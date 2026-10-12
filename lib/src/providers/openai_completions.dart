@@ -300,7 +300,9 @@ final class _OpenAICompletionsSession {
       cancelToken,
       // Null falls through to the effective (config-overridable) default.
       idleTimeout: scopedIdle,
-      timeoutSource: options?.idleTimeout == null
+      // The scope label cites THE LEG THAT RAN (issue #1554 review round 1):
+      // an explicit options override or an unscoped model keeps bare text.
+      timeoutSource: options?.idleTimeout == null && scopedIdle != null
           ? model.timeoutScopeLabel
           : null,
     );

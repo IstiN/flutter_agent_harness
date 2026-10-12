@@ -274,6 +274,63 @@ void main() {
         providerConnectTimeout,
       );
     });
+
+    test('per-leg scope labels: an idle-only override never cites its scope '
+        'on a connect-stall note; a connect-scoped model cites it there',
+        () async {
+      providerTuningRegistry.clear();
+      providerTimeoutsOverride = const ProviderTimeoutsOverride(
+        connect: Duration(milliseconds: 400),
+      );
+      addTearDown(providerTuningRegistry.clear);
+      addTearDown(() => providerTimeoutsOverride = null);
+      final hole = await _bindBlackHole();
+      addTearDown(hole.close);
+      Future<String> connectStall(Model scoped) async {
+        final events = await streamOpenAICompletions(
+          scoped,
+          Context(
+            messages: [UserMessage.text('hi', timestamp: DateTime.utc(2026))],
+          ),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          sharedProviderHttpClient(),
+        ).toList();
+        final last = events.last;
+        expect(last, isA<ErrorEvent>());
+        return '${(last as ErrorEvent).error.errorMessage}';
+      }
+
+      Model model({Duration? connect, Duration? idle, String? label}) =>
+          Model(
+            id: 'm',
+            api: 'openai-completions',
+            provider: 'openai',
+            baseUrl: 'http://127.0.0.1:${hole.port}/v1',
+            contextWindow: 128000,
+            maxTokens: 16384,
+            connectTimeout: connect,
+            streamIdleTimeout: idle,
+            timeoutScopeLabel: label,
+          );
+
+      // Idle-only override: the CONNECT leg ran the global window — its
+      // stall note must never cite the other leg's scope.
+      final idleOnly = await connectStall(
+        model(idle: const Duration(seconds: 1), label: 'role slow override'),
+      );
+      expect(idleOnly, contains('no response headers within'));
+      expect(idleOnly, isNot(contains('role slow override')));
+
+      // Connect-scoped: the connect stall cites THIS leg's scope.
+      final connectScoped = await connectStall(
+        model(
+          connect: const Duration(milliseconds: 300),
+          label: 'role slow override',
+        ),
+      );
+      expect(connectScoped, contains('no response headers within'));
+      expect(connectScoped, contains('role slow override'));
+    }, timeout: const Timeout(Duration(seconds: 60)));
   });
 
   group('AC3/IT — dual budgets over loopback failure classes', () {

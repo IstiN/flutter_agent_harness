@@ -1580,13 +1580,18 @@ Future<http.StreamedResponse> startProviderResponse(
 ) async {
   // Issue #1554: the model's request-scoped watchdog windows (a roles
   // chain entry's `connectTimeoutMs`/`streamIdleTimeoutMs`) ride the send
-  // — the top precedence layer, above the URL-keyed tuning table.
+  // — the top precedence layer, above the URL-keyed tuning table. The
+  // scope label cites THE LEG THAT RAN (review round 1): an idle-only
+  // override never names its scope on a connect-stall note, and vice
+  // versa — a leg that ran the global default keeps the bare text.
   final response = await sendProviderRequest(
     httpClient,
     request,
     cancelToken,
     connectTimeout: state.model.connectTimeout,
-    timeoutSource: state.model.timeoutScopeLabel,
+    timeoutSource: state.model.connectTimeout == null
+        ? null
+        : state.model.timeoutScopeLabel,
   );
   await onResponse?.call(response.statusCode, response.headers, state.model);
   eventStream.push(StartEvent(partial: state.snapshot()));

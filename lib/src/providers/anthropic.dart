@@ -297,7 +297,10 @@ final class _AnthropicStreamSession {
       response,
       cancelToken,
       idleTimeout: model.streamIdleTimeout,
-      timeoutSource: model.timeoutScopeLabel,
+      // The scope label cites THE LEG THAT RAN (issue #1554 review round 1).
+      timeoutSource: model.streamIdleTimeout == null
+          ? null
+          : model.timeoutScopeLabel,
     );
 
     // Ported from pi's `iterateAnthropicEvents`: only the message events

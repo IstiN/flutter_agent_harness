@@ -298,7 +298,10 @@ Future<void> _consumeSseStream(
     response,
     cancelToken,
     idleTimeout: handler._model.streamIdleTimeout,
-    timeoutSource: handler._model.timeoutScopeLabel,
+    // The scope label cites THE LEG THAT RAN (issue #1554 review round 1).
+    timeoutSource: handler._model.streamIdleTimeout == null
+        ? null
+        : handler._model.timeoutScopeLabel,
   );
 
   while (await iterator.moveNext()) {

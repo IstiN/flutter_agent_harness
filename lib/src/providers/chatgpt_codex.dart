@@ -15,6 +15,7 @@ import '../session/uuid.dart';
 import '../types.dart';
 import 'chatgpt_oauth.dart';
 import 'codex_transport.dart';
+import 'provider_tuning.dart' show providerStreamIdleTimeoutForUrl;
 import 'stall_sentinel.dart' show providerIdleStallFired;
 import 'provider_common.dart';
 
@@ -297,12 +298,19 @@ final class _ChatGptCodexSession {
   /// abort during a silent stretch must not wait for the next line or the
   /// idle watchdog.
   Future<void> _consumeSseLines(http.StreamedResponse response) async {
-    // Issue #1554: the model's request-scoped idle window wins over the
-    // global effective value.
-    final idle = model.streamIdleTimeout ?? effectiveProviderStreamIdleTimeout;
-    // The stall line names a scoped override so a wide window never reads
-    // as a hang.
-    final scopedNote = model.timeoutScopeLabel == null
+    // Issue #1554, review round 1: the model's request-scoped idle window
+    // wins; WITHOUT a model override the same URL-keyed tuning table
+    // createSseIterator consults applies (a streamIdleTimeoutMs-only
+    // registry entry must scope the codex bypass too, not just the shared
+    // iterator path).
+    final tunedIdle = response.request?.url == null
+        ? effectiveProviderStreamIdleTimeout
+        : providerStreamIdleTimeoutForUrl(response.request!.url);
+    final idle = model.streamIdleTimeout ?? tunedIdle;
+    // The stall line names the override of THE LEG THAT RAN — an idle-only
+    // model scope is named here; a model without a scoped idle leg keeps
+    // the bare stall text (per-leg labels, review round 1).
+    final scopedNote = model.streamIdleTimeout == null
         ? ''
         : ' — idle window ${idle.inSeconds}s (${model.timeoutScopeLabel})';
     final lines = StreamIterator<String>(
@@ -385,8 +393,11 @@ final class _ChatGptCodexSession {
       cancelToken,
       // Issue #1554: the model's request-scoped watchdog windows ride the
       // send — null falls through to the per-provider table, then global.
+      // The scope label cites THE LEG THAT RAN: a model without a scoped
+      // connect leg keeps the bare stall text (review round 1).
       connectTimeout: model.connectTimeout,
-      timeoutSource: model.timeoutScopeLabel,
+      timeoutSource:
+          model.connectTimeout == null ? null : model.timeoutScopeLabel,
     );
     // Cloudflare sets its cookies even on error responses — store always.
     _cookies.store(uri, response.headers);
