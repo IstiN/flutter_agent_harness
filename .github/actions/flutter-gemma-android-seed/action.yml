@@ -1,0 +1,45 @@
+name: flutter-gemma-android-seed
+description: >-
+  Pre-seed the flutter_gemma LiteRT-LM Android native cache so the
+  flutter_gemma_litertlm build hook never downloads
+  litertlm-android_arm64.tar.gz mid-build. gh-1468: one HTTP 500 from the
+  github.com release-asset CDN during that download red'd the ci.yml
+  build-android leg (and the aggregate Quality gate with it). The hook
+  short-circuits the download entirely once libLiteRtLm.so and a matching
+  .flutter_gemma_native_version marker exist in the cache — same
+  hardening the macOS legs carry via "Ensure flutter_gemma macOS companion
+  dylibs". The version/checksum below MUST equal the hook's _litertlmBundle
+  registration in the pinned flutter_gemma_litertlm (hook/build.dart);
+  test/ci_gemma_android_seed_guard_test.dart AC3 cross-checks both sides.
+runs:
+  using: composite
+  steps:
+    - name: Seed flutter_gemma Android LiteRT-LM libs
+      shell: bash
+      run: |
+        set -euo pipefail
+        GEMMA_CACHE="$HOME/.cache/flutter_gemma/native"
+        PLATFORM_DIR="$GEMMA_CACHE/android_arm64"
+        MARKER="$GEMMA_CACHE/.flutter_gemma_native_version"
+        # The hook's cache-dedup predicate: main lib present AND the
+        # marker carries this bundle's exact version (its
+        # _invalidateBundleCacheIfStale wipes owned files on a version
+        # mismatch, so a stale seed would be deleted and re-downloaded
+        # mid-build — the roulette this action exists to stop).
+        if [ -f "$PLATFORM_DIR/libLiteRtLm.so" ] && \
+           grep -q '"version":"0.17.1-a"\|"version": *"0.17.1-a"' "$MARKER" 2>/dev/null; then
+          echo "flutter_gemma Android LiteRT-LM libs already cached ($PLATFORM_DIR)"
+        else
+          echo "seeding flutter_gemma Android LiteRT-LM libs from native-v0.17.1-a"
+          mkdir -p "$PLATFORM_DIR"
+          curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+            -o /tmp/litertlm-android_arm64.tar.gz \
+            https://github.com/DenisovAV/flutter_gemma/releases/download/native-v0.17.1-a/litertlm-android_arm64.tar.gz
+          echo "745b89b606eb712a78f06aed41daca1370eae79b00e0a36054c8e775c0251768  /tmp/litertlm-android_arm64.tar.gz" | sha256sum -c -
+          tar xzf /tmp/litertlm-android_arm64.tar.gz -C "$PLATFORM_DIR"
+          # Marker commit point: {version, owner} exactly as the hook's
+          # _writeMarker emits it (owner = the hook's _packageName) so the
+          # pre-seeded cache keeps a single CodeAsset registrant.
+          printf '{"version":"0.17.1-a","owner":"flutter_gemma_litertlm"}\n' > "$MARKER"
+        fi
+        ls -la "$PLATFORM_DIR"
