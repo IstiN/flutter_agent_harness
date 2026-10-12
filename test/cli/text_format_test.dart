@@ -31,12 +31,23 @@ void main() {
       expect(out.startsWith('k0='), isTrue);
     });
 
-    test('output of exactly 100 chars is not truncated', () {
-      final key = 'k';
-      // Rendered as k=" + 96 v's + " — 'k=' (2) + 2 quote chars + 96
-      // values = exactly 100 chars, so the cap must not touch it.
-      final value = 'v' * 96;
-      expect(formatArgs({key: value}), 'k=${'v' * 96}');
+    test('unquoted rendering of exactly 100 chars is not truncated', () {
+      // The key renders RAW (never JSON-encoded); an int value encodes
+      // without quotes: 98 + '=' + '1' = exactly 100, untouched.
+      expect(formatArgs({'k' * 98: 1}), '${'k' * 98}=1');
+    });
+
+    test('quoted rendering counts the 2 JSON quote chars toward the cap', () {
+      // k=" + 96 v's + " = exactly 100 — at the cap, not truncated. The
+      // expected literal includes the quotes (they are part of the output).
+      expect(formatArgs({'k': 'v' * 96}), 'k="${'v' * 96}"');
+    });
+
+    test('one char over the cap truncates mid-quote (closing quote cut)', () {
+      // k=" + 97 v's + " = 101 > 100 → first 100 chars + '...': the
+      // closing quote is amputated. Surprising, but it is what the
+      // renderer does — coverage PR, pin actual behavior.
+      expect(formatArgs({'k': 'v' * 97}), 'k="${'v' * 97}...');
     });
 
     test('empty args render as an empty string', () {
