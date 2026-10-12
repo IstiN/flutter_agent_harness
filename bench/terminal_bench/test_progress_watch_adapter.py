@@ -388,6 +388,66 @@ class Round3AdapterTest(unittest.TestCase):
         # The genuinely secret values keep their base64 transport.
         self.assertIn("FA_PROVIDER_CONFIG_BASE64", payload)
 
+    def test_deadline_rides_the_launch_line_and_matches_the_audit(self):
+        # gh-1556 AC7: fa's wrap-up deadline is computed once per trial,
+        # rides the SAME line that launches fa (the #1406 pane-env loss
+        # lesson), and is the exact value the timeout audit records.
+        # TerminalCommand is patched locally: test_fa_usage installs a
+        # bare class into the shared tb stub (no kwargs __init__), which
+        # must not leak into these assertions under full discovery.
+        recorded = []
+
+        def _terminal_command(**kwargs):
+            recorded.append(kwargs)
+            return types.SimpleNamespace(**kwargs)
+
+        agent = self._agent()
+        env = clean_env(
+            FA_PROVIDER_CONFIG="{}",
+            FA_PROGRESS_EXTENSION="1",
+            FA_STALL_GAP_SEC="360",
+            FA_AGENT_TIMEOUT_ABS_CEILING_SEC="3600",
+        )
+        with mock.patch.dict(os.environ, env, clear=False):
+            agent._deadline_env = fa_agent_timeout.deadline_env_from(env)
+            with mock.patch.object(fa_agent, "TerminalCommand", _terminal_command):
+                commands = agent._run_agent_commands("build it")
+            audit = fa_agent_timeout.audit_dict(
+                fa_agent_timeout.TimeoutKnobs.from_env(env),
+                fa_agent_timeout.ProgressWatch(
+                    fa_agent_timeout.TimeoutKnobs.from_env(env)
+                ),
+                "completed",
+                deadline_epoch_ms=int(
+                    agent._deadline_env["FA_DEADLINE_EPOCH_MS"]
+                ),
+            )
+        self.assertEqual(len(commands), 1)
+        launch = commands[0].command
+        self.assertIn(
+            f"export FA_DEADLINE_EPOCH_MS={agent._deadline_env['FA_DEADLINE_EPOCH_MS']}; ",
+            launch,
+        )
+        self.assertEqual(audit["deadline_epoch_ms"],
+                         int(agent._deadline_env["FA_DEADLINE_EPOCH_MS"]))
+
+    def test_no_knobs_means_no_deadline_export(self):
+        # No adapter cap (tb's harness caps are invisible here) => no
+        # deadline: fa never invents a clock.
+        recorded = []
+
+        def _terminal_command(**kwargs):
+            recorded.append(kwargs)
+            return types.SimpleNamespace(**kwargs)
+
+        agent = self._agent()
+        env = clean_env(FA_PROVIDER_CONFIG="{}")
+        with mock.patch.dict(os.environ, env, clear=False):
+            agent._deadline_env = fa_agent_timeout.deadline_env_from(env)
+            with mock.patch.object(fa_agent, "TerminalCommand", _terminal_command):
+                launch = agent._run_agent_commands("build it")[0].command
+        self.assertNotIn("FA_DEADLINE_EPOCH_MS", launch)
+
 
 if __name__ == "__main__":
     unittest.main()
