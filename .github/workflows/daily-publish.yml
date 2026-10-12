@@ -547,13 +547,12 @@ jobs:
       # at this action pin, so the minted token cannot leave this repo. The
       # `permissions` ceiling input used by ci.yml's release job is NOT
       # copied deliberately — this pin (v3.2.0, actions/logs confirm)
-      # ignores it with an "Unexpected input(s)" warning; the step's own
-      # GITHUB_TOKEN is the enforceable least-privilege surface here.
+      # ignores it with an "Unexpected input(s)" warning; least-privilege
+      # is enforced at JOB level (contents: read + actions: write, the
+      # job's GITHUB_TOKEN), the only permissions scope steps inherit.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         if: secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != ''
-        permissions:
-          contents: none
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
