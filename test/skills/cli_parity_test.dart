@@ -113,6 +113,9 @@ const _nonSettingsCommands = <String, String>{
   '/update':
       'binary self-update + successor restart (issue #1377), changes no '
       'persisted setting',
+  '/timer':
+      'session deadline countdown (gh-1556), in-memory clock only — never '
+      'persisted anywhere',
 };
 
 /// The commands the skill's parity marker documents.

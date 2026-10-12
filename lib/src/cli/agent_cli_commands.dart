@@ -39,6 +39,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/jsr': (cli, rest) async => cli._jsrSlash(rest),
   '/power': (cli, rest) async => cli._powerSlash(),
   '/quota': (cli, rest) async => cli._quotaSlash(rest),
+  '/timer': (cli, rest) async => cli._handleTimerCommand(rest),
   // Hidden (issue #735): not in the slash menu — a diagnostics dump of
   // the live tty's termios state for steering-freeze triage.
   '/termios': (cli, rest) async => cli._printTermiosDump(),
@@ -339,6 +340,39 @@ extension SlashCommandDispatch on AgentCli {
         return false;
     }
     return true;
+  }
+
+  /// `/timer [<duration|epoch-ms>|clear]` — the live session deadline
+  /// setter (gh-1556). Bare `/timer` shows the current value; a duration
+  /// (`25m`, `90s`, `1h30m`) or an absolute epoch-ms timestamp arms (or
+  /// re-arms, resetting the one-shot notice latches) the SAME single clock
+  /// the env var and `--timer`/`--deadline` wrote at boot; `/timer clear`
+  /// disarms it and every consumer falls back to today's byte-for-byte
+  /// behavior. An invalid spec is a clear user-facing error — never a
+  /// silently wrong deadline.
+  Future<void> _handleTimerCommand(String rest) async {
+    final arg = rest.trim();
+    if (arg.isEmpty) {
+      final line = _deadline.budgetLine();
+      io.writeln(
+        line == null
+            ? 'no deadline set (/timer 25m arms one)'
+            : 'deadline armed — $line',
+      );
+      return;
+    }
+    if (arg == 'clear') {
+      _deadline.clear();
+      io.writeln('deadline cleared');
+      return;
+    }
+    try {
+      _deadline.setFromSpec(arg);
+    } on FormatException catch (error) {
+      io.writeln('invalid /timer value: ${error.message}');
+      return;
+    }
+    io.writeln('deadline set — ${_deadline.budgetLine()}');
   }
 
   /// `/a2a` — Phase 5a status: per-server connecting/connected/failed.
