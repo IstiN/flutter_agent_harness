@@ -397,6 +397,7 @@ final class CliConfig {
     this.providerTimeouts,
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
+    this.skillsLiveRediscovery = true,
     this.skillToggles = const {},
     this.memory,
     this.fabric,
@@ -572,6 +573,8 @@ final class CliConfig {
           SkillsAccess.granted,
       skillsDisableShellExecution:
           skillsSection['skillsDisableShellExecution'] as bool? ?? false,
+      skillsLiveRediscovery:
+          skillsSection['skillsLiveRediscovery'] as bool? ?? true,
       skillToggles:
           skillsSection['skillToggles'] as Map<String, bool>? ?? const {},
       // The output section (gh-1198) is strict: `streamThinking` opts
@@ -619,6 +622,17 @@ final class CliConfig {
             );
           }
           result['skillsDisableShellExecution'] = value;
+        case 'liveRediscovery':
+          // gh-1440: the per-composition freshness check. Off returns to
+          // boot-snapshot semantics with the prompt's staleness footer
+          // disclosing it; `/skill:` cold-resolve stays available.
+          final value = node[key];
+          if (value is! bool) {
+            throw ConfigException(
+              'skills.liveRediscovery must be a boolean, got: $value',
+            );
+          }
+          result['skillsLiveRediscovery'] = value;
         default:
           final name = '$key';
           result['skillToggles'] = {
@@ -696,6 +710,14 @@ final class CliConfig {
   /// skill bodies render as a disabled placeholder instead of executing
   /// (the `skills.disableShellExecution` yaml key).
   final bool skillsDisableShellExecution;
+
+  /// Whether the per-composition skills freshness check runs (gh-1440, the
+  /// `skills.liveRediscovery` yaml key). On by default — a skill landing on
+  /// disk mid-session joins the index at the next prompt recomposition;
+  /// `false` returns to boot-snapshot semantics with the prompt's
+  /// staleness footer disclosing it (`/skills reload` and the `/skill:`
+  /// cold-resolve stay available either way).
+  final bool skillsLiveRediscovery;
 
   /// Per-skill on/off toggles from the GLOBAL scope (`skills:` section,
   /// `skillName: on|off` entries in `~/.fah/config.yaml`, issue #1151). The
@@ -893,6 +915,7 @@ final class CliConfig {
       providerTimeouts: providerTimeouts,
       skillsAccess: skillsAccess,
       skillsDisableShellExecution: skillsDisableShellExecution,
+      skillsLiveRediscovery: skillsLiveRediscovery,
       skillToggles: skillToggles,
       memory: memory,
       fabric: fabric,
@@ -1190,6 +1213,9 @@ final class CliConfig {
     final buffer = StringBuffer('skills:\n');
     _writeSkillsAccess(buffer);
     _writeSkillsDisableShellExecution(buffer);
+    // gh-1440: only the non-default (opt-out) value is written — the file
+    // stays minimal.
+    if (!skillsLiveRediscovery) buffer.write('  liveRediscovery: false\n');
     for (final entry in skillToggles.entries) {
       buffer.write('  ${entry.key}: ${entry.value}\n');
     }
@@ -1199,6 +1225,7 @@ final class CliConfig {
   bool get _skillsSectionNeeded =>
       skillsAccess != SkillsAccess.granted ||
       skillsDisableShellExecution ||
+      !skillsLiveRediscovery ||
       skillToggles.isNotEmpty;
 
   void _writeSkillsAccess(StringBuffer buffer) {
