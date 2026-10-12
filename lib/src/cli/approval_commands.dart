@@ -609,6 +609,10 @@ extension ApprovalCommands on AgentCli {
       // compile-time activity ring off the controller's live tick frame —
       // blank while idle (the `>_ Fa` final state) and never model text.
       brandFrame: isBusy ? _tuiController?.brandFrameGlyph : null,
+      // gh-1556: the deadline countdown chip's LIVE remaining budget (the
+      // band re-renders per frame tick; -1 hides the segment when unarmed
+      // — byte-identical legacy chrome).
+      deadlineRemainingMs: _deadline.isArmed ? _deadline.remainingMs : -1,
     );
   }
 
