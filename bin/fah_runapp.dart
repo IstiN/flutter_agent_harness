@@ -62,6 +62,26 @@ Future<void> _runApp(List<String> args) async {
     _fail(error.message);
   }
 
+  // gh-1556: the ONE session deadline clock. The host env seeds it
+  // (missing/invalid = feature off, silent); `--timer`/`--deadline`
+  // override the env (later wins); `/timer` adjusts it live. An invalid
+  // FLAG spec is the user's own words — a usage error, never a silently
+  // wrong clock.
+  final SessionDeadline sessionDeadline;
+  try {
+    sessionDeadline = resolveSessionDeadline(
+      envValue: Platform.environment[deadlineEpochMsEnvVar],
+      flagSpec: parsed.timer ?? parsed.deadline,
+    );
+  } on FormatException catch (error) {
+    // Not dead code: parseCliArgs's `_validateDeadlineFlag` only checks
+    // the spec's SHAPE — a well-formed but PAST epoch (e.g.
+    // `--deadline 1893456000000`) passes there and throws here, at
+    // `SessionDeadline.setEpochMs`. Keep this catch; it defends that one
+    // narrow path.
+    _fail('invalid --timer/--deadline: ${error.message}');
+  }
+
   // Quick self-management commands, intercepted before prompt resolution:
   // `fa update` swaps in the latest release binary; `fa uninstall` removes
   // the binary + PATH entry (and ~/.fah on a second confirmation).
@@ -1217,6 +1237,10 @@ Future<void> _runApp(List<String> args) async {
         // notice stream (stderr alone is invisible in the alternate screen).
         rolesDropNotice: rolesDropNotice,
         wakeExecutable: wakeExecutable(),
+        // gh-1556: the seeded session deadline (env < flag; `/timer`
+        // adjusts it live). Unarmed keeps the whole feature off —
+        // byte-for-byte today's behavior.
+        deadline: sessionDeadline,
         // The dispatch below: a prompt argument is a headless run (autonomous
         // supervision default); an interactive REPL/TUI session defaults to
         // advisory — a human is present (gh-1054 review).

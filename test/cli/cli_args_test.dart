@@ -711,4 +711,70 @@ void main() {
       );
     });
   });
+
+  group('parseCliArgs --timer/--deadline (gh-1556)', () {
+    CliArgs parse(List<String> args) => parseCliArgs(args) as CliArgs;
+
+    test('--timer carries the raw spec through', () {
+      final args = parse(const ['--timer', '25m', '-p', 'hi']);
+      expect(args.timer, '25m');
+      expect(args.deadline, isNull);
+    });
+
+    test('--deadline carries duration and epoch forms through', () {
+      expect(parse(const ['--deadline', '1h30m']).deadline, '1h30m');
+      expect(
+        parse(const ['--deadline', '1893456000000', '-p', 'hi']).deadline,
+        '1893456000000',
+      );
+    });
+
+    test('valid unit shapes parse', () {
+      for (final spec in ['25m', '90s', '1h', '1h30m', '2h15m30s']) {
+        expect(() => parse(['--timer', spec]), returnsNormally, reason: spec);
+      }
+    });
+
+    test('invalid shapes are usage errors naming the flag', () {
+      for (final spec in ['abc', '25', '25x', '1h30', '-5m', '0s', '']) {
+        expect(
+          () => parse(['--timer', spec]),
+          throwsA(
+            isA<CliArgsException>().having(
+              (e) => e.message,
+              'message',
+              contains('invalid --timer value'),
+            ),
+          ),
+          reason: spec,
+        );
+      }
+    });
+
+    test('invalid --deadline value names --deadline', () {
+      expect(
+        () => parse(const ['--deadline', 'nope']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('invalid --deadline value'),
+          ),
+        ),
+      );
+    });
+
+    test('combining --timer with --deadline is a usage error', () {
+      expect(
+        () => parse(const ['--timer', '25m', '--deadline', '90s']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('cannot combine --timer and --deadline'),
+          ),
+        ),
+      );
+    });
+  });
 }
