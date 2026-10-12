@@ -228,13 +228,48 @@ void main() {
       await run;
     });
 
-    test('unarmed: the var is absent (byte-for-byte legacy env)', () async {
+    test('unarmed: the var rides as an empty scrub sentinel', () async {
+      // gh-1556 rework review (thread 8/10): the overlay must not just
+      // OMIT the key when unarmed — LocalShell merges options.env OVER
+      // Platform.environment, so a stale host-exported
+      // FA_DEADLINE_EPOCH_MS would still leak into bash children. The
+      // empty-string sentinel scrubs it (resolveSessionDeadline treats
+      // an empty value as feature-off).
       final stream = _InstantStream(const []);
       final cli = cliFor(stream);
       final run = cli.run();
       await Future<void>.delayed(const Duration(milliseconds: 50));
       final vars = await cli.sessionEnvVarsForTest();
-      expect(vars.containsKey(deadlineEpochMsEnvVar), isFalse);
+      expect(vars[deadlineEpochMsEnvVar], '');
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('clear: the overlay scrubs a previously-armed value', () async {
+      // Armed → /timer clear: the sentinel must replace the live epoch
+      // so the cleared clock cannot ride into later bash execs.
+      final stream = _InstantStream(const []);
+      final cli = cliFor(stream);
+      final run = cli.run();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      io.sendLine('/timer 25m');
+      await _waitFor(
+        () => io.out.toString().contains('deadline set'),
+        'the set line',
+      );
+      var vars = await cli.sessionEnvVarsForTest();
+      expect(vars[deadlineEpochMsEnvVar], isNot(''));
+
+      io.sendLine('/timer clear');
+      await _waitFor(
+        () => io.out.toString().contains('deadline cleared'),
+        'the cleared line',
+      );
+      vars = await cli.sessionEnvVarsForTest();
+      expect(vars[deadlineEpochMsEnvVar], '');
+      expect(cli.deadlineForTest.isArmed, isFalse);
+
       io.sendLine('/exit');
       await run;
     });

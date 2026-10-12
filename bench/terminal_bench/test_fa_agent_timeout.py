@@ -1082,6 +1082,38 @@ class DeadlineEnvTest(unittest.TestCase):
             {"FA_DEADLINE_EPOCH_MS": str(now_ms + 3480_000)},
         )
 
+    def test_watch_mode_without_extension_deadline_is_base_minus_margin(self):
+        # gh-1556 rework review (BLOCKING, AC7): with the extension off
+        # ProgressWatch pins kill_at = base_sec (the flat legacy cap) —
+        # so the exported deadline MUST derive from base_sec too.
+        # Promising the 3600s abs ceiling would be a ~58-minute lie over
+        # a 6-minute guillotine (workflow-reachable via an explicit
+        # progress-extension: false dispatch, which unsets the step-env
+        # extension while the watch knobs remain).
+        env = clean_env_all(
+            FA_STALL_GAP_SEC="360", FA_AGENT_TIMEOUT_ABS_CEILING_SEC="3600"
+        )
+        knobs = TimeoutKnobs.from_env(env)
+        self.assertTrue(knobs.progress_watch)
+        self.assertFalse(knobs.progress_extension)
+        # The real guillotine — the deadline must not outlive it.
+        self.assertEqual(
+            fa_agent_timeout.ProgressWatch(knobs).kill_at, knobs.base_sec
+        )
+        now_ms = 1_700_000_000_000
+        # base 360s - 120s wrap-up margin = 240s (NOT 3600 - 120).
+        self.assertEqual(
+            fa_agent_timeout.effective_cap_sec(knobs), knobs.base_sec
+        )
+        self.assertEqual(
+            fa_agent_timeout.deadline_epoch_ms(knobs, now_ms),
+            now_ms + 240_000,
+        )
+        self.assertEqual(
+            fa_agent_timeout.deadline_env_from(env, now_ms),
+            {"FA_DEADLINE_EPOCH_MS": str(now_ms + 240_000)},
+        )
+
     def test_legacy_extension_deadline_is_hard_ceiling_minus_margin(self):
         env = clean_env_all(
             FA_AGENT_TIMEOUT_SEC="600", FA_PROGRESS_EXTENSION="1"

@@ -1006,6 +1006,11 @@ class AgentCli {
   /// gh-1556: the armed deadline rides along as `FA_DEADLINE_EPOCH_MS`, so
   /// a mid-session `/timer` adjustment is picked up by the next command —
   /// the chip, the request line and the shell all see the ONE clock.
+  /// Unarmed, the key still rides as an EMPTY scrub sentinel: `LocalShell`
+  /// merges the overlay OVER `Platform.environment`, so omitting the key
+  /// would leave a stale host-exported `FA_DEADLINE_EPOCH_MS` visible to
+  /// bash children after `/timer clear` — and `resolveSessionDeadline`
+  /// treats an empty value as feature-off, exactly like no export.
   Future<Map<String, String>> _sessionEnvVars() async {
     final session = _session;
     final metadata = session == null ? null : await session.getMetadata();
@@ -1015,7 +1020,9 @@ class AgentCli {
       providerEnvVar: _providerKind,
       modelEnvVar: _agent.state.model.id,
       if (_deadline.isArmed)
-        deadlineEpochMsEnvVar: '${_deadline.deadlineEpochMs}',
+        deadlineEpochMsEnvVar: '${_deadline.deadlineEpochMs}'
+      else
+        deadlineEpochMsEnvVar: '',
       ..._runtimeSecrets,
     };
   }

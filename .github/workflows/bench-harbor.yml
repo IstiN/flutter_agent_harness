@@ -555,6 +555,12 @@ jobs:
             # would be silently ignored — under watch+extension the abs
             # ceiling alone bounds a progressing trial (base_sec is only
             # consulted with the extension off).
+            # The watch exports are individually removable (the escape
+            # hatch back to the legacy ladder): if the ceiling export
+            # alone is gone, default it to base x4 under `set -u`
+            # (exactly what the legacy ladder would have used) before
+            # the clip — an unbound variable must not kill the shard.
+            export FA_AGENT_TIMEOUT_ABS_CEILING_SEC="${FA_AGENT_TIMEOUT_ABS_CEILING_SEC:-$((AGENT_TIMEOUT * 4))}"
             export FA_AGENT_TIMEOUT_ABS_CEILING_SEC="$(( FA_AGENT_TIMEOUT_ABS_CEILING_SEC < AGENT_TIMEOUT * 4 ? FA_AGENT_TIMEOUT_ABS_CEILING_SEC : AGENT_TIMEOUT * 4 ))"
           fi
           case "$PROGRESS_EXTENSION" in

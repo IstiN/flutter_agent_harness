@@ -507,11 +507,20 @@ def effective_cap_sec(knobs: TimeoutKnobs, test_budget_sec: float = 0.0) -> floa
 
     Progress-watch mode: the flat abs ceiling (+ the caller's test
     budget where one is folded in, as tb does NOT — it leaves the
-    verifier phase to the harness). Legacy progress-aware ladder: the
-    byte-growth hard ceiling. Flat ladder: the flat base cap.
+    verifier phase to the harness) — but ONLY while the extension is on;
+    with the extension off ProgressWatch pins kill_at to the flat
+    base_sec, so promising the abs ceiling would be a lie over the real
+    guillotine (never lie about the clock). Legacy progress-aware
+    ladder: the byte-growth hard ceiling. Flat ladder: the flat base
+    cap.
     """
     if knobs.progress_watch:
-        return knobs.watch_abs_ceiling_sec + test_budget_sec
+        cap = (
+            knobs.watch_abs_ceiling_sec
+            if knobs.progress_extension
+            else knobs.base_sec
+        )
+        return cap + test_budget_sec
     if knobs.progress_extension:
         return knobs.ceiling_sec
     return knobs.base_sec

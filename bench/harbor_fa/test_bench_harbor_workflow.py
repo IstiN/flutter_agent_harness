@@ -167,6 +167,20 @@ class BenchHarborDefaultsTest(unittest.TestCase):
             self._shard_run_block(),
         )
 
+    def test_agent_timeout_clip_defaults_the_ceiling_when_export_removed(self):
+        # gh-1556 rework re-review (suggestion): the escape hatch is
+        # "remove the watch exports to restore the legacy ladder" — but
+        # the exports are load-bearing individually: unsetting ONLY
+        # FA_AGENT_TIMEOUT_ABS_CEILING_SEC (keeping agent-timeout set)
+        # must not die on an unbound variable under `set -euo pipefail`;
+        # the ceiling defaults to base x4 (exactly what the legacy
+        # ladder would have used) before the clip runs.
+        run_block = self._shard_run_block()
+        self.assertIn(
+            '${FA_AGENT_TIMEOUT_ABS_CEILING_SEC:-$((AGENT_TIMEOUT * 4))}',
+            run_block,
+        )
+
     def test_progress_extension_input_can_still_turn_the_extension_off(self):
         # gh-1556 rework review: the step env exports FA_PROGRESS_EXTENSION=1
         # (the watch default, AC2) — an explicit progress-extension: false
