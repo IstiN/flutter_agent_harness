@@ -2366,5 +2366,15 @@
       "total": 73590,
       "model": "kimi-for-coding"
     }
+  ],
+  "pr-1563": [
+    {
+      "leg": "review",
+      "at": "2026-10-12T11:24:15Z",
+      "prompt": 98662,
+      "completion": 22862,
+      "total": 121524,
+      "model": "kimi-for-coding"
+    }
   ]
 }
