@@ -256,8 +256,7 @@ resolveEffectiveCliArgs(
   // bind (a claude id pinned over api.openai.com) is dropped.
   final degraded = restore.endpointConflict && !explicitOverride;
   final degradedDefault = resolveCliProviderSpec(provider)?.defaultBaseUrl;
-  final keepSavedPair =
-      !degraded || _degradedPairResolves(provider, saved);
+  final keepSavedPair = !degraded || _degradedPairResolves(provider, saved);
   final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
   final effective = CliArgs(
@@ -286,9 +285,7 @@ resolveEffectiveCliArgs(
     ProviderModelBinding.resolve(
       providerKind: provider,
       modelId: parsed.model!,
-      baseUrl: keepSavedPair
-          ? baseUrl
-          : (parsed.baseUrl ?? degradedDefault),
+      baseUrl: keepSavedPair ? baseUrl : (parsed.baseUrl ?? degradedDefault),
       provenance: BindingProvenance.flag,
     );
   }

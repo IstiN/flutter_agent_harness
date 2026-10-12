@@ -494,8 +494,7 @@ void main() {
       );
     });
 
-    test('an explicit --model of the saved binding\'s own family passes',
-        () {
+    test('an explicit --model of the saved binding\'s own family passes', () {
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(model: 'claude-opus-4'),
         CliConfig(
@@ -525,8 +524,7 @@ void main() {
     });
 
     test('an endpoint-conflict degrade drops the stale saved pair when no '
-        'valid binding survives under the degraded kind (gh-1570 L9/E2)',
-        () {
+        'valid binding survives under the degraded kind (gh-1570 L9/E2)', () {
       // A claude-family id pinned over the openai canonical endpoint
       // cannot bind as openai-completions — the pair is the L9 poison and
       // is dropped rather than riding the degrade.
