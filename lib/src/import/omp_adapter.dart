@@ -194,7 +194,7 @@ final class OmpAdapter implements HarnessAdapter {
       fs,
       path,
       4096,
-      maxFileBytes: limits.maxFileBytes,
+      maxFileBytes: maxFileBytes,
     );
     if (prefix == null) return null;
     var slotTitle = ('', '');
