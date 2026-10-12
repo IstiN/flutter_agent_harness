@@ -30,6 +30,7 @@ library;
 import '../exceptions.dart';
 import 'provider_common.dart'
     show
+        ProviderTimeoutsOverride,
         effectiveProviderConnectTimeout,
         effectiveProviderStreamIdleTimeout,
         providerConnectTimeout,
@@ -355,6 +356,7 @@ ResolvedProviderTimeouts resolveProviderTimeouts({Uri? url, String? name}) {
       if (value != null) return value;
     }
     final global = providerTimeoutsOverride;
+    if (global == null) return fallback;
     return globalPick(global) ?? fallback;
   }
 

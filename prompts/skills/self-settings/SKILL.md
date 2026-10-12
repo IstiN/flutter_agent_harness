@@ -260,7 +260,7 @@ models:                        # media slots + named custom models
       provider: openai
       baseUrl: https://api.openai.com/v1
       model: gpt-4o-mini
-      contextWindow: 128000    # + maxTokens, input, connectTimeoutMs, streamIdleTimeoutMs
+      contextWindow: 128000    # + maxTokens, input
 ```
 
 Scoped provider timeouts (issue #1554): `connectTimeoutMs`/`streamIdleTimeoutMs`

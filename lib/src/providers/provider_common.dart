@@ -735,7 +735,10 @@ Future<http.StreamedResponse> _sendWatchedOnce(
   }
 
   if (cancelToken == null) {
-    return responseFuture.timeout(effectiveConnect, onTimeout: watchdogTimedOut);
+    return responseFuture.timeout(
+      effectiveConnect,
+      onTimeout: watchdogTimedOut,
+    );
   }
   return Future.any([
     responseFuture,
