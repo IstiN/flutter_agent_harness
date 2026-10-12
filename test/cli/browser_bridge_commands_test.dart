@@ -154,10 +154,7 @@ void main() {
           running: true,
           url: 'ws://127.0.0.1:8777/ws',
           extensions: ['ext-a', 'ext-b'],
-          mailboxes: [
-            (id: 'mb-1', cwd: '/tmp/work'),
-            (id: 'mb-2', cwd: null),
-          ],
+          mailboxes: [(id: 'mb-1', cwd: '/tmp/work'), (id: 'mb-2', cwd: null)],
         ),
       );
       final lines = await runBrowserCommand(handle, 'status');

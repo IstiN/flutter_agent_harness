@@ -34,19 +34,16 @@ void main() {
       expect(html, isNot(contains('btn-soon')));
     });
 
-    test(
-      'config values are attribute-escaped — a hostile link cannot '
-      'break out of the href',
-      () {
-        const hostile = 'https://x.test/a?b=1&c="><script>alert(1)</script>';
-        final html = renderAppStoreBlockHtml(
-          const LinksConfig(appstore: hostile),
-        );
-        expect(html, contains('&amp;'));
-        expect(html, contains('&quot;&gt;&lt;script&gt;'));
-        expect(html, isNot(contains('"><script')));
-      },
-    );
+    test('config values are attribute-escaped — a hostile link cannot '
+        'break out of the href', () {
+      const hostile = 'https://x.test/a?b=1&c="><script>alert(1)</script>';
+      final html = renderAppStoreBlockHtml(
+        const LinksConfig(appstore: hostile),
+      );
+      expect(html, contains('&amp;'));
+      expect(html, contains('&quot;&gt;&lt;script&gt;'));
+      expect(html, isNot(contains('"><script')));
+    });
   });
 
   group('header badge and hero CTA', () {

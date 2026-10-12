@@ -37,22 +37,19 @@ void main() {
       );
     });
 
-    test(
-      'an unknown key throws ConfigException (a typo never silently '
-      'keeps the default)',
-      () {
-        expect(
-          () => parseOutputSection(loadYaml('streamThnking: true')),
-          throwsA(
-            isA<ConfigException>().having(
-              (e) => e.message,
-              'message',
-              contains('unknown "output" key: streamThnking'),
-            ),
+    test('an unknown key throws ConfigException (a typo never silently '
+        'keeps the default)', () {
+      expect(
+        () => parseOutputSection(loadYaml('streamThnking: true')),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown "output" key: streamThnking'),
           ),
-        );
-      },
-    );
+        ),
+      );
+    });
 
     test('a non-boolean streamThinking throws ConfigException', () {
       expect(

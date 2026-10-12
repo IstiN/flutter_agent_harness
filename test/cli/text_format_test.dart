@@ -22,9 +22,7 @@ void main() {
     test('caps at 100 columns with an ellipsis', () {
       // Entries render as k<N>="<v>" — ~9 chars each over 30 entries, far
       // past the cap: the join must truncate to exactly 100 chars + '...'.
-      final args = {
-        for (var i = 0; i < 30; i++) 'k$i': 'v$i',
-      };
+      final args = {for (var i = 0; i < 30; i++) 'k$i': 'v$i'};
       final out = formatArgs(args);
       expect(out.length, 103); // 100 + '...'
       expect(out.endsWith('...'), isTrue);
@@ -73,7 +71,10 @@ void main() {
     });
 
     test('matches jsonEncode for serializable input (lossless)', () {
-      final value = {'list': [1, 2, 3], 'nested': {'b': true}};
+      final value = {
+        'list': [1, 2, 3],
+        'nested': {'b': true},
+      };
       expect(safeJsonEncode(value), jsonEncode(value));
     });
   });
