@@ -201,15 +201,56 @@ void main() {
       );
     });
 
-    test('a known google family id over an openai endpoint is rejected', () {
+    test('a known google family id over the canonical openai endpoint is '
+        'rejected (family-exclusive endpoints carry a verdict)', () {
       expect(
         () => ProviderModelBinding.resolve(
-          providerKind: 'openrouter',
+          providerKind: 'openai',
           modelId: 'gemini-2.5-pro',
+          baseUrl: 'https://api.openai.com/v1',
           provenance: BindingProvenance.flag,
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('gemini-2.5-pro'), contains('api.openai.com')),
+          ),
+        ),
+      );
+    });
+
+    test('a family id over a ROUTER endpoint passes (routers serve many '
+        'families — openrouter, copilot, dial carry no verdict)', () {
+      final binding = ProviderModelBinding.resolve(
+        providerKind: 'openrouter',
+        modelId: 'gemini-2.5-pro',
+        provenance: BindingProvenance.flag,
+      );
+      expect(binding.modelId, 'gemini-2.5-pro');
+    });
+
+    test('a vendor-prefixed id of another dialect on a non-openai wire is '
+        'rejected (openai/claude on an anthropic binding)', () {
+      expect(
+        () => ProviderModelBinding.resolve(
+          providerKind: 'anthropic',
+          modelId: 'openai/gpt-4o',
+          baseUrl: 'http://192.168.1.10:8080',
+          provenance: BindingProvenance.env,
         ),
         throwsA(isA<ConfigException>()),
       );
+    });
+
+    test('a vendor-prefixed id on an openai-dialect binding passes (the '
+        'routing convention — openrouter zai/glm ids)', () {
+      final binding = ProviderModelBinding.resolve(
+        providerKind: 'openrouter',
+        modelId: 'zai/glm-5.3-flashx',
+        provenance: BindingProvenance.command,
+      );
+      expect(binding.modelId, 'zai/glm-5.3-flashx');
     });
 
     test('an unknown family id on any endpoint passes (no list to check)', () {

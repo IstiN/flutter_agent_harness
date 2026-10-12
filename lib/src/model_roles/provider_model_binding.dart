@@ -11,20 +11,26 @@
 /// model+key+stream from one ref, `ProviderQueueEntry` carries its own
 /// provider config). What it validates:
 ///
-/// 1. *Wire ⇄ endpoint* — the endpoint's declared/known dialect must
-///    match the wire kind. A known endpoint of ANOTHER dialect
-///    ([ProviderSpec.defaultBaseUrl], [sameEndpoint]-normalized) and a
-///    vendor-prefixed model id (`zai/glm-…`) riding a non-openai wire are
-///    both rejections. An explicit `wire:` override is the only escape
-///    hatch and is echoed in every report (E6: a genuinely
+/// 1. *Wire ⇄ endpoint* — the endpoint's declared/known API DIALECT must
+///    match the binding's ([ProviderSpec.api] vs [ProviderSpec.api] over
+///    [ProviderSpec.defaultBaseUrl], [sameEndpoint]-normalized — `zai`'s
+///    kind routes the openai-completions adapter, so an
+///    openai-completions binding on z.ai's OpenAI-compatible endpoint
+///    passes while an anthropic binding on it does not). A
+///    vendor-prefixed model id (`zai/glm-…`) naming a record of another
+///    dialect is a rejection too. An explicit `wire:` override is the
+///    only escape hatch and is echoed in every report (E6: a genuinely
 ///    foreign-dialect endpoint behind a custom baseUrl passes only
 ///    through it).
-/// 2. *Model ⇄ endpoint* — a model id whose family is KNOWN
-///    ([modelFamilyWireHint]: `claude-*` is anthropic wire, `gemini-*`
-///    google, `gpt-*`/`o1`/`o3`/`o4-*` openai-completions) is rejected on
-///    a KNOWN endpoint of another dialect. Unknown ids and unknown
-///    endpoints always pass — there is nothing to check them against
-///    (D2: the `unverified` marker territory, never a silent guess).
+/// 2. *Model ⇄ endpoint* — a model id whose family dialect is KNOWN
+///    ([modelFamilyDialectHint]: `claude-*` is anthropic-messages,
+///    `gemini-*` google-generative-ai, `gpt-*`/`o1`/`o3`/`o4-*`
+///    openai-completions) is rejected on a family-exclusive canonical
+///    endpoint of another family (api.anthropic.com serves only claude
+///    ids, api.openai.com only gpt ids, generativelanguage only gemini
+///    ids). Routers (OpenRouter/Copilot/DIAL), shared-dialect endpoints
+///    and unknown endpoints always pass — there is nothing to judge them
+///    by (D2: the `unverified` marker territory, never a silent guess).
 /// 3. *Endpoint-shared wires* — `openai-completions` is six catalog
 ///    records (openai, openrouter, kimi, codemie, …). A binding on that
 ///    wire with NO record name and NO baseUrl has no identity at all and
@@ -165,12 +171,11 @@ final class ProviderModelBinding {
 
     if (!override) {
       _validateWireEndpoint(
-        wireKind: wireKind,
+        spec: spec,
         baseUrl: effectiveBaseUrl,
         modelId: modelId,
       );
       _validateModelEndpoint(
-        wireKind: wireKind,
         spec: spec,
         baseUrl: effectiveBaseUrl,
         modelId: modelId,
@@ -295,14 +300,13 @@ String _resolveBaseUrl({
 /// identity/wire label (`zai` routes the openai-completions adapter) and
 /// `api` is the dialect the endpoint actually speaks — so the comparison
 /// is dialect-to-dialect: an openai-completions binding on z.ai's
-/// OpenAI-compatible endpoint passes, an anthropic-messages binding on
-/// the same endpoint does not. Unknown endpoints pass — there is nothing
-/// declared to check against.
+/// OpenAI-compatible endpoint passes, an anthropic binding on the same
+/// endpoint does not. Unknown endpoints pass — there is nothing declared
+/// to check against.
 void _validateWireEndpoint({
-    required String wireKind,
-    required ProviderSpec spec,
-    required String baseUrl,
-    required String modelId,
+  required ProviderSpec spec,
+  required String baseUrl,
+  required String modelId,
 }) {
   for (final endpointSpec in providerCatalog.values) {
     if (endpointSpec.defaultBaseUrl.isEmpty) continue;
@@ -310,7 +314,7 @@ void _validateWireEndpoint({
     if (endpointSpec.api == spec.api) return;
     throw ConfigException(
       'provider/model binding mismatch: model "$modelId" would ride the '
-      '"${spec.api}" dialect (provider "$providerKindForLabel") against '
+      '"${spec.api}" dialect (provider "${spec.name}") against '
       '${endpointSpec.name}\'s endpoint $baseUrl — that endpoint speaks '
       '"${endpointSpec.api}". Point the binding at the matching endpoint, '
       'or declare the explicit `wire:` override only when the endpoint '
@@ -319,14 +323,14 @@ void _validateWireEndpoint({
   }
 }
 
-
-/// Model ⇄ endpoint: two KNOWN-signal checks — a vendor-prefixed id
-/// riding a non-openai wire (openai-completions is the routing-wire
-/// ecosystem where `vendor/model` ids live), and a known model family on
-/// a known endpoint of another dialect. Unknown ids or unknown endpoints
-/// pass (D2 territory, never a guess).
+/// Model ⇄ endpoint: two KNOWN-signal checks — a vendor-prefixed id whose
+/// prefix names a record of ANOTHER API dialect (openai-completions is
+/// the routing dialect where `vendor/model` ids live, so prefixes agree
+/// with everything else that speaks it), and a known model family on the
+/// family-exclusive CANONICAL endpoint of a different family. Unknown
+/// ids, routers and unknown endpoints pass (D2 territory, never a
+/// guess).
 void _validateModelEndpoint({
-  required String wireKind,
   required ProviderSpec spec,
   required String baseUrl,
   required String modelId,
@@ -335,62 +339,45 @@ void _validateModelEndpoint({
   if (slash > 0) {
     final head = modelId.substring(0, slash).trim().toLowerCase();
     final headSpec = resolveCliProviderSpec(head);
-    if (headSpec != null &&
-        headSpec.kind != wireKind &&
-        wireKind != 'openai-completions') {
+    if (headSpec != null && headSpec.api != spec.api) {
       throw ConfigException(
         'provider/model binding mismatch: model "$modelId" names provider '
-        '"${headSpec.name}" (wire "${headSpec.kind}") but the binding '
-        'speaks wire "$wireKind" against $baseUrl — vendor-prefixed ids '
-        'ride the openai-completions ecosystem; use a model of the bound '
-        'provider or an explicit `wire:` override',
+        '"${headSpec.name}" (dialect "${headSpec.api}") but the binding '
+        'serves "${spec.api}" on $baseUrl — use a model of the bound '
+        'provider, or an explicit `wire:` override only when the endpoint '
+        'genuinely speaks "${spec.api}"',
       );
     }
     return;
   }
-  final hint = modelFamilyWireHint(modelId);
-  if (hint == null || hint == wireKind) return;
-  // The family check needs a KNOWN endpoint: a family id on an endpoint
-  // nobody can classify is D2 unverified territory, not a rejection.
-  final endpointKind = _knownEndpointKind(baseUrl);
-  if (endpointKind == null || endpointKind == hint) return;
+  final hint = modelFamilyDialectHint(modelId);
+  if (hint == null || hint == spec.api) return;
+  // The family check fires only on a family-EXCLUSIVE canonical
+  // endpoint: routers (OpenRouter, Copilot, DIAL, kimi, …) and unknown
+  // endpoints serve many families and carry no verdict.
+  final canonical = _familyExclusiveEndpointDialect(baseUrl);
+  if (canonical == null || canonical == hint) return;
   throw ConfigException(
-    'provider/model binding mismatch: model "$modelId" is a '
-    '"$hint"-wire family id but the binding serves it on $baseUrl '
-    '(wire "$wireKind") — use a model of the bound provider, or declare '
-    'the explicit `wire:` override only when the endpoint genuinely '
-    'speaks "$wireKind"',
+    'provider/model binding mismatch: model "$modelId" is a "$hint" '
+    'dialect family id but the binding serves it on $baseUrl '
+    '("${spec.api}") — use a model of the bound provider, or declare the '
+    'explicit `wire:` override only when the endpoint genuinely speaks '
+    '"${spec.api}"',
   );
 }
 
-/// The adapter kind a KNOWN endpoint speaks: the catalog entry whose
-/// default endpoint [sameEndpoint]-matches [baseUrl], else null.
-String? _knownEndpointKind(String baseUrl) {
-  for (final spec in providerCatalog.values) {
-    if (spec.defaultBaseUrl.isEmpty) continue;
-    if (sameEndpoint(spec.defaultBaseUrl, baseUrl)) return spec.kind;
-  }
-  return null;
-}
-
-/// The wire kind a model id's FAMILY is known for, or null when the id
-/// carries no known family signal. Deliberately conservative — only the
-/// families whose wire is dialect-DISTINCT are pinned:
-///
-/// - `claude-*` → the anthropic wire (also `anthropic/*` prefixed ids via
-///   the vendor rule above);
-/// - `gemini-*` → the google wire;
-/// - `gpt-*`, `o1*`, `o3*`, `o4-*`, `chatgpt*` → the openai-completions
-///   wire.
-///
-/// Families served over MULTIPLE wires (`glm-*` on zai endpoints and
-/// OpenAI-compatible proxies alike, `kimi-*`, `minimax-*` chat over the
-/// openai wire) stay unpinned — a hint with two possible wires cannot
-/// reject anything without false positives.
-String? modelFamilyWireHint(String modelId) {
+/// The family dialect a model id is KNOWN for — as an API dialect, so it
+/// compares against [ProviderSpec.api]. Deliberately conservative: only
+/// the families whose dialect is DISTINCT are pinned (`claude-*` →
+/// anthropic-messages, `gemini-*` → google-generative-ai, `gpt-*`/
+/// `o1`/`o3`/`o4-*`/`chatgpt*` → openai-completions). Families served
+/// over multiple dialects (`glm-*`, `kimi-*`, `minimax-*`) stay unpinned
+/// — a hint with two possible dialects cannot reject without false
+/// positives.
+String? modelFamilyDialectHint(String modelId) {
   final id = modelId.trim().toLowerCase();
-  if (id.startsWith('claude')) return 'anthropic';
-  if (id.startsWith('gemini')) return 'google';
+  if (id.startsWith('claude')) return anthropicMessagesApi;
+  if (id.startsWith('gemini')) return 'google-generative-ai';
   if (id.startsWith('gpt-') ||
       id.startsWith('o1') ||
       id.startsWith('o3') ||
@@ -401,6 +388,23 @@ String? modelFamilyWireHint(String modelId) {
   return null;
 }
 
+/// The family-dialect verdict a canonical endpoint carries: non-null
+/// ONLY for the three family-exclusive endpoints — anthropic (claude
+/// ids), openai (gpt ids), google (gemini ids). Every other endpoint
+/// (routers, proxies, gateways) returns null: no verdict.
+String? _familyExclusiveEndpointDialect(String baseUrl) {
+  String? verdict;
+  for (final (name, dialect) in const [
+    ('anthropic', anthropicMessagesApi),
+    ('openai', 'openai-completions'),
+    ('google', 'google-generative-ai'),
+  ]) {
+    final spec = providerCatalog[name];
+    if (spec == null || spec.defaultBaseUrl.isEmpty) continue;
+    if (sameEndpoint(spec.defaultBaseUrl, baseUrl)) verdict = dialect;
+  }
+  return verdict;
+}
 /// Strips ONE trailing slash — the [sameEndpoint] normalization a
 /// persisted binding round-trips through (E1).
 String normalizeBaseUrl(String baseUrl) {

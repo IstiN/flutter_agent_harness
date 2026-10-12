@@ -470,6 +470,95 @@ void main() {
       expect(resolved.args.mode, 'review');
     });
 
+    test('an explicit --model of another dialect over a saved catalog '
+        'binding is rejected naming BOTH sides (gh-1570 AC3/H2)', () {
+      // Yesterday anthropic → today `fa -p "fix" --model gpt-5`: the
+      // flag model must not ride the saved anthropic endpoint.
+      expect(
+        () => resolveEffectiveCliArgs(
+          const CliArgs(model: 'gpt-5'),
+          CliConfig(
+            providerKind: 'anthropic',
+            modelId: 'claude-sonnet-4-5',
+            baseUrl: 'https://api.anthropic.com',
+          ),
+          env: const {},
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('gpt-5'), contains('api.anthropic.com')),
+          ),
+        ),
+      );
+    });
+
+    test('an explicit --model of the saved binding\'s own family passes',
+        () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(model: 'claude-opus-4'),
+        CliConfig(
+          providerKind: 'anthropic',
+          modelId: 'claude-sonnet-4-5',
+          baseUrl: 'https://api.anthropic.com',
+        ),
+        env: const {},
+      );
+      expect(resolved.provider, 'anthropic');
+      expect(resolved.args.model, 'claude-opus-4');
+    });
+
+    test('an explicit --model with an explicit --provider is manual '
+        'control — no joint validation against the saved binding', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(model: 'gpt-5', providerExplicit: true),
+        CliConfig(
+          providerKind: 'anthropic',
+          modelId: 'claude-sonnet-4-5',
+          baseUrl: 'https://api.anthropic.com',
+        ),
+        env: const {},
+      );
+      expect(resolved.provider, 'openai-completions');
+      expect(resolved.args.model, 'gpt-5');
+    });
+
+    test('an endpoint-conflict degrade drops the stale saved pair when it '
+        'does not cohere with the degraded kind (gh-1570 L9/E2)', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(
+          providerKind: 'copilot',
+          modelId: 'claude-sonnet-4',
+          baseUrl: 'https://stale-gateway.example/v1',
+        ),
+        env: const {},
+      );
+      expect(resolved.incompatibleSavedEndpoint, 'copilot');
+      // The poison (copilot's model id + stale gateway URL) must not
+      // ride the degraded openai-completions boot.
+      expect(resolved.args.model, isNull);
+      expect(resolved.args.baseUrl, isNull);
+    });
+
+    test('an endpoint-conflict degrade keeps a pair that coheres with the '
+        'degraded kind (openrouter default)', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(
+          providerKind: 'chatgpt-codex',
+          modelId: 'gpt-5-codex',
+          baseUrl: 'https://openrouter.ai/api/v1',
+        ),
+        env: const {},
+      );
+      expect(resolved.incompatibleSavedEndpoint, 'chatgpt-codex');
+      expect(resolved.provider, 'openai-completions');
+      expect(resolved.args.model, 'gpt-5-codex');
+      expect(resolved.args.baseUrl, 'https://openrouter.ai/api/v1');
+    });
+
     test('an FA_PROVIDER_* declaration wins over the saved kind and '
         'supplies model and baseUrl', () {
       final resolved = resolveEffectiveCliArgs(

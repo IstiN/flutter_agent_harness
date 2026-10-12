@@ -17,6 +17,7 @@ import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
 import '../model_roles/provider_catalog.dart';
+import '../model_roles/provider_model_binding.dart';
 import '../model_roles/providers_queue.dart';
 import '../model_roles/roles_config.dart';
 import '../secrets/secrets_store.dart';
@@ -238,18 +239,31 @@ resolveEffectiveCliArgs(
     faPreconfig: faPreconfig,
     restoredKind: restoredKind,
   );
+  final explicitOverride = parsed.providerExplicit || faPreconfig != null;
   final reports = _savedRestoreReports(
     savedRaw: restore.raw,
     savedSpec: restore.spec,
     endpointConflict: restore.endpointConflict,
-    explicitOverride: parsed.providerExplicit || faPreconfig != null,
+    explicitOverride: explicitOverride,
   );
+  // gh-1570 (L9/E2): an endpoint-conflict DEGRADE must not inherit the
+  // stale pair — the saved kind was refused over its baseUrl, so the
+  // baseUrl+modelId are poison unless they still cohere with the
+  // DEGRADED kind's own endpoint (the codex-over-openrouter partial
+  // write keeps working; a copilot pin over a stale gateway is dropped).
+  final degraded = restore.endpointConflict && !explicitOverride;
+  final degradedDefault = resolveCliProviderSpec(provider)?.defaultBaseUrl;
+  final keepSavedPair =
+      !degraded ||
+      (degradedDefault != null &&
+          saved.baseUrl.isNotEmpty &&
+          sameEndpoint(saved.baseUrl, degradedDefault));
   final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
   final effective = CliArgs(
-    model: modelId,
+    model: keepSavedPair ? modelId : (parsed.model ?? faPreconfig?.modelId),
     provider: provider,
-    baseUrl: baseUrl,
+    baseUrl: keepSavedPair ? baseUrl : (parsed.baseUrl ?? faPreconfig?.baseUrl),
     visionModel: parsed.visionModel,
     visionBaseUrl: parsed.visionBaseUrl,
     transcribeModel: parsed.transcribeModel,
@@ -263,6 +277,21 @@ resolveEffectiveCliArgs(
     sessionRoot: parsed.sessionRoot,
     session: parsed.session,
   );
+  // gh-1570 (AC3/H2): an explicit `--model` over a restored binding is a
+  // PARTIAL override — the model is revalidated against the binding it
+  // would ride and a dialect mismatch is a boot-time rejection naming
+  // both sides, never a silent cross-provider ride (`--model gpt-5` over
+  // a saved anthropic binding dies here, before any network call).
+  if (parsed.model != null && !parsed.providerExplicit && faPreconfig == null) {
+    ProviderModelBinding.resolve(
+      providerKind: provider,
+      modelId: parsed.model!,
+      baseUrl: keepSavedPair
+          ? baseUrl
+          : (parsed.baseUrl ?? degradedDefault),
+      provenance: BindingProvenance.flag,
+    );
+  }
   return (
     args: effective,
     provider: provider,

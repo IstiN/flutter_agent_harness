@@ -826,4 +826,96 @@ void main() {
       expect(preconfig.thinkingLevel, 'high');
     });
   });
+
+  group('wire ⇄ endpoint validation (gh-1570 AC2)', () {
+    test('the incident configuration is rejected at parse time', () {
+      // bench job 114848402110: FA_PROVIDER_TYPE=anthropic + an
+      // OpenAI-compatible proxy + zai/glm-5.3-flashx — the anthropic
+      // wire spoken to an OpenAI endpoint, trial dead before the agent
+      // started. The vendor prefix gives the dialect away.
+      expect(
+        () => parse(
+          providerType: 'anthropic',
+          providerConfig:
+              '{"baseUrl":"http://192.168.1.10:8080/v1",'
+              '"model":"zai/glm-5.3-flashx","apiKeyEnvVar":"KEY"}',
+          vars: {'KEY': 'k'},
+        ),
+        throwsA(
+          throwsConfig.having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('zai/glm-5.3-flashx'),
+              contains('http://192.168.1.10:8080/v1'),
+              contains('anthropic'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('a known endpoint of another dialect is rejected', () {
+      expect(
+        () => parse(
+          providerType: 'anthropic',
+          providerConfig:
+              '{"baseUrl":"https://api.openai.com/v1",'
+              '"model":"claude-sonnet-4-5"}',
+        ),
+        throwsA(
+          throwsConfig.having(
+            (e) => e.message,
+            'message',
+            allOf(contains('api.openai.com'), contains('anthropic')),
+          ),
+        ),
+      );
+    });
+
+    test('an explicit wire: override passes and is echoed (E6)', () {
+      final pre = parse(
+        providerType: 'anthropic',
+        providerConfig:
+            '{"baseUrl":"http://192.168.1.10:8080/v1",'
+            '"model":"zai/glm-5.3-flashx","wire":"openai-completions"}',
+      )!;
+      expect(pre.binding.providerKind, 'openai-completions');
+      expect(pre.binding.wireOverride, isTrue);
+      expect(pre.binding.echo(), contains('wire override'));
+      expect(pre.baseUrl, 'http://192.168.1.10:8080/v1');
+    });
+
+    test('an unknown wire: value is rejected', () {
+      expect(
+        () => parse(
+          providerType: 'anthropic',
+          providerConfig:
+              '{"baseUrl":"https://api.anthropic.com",'
+              '"model":"claude-sonnet-4-5","wire":"smoke-signals"}',
+        ),
+        throwsA(
+          throwsConfig.having(
+            (e) => e.message,
+            'message',
+            contains('smoke-signals'),
+          ),
+        ),
+      );
+    });
+
+    test('a consistent declaration resolves its binding', () {
+      final pre = parse(
+        providerType: 'anthropic',
+        providerConfig:
+            '{"baseUrl":"https://api.anthropic.com",'
+            '"model":"claude-sonnet-4-5","apiKeyEnvVar":"MY_ANTHROPIC_KEY"}',
+        vars: {'MY_ANTHROPIC_KEY': 'sk-ant'},
+      )!;
+      expect(pre.binding.providerKind, 'anthropic');
+      expect(pre.binding.modelId, 'claude-sonnet-4-5');
+      expect(pre.binding.keyEnvRef, 'MY_ANTHROPIC_KEY');
+      expect(pre.binding.wireOverride, isFalse);
+    });
+  });
 }
