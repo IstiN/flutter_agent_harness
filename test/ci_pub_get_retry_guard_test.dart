@@ -65,13 +65,17 @@ const expectedUsesPerWorkflow = {
   // resolves flutter_app through the shared action (bounded retry + skew
   // fail-fast) before its macOS `flutter test test/apps` run — a bare pub
   // get there would be exactly the network roulette AC2 exists to stop.
+  // 12 + 1 (issue #1267 N2): the flutter-app-lock-smoke legs resolve
+  // flutter_app through the shared action before their linux/windows
+  // release builds — the smoke that catches a floated transitive (#1265)
+  // must itself resolve against the COMMITTED lockfile, never re-float it.
   // 12 - 1 (gh-1522): the release-tag job is retired with the bot bump flow
   // — releases cut tags without touching files, so nothing on the release
   // path resolves flutter_app anymore. gh-1537 needs no release-tag.yml
   // entry either: with the post-merge main CI run retired there are no
   // main-push events, and the tag-only release (gh-1522) cuts its tag
   // inside the ci.yml release job on schedule/dispatch arms.
-  '.github/workflows/ci.yml': 11,
+  '.github/workflows/ci.yml': 12,
   // gh-1538: nightly slimmed to builds + integration-only — the
   // full-quality / cli-visual / flutter-app-macos jobs (3 of the 4
   // pre-migration resolutions) are gone as pre-merge-gate duplication.
