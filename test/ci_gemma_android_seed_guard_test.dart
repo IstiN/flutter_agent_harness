@@ -90,9 +90,7 @@ void main() {
       final body = read(actionPath);
       expect(
         body,
-        contains(
-          'native-v$expectedVersion/litertlm-android_arm64.tar.gz',
-        ),
+        contains('native-v$expectedVersion/litertlm-android_arm64.tar.gz'),
         reason:
             'the seed must fetch the exact archive the pinned '
             'flutter_gemma_litertlm hook registers (native-v'
@@ -137,8 +135,7 @@ void main() {
     for (final entry in androidBuildJobs.entries) {
       final workflow = entry.key;
       for (final jobKey in entry.value) {
-        test('AC2: $workflow $jobKey seeds before its Android build step',
-            () {
+        test('AC2: $workflow $jobKey seeds before its Android build step', () {
           final steps = jobSteps(workflow, jobKey);
           final buildIndexes = <int>[];
           final seedIndexes = <int>[];
@@ -223,9 +220,9 @@ void main() {
         );
         return;
       }
-      final packageConfig = jsonDecode(
-        packageConfigFile.readAsStringSync(),
-      ) as Map<String, dynamic>;
+      final packageConfig =
+          jsonDecode(packageConfigFile.readAsStringSync())
+              as Map<String, dynamic>;
       final packages = packageConfig['packages'] as List<dynamic>;
       final litertlm = packages
           .whereType<Map<String, dynamic>>()
