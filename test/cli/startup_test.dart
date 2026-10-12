@@ -529,14 +529,14 @@ void main() {
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(),
         CliConfig(
-          providerKind: 'copilot',
-          modelId: 'claude-sonnet-4',
+          providerKind: 'chatgpt-codex',
+          modelId: 'gpt-5-codex',
           baseUrl: 'https://stale-gateway.example/v1',
         ),
         env: const {},
       );
-      expect(resolved.incompatibleSavedEndpoint, 'copilot');
-      // The poison (copilot's model id + stale gateway URL) must not
+      expect(resolved.incompatibleSavedEndpoint, 'chatgpt-codex');
+      // The poison (the codex model id + stale gateway URL) must not
       // ride the degraded openai-completions boot.
       expect(resolved.args.model, isNull);
       expect(resolved.args.baseUrl, isNull);

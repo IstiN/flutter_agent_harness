@@ -9,7 +9,8 @@ import 'dart:io';
 
 import '../model_roles/provider_catalog.dart';
 import '../secrets/secure_key_store.dart';
-import 'custom_providers.dart';
+import 'custom_providers.dart'
+    show CustomProviderRegistry, sameEndpoint;
 
 /// The env names that can hold [provider]'s API key: the catalog spec's
 /// names ([providerCatalog]; copilot → COPILOT_GITHUB_TOKEN,
@@ -62,8 +63,15 @@ String? optionalProviderApiKey(
   final pinned = _pinnedKeyValue(pinnedKeyName, environment, keys);
   if (pinned != null) return pinned;
   final spec = _keySpec(provider);
+  // Trailing-slash-normalized (the shared sameEndpoint rule, gh-1570
+  // L10): a default endpoint saved/spelled with one trailing slash must
+  // not classify as CUSTOM — the catalog env names would never be probed
+  // and the boot would go keyless (401).
   final customEndpoint =
-      spec != null && baseUrl != null && baseUrl != spec.defaultBaseUrl;
+      spec != null &&
+      baseUrl != null &&
+      baseUrl.isNotEmpty &&
+      !sameEndpoint(baseUrl, spec.defaultBaseUrl);
   if (!customEndpoint) {
     final envKey = _firstEnvValue(apiKeyEnvNames(provider), environment);
     if (envKey != null) return envKey;

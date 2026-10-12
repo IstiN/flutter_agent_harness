@@ -15,6 +15,7 @@ import '../providers/quota.dart';
 // gh-1308: the zero-byte stall tag — the transient ladder's wedged-endpoint
 // verdict, classified as an immediate queue advance.
 import '../providers/transient_retry_stream.dart' show zeroByteStallTag;
+import 'provider_model_binding.dart';
 import 'roles_config.dart';
 import '../types.dart';
 import '../exceptions.dart';
@@ -210,8 +211,28 @@ List<ChainEntry> buildProviderQueueChain(
       continue;
     }
     final ring = ApiKeyRing(baseName: keyEnv, credentials: stack);
+    // gh-1570 (AC6/M5): every queue entry resolves through the binding —
+    // model id shape, wire⇄endpoint dialect, and the endpoint-shared
+    // kind's identity all validate HERE. A name-less `openai-completions`
+    // entry has no identity (openai/openrouter/kimi/codemie share the
+    // wire) and is rejected instead of silently riding openrouter.ai
+    // with its key.
+    final ProviderModelBinding binding;
+    try {
+      binding = ProviderModelBinding.resolve(
+        providerKind: entry.providerType,
+        modelId: entry.model,
+        baseUrl: entry.baseUrl,
+        keyEnvRef: keyEnv,
+        provenance: BindingProvenance.queue,
+      );
+    } on ConfigException catch (error) {
+      throw ConfigException(
+        'queue entry ${entry.label}: ${error.message}',
+      );
+    }
     final spec = catalogProvider(
-      queueKindCatalogName(entry.providerType, entry.baseUrl),
+      queueKindCatalogName(binding.providerKind, entry.baseUrl),
     )!;
     final inner = factory(spec.kind, stack.first.value);
     chain.add(

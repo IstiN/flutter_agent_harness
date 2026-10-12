@@ -707,14 +707,26 @@ String startupApiKey(
 }) {
   // A base URL other than the catalog default (--base-url or config
   // baseUrl) means a user-configured endpoint: local servers need no key.
+  // Trailing-slash-normalized (the shared sameEndpoint rule, gh-1570
+  // L10) — a default endpoint spelled with one trailing slash must not
+  // read as custom and silently boot keyless.
   final customEndpoint =
       provider == 'openai-completions' &&
-      baseUrl != providerCatalog['openrouter']!.defaultBaseUrl;
+      baseUrl != null &&
+      baseUrl.isNotEmpty &&
+      !sameEndpoint(baseUrl, providerCatalog['openrouter']!.defaultBaseUrl);
   // Saved custom entries for this endpoint carry name-scoped keys
   // (multi-account); they resolve right after the host-scoped slot.
+  // Endpoint comparison is normalized (gh-1570 S4) — a saved entry and
+  // the boot URL disagreeing on one trailing slash must not hide the
+  // entry's key.
   final entryKeyNames = [
     for (final entry in customProviders)
-      if (entry.baseUrl == baseUrl && entry.keyName != null) entry.keyName!,
+      if (baseUrl != null &&
+          baseUrl.isNotEmpty &&
+          sameEndpoint(entry.baseUrl, baseUrl) &&
+          entry.keyName != null)
+        entry.keyName!,
   ];
   final key = defaultRoleResolved || customEndpoint || interactive
       ? (optionalProviderApiKey(

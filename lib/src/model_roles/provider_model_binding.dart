@@ -143,12 +143,16 @@ final class ProviderModelBinding {
     }
 
     // The record: a catalog name/kind resolves to its spec (the ONE
-    // both-identifier lookup). An unknown id with no wire override is a
-    // fail-loud rejection — a binding names a real record or it names
-    // nothing.
+    // both-identifier lookup). An explicit baseUrl that merely SPELLS the
+    // spec's default endpoint does not flip the legacy openai/openrouter
+    // record rule (E1: the default spelling keeps the record identity).
+    final explicitUrl = baseUrl?.trim() ?? '';
+    final defaultSpelling =
+        explicitUrl.isNotEmpty &&
+        _defaultSpellsRecord(name.isNotEmpty ? name : rawKind, explicitUrl);
     final spec = resolveCliProviderSpec(
       name.isNotEmpty ? name : rawKind,
-      baseUrl: baseUrl,
+      baseUrl: defaultSpelling ? null : baseUrl,
     );
     if (spec == null) {
       throw ConfigException(
