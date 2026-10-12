@@ -52,9 +52,11 @@ StatusLineSnapshot _ladderSnapshot() => StatusLineSnapshot(
 
 void main() {
   group('segment registry', () {
-    test('covers exactly the omp 27 ids', () {
-      expect(kStatusLineSegmentIds, hasLength(27));
+    test('covers exactly the omp 27 ids plus the fa timer extension', () {
+      // 27 omp ids + `timer` (gh-1556, the deadline countdown chip).
+      expect(kStatusLineSegmentIds, hasLength(28));
       expect(kStatusLineSegments.keys.toSet(), kStatusLineSegmentIds.toSet());
+      expect(kStatusLineSegmentIds.last, 'timer');
     });
 
     test('every id renders without data or throws never', () {
@@ -164,7 +166,7 @@ void main() {
       expect(kStatusLinePresetNames, hasLength(7));
     });
 
-    test('every preset id list stays within the 27-id table', () {
+    test('every preset id list stays within the known-id table', () {
       for (final preset in kStatusLinePresets.values) {
         for (final id in [...preset.left, ...preset.right]) {
           expect(kStatusLineSegmentIds, contains(id));
@@ -205,6 +207,55 @@ void main() {
       expect(custom.separator, kStatusLinePresets['custom']!.separator);
       expect(custom.left, ['model']);
       expect(custom.right, ['cost']);
+    });
+  });
+
+  group('timer countdown chip (gh-1556)', () {
+    test('renders the live remaining budget while armed', () {
+      const snapshot = StatusLineSnapshot(
+        cwd: '/',
+        deadlineRemainingMs: 5 * 60 * 1000,
+      );
+      final segment = kStatusLineSegments['timer']!(snapshot, _defaultSpec());
+      expect(segment, isNotNull);
+      expect(segment!.text, contains('⏱'));
+      expect(segment.text, contains('5min'));
+    });
+
+    test('hides when no deadline is armed (data absence, E7)', () {
+      const empty = StatusLineSnapshot(cwd: '/');
+      expect(kStatusLineSegments['timer']!(empty, _defaultSpec()), isNull);
+    });
+
+    test('a non-positive budget reads 0s, never negative', () {
+      const snapshot = StatusLineSnapshot(cwd: '/', deadlineRemainingMs: 0);
+      final segment = kStatusLineSegments['timer']!(snapshot, _defaultSpec());
+      expect(segment!.text, contains('0s'));
+      expect(segment.text, isNot(contains('-')));
+    });
+
+    test('unarmed default band renders byte-identically to the pre-chip row',
+        () {
+      const snapshot = StatusLineSnapshot(
+        cwd: '/work',
+        modelName: 'm',
+        approvalMode: 'yolo',
+      );
+      final band = renderStatusLine(snapshot, _defaultSpec(), 120).join('\n');
+      expect(band, isNot(contains('⏱')));
+      expect(band, isNot(contains('timer')));
+    });
+
+    test('armed default band shows the chip next to the other segments', () {
+      const snapshot = StatusLineSnapshot(
+        cwd: '/work',
+        modelName: 'm',
+        approvalMode: 'yolo',
+        deadlineRemainingMs: 90 * 60 * 1000,
+      );
+      final band = renderStatusLine(snapshot, _defaultSpec(), 120).join('\n');
+      expect(band, contains('⏱'));
+      expect(band, contains('1h30m'));
     });
   });
 
