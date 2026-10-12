@@ -219,10 +219,15 @@ final class ModelRolesResolver {
       onUnknownProvider();
       return null;
     }
-    final keyBase = _keyBaseName(ref, spec);
+    // Non-null alias: the registry leg reassigns `spec` above and
+    // `buildRouted` below captures it — flow analysis never promotes a
+    // captured local that is assigned more than once, so the closure must
+    // read a final.
+    final resolvedSpec = spec;
+    final keyBase = _keyBaseName(ref, resolvedSpec);
     if (keyBase == null) {
       skipped.add(
-        '${ref.label} (missing API key: ${_missingKeyHint(ref, spec)})',
+        '${ref.label} (missing API key: ${_missingKeyHint(ref, resolvedSpec)})',
       );
       return null;
     }
@@ -242,7 +247,7 @@ final class ModelRolesResolver {
     var currentKey = ring.currentCredential.value;
 
     StreamFunction buildRouted() {
-      final inner = _streamFactory(spec.kind, currentKey);
+      final inner = _streamFactory(resolvedSpec.kind, currentKey);
       return (model, context, {cancelToken}) {
         // An explicit per-call override (the compaction bypass) wins
         // over the resolver's bound session id.
@@ -262,7 +267,7 @@ final class ModelRolesResolver {
       // Build from the RESOLVED spec's name: a kind-named ref
       // (`chatgpt-codex`) is not itself a catalog key.
       model: buildCatalogModel(
-        spec.name,
+        resolvedSpec.name,
         ref.modelId,
         baseUrl: ref.baseUrl,
         contextWindow: ref.contextWindow,
