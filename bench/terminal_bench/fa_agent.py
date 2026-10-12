@@ -247,6 +247,10 @@ class FaAgent(AbstractInstalledAgent):
         )
         knobs = _timeout.TimeoutKnobs.from_env()
         if knobs is None:
+            # gh-1556 AC7: no adapter cap -> no deadline export (the
+            # deadline_env stash is also cleared so a re-used agent object
+            # can never leak a stale clock into a stock run).
+            self._deadline_env = {}
             result = super().perform_task(instruction, session, logging_dir)
             # Issue #1123, corrected by gh-1209: fold fa's real session
             # usage into the result for ANY outcome where the agent process
@@ -291,6 +295,12 @@ class FaAgent(AbstractInstalledAgent):
             decider = _timeout.ProgressWatch(knobs, test_budget_sec=test_budget_sec)
         else:
             decider = _timeout.ProgressLadder(knobs)
+        # gh-1556 AC7: fa's wrap-up deadline (effective cap minus the
+        # wrap-up margin) is computed once per trial and rides the launch
+        # line (see _run_agent_commands) and the env export; the audit
+        # records this exact value. No knobs => {} (feature off — the
+        # harness's own caps are invisible to the adapter).
+        self._deadline_env = _timeout.deadline_env_from()
         base_perform = super().perform_task
         box = {}
 
@@ -353,8 +363,11 @@ class FaAgent(AbstractInstalledAgent):
                 if worker.is_alive():
                     # fa ignored SIGINT (or the shell wedged): kill it from
                     # outside so the pane is free for the harness's tests.
+                    # gh-1556 AC1 (harbor twin): the `[f]a` bracket trick —
+                    # a plain pattern would match this sh -c wrapper's own
+                    # cmdline and SIGTERM the kill shell itself.
                     session.container.exec_run(
-                        ["sh", "-c", "pkill -f 'fa --session-root' || true"]
+                        ["sh", "-c", "pkill -f '[f]a --session-root' || true"]
                     )
                     worker.join(30)
                 break
@@ -376,6 +389,11 @@ class FaAgent(AbstractInstalledAgent):
                 # Audit the true outcome class (issue #1122): a stock-body
                 # crash must not be recorded as a completed run.
                 outcome or ("crashed" if crashed else "completed"),
+                deadline_epoch_ms=(
+                    int(self._deadline_env["FA_DEADLINE_EPOCH_MS"])
+                    if self._deadline_env
+                    else None
+                ),
             )
         # Our decider's verdict outranks a late worker error: once we decided
         # the run is a stall/ceiling timeout, the harness must see exactly
@@ -657,11 +675,19 @@ class FaAgent(AbstractInstalledAgent):
         )
 
     @staticmethod
-    def _write_audit(logging_dir, knobs, ladder, outcome) -> None:
+    def _write_audit(logging_dir, knobs, ladder, outcome, deadline_epoch_ms=None) -> None:
         # AC4 (issue #1122): extension decisions land in the trial artifact.
+        # gh-1556 AC7: the fa-visible deadline is audited next to the knobs
+        # it derives from.
         path = Path(logging_dir) / "fa-agent-timeout.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(_timeout.audit_dict(knobs, ladder, outcome)))
+        path.write_text(
+            json.dumps(
+                _timeout.audit_dict(
+                    knobs, ladder, outcome, deadline_epoch_ms=deadline_epoch_ms
+                )
+            )
+        )
 
     @staticmethod
     def _fold_session_usage(session, result, logging_dir=None):
@@ -718,9 +744,20 @@ class FaAgent(AbstractInstalledAgent):
         # install-time setup-env.sh sourcing and the launch; the grep
         # capture doubles as AC1's runtime proof (folded into agent-logs
         # as fa-conn-env.txt at trial end).
+        # gh-1556 AC7: fa's wrap-up deadline rides the same launch line
+        # (the adapter's effective kill cap minus the wrap-up margin,
+        # stashed on self by _perform_task_with_deadline). No knobs => no
+        # deadline export: tb's harness caps are invisible here, and fa
+        # never invents a clock.
+        deadline = getattr(self, "_deadline_env", {})
+        deadline_export = (
+            f"export FA_DEADLINE_EPOCH_MS={deadline['FA_DEADLINE_EPOCH_MS']}; "
+            if deadline
+            else ""
+        )
         return [
             TerminalCommand(
-                command=f"{pane_launch_env_prefix()}"
+                command=f"{deadline_export}{pane_launch_env_prefix()}"
                 f"fa --session-root /agent-logs/fah-sessions "
                 f"-p {shlex.quote(instruction)}",
                 min_timeout_sec=0.0,
