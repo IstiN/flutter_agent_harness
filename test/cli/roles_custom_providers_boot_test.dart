@@ -1,8 +1,3 @@
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:test/test.dart';
-
-import 'agent_cli_test_support.dart' show FakeCliIO, FakeSecureKeyStore;
-
 /// Issue #1552 — the boot path with the user's verbatim config shape (the
 /// bycom.by report): a `customProviders:` entry named `aiai` referenced by
 /// name from every roles chain.
@@ -14,6 +9,12 @@ import 'agent_cli_test_support.dart' show FakeCliIO, FakeSecureKeyStore;
 /// - **AC4**: the roles-drop warning surfaces in the notice stream, not
 ///   stderr only.
 library;
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
+import 'package:test/test.dart';
+
+import 'agent_cli_test_support.dart' show FakeCliIO, FakeSecureKeyStore;
 
 const _roles = ['default', 'smol', 'slow', 'plan', 'subagent'];
 

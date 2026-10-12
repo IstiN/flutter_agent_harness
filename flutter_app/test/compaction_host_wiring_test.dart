@@ -234,6 +234,7 @@ void main() {
           secrets: secrets,
           customProviders: [entry],
         ),
+        contextWindowCap: null,
       );
       final store = TaskModelsStore.inMemory({
         TaskRole.smol: TaskRoleConfig(

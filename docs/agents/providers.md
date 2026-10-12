@@ -40,7 +40,14 @@ Rules:
 
 - **Kind-vs-name**: resolution order is catalog name, then adapter kind (`chatgpt-codex`), then the `customProviders:` registry. Registry entries can never be named after catalog providers (reserved names), so the two namespaces never shadow. An entry known to NEITHER catalog nor registry still skips + degrades exactly as before (the roles config falls back to the single model with one warning — which also prints in the TUI, not only stderr).
 - **Defaults**: the entry supplies `baseUrl` and `keyName` where the chain ref omits them; explicit ref fields always win.
-- **Key slots** (unchanged, issue #40): a custom endpoint's key resolves from the entry's pinned `keyName` first, then the endpoint-scoped `FA_KEY_<HOST>` store slot (e.g. `FA_KEY_API_BYCOM_BY`) or its `_2`/`_3`… rotation stack — never from a default endpoint's env var. Export `AIAI_API_KEY=<key>` (or `/key set FA_KEY_API_BYCOM_BY <key>`) and every chain entry referencing the entry resolves.
+- **Key slots** (issue #40 precedence): a custom endpoint's key resolves
+  from the entry's pinned `keyName` first, then the endpoint-scoped
+  `FA_KEY_<HOST>` store slot (e.g. `FA_KEY_API_BYCOM_BY`) or its
+  `_2`/`_3`… rotation stack, and only then falls back to the adapter
+  dialect's catalog env names (`OPENAI_API_KEY` for an `openai` entry —
+  the last-resort fallback, shared with the dialect's default endpoint).
+  Export `AIAI_API_KEY=<key>` (or `/key set FA_KEY_API_BYCOM_BY <key>`)
+  and every chain entry referencing the entry resolves.
 
 ## Vision helpers
 

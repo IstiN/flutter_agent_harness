@@ -1231,8 +1231,8 @@ Future<void> _runApp(List<String> args) async {
       // to plain; --no-format / FA_NO_FORMAT (truthy values, like
       // FA_PI_MODE) force raw; width is the stdout terminal width at
       // process start, irrelevant in raw mode).
-        markdownSurface: markdownSurface,
-        config: AgentCliConfig(
+      markdownSurface: markdownSurface,
+      config: AgentCliConfig(
         // Issue #1552 AC4: the roles-drop warning re-prints into the TUI
         // notice stream (stderr alone is invisible in the alternate screen).
         rolesDropNotice: rolesDropNotice,

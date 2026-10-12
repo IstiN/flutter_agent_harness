@@ -1,10 +1,10 @@
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:test/test.dart';
-
 /// Issue #1552 — roles resolve `customProviders:` entries by name: the
 /// hand-written `provider: aiai` chain entry works exactly like the
 /// equivalent kind+baseUrl+apiKeyName spelling.
 library;
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:test/test.dart';
 
 StreamFunction _neverStream(String kind, String apiKey) =>
     (model, context, {cancelToken}) => throw StateError('no stream expected');
@@ -218,27 +218,40 @@ void main() {
   group('REG-2 — key provenance unchanged (issue #40 invariant)', () {
     test('the custom-name form picks the SAME key slots as the '
         'kind+baseUrl form in every key layout', () {
+      // Per-layout shapes: the 'entry pin' layout is only reachable with
+      // a KEYED entry (a keyless entry never consults the pin), so that
+      // layout pins `keyName` on the entry and — to keep both sides of
+      // the comparison meaningful — `apiKeyName` on the kind+baseUrl twin
+      // ref. The slot-based layouts stay keyless: the entry then resolves
+      // through the endpoint-scoped slot / the adapter's spec env names,
+      // exactly like the twin.
       const layouts = [
         (
           'entry pin',
           {'AIAI_API_KEY': 'k'},
+          'AIAI_API_KEY',
+          'AIAI_API_KEY',
         ),
         (
           'endpoint slot',
           {'FA_KEY_API_BYCOM_BY': 'k'},
+          null,
+          null,
         ),
         (
           'spec env fallback',
           {'OPENAI_API_KEY': 'k'},
+          null,
+          null,
         ),
       ];
-      for (final (label, secrets) in layouts) {
+      for (final (label, secrets, entryKeyName, refApiKeyName) in layouts) {
         final byName = _resolver(
           {
             'default': [ModelRef(provider: 'aiai', modelId: 'glm-4.6')],
           },
           secrets: secrets,
-          customProviders: [_bycom(keyName: null)],
+          customProviders: [_bycom(keyName: entryKeyName)],
         ).chainFor('default')!.single.keyRing.baseName;
         final byKind = _resolver(
           {
@@ -247,6 +260,7 @@ void main() {
                 provider: 'openai',
                 modelId: 'glm-4.6',
                 baseUrl: 'https://api.bycom.by/v1',
+                apiKeyName: refApiKeyName,
               ),
             ],
           },

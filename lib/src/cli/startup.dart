@@ -358,6 +358,13 @@ EnvProviderPreconfig? faProviderPreconfig(
   );
 }
 
+/// Every chain ref a roles config declares (roles + path overrides).
+List<ModelRef> _rolesChainRefs(ModelRolesConfig rolesConfig) => [
+  for (final chain in rolesConfig.roles.values) ...chain,
+  for (final override in rolesConfig.pathOverrides)
+    for (final chain in override.roles.values) ...chain,
+];
+
 /// The explicit `apiKeyName`s referenced by a roles config (the
 /// secure-store preload set; the catalog names are always preloaded), plus
 /// the endpoint-scoped `FA_KEY_<HOST>` slot of every chain entry pinned to
@@ -371,11 +378,7 @@ Set<String> roleKeyNames(
   ModelRolesConfig rolesConfig, {
   List<CustomProviderEntry> customProviders = const [],
 }) {
-  final refs = [
-    for (final chain in rolesConfig.roles.values) ...chain,
-    for (final override in rolesConfig.pathOverrides)
-      for (final chain in override.roles.values) ...chain,
-  ];
+  final refs = _rolesChainRefs(rolesConfig);
   return {
     for (final ref in refs) ...[
       if (ref.apiKeyName != null) ref.apiKeyName!,
@@ -433,7 +436,10 @@ Set<String> secureKeyPreloadNames(CliConfig saved, {required String? baseUrl}) {
     'VISION_API_KEY',
     'TRANSCRIBE_API_KEY',
     if (saved.modelRoles != null)
-      ...roleKeyNames(saved.modelRoles!, customProviders: saved.customProviders),
+      ...roleKeyNames(
+        saved.modelRoles!,
+        customProviders: saved.customProviders,
+      ),
   };
 }
 
@@ -502,7 +508,10 @@ Set<String> referencedSecureKeyNames(CliConfig saved) {
     for (final entry in saved.customProviders)
       if (entry.keyName != null) entry.keyName!,
     if (saved.modelRoles != null)
-      ...roleKeyNames(saved.modelRoles!, customProviders: saved.customProviders),
+      ...roleKeyNames(
+        saved.modelRoles!,
+        customProviders: saved.customProviders,
+      ),
   };
 }
 
@@ -637,6 +646,30 @@ List<String> secureKeyBootDiagnostics({
   return lines;
 }
 
+/// The key slots the registry leg (issue #1552) can consume: for every
+/// saved [customProviders] entry a roles chain actually names — a
+/// catalog-unknown `provider:` matched against the entry names, trim +
+/// case-fold exactly like `ModelRolesResolver._findCustomProvider` (entry
+/// names are reserved against the catalog, so the match is unambiguous) —
+/// the entry's pinned `keyName` and its endpoint-scoped `FA_KEY_<HOST>`
+/// slot. Unreferenced entries contribute nothing.
+Set<String> _referencedCustomKeyNames(
+  ModelRolesConfig rolesConfig,
+  List<CustomProviderEntry> customProviders,
+) {
+  final named = {
+    for (final ref in _rolesChainRefs(rolesConfig))
+      ref.provider.trim().toLowerCase(),
+  };
+  return {
+    for (final entry in customProviders)
+      if (named.contains(entry.name.toLowerCase())) ...[
+        if (entry.keyName != null) entry.keyName!,
+        CustomProviderRegistry.keyNameFor(entry.baseUrl),
+      ],
+  };
+}
+
 /// Collects the secrets snapshot for the model-roles resolver: every
 /// provider catalog env name plus its rotation stack (`NAME`, `NAME_2`,
 /// `NAME_3`, ...), plus any base name referenced by an explicit
@@ -646,7 +679,9 @@ List<String> secureKeyBootDiagnostics({
 /// (the `customProviders:` section) feeds the registry leg (issue #1552):
 /// a chain entry naming one of these entries resolves keys through the
 /// entry — its pinned `keyName` first, else the endpoint-scoped slot — so
-/// both names ride the snapshot.
+/// both names ride the snapshot, scoped to the entries the chains actually
+/// NAME: an unreferenced saved entry changes nothing (existing configs
+/// stay byte-identical — the PR contract).
 Map<String, String> collectRoleSecrets(
   ModelRolesConfig rolesConfig,
   SecureKeyCache keys, {
@@ -656,10 +691,7 @@ Map<String, String> collectRoleSecrets(
   final baseNames = <String>{
     for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
     ...roleKeyNames(rolesConfig, customProviders: customProviders),
-    for (final entry in customProviders) ...[
-      if (entry.keyName != null) entry.keyName!,
-      CustomProviderRegistry.keyNameFor(entry.baseUrl),
-    ],
+    ..._referencedCustomKeyNames(rolesConfig, customProviders),
   };
   final secrets = <String, String>{};
   final environment = env ?? Platform.environment;
