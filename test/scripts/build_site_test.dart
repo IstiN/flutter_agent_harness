@@ -546,6 +546,30 @@ void main() {
         );
       },
     );
+
+    test(
+      'runs the site guards through the dart test runner (gh-1476 rework)',
+      () {
+        final ci = File('.github/workflows/ci.yml').readAsStringSync();
+        final step = ci.split('GEO site build + validation').last;
+        // `dart test/site/` is NOT a test invocation — dart treats
+        // `test/site/` as a command name and exits 64 ("Could not find a
+        // command named"), so the guards never ran and the step failed on
+        // every CI run (validation CI red on 342423d0). The guards must
+        // go through the `test` runner: `dart test test/site/`.
+        expect(
+          step,
+          contains('dart test test/site/'),
+          reason: 'site guards must run via the dart test runner',
+        );
+        expect(
+          step,
+          isNot(contains('dart test/site/')),
+          reason: '`dart test/site/` is not a test invocation — dart '
+              'treats it as a command name and exits 64',
+        );
+      },
+    );
   });
 
   group('emitSite (--out)', () {

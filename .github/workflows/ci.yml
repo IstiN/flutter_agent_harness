@@ -521,7 +521,7 @@ jobs:
           dart scripts/build_blog.dart
           git diff --exit-code -- site/blog/posts site/blog/posts.json
           dart scripts/build_site.dart --out "$d/site"
-          FA_SITE_ROOT="$d/site" dart test/site/
+          FA_SITE_ROOT="$d/site" dart test test/site/
 
       # gh-1199 AC2: the deterministic-gate boundary is self-enforcing —
       # an integration-tagged test that looks live (real provider URL, or

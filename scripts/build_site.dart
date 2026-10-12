@@ -11,7 +11,7 @@
 //     artifacts exist at deploy time;
 //   - ci.yml validates: `--out <tmp>` + test/site/* (crawl/schema/llms
 //     guards) run against the temp output via FA_SITE_ROOT;
-//   - `dart test/site/` locally: builds to a temp dir on demand when
+//   - `dart test test/site/` locally: builds to a temp dir on demand when
 //     site/ carries no built layer yet.
 //
 // What it generates (site-relative paths):
@@ -822,7 +822,7 @@ String? parseArgs(List<String> args) {
         'generated artifacts are deploy-time products — gitignored, '
         'never committed — so there is nothing to drift against. Build '
         'to a temp dir and validate the output instead: '
-        '`dart scripts/build_site.dart --out <dir>` (+ test/site/* via '
+        '`dart scripts/build_site.dart --out <dir>` (+ `dart test test/site/` via '
         'FA_SITE_ROOT).',
       );
     } else {
