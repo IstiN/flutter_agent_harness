@@ -26,6 +26,18 @@ Host-side inputs (environment):
   trail lands in /logs/agent/fa-timeout-metadata.json, synced back with
   the other agent logs. No knobs set => today's single awaited exec.
 
+  Round 3 (gh-1556, harbor parity for #1392/#1430): when a watch knob is
+  set (FA_STALL_GAP_SEC / FA_AGENT_TIMEOUT_ABS_CEILING_SEC — bench-harbor.yml
+  sets both on every shard, so progress-watch is the bench default), the
+  kill decision is the gap-aware ProgressWatch, not the byte-growth
+  ladder; a stall/ceiling kill also exports FA_DEADLINE_EPOCH_MS to fa
+  (effective cap minus a 120s wrap-up margin) so fa can land partial
+  results before the guillotine. The kill path uses the `[f]a` bracket
+  trick: the pre-fix self-matching `pkill -f 'fa --session-root'`
+  SIGTERMed the exec wrapper's own shell (exit 143 skipped the audit AND
+  the TimeoutError, classifying ladder kills as agent crashes) — and the
+  kill is wrapped so its failure can never replace the TimeoutError.
+
 Usage:
   PYTHONPATH=bench/harbor_fa harbor run -d terminal-bench/terminal-bench@4.0.0 \
     -a fa_agent:FaAgent -e docker -m glm-5.3-flash
@@ -39,6 +51,7 @@ import json
 import os
 import shlex
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -109,6 +122,15 @@ class FaAgent(BaseInstalledAgent):
         key_var = json.loads(os.environ["FA_PROVIDER_CONFIG"]).get("apiKeyEnvVar")
         if key_var and os.environ.get(key_var):
             env[f"{key_var}_BASE64"] = _b64(os.environ[key_var])
+        # gh-1556 AC7: fa's deadline awareness rides the same env — the
+        # adapter's effective kill cap minus the wrap-up margin, computed
+        # once when the deadline run starts (see _run_with_deadline, which
+        # stashes the exact value the audit then records). With no timeout
+        # knob there is no adapter cap (the dataset-declared task caps are
+        # harbor's own) and the export is absent: fa never invents a clock.
+        deadline = getattr(self, "_deadline_epoch_ms", None)
+        if deadline is not None:
+            env["FA_DEADLINE_EPOCH_MS"] = str(deadline)
         return env
 
     async def install(self, environment: BaseEnvironment) -> None:
@@ -163,6 +185,10 @@ class FaAgent(BaseInstalledAgent):
     ) -> None:
         knobs = _timeout.TimeoutKnobs.from_env()
         if knobs is None:
+            # gh-1556 AC7: no adapter cap => no deadline export (also
+            # clear any stash from a previous supervised run on a
+            # re-used agent object — fa never sees a stale clock).
+            self._deadline_epoch_ms = None
             await self.exec_as_agent(
                 environment, command=self._agent_command(instruction),
                 env=self._provider_env,
@@ -197,7 +223,24 @@ class FaAgent(BaseInstalledAgent):
         completion (including a non-zero fa exit) re-raises whatever the
         exec raised, byte-for-byte today's semantics.
         """
-        ladder = _timeout.ProgressLadder(knobs)
+        ladder = (
+            # gh-1556 (Class C): parity with bench/terminal_bench/
+            # fa_agent.py — when a watch knob is set the kill decision is
+            # the gap-aware ProgressWatch (issue #1392/#1430), not the
+            # retired byte-growth ladder. bench-harbor.yml now sets the
+            # knobs on every shard, so watch mode is the bench default;
+            # with knobs removed the legacy ProgressLadder runs
+            # byte-for-byte (round-2 REG).
+            _timeout.ProgressWatch(knobs)
+            if knobs.progress_watch
+            else _timeout.ProgressLadder(knobs)
+        )
+        # gh-1556 AC7: the wrap-up deadline exported to fa (via
+        # _provider_env) is computed once here, at run start, and the
+        # audit below records this exact value.
+        self._deadline_epoch_ms = _timeout.deadline_epoch_ms(
+            knobs, int(time.time() * 1000)
+        )
         loop = asyncio.get_running_loop()
         start = loop.time()
         outcome = None
@@ -214,13 +257,25 @@ class FaAgent(BaseInstalledAgent):
                 loop.time() - start, await self._progress_bytes(environment)
             )
             if outcome:
-                # procps may be missing in slim task images; if neither
-                # signal nor pkill lands, harbor's own task timeout still
+                # gh-1556 AC1: the kill is best-effort and can never
+                # replace the ladder's TimeoutError. The pre-fix command
+                # was `pkill -f 'fa --session-root'` — the exec wrapper's
+                # OWN cmdline contains that pattern, so pkill SIGTERMed
+                # its own shell (exit 143), the exception skipped the
+                # audit write AND the TimeoutError, and harbor recorded a
+                # ladder kill as an agent crash (TB 2.0 run 38150649548:
+                # a SOLVED task scored 0). The bracket trick matches the
+                # agent process but not this command line, and any kill
+                # failure is swallowed: harbor's own task timeout still
                 # bounds the trial.
-                await self.exec_as_root(
-                    environment, command="pkill -f 'fa --session-root' || true",
-                    timeout_sec=15,
-                )
+                try:
+                    await self.exec_as_root(
+                        environment,
+                        command="pkill -f '[f]a --session-root' || true",
+                        timeout_sec=15,
+                    )
+                except Exception:
+                    pass
                 try:
                     await asyncio.wait_for(asyncio.shield(exec_task), timeout=60)
                 except Exception:
@@ -253,6 +308,7 @@ class FaAgent(BaseInstalledAgent):
         await self._write_audit(
             environment, knobs, ladder,
             outcome or ("crashed" if error is not None else "completed"),
+            deadline_epoch_ms=self._deadline_epoch_ms,
         )
         if outcome:
             raise asyncio.TimeoutError(
@@ -274,7 +330,9 @@ class FaAgent(BaseInstalledAgent):
             pass
         return None
 
-    async def _write_audit(self, environment, knobs, ladder, outcome) -> None:
+    async def _write_audit(
+        self, environment, knobs, ladder, outcome, deadline_epoch_ms=None
+    ) -> None:
         # AC4 (issue #1122): audit trail synced back with the agent logs.
         # AC6 (issue #1185): the audit also documents the harness-originated
         # share of the progress sample — the ⏳ liveness lines the pane
@@ -292,6 +350,7 @@ class FaAgent(BaseInstalledAgent):
                     outcome,
                     progress_bytes=progress,
                     liveness_bytes=liveness,
+                    deadline_epoch_ms=deadline_epoch_ms,
                 )
             ).encode()
         ).decode()
