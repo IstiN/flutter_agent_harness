@@ -112,6 +112,66 @@ String _scheduleResult(String id) =>
     'scheduled $id for 2026-10-09T16:00:00.000Z — it will arrive as '
     '[scheduled] mail';
 
+/// Drives the LIVE afterToolCall watcher (attached at construction,
+/// composing the phase-labels hook) with a hand-built context — the
+/// branch-exhaustive drive for the hook's own logic; the full-run tests
+/// above cover the schedule_message wiring end to end.
+Future<AfterToolCallResult?> _driveWatcher(
+  AgentCli cli, {
+  required String toolName,
+  required bool isError,
+  required String resultText,
+  Map<String, dynamic> arguments = const {},
+}) async {
+  final hook = cli.agent.afterToolCall!;
+  return hook(
+    AfterToolCallContext(
+      assistantMessage: testAssistant(),
+      toolCall: ToolCall(id: 't1', name: toolName, arguments: arguments),
+      result: ToolExecutionResult.text(resultText),
+      isError: isError,
+      context: const Context(messages: []),
+    ),
+    null,
+  );
+}
+
+/// A session whose metadata probe always fails: the shape behind the
+/// watcher's swallow branch — `_obligationsWriterFor`'s snapshot scan
+/// rehydrates through `_repo` and must survive the crash.
+final class _ThrowingMetadataStorage implements SessionStorage {
+  @override
+  Future<SessionMetadata> getMetadata() async =>
+      throw StateError('session file vanished mid-scan');
+
+  @override
+  Future<String?> getLeafId() async => null;
+
+  @override
+  Future<void> setLeafId(String? leafId) async {}
+
+  @override
+  Future<String> createEntryId() async => 'fake-id';
+
+  @override
+  Future<void> appendEntry(SessionRecord record) async {}
+
+  @override
+  Future<SessionRecord?> getEntry(String id) async => null;
+
+  @override
+  Future<List<SessionRecord>> findEntries(String type) async => const [];
+
+  @override
+  Future<String?> getLabel(String id) async => null;
+
+  @override
+  Future<List<SessionRecord>> getPathToRoot(String? leafId) async => const [];
+
+  @override
+  Future<List<SessionRecord>> getEntries() async => const [];
+}
+
 Future<ObligationsLedger> _latestLedger(MemoryExecutionEnv env) async {
   final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
   final sessions = await repo.list(cwd: '/work');
@@ -248,5 +308,105 @@ void main() {
     await run;
     expect(stream.results.single, contains('classic engine'));
     expect((await _latestLedger(env)).entries, isEmpty);
+  });
+
+  test('the live watcher records a schedule_message hit into the ledger',
+      () async {
+    final cli = _bootCli(env: env, io: io, stream: _ProbedStream(const []));
+    cli.sessionForTest = await JsonlSessionRepo(
+      fs: env,
+      sessionsRoot: '/sessions',
+    ).create(JsonlSessionCreateOptions(cwd: '/work'));
+
+    final result = await _driveWatcher(
+      cli,
+      toolName: 'schedule_message',
+      isError: false,
+      resultText: _scheduleResult('sm-live-1'),
+      arguments: {'text': _reason},
+    );
+
+    // A clean recording stays silent: no `[obligations]` note on io.
+    expect(result, isNull);
+    expect(io.out.toString(), isNot(contains('[obligations]')));
+    final ledger = await _latestLedger(env);
+    expect(ledger.entries.single.kind, ObligationKind.pendingWait);
+    expect(ledger.entries.single.text, _reason);
+    expect(ledger.entries.single.sourceRecordId, 'sm-live-1');
+  });
+
+  test('error results and foreign tools never reach the ledger', () async {
+    final cli = _bootCli(env: env, io: io, stream: _ProbedStream(const []));
+    cli.sessionForTest = await JsonlSessionRepo(
+      fs: env,
+      sessionsRoot: '/sessions',
+    ).create(JsonlSessionCreateOptions(cwd: '/work'));
+
+    await _driveWatcher(
+      cli,
+      toolName: 'read',
+      isError: false,
+      resultText: 'file body',
+      arguments: {'path': 'x.txt'},
+    );
+    await _driveWatcher(
+      cli,
+      toolName: 'schedule_message',
+      isError: true,
+      resultText: _scheduleResult('sm-err-1'),
+      arguments: {'text': _reason},
+    );
+
+    expect(io.out.toString(), isNot(contains('[obligations]')));
+    expect((await _latestLedger(env)).entries, isEmpty);
+  });
+
+  test('a schedule result without a scheduled id is reported on io',
+      () async {
+    final cli = _bootCli(env: env, io: io, stream: _ProbedStream(const []));
+    cli.sessionForTest = await JsonlSessionRepo(
+      fs: env,
+      sessionsRoot: '/sessions',
+    ).create(JsonlSessionCreateOptions(cwd: '/work'));
+
+    await _driveWatcher(
+      cli,
+      toolName: 'schedule_message',
+      isError: false,
+      resultText: 'error: text is required',
+    );
+
+    expect(
+      io.out.toString(),
+      contains('[obligations] pending-wait not recorded:'),
+    );
+    expect(io.out.toString(), contains('did not carry a scheduled id'));
+    expect((await _latestLedger(env)).entries, isEmpty);
+  });
+
+  test('a ledger crash cannot fail the tool call the schedule succeeded',
+      () async {
+    // The throw needs a REAL repo behind `_repo` (the snapshot scan
+    // rehydrates through it), so boot one full turn first; the swapped
+    // session's metadata probe then crashes the scan inside the hook.
+    final stream = _ProbedStream([
+      ([], textTurn('warmup')),
+    ]);
+    final cli = _bootCli(env: env, io: io, stream: stream);
+    await _runConversation(env, io, stream, userLines: ['hello']);
+    cli.sessionForTest = Session(_ThrowingMetadataStorage());
+
+    final result = await _driveWatcher(
+      cli,
+      toolName: 'schedule_message',
+      isError: false,
+      resultText: _scheduleResult('sm-crash-1'),
+      arguments: {'text': _reason},
+    );
+
+    // The swallow: no exception surfaced, the prior chain still ran,
+    // and the failure is NOT misreported as a recording note.
+    expect(result, isNull);
+    expect(io.out.toString(), isNot(contains('[obligations]')));
   });
 }
