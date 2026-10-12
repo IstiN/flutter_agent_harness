@@ -193,6 +193,22 @@ QUICK COMMANDS
                                conversation is kept verbatim and the
                                original preserved as <file>.bak. A live
                                session (fresh heartbeat) is refused.
+  import                       fa import --harness=<omp|kimi|opencode|
+                               claude> (--all | --session=<id|prefix>)
+                               [--session-root=<path>] [--cwd=<path>]:
+                               import another harness's per-project
+                               session history (omp and claude today;
+                               kimi/opencode pending their format
+                               spikes) into fa's own store as new,
+                               standalone sessions — discoverable in fa
+                               session list, fa trajectory view and the
+                               /sessions picker, resumable like any fa
+                               session. Discovery is scoped to the
+                               current folder; foreign stores are
+                               read-only; re-imports of an already
+                               imported session are skipped. Exit 0 ok,
+                               1 usage, 2 store missing, 3 nothing
+                               imported.
   config                       fa config export-providers [--out
                                <file.fahx>] [--passphrase-stdin]: write
                                the saved custom providers (plus their

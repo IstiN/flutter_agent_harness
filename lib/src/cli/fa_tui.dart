@@ -143,6 +143,13 @@ final class FaTuiCallbacks {
   /// the given terminal width — the width drives the column elision.
   final List<MenuItem> Function(String filter, int width) buildModelMenu;
 
+  /// Rebuilds the `/import` session-search picker for a keyword query
+  /// (issue #1562, GOAL F10): the host-callback rebuild mechanism the
+  /// models picker uses, so the filter matches session CONTENT (title +
+  /// bounded message text) instead of static labels. Null keeps the
+  /// picker generic (static local filtering).
+  final List<MenuItem> Function(String filter)? buildImportSessionsMenu;
+
   /// One-line status shown above the input line.
   final String Function() statusLine;
 

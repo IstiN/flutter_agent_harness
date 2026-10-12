@@ -234,4 +234,198 @@ extension AgentCliPickers on AgentCli {
   /// PTY.
   @visibleForTesting
   List<MenuItem> approvalPickerItemsForTest() => approvalPickerItems();
+
+  // ---- /import (issue #1562) ----
+
+  /// `/import`: the TUI import flow — harness picker, then the
+  /// session-search picker. Line mode points at the headless CLI form.
+  Future<void> _handleImportCommand(String rest) async {
+    if (_tuiController == null) {
+      io.writeln(
+        '/import opens the interactive import picker. Headless equivalent: '
+        '`fa import --harness=<omp|claude> (--all | --session=<id>)`.',
+      );
+      return;
+    }
+    _openImportHarnessPicker();
+  }
+
+  /// Step 1 of the flow (GOAL UX contract): the harness picker — four
+  /// entries, type-to-filter free, Esc cancels with zero writes.
+  void _openImportHarnessPicker() {
+    final items = [
+      MenuItem(
+        key: 'omp',
+        label: 'omp',
+        description: '~/.omp/agent/sessions — pinned format',
+      ),
+      MenuItem(
+        key: 'claude',
+        label: 'claude',
+        description: '~/.claude/projects — partial pin (taxonomy spike open)',
+      ),
+      MenuItem(
+        key: 'opencode',
+        label: 'opencode',
+        description: 'pending format discovery spike',
+      ),
+      MenuItem(
+        key: 'kimi',
+        label: 'kimi',
+        description: 'pending format discovery spike',
+      ),
+    ];
+    importHarnessItemsForTest = items;
+    _tuiController?.openPicker('import-harness', 'Import sessions', items);
+  }
+
+  /// Step 2: discover the current folder's foreign sessions and open the
+  /// session-search picker (rows carry title + first/last previews; typing
+  /// keyword-searches CONTENT through the host rebuild callback, GOAL
+  /// F10/F11).
+  Future<void> _tuiPickImportHarness(String key) async {
+    if (!implementedHarnesses.contains(key)) {
+      io.writeln(
+        'import: "$key" is pending its format discovery spike — '
+        'not importable yet.',
+      );
+      return;
+    }
+    final adapter = adapterFor(key);
+    if (adapter == null) return;
+    final home = config.homeDir ?? '';
+    final List<ForeignSessionSummary> discovered;
+    try {
+      discovered = await adapter.discover(
+        fs: _env,
+        cwd: _env.cwd,
+        homeDir: home,
+        tempDir: '',
+        limits: const ImportLimits(),
+      );
+    } on ForeignStoreAbsent catch (error) {
+      io.writeln(
+        _keyStatusView.errorLine(
+          'import: no ${adapter.id} store at ${error.root}',
+          _agent.state.model.baseUrl,
+        ),
+      );
+      return;
+    } on ForeignFileError catch (error) {
+      io.writeln(
+        _keyStatusView.errorLine(
+          'import: ${error.message}',
+          _agent.state.model.baseUrl,
+        ),
+      );
+      return;
+    }
+    if (discovered.isEmpty) {
+      io.writeln(
+        'import: no ${adapter.id} sessions found for ${_env.cwd}',
+      );
+      return;
+    }
+    _importHarness = key;
+    // Previews + the bounded keyword index (one read-only streamed pass
+    // per session; a failing file degrades to a headerless row).
+    final described = <ForeignSessionSummary>[];
+    for (final summary in discovered) {
+      try {
+        described.add(
+          await describeForeignSession(
+            adapter: adapter,
+            fs: _env,
+            summary: summary,
+            limits: const ImportLimits(),
+            homeDir: home,
+          ),
+        );
+      } on Object {
+        described.add(summary);
+      }
+    }
+    _importSummaries = described;
+    _tuiController?.openPicker(
+      'import-sessions',
+      'Import from ${adapter.id}',
+      _importSessionMenuItems(''),
+    );
+  }
+
+  /// The picker rows: `All (<n> sessions)` first, then one row per
+  /// session — selection keys carry the source id so a filtered view's
+  /// selection still resolves.
+  List<MenuItem> _importSessionMenuItems(String filter) {
+    final rows = _importRowsFor(filter);
+    return [
+      MenuItem(
+        key: 'all',
+        label: 'All (${_importSummaries.length} sessions)',
+        description: 'import every discovered ${_importHarness ?? ''} session',
+      ),
+      for (final summary in rows)
+        MenuItem(
+          key: 'i:${summary.sourceId}',
+          label: summary.title.isNotEmpty ? summary.title : summary.sourceId,
+          description:
+              'first: ${summary.firstPreview} · last: ${summary.lastPreview}',
+        ),
+    ];
+  }
+
+  /// The host-callback rebuild the import-sessions picker filters through
+  /// (the models-picker mechanism, GOAL F10): keyword search over title +
+  /// bounded message text, recency order when the query is empty.
+  List<MenuItem> _buildImportSessionMenu(String filter) =>
+      _importSessionMenuItems(filter);
+
+  List<ForeignSessionSummary> _importRowsFor(String filter) {
+    final query = filter.trim().toLowerCase();
+    if (query.isEmpty) return _importSummaries;
+    return [
+      for (final summary in _importSummaries)
+        if (summary.title.toLowerCase().contains(query) ||
+            summary.searchText.toLowerCase().contains(query))
+          summary,
+    ];
+  }
+
+  /// Step 3: import the selection — one session or every discovered one —
+  /// through the same runner the CLI uses; per-session progress lines in
+  /// the shared summary format. Esc never reaches here (zero writes).
+  Future<void> _tuiPickImportSession(String key) async {
+    final harness = _importHarness;
+    final adapter = harness == null ? null : adapterFor(harness);
+    final repo = _repo;
+    if (adapter == null || repo is! JsonlSessionRepo) return;
+    final selected = key == 'all'
+        ? _importSummaries
+        : _importSummaries.where((s) => s.sourceId == key.substring(2));
+    for (final summary in selected) {
+      try {
+        final result = await runImport(
+          adapter: adapter,
+          fs: _env,
+          repo: repo,
+          cwd: _env.cwd,
+          selector: ImportSelector.one(summary.sourceId),
+          limits: const ImportLimits(),
+          homeDir: config.homeDir ?? '',
+          tempDir: '',
+          onLine: io.writeln,
+        );
+        if (result.exitCode != 0 && result.lines.isEmpty) {
+          io.writeln('import: failed (${result.exitCode})');
+        }
+      } on Object catch (error) {
+        io.writeln(
+          _keyStatusView.errorLine(
+            'import ${summary.sourceId} failed: $error',
+            _agent.state.model.baseUrl,
+          ),
+        );
+      }
+    }
+  }
 }

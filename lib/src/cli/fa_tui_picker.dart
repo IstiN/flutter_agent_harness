@@ -118,6 +118,9 @@ extension _TuiPickerKeys on FaTuiModel {
     final isModelsPicker = pickerId == 'models';
     final items = isModelsPicker
         ? callbacks.buildModelMenu(filter, termWidth)
+        : pickerId == 'import-sessions' &&
+              callbacks.buildImportSessionsMenu != null
+        ? callbacks.buildImportSessionsMenu!(filter)
         : _filterItems(menuAllItems, filter);
     return copyWith(modelFilter: filter, menuItems: items, menuSelected: 0);
   }

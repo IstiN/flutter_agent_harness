@@ -1,0 +1,9 @@
+{"type":"session","version":3,"id":"claude-0001","timestamp":"2026-10-10T10:00:00.000Z","cwd":"__CWD__"}
+{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"sessionId":"claude-0001","cwd":"__CWD__","timestamp":"2026-10-10T10:01:00.000Z","message":{"role":"user","content":"plan the API"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","isSidechain":false,"sessionId":"claude-0001","timestamp":"2026-10-10T10:02:00.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"start with resources"},{"type":"tool_use","id":"tu-1","name":"write","input":{"path":"api.ts"}},{"type":"text","text":"Writing"}],"model":"claude-sonnet-4-5","stopReason":"toolUse"}}
+{"type":"user","uuid":"u2","parentUuid":"a1","isSidechain":false,"sessionId":"claude-0001","cwd":"__CWD__","timestamp":"2026-10-10T10:02:10.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu-1","content":[{"type":"text","text":"ok"}]}]}}
+{"type":"last-prompt","prompt":"plan the API","cwd":"__CWD__"}
+{"type":"permission-mode","mode":"default","cwd":"__CWD__"}
+{"type":"user","uuid":"u3","parentUuid":null,"isSidechain":true,"sessionId":"claude-0001","cwd":"__CWD__","timestamp":"2026-10-10T10:02:20.000Z","message":{"role":"user","content":"sidechain thing"}}
+{"type":"assistant","uuid":"a2","parentUuid":"u2","isSidechain":false,"sessionId":"claude-0001","cwd":"__CWD__","timestamp":"2026-10-10T10:03:30.000Z","message":{"role":"assistant","content":[{"type":"text","text":"off-branch fork answer"}]}}
+{"type":"user","uuid":"u4","parentUuid":"u2","isSidechain":false,"sessionId":"claude-0001","cwd":"__CWD__","timestamp":"2026-10-10T10:03:00.000Z","message":{"role":"user","content":"thanks"}}

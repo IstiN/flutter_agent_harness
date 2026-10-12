@@ -102,6 +102,7 @@ final class CliArgs extends CliArgsResult {
     this.ext,
     this.jsr,
     this.sessionList,
+    this.importCmd,
     this.positionals = const [],
     this.output,
     this.outputFormat,
@@ -238,9 +239,13 @@ final class CliArgs extends CliArgsResult {
   /// to the jsr widget CLI pass-through instead of a prompt run.
   final JsrCliCommand? jsr;
 
-  /// The `fa session <verb>` subcommand (issue #198), when the invocation
-  /// routed to the session lister instead of a prompt run.
+  /// The `fa session <verb>` subcommand (issue #198 / gh-1073): routed to
+  /// the session lister/repairer instead of a prompt run.
   final SessionCliCommand? sessionList;
+
+  /// `fa import` (issue #1562): cross-harness session import — routed to
+  /// the importer instead of a prompt run, before any provider wiring.
+  final ImportCliCommand? importCmd;
 
   /// `--output <mode>` (issue #155): 'events' (HEP v1 JSONL on stdout) or
   /// 'events=full' (full tool arguments). 'json' only rides `--version`.
@@ -329,6 +334,7 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
   'ext': _parseExtArgs,
   'jsr': _parseJsrArgs,
   'session': _parseSessionArgs,
+  'import': _parseImportArgs,
 };
 
 /// Applies the no-value boolean flags (`--wait-for-jobs`, `--pi`,
@@ -1446,4 +1452,146 @@ CliArgsResult _parseSessionArgs(List<String> args) {
     }
   }
   return (json: json, flat: flat, dryRun: dryRun, repairTarget: repairTarget);
+}
+
+/// The `fa import` subcommand (issue #1562): cross-harness session import.
+///
+/// `--harness` names the foreign store (omp|kimi|opencode|claude);
+/// exactly one of `--all` / `--session=<id|prefix>` selects the targets.
+/// Discovery is scoped to the current folder; no provider/model/key is
+/// ever built for this verb.
+final class ImportCliCommand {
+  /// Creates [ImportCliCommand].
+  const ImportCliCommand({
+    required this.harness,
+    this.all = false,
+    this.session,
+  });
+
+  /// The foreign harness (`omp`, `kimi`, `opencode`, `claude`).
+  final String harness;
+
+  /// `--all`: every discovered current-folder session.
+  final bool all;
+
+  /// `--session <id|prefix>`: one session, exact id or unambiguous prefix.
+  final String? session;
+}
+
+const String _importUsage =
+    'usage: fa import --harness=<omp|kimi|opencode|claude> '
+    '(--all | --session=<id|prefix>) [--session-root=<path>] [--cwd=<path>]';
+
+/// The harness names `--harness` accepts (the identical CLI/TUI surface;
+/// kimi/opencode parse but report their pending format spike at run time).
+/// Single source of truth: the import layer's registry.
+const Set<String> importHarnessNames = {'omp', 'kimi', 'opencode', 'claude'};
+
+/// Parses the `import` subcommand operands. Unknown flags and a missing or
+/// conflicting selector are usage errors so a typo never becomes a prompt
+/// sent to a model (GOAL F7).
+CliArgsResult _parseImportArgs(List<String> args) {
+  if (args.contains('--help') || args.contains('-h')) {
+    return const CliArgsHelp();
+  }
+  if (args.isEmpty) {
+    throw const CliArgsException(_importUsage);
+  }
+  final operands = _parseImportOperands(args);
+  return CliArgs(
+    cwd: operands.cwd,
+    sessionRoot: operands.sessionRoot,
+    importCmd: ImportCliCommand(
+      harness: _importHarnessValue(operands),
+      all: operands.all,
+      session: operands.session,
+    ),
+  );
+}
+
+/// The `--harness` value with the unknown-name check (usage error via
+/// [CliArgsException], GOAL exit table row 1).
+String _importHarnessValue(_ImportOperands operands) {
+  final harness = operands.harness;
+  if (harness == null) {
+    throw CliArgsException('--harness requires a value\n$_importUsage');
+  }
+  if (!importHarnessNames.contains(harness)) {
+    throw CliArgsException(
+      'unknown harness: $harness '
+      '(expected one of ${importHarnessNames.join('|')})\n$_importUsage',
+    );
+  }
+  return harness;
+}
+
+/// The operands collected while walking an `fa import` argument list.
+class _ImportOperands {
+  String? harness;
+  bool all = false;
+  String? session;
+  String? cwd;
+  String? sessionRoot;
+}
+
+/// Walks the arguments after `import`, collecting the flags (both the
+/// space-separated and `--flag=value` forms). Split out of
+/// [_parseImportArgs] for the CRAP ratchet.
+_ImportOperands _parseImportOperands(List<String> args) {
+  final operands = _ImportOperands();
+  for (var i = 0; i < args.length; i++) {
+    final arg = args[i];
+    if (arg == '--all') {
+      operands.all = true;
+      continue;
+    }
+    String? value;
+    String? name;
+    for (final flag in const ['--harness', '--session-root', '--cwd', '--session']) {
+      if (arg == flag || arg.startsWith('$flag=')) {
+        name = flag;
+        value = arg.length > flag.length && arg[flag.length] == '='
+            ? arg.substring(flag.length + 1)
+            : null;
+        break;
+      }
+    }
+    if (name == null) {
+      throw CliArgsException('unknown argument: $arg\n$_importUsage');
+    }
+    if (value == null) {
+      if (i + 1 >= args.length) {
+        throw CliArgsException('$name requires a value\n$_importUsage');
+      }
+      value = args[++i];
+    }
+    switch (name) {
+      case '--harness':
+        operands.harness = value;
+      case '--session':
+        operands.session = value;
+      case '--session-root':
+        operands.sessionRoot = value;
+      case '--cwd':
+        operands.cwd = value;
+    }
+  }
+  _validateImportOperands(operands);
+  return operands;
+}
+
+/// The selector rule: exactly one of `--all` / `--session` (GOAL UX
+/// contract). Split out of the operand walk for the CRAP ratchet.
+void _validateImportOperands(_ImportOperands operands) {
+  if (!operands.all && operands.session == null) {
+    throw CliArgsException(
+      'fa import needs exactly one of --all or --session\n$_importUsage',
+    );
+  }
+  if (operands.all && operands.session != null) {
+    throw CliArgsException(
+      'fa import takes exactly one of --all or --session, not both\n'
+      '$_importUsage',
+    );
+  }
 }

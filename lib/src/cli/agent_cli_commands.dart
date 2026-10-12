@@ -28,6 +28,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/redact': (cli, rest) async => cli._handleRedactCommand(rest),
   '/theme': (cli, rest) async => cli._themeSlash(rest),
   '/trajectory': (cli, rest) async => cli._handleTrajectoryCommand(rest),
+  '/import': (cli, rest) async => cli._handleImportCommand(rest),
   '/usage': (cli, rest) async => cli._handleUsageCommand(rest),
   '/mail': (cli, rest) async => cli.handleMailCommand(rest),
   '/reply': (cli, rest) async => cli.handleReplyCommand(rest),
