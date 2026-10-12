@@ -111,6 +111,7 @@ final class FaTuiCallbacks {
     required this.onModelSelected,
     required this.buildSlashMenu,
     required this.buildModelMenu,
+    this.buildImportSessionsMenu,
     required this.statusLine,
     required this.prompt,
     this.onInterrupt,

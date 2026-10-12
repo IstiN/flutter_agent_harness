@@ -32,7 +32,7 @@ final class OmpAdapter implements HarnessAdapter {
     final root = storeRoot(homeDir);
     final exists = await fs.exists(root);
     final isDir = exists.valueOrNull == true &&
-        (await fs.fileInfo(root)).valueOrNull?.kind == FileKind.dir;
+        (await fs.fileInfo(root)).valueOrNull?.kind == FileKind.directory;
     return isDir ? root : null;
   }
 
@@ -51,7 +51,7 @@ final class OmpAdapter implements HarnessAdapter {
     final listed = await fs.listDir(root);
     if (listed.isErr) return const [];
     for (final entry in listed.valueOrNull ?? const <FileInfo>[]) {
-      if (entry.kind != FileKind.dir || !candidates.contains(entry.name)) {
+      if (entry.kind != FileKind.directory || !candidates.contains(entry.name)) {
         continue;
       }
       for (final (path, size, mtimeMs)
@@ -217,7 +217,8 @@ final class OmpAdapter implements HarnessAdapter {
   /// reads on ranged backends; a whole-file read fallback elsewhere.
   Future<String?> _readPrefix(FileSystem fs, String path, int bytes) async {
     if (fs is RangedReadFileSystem) {
-      final read = await fs.readRange(path, 0, bytes);
+      final ranged = fs as RangedReadFileSystem;
+      final read = await ranged.readRange(path, 0, bytes);
       if (read.isErr) return null;
       return utf8.decode(read.valueOrNull ?? const [], allowMalformed: true);
     }

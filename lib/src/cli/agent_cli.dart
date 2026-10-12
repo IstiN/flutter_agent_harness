@@ -1000,7 +1000,9 @@ class AgentCli {
   /// land in [importHarnessItemsForTest] (the sessionPickerItemsForTest
   /// pattern).
   @visibleForTesting
-  Future<void> openImportHarnessPickerForTest() => _openImportHarnessPicker();
+  Future<void> openImportHarnessPickerForTest() async {
+    _openImportHarnessPicker();
+  }
 
   /// The items the most recent /import harness picker opened with.
   @visibleForTesting

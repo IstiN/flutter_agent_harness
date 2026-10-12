@@ -33,7 +33,7 @@ final class ClaudeAdapter implements HarnessAdapter {
     final root = storeRoot(homeDir);
     final exists = await fs.exists(root);
     final isDir = exists.valueOrNull == true &&
-        (await fs.fileInfo(root)).valueOrNull?.kind == FileKind.dir;
+        (await fs.fileInfo(root)).valueOrNull?.kind == FileKind.directory;
     return isDir ? root : null;
   }
 
@@ -192,7 +192,8 @@ final class ClaudeAdapter implements HarnessAdapter {
   Future<String> _firstCwd(FileSystem fs, String path) async {
     String? prefix;
     if (fs is RangedReadFileSystem) {
-      final read = await fs.readRange(path, 0, 4096);
+      final ranged = fs as RangedReadFileSystem;
+      final read = await ranged.readRange(path, 0, 4096);
       prefix = read.isErr
           ? null
           : utf8.decode(read.valueOrNull ?? const [], allowMalformed: true);

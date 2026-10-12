@@ -9,6 +9,7 @@ import '../env/execution_env.dart';
 import '../exceptions.dart';
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
+import '../session/session_storage.dart';
 import 'claude_adapter.dart';
 import 'foreign_session.dart';
 import 'harness_adapter.dart';
@@ -256,7 +257,9 @@ Future<(String, String)> _importOne({
         );
     }
   }
-  await session.appendCustomEntry('import.${adapter.id}.complete', {
+  await session.appendCustomEntry(
+        customType: 'import.${adapter.id}.complete',
+        data: {
     'recordCount': mapped.items.length,
   });
   final metadata = await session.getMetadata();

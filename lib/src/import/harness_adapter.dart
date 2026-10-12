@@ -127,12 +127,15 @@ Stream<ForeignLine> scanForeignLines(
     return;
   }
   const chunkBytes = 1 << 20;
+  // The `is!` guard above proved the host is ranged-capable; the explicit
+  // bind carries the member (FileSystem itself has no ranged reads).
+  final ranged = fs as RangedReadFileSystem;
   var position = 0;
   var number = 0;
   var carry = <int>[];
   while (position < size) {
     final end = position + chunkBytes < size ? position + chunkBytes : size;
-    final read = await fs.readRange(path, position, end);
+    final read = await ranged.readRange(path, position, end);
     if (read.isErr) throw ForeignFileError('unreadable file: $path');
     position = end;
     final bytes = read.valueOrNull ?? Uint8List(0);
