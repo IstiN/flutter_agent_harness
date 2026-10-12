@@ -192,6 +192,17 @@ void main() {
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
+          // gh-1380: structured sessions now carry the recall-hygiene
+          // contract + the session_search schema; on this 12k window that
+          // static overhead alone crosses the request-size compaction
+          // threshold post-turn, and the structured summarizer adds 2
+          // more stream calls. This scenario pins the retry ladder
+          // (issue #1121) — compaction stays out of its call count.
+          compactionSettings: const CompactionSettings(
+            enabled: false,
+            reserveTokens: 100,
+            keepRecentTokens: 100,
+          ),
         ),
         io: io,
         streamFunction: transientRetryStreamFunction((
