@@ -197,15 +197,26 @@ final class ModelRolesResolver {
     }
     final keyBase = _keyBaseName(ref, spec);
     if (keyBase == null) {
-      skipped.add(
-        '${ref.label} (missing API key: ${_missingKeyHint(ref, spec)})',
-      );
-      return null;
+      // gh-1570 (AC8): a keyless ref needs NO credential — a localhost
+      // bench endpoint or an unauthenticated gateway. The stream factory
+      // receives the EMPTY key, byte-parity with the non-roles keyless
+      // boot. Skipped only when the ref does NOT declare keyless.
+      if (!ref.keyless) {
+        skipped.add(
+          '${ref.label} (missing API key: ${_missingKeyHint(ref, spec)})',
+        );
+        return null;
+      }
     }
-    final ring = _rings.putIfAbsent(
-      keyBase,
-      () => ApiKeyRing.fromSecrets(_secrets, keyBase, now: _now)!,
-    );
+    final ring = keyBase == null
+        ? ApiKeyRing(
+            baseName: '',
+            credentials: const [ApiKeyCredential('', '')],
+          )
+        : _rings.putIfAbsent(
+            keyBase,
+            () => ApiKeyRing.fromSecrets(_secrets, keyBase, now: _now)!,
+          );
     // gh-1395 review round 1: ONE policy per chain entry (session-scoped).
     // streamForKey is invoked per fallback ATTEMPT; building the policy
     // inside it would mint a fresh ledger every attempt and AC4/E3's

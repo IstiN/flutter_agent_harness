@@ -701,9 +701,60 @@ void main() {
             secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
             streamFactory: _neverStream,
           );
-          // No key env var declared → bin/fah.dart skips the pin: the
-          // roles default survives untouched.
+          // No key env var declared AND no keyless pin → bin/fah.dart
+          // skips the pin: the roles default survives untouched.
           expect(resolver.resolveRole('default')!.model.provider, 'anthropic');
+        },
+      );
+
+      test(
+        'a keyless pin resolves with NO credential — localhost preconfig '
+        'beats saved roles (gh-1570 AC8/UT-8)',
+        () {
+          // The exact sequence bin/fah.dart performs for a KEYLESS
+          // FA_PROVIDER_* declaration (no apiKeyEnvVar — a localhost
+          // bench endpoint): pin the default role to a keyless single-entry
+          // chain. The saved roles config must NOT win — the bench
+          // measures the preconfigured provider.
+          var seenKey = 'SENTINEL-NEVER-SET';
+          var seenKind = '';
+          final resolver = ModelRolesResolver(
+            config: ModelRolesConfig(
+              roles: const {
+                'default': [
+                  ModelRef(provider: 'anthropic', modelId: 'claude-old'),
+                ],
+              },
+            ),
+            secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
+            streamFactory: (kind, apiKey) {
+              seenKind = kind;
+              seenKey = apiKey;
+              return _neverStream(kind, apiKey);
+            },
+          );
+          resolver.setDefaultChain([
+            const ModelRef(
+              provider: 'anthropic',
+              modelId: 'claude-sonnet-4-5',
+              baseUrl: 'http://localhost:8080/v1',
+              keyless: true,
+            ),
+          ]);
+
+          for (final role in ['default', 'slow', 'plan']) {
+            final resolved = resolver.resolveRole(role);
+            expect(resolved, isNotNull, reason: role);
+            expect(resolved!.model.provider, 'anthropic', reason: role);
+            expect(resolved.model.baseUrl, 'http://localhost:8080/v1');
+          }
+          // The stream function receives the EMPTY key — byte-parity with
+          // the non-roles keyless boot (bin/fah.dart sends preconfig.apiKey
+          // == '') — never the saved roles provider's key.
+          expect(seenKind, 'anthropic');
+          expect(seenKey, '');
+          // The saved roles entry's key was never the pin's credential.
+          expect(seenKey, isNot('a-key'));
         },
       );
 

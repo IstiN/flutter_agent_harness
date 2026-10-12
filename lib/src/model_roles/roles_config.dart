@@ -71,6 +71,7 @@ final class ModelRef {
     this.authHeader,
     this.connectTimeout,
     this.streamIdleTimeout,
+    this.keyless = false,
   });
 
   /// Parses the string shorthand `provider/modelId`.
@@ -142,6 +143,7 @@ final class ModelRef {
             'streamIdleTimeoutMs',
             where,
           ),
+          keyless: _optionalBool(entry, 'keyless', role),
         );
       default:
         throw ConfigException(
@@ -170,6 +172,20 @@ final class ModelRef {
       throw ConfigException(
         '"$key"${role == null ? '' : ' in role "$role"'} must be a '
         'positive integer',
+      );
+    }
+    return value;
+  }
+
+  /// A `keyless: true` flag (gh-1570 AC8): the entry's endpoint needs NO
+  /// credential (a localhost bench server). Only `true` means keyless —
+  /// absent, null and `false` all read as false.
+  static bool _optionalBool(YamlMap map, String key, String? role) {
+    final value = map[key];
+    if (value == null) return false;
+    if (value is! bool) {
+      throw ConfigException(
+        '"$key"${role == null ? '' : ' in role "$role"'} must be a boolean',
       );
     }
     return value;
@@ -267,6 +283,13 @@ final class ModelRef {
   /// issue #1398). Null keeps the global value, then the 300 s default.
   final Duration? streamIdleTimeout;
 
+  /// The endpoint needs NO credential (`keyless: true`, gh-1570 AC8): a
+  /// localhost bench server or an unauthenticated gateway. The resolver
+  /// treats the entry as always credentialed and the stream factory
+  /// receives the EMPTY key — byte-parity with the non-roles keyless
+  /// boot. Saved roles configs never outrank a keyless pin.
+  final bool keyless;
+
   /// The `provider/modelId` display form.
   String get label => '$provider/$modelId';
 
@@ -299,6 +322,7 @@ final class ModelRef {
         'streamIdleTimeoutMs: ${streamIdleTimeout!.inMilliseconds}\n',
       );
     }
+    if (keyless) buffer.write('keyless: true\n');
     return buffer.toString();
   }
 }
