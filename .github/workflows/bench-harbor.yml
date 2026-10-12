@@ -506,6 +506,21 @@ jobs:
           # (needs.setup.outputs.dataset).
           AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
           PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
+          # gh-1556 AC2: progress-watch is the bench default on EVERY
+          # shard (#1392/#1430) — the gap-aware kill decision replaces
+          # the retired byte-growth ladder that guillotined productive
+          # trials (TB 2.0 Class C). FA_STALL_GAP_SEC pins the gh-1430
+          # invariant (never below fa's 300s stream-idle watchdog +
+          # margin — the REG in test_fa_agent_timeout.py reads the Dart
+          # source and fails on drift); the abs ceiling is flat 3600s.
+          # Removing these exports is the only way back to the legacy
+          # ladder (its round-2 byte-for-byte REG stays green).
+          # FA_PROGRESS_EXTENSION=1 is required with the watch: without
+          # it ProgressWatch degenerates to the flat base cap (the watch
+          # only arms its gap-aware decision under the extension).
+          FA_PROGRESS_EXTENSION: '1'
+          FA_STALL_GAP_SEC: '360'
+          FA_AGENT_TIMEOUT_ABS_CEILING_SEC: '3600'
           # shard task names: dataset dir names, no whitespace — safe to word-split.
           SHARD_TASKS: ${{ matrix.tasks }}
         run: |
@@ -525,19 +540,44 @@ jobs:
           args=()
           for t in $SHARD_TASKS; do args+=(-i "$t"); done
           # Issue #1122 knobs, same env contract as bench.yml (shared
-          # bench/fa_agent_timeout.py); absent inputs stay byte-for-byte
-          # today's run (REG-1). A ceiling beyond a task's declared cap is
+          # bench/fa_agent_timeout.py). gh-1556 AC2: the watch knobs now
+          # ride the step env block on every shard (progress-watch is the
+          # bench default), so the adapter always supervises — only
+          # removing those exports restores the unsupervised run. The
+          # inputs below stay meaningful ON TOP of the watch defaults:
+          # an explicit agent-timeout clips the watch ceiling to base x4
+          # (the pre-PR ladder semantics — under the watch the abs
+          # ceiling is the cap that actually kills a progressing trial),
+          # and an explicit progress-extension: false unsets the
+          # step-env extension. With both inputs empty the step-env
+          # watch values rule unchanged.
+          # A ceiling beyond a task's declared cap is
           # clipped by harbor's own per-task timeout (min of the two wins).
           if [ -n "$AGENT_TIMEOUT" ]; then
             case "$AGENT_TIMEOUT" in *[!0-9]*)
               echo '::error::agent-timeout must be integer seconds'; exit 1;; esac
             export FA_AGENT_TIMEOUT_SEC="$AGENT_TIMEOUT"
+            # gh-1556 rework: without this clip an operator-set base cap
+            # would be silently ignored — under watch+extension the abs
+            # ceiling alone bounds a progressing trial (base_sec is only
+            # consulted with the extension off).
+            # The watch exports are individually removable (the escape
+            # hatch back to the legacy ladder): if the ceiling export
+            # alone is gone, default it to base x4 under `set -u`
+            # (exactly what the legacy ladder would have used) before
+            # the clip — an unbound variable must not kill the shard.
+            export FA_AGENT_TIMEOUT_ABS_CEILING_SEC="${FA_AGENT_TIMEOUT_ABS_CEILING_SEC:-$((AGENT_TIMEOUT * 4))}"
+            export FA_AGENT_TIMEOUT_ABS_CEILING_SEC="$(( FA_AGENT_TIMEOUT_ABS_CEILING_SEC < AGENT_TIMEOUT * 4 ? FA_AGENT_TIMEOUT_ABS_CEILING_SEC : AGENT_TIMEOUT * 4 ))"
           fi
           case "$PROGRESS_EXTENSION" in
             ''|0|1|true|TRUE|True|yes|on|false|FALSE|False|no|off) ;;
             *) echo "::error::progress-extension must be boolean (true/false), got '$PROGRESS_EXTENSION'"; exit 1 ;;
           esac
           case "$PROGRESS_EXTENSION" in
+            # gh-1556 rework: the step env exports FA_PROGRESS_EXTENSION=1
+            # (the watch default) — an explicit false must still win by
+            # unsetting it, otherwise the input is a silent no-op.
+            false|FALSE|False|no|off) unset FA_PROGRESS_EXTENSION;;
             1|true|TRUE|True|yes|on) export FA_PROGRESS_EXTENSION=1;;
           esac
           # Pinned --job-name: one jobs/<name>/ dir per shard, so the summary

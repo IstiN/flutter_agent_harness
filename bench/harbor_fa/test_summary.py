@@ -184,6 +184,116 @@ class SummaryTest(unittest.TestCase):
         self.assertNotIn("Ledger row", out)
 
 
+class PresenceCompletenessTest(unittest.TestCase):
+    """gh-1556 AC3/AC4: completeness counts by result.json PRESENCE.
+
+    The TB 2.0 aggregate reddened on legitimate dataset-cap timeouts:
+    errored trials (a readable result.json with an exception class) counted
+    as unattempted, the exception count was a hard problem, and the only
+    way to read the report was downloading the merged artifact. Now: an
+    errored trial counts as attempted, the errored class is its own
+    breakdown line (never a verdict), exit 1 is reserved for genuinely
+    lost trials, and the full report (table + errored breakdown + ledger
+    row) renders to $GITHUB_STEP_SUMMARY.
+    """
+
+    def setUp(self):
+        self._summary_bak = os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        self._label_bak = os.environ.pop("BENCH_RUN_LABEL", None)
+        self.addCleanup(self._restore_env)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.jobs = Path(tmp.name)
+
+    def _restore_env(self):
+        if self._summary_bak is not None:
+            os.environ["GITHUB_STEP_SUMMARY"] = self._summary_bak
+        if self._label_bak is not None:
+            os.environ["BENCH_RUN_LABEL"] = self._label_bak
+
+    def _run(self, *argv) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = main(list(argv))
+        return rc, out.getvalue()
+
+    def test_errored_trials_count_as_attempted_and_do_not_redden(self):
+        # The exact TB 2.0 shape: one resolved, one unresolved, one
+        # errored at a dataset cap — all three produced a result.json.
+        make_jobs(
+            self.jobs,
+            "fa-2.0-docker-cpu-0",
+            [
+                {"resolved": True},
+                {"resolved": False},
+                {"exception": "AgentTimeoutError"},
+            ],
+        )
+        rc, out = self._run(str(self.jobs), "--family", "2.0", "--expected-trials", "3")
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 1/2 scored trials**", out)
+        self.assertIn("**Attempted: 3 trials produced a result.json "
+                      "(1 errored before a verdict", out)
+        self.assertIn("AgentTimeoutError ×1", out)
+        self.assertIn("Errored trials (harness/infra failure, not scored)", out)
+
+    def test_errored_still_counted_with_mixed_exception_classes(self):
+        # 2+ errored items with different exception classes — the
+        # breakdown lists every class, the presence count aggregates.
+        make_jobs(
+            self.jobs,
+            "fa-2.0-docker-cpu-0",
+            [
+                {"exception": "AgentTimeoutError"},
+                {"exception": "AgentTimeoutError"},
+                {"exception": "NonZeroAgentExitCodeError"},
+            ],
+        )
+        rc, out = self._run(str(self.jobs), "--family", "2.0", "--expected-trials", "3")
+        self.assertEqual(rc, 0)
+        self.assertIn("AgentTimeoutError ×2", out)
+        self.assertIn("NonZeroAgentExitCodeError ×1", out)
+        self.assertIn("0/0 scored trials", out)
+
+    def test_genuinely_lost_trials_still_fail(self):
+        # The lost-shard guard keeps its teeth: a trial with NO
+        # result.json never appears in the jobs dir at all.
+        make_jobs(self.jobs, "fa-2.0-docker-cpu-0", [{"resolved": True}])
+        rc, out = self._run(str(self.jobs), "--family", "2.0", "--expected-trials", "2")
+        self.assertEqual(rc, 1)
+        self.assertIn("Incomplete run: 1/2 expected trials attempted", out)
+
+    def test_no_jobs_still_fails(self):
+        rc, out = self._run(str(self.jobs), "--family", "2.0", "--expected-trials", "2")
+        self.assertEqual(rc, 1)
+        self.assertIn("No harbor jobs found", out)
+
+    def test_step_summary_carries_table_errored_breakdown_and_ledger(self):
+        # gh-1556 AC4 (TB1 parity): the aggregate surfaces the resolution
+        # table, the errored breakdown and the paste-ready ledger row in
+        # the job's step summary — reading a result must not require
+        # downloading the merged artifact.
+        make_jobs(
+            self.jobs,
+            "fa-2.0-docker-cpu-0",
+            [{"resolved": True}, {"exception": "AgentTimeoutError"}],
+        )
+        sink = self.jobs / "step-summary.md"
+        os.environ["GITHUB_STEP_SUMMARY"] = str(sink)
+        rc, _ = self._run(
+            str(self.jobs), "--family", "2.0", "--model", "glm-5.3-flash",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
+            "--expected-trials", "2",
+        )
+        self.assertEqual(rc, 0)
+        report = sink.read_text()
+        self.assertIn("| split | resolved | rate | tokens in/out | est cost |", report)
+        self.assertIn("Errored trials (harness/infra failure, not scored):", report)
+        self.assertIn("AgentTimeoutError ×1", report)
+        self.assertIn("### Ledger row — append to docs/bench.md", report)
+        self.assertIn("**Attempted: 2 trials produced a result.json", report)
+
+
 def _write_ledger(trial_dir: Path, items: list[dict]) -> None:
     """The hidden `task_ledger` session record exactly as the Dart side
     persists it (gh-1412): a `custom` record, customType task_ledger."""
