@@ -151,6 +151,9 @@ const builtinSlashCommands = <String, String>{
   '/memory': '[maintain] — memory stats or run consolidation',
   '/power': 'show sleep prevention (caffeinate) level and state',
   '/quota': '[refresh] — provider quota: used/limit, reset, updated',
+  '/timer':
+      '[<duration|epoch-ms>|clear] — session deadline countdown '
+      '(25m, 90s, 1h30m)',
   '/redact': '[on|off|block on|block off|stats|layers] — secret redaction',
   '/a2a': 'show A2A remote agent servers status',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',
