@@ -966,7 +966,7 @@ Future<void> _scanSessionSegment(
   final Object maybeRanged = fs;
   final ranged = maybeRanged is RangedReadFileSystem ? maybeRanged : null;
   if (ranged != null) {
-    await _scanRanged(ranged, path, accumulator, blockBytes);
+    await _scanRanged(fs, ranged, path, accumulator, blockBytes);
     return;
   }
   await _scanWholeFile(fs, path, accumulator);
@@ -988,9 +988,13 @@ Future<void> _scanWholeFile(
 }
 
 /// The ranged-read path: stat first (a missing path or a directory is
-/// an empty scan), then stream blocks.
+/// an empty scan), then stream blocks. `fileInfo` lives on the full
+/// [FileSystem] surface — [RangedReadFileSystem] only carries
+/// `readRange` (the same dual-surface shape as the session repo's
+/// `_readCustomRecordsStreamed`).
 Future<void> _scanRanged(
-  RangedReadFileSystem fs,
+  FileSystem fs,
+  RangedReadFileSystem ranged,
   String path,
   _ScanAccumulator accumulator,
   int blockBytes,
@@ -999,7 +1003,7 @@ Future<void> _scanRanged(
   if (info.isErr) return;
   final meta = info.valueOrNull;
   if (meta == null || meta.kind != FileKind.file) return;
-  await _scanFileBlocks(fs, path, accumulator, blockBytes, meta.size);
+  await _scanFileBlocks(ranged, path, accumulator, blockBytes, meta.size);
 }
 
 /// The bounded block stream: whole lines go to the accumulator as they
