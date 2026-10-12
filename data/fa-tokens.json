@@ -2502,5 +2502,15 @@
       "total": 79943,
       "model": "glm-5.3-flash"
     }
+  ],
+  "issue-1570": [
+    {
+      "leg": "dev",
+      "at": "2026-10-12T19:44:35Z",
+      "prompt": 279007,
+      "completion": 81807,
+      "total": 360814,
+      "model": "glm-5.3-flash"
+    }
   ]
 }
