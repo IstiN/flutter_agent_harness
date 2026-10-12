@@ -99,6 +99,10 @@ table>, attempts: 1` (e.g. `dataset: 2.1, tasks: fix-git, attempts: 1`).
 Once green, dispatch the full run (`tasks:` empty,
 `confirm-full-run: true` for 2.0/2.1/3.0).
 
+**gh-1556 gate (AC9)**: no full 2.1 dispatch until the gh-1556 bench
+pipeline changes land AND a smoke dispatch (`family=2.0, tasks=<smoke
+task>`) shows a green aggregate with a rendered step summary.
+
 Comparability discipline (issue #1124): a cross-version run set uses the
 **same model and the same fa bundle** (commit) for every version, and
 each ledger row names both.
@@ -126,6 +130,38 @@ substitute a CUDA sandbox. The workflow assigns them to a modal shard
 automatically (`bench/harbor_fa/split_tasks.py` reads each task's
 `task.toml` `gpus` declaration).
 
+### Timeout policy (gh-1556)
+
+Progress-watch is the bench default on every shard: the workflow exports
+`FA_PROGRESS_EXTENSION=1`, `FA_STALL_GAP_SEC=360`, and
+`FA_AGENT_TIMEOUT_ABS_CEILING_SEC=3600`, so the adapter's kill decision
+is the gap-aware `ProgressWatch` (issues #1392/#1430) — a progressing
+trial dies only at the flat 3600s absolute ceiling; a stalled one dies at
+the gap boundary. The 360s stall-gap pins the gh-1430 invariant (never
+below fa's 300s stream-idle watchdog + margin; the REG in
+`test_fa_agent_timeout.py` reads the Dart source and fails on drift).
+Removing those exports is the only way back to the legacy byte-growth
+ladder (its round-2 byte-for-byte REG stays green). Harbor's own
+dataset-declared per-task caps still apply underneath — the bench never
+overrides them (leaderboard comparability); a trial may therefore end in
+harbor's `AgentTimeoutError` without a ladder verdict, which the summary
+counts as attempted, not lost.
+
+The kill path itself is bulletproofed (gh-1556 AC1, the TB 2.0 Class-A
+score loss): the ladder kill runs `pkill -f '[f]a --session-root'`
+(bracket trick — the pre-fix plain pattern matched the exec wrapper's own
+cmdline, SIGTERMed its own shell, and the exit-143 skipped both the audit
+write and the `TimeoutError`, classifying a ladder kill as an agent
+crash), and the kill is wrapped so its failure can never replace the
+ladder's timeout classification.
+
+Deadline awareness (gh-1556 AC7): when the adapter arms a cap it also
+exports `FA_DEADLINE_EPOCH_MS` (= now + effective cap − 120s wrap-up
+margin) into the fa session, so fa can steer its own wrap-up (drain
+background jobs, land partial results) before the guillotine; the exact
+value is audited in the trial's `fa-timeout-metadata.json`. With no
+adapter cap the export is absent — fa never invents a clock.
+
 ### Cost
 
 - CPU shards: default ubuntu-latest runners (GitHub minutes; the
@@ -142,11 +178,17 @@ automatically (`bench/harbor_fa/split_tasks.py` reads each task's
    set; the job links land in the workflow logs and this is what
    tbench.ai's leaderboard reads.
 2. **Job summary** — the `Aggregate resolution rate` step writes the
-   resolution table (resolved/attempted per split + overall) to the
-   GitHub job summary (`bench/harbor_fa/summary.py`), with per-split
-   token totals and derived cost from `bench/pricing.json` (issue #1123;
-   unpriced models render n/a), followed by a paste-ready ledger row for
-   the table below. Report jobs are keyed per
+   resolution table (resolved/scored per split + overall) to the
+   GitHub job summary (`bench/harbor_fa/summary.py`, gh-1556 AC4 — TB1
+   parity: reading a result never requires downloading the merged
+   artifact), with per-split token totals and derived cost from
+   `bench/pricing.json` (issue #1123; unpriced models render n/a), an
+   errored-trials breakdown by exception class, and a paste-ready ledger
+   row for the table below. Completeness is counted by presence (AC3):
+   a trial whose `result.json` was written counts as attempted
+   regardless of exception class — the step exits 1 ONLY on genuinely
+   lost trials (no `result.json`); errored trials report as their own
+   breakdown line, never a verdict. Report jobs are keyed per
    dataset version (`fa-<family>-*` job names) — results from different
    versions never mix.
 3. **Artifacts** — `harbor-jobs-merged` carries every trial's full
