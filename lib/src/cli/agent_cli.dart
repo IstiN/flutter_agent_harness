@@ -86,6 +86,7 @@ import '../task/delivery_slo.dart';
 import '../skills/builtin_skills.dart';
 import '../skills/skill_availability.dart';
 import '../skills/skills.dart';
+import '../skills/skills_freshness.dart';
 import '../skills/operative_pins.dart' show operativePinNotice;
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
@@ -93,7 +94,8 @@ import '../prompts/prompts.g.dart'
         cliMessagingSectionPrompt,
         readSqliteSectionPrompt,
         cliPiModePrompt,
-        finalizeGateContractPrompt;
+        finalizeGateContractPrompt,
+        recallHygienePrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../wire/wire_serve.dart';
@@ -194,6 +196,8 @@ import '../tools/discover_tools_tool.dart';
 import '../tools/load_modes.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
+import '../tools/session_search_tool.dart';
+import '../session/session_search.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';
 import '../tools/inspect_image.dart';
@@ -744,6 +748,16 @@ class AgentCli {
       session: () => _session,
     );
     _toolRegistry.register(_compactExpand.tool);
+    // Session-wide archive search (issue #1380 A2): registered under the
+    // same always-registered graceful contract as ask/request_secret —
+    // the search degrades to an honest cannot-search result when no
+    // session file backs the host.
+    _toolRegistry.register(
+      sessionSearchTool(search: searchSessionArchive),
+    );
+    // Pending-wait obligations (issue #1380 AC5): a successful
+    // schedule_message arms a timer — the ledger learns why it exists.
+    _attachObligationPendingWaits();
     _agent.state.tools = _toolRegistry.tools;
     // Capability-gated availability (issue #19): the gate hides/restores
     // tools per the tools: scope stack and tombstones disabled calls; the
@@ -1492,6 +1506,23 @@ class AgentCli {
   /// Mutable: the startup consent dialog and `/skills access` change it;
   /// the host persists it via [AgentCliConfig.onSkillsAccessChanged].
   late SkillsAccess _skillsAccess = config.skillsAccess;
+
+  /// gh-1440 skills-freshness state (all derived — the session JSONL stays
+  /// byte-identical): the stat-level root fingerprint recorded at the last
+  /// discovery scan, the wall-clock stamp the prompt's skills section
+  /// renders (`scanned at` — NOT per-composition time, so an unchanged
+  /// fingerprint renders byte-identical sections), the lowercase skill
+  /// names frozen at the boot scan (the `added mid-session` baseline),
+  /// the names at the last scan (the dropped-from-disk note baseline), and
+  /// the warn-once latch for freshness-check failures plus the
+  /// malformed-file paths already warned about.
+  SkillRootsFingerprint? _skillRootsFingerprint;
+  DateTime? _skillsScannedAt;
+  Set<String>? _bootSkillNames;
+  Set<String> _lastScanSkillNames = const {};
+  bool _skillsFreshnessWarned = false;
+  bool _rescanning = false;
+  Set<String> _warnedMalformedSkillPaths = const {};
 
   /// Whether any third-party skill/agent root exists on disk — drives the
   /// one-time consent dialog and the "disabled" hint. Computed by
