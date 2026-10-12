@@ -539,23 +539,22 @@ jobs:
       # the fa-release-bot App token — a GITHUB_TOKEN push can never cascade
       # (gh-1172), the App's push can (the same mechanism ci.yml's release
       # job uses to cut tags). Job-scoped, expires with the job; this job's
-      # own GITHUB_TOKEN stays read-scoped.
-      # Skip, never fail, when the App is not configured (forks, rotation
-      # gap): the check step then runs tokenless and the script's
-      # manual-re-push alarm fires exactly as before this change.
-      # Access scope: owner/repositories default to the CURRENT repository
-      # at this action pin, so the minted token cannot leave this repo. The
-      # `permissions` ceiling input used by ci.yml's release job is NOT
-      # copied deliberately — this pin (v3.2.0, actions/logs confirm)
-      # ignores it with an "Unexpected input(s)" warning; least-privilege
-      # is enforced at JOB level (contents: read + actions: write, the
-      # job's GITHUB_TOKEN), the only permissions scope steps inherit.
+      # own GITHUB_TOKEN stays read-scoped (job-level permissions block).
+      # Shape mirrors the validator-proven precedent exactly (ci.yml release
+      # job, the create-github-app-token step): NO `if:` at all — secrets
+      # context in a step-if trips GitHub's workflow validator; and a mint
+      # on an unconfigured App (forks, rotation gap) fails, is SWALLOWED by
+      # continue-on-error, outputs.token stays empty, and the script's
+      # manual-re-push alarm fires exactly as before this change. The
+      # least-privilege ceiling rides the action's `permissions` input
+      # (contents:write covers the tag re-push), identical to the precedent.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
-        if: secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != ''
+        continue-on-error: true
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permissions: contents:write
 
       - name: Verify pub.dev serves the pubspec version
         id: check
