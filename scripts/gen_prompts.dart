@@ -104,6 +104,10 @@ const rootSpecs = <PromptSpec>[
     constName: 'pinnedOperativePrompt',
   ),
   PromptSpec(
+    source: 'prompts/compaction/recall_hygiene.md',
+    constName: 'recallHygienePrompt',
+  ),
+  PromptSpec(
     source: 'prompts/cli/mode_code.md',
     constName: 'cliCodeModePrompt',
     requiredToken: '{{cwd}}',
