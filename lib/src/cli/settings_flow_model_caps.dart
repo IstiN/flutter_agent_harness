@@ -270,6 +270,7 @@ extension ModelCapabilityCapsSettings on AgentCli {
       io.writeln('could not write $path');
       return;
     }
+    await _notifyUserConfigFileChanged();
     io.writeln('$message → $path (${applicationNote('models')})');
     await _applyCapabilityEdit(segments[2], segments[3]);
   }

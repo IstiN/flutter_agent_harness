@@ -225,13 +225,37 @@ void main() {
       final path = configFile(tmp).path;
       final before = File(path).lastModifiedSync();
       final textBefore = File(path).readAsStringSync();
-      // Give the filesystem clock room to move: an actual rewrite must
-      // bump the mtime past [before].
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // Clock-independent short-circuit proof: a real write goes through
+      // a unique `config.yaml.tmp.<pid>.<n>` file (create + rename), a
+      // short-circuit creates nothing. The directory watch reports the
+      // file-system EVENTS, not mtimes, so the assertion cannot pass
+      // vacuously on coarse-clock filesystems (gh-1572 rework). An
+      // unsupported watch platform degrades to the mtime pin below.
+      final events = <FileSystemEvent>[];
+      final watch = Directory('${tmp.path}/.fah').watch();
+      final subscription = watch.listen(
+        events.add,
+        onError: (Object _) {
+          // Unsupported platform/filesystem: the mtime pin still holds.
+        },
+        cancelOnError: true,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
       await saveCliConfig(
         tmp.path,
         saved.withCustomProviders(saved.customProviders),
       );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await subscription.cancel();
+
+      expect(
+        events.where((event) => event.path.contains('.tmp.')),
+        isEmpty,
+        reason: 'an unchanged save must not even create the temp file',
+      );
+      // The watch settle (100 ms) already gave the filesystem clock room
+      // to move: an actual rewrite must bump the mtime past [before].
       expect(File(path).lastModifiedSync(), before);
       expect(File(path).readAsStringSync(), textBefore);
     });
@@ -256,7 +280,10 @@ void main() {
     /// boot snapshot and every save go through the real file
     /// (`loadCliConfig`/`saveCliConfig`), exactly the two views
     /// bin/fah_runapp.dart holds.
-    (AgentCli, FakeCliIO) bootCli({int? contextWindowCap}) {
+    (AgentCli, FakeCliIO) bootCli({
+      int? contextWindowCap,
+      Future<void> Function()? onUserConfigFileChanged,
+    }) {
       final io = FakeCliIO();
       final cli = AgentCli(
         config: AgentCliConfig(
@@ -266,6 +293,7 @@ void main() {
           sessionRoot: '${tmp.path}/sessions',
           homeDir: tmp.path,
           contextWindowCap: contextWindowCap,
+          onUserConfigFileChanged: onUserConfigFileChanged,
         ),
         io: io,
         streamFunction: FakeStreamFunction([textTurn('ok')]).call,
@@ -341,9 +369,15 @@ void main() {
         reason: 'the clear-cap write must land on disk first',
       );
 
-      // The next persist in the same session (/mode switch, approval
-      // change, skill toggle…) saves from the BOOT snapshot.
-      await persistShapedSave(bootSnapshot);
+      // The rework wiring (bin/fah_runapp.dart): every sanctioned direct
+      // write re-syncs the snapshot via onUserConfigFileChanged (its
+      // firing from the real flow is pinned by the auto-update drop
+      // tests), so the next persist renders the freshest on-disk truth.
+      final snapshot = loadCliConfig(tmp.path);
+
+      // Any later persist trigger in the same session (/mode switch,
+      // approval change, skill toggle…).
+      await persistShapedSave(snapshot);
 
       final reloaded = loadCliConfig(tmp.path);
       expect(
@@ -371,7 +405,8 @@ void main() {
         reason: 'the key drop must land on disk first',
       );
 
-      await persistShapedSave(bootSnapshot);
+      final snapshot = loadCliConfig(tmp.path);
+      await persistShapedSave(snapshot);
 
       expect(
         loadCliConfig(tmp.path).autoUpdate,
@@ -398,12 +433,66 @@ void main() {
         reason: 'the global pick must land on disk first',
       );
 
-      await persistShapedSave(bootSnapshot);
+      final snapshot = loadCliConfig(tmp.path);
+      await persistShapedSave(snapshot);
 
       expect(
         loadCliConfig(tmp.path).compactionEngine,
         CompactionEngine.structured,
         reason: 'the pick must survive the next persist in the session',
+      );
+    });
+
+    test('the real auto-update flow fires the re-sync hook', () async {
+      // Input-free flow, both write branches: off → notify lands the
+      // DROP branch, notify → on lands the shared surgical-upsert path
+      // (`_upsertConfigYaml`). Every sanctioned user-file write must
+      // fire the hook exactly once.
+      var resyncs = 0;
+      final (cli, _) = bootCli(
+        onUserConfigFileChanged: () async => resyncs++,
+      );
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync('${ticketConfigYaml}auto_update: false\n');
+
+      cli.config.autoUpdate = AutoUpdateMode.off;
+      await cli.startAutoUpdateFlow();
+      expect(resyncs, 1, reason: 'the drop branch fires the hook');
+      expect(loadCliConfig(tmp.path).autoUpdate, AutoUpdateMode.notify);
+
+      cli.config.autoUpdate = AutoUpdateMode.notify;
+      await cli.startAutoUpdateFlow();
+      expect(resyncs, 2, reason: 'the upsert branch fires the hook');
+      expect(loadCliConfig(tmp.path).autoUpdate, AutoUpdateMode.on);
+    });
+
+    test('the flow re-sync keeps a sanctioned drop alive across a real '
+        'persist', () async {
+      // End to end: the boot snapshot, the real flow's drop, the hook
+      // re-sync (wired exactly like bin/fah_runapp.dart), then the
+      // boot-shaped persist.
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync('${ticketConfigYaml}auto_update: false\n');
+      var snapshot = loadCliConfig(tmp.path);
+      expect(snapshot.autoUpdate, AutoUpdateMode.off);
+
+      final (cli, _) = bootCli(
+        onUserConfigFileChanged: () async {
+          snapshot = loadCliConfig(tmp.path);
+        },
+      );
+      cli.config.autoUpdate = AutoUpdateMode.off;
+      await cli.startAutoUpdateFlow();
+
+      await persistShapedSave(snapshot);
+
+      expect(
+        loadCliConfig(tmp.path).autoUpdate,
+        AutoUpdateMode.notify,
+        reason: 'the drop survives the persist because the flow re-synced '
+            'the snapshot through the hook',
       );
     });
 

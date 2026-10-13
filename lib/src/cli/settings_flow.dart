@@ -2061,9 +2061,11 @@ extension SettingsFlow on AgentCli {
     }
   }
 
-  /// The clear branch: the `agent:` section's only key is
-  /// `contextWindowCap`, so clearing drops the whole top-level block
-  /// (a bare `agent:` would fail the strict diagnostics validator).
+  /// The clear branch: a surgical `removeYamlPath` of the cap key — the
+  /// sibling `agent:` keys (the load preset, the misuse-breaker kill
+  /// switch, the stuck-tool section) survive byte-for-byte; the whole
+  /// block goes only when the cap was its last member (a bare `agent:`
+  /// would fail the strict diagnostics validator).
   Future<void> _clearContextCap() async {
     if (config.contextWindowCap == null) {
       io.writeln('context cap: already off — nothing to clear');
@@ -2083,7 +2085,10 @@ extension SettingsFlow on AgentCli {
         io.writeln('cannot read $path: $error — not saved');
         return;
     }
-    final edited = _dropTopLevelBlock(source, 'agent');
+    final edited = removeYamlPath(source, const [
+      'agent',
+      'contextWindowCap',
+    ]);
     // Never persist a file the next boot would reject.
     try {
       loadYaml(edited);
@@ -2095,6 +2100,7 @@ extension SettingsFlow on AgentCli {
       io.writeln('could not write $path');
       return;
     }
+    await _notifyUserConfigFileChanged();
     io.writeln(
       'agent.contextWindowCap removed → $path (${applicationNote('agent')})',
     );
@@ -2396,6 +2402,11 @@ extension SettingsFlow on AgentCli {
       io.writeln('could not write $path');
       return false;
     }
+    // A user-file write just bypassed the host's whole-file save — fire
+    // the re-sync hook so the next persist renders this write instead of
+    // the stale boot snapshot (gh-1572 rework). Project writes touch a
+    // different file; the snapshot tracks the user one only.
+    if (!projectScope) await _notifyUserConfigFileChanged();
     io.writeln(
       '${segments.join('.')} = $value → $path '
       '(${note ?? applicationNote(segments.first)})',

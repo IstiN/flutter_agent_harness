@@ -65,6 +65,7 @@ extension SettingsAutoUpdateFlow on AgentCli {
       io.writeln('could not write $path');
       return false;
     }
+    await _notifyUserConfigFileChanged();
     io.writeln('auto_update removed → $path (notify is the default)');
     return true;
   }

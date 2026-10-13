@@ -120,6 +120,7 @@ final class AgentCliConfig {
     this.cubeSource,
     this.cubeSettings,
     this.onCubeSettingsChanged,
+    this.onUserConfigFileChanged,
     this.cubeRegistryClient,
     this.extRuntimeFactory,
     this.extBootstrapJs = '$kExtTransportStdioJs\n;\n$kExtBootstrapCoreJs',
@@ -275,6 +276,16 @@ final class AgentCliConfig {
   /// sandbox flow) so the executable can persist it. The flow awaits the
   /// hook before confirming, so persistence lands with the feedback line.
   final Future<void> Function()? onCubeSettingsChanged;
+
+  /// Called after a settings-hub flow wrote the USER config file
+  /// directly (the surgical validated-yaml upserts, the drop-key /
+  /// clear-key edits — every sanctioned write that bypasses the host's
+  /// whole-file save). Hosts holding a boot-time snapshot of the user
+  /// config re-read it here so their next whole-file save renders the
+  /// freshest on-disk truth instead of re-rendering the stale boot
+  /// values OVER the flow's write (gh-1572 rework). Null (tests, web)
+  /// makes the writes one-way.
+  final Future<void> Function()? onUserConfigFileChanged;
 
   /// Fetches one [DapHubSnapshot] (probe outcome in
   /// [DapHubSnapshot.connected]): the resolved config url/name plus the

@@ -233,7 +233,11 @@ Future<void> _runApp(List<String> args) async {
   if (home == null || home.isEmpty) {
     _fail('cannot resolve home directory; pass --session-root');
   }
-  late final CliConfig saved;
+  // gh-1572 rework: mutable — the onUserConfigFileChanged hook re-syncs
+  // it after every sanctioned settings-hub write to ~/.fah/config.yaml,
+  // so persistConfig's copyWith base never re-renders the boot values
+  // over a newer sanctioned edit.
+  late CliConfig saved;
   try {
     saved = loadCliConfig(home);
   } on ConfigException catch (error) {
@@ -1490,6 +1494,21 @@ Future<void> _runApp(List<String> args) async {
         },
         onModeChanged: (_) async => persistConfig(),
         onApprovalChanged: () async => persistConfig(),
+        // gh-1572 rework: the settings-hub flows write ~/.fah/config.yaml
+        // directly (surgical validated-yaml upserts, drop-key edits).
+        // Re-sync the boot snapshot after every sanctioned write so the
+        // next persistConfig renders the freshest on-disk truth instead
+        // of re-rendering the stale boot values over the flow's write.
+        // A reload failure (unparseable file) keeps the previous
+        // snapshot — the next save refuses loudly through its own
+        // merge-step parse, same as before this hook existed.
+        onUserConfigFileChanged: () async {
+          try {
+            saved = loadCliConfig(home);
+          } on ConfigException {
+            // Keep the previous snapshot (see above).
+          }
+        },
         // Global `tools:` toggles (`/tools <id> global`): the CLI owns the
         // live scope; persistConfig writes it back (see below).
         onToolsConfigChanged: () async => persistConfig(),
@@ -1560,7 +1579,10 @@ Future<void> _runApp(List<String> args) async {
       // spills/subagents/jobs/headless/agent/quota/tui/trajectory/waiting
       // on every boot). Only the session-live overlays are applied on
       // top; saveCliConfig's disk-preservation backstop additionally
-      // re-attaches any top-level block the emitter omits.
+      // re-attaches any top-level block the emitter omits. The rework's
+      // onUserConfigFileChanged hook keeps [saved] fresh against the
+      // sanctioned mid-session writes (settings-hub upserts and key
+      // drops), so the base never re-renders over a newer edit.
       saved.copyWith(
         // The provider/model triple is per-folder now (folder_model_state):
         // keep the LOADED seed in the global config so a `/model` or

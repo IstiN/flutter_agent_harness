@@ -1785,6 +1785,12 @@ const _diskPreservedSections = {
   // that does not carry them.
   'power',
   'auto_update',
+  // The main-model provider queue (issue #418): a top-level section the
+  // emitter can NEVER render (no CliConfig field — the queue resolver in
+  // startup.dart reads it straight from the yaml), so without the
+  // backstop any save silently deleted the user's queue. Raw-block
+  // survival, like `waiting:`/`memory:`.
+  'providersQueue',
 };
 
 /// Re-attaches the [_diskPreservedSections] blocks of [diskText] to
