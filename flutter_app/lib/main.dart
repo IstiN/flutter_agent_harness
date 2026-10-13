@@ -628,6 +628,16 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       await bootExtensionRelay(
         env: widget.env,
         onHome: (manager, registry) async {
+          // The relay restore (attach + converge + registry seed) is done
+          // by the time onHome runs — disarm the restore phase BEFORE the
+          // home navigation: pushReplacement stays pending for as long as
+          // the user sits on home, and bootExtensionRelay awaits onHome, so
+          // the finally below cannot disarm a healthy boot until home is
+          // popped (spurious "restore not completed" breadcrumbs from 10 s
+          // after every launch). The finally stays as the failure-path net
+          // (restoreDone is idempotent): a relay boot that threw never
+          // reached here.
+          kBootWatchdog.restoreDone();
           if (!mounted) return;
           AppAnalytics.instance.bootstrapResult('chat');
           final navigator = Navigator.of(context);
@@ -691,8 +701,18 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
           sessionKeys: widget.sessionKeysStore,
           providerRegistry: widget.registry,
           taskModelsStore: widget.taskModelsStore,
-        ),
-      );
+      BootSteps.mark('restore:session');
+      // The restore chain is done — disarm the watchdog's restore phase
+      // HERE, not in the finally below: `await navigator.pushReplacement`
+      // stays pending for as long as the user sits on home, so a
+      // finally-disarm would keep the phase armed for the whole session —
+      // every healthy launch would breadcrumb "restore not completed"
+      // from 10 s after boot (and widget tests that end parked on home
+      // would die on the pending restore timer). The finally remains the
+      // failure-path net (restoreDone is idempotent): a restore that
+      // THREW never reached here and is disarmed on the way out.
+      kBootWatchdog.restoreDone();
+      if (!mounted) return;
       BootSteps.mark('restore:session');
       if (!mounted) return;
       AppAnalytics.instance.bootstrapResult('chat');
@@ -730,9 +750,10 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
         setState(() => _config = null);
       }
     } finally {
-      // gh-1507: disarm the watchdog's post-frame restore phase (no-op if
-      // the first frame never landed or the restore never started) — a
-      // restore that completes never breadcrumbs, one that wedges did.
+      // gh-1507: failure-path net for the restore phase (restoreDone is
+      // idempotent — the success path already disarmed above, before the
+      // home navigation). A restore that THREW — landing on the setup
+      // form, no wedge — is disarmed here on the way out.
       kBootWatchdog.restoreDone();
     }
   }

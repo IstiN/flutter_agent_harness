@@ -25,6 +25,13 @@
 /// deadlock or event-loop starvation). A synchronously blocked main
 /// isolate suppresses both the probe and the breadcrumb — a silent
 /// watchdog does not prove a healthy boot.
+///
+/// Under `flutter test` the watchdog records phases but arms no real
+/// timers ([BootWatchdog.timersEnabled] — the test binding fails any test
+/// that ends with timers pending, and boot flows legitimately end
+/// mid-restore or parked on home); the fake_async unit suite opts back in.
+/// A silent watchdog in a widget test therefore says nothing about the
+/// arm/repeat behavior — that is what the fake_async suite is for.
 library;
 
 import 'dart:async';
@@ -94,10 +101,32 @@ final class BootWatchdog {
     this.repeatInterval = const Duration(seconds: 30),
     void Function(String message)? onBreadcrumb,
     Stopwatch? uptime,
+    bool? timersEnabled,
   }) : _onBreadcrumb =
            onBreadcrumb ??
            ((message) => debugPrint('[fah] BOOT-WATCHDOG $message')),
-       _uptime = uptime ?? BootSteps.uptime;
+       _uptime = uptime ?? BootSteps.uptime,
+       timersEnabled = timersEnabled ?? !_underTestBinding;
+
+  /// True under `flutter test` — same binding-name probe as
+  /// `app_tile_host.dart`: the flutter test binding fails ANY test whose
+  /// body ends with timers still pending (`!timersPending`), and boot
+  /// flows legitimately end with a watchdog phase still in flight (the
+  /// boot-spinner test ends mid-restore; the boot-flow tests end parked
+  /// on home). Under that binding the watchdog therefore records phases
+  /// but arms no real timers; the fake_async suite opts back in with
+  /// `timersEnabled: true` to exercise the real arm/repeat/give-up
+  /// behavior. Release builds never run under a test binding, so
+  /// production always arms.
+  static bool get _underTestBinding {
+    try {
+      return WidgetsBinding.instance.runtimeType
+          .toString()
+          .contains('TestWidgetsFlutterBinding');
+    } on FlutterError {
+      return false; // No binding (pure-Dart fake_async runs) → arm.
+    }
+  }
 
   /// First-frame threshold. The freeze report landed at ~3 s uptime, so
   /// the default sits just above a healthy cold start on a fast device;
@@ -137,9 +166,18 @@ final class BootWatchdog {
   /// firing, up to [_maxFirings]).
   final Duration repeatInterval;
 
+  /// Whether [_arm] creates real `Timer`s. Defaults to arming everywhere
+  /// EXCEPT under the flutter test binding (see [_underTestBinding]);
+  /// `timersEnabled: true` opts a test-hosted instance back into real
+  /// timers. When `false`, the phases are still recorded ([beginRestore]/
+  /// [restoreDone] keep their bookkeeping) — only the timers are left
+  /// unarmed, so nothing can fire and nothing is left pending.
+  final bool timersEnabled;
+
   final void Function(String message) _onBreadcrumb;
   final Stopwatch _uptime;
   Timer? _timer;
+  bool _installed = false;
   bool _firstFrameSeen = false;
   bool _restoreArmed = false;
   int _firings = 0;
@@ -150,7 +188,8 @@ final class BootWatchdog {
   /// — a second install on an already-armed instance is a no-op.
   void install() {
     if (_defaultThresholdMs <= 0) return;
-    if (_timer != null) return;
+    if (_installed) return;
+    _installed = true;
     WidgetsBinding.instance.addPostFrameCallback((_) => firstFrame());
     _arm(threshold, _fire);
   }
@@ -202,6 +241,10 @@ final class BootWatchdog {
   }
 
   void _arm(Duration delay, void Function() onFire) {
+    // Under the flutter test binding the phases are recorded but no real
+    // timer exists (see [timersEnabled]) — nothing can fire, nothing is
+    // left pending for the binding's `!timersPending` invariant.
+    if (!timersEnabled) return;
     _timer = Timer(delay, onFire);
   }
 

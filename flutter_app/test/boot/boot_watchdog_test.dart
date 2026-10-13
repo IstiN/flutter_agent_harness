@@ -63,6 +63,7 @@ void main() {
           threshold: const Duration(seconds: 4),
           repeatInterval: const Duration(seconds: 30),
           onBreadcrumb: breadcrumbs.add,
+          timersEnabled: true,
         );
         watchdog.install();
         expect(breadcrumbs, isEmpty);
@@ -84,6 +85,7 @@ void main() {
           threshold: const Duration(seconds: 4),
           repeatInterval: const Duration(seconds: 30),
           onBreadcrumb: breadcrumbs.add,
+          timersEnabled: true,
         );
         watchdog.install();
 
@@ -107,6 +109,7 @@ void main() {
             threshold: const Duration(seconds: 4),
             repeatInterval: const Duration(seconds: 30),
             onBreadcrumb: breadcrumbs.add,
+            timersEnabled: true,
           );
           watchdog.install();
           async.elapse(const Duration(seconds: 3));
@@ -128,6 +131,7 @@ void main() {
             threshold: const Duration(seconds: 4),
             repeatInterval: const Duration(seconds: 30),
             onBreadcrumb: breadcrumbs.add,
+            timersEnabled: true,
           );
           watchdog.install();
           async.elapse(const Duration(seconds: 10));
@@ -150,6 +154,7 @@ void main() {
           threshold: const Duration(seconds: 4),
           repeatInterval: const Duration(seconds: 30),
           onBreadcrumb: breadcrumbs.add,
+          timersEnabled: true,
         );
         watchdog.install();
         watchdog.install();
@@ -166,6 +171,7 @@ void main() {
       restoreThreshold: const Duration(seconds: 10),
       repeatInterval: const Duration(seconds: 30),
       onBreadcrumb: breadcrumbs.add,
+      timersEnabled: true,
     );
 
     test(
