@@ -1,0 +1,1 @@
+{"ts":"2026-10-13T20:35:17.561234Z","event":"scheduled","id":"1791923717559999_0000_xukskj","dueMs":1791924917560,"to":"main","text":"Check full-suite background job sh-41-hn6m9by93o16islor (dart test --exclude-tags integration) for pr-1586 rework: if finished, read the result via bash_job output and finalize outputs/response.md's \""}
