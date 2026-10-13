@@ -721,6 +721,13 @@ final class _WrapState {
   final wordParts = <_WrapPart>[];
   var wordVisible = 0;
   var col = 0;
+  // True while the current row holds ONLY a boundary space carried across
+  // the wrap (its word ended exactly at the last column): a following word
+  // that no longer fits hard-cuts across rows from here instead of pushing
+  // the space onto its own blank row, and an end-of-line row holding only
+  // the carried space is dropped like trailing whitespace (gh-1510,
+  // gh-1517 review).
+  var carriedBoundarySpace = false;
 }
 
 /// Closes the row under construction: active styles end with a reset, and
@@ -843,13 +850,23 @@ void _wrapFlushFit(_WrapState s) {
   }
 }
 
-/// Emits one accumulated word: hard-cut when it is wider than the row,
-/// else written whole after a possible single close.
+/// Emits one accumulated word: hard-cut when it is wider than the row (or
+/// no longer fits after a carried boundary space), else written whole after
+/// a possible single close. A pure-style word (zero visible width, e.g. a
+/// trailing reset after a boundary space) leaves the carried-space state
+/// untouched, so the end-of-line drop guard treats 'aaaa \x1b[0m'
+/// exactly like 'aaaa '.
 void _wrapFlushWord(_WrapState s) {
   if (s.wordParts.isEmpty) return;
-  if (s.wordVisible > s.width) {
-    // A single word longer than the width: hard-cut it across rows.
-    if (s.col > 0) _wrapCloseRow(s);
+  final carried = s.carriedBoundarySpace;
+  if (s.wordVisible > 0) s.carriedBoundarySpace = false;
+  // A word one cell short of the full width still fits after a carried
+  // space; at `width` or more it hard-cuts across rows starting here.
+  if (s.wordVisible > s.width || (carried && s.wordVisible >= s.width)) {
+    // A single word longer than the row (or than the row minus a carried
+    // boundary space): hard-cut it across rows, keeping a carried-space
+    // row open as the starting row.
+    if (s.col > 0 && !carried) _wrapCloseRow(s);
     _wrapFlushHardCut(s);
   } else {
     _wrapFlushFit(s);
@@ -946,9 +963,15 @@ List<_WrapPart> _tokenizeWrapParts(String line) {
 /// Two correctness rules beyond the escape safety:
 ///
 /// - Word-aware: breaks at spaces when possible (a hard mid-word cut only
-///   happens for a single word longer than [width]); a boundary space stays
-///   at the end of the closing row, so reassembling the rows reproduces the
-///   original text.
+///   happens for a single word longer than [width]); a boundary space that
+///   fits stays at the end of the closing row, and one that lands exactly
+///   at the wrap edge CARRIES to the continuation row (terminal autowrap)
+///   instead of being dropped — a dropped space collapses the two words in
+///   the rendered screen buffer ("memory round-tripcomplete", gh-1510).
+///   Reassembling the rows therefore reproduces the original text up to
+///   trailing whitespace — the one documented drop is a row holding only
+///   the line's trailing boundary space (invisible either way), with or
+///   without trailing SGR codes.
 /// - SGR state carries across the cut EXPLICITLY: the closed row ends with
 ///   a reset and the continuation row re-opens the active styles. dart_tui
 ///   redraws rows independently, so relying on the terminal to keep SGR
@@ -969,13 +992,21 @@ List<String> wrapAnsiLine(String line, int width) {
     if (part.isSpace) {
       _wrapFlushWord(s);
       // A boundary space ends the closing row when it fits; at the very
-      // edge it is dropped rather than becoming an invisible leading
-      // space.
+      // edge (the word filled the row exactly) it CARRIES to the
+      // continuation row — terminal autowrap — so the rendered screen
+      // buffer keeps the separating space instead of collapsing the
+      // words (gh-1510). A further space keeps the carried state (a
+      // multi-space run fills the continuation row before wrapping), as
+      // do trailing SGR codes (handled in _wrapFlushWord); only a
+      // visible word ends it.
       if (s.col + 1 <= width) {
         s.row.write(' ');
         s.col++;
       } else {
         _wrapCloseRow(s);
+        s.row.write(' ');
+        s.col = 1;
+        s.carriedBoundarySpace = true;
       }
     } else {
       s.wordParts.add(part);
@@ -983,8 +1014,10 @@ List<String> wrapAnsiLine(String line, int width) {
     }
   }
   _wrapFlushWord(s);
-  // A row holding only re-emitted SGR codes (no visible columns) is dropped.
-  if (s.col > 0) _wrapCloseRow(s);
+  // A row holding only re-emitted SGR codes (no visible columns), or only
+  // a trailing boundary space (the line's trailing whitespace — invisible
+  // either way), is dropped.
+  if (s.col > 0 && !s.carriedBoundarySpace) _wrapCloseRow(s);
   return s.rows;
 }
 
