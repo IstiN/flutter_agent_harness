@@ -11,6 +11,7 @@
 @Timeout(Duration(minutes: 5))
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
@@ -23,7 +24,7 @@ void main() {
     'PTY: scroll-up mid-run holds the fold, arrivals count, End returns live',
     () async {
       final tempHome = Directory.systemTemp.createTempSync('fa_tui_1439_');
-      final workspace = Directory('/tmp').createTempSync('fa1439ws');
+      final workspace = Directory.systemTemp.createTempSync('fa1439ws');
       addTearDown(() => workspace.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
         // Turn 1 seeds a transcript taller than the viewport (24 rows ->
@@ -131,18 +132,38 @@ tui:
       // itself is a textless `─` rule — gh-1446 retracted the #827
       // "N lines above fold" hint words, so no fold text ever returns.
       harness.sendText('\x1b[F'); // end
-      await Future<void>.delayed(const Duration(milliseconds: 1500));
-      final live = harness.screenText;
-      expect(
-        live,
-        isNot(contains(RegExp(r'● \d+ new'))),
-        reason: 'the counter resets when the unseen tail is revealed',
+      // The re-engage frame rides the 10 Hz spinner repaints, so a blind
+      // sleep + ONE screen sample races the paint path — the exact flake
+      // (#1467: the red runs sampled the glass once, 1500 ms after End).
+      // Anchor on the post-gh-1446 re-engage observable itself: the
+      // TEXTLESS fold rule at the indicator slot pinned by the LIVE board
+      // summary directly under it. The held rule carries percent/counter
+      // TEXT on that same row, so the pair can only match once the fold
+      // actually re-engaged — a true proof, not a chrome echo (a bare
+      // `^─+$` anchor would match the legacy chrome rule in every frame
+      // and prove nothing). The guard stays: a fold that never
+      // re-engages fails LOUDLY on the wait, with the screen attached.
+      final foldLive = RegExp(
+        r'^─+\n.{0,4}Background jobs \(\d+\)',
+        multiLine: true,
       );
-      expect(
-        live,
-        isNot(contains(RegExp(r'\d+% · '))),
-        reason: 'the held percent rule leaves the glass on re-engage',
-      );
+      String live;
+      try {
+        live = await harness.waitForScreen(
+          foldLive,
+          timeout: const Duration(seconds: 10),
+        );
+      } on TimeoutException {
+        // One lost PTY keypress is transport, not product: retry the
+        // navigation key once, then still demand the live fold row.
+        harness.sendText('\x1b[F'); // end (retry)
+        live = await harness.waitForScreen(
+          foldLive,
+          timeout: const Duration(seconds: 30),
+        );
+      }
+      // The anchored capture IS the re-engage proof (capture, don't
+      // re-read — the gh-1049 convention).
       expect(
         live,
         isNot(contains('above fold')),
@@ -157,8 +178,25 @@ tui:
             'the reserved fold row renders as a plain rule — chrome, '
             'not content (gh-1446 AC1 byte-scan contract)',
       );
+      // Absence assertions need a SETTLED screen (the #550/#557 family —
+      // the cell-diff path repaints only changed cells, so the pre-End
+      // held rule can linger one frame after the re-engage). The textless
+      // fold rule is a SUSTAINED live-edge row, so the settle keeps the
+      // re-engaged shape on the glass.
+      await harness.waitForOutput(settleMs: 400);
+      final settledLive = harness.screenText;
       expect(
-        live,
+        settledLive,
+        isNot(contains(RegExp(r'● \d+ new'))),
+        reason: 'the counter resets when the unseen tail is revealed',
+      );
+      expect(
+        settledLive,
+        isNot(contains(RegExp(r'\d+% · '))),
+        reason: 'the held percent rule leaves the glass on re-engage',
+      );
+      expect(
+        settledLive,
         contains('Background jobs'),
         reason:
             're-engage lands on the LIVE edge: the busy tail is on '
