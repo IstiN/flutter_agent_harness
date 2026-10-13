@@ -1033,8 +1033,12 @@ void main() {
         );
         // Absolute budget (the issue's open-budget form): warmed runs do
         // this in well under 100ms; even a cold JIT-tier cliff stays
-        // under 3s. The pre-#1497 shape measured 31s for the same loop.
-        expect(sw.elapsed, lessThan(const Duration(seconds: 8)));
+        // under 3s (M4 Pro). The pre-#1497 shape measured 31s for the
+        // same loop. 12s (not 8s): a loaded CI runner measured 8.82s for
+        // this same green path (~4x this box) — the quadratic shape still
+        // fails at >=31s, and the row-copy envelope above is the primary
+        // guard regardless.
+        expect(sw.elapsed, lessThan(const Duration(seconds: 12)));
       },
     );
 

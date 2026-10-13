@@ -130,7 +130,9 @@ final class TrajectorySnapshotBuilder {
   bool _reqResort = false;
 
   /// Dirty-position sentinel: no cached position touched yet.
-  static const int _reqUntouched = 1 << 60;
+  // Literal, not `1 << 60`: dart2js shifts are 32-bit — 0 on web would make
+  // every cached position look dirty (issue #1074).
+  static const int _reqUntouched = 0x1000000000000000;
 
   /// How many snapshots [_snapshot] has materialized. Hosts bulk-loading a
   /// session must see exactly one; the per-append live tail grows this by
