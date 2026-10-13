@@ -21,7 +21,8 @@ import '../../bin/self_manage.dart';
 /// SHA-256). Static data — nothing is signed at test time.
 
 /// The test signing key's public half: the `pem:` injection target.
-const _testPem = '-----BEGIN PUBLIC KEY-----\n'
+const _testPem =
+    '-----BEGIN PUBLIC KEY-----\n'
     'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0oDyFPqAfPdV6/EXT7Sa\n'
     '/lkqlJUA1chgVeOv3HAPMfOZR5203eS8ObjYEI38WtJHTV8hGYqCHBzv7iJHz1+b\n'
     'dYf4ky1wpsza5zIsIERmPvGTkJhCeqYfOY7NauOQ9S+6oJDsUn2U4c2/3w6nv7jl\n'
@@ -135,9 +136,7 @@ void main() {
       final destDir = args.last;
       final archiveFile = args[args.indexOf('-xzf') + 1];
       final data = File(archiveFile).readAsBytesSync();
-      final decoded = TarDecoder().decodeBytes(
-        GZipDecoder().decodeBytes(data),
-      );
+      final decoded = TarDecoder().decodeBytes(GZipDecoder().decodeBytes(data));
       for (final entry in decoded) {
         if (entry.isFile) {
           final parts = entry.name.split('/');
@@ -149,7 +148,6 @@ void main() {
     }
     return ProcessResult(0, 0, '', '');
   }
-
 
   group('classifyInstall', () {
     test('a .dart script is a dev run', () {
@@ -586,33 +584,37 @@ void main() {
   });
 
   group('copyBundleLibs (gh-1574 installer layout)', () {
-    test('installs bundle libs where the binary looks: <installDir>/../lib',
-        () async {
-      final tmp = await Directory.systemTemp.createTemp('fa_bundle_libs');
-      try {
-        final bundle = Directory('${tmp.path}/bundle')
-          ..createSync(recursive: true);
-        File('${bundle.path}/lib/libsqlite3.dylib')
-            .writeAsStringSync('dylib');
-        File('${bundle.path}/lib/libsqlite3.so').writeAsStringSync('so');
-        final installDir = Directory('${tmp.path}/home/.local/bin')
-          ..createSync(recursive: true);
-        File('${installDir.path}/fa').writeAsStringSync('exe');
+    test(
+      'installs bundle libs where the binary looks: <installDir>/../lib',
+      () async {
+        final tmp = await Directory.systemTemp.createTemp('fa_bundle_libs');
+        try {
+          final bundle = Directory('${tmp.path}/bundle')
+            ..createSync(recursive: true);
+          Directory('${bundle.path}/lib').createSync();
+          File(
+            '${bundle.path}/lib/libsqlite3.dylib',
+          ).writeAsStringSync('dylib');
+          File('${bundle.path}/lib/libsqlite3.so').writeAsStringSync('so');
+          final installDir = Directory('${tmp.path}/home/.local/bin')
+            ..createSync(recursive: true);
+          File('${installDir.path}/fa').writeAsStringSync('exe');
 
-        await copyBundleLibs(bundle, installDir);
+          await copyBundleLibs(bundle, installDir);
 
-        // The AOT binary's native-assets resolver reads <exe_dir>/../lib —
-        // with the exe at <installDir>/fa that is <installDir>/../lib.
-        final libDir = Directory('${installDir.parent.path}/lib');
-        expect(
-          File('${libDir.path}/libsqlite3.dylib').readAsStringSync(),
-          'dylib',
-        );
-        expect(File('${libDir.path}/libsqlite3.so').readAsStringSync(), 'so');
-      } finally {
-        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
-      }
-    });
+          // The AOT binary's native-assets resolver reads <exe_dir>/../lib —
+          // with the exe at <installDir>/fa that is <installDir>/../lib.
+          final libDir = Directory('${installDir.parent.path}/lib');
+          expect(
+            File('${libDir.path}/libsqlite3.dylib').readAsStringSync(),
+            'dylib',
+          );
+          expect(File('${libDir.path}/libsqlite3.so').readAsStringSync(), 'so');
+        } finally {
+          if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+        }
+      },
+    );
 
     test('does not install bundle libs beside the binary '
         '(the broken gh-1574 layout)', () async {
@@ -620,16 +622,20 @@ void main() {
       try {
         final bundle = Directory('${tmp.path}/bundle')
           ..createSync(recursive: true);
-        File('${bundle.path}/lib/libsqlite3.dylib')
-            .writeAsStringSync('dylib');
+        Directory('${bundle.path}/lib').createSync();
+        File('${bundle.path}/lib/libsqlite3.dylib').writeAsStringSync('dylib');
         final installDir = Directory('${tmp.path}/home/.local/bin')
           ..createSync(recursive: true);
 
         await copyBundleLibs(bundle, installDir);
 
-        expect(Directory('${installDir.path}/lib').existsSync(), isFalse,
-            reason: 'libs must not land in <installDir>/lib — the binary '
-                'looks in <exe_dir>/../lib (gh-1574)');
+        expect(
+          Directory('${installDir.path}/lib').existsSync(),
+          isFalse,
+          reason:
+              'libs must not land in <installDir>/lib — the binary '
+              'looks in <exe_dir>/../lib (gh-1574)',
+        );
       } finally {
         if (tmp.existsSync()) tmp.deleteSync(recursive: true);
       }
@@ -645,7 +651,10 @@ void main() {
 
         await copyBundleLibs(bundle, installDir);
 
-        expect(Directory('${installDir.parent.path}/lib').existsSync(), isFalse);
+        expect(
+          Directory('${installDir.parent.path}/lib').existsSync(),
+          isFalse,
+        );
       } finally {
         if (tmp.existsSync()) tmp.deleteSync(recursive: true);
       }
@@ -659,28 +668,42 @@ void main() {
     // <install_dir>/../lib — never <install_dir>/lib (gh-1574).
     test('install_local.sh targets <INSTALL_DIR>/../lib', () {
       final script = File('install_local.sh').readAsStringSync();
-      expect(script, contains(r'"$INSTALL_DIR/../lib/"'),
-          reason: 'bundle libs must be copied to <install_dir>/../lib');
-      expect(script.contains(r'"$INSTALL_DIR/lib"'), isFalse,
-          reason: 'installing into <install_dir>/lib is the gh-1574 bug — '
-              'the binary looks in <exe_dir>/../lib');
+      expect(
+        script,
+        contains(r'"$INSTALL_DIR/../lib/"'),
+        reason: 'bundle libs must be copied to <install_dir>/../lib',
+      );
+      expect(
+        script.contains(r'"$INSTALL_DIR/lib"'),
+        isFalse,
+        reason:
+            'installing into <install_dir>/lib is the gh-1574 bug — '
+            'the binary looks in <exe_dir>/../lib',
+      );
     });
 
     test('site/install.sh targets <install_dir>/../lib', () {
       final script = File('site/install.sh').readAsStringSync();
-      expect(script, contains(r'lib_dir="$install_dir/../lib"'),
-          reason: 'bundle libs must be copied to <install_dir>/../lib');
-      expect(script.contains(r'"$install_dir/lib"'), isFalse,
-          reason: 'installing into <install_dir>/lib is the gh-1574 bug — '
-              'the binary looks in <exe_dir>/../lib');
+      expect(
+        script,
+        contains(r'lib_dir="$install_dir/../lib"'),
+        reason: 'bundle libs must be copied to <install_dir>/../lib',
+      );
+      expect(
+        script.contains(r'"$install_dir/lib"'),
+        isFalse,
+        reason:
+            'installing into <install_dir>/lib is the gh-1574 bug — '
+            'the binary looks in <exe_dir>/../lib',
+      );
     });
 
-    test('site/install.ps1 keeps <installDir>\lib (exe lives in bin/)', () {
+    test('site/install.ps1 keeps <installDir>\\lib (exe lives in bin/)', () {
       // Windows is correct already: the exe goes to <root>\bin\fa.exe, so
       // the native-assets lookup <exe_dir>\..\lib resolves to <root>\lib.
       final script = File('site/install.ps1').readAsStringSync();
-      expect(script, contains('Join-Path $installDir "lib"'));
-      expect(script, contains('Join-Path $installDir "bin"'));
+      expect(script, contains(r'Join-Path $installDir "lib"'));
+      expect(script, contains(r'Join-Path $installDir "bin"'));
     });
   });
 
@@ -1048,8 +1071,7 @@ void main() {
         currentVersion: '0.1.0',
         launchArgs: const [],
         statePath: '${temp.path}/update-state.json',
-        detectInstall: () =>
-            const Install(InstallKind.devRun, 'bin/fah.dart'),
+        detectInstall: () => const Install(InstallKind.devRun, 'bin/fah.dart'),
         newClient: () => client,
       );
       expect(outcome, ApplyUpdateOutcome.refusedDevRun);
@@ -1110,10 +1132,8 @@ void main() {
     test('an unspawnable successor fails without throwing', () async {
       final started = await spawnSuccessor(
         launchArgs: const [],
-        spawn: (exe, args) => Process.start(
-          '${temp.path}/definitely-missing-binary',
-          const [],
-        ),
+        spawn: (exe, args) =>
+            Process.start('${temp.path}/definitely-missing-binary', const []),
       );
       expect(started, isFalse);
     });
@@ -1138,10 +1158,7 @@ void main() {
 
     test('never throws when the log directory cannot be created', () {
       final blocker = File('${temp.path}/blocker')..writeAsStringSync('x');
-      expect(
-        () => logUpdateLine('nope', home: blocker.path),
-        returnsNormally,
-      );
+      expect(() => logUpdateLine('nope', home: blocker.path), returnsNormally);
     });
   });
 
@@ -1156,10 +1173,8 @@ void main() {
         final outcome = await applyUpdate(
           currentVersion: '1.0.522',
           launchArgs: const ['--session', 'live'],
-          detectInstall: () => Install(
-            InstallKind.pubGlobal,
-            '${temp.path}/pub-cache/bin/fa',
-          ),
+          detectInstall: () =>
+              Install(InstallKind.pubGlobal, '${temp.path}/pub-cache/bin/fa'),
           newClient: () => releaseClient(),
           runProcess: (exe, args) async {
             runCalls.add((exe, args));
@@ -1186,10 +1201,7 @@ void main() {
             if (args.length >= 3) args[2],
         ];
         expect(verbs, containsAll(['list', 'activate']));
-        expect(
-          verbs.where((v) => v == 'deactivate'),
-          isEmpty,
-        );
+        expect(verbs.where((v) => v == 'deactivate'), isEmpty);
         // The successor exe is the PATH shim (never the dart VM), and the
         // original argv — with the live session — rides through.
         final (spawnExe, spawnArgs) = spawnCalls.single;
@@ -1364,10 +1376,12 @@ void main() {
 
   group('successorArgs', () {
     test('appends the live session when the argv carries none', () {
-      expect(
-        successorArgs(const ['-p', 'hi'], 's1'),
-        const ['-p', 'hi', '--session', 's1'],
-      );
+      expect(successorArgs(const ['-p', 'hi'], 's1'), const [
+        '-p',
+        'hi',
+        '--session',
+        's1',
+      ]);
     });
 
     test('passes the argv through unchanged without a session id', () {
@@ -1375,18 +1389,14 @@ void main() {
       expect(identical(successorArgs(argv, null), argv), isTrue);
     });
 
-    test(
-      'never double-flags when the argv already resumes a session',
-      () {
-        expect(
-          successorArgs(const ['--session', 'other'], 's1'),
-          const ['--session', 'other'],
-        );
-        expect(
-          successorArgs(const ['--session=other'], 's1'),
-          const ['--session=other'],
-        );
-      },
-    );
+    test('never double-flags when the argv already resumes a session', () {
+      expect(successorArgs(const ['--session', 'other'], 's1'), const [
+        '--session',
+        'other',
+      ]);
+      expect(successorArgs(const ['--session=other'], 's1'), const [
+        '--session=other',
+      ]);
+    });
   });
 }

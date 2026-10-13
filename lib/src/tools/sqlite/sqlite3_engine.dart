@@ -13,11 +13,32 @@ import 'sqlite_reader.dart';
 
 /// A [SqliteEngine] opening databases through `package:sqlite3` (FFI).
 final class Sqlite3Engine implements SqliteEngine {
-  /// Creates an engine.
-  const Sqlite3Engine();
+  /// Creates an engine. [openOverride] replaces the real `sqlite3.open`
+  /// (test seam for simulating native-assets library-load failures).
+  const Sqlite3Engine({SqliteOpen? openOverride})
+    : _openOverride = openOverride;
+
+  final SqliteOpen? _openOverride;
 
   @override
   SqliteDatabase openReadOnly(String path) {
+    try {
+      return (_openOverride ?? _openBundledLibrary)(path);
+    } on ArgumentError catch (error) {
+      // gh-1574: a missing bundled libsqlite3 (installers must place it in
+      // <exe_dir>/../lib) surfaces as the ffi resolver's ArgumentError —
+      // degrade to the clean sqlite-unavailable note instead of the raw FFI
+      // dump. A Dart-level system-library fallback is not possible with
+      // package:sqlite3 native assets (bindings resolve via the build-time
+      // asset mapping; no loader override), so the repair is the layout.
+      if (isSqliteDynamicLibraryLoadFailure(error)) {
+        throw StateError(sqliteUnavailableMessage(path));
+      }
+      rethrow;
+    }
+  }
+
+  static SqliteDatabase _openBundledLibrary(String path) {
     final db = sqlite3.open(path, mode: OpenMode.readOnly);
     db.execute('PRAGMA busy_timeout = $sqliteBusyTimeoutMs');
     return _Sqlite3Database(db);
