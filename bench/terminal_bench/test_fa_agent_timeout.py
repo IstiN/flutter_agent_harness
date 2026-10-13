@@ -982,6 +982,58 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         self.assertNotIn("knobs", audit)
         self.assertEqual(audit["cap_resolution"]["winning_cap_source"], "external")
 
+    def test_harness_timeout_stock_run_audits_external_kill(self):
+        # Review round 2: knobs=None means the adapter never supervises —
+        # an agent_timeout classification is the HARNESS's own kill (it
+        # came from outside the adapter), so the audit must say the
+        # recognized verdict `external_kill`. The raw failure-mode string
+        # is absent from both honesty-justified sets (summary.py /
+        # post_mortem_usage.py) and reads as a false "killed while
+        # progressing" contradiction (the gh-1556 lesson).
+        logging_dir = Path(self.tmpdir.name)
+        agent = self._agent()
+        session = FakeTmuxSession()
+        sentinel = types.SimpleNamespace(
+            failure_mode=self.legacy_fa.FailureMode.AGENT_TIMEOUT
+        )
+        env = clean_env_all(
+            FA_PROVIDER_CONFIG="{}",
+            **{fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+        )
+        with mock.patch.dict(os.environ, env), mock.patch.object(
+            self.legacy_fa.AbstractInstalledAgent, "perform_task",
+            side_effect=lambda *a, **k: sentinel,
+        ):
+            agent.perform_task("instr", session, logging_dir)
+        audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
+        self.assertEqual(audit["outcome"], "external_kill")
+        self.assertEqual(audit["policy"], "external-cap")
+
+    def test_other_failure_modes_stay_raw_in_the_stock_audit(self):
+        # Only the harness-timeout class maps to a recognized verdict;
+        # every other failure mode stays raw — the harness's own
+        # classification IS the truthful outcome (those rows never pass
+        # the agent_timeout honesty filter).
+        logging_dir = Path(self.tmpdir.name)
+        agent = self._agent()
+        session = FakeTmuxSession()
+        sentinel = types.SimpleNamespace(
+            failure_mode=self.legacy_fa.FailureMode.UNKNOWN_AGENT_ERROR
+        )
+        env = clean_env_all(
+            FA_PROVIDER_CONFIG="{}",
+            **{fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+        )
+        with mock.patch.dict(os.environ, env), mock.patch.object(
+            self.legacy_fa.AbstractInstalledAgent, "perform_task",
+            side_effect=lambda *a, **k: sentinel,
+        ):
+            agent.perform_task("instr", session, logging_dir)
+        audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
+        self.assertEqual(
+            audit["outcome"], str(self.legacy_fa.FailureMode.UNKNOWN_AGENT_ERROR.value)
+        )
+
     def test_no_cap_no_knobs_stock_run_stays_byte_identical(self):
         # AC5/REG-2: no cap, no knobs — no export, no audit.
         logging_dir = Path(self.tmpdir.name)

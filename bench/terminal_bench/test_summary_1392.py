@@ -266,6 +266,25 @@ class ScoreHonestyTest(unittest.TestCase):
         _, problems = summary.render(self.runs)
         self.assertEqual(problems, [])
 
+    def test_running_checkpoint_residue_is_not_a_contradiction(self):
+        # gh-1576 E3 (review round 2): the incremental "running"
+        # checkpoints are the residue a SIGKILL leaves behind — the
+        # harness killed the trial before any final write landed. A
+        # checkpoint names NO bench kill (it is the "no verdict yet"
+        # truth), so a checkpoint-only audit can never read as a
+        # bench-inflicted contradiction on an agent_timeout row.
+        _results(
+            self.runs / "shard-0",
+            [_row("t1", "t1__trial", mode="agent_timeout")],
+        )
+        _session(self.runs, "t1", "t1__trial", [60, 90])
+        trial_dir = self.runs / "shard-0" / "t1" / "t1__trial"
+        (trial_dir / "fa-agent-timeout.json").write_text(
+            json.dumps({"outcome": "running", "checkpoint": True})
+        )
+        _, problems = summary.render(self.runs)
+        self.assertEqual(problems, [])
+
     def test_missing_session_data_degrades_silently(self):
         # E4: no session logs at all -> no crash, no contradiction claim.
         _results(
