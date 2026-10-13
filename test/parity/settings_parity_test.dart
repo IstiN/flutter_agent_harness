@@ -31,6 +31,21 @@ void main() {
     setUpAll(() async {
       cliSource = await readAllDart('lib/src/cli');
       appSource = await readAllDart('flutter_app/lib');
+      // Issue #1079 slice 5: the app constructs its stack through the
+      // shared builder, so the interactive tool factories register in the
+      // builder's assembly — not in either shell. Scan the assembly region
+      // with the app tree (the shells' half is the callback services they
+      // pass, asserted below).
+      final wiring = await File(
+        'lib/src/hosts/host_agent_wiring.dart',
+      ).readAsString();
+      final assemblyStart = wiring.indexOf('List<AgentTool> _buildCoreTools(');
+      assert(
+        assemblyStart >= 0,
+        'host_agent_wiring.dart: tool assembly moved — update the parity '
+        'slice',
+      );
+      appSource += wiring.substring(assemblyStart);
     });
 
     test('every SharedSetting is present in the CLI unless exempted', () {
@@ -124,7 +139,9 @@ void main() {
 
     test('interactive tool factories are called by both platforms', () {
       // askTool and requestSecretTool are the two interactive tools that
-      // require a host callback. Both platforms must register them.
+      // require a host callback. Issue #1079 slice 5: BOTH hosts construct
+      // through the builder, so the factories register in the builder's
+      // assembly — each shell's half is the callback service it passes.
       expect(
         cliSource,
         contains('askTool('),
@@ -138,12 +155,26 @@ void main() {
       expect(
         appSource,
         contains('askTool('),
-        reason: 'App must register askTool.',
+        reason: 'The builder assembly must register askTool.',
       );
       expect(
         appSource,
         contains('requestSecretTool('),
-        reason: 'App must register requestSecretTool.',
+        reason: 'The builder assembly must register requestSecretTool.',
+      );
+      // The shells hand over their handlers (agent_cli.dart: onAsk/onRequestSecret;
+      // the app: the host-builder part's services).
+      expect(
+        appSource,
+        contains('onAsk:'),
+        reason: 'App must pass its ask callback service to the builder.',
+      );
+      expect(
+        appSource,
+        contains('onRequestSecret:'),
+        reason:
+            'App must pass its request_secret callback service to the '
+            'builder.',
       );
     });
   });
