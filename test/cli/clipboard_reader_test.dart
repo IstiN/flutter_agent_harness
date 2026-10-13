@@ -85,18 +85,20 @@ void main() {
     expect((read as PasteboardImage).bytes, _pngish);
   });
 
-  test('the macOS path falls through PNG to JPEG to TIFF, then gives up',
-      () async {
-    var calls = 0;
-    Future<ProcessResult> runner(String exe, List<String> args) async {
-      calls++;
-      return ProcessResult(1, 1, '', 'clipboard holds no image');
-    }
+  test(
+    'the macOS path falls through PNG to JPEG to TIFF, then gives up',
+    () async {
+      var calls = 0;
+      Future<ProcessResult> runner(String exe, List<String> args) async {
+        calls++;
+        return ProcessResult(1, 1, '', 'clipboard holds no image');
+      }
 
-    final read = await readPasteboardImage(runner: runner, platform: 'macos');
-    expect(calls, 3, reason: 'PNGf tried, then JPEG, then the TIFF fallback');
-    expect(read, isA<PasteboardUnavailable>());
-  });
+      final read = await readPasteboardImage(runner: runner, platform: 'macos');
+      expect(calls, 3, reason: 'PNGf tried, then JPEG, then the TIFF fallback');
+      expect(read, isA<PasteboardUnavailable>());
+    },
+  );
 
   // --- gh-1575: a TIFF-only pasteboard (Preview, browsers) must paste ---
 
@@ -195,6 +197,76 @@ void main() {
     expect(read, isA<PasteboardUnavailable>());
     expect((read as PasteboardUnavailable).reason, contains('xclip'));
   });
+
+  // --- gh-1575 review: the text backends must be encoding- and type-pinned ---
+
+  test('the Windows text command pins UTF-8 on the console encoding', () async {
+    String? command;
+    Future<ProcessResult> runner(String exe, List<String> args) async {
+      expect(exe, 'powershell');
+      command = args.last;
+      return _ok(utf8.encode('windows text\r\n'));
+    }
+
+    await readPasteboardText(runner: runner, platform: 'windows');
+    // Windows PowerShell 5.1 writes redirected stdout in the OEM code
+    // page; without this pin every non-ASCII clipboard character lands
+    // in the composer as U+FFFD (review important 2).
+    expect(
+      command,
+      contains('[Console]::OutputEncoding=[System.Text.Encoding]::UTF8'),
+    );
+    expect(command, contains('Get-Clipboard'));
+  });
+
+  test('the Windows text path normalizes embedded CRLF to LF', () async {
+    Future<ProcessResult> runner(String exe, List<String> args) async =>
+        _ok(utf8.encode('line one\r\nline two\r\n'));
+
+    final read = await readPasteboardText(runner: runner, platform: 'windows');
+    // Get-Clipboard formats every line with \r\n — the composer must see
+    // the same text the clipboard held, not a \r-riddled one (review
+    // important 2, secondary).
+    expect((read as PasteboardText).text, 'line one\nline two');
+  });
+
+  test('the Linux text backends pin the text content type', () async {
+    final calls = <(String, List<String>)>[];
+    Future<ProcessResult> runner(String exe, List<String> args) async {
+      calls.add((exe, args));
+      return calls.length == 1
+          ? ProcessResult(1, 1, '', 'nope')
+          : _ok(utf8.encode('wayland text'));
+    }
+
+    final read = await readPasteboardText(runner: runner, platform: 'linux');
+    expect(read, isA<PasteboardText>());
+    expect(calls, hasLength(2));
+    final (xclipExe, xclipArgs) = calls[0];
+    final (wlExe, wlArgs) = calls[1];
+    expect(xclipExe, 'xclip');
+    // Unpinned xclip defaults to STRING; wl-paste without --type pastes
+    // the FIRST MIME the source offers — for an image-only clipboard the
+    // raw image bytes, which used to reach the composer as "text"
+    // (review important 3). Pinned, both fail cleanly instead.
+    expect(xclipArgs, containsAll(['-t', 'text/plain;charset=utf-8']));
+    expect(wlExe, 'wl-paste');
+    expect(wlArgs, containsAllInOrder(['--type', 'text/plain;charset=utf-8']));
+  });
+
+  test(
+    'an image-only Linux clipboard is not dumped into the composer',
+    () async {
+      // With the type pin, a clipboard holding only image MIME fails both
+      // backends (exit 1) — the named reason, never decoded image bytes.
+      Future<ProcessResult> runner(String exe, List<String> args) async =>
+          ProcessResult(1, 1, const <int>[], 'target not available');
+
+      final read = await readPasteboardText(runner: runner, platform: 'linux');
+      expect(read, isA<PasteboardUnavailable>());
+      expect((read as PasteboardUnavailable).reason, contains('xclip'));
+    },
+  );
 
   test('the pinned platform falls through to the platform note', () async {
     final read = await readPasteboardImage(

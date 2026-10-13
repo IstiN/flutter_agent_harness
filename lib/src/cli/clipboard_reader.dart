@@ -15,9 +15,11 @@
 /// - `readPasteboardText` reads the clipboard's plain text the same way
 ///   (`pbpaste` / `xclip`+`wl-paste` / PowerShell `Get-Clipboard`) — the
 ///   Ctrl+V text fallback when the image probe misses (gh-1575).
-/// - `FA_FAKE_PASTEBOARD=<path>` short-circuits everything and reads that
-///   file — the test seam for the PTY golden tests (and handy for
-///   debugging on a headless box).
+/// - `FA_FAKE_PASTEBOARD=<path>` short-circuits the IMAGE read: that file
+///   is returned as-is — the test seam for the PTY golden tests (and handy
+///   for debugging on a headless box). The TEXT read has no fake seam —
+///   it consults only the real platform pasteboard (script it with the
+///   injected [ProcessRunner]).
 library;
 
 import 'dart:convert';
@@ -268,9 +270,16 @@ PasteboardRead _textFromStdout(ProcessResult result) {
 }
 
 Future<PasteboardRead> _readLinuxText(ProcessRunner runner) async {
+  // Type-pinned like the image path (gh-1575 review): unpinned wl-paste
+  // pastes the FIRST MIME the source offers — for an image-only clipboard
+  // the raw image bytes would reach the composer as "text". Pinned, both
+  // backends fail cleanly and the named reason prints instead.
   for (final (executable, args) in [
-    ('xclip', ['-selection', 'clipboard', '-o']),
-    ('wl-paste', ['--no-newline']),
+    (
+      'xclip',
+      ['-selection', 'clipboard', '-t', 'text/plain;charset=utf-8', '-o'],
+    ),
+    ('wl-paste', ['--type', 'text/plain;charset=utf-8', '--no-newline']),
   ]) {
     final read = _textFromStdout(await runner(executable, args));
     if (read is PasteboardText) return read;
@@ -281,18 +290,28 @@ Future<PasteboardRead> _readLinuxText(ProcessRunner runner) async {
 }
 
 Future<PasteboardRead> _readWindowsText(ProcessRunner runner) async {
+  // Pin the console encoding (gh-1575 review): Windows PowerShell 5.1
+  // writes redirected stdout in the OEM code page, so a UTF-8 decode of
+  // an unpinned read mojibakes every non-ASCII character.
   final read = _textFromStdout(
-    await runner('powershell', ['-NoProfile', '-Command', 'Get-Clipboard']),
+    await runner('powershell', [
+      '-NoProfile',
+      '-Command',
+      '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Get-Clipboard',
+    ]),
   );
   if (read is! PasteboardText) return read;
   // PowerShell's output formatter appends exactly one newline to the
-  // captured stream — the clipboard text itself never carries it.
+  // captured stream — the clipboard text itself never carries it — and
+  // formats every embedded line break as `\r\n`; normalize to `\n` (the
+  // composer inserts verbatim, no `\r` normalization downstream).
   var text = read.text;
   if (text.endsWith('\r\n')) {
     text = text.substring(0, text.length - 2);
   } else if (text.endsWith('\n')) {
     text = text.substring(0, text.length - 1);
   }
+  text = text.replaceAll('\r\n', '\n');
   if (text.isEmpty) {
     return const PasteboardUnavailable('clipboard holds no text');
   }
