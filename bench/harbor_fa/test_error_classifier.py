@@ -32,6 +32,7 @@ Two suites live here:
 """
 import importlib
 import importlib.util
+import dataclasses
 import re
 import sys
 import tempfile
@@ -84,8 +85,13 @@ if REAL_HARBOR_BASE is None:
     class _StubBaseInstalledAgent:
         ERROR_PATTERNS = []
 
+    @dataclasses.dataclass
+    class _StubErrorPattern:
+        pattern: str
+        exception: type
+
     installed_base.BaseInstalledAgent = _StubBaseInstalledAgent
-    installed_base.ErrorPattern = None
+    installed_base.ErrorPattern = _StubErrorPattern
     installed_base.ApiRateLimitError = type(
         "ApiRateLimitError", (RuntimeError,), {}
     )
@@ -177,21 +183,28 @@ class AnchoredPatternSemanticsTest(unittest.TestCase):
 
     def test_override_replaces_unanchored_rate_limit_patterns(self):
         # The override must exist and keep exactly the anchored
-        # ApiRateLimitError entries — the inherited broad pair is gone.
+        # ApiRateLimitError entries — the inherited broad pair is gone
+        # (replaced one-for-one, neither dropped nor grown).
         ApiRateLimitError = _api_rate_limit_error_cls()
         inherited = [
             p
             for p in _inherited_error_patterns()
             if p.exception is ApiRateLimitError
         ]
-        overridden = _rate_limit_patterns()
+        overridden = [c.pattern for c, _ in _rate_limit_patterns()]
+        self.assertEqual(len(overridden), len(inherited))
         self.assertEqual(
-            len(inherited) - len(overridden),
+            len(overridden),
             2,
-            f"expected the two unanchored entries replaced; inherited="
-            f"{[p.pattern for p in inherited]} overridden="
-            f"{[c.pattern for c, _ in overridden]}",
+            f"expected exactly the two rate-limit wordings anchored; got "
+            f"{overridden}",
         )
+        for unanchored in (p.pattern for p in inherited):
+            self.assertNotIn(
+                unanchored,
+                overridden,
+                f"unanchored pattern {unanchored!r} survived the override",
+            )
 
     def test_teardown_output_with_rate_limit_words_is_not_rate_limit(self):
         # THE gh-1592 REG: teardown/echo text containing "rate limit"

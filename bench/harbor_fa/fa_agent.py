@@ -75,6 +75,40 @@ import fa_usage  # noqa: E402
 
 _VERSION = "0.1.0"
 
+# gh-1592: harbor's failed-command classifier (_classify_exec_error) scans
+# a failed exec's stdout+stderr with ERROR_PATTERNS, and its ApiRateLimit
+# entries are UNANCHORED substrings — `rate.?limit` matched the tee'd fa
+# output of run 38271607849 (shard fa-2.1-docker-cpu-5, trial
+# gpt2-codegolf__pKKQfqj) after the 900s timeout kill: the output
+# legitimately contains the words "rate limit" (echoed provider-error
+# text, fa's own `[roles] rate limited on … — retrying` notices), so the
+# failed launch exec surfaced as ApiRateLimitError with no provider 429
+# anywhere. The anchor below requires the structured provider-error
+# context: `429` and the wording must share ONE line — the shape every
+# real 429 reaches fa's output in (`formatProviderError` renders
+# `<statusCode>: <message>`, raw HTTP status lines are `HTTP/1.1 429 …`,
+# JSON error bodies carry the `"code": 429` inline on one line), while
+# fa's own notice lines and echoed prose carry no 429 on the line.
+# `(?im)` rides the pattern because harbor compiles with re.IGNORECASE
+# only; the `^` anchors each attempt to a line start so classification
+# stays linear over multi-MB tee'd streams, and the `[^\r\n]*` spans keep
+# every match line-scoped.
+_429_SAME_LINE = (
+    r"(?im)^[^\r\n]*\b429\b[^\r\n]*{word}[^\r\n]*"
+    r"|^[^\r\n]*{word}[^\r\n]*\b429\b[^\r\n]*"
+)
+_ANCHORED_RATE_LIMIT_PATTERNS = [
+    # Replaces the inherited `rate.?limit` substring entry.
+    ErrorPattern(_429_SAME_LINE.format(word=r"rate.?limit"), ApiRateLimitError),
+    # Sibling audit (gh-1592): `too many requests` — same free-text
+    # substring class, anchored the same way. The usage-limit, auth,
+    # capacity and safety entries are full-sentence signatures with no
+    # observed FP class and stay inherited verbatim.
+    ErrorPattern(
+        _429_SAME_LINE.format(word=r"too many requests"), ApiRateLimitError
+    ),
+]
+
 # Issue #1408 AC1 (review 5456649624): the in-container job-log dir,
 # OUTSIDE the graded task workspace — same constant the terminal-bench
 # adapter defines (bench/terminal_bench/fa_agent.py); a future relocation
@@ -93,6 +127,20 @@ _AUDIT_PATH = "/logs/agent/fa-timeout-metadata.json"
 
 
 class FaAgent(BaseInstalledAgent):
+    # gh-1592: the inherited table's rate-limit entries are free-text
+    # substrings (see _ANCHORED_RATE_LIMIT_PATTERNS above) — replace the
+    # pair, keep every other entry (auth, usage-limit, capacity, safety,
+    # transport, the `API Error` catch-all) byte-identical so the rest of
+    # harbor's classification policy is untouched. Matching is
+    # position-based (last match wins), so the appended anchored entries
+    # also outrank the generic `API Error` catch-all on a line carrying
+    # both.
+    ERROR_PATTERNS = [
+        p
+        for p in BaseInstalledAgent.ERROR_PATTERNS
+        if p.exception is not ApiRateLimitError
+    ] + _ANCHORED_RATE_LIMIT_PATTERNS
+
     @staticmethod
     def name() -> str:
         return "fa"
