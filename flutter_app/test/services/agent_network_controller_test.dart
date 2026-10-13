@@ -134,4 +134,55 @@ void main() {
     expect(controller.agentId, isNull);
     expect(await controller.peers(), isEmpty);
   });
+
+  test('first run adopts the sandbox .dap/config.json and joins; later the '
+      'persisted settings win', () async {
+    final env = MemoryExecutionEnv(cwd: '/app-sandbox');
+    await env.writeFile(
+      '/app-sandbox/.dap/config.json',
+      '{"url":"${url.toString()}","name":"mi8-lite"}',
+    );
+    final fabric = SwappableMessagingRepository(fileLayer(env));
+    final controller = AgentNetworkController(
+      env: env,
+      fileLayer: fileLayer(env),
+      fileFabric: fabric,
+      transport: const IoHubTransport(),
+      loadIdentity: (_) async => null,
+    );
+    addTearDown(controller.dispose);
+    await controller.start();
+    expect(controller.store.enabled, isTrue);
+    expect(controller.store.url, url.toString());
+    expect(controller.store.name, 'mi8-lite');
+    await waitUntil(() => controller.state == HubLinkState.connected);
+
+    // The user turns it off: a restart must NOT re-provision.
+    await controller.setEnabled(false);
+    final again = AgentNetworkController(
+      env: env,
+      fileLayer: fileLayer(env),
+      fileFabric: fabric,
+      transport: const IoHubTransport(),
+      loadIdentity: (_) async => null,
+    );
+    addTearDown(again.dispose);
+    await again.start();
+    expect(again.store.enabled, isFalse);
+  });
+
+  test('missing/garbage .dap config provisions nothing', () async {
+    final env = MemoryExecutionEnv(cwd: '/app-sandbox');
+    await env.writeFile('/app-sandbox/.dap/config.json', 'not json');
+    final controller = AgentNetworkController(
+      env: env,
+      fileLayer: fileLayer(env),
+      fileFabric: SwappableMessagingRepository(fileLayer(env)),
+      transport: const IoHubTransport(),
+      loadIdentity: (_) async => null,
+    );
+    addTearDown(controller.dispose);
+    await controller.start();
+    expect(controller.store.enabled, isFalse);
+  });
 }

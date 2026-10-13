@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -34,7 +35,9 @@ class AgentNetworkController extends ChangeNotifier {
     required this._fileFabric,
     HubTransport? transport,
     Future<HubIdentity?> Function(String? path)? loadIdentity,
-  }) : _transport = transport ?? platformHubTransport,
+    Future<AgentNetworkProvision?> Function()? provision,
+  }) : _provision = provision,
+       _transport = transport ?? platformHubTransport,
        _loadIdentity = loadIdentity ?? loadOrCreateIdentity {
     _store = AgentNetworkStore.inMemory();
   }
@@ -42,6 +45,7 @@ class AgentNetworkController extends ChangeNotifier {
   final ExecutionEnv _env;
   final FileMessagingRepository _fileLayer;
   final SwappableMessagingRepository _fileFabric;
+  final Future<AgentNetworkProvision?> Function()? _provision;
   final HubTransport? _transport;
   final Future<HubIdentity?> Function(String? path)? _loadIdentity;
 
@@ -65,8 +69,44 @@ class AgentNetworkController extends ChangeNotifier {
   /// (the service construction path).
   Future<void> start() async {
     _store = await AgentNetworkStore.load(_env);
+    // First run with a hub URL provisioned out-of-band (sandbox
+    // `.dap/config.json`, e.g. pushed over adb on a phone with no usable
+    // taps): adopt it and join — once; later the user's own settings win.
+    if (!_store.persisted && supported) {
+      final seed = await _safeProvision();
+      if (seed != null) {
+        await _store.setConnection(url: seed.url, name: seed.name);
+        await _store.setEnabled(true);
+      }
+    }
     if (_store.enabled) await _join();
     notifyListeners();
+  }
+
+  Future<AgentNetworkProvision?> _safeProvision() async {
+    try {
+      final custom = _provision;
+      if (custom != null) return await custom();
+      return await _provisionFromSandboxDap();
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Default provisioning source: `<sandbox>/.dap/config.json`
+  /// (`{"url": ..., "name": ...}`), the same file the DAP connection editor
+  /// writes on mobile.
+  Future<AgentNetworkProvision?> _provisionFromSandboxDap() async {
+    final text = (await _env.readTextFile(
+      '${_env.cwd}/.dap/config.json',
+    )).valueOrNull;
+    if (text == null) return null;
+    final decoded = jsonDecode(text);
+    if (decoded is! Map) return null;
+    final url = '${decoded['url'] ?? ''}'.trim();
+    if (url.isEmpty) return null;
+    final name = '${decoded['name'] ?? ''}'.trim();
+    return AgentNetworkProvision(url: url, name: name.isEmpty ? null : name);
   }
 
   Future<void> setEnabled(bool value) async {
@@ -163,4 +203,16 @@ class AgentNetworkController extends ChangeNotifier {
     unawaited(_leave());
     super.dispose();
   }
+}
+
+/// A hub connection provisioned outside the app UI (see
+/// [AgentNetworkController.start]).
+class AgentNetworkProvision {
+  const AgentNetworkProvision({required this.url, this.name});
+
+  /// The hub websocket URL.
+  final String url;
+
+  /// The agent's roster name, if provisioned.
+  final String? name;
 }

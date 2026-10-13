@@ -22,12 +22,14 @@ class AgentNetworkStore {
     this._enabled,
     this._url,
     this._token,
-    this._name,
-  );
+    this._name, {
+    this.persisted = false,
+  });
 
   /// A store without persistence (tests): setters flip memory only.
   AgentNetworkStore.inMemory()
-    : _env = null,
+    : persisted = false,
+      _env = null,
       _enabled = false,
       _url = defaultAgentNetworkUrl,
       _token = '',
@@ -44,6 +46,10 @@ class AgentNetworkStore {
 
   /// The default agent display name on the hub roster.
   static const defaultAgentNetworkName = 'app-agent';
+
+  /// Whether the settings came from an existing `agent_network.json` (false
+  /// = first run, defaults) — gates one-shot provisioning from `.dap`.
+  final bool persisted;
 
   final ExecutionEnv? _env;
   bool _enabled;
@@ -64,6 +70,7 @@ class AgentNetworkStore {
     var url = defaultAgentNetworkUrl;
     var token = '';
     var name = defaultAgentNetworkName;
+    var persisted = false;
     try {
       final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
       if (text != null) {
@@ -75,13 +82,21 @@ class AgentNetworkStore {
           final savedName = '${decoded['name'] ?? defaultAgentNetworkName}'
               .trim();
           name = savedName.isEmpty ? defaultAgentNetworkName : savedName;
+          persisted = true;
         }
       }
       // Corrupt or incompatible file → the defaults, never crash boot.
     } on Object {
       // (handled above: fall through to the defaults)
     }
-    return AgentNetworkStore._(env, enabled, url, token, name);
+    return AgentNetworkStore._(
+      env,
+      enabled,
+      url,
+      token,
+      name,
+      persisted: persisted,
+    );
   }
 
   Future<void> _persist() async {
