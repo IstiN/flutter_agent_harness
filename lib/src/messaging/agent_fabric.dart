@@ -21,10 +21,13 @@ import 'messaging_repository.dart';
 /// becomes the primary of a [FallbackMessagingRepository]: hub-resolvable
 /// recipients deliver hub-ward, everything else lands in the files.
 /// [mainMailbox] names the mailbox hub mail merges into — the MAIN inbox
-/// drain only, so subagent drains never touch the hub.
+/// drain only, so subagent drains never touch the hub. The raw file layer
+/// rides the record too (`fileLayer`) for hosts whose hub membership
+/// controller swaps over it (issue #402).
 ({
   MessagingRepository fabric,
   SwappableMessagingRepository fileFabric,
+  FileMessagingRepository fileLayer,
   String messagesRoot,
 })
 buildAgentFabric({
@@ -33,20 +36,26 @@ buildAgentFabric({
   required String? homeDir,
   required MessagingRepository? hubFabric,
   required String? Function() mainMailbox,
+  String? sessionCwd,
 }) {
-  final messagesRoot = '$sessionRoot/${encodeSessionCwd(env.cwd)}/messages';
-  final fileFabric = SwappableMessagingRepository(
-    FileMessagingRepository(
-      env: env,
-      root: messagesRoot,
-      decodeSessionCwd: decodeSessionCwd,
-      homeDir: homeDir,
-    ),
+  // The session scope usually IS the launch cwd; hosts with a mount
+  // concept (the app's project folders) name the scoped dir explicitly so
+  // mail is grouped by WORKSPACE, not by container cwd (issue #1079
+  // slice 5 — the flutter_app mount flow keeps its root).
+  final messagesRoot =
+      '$sessionRoot/${encodeSessionCwd(sessionCwd ?? env.cwd)}/messages';
+  final fileLayer = FileMessagingRepository(
+    env: env,
+    root: messagesRoot,
+    decodeSessionCwd: decodeSessionCwd,
+    homeDir: homeDir,
   );
+  final fileFabric = SwappableMessagingRepository(fileLayer);
   if (hubFabric == null) {
     return (
       fabric: fileFabric,
       fileFabric: fileFabric,
+      fileLayer: fileLayer,
       messagesRoot: messagesRoot,
     );
   }
@@ -58,6 +67,7 @@ buildAgentFabric({
   return (
     fabric: composite,
     fileFabric: fileFabric,
+    fileLayer: fileLayer,
     messagesRoot: messagesRoot,
   );
 }
