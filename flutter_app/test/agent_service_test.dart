@@ -1173,6 +1173,11 @@ void main() {
       final assistantMessages = service.messages
           .where((m) => m.role == 'assistant')
           .toList();
+      // ignore: avoid_print
+      for (final m in service.messages) {
+        // ignore: avoid_print
+        print('DBG bubble role=' + m.role + ' err=' + m.isError.toString() + ' text=' + (m.content.toString().length > 60 ? m.content.toString().substring(0, 60) : m.content.toString()));
+      }
       expect(assistantMessages, hasLength(2));
       expect(
         assistantMessages.where((m) => m.content == emptyResponsePlaceholder),

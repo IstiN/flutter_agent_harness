@@ -71,7 +71,16 @@ Future<(AssistantMessage, Context)> retryEmptyCompletion(
         baseDelay: config.emptyHiccupBaseDelay,
         maxBackoff: config.emptyHiccupMaxBackoff,
       );
-      if (delay > Duration.zero) await Future<void>.delayed(delay);
+      if (delay > Duration.zero) {
+        // E7: race the sleep against the token — a cancel landing during
+        // the backoff wakes immediately instead of stalling for up to
+        // [AgentLoopConfig.emptyHiccupMaxBackoff]. The next
+        // `_streamAssistantResponse` short-circuits into `_abortedTurn`.
+        await Future.any<void>([
+          Future<void>.delayed(delay),
+          if (cancelToken != null) cancelToken.onCancel,
+        ]);
+      }
       hiccup++;
     }
     (current, out) = await _streamAssistantResponse(
@@ -84,9 +93,16 @@ Future<(AssistantMessage, Context)> retryEmptyCompletion(
     cancelled = _isCancelRequested(cancelToken);
   }
   // E5: the abort landed with (or after) the last empty completion, before
-  // the classification — the abort wins. Settle aborted, never as the
-  // hiccup error and never as a silent empty success.
-  if (cancelled && _isDegenerateEmpty(current)) {
+  // the classification — the abort wins over ANY empty shape (a clean
+  // `stop`, a `length` cut, or the tolerated silent-truncation flag): a
+  // truncation-flagged empty that settles as the run final leaves headless
+  // at exit 0 on an aborted run. Settle the explicit aborted terminal
+  // instead — never the hiccup error, never a silent empty success. An
+  // already-aborted terminal (the `_streamAssistantResponse` short-circuit)
+  // is left as-is: converting it again would duplicate the emission.
+  if (cancelled &&
+      current.stopReason != StopReason.aborted &&
+      isEmptyAssistantCompletion(current)) {
     current = await _finishWithoutStream(
       out,
       emit,

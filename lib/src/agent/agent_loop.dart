@@ -487,7 +487,9 @@ final class AgentLoopConfig {
   /// [classifyEmptyCompletion]'s `emptyAfterPartial` verdict) is retried
   /// with exponential backoff before the run ends with an explicit
   /// empty-exhaustion error instead of settling a silent success. Default:
-  /// 3. `0` restores the legacy accept-empty settle.
+  /// 3. `0` still converts an empty-after-partial into the exhaustion error
+  /// after the [maxEmptyRetries] budget — the never-settle-empty contract
+  /// is not switchable off.
   final int emptyHiccupRetries;
 
   /// gh-1577: first backoff sleep between empty-hiccup retries (the
@@ -1391,14 +1393,6 @@ Future<({List<ToolResultMessage> results, bool hasMore})> _executeToolCallPhase(
 Future<List<Message>> _steeringMessages(AgentLoopConfig config) async {
   return await config.getSteeringMessages?.call() ?? const <Message>[];
 }
-
-/// A completion is degenerate-empty when the model stopped normally
-/// (`stop`) but produced no tool calls and no non-whitespace text — a
-/// known provider failure mode under load (the answer is simply blank).
-/// The content check is shared with gh-1577's classifier.
-bool _isDegenerateEmpty(AssistantMessage message) =>
-    message.stopReason == StopReason.stop &&
-    isEmptyAssistantCompletion(message);
 
 /// Retries a degenerate-empty completion with the same context (bounded by
 /// `config.maxEmptyRetries`; a blank answer never ends a run on the first

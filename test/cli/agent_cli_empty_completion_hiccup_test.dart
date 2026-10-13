@@ -25,6 +25,9 @@ void main() {
       env: env,
       sessionRoot: '/sessions',
       providerKind: 'openai-completions',
+      // gh-1577 thread 3: the backoff is pinnable from the CLI seam —
+      // zero it so the suite asserts request counts, not wall-clock sleeps.
+      emptyHiccupBaseDelay: Duration.zero,
     ),
     io: io,
     streamFunction: stream.call,

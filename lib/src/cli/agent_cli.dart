@@ -630,6 +630,11 @@ class AgentCli {
         // The CLI handles empty-response retries itself with a 'continue'
         // nudge so the transcript reflects the retry explicitly.
         maxEmptyRetries: 0,
+        // gh-1577: the bounded hiccup budget rides the config so hosts and
+        // tests can tune N and pin the backoff.
+        emptyHiccupRetries: config.emptyHiccupRetries,
+        emptyHiccupBaseDelay: config.emptyHiccupBaseDelay,
+        emptyHiccupMaxBackoff: config.emptyHiccupMaxBackoff,
         // Post-mortem "who held the busy row": the run idle watchdog's fire
         // lands in fa.log with the session id.
         onRunIdleTimeout: (error) =>

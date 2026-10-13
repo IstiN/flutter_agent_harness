@@ -1983,7 +1983,7 @@ class _CancelDuringBackoffStreamFunction {
       ),
     );
     final stream = AssistantMessageEventStream();
-    final isLast = index == turns.length - 1;
+    final isLast = turns.length == 1;
     for (final event in turns.removeAt(0)) {
       stream.push(event);
     }
