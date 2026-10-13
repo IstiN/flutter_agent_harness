@@ -1080,6 +1080,60 @@ final class _WalkResult {
   final List<int> pendingStartAt;
 }
 
+/// Per-step walk state shared by the incremental [_walk] and the full
+/// [_rebuild] pass — the pending-table boundary-latch bookkeeping
+/// (gh-1573) lives in exactly ONE place: a drift between the two loops
+/// would silently desynchronize the commit boundary between the
+/// incremental and rebuild paths.
+final class _TableWalkState {
+  _TableWalkState();
+
+  /// Formatted outputs per consumed source line.
+  final List<List<String>> outsPerLine = [];
+
+  /// Fence state after each consumed line (see [_WalkResult.fenceAfter]).
+  final List<bool> fenceAfter = [];
+
+  /// Whether the pending-table buffer was NON-EMPTY just BEFORE each
+  /// consumed line (see [_WalkResult.tableBefore]).
+  final List<bool> tableBefore = [];
+
+  /// Absolute src index where the pending span began, per consumed line
+  /// (see [_WalkResult.pendingStartAt]).
+  final List<int> pendingStartAt = [];
+
+  /// Absolute src index where the in-flight pending span began (-1 when
+  /// none is open). A seeded walk starts inside (or at the head of) an
+  /// already-open span: the seed occupies src[from-seed.length..from).
+  int pendingStart = -1;
+
+  /// Step whose completion last left no pending table (-1 = none yet).
+  int lastClean = -1;
+
+  /// Fence state after [lastClean].
+  bool fenceAtClean = false;
+}
+
+/// Consumes one source [line] at absolute src index [i] into [state]
+/// through [fmt] — the per-step bookkeeping both walk loops share:
+/// latch the span start, snapshot the pre-line state, consume, then
+/// update the clean-step / span tracking from the post-line state.
+void _tableWalkStep(AnsiMarkdown fmt, String line, int i, _TableWalkState s) {
+  if (fmt.hasPendingTable && s.pendingStart < 0) s.pendingStart = i;
+  s.tableBefore.add(fmt.hasPendingTable);
+  s.pendingStartAt.add(s.pendingStart);
+  s.outsPerLine.add(fmt.consumeLine(line));
+  s.fenceAfter.add(fmt.inFence);
+  if (fmt.hasPendingTable) {
+    // This step may have OPENED the span (buffered its first row).
+    if (s.pendingStart < 0) s.pendingStart = i;
+  } else {
+    s.pendingStart = -1;
+    s.lastClean = s.outsPerLine.length - 1;
+    s.fenceAtClean = fmt.inFence;
+  }
+}
+
 final class TranscriptMarkdown {
   TranscriptMarkdown({required this.width}) : _fmt = AnsiMarkdown(width: width);
 
@@ -1363,40 +1417,22 @@ final class TranscriptMarkdown {
     final seed = _pendingSeedTable;
     _fmt.restoreState(inFence: _savedFence, table: seed ?? const []);
     _pendingSeedTable = null;
-    final outsPerLine = <List<String>>[];
-    final fenceAfter = <bool>[];
-    final tableBefore = <bool>[];
-    final pendingStartAt = <int>[];
-    // Absolute src index where the in-flight pending span began; the seed
-    // occupies src[from-seed.length..from), so a seeded walk starts inside
-    // (or at the head of) an already-open span.
-    var pendingStart = seed == null || seed.isEmpty ? -1 : from - seed.length;
-    var lastClean = -1; // step whose completion left no pending table
-    var fenceAtClean = false;
+    final s = _TableWalkState()
+      // The seed occupies src[from-seed.length..from), so a seeded walk
+      // starts inside (or at the head of) an already-open span.
+      ..pendingStart = seed == null || seed.isEmpty ? -1 : from - seed.length;
     for (var i = from; i < src.length; i++) {
-      if (_fmt.hasPendingTable && pendingStart < 0) pendingStart = i;
-      tableBefore.add(_fmt.hasPendingTable);
-      pendingStartAt.add(pendingStart);
-      outsPerLine.add(_fmt.consumeLine(src[i]));
-      fenceAfter.add(_fmt.inFence);
-      if (_fmt.hasPendingTable) {
-        // This step may have OPENED the span (buffered its first row).
-        if (pendingStart < 0) pendingStart = i;
-      } else {
-        pendingStart = -1;
-        lastClean = outsPerLine.length - 1;
-        fenceAtClean = _fmt.inFence;
-      }
+      _tableWalkStep(_fmt, src[i], i, s);
     }
     return _WalkResult(
-      outsPerLine,
-      lastClean,
-      fenceAtClean,
+      s.outsPerLine,
+      s.lastClean,
+      s.fenceAtClean,
       _fmt.hasPendingTable,
       _fmt.flushTrailing(),
-      fenceAfter,
-      tableBefore,
-      pendingStartAt,
+      s.fenceAfter,
+      s.tableBefore,
+      s.pendingStartAt,
     );
   }
 
@@ -1487,27 +1523,9 @@ final class TranscriptMarkdown {
     debugLinesFormatted += src.length;
     _pendingSeedTable = null; // a refused rollback's seed never survives
     final fmt = AnsiMarkdown(width: width);
-    final outs = <List<String>>[];
-    final fenceAfter = <bool>[];
-    final tableBefore = <bool>[];
-    final pendingStartAt = <int>[];
-    var pendingStart = -1;
-    var lastClean = -1;
-    var fenceAtClean = false;
+    final s = _TableWalkState();
     for (var i = 0; i < src.length; i++) {
-      final line = src[i];
-      if (fmt.hasPendingTable && pendingStart < 0) pendingStart = i;
-      tableBefore.add(fmt.hasPendingTable);
-      pendingStartAt.add(pendingStart);
-      outs.add(fmt.consumeLine(line));
-      fenceAfter.add(fmt.inFence);
-      if (fmt.hasPendingTable) {
-        if (pendingStart < 0) pendingStart = i;
-      } else {
-        pendingStart = -1;
-        lastClean = outs.length - 1;
-        fenceAtClean = fmt.inFence;
-      }
+      _tableWalkStep(fmt, src[i], i, s);
     }
     final hadPending = fmt.hasPendingTable;
     final trailing = fmt.flushTrailing();
@@ -1526,20 +1544,21 @@ final class TranscriptMarkdown {
     _boundaryLast = src.isEmpty ? null : src.last;
     _savedFence = false;
     final r = _WalkResult(
-      outs,
-      lastClean,
-      fenceAtClean,
+      s.outsPerLine,
+      s.lastClean,
+      s.fenceAtClean,
       hadPending,
       trailing,
-      fenceAfter,
-      tableBefore,
-      pendingStartAt,
+      s.fenceAfter,
+      s.tableBefore,
+      s.pendingStartAt,
     );
     _commitTo(r, src, from: 0);
-    _savedFence = fenceAtClean; // even without a durable edge yet
+    _savedFence = s.fenceAtClean; // even without a durable edge yet
     _expose(r, src);
   }
 }
+
 /// How [MarkdownSurface.render] emits assistant markdown.
 enum MarkdownSurfaceMode {
   /// ANSI-rendered: an interactive terminal with color.
@@ -1611,10 +1630,9 @@ final class MarkdownSurface {
   String render(String text) => switch (mode) {
     MarkdownSurfaceMode.raw => text,
     MarkdownSurfaceMode.ansi => _renderWhole(text),
-    MarkdownSurfaceMode.plain => _renderWhole(text).replaceAll(
-      _ansiEscapeRe,
-      '',
-    ),
+    MarkdownSurfaceMode.plain => _renderWhole(
+      text,
+    ).replaceAll(_ansiEscapeRe, ''),
   };
 
   String _renderWhole(String text) {
@@ -1623,9 +1641,9 @@ final class MarkdownSurface {
     // the HOST pins once (bin/fah.dart resolves the surface; AgentCli's
     // constructor pins the controller from surface.profile) — render()
     // only formats.
-    return AnsiMarkdown(width: width)
-        .formatAll(resolveSetextHeadings(text.split('\n')))
-        .join('\n');
+    return AnsiMarkdown(
+      width: width,
+    ).formatAll(resolveSetextHeadings(text.split('\n'))).join('\n');
   }
 }
 
@@ -1656,8 +1674,7 @@ MarkdownSurface resolveMarkdownSurface({
   return MarkdownSurface.resolving(
     tty: ansiSupported,
     color: profile != null,
-    format:
-        !noFormatFlag && !isTruthyEnvValue(environment['FA_NO_FORMAT']),
+    format: !noFormatFlag && !isTruthyEnvValue(environment['FA_NO_FORMAT']),
     width: width,
     profile: profile,
   );
