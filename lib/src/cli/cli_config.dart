@@ -988,8 +988,7 @@ final class CliConfig {
       waiting: waiting ?? this.waiting,
       jobs: jobs ?? this.jobs,
       headless: headless ?? this.headless,
-      powerSleepPrevention:
-          powerSleepPrevention ?? this.powerSleepPrevention,
+      powerSleepPrevention: powerSleepPrevention ?? this.powerSleepPrevention,
       powerHold: powerHold ?? this.powerHold,
       quota: quota ?? this.quota,
       tuiTheme: tuiTheme ?? this.tuiTheme,

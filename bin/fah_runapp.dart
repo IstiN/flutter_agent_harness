@@ -306,8 +306,9 @@ Future<void> _runApp(List<String> args) async {
         // which only runs when the abandoned fetch itself settles.
         final probe = http.Client();
         try {
-          final latest = await fetchLatestTag(client: probe)
-              .timeout(const Duration(seconds: 3), onTimeout: () => null);
+          final latest = await fetchLatestTag(
+            client: probe,
+          ).timeout(const Duration(seconds: 3), onTimeout: () => null);
           if (latest != null &&
               compareVersions(latest, packageVersion) > 0 &&
               !autoUpdateTuiOwnsScreen) {

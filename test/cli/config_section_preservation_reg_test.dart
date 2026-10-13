@@ -75,11 +75,7 @@ void expectTicketSectionsLoaded(CliConfig config) {
   expect(config.subagents.heartbeatMinutes, 5, reason: 'subagents');
   expect(config.subagents.stallMinutes, 7, reason: 'subagents.stallMinutes');
   expect(config.jobs.staleHours, 48, reason: 'jobs.staleHours');
-  expect(
-    config.jobs.logRetentionDays,
-    7,
-    reason: 'jobs.logRetentionDays',
-  );
+  expect(config.jobs.logRetentionDays, 7, reason: 'jobs.logRetentionDays');
   expect(
     config.headless.shellJobDrainMs,
     600,
@@ -117,65 +113,59 @@ void main() {
       tmp.deleteSync(recursive: true);
     });
 
-    test(
-      'saveCliConfig round trip: every section survives '
-      'loadCliConfig → save-shaped CliConfig → saveCliConfig',
-      () async {
-        configFile(tmp)
-          ..createSync(recursive: true)
-          ..writeAsStringSync(ticketConfigYaml);
-        final saved = loadCliConfig(tmp.path);
-        expectTicketSectionsLoaded(saved);
+    test('saveCliConfig round trip: every section survives '
+        'loadCliConfig → save-shaped CliConfig → saveCliConfig', () async {
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(ticketConfigYaml);
+      final saved = loadCliConfig(tmp.path);
+      expectTicketSectionsLoaded(saved);
 
-        // The shape saveCliConfig itself produces via its
-        // merge-before-write step (withCustomProviders identity).
-        await saveCliConfig(
-          tmp.path,
-          saved.withCustomProviders(saved.customProviders),
-        );
+      // The shape saveCliConfig itself produces via its
+      // merge-before-write step (withCustomProviders identity).
+      await saveCliConfig(
+        tmp.path,
+        saved.withCustomProviders(saved.customProviders),
+      );
 
-        expectTicketSectionsLoaded(loadCliConfig(tmp.path));
-      },
-    );
+      expectTicketSectionsLoaded(loadCliConfig(tmp.path));
+    });
 
-    test(
-      'the boot-shaped persistConfig save keeps the provider triple '
-      'and every section',
-      () async {
-        configFile(tmp)
-          ..createSync(recursive: true)
-          ..writeAsStringSync(ticketConfigYaml);
-        final saved = loadCliConfig(tmp.path);
+    test('the boot-shaped persistConfig save keeps the provider triple '
+        'and every section', () async {
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(ticketConfigYaml);
+      final saved = loadCliConfig(tmp.path);
 
-        // Mirrors bin/fah_runapp.dart persistConfig: the saved config as
-        // the base, only the session-live overlays on top. Explicit
-        // --provider/--base-url/--model flags never touch the saved
-        // defaults (the provider/model triple is per-folder state).
-        final persistShaped = saved.copyWith(
-          mode: 'code',
-          approvalMode: 'yolo',
-          allowedTools: const [],
-          modelRoles: saved.modelRoles,
-          customProviders: saved.customProviders,
-          models: saved.models,
-          mcp: saved.mcp,
-          skillsAccess: saved.skillsAccess,
-          skillToggles: saved.skillToggles,
-          cube: saved.cube,
-          tools: saved.tools,
-        );
-        expect(persistShaped.providerKind, saved.providerKind);
-        expect(persistShaped.modelId, saved.modelId);
-        expect(persistShaped.baseUrl, saved.baseUrl);
+      // Mirrors bin/fah_runapp.dart persistConfig: the saved config as
+      // the base, only the session-live overlays on top. Explicit
+      // --provider/--base-url/--model flags never touch the saved
+      // defaults (the provider/model triple is per-folder state).
+      final persistShaped = saved.copyWith(
+        mode: 'code',
+        approvalMode: 'yolo',
+        allowedTools: const [],
+        modelRoles: saved.modelRoles,
+        customProviders: saved.customProviders,
+        models: saved.models,
+        mcp: saved.mcp,
+        skillsAccess: saved.skillsAccess,
+        skillToggles: saved.skillToggles,
+        cube: saved.cube,
+        tools: saved.tools,
+      );
+      expect(persistShaped.providerKind, saved.providerKind);
+      expect(persistShaped.modelId, saved.modelId);
+      expect(persistShaped.baseUrl, saved.baseUrl);
 
-        await saveCliConfig(tmp.path, persistShaped);
-        final reloaded = loadCliConfig(tmp.path);
-        expect(reloaded.providerKind, 'openai-completions');
-        expect(reloaded.modelId, 'openai/gpt-4o-mini');
-        expect(reloaded.baseUrl, 'https://openrouter.ai/api/v1');
-        expectTicketSectionsLoaded(reloaded);
-      },
-    );
+      await saveCliConfig(tmp.path, persistShaped);
+      final reloaded = loadCliConfig(tmp.path);
+      expect(reloaded.providerKind, 'openai-completions');
+      expect(reloaded.modelId, 'openai/gpt-4o-mini');
+      expect(reloaded.baseUrl, 'https://openrouter.ai/api/v1');
+      expectTicketSectionsLoaded(reloaded);
+    });
 
     test('toYaml renders the spills section when set', () {
       final config = CliConfig(
@@ -209,19 +199,16 @@ void main() {
       expect(CliConfig().toYaml(), isNot(contains('spills:')));
     });
 
-    test(
-      'the disk backstop re-attaches every known section block the '
-      'emitter omitted',
-      () async {
-        configFile(tmp)
-          ..createSync(recursive: true)
-          ..writeAsStringSync(ticketConfigYaml);
-        // A config that renders none of the sections above (all
-        // defaults): the raw on-disk blocks must survive the save.
-        await saveCliConfig(tmp.path, CliConfig(mode: 'code'));
-        expectTicketSectionsLoaded(loadCliConfig(tmp.path));
-      },
-    );
+    test('the disk backstop re-attaches every known section block the '
+        'emitter omitted', () async {
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(ticketConfigYaml);
+      // A config that renders none of the sections above (all
+      // defaults): the raw on-disk blocks must survive the save.
+      await saveCliConfig(tmp.path, CliConfig(mode: 'code'));
+      expectTicketSectionsLoaded(loadCliConfig(tmp.path));
+    });
 
     test('an unchanged save does not rewrite the file', () async {
       configFile(tmp)
