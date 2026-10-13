@@ -294,13 +294,15 @@ final class AgentCliConfig {
   final Future<void> Function()? onCubeSettingsChanged;
 
   /// Called after a settings-hub flow wrote the USER config file
-  /// directly (the surgical validated-yaml upserts, the drop-key /
-  /// clear-key edits — every sanctioned write that bypasses the host's
-  /// whole-file save). Hosts holding a boot-time snapshot of the user
-  /// config re-read it here so their next whole-file save renders the
-  /// freshest on-disk truth instead of re-rendering the stale boot
-  /// values OVER the flow's write (gh-1572 rework). Null (tests, web)
-  /// makes the writes one-way.
+  /// directly — every sanctioned write that bypasses the host's
+  /// whole-file save: the surgical validated-yaml upserts (user-scope
+  /// wins), the drop-key / clear-key edits, the ttsr block replace and
+  /// the mcp block replace (the roster lives on
+  /// `SettingsConfigSyncFlow._notifyUserConfigFileChanged`). Hosts
+  /// holding a boot-time snapshot of the user config re-read it here so
+  /// their next whole-file save renders the freshest on-disk truth
+  /// instead of re-rendering the stale boot values OVER the flow's write
+  /// (gh-1572 rework). Null (tests, web) makes the writes one-way.
   final Future<void> Function()? onUserConfigFileChanged;
 
   /// Fetches one [DapHubSnapshot] (probe outcome in

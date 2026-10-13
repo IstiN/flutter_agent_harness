@@ -804,6 +804,12 @@ extension SettingsFlow on AgentCli {
       io.writeln('ttsr: could not write $path');
       return false;
     }
+    // A USER-file write just bypassed the host's whole-file save — fire
+    // the re-sync hook so the next persist renders this edit instead of
+    // the stale boot snapshot (gh-1572 rework; the boot snapshot carries
+    // `ttsr:` with no live overlay, so without the re-sync a rule
+    // add/toggle/delete was re-rendered over at the next persist).
+    if (path == _userConfigPath()) await _notifyUserConfigFileChanged();
     final live = _syncLiveTtsrRules(before, section);
     io.writeln(
       'ttsr saved → $path '
@@ -1438,6 +1444,13 @@ extension SettingsFlow on AgentCli {
       io.writeln('mcp: could not write $path');
       return false;
     }
+    // A USER-file write just bypassed the host's whole-file save — fire
+    // the re-sync hook so the next persist renders this edit instead of
+    // the stale boot snapshot (gh-1572 rework; `AgentCliConfig.mcpConfig`
+    // is never assigned by the CLI host, so the persist overlay resolves
+    // to the boot snapshot's section and without the re-sync a server
+    // add/edit/delete was re-rendered over at the next persist).
+    if (path == _userConfigPath()) await _notifyUserConfigFileChanged();
     final manager = _mcp.manager;
     if (manager == null) {
       io.writeln(

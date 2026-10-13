@@ -39,7 +39,15 @@ block a release again.
   only the cap key instead of the whole `agent:` block (the sibling
   `mode:`/`misuseBreaker:` keys survive); and the `providersQueue:`
   block (no typed renderer) joins the disk backstop so a save can never
-  silently delete the user's queue.
+  silently delete the user's queue. Rework round 2 (merge + guards):
+  `validateAgentSection`'s per-key switch became the `_agentKeyValidators`
+  table (the two gh-1572 keys pushed the switch form to complexity 13 —
+  over the repo's CRAP ratchet; the table keeps the mirror complete at
+  complexity 4), and the last two direct USER-config writers —
+  `_writeTtsrSection` and `_writeMcpSection` — fire the re-sync hook, so
+  a mid-session ttsr rule toggle or mcp server edit survives the next
+  persist too (the writer roster in `settings_flow_config_sync.dart` is
+  now exhaustive).
 - gh-1577: an empty assistant completion after partial content (assistant
   text, tool activity, or a truncation signal earlier in the turn) is a
   bounded-retry provider hiccup — up to `emptyHiccupRetries` (default 3)

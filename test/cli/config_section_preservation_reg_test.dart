@@ -548,9 +548,11 @@ void main() {
       // _clearContextCap/_dropAutoUpdateKey — it must fire the hook or
       // the next persist re-renders the boot block over the edit.
       var resyncs = 0;
-      final (cli, io) = bootCli(onUserConfigFileChanged: () async {
-        resyncs++;
-      });
+      final (cli, io) = bootCli(
+        onUserConfigFileChanged: () async {
+          resyncs++;
+        },
+      );
       configFile(tmp)
         ..createSync(recursive: true)
         ..writeAsStringSync(
@@ -563,6 +565,7 @@ void main() {
           '      enabled: false\n',
         );
 
+      final run = cli.run();
       final flow = cli.startTtsrRulesFlow();
       await waitRenders(io, 1); // main menu (rule/add/done)
       io.sendLine('1'); // the no-secrets rule → its submenu
@@ -572,6 +575,8 @@ void main() {
       await waitRenders(io, 3); // the main menu re-rendered
       io.sendLine('3'); // done (1=rule, 2=add, 3=done)
       await flow;
+      io.sendLine('/exit');
+      await run;
 
       expect(resyncs, 1, reason: 'the ttsr write must fire the hook');
       expect(
@@ -585,9 +590,11 @@ void main() {
       // _writeMcpSection is the last remaining direct USER-config writer
       // without the hook — same data-loss class as the ttsr flow.
       var resyncs = 0;
-      final (cli, io) = bootCli(onUserConfigFileChanged: () async {
-        resyncs++;
-      });
+      final (cli, io) = bootCli(
+        onUserConfigFileChanged: () async {
+          resyncs++;
+        },
+      );
       configFile(tmp)
         ..createSync(recursive: true)
         ..writeAsStringSync(
@@ -599,6 +606,7 @@ void main() {
           "      args: ['-y', '@modelcontextprotocol/server-fs', '/tmp']\n",
         );
 
+      final run = cli.run();
       final flow = cli.startMcpServersFlow();
       await waitRenders(io, 1); // main menu (fs/add/done)
       io.sendLine('1'); // the fs server → its submenu
@@ -612,6 +620,8 @@ void main() {
       await waitRenders(io, 3); // the main menu re-rendered
       io.sendLine('3'); // done (1=fs, 2=add, 3=done)
       await flow;
+      io.sendLine('/exit');
+      await run;
 
       expect(resyncs, 1, reason: 'the mcp write must fire the hook');
       final server =
@@ -619,8 +629,7 @@ void main() {
       expect(server?.command, 'node2', reason: 'the edit must land on disk');
     });
 
-    test('the ttsr toggle survives the next persist (flow re-sync)',
-        () async {
+    test('the ttsr toggle survives the next persist (flow re-sync)', () async {
       // End to end: boot snapshot → the real flow's write → the hook
       // re-sync (wired exactly like bin/fah_runapp.dart) → the
       // boot-shaped persist. Without the hook the save re-renders the
@@ -644,6 +653,7 @@ void main() {
           snapshot = loadCliConfig(tmp.path);
         },
       );
+      final run = cli.run();
       final flow = cli.startTtsrRulesFlow();
       await waitRenders(io, 1);
       io.sendLine('1');
@@ -653,6 +663,8 @@ void main() {
       await waitRenders(io, 3);
       io.sendLine('3');
       await flow;
+      io.sendLine('/exit');
+      await run;
 
       await persistShapedSave(snapshot);
 
@@ -661,6 +673,61 @@ void main() {
         isTrue,
         reason:
             'the toggle survives the persist because the flow re-synced '
+            'the snapshot through the hook',
+      );
+    });
+
+    test('the mcp edit survives the next persist (flow re-sync)', () async {
+      // Same end-to-end shape for the mcp writer: without the hook the
+      // persist overlay (`cli.config.mcpConfig?.config ?? saved.mcp` —
+      // the CLI host never assigns mcpConfig) re-rendered the boot
+      // snapshot's section over the edit.
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          'model: test-model\n'
+          'mcp:\n'
+          '  servers:\n'
+          '    fs:\n'
+          '      command: npx\n'
+          "      args: ['-y', '@modelcontextprotocol/server-fs', '/tmp']\n",
+        );
+      var snapshot = loadCliConfig(tmp.path);
+      final bootCommand =
+          (snapshot.mcp?.servers['fs'] as McpStdioServerConfig?)?.command;
+      expect(bootCommand, 'npx');
+
+      final (cli, io) = bootCli(
+        onUserConfigFileChanged: () async {
+          snapshot = loadCliConfig(tmp.path);
+        },
+      );
+      final run = cli.run();
+      final flow = cli.startMcpServersFlow();
+      await waitRenders(io, 1);
+      io.sendLine('1');
+      await waitRenders(io, 2);
+      io.sendLine('1');
+      await waitForIo(io, () => io.out.toString().contains('command ('));
+      io.sendLine('node2');
+      io.sendLine('srv.js, --port, 9');
+      io.sendLine('BAZ=qux');
+      await waitForIo(io, () => io.out.toString().contains('mcp saved →'));
+      await waitRenders(io, 3);
+      io.sendLine('3');
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      await persistShapedSave(snapshot);
+
+      final server =
+          loadCliConfig(tmp.path).mcp?.servers['fs'] as McpStdioServerConfig?;
+      expect(
+        server?.command,
+        'node2',
+        reason:
+            'the edit survives the persist because the flow re-synced '
             'the snapshot through the hook',
       );
     });
