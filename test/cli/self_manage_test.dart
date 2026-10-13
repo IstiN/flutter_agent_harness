@@ -715,13 +715,15 @@ void main() {
       expect(
         template,
         contains(r'lib_dir="$install_dir/../lib"'),
-        reason: 'the template feeds the generated installer — bundle libs '
+        reason:
+            'the template feeds the generated installer — bundle libs '
             'must be copied to <install_dir>/../lib there too',
       );
       expect(
         template.contains(r'"$install_dir/lib"'),
         isFalse,
-        reason: 'installing into <install_dir>/lib is the gh-1574 bug — '
+        reason:
+            'installing into <install_dir>/lib is the gh-1574 bug — '
             'the binary looks in <exe_dir>/../lib',
       );
     });
@@ -739,7 +741,7 @@ void main() {
         final script = File(path).readAsStringSync();
         final copyLine = script
             .split('\n')
-            .firstWhere((line) => line.contains('bundle/lib/'));
+            .firstWhere((line) => line.contains('lib/"*'));
         expect(
           copyLine.contains('|| true'),
           isFalse,

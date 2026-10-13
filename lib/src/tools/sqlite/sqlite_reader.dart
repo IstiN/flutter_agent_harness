@@ -147,7 +147,7 @@ bool isSqliteDynamicLibraryLoadFailure(Object error) {
 String sqliteUnavailableMessage(String path) {
   return '[SQLite is unavailable: the bundled libsqlite3 dynamic library '
       'could not be loaded. Installed binaries look for it in '
-      '<exe_dir>/../lib — e.g. ~/.local/libsqlite3.dylib for '
+      '<exe_dir>/../lib — e.g. ~/.local/lib/libsqlite3.dylib for '
       '~/.local/bin/fa. Reinstall fa (site/install.sh or install_local.sh) '
       'or run `fa update` to repair the layout; $path was not opened.]';
 }

@@ -34,8 +34,7 @@ bool repairStaleSqliteBundleLayout({String? executablePath}) {
     if (!staleDir.existsSync()) return false;
     final targetDirPath =
         '$exeDir${Platform.pathSeparator}..${Platform.pathSeparator}lib';
-    if (_normalizeDirPath(staleDir.path) ==
-        _normalizeDirPath(targetDirPath)) {
+    if (_normalizeDirPath(staleDir.path) == _normalizeDirPath(targetDirPath)) {
       return false;
     }
     var moved = false;

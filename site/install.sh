@@ -356,7 +356,9 @@ fi
 # with the exe at $install_dir/fa that is $install_dir/../lib, never
 # $install_dir/lib.
 if [ -d "$tmp_extract/bundle/lib" ]; then
-  cp -r "$tmp_extract/bundle/lib/"* "$lib_dir/" 2>/dev/null || true
+  if ! cp -r "$tmp_extract/bundle/lib/"* "$lib_dir/"; then
+    warn "failed to copy the bundle libs into $lib_dir — SQLite reads will fail until that directory holds the bundled libsqlite3; check permissions and disk space, then reinstall"
+  fi
 fi
 rm -rf "$tmp_extract"
 

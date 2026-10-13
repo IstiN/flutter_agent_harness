@@ -19,7 +19,7 @@ block a release again.
   POSIX installer copied the bundle libs beside the binary
   (`<install_dir>/lib`), so `read path=x.db` died with a raw FFI dump
   (`Couldn't resolve native function 'sqlite3_initialize' … Failed to load
-  dynamic library '~/.local/libsqlite3.dylib'`); it only worked on machines
+  dynamic library '~/.local/lib/libsqlite3.dylib'`); it only worked on machines
   with a manual symlink in `~/.local/lib`. Fixed the layout in all three
   install paths — `site/install.sh` (incl. the quarantine-xattr pass and the
   source-build advice), `install_local.sh`, and `fa update`
@@ -31,7 +31,16 @@ block a release again.
   clean `SQLite is unavailable — reinstall or run fa update` note instead of
   the raw resolver dump; a Dart-level system-library fallback is impossible
   with package:sqlite3 native assets (build-time asset mapping, no loader
-  override).
+  override). Installs already broken by the old layout self-heal: on the
+  bundled library's first failed load the binary moves the stale
+  `<exe_dir>/libsqlite3.*` into `<exe_dir>/../lib/` and retries the load
+  (`repairStaleSqliteBundleLayout`) — so one `fa update` suffices (the
+  successor binary repairs on its first SQLite read; a pre-fix binary cannot
+  repair itself), and the stale `<bin>/lib` leftovers disappear as they
+  migrate. The POSIX installers also report a failed lib copy instead of
+  swallowing it (`site/install.sh` warns naming the lib dir; same in
+  `install_local.sh`), and `site/install.sh.template` carries the same
+  layout so regenerating the installers cannot resurrect the old one.
 
 - gh-1556: bench pipeline stops bleeding score + fa deadline awareness.
   Bench: the harbor ladder kill uses the `[f]a` bracket trick and is

@@ -15,7 +15,7 @@ String _text(ToolExecutionResult result) {
 final _macMissingDylibError = ArgumentError(
   "Couldn't resolve native function 'sqlite3_initialize' in "
   "'package:sqlite3/src/ffi/libsqlite3.g.dart' : Failed to load dynamic "
-  "library '/Users/someone/.local/libsqlite3.dylib' (no such file)",
+  "library '/Users/someone/.local/lib/libsqlite3.dylib' (no such file)",
 );
 
 /// The same failure on Linux (`libsqlite3.so`).
@@ -316,19 +316,19 @@ void main() {
       // wrong shape (gh-1574 r2 review).
       expect(
         _macMissingDylibError.message,
-        contains('/Users/someone/.local/libsqlite3.dylib'),
+        contains('/Users/someone/.local/lib/libsqlite3.dylib'),
       );
       expect(
         _linuxMissingDylibError.message,
-        contains('/usr/local/libsqlite3.so'),
+        contains('/usr/local/lib/libsqlite3.so'),
       );
     });
 
     test('the unavailable note shows the correct example path', () {
       final message = sqliteUnavailableMessage('${tempDir.path}/data.db');
       // <exe_dir>/../lib + libsqlite3.dylib for ~/.local/bin/fa is
-      // ~/.local/libsqlite3.dylib — the /lib/ segment must be present.
-      expect(message, contains('~/.local/libsqlite3.dylib'));
+      // ~/.local/lib/libsqlite3.dylib — the /lib/ segment must be present.
+      expect(message, contains('~/.local/lib/libsqlite3.dylib'));
       expect(message, isNot(contains('~/.local/libsqlite3.dylib')));
     });
 
@@ -431,9 +431,8 @@ void main() {
     setUp(() {
       // Mirrors a flat binary install: <installRoot>/bin/fa with the
       // pre-fix installers' inert <exe_dir>/lib leftovers beside it.
-      installRoot = Directory(
-        '${tempDir.path}/local',
-      )..createSync(recursive: true);
+      installRoot = Directory('${tempDir.path}/local')
+        ..createSync(recursive: true);
       binDir = Directory('${installRoot.path}/bin')..createSync();
     });
 
@@ -452,13 +451,11 @@ void main() {
         expect(moved, isTrue);
         // Where the native-assets resolver reads: <exe_dir>/../lib/<name>.
         expect(
-          File(
-            '${installRoot.path}/libsqlite3.dylib',
-          ).readAsStringSync(),
+          File('${installRoot.path}/lib/libsqlite3.dylib').readAsStringSync(),
           'dylib',
         );
         expect(
-          File('${installRoot.path}/libsqlite3.so').readAsStringSync(),
+          File('${installRoot.path}/lib/libsqlite3.so').readAsStringSync(),
           'so',
         );
         // Moved, not duplicated.
@@ -476,7 +473,7 @@ void main() {
 
       expect(moved, isFalse);
       expect(
-        File('${installRoot.path}/libsqlite3.dylib').existsSync(),
+        File('${installRoot.path}/lib/libsqlite3.dylib').existsSync(),
         isFalse,
       );
     });
@@ -484,9 +481,9 @@ void main() {
     test('never clobbers a lib already present at the target', () {
       final stale = Directory('${binDir.path}/lib')..createSync();
       File('${stale.path}/libsqlite3.dylib').writeAsStringSync('stale');
-      File(
-        '${installRoot.path}/libsqlite3.dylib',
-      ).writeAsStringSync('fresh');
+      final target = File('${installRoot.path}/lib/libsqlite3.dylib');
+      target.parent.createSync(recursive: true);
+      target.writeAsStringSync('fresh');
 
       final moved = repairStaleSqliteBundleLayout(
         executablePath: '${binDir.path}/fa',
@@ -494,7 +491,7 @@ void main() {
 
       expect(moved, isFalse);
       expect(
-        File('${installRoot.path}/libsqlite3.dylib').readAsStringSync(),
+        File('${installRoot.path}/lib/libsqlite3.dylib').readAsStringSync(),
         'fresh',
       );
       expect(File('${stale.path}/libsqlite3.dylib').existsSync(), isTrue);
@@ -560,8 +557,7 @@ void main() {
       expect(opens, 1);
     });
 
-    test('a non-load failure on the retried load passes through untouched',
-        () {
+    test('a non-load failure on the retried load passes through untouched', () {
       final notADatabase = SqliteException(
         extendedResultCode: 26,
         message: 'file is not a database',

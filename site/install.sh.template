@@ -199,6 +199,7 @@ if [ "$dl_ok" != true ]; then
   say "    cd flutter_agent_harness"
   say "    dart build cli --target=bin/fah.dart --output=build/out"
   say "    cp build/out/bundle/bin/fah ~/.local/bin/fa"
+  say "    cp -r build/out/bundle/lib ~/.local/  # bundle libs, gh-1574"
   say ""
   exit 1
 fi
@@ -316,7 +317,8 @@ if [ "$os" = "macos" ] && command -v codesign >/dev/null 2>&1 && [ -n "${FA_EXPE
   esac
 fi
 
-mkdir -p "$install_dir/lib"
+mkdir -p "$install_dir/../lib"
+lib_dir="$install_dir/../lib"
 rm -f "$target"  # break any pre-existing symlink so cp writes the real file
 cp "$tmp_extract/bundle/bin/fa" "$target"
 chmod +x "$target"
@@ -324,8 +326,13 @@ chmod +x "$target"
 if [ -f "$tmp_extract/bundle/version.txt" ]; then
   cp "$tmp_extract/bundle/version.txt" "$install_dir/version.txt"
 fi
+# gh-1574: the binary's native-assets resolver reads <exe_dir>/../lib —
+# with the exe at $install_dir/fa that is $install_dir/../lib, never
+# $install_dir/lib.
 if [ -d "$tmp_extract/bundle/lib" ]; then
-  cp -r "$tmp_extract/bundle/lib/"* "$install_dir/lib/" 2>/dev/null || true
+  if ! cp -r "$tmp_extract/bundle/lib/"* "$lib_dir/"; then
+    warn "failed to copy the bundle libs into $lib_dir — SQLite reads will fail until that directory holds the bundled libsqlite3; check permissions and disk space, then reinstall"
+  fi
 fi
 rm -rf "$tmp_extract"
 
@@ -340,7 +347,7 @@ ok "Installed $target"
 if [ "$os" = "macos" ]; then
   if command -v xattr >/dev/null 2>&1; then
     xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
-    xattr -dr com.apple.quarantine "$install_dir/lib" 2>/dev/null || true
+    xattr -dr com.apple.quarantine "$lib_dir" 2>/dev/null || true
   fi
   if command -v codesign >/dev/null 2>&1; then
     codesign --force --sign - "$target" 2>/dev/null || true
