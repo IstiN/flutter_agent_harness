@@ -105,9 +105,16 @@ def _parse_iso_ts(value) -> "datetime | None":
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    # E5 hardening (rework thread): harbor versions/sources may mix naive
+    # and aware stamps; the delta in _hang_seconds must never raise
+    # TypeError on the subtraction. Naive is read as UTC — harbor stamps
+    # UTC clocks with or without the offset suffix.
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
 
 
 def _hang_seconds(data: dict) -> "float | None":

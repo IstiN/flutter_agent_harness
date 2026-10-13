@@ -126,6 +126,24 @@ class HangSecondsTest(unittest.TestCase):
         }
         self.assertAlmostEqual(_hang_seconds(data), 1800.0)
 
+    def test_mixed_naive_aware_timestamps(self):
+        # Rework thread (PRRT_kwDOTXdlLc6sAKyM): mixed naive/aware stamps
+        # across harbor versions must not raise TypeError in the delta
+        # subtraction — a naive stamp is read as UTC (harbor clocks UTC).
+        data = {
+            "started_at": "2025-01-01T09:00:00",  # naive
+            "finished_at": "2025-01-01T09:30:00+00:00",  # aware
+        }
+        self.assertAlmostEqual(_hang_seconds(data), 1800.0)
+
+    def test_mixed_aware_naive_timestamps(self):
+        # Same hazard, other direction.
+        data = {
+            "started_at": "2025-01-01T09:00:00Z",  # aware
+            "finished_at": "2025-01-01T09:15:00",  # naive
+        }
+        self.assertAlmostEqual(_hang_seconds(data), 900.0)
+
     def test_unknown_when_nothing_parses(self):
         self.assertIsNone(_hang_seconds({}))
         self.assertIsNone(_hang_seconds({"exception_info": {}}))
@@ -456,6 +474,55 @@ class UnreadableResultTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("Incomplete run: 1/2 expected trials attempted", out)
         self.assertNotIn("verifier_timeout", out)
+
+
+class MixedTimezoneRenderTest(unittest.TestCase):
+    """E5 hardening (rework thread PRRT_kwDOTXdlLc6sAKyM): a
+    verifier-hang trial whose started_at/finished_at mix naive and aware
+    stamps (mixed sources across harbor versions) must render the full
+    summary — the TypeError in the delta fallback must never kill it."""
+
+    def setUp(self):
+        self._summary_bak = os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        self.addCleanup(self._restore_env)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.jobs = Path(tmp.name)
+
+    def _restore_env(self):
+        if self._summary_bak is not None:
+            os.environ["GITHUB_STEP_SUMMARY"] = self._summary_bak
+
+    def _run(self, *argv) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = main(list(argv))
+        return rc, out.getvalue()
+
+    def test_render_survives_mixed_naive_aware_stamps(self):
+        # No «timed out after N seconds» message → the delta fallback is
+        # exercised with a naive started_at against an aware finished_at.
+        job = self.jobs / "fa-2.1-docker-cpu-0"
+        write_result(
+            job / "mixed-tz",
+            {
+                "verifier_result": None,
+                "exception_info": {"exception_type": "VerifierTimeoutError"},
+                "started_at": "2025-01-01T09:00:00",  # naive
+                "finished_at": "2025-01-01T09:30:00+00:00",  # aware
+            },
+        )
+        rc, out = self._run(str(self.jobs))
+        self.assertEqual(rc, 0)
+        self.assertIn("agent code hung the verifier", out)
+        self.assertIn(
+            "- fa-2.1-docker-cpu-0/mixed-tz: VerifierTimeoutError, ~1800s (~30.0 min)",
+            out,
+        )
+        self.assertNotIn(
+            "Errored trials (harness/infra failure, not scored): VerifierTimeoutError",
+            out,
+        )
 
 
 @unittest.skipUnless(
