@@ -2621,7 +2621,8 @@ ToolExecutionResult _errorToolResult(Object message, {String? toolName}) {
     return ToolExecutionResult(
       content: [
         TextContent(
-          text: 'Tool error ($name): run was aborted — tool not started'
+          text:
+              'Tool error ($name): run was aborted — tool not started'
               '${reason == null ? '' : ' (cancel reason: $reason)'}',
         ),
       ],

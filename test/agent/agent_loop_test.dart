@@ -789,15 +789,11 @@ void main() {
           'Tool error (weather): total 12\nCommand exited with code 2',
         );
         expect(
-          await textOf(
-            () => StateError('partial output\nCommand aborted'),
-          ),
+          await textOf(() => StateError('partial output\nCommand aborted')),
           'Tool error (weather): partial output\nCommand aborted',
         );
         // A genuinely uncaught exception keeps the hint.
-        final genericState = await textOf(
-          () => StateError('disk exploded'),
-        );
+        final genericState = await textOf(() => StateError('disk exploded'));
         expect(genericState, startsWith('Tool error (weather): disk exploded'));
         expect(genericState, contains('uncaught exception'));
         expect(
@@ -848,9 +844,7 @@ void main() {
         expect(validation, contains('args must be a map'));
         expect(validation, isNot(contains('uncaught exception')));
 
-        final notFound = await textOf(
-          () => ToolNotFoundException('weather'),
-        );
+        final notFound = await textOf(() => ToolNotFoundException('weather'));
         expect(notFound, startsWith('Tool error (weather): '));
         expect(notFound, isNot(contains('uncaught exception')));
 
@@ -1670,76 +1664,73 @@ void main() {
 
         await stream.toList();
         expect(fake.calls, 3, reason: 'partial + hiccup retry + recovery');
-        expect((await stream.result).last as AssistantMessage, _text('task finished for real'));
-      },
-    );
-
-    test(
-      'IT-2/E3/AC7: a persistent-empty storm fires exactly N retries then '
-      'ends with a loud run error — no storm',
-      () async {
-        final fake = _FakeStreamFunction([
-          _toolTurn([_call('c1', 'noop')]),
-          emptyTurn,
-          emptyTurn,
-          emptyTurn,
-          emptyTurn,
-          _textTurn('never reached'),
-        ]);
-        final stream = agentLoop(
-          prompts: [UserMessage.text('do the task')],
-          context: const Context(messages: []),
-          config: cliShapeConfig(),
-          streamFunction: fake.call,
-          toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
+        expect(
+          (await stream.result).last as AssistantMessage,
+          _text('task finished for real'),
         );
-
-        final events = await stream.toList();
-        // partial + 1 original empty + exactly 3 retries = 5 requests.
-        expect(fake.calls, 5);
-        final last = (await stream.result).last as AssistantMessage;
-        expect(last.stopReason, StopReason.error);
-        expect(last.errorMessage, contains('empty'));
-        expect(last.errorMessage, contains('3 retries'));
-        expect(last.errorMessage, contains('4 attempts'));
-        expect(last.errorMessage, contains('stop'));
-        // The exhaustion verdict is the run's terminal outcome.
-        final turnEnds = events.whereType<TurnEndEvent>().toList();
-        expect(turnEnds.last.message.stopReason, StopReason.error);
       },
     );
 
-    test(
-      'invariant 3: retried empty messages stay in the transcript (truthful '
-      'record)',
-      () async {
-        final fake = _FakeStreamFunction([
-          _toolTurn([_call('c1', 'noop')]),
-          emptyTurn,
-          emptyTurn,
-          _textTurn('recovered'),
-        ]);
-        final stream = agentLoop(
-          prompts: [UserMessage.text('do the task')],
-          context: const Context(messages: []),
-          config: cliShapeConfig(),
-          streamFunction: fake.call,
-          toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
-        );
+    test('IT-2/E3/AC7: a persistent-empty storm fires exactly N retries then '
+        'ends with a loud run error — no storm', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('c1', 'noop')]),
+        emptyTurn,
+        emptyTurn,
+        emptyTurn,
+        emptyTurn,
+        _textTurn('never reached'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('do the task')],
+        context: const Context(messages: []),
+        config: cliShapeConfig(),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
+      );
 
-        final events = await stream.toList();
-        await stream.result;
-        final ended = events
-            .whereType<MessageEndEvent>()
-            .where((e) => e.message is AssistantMessage)
-            .toList();
-        final empties = ended
-            .map((e) => e.message as AssistantMessage)
-            .where((m) => m.content.isEmpty && m.stopReason == StopReason.stop)
-            .length;
-        expect(empties, 2, reason: 'both retried empties were emitted');
-      },
-    );
+      final events = await stream.toList();
+      // partial + 1 original empty + exactly 3 retries = 5 requests.
+      expect(fake.calls, 5);
+      final last = (await stream.result).last as AssistantMessage;
+      expect(last.stopReason, StopReason.error);
+      expect(last.errorMessage, contains('empty'));
+      expect(last.errorMessage, contains('3 retries'));
+      expect(last.errorMessage, contains('4 attempts'));
+      expect(last.errorMessage, contains('stop'));
+      // The exhaustion verdict is the run's terminal outcome.
+      final turnEnds = events.whereType<TurnEndEvent>().toList();
+      expect(turnEnds.last.message.stopReason, StopReason.error);
+    });
+
+    test('invariant 3: retried empty messages stay in the transcript (truthful '
+        'record)', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('c1', 'noop')]),
+        emptyTurn,
+        emptyTurn,
+        _textTurn('recovered'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('do the task')],
+        context: const Context(messages: []),
+        config: cliShapeConfig(),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
+      );
+
+      final events = await stream.toList();
+      await stream.result;
+      final ended = events
+          .whereType<MessageEndEvent>()
+          .where((e) => e.message is AssistantMessage)
+          .toList();
+      final empties = ended
+          .map((e) => e.message as AssistantMessage)
+          .where((m) => m.content.isEmpty && m.stopReason == StopReason.stop)
+          .length;
+      expect(empties, 2, reason: 'both retried empties were emitted');
+    });
 
     test(
       'UT-2/E6: silent-truncation-flagged and length empties follow the same '
@@ -1769,35 +1760,32 @@ void main() {
       },
     );
 
-    test(
-      'UT-4/E2: a cancel between attempts suppresses the next attempt — no '
-      'retry after abort, and the run settles aborted',
-      () async {
-        final source = CancelTokenSource();
-        final token = source.token;
-        final fake = _CancelAfterEmptyStreamFunction([
-          _toolTurn([_call('c1', 'noop')]),
-          emptyTurn,
-        ], source);
-        final stream = agentLoop(
-          prompts: [UserMessage.text('do the task')],
-          context: const Context(messages: []),
-          config: cliShapeConfig(),
-          streamFunction: fake.call,
-          toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
-          cancelToken: token,
-        );
+    test('UT-4/E2: a cancel between attempts suppresses the next attempt — no '
+        'retry after abort, and the run settles aborted', () async {
+      final source = CancelTokenSource();
+      final token = source.token;
+      final fake = _CancelAfterEmptyStreamFunction([
+        _toolTurn([_call('c1', 'noop')]),
+        emptyTurn,
+      ], source);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('do the task')],
+        context: const Context(messages: []),
+        config: cliShapeConfig(),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
+        cancelToken: token,
+      );
 
-        final events = await stream.toList();
-        // The empty turn's request went out; the cancel fires with it; no
-        // third request may leave.
-        expect(fake.calls, 2);
-        final last = (await stream.result).last as AssistantMessage;
-        expect(last.stopReason, StopReason.aborted);
-        final turnEnds = events.whereType<TurnEndEvent>().toList();
-        expect(turnEnds.last.message.stopReason, StopReason.aborted);
-      },
-    );
+      final events = await stream.toList();
+      // The empty turn's request went out; the cancel fires with it; no
+      // third request may leave.
+      expect(fake.calls, 2);
+      final last = (await stream.result).last as AssistantMessage;
+      expect(last.stopReason, StopReason.aborted);
+      final turnEnds = events.whereType<TurnEndEvent>().toList();
+      expect(turnEnds.last.message.stopReason, StopReason.aborted);
+    });
 
     test(
       'AC2: a clean empty keeps the generic budget only — no hiccup retries, '
@@ -1814,55 +1802,88 @@ void main() {
 
         await stream.toList();
         expect(fake.calls, 1, reason: 'clean empty: the CLI nudge owns it');
-        expect(((await stream.result).last as AssistantMessage).content, isEmpty);
+        expect(
+          ((await stream.result).last as AssistantMessage).content,
+          isEmpty,
+        );
       },
     );
 
     test(
-      'E5/E2: an abort racing the FINAL hiccup retry wins over any empty '
-      'shape — a length-flagged empty settles aborted, never escapes as a '
-      'silent final (headless would exit 0 on an aborted run)',
+      'UT: emptyHiccupRetries: 0 is not an escape hatch — the exhaustion '
+      'error fires after the maxEmptyRetries budget',
       () async {
-        final source = CancelTokenSource();
-        final token = source.token;
-        final fake = _CancelAfterEmptyStreamFunction([
+        final fake = _FakeStreamFunction([
           _toolTurn([_call('c1', 'noop')]),
           emptyTurn,
-          lengthEmptyTurn,
-        ], source);
+          _textTurn('never reached'),
+        ]);
         final stream = agentLoop(
           prompts: [UserMessage.text('do the task')],
           context: const Context(messages: []),
-          config: cliShapeConfig(),
+          config: const AgentLoopConfig(
+            model: _model,
+            maxEmptyRetries: 0,
+            emptyHiccupRetries: 0,
+            emptyHiccupBaseDelay: Duration.zero,
+          ),
           streamFunction: fake.call,
           toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
-          cancelToken: token,
         );
 
-        final events = await stream.toList();
+        await stream.toList();
         final last = (await stream.result).last as AssistantMessage;
-        expect(
-          last.stopReason,
-          StopReason.aborted,
-          reason: 'the cancel landed with the last retry; a length-flagged '
-              'empty must take the explicit aborted terminal, never settle '
-              'as the run final',
-        );
-        // The empty must not escape as a settled turn either: no TurnEnd
-        // may carry the length-flagged empty as its outcome (an aborted
-        // run settling a turn on a silent empty is the gh-1577 class).
-        final turnEnds = events.whereType<TurnEndEvent>().toList();
-        expect(turnEnds, isNotEmpty);
-        for (final turnEnd in turnEnds) {
-          expect(
-            turnEnd.message.stopReason,
-            isNot(StopReason.length),
-            reason: 'an aborted run must never settle a turn on a '
-                'truncation-flagged empty',
-          );
-        }
+        expect(last.stopReason, StopReason.error);
+        expect(fake.calls, 2, reason: 'the original blank only — no retries');
+        expect(last.errorMessage, contains('0 retries'));
+        expect(last.errorMessage, contains('1 attempts'));
       },
     );
+
+    test('E5/E2: an abort racing the FINAL hiccup retry wins over any empty '
+        'shape — a length-flagged empty settles aborted, never escapes as a '
+        'silent final (headless would exit 0 on an aborted run)', () async {
+      final source = CancelTokenSource();
+      final token = source.token;
+      final fake = _CancelAfterEmptyStreamFunction([
+        _toolTurn([_call('c1', 'noop')]),
+        emptyTurn,
+        lengthEmptyTurn,
+      ], source);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('do the task')],
+        context: const Context(messages: []),
+        config: cliShapeConfig(),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
+        cancelToken: token,
+      );
+
+      final events = await stream.toList();
+      final last = (await stream.result).last as AssistantMessage;
+      expect(
+        last.stopReason,
+        StopReason.aborted,
+        reason:
+            'the cancel landed with the last retry; a length-flagged '
+            'empty must take the explicit aborted terminal, never settle '
+            'as the run final',
+      );
+      // The empty must not escape as a settled turn either: no TurnEnd
+      // may carry the length-flagged empty as its outcome (an aborted
+      // run settling a turn on a silent empty is the gh-1577 class).
+      final turnEnds = events.whereType<TurnEndEvent>().toList();
+      expect(turnEnds, isNotEmpty);
+      for (final turnEnd in turnEnds) {
+        expect(
+          turnEnd.message.stopReason,
+          isNot(StopReason.length),
+          reason:
+              'an aborted run must never settle a turn on a '
+              'truncation-flagged empty',
+        );
+      }
+    });
 
     test(
       'E7: the backoff sleep is cancellation-aware — a cancel landing during '
@@ -1872,10 +1893,14 @@ void main() {
         final token = source.token;
         // The empty's request goes out; the abort fires 50ms into the 5s
         // backoff sleep that follows the classification.
-        final fake = _CancelDuringBackoffStreamFunction([
-          _toolTurn([_call('c1', 'noop')]),
-          emptyTurn,
-        ], source, const Duration(milliseconds: 50));
+        final fake = _CancelDuringBackoffStreamFunction(
+          [
+            _toolTurn([_call('c1', 'noop')]),
+            emptyTurn,
+          ],
+          source,
+          const Duration(milliseconds: 50),
+        );
         final stream = agentLoop(
           prompts: [UserMessage.text('do the task')],
           context: const Context(messages: []),
@@ -1891,12 +1916,13 @@ void main() {
         );
 
         final sw = Stopwatch()..start();
-        final events = await stream.toList();
+        await stream.toList();
         sw.stop();
         expect(
           sw.elapsed,
           lessThan(const Duration(seconds: 2)),
-          reason: 'Ctrl+C during a hiccup storm must not stall for the '
+          reason:
+              'Ctrl+C during a hiccup storm must not stall for the '
               'backoff window',
         );
         expect(
@@ -1974,7 +2000,6 @@ class _CancelDuringBackoffStreamFunction {
     Context context, {
     CancelToken? cancelToken,
   }) {
-    final index = contexts.length;
     contexts.add(
       Context(
         systemPrompt: context.systemPrompt,

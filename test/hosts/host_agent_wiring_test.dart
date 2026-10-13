@@ -179,10 +179,7 @@ void main() {
       expect(wired.extensions, isEmpty);
       final fabricPlan = wired.plan.planFor(HostCapability.messagingFabric);
       expect(fabricPlan, isA<WiredCapability>());
-      expect(
-        (fabricPlan as WiredCapability).transports,
-        {'a2a'},
-      );
+      expect((fabricPlan as WiredCapability).transports, {'a2a'});
     });
 
     test('absent web search config hides the family from tools AND tokens', () {

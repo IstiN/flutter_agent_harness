@@ -763,9 +763,7 @@ class AgentCli {
     // same always-registered graceful contract as ask/request_secret —
     // the search degrades to an honest cannot-search result when no
     // session file backs the host.
-    _toolRegistry.register(
-      sessionSearchTool(search: searchSessionArchive),
-    );
+    _toolRegistry.register(sessionSearchTool(search: searchSessionArchive));
     // Pending-wait obligations (issue #1380 AC5): a successful
     // schedule_message arms a timer — the ledger learns why it exists.
     _attachObligationPendingWaits();

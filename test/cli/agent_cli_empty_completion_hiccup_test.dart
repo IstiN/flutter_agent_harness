@@ -34,8 +34,15 @@ void main() {
   );
 
   final truncatedToolCallTurn = toolTurn([
-    const ToolCall(id: 'c1', name: 'bash', arguments: {'command': 'python3 - <<'
-        '"unsigned long N = strtoull(argv[1'}),
+    const ToolCall(
+      id: 'c1',
+      name: 'bash',
+      arguments: {
+        'command':
+            'python3 - <<'
+            '"unsigned long N = strtoull(argv[1',
+      },
+    ),
   ]);
 
   List<AssistantMessageEvent> emptyTurn() => [
@@ -43,23 +50,20 @@ void main() {
   ];
 
   group('headless runHeadless (IT-1/IT-2/IT-3, AC4, REG-2)', () {
-    test(
-      'IT-1: partial stream → empty → healthy completion finishes the task '
-      'with exit 0 and the retried empty in the transcript',
-      () async {
-        final stream = FakeStreamFunction([
-          truncatedToolCallTurn,
-          emptyTurn(),
-          textTurn('task complete: all gates pass'),
-        ]);
-        final cli = cliFor(stream);
+    test('IT-1: partial stream → empty → healthy completion finishes the task '
+        'with exit 0 and the retried empty in the transcript', () async {
+      final stream = FakeStreamFunction([
+        truncatedToolCallTurn,
+        emptyTurn(),
+        textTurn('task complete: all gates pass'),
+      ]);
+      final cli = cliFor(stream);
 
-        final exitCode = await cli.runHeadless('do the task');
+      final exitCode = await cli.runHeadless('do the task');
 
-        expect(exitCode, 0, reason: 'the retry recovered — a real finish');
-        expect(stream.calls, 3);
-      },
-    );
+      expect(exitCode, 0, reason: 'the retry recovered — a real finish');
+      expect(stream.calls, 3);
+    });
 
     test(
       'E2/E5: an abort landing with the FINAL hiccup retry (a length-flagged '
@@ -101,59 +105,56 @@ void main() {
   });
 
   group('interactive REPL (IT-4/AC5, REG-1)', () {
-    test(
-      'IT-4/AC5: exhaustion prints the error and returns to the prompt; the '
-      'session stays steerable',
-      () async {
-        final stream = FakeStreamFunction([
-          truncatedToolCallTurn,
-          emptyTurn(),
-          emptyTurn(),
-          emptyTurn(),
-          emptyTurn(),
-          textTurn('fresh answer after the user re-asked'),
-        ]);
-        final cli = cliFor(stream);
-        final run = cli.run();
-        io.sendLine('do the task');
-        int calls = 0;
-        for (var i = 0; i < 400; i++) {
-          calls = stream.calls;
-          if (calls >= 5 && !cli.isBusy) break;
-          await Future<void>.delayed(const Duration(milliseconds: 25));
-        }
-        expect(stream.calls, 5, reason: 'exactly N retries, no storm');
-        expect(io.out.toString(), contains('empty completion after partial'));
-        // The session is alive: the follow-up user message runs normally.
-        io.sendLine('try again please');
-        for (var i = 0; i < 400; i++) {
-          if (stream.calls >= 6 && !cli.isBusy) break;
-          await Future<void>.delayed(const Duration(milliseconds: 25));
-        }
-        expect(io.out.toString(), contains('fresh answer after the user re-asked'));
-        io.sendLine('/exit');
-        await run;
-      },
-    );
+    test('IT-4/AC5: exhaustion prints the error and returns to the prompt; the '
+        'session stays steerable', () async {
+      final stream = FakeStreamFunction([
+        truncatedToolCallTurn,
+        emptyTurn(),
+        emptyTurn(),
+        emptyTurn(),
+        emptyTurn(),
+        textTurn('fresh answer after the user re-asked'),
+      ]);
+      final cli = cliFor(stream);
+      final run = cli.run();
+      io.sendLine('do the task');
+      int calls = 0;
+      for (var i = 0; i < 400; i++) {
+        calls = stream.calls;
+        if (calls >= 5 && !cli.isBusy) break;
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(stream.calls, 5, reason: 'exactly N retries, no storm');
+      expect(io.out.toString(), contains('empty completion after partial'));
+      // The session is alive: the follow-up user message runs normally.
+      io.sendLine('try again please');
+      for (var i = 0; i < 400; i++) {
+        if (stream.calls >= 6 && !cli.isBusy) break;
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(
+        io.out.toString(),
+        contains('fresh answer after the user re-asked'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
 
-    test(
-      'REG-1: clean empties keep the #1085 M2b semantics — one nudge, then '
-      'settle',
-      () async {
-        final stream = FakeStreamFunction([emptyTurn(), emptyTurn()]);
-        final cli = cliFor(stream);
-        final run = cli.run();
-        io.sendLine('hi');
-        for (var i = 0; i < 400; i++) {
-          if (stream.calls >= 2 && !cli.isBusy) break;
-          await Future<void>.delayed(const Duration(milliseconds: 25));
-        }
-        expect(stream.calls, 2, reason: 'one nudge, then settle — unchanged');
-        expect(io.out.toString(), isNot(contains('empty completion after')));
-        io.sendLine('/exit');
-        await run;
-      },
-    );
+    test('REG-1: clean empties keep the #1085 M2b semantics — one nudge, then '
+        'settle', () async {
+      final stream = FakeStreamFunction([emptyTurn(), emptyTurn()]);
+      final cli = cliFor(stream);
+      final run = cli.run();
+      io.sendLine('hi');
+      for (var i = 0; i < 400; i++) {
+        if (stream.calls >= 2 && !cli.isBusy) break;
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(stream.calls, 2, reason: 'one nudge, then settle — unchanged');
+      expect(io.out.toString(), isNot(contains('empty completion after')));
+      io.sendLine('/exit');
+      await run;
+    });
   });
 }
 
