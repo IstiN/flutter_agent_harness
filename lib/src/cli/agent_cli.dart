@@ -275,6 +275,7 @@ part 'settings_flow.dart';
 part 'settings_flow_auto_update.dart';
 part 'settings_flow_harness_mode.dart';
 part 'settings_flow_model_caps.dart';
+part 'settings_flow_context_cap.dart';
 part 'settings_flow_config_sync.dart';
 part 'agent_commands.dart';
 part 'approval_commands.dart';
@@ -758,9 +759,7 @@ class AgentCli {
     // same always-registered graceful contract as ask/request_secret —
     // the search degrades to an honest cannot-search result when no
     // session file backs the host.
-    _toolRegistry.register(
-      sessionSearchTool(search: searchSessionArchive),
-    );
+    _toolRegistry.register(sessionSearchTool(search: searchSessionArchive));
     // Pending-wait obligations (issue #1380 AC5): a successful
     // schedule_message arms a timer — the ledger learns why it exists.
     _attachObligationPendingWaits();

@@ -332,9 +332,10 @@ void main() {
     /// else byte-for-byte.
     Future<void> dropAutoUpdateKeyWrite() async {
       final path = configFile(tmp).path;
-      final edited = removeYamlPath((await env.readTextFile(path)).getOrThrow(), const [
-        'auto_update',
-      ]);
+      final edited = removeYamlPath(
+        (await env.readTextFile(path)).getOrThrow(),
+        const ['auto_update'],
+      );
       loadYaml(edited);
       await env.writeFile(path, edited);
     }
@@ -390,8 +391,7 @@ void main() {
       expect(reloaded.misuseBreaker, isFalse);
     });
 
-    test('the auto-update off→notify key drop is not resurrected',
-        () async {
+    test('the auto-update off→notify key drop is not resurrected', () async {
       configFile(tmp)
         ..createSync(recursive: true)
         ..writeAsStringSync('${ticketConfigYaml}auto_update: false\n');
@@ -415,33 +415,37 @@ void main() {
       );
     });
 
-    test('a global compaction pick is not overwritten by the boot value',
-        () async {
-      // The boot-loaded engine is non-default (classic); the settings-hub
-      // pick is structured (global scope).
-      configFile(tmp)
-        ..createSync(recursive: true)
-        ..writeAsStringSync('${ticketConfigYaml}compaction:\n'
-            '  engine: classic\n');
-      final bootSnapshot = loadCliConfig(tmp.path);
-      expect(bootSnapshot.compactionEngine, CompactionEngine.classic);
+    test(
+      'a global compaction pick is not overwritten by the boot value',
+      () async {
+        // The boot-loaded engine is non-default (classic); the settings-hub
+        // pick is structured (global scope).
+        configFile(tmp)
+          ..createSync(recursive: true)
+          ..writeAsStringSync(
+            '${ticketConfigYaml}compaction:\n'
+            '  engine: classic\n',
+          );
+        final bootSnapshot = loadCliConfig(tmp.path);
+        expect(bootSnapshot.compactionEngine, CompactionEngine.classic);
 
-      await globalCompactionPickWrite();
-      expect(
-        loadCliConfig(tmp.path).compactionEngine,
-        CompactionEngine.structured,
-        reason: 'the global pick must land on disk first',
-      );
+        await globalCompactionPickWrite();
+        expect(
+          loadCliConfig(tmp.path).compactionEngine,
+          CompactionEngine.structured,
+          reason: 'the global pick must land on disk first',
+        );
 
-      final snapshot = loadCliConfig(tmp.path);
-      await persistShapedSave(snapshot);
+        final snapshot = loadCliConfig(tmp.path);
+        await persistShapedSave(snapshot);
 
-      expect(
-        loadCliConfig(tmp.path).compactionEngine,
-        CompactionEngine.structured,
-        reason: 'the pick must survive the next persist in the session',
-      );
-    });
+        expect(
+          loadCliConfig(tmp.path).compactionEngine,
+          CompactionEngine.structured,
+          reason: 'the pick must survive the next persist in the session',
+        );
+      },
+    );
 
     test('the real auto-update flow fires the re-sync hook', () async {
       // Input-free flow, both write branches: off → notify lands the
@@ -449,9 +453,7 @@ void main() {
       // (`_upsertConfigYaml`). Every sanctioned user-file write must
       // fire the hook exactly once.
       var resyncs = 0;
-      final (cli, _) = bootCli(
-        onUserConfigFileChanged: () async => resyncs++,
-      );
+      final (cli, _) = bootCli(onUserConfigFileChanged: () async => resyncs++);
       configFile(tmp)
         ..createSync(recursive: true)
         ..writeAsStringSync('${ticketConfigYaml}auto_update: false\n');
@@ -491,7 +493,8 @@ void main() {
       expect(
         loadCliConfig(tmp.path).autoUpdate,
         AutoUpdateMode.notify,
-        reason: 'the drop survives the persist because the flow re-synced '
+        reason:
+            'the drop survives the persist because the flow re-synced '
             'the snapshot through the hook',
       );
     });

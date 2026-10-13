@@ -28,6 +28,18 @@ block a release again.
   disk backstop covers every known top-level key. `spills:` renders in
   `toYaml` (new `SpillsConfig.toYaml`) and `agent.misuseBreaker: false`
   persists too; an unchanged save no longer rewrites the file at all.
+  Rework round: the boot snapshot re-syncs from disk after every
+  sanctioned mid-session settings write (`onUserConfigFileChanged` — a
+  cleared context cap, an `auto_update` key drop or a global compaction
+  pick is no longer resurrected/overwritten by the next save in the
+  same session); `validateAgentSection` (the strict `fa config check` /
+  `config set` / settings-hub mirror) accepts the emitter's
+  `agent.misuseBreaker` and `agent.stuckTool` keys so `fa config check`
+  never false-fails on fa's own output; clearing the context cap drops
+  only the cap key instead of the whole `agent:` block (the sibling
+  `mode:`/`misuseBreaker:` keys survive); and the `providersQueue:`
+  block (no typed renderer) joins the disk backstop so a save can never
+  silently delete the user's queue.
 
 - gh-1556: bench pipeline stops bleeding score + fa deadline awareness.
   Bench: the harbor ladder kill uses the `[f]a` bracket trick and is

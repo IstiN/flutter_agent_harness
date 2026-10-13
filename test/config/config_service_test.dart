@@ -921,11 +921,16 @@ void main() {
       for (final config in shapes) {
         final doc = loadYaml(config.toYaml()) as YamlMap;
         final agentNode = doc['agent'];
-        expect(agentNode, isA<YamlMap>(), reason: 'emitter: ${config.toYaml()}');
+        expect(
+          agentNode,
+          isA<YamlMap>(),
+          reason: 'emitter: ${config.toYaml()}',
+        );
         expect(
           () => validateAgentSection(agentNode),
           returnsNormally,
-          reason: 'the emitter wrote a section the validator rejects:\n'
+          reason:
+              'the emitter wrote a section the validator rejects:\n'
               '${config.toYaml()}',
         );
       }
