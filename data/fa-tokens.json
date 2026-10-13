@@ -2688,6 +2688,15 @@
       "total": 79676,
       "cacheRead": 1744384,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-13T21:10:49Z",
+      "prompt": 106056,
+      "completion": 29318,
+      "total": 135374,
+      "cacheRead": 2880000,
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-1574": [
