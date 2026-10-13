@@ -466,13 +466,19 @@ extension AgentCliHubDriver on AgentCli {
     if (session == null) return Future.value();
     _persistChain = _persistChain
         .then((_) async {
-          // gh-1590: the window gate FIRST — a refused mutation reserves
+          // A board with no cards has nothing to say: an empty `[]`
+          // snapshot must not append (every no-job session would grow
+          // one at run finalize) and must not open a persist window.
+          // The check rides BEFORE the gate so it costs nothing when
+          // the window would refuse anyway.
+          final records = _jobBoard.toRecords();
+          if (records.isEmpty) return;
+          // gh-1590: the window gate NEXT — a refused mutation reserves
           // the trailing flush (which re-enters here unforced) and skips
           // the encode entirely.
           if (!force && !_jobBoardPersistThrottle.shouldPersistNow()) return;
           // Serialize ONCE — the dedupe key must be the exact payload
           // that gets appended, not a second encoding of the same board.
-          final records = _jobBoard.toRecords();
           final json = jsonEncode(records);
           if (!_jobBoardPersistDeduper.shouldPersist(json)) return;
           try {

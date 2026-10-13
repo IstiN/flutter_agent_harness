@@ -61,9 +61,12 @@ final class _ThrottleJob implements ShellJob {
   _ThrottleJob({required this.command, required this.logPath});
 
   /// The registry id the board assigns (overrides the shell-provided one).
+  @override
   String get id => logPath.split('/').last;
 
+  @override
   final String command;
+  @override
   final String logPath;
   int? _exitCode;
   final _settled = Completer<void>();
@@ -237,6 +240,48 @@ void main() {
           reason: 'the flush lands the final board state',
         );
       }
+    },
+  );
+  test(
+    'a session with NO background jobs never grows a shell_job_registry '
+    'record (gh-1590: the finalize flush must not append empty '
+    'snapshots)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final io = FakeCliIO();
+      final shell = _ThrottleShell();
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          approvalMode: ApprovalMode.yolo,
+        ),
+        io: io,
+        streamFunction: (model, context, {cancelToken}) {
+          final stream = AssistantMessageEventStream();
+          for (final event in textTurn('plain answer, no jobs')) {
+            stream.push(event);
+          }
+          stream.end();
+          return stream;
+        },
+      );
+      final code = await cli.runHeadless('answer without any jobs');
+      expect(code, 0);
+      final files = await _sessionFiles(env, '/sessions');
+      expect(files, hasLength(1), reason: 'one session file was written');
+      final payloads = await shellJobRegistryRecords(env, files.single);
+      expect(
+        payloads,
+        isEmpty,
+        reason:
+            'an empty board must never append '
+            'an empty `[]` snapshot — that would grow every no-job session '
+            'and defeat the empty-session cleanup',
+      );
     },
   );
 }
