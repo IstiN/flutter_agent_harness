@@ -1812,6 +1812,81 @@ void main() {
         expect(((await stream.result).last as AssistantMessage).content, isEmpty);
       },
     );
+
+    test(
+      'E5/E2: an abort racing the FINAL hiccup retry wins over any empty '
+      'shape — a length-flagged empty settles aborted, never escapes as a '
+      'silent final (headless would exit 0 on an aborted run)',
+      () async {
+        final source = CancelTokenSource();
+        final token = source.token;
+        final fake = _CancelAfterEmptyStreamFunction([
+          _toolTurn([_call('c1', 'noop')]),
+          emptyTurn,
+          lengthEmptyTurn,
+        ], source);
+        final stream = agentLoop(
+          prompts: [UserMessage.text('do the task')],
+          context: const Context(messages: []),
+          config: cliShapeConfig(),
+          streamFunction: fake.call,
+          toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
+          cancelToken: token,
+        );
+
+        await stream.toList();
+        final last = (await stream.result).last as AssistantMessage;
+        expect(
+          last.stopReason,
+          StopReason.aborted,
+          reason: 'the cancel landed with the last retry; a length-flagged '
+              'empty must take the explicit aborted terminal, never settle '
+              'as the run final',
+        );
+      },
+    );
+
+    test(
+      'E7: the backoff sleep is cancellation-aware — a cancel landing during '
+      'the backoff does not wait out the delay',
+      () async {
+        final source = CancelTokenSource();
+        final token = source.token;
+        // The empty's request goes out; the abort fires 50ms into the 5s
+        // backoff sleep that follows the classification.
+        final fake = _CancelDuringBackoffStreamFunction([
+          _toolTurn([_call('c1', 'noop')]),
+          emptyTurn,
+        ], source, const Duration(milliseconds: 50));
+        final stream = agentLoop(
+          prompts: [UserMessage.text('do the task')],
+          context: const Context(messages: []),
+          config: const AgentLoopConfig(
+            model: _model,
+            maxEmptyRetries: 0,
+            emptyHiccupBaseDelay: Duration(seconds: 5),
+            emptyHiccupMaxBackoff: Duration(seconds: 5),
+          ),
+          streamFunction: fake.call,
+          toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
+          cancelToken: token,
+        );
+
+        final sw = Stopwatch()..start();
+        await stream.toList();
+        sw.stop();
+        expect(
+          sw.elapsed,
+          lessThan(const Duration(seconds: 2)),
+          reason: 'Ctrl+C during a hiccup storm must not stall for the '
+              'backoff window',
+        );
+        expect(
+          ((await stream.result).last as AssistantMessage).stopReason,
+          StopReason.aborted,
+        );
+      },
+    );
   });
 }
 
@@ -1858,6 +1933,44 @@ class _CancelAfterEmptyStreamFunction {
     }
     stream.end();
     if (index == cancelOnTurn) source.cancel('test abort');
+    return stream;
+  }
+}
+
+/// A scripted stream that arms the abort timer when it serves the LAST
+/// turn: the cancel lands while the loop sits in the between-attempts
+/// backoff sleep (after the classification, before the next request).
+class _CancelDuringBackoffStreamFunction {
+  _CancelDuringBackoffStreamFunction(this.turns, this.source, this.cancelAfter);
+
+  final List<List<AssistantMessageEvent>> turns;
+  final CancelTokenSource source;
+  final Duration cancelAfter;
+
+  final contexts = <Context>[];
+
+  int get calls => contexts.length;
+
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    final index = contexts.length;
+    contexts.add(
+      Context(
+        systemPrompt: context.systemPrompt,
+        messages: List.of(context.messages),
+        tools: context.tools,
+      ),
+    );
+    final stream = AssistantMessageEventStream();
+    final isLast = index == turns.length - 1;
+    for (final event in turns.removeAt(0)) {
+      stream.push(event);
+    }
+    stream.end();
+    if (isLast) Timer(cancelAfter, () => source.cancel('test abort'));
     return stream;
   }
 }
