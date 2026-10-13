@@ -15,15 +15,14 @@ import 'sqlite_reader.dart';
 final class Sqlite3Engine implements SqliteEngine {
   /// Creates an engine. [openOverride] replaces the real `sqlite3.open`
   /// (test seam for simulating native-assets library-load failures).
-  const Sqlite3Engine({SqliteOpen? openOverride})
-    : _openOverride = openOverride;
+  final SqliteOpen? openOverride;
 
-  final SqliteOpen? _openOverride;
+  const Sqlite3Engine({this.openOverride});
 
   @override
   SqliteDatabase openReadOnly(String path) {
     try {
-      return (_openOverride ?? _openBundledLibrary)(path);
+      return (openOverride ?? _openBundledLibrary)(path);
     } on ArgumentError catch (error) {
       // gh-1574: a missing bundled libsqlite3 (installers must place it in
       // <exe_dir>/../lib) surfaces as the ffi resolver's ArgumentError —

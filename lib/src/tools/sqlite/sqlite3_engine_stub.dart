@@ -11,8 +11,11 @@ import 'sqlite_reader.dart';
 
 /// A [SqliteEngine] that is never usable on the web.
 final class Sqlite3Engine implements SqliteEngine {
-  /// Creates an engine.
-  const Sqlite3Engine();
+  /// Creates an engine. [openOverride] is accepted for API parity with the
+  /// FFI engine; the web engine never opens a database.
+  final SqliteOpen? openOverride;
+
+  const Sqlite3Engine({this.openOverride});
 
   @override
   SqliteDatabase openReadOnly(String path) => throw UnsupportedError(
