@@ -13,6 +13,18 @@ block a release again.
 
 ## Unreleased
 
+- gh-1575: macOS clipboard paste fixed for TIFF-only pasteboards + the
+  Ctrl+V text fallback. `_readMacos` probes `«class TIFF»` after PNGf/JPEG
+  miss and converts via `sips -s format png` (a Preview/browser copy used
+  to dead-end on `clipboard holds no image`; a failed conversion keeps the
+  unavailable fall-through and every scratch file is cleaned up); new
+  `readPasteboardText` (`pbpaste` / xclip+wl-paste / PowerShell
+  Get-Clipboard) behind the same injectable `ProcessRunner`/`platform:`
+  seam, and Ctrl+V with a TEXT clipboard now inserts the clipboard text
+  into the composer instead of printing the image probe's dead-end reason
+  — bracketed-paste routing, gesture pairing and silent-failure semantics
+  unchanged.
+
 - gh-1556: bench pipeline stops bleeding score + fa deadline awareness.
   Bench: the harbor ladder kill uses the `[f]a` bracket trick and is
   wrapped so a kill failure can never replace the `TimeoutError` (the

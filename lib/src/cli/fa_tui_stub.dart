@@ -47,6 +47,7 @@ final class FaTuiCallbacks {
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
+    this.readClipboardText,
     this.statusSnapshot,
     this.statusLineEngine,
   });
@@ -78,6 +79,10 @@ final class FaTuiCallbacks {
   /// Reads the platform pasteboard image on Ctrl+V. Always null here —
   /// web builds report the pasteboard as unavailable (edge E1).
   final Future<PasteboardRead> Function()? readClipboardImage;
+
+  /// Reads the platform pasteboard's text (gh-1575, Ctrl+V fallback).
+  /// Always null here — web builds never fall back to clipboard text.
+  final Future<PasteboardRead> Function()? readClipboardText;
 }
 
 /// No-op stand-in for the real TUI controller (never run on web).

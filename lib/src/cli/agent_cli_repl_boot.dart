@@ -203,6 +203,7 @@ extension on AgentCli {
         pathCandidates: pathCandidatesFor,
         onHubAction: (action, key) => _onHubAction(action, key),
         readClipboardImage: () => readPasteboardImage(),
+        readClipboardText: () => readPasteboardText(),
       ),
       isExited: () => _exited,
       programHooks: config.tuiProgramHooks,

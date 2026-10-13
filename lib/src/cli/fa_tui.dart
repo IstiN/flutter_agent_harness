@@ -123,6 +123,7 @@ final class FaTuiCallbacks {
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
+    this.readClipboardText,
     this.statusSnapshot,
     this.statusLineEngine,
   });
@@ -204,6 +205,12 @@ final class FaTuiCallbacks {
   /// reader wired (prints the unavailable hint). Runs OFF the UI loop —
   /// the result comes back as a [PasteboardResultMsg].
   final Future<PasteboardRead> Function()? readClipboardImage;
+
+  /// Reads the platform pasteboard's plain text (gh-1575): the Ctrl+V
+  /// image-probe fallback — when the pasteboard holds no image, the text
+  /// is inserted into the composer instead of printing the dead-end
+  /// reason. Null = no fallback (the named reason prints as before).
+  final Future<PasteboardRead> Function()? readClipboardText;
 
   /// Agents-hub overlay actions (issue #277): [FaHubAction.enter] drills
   /// into the selected agent's transcript ([key] = row key), back returns
