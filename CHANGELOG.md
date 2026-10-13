@@ -13,6 +13,22 @@ block a release again.
 
 ## Unreleased
 
+- fix(cli): gh-1572 — `fa` boot no longer rewrites `~/.fah/config.yaml`
+  from a lossy config. `persistConfig` (bin/fah_runapp.dart) built a
+  fresh `CliConfig` carrying only some fields and `persistConfig()` ran
+  unconditionally at boot, so every launch silently dropped the user's
+  `spills:`, `subagents:`, `jobs:`, `headless:`, `agent:`, `quota:`,
+  `tui:`, `trajectory:`, `waiting:`, `power.hold` and `auto_update`
+  settings (first reported on 1.0.547). Three cooperating fixes: the
+  boot save is now `saved.copyWith(<live overlays>)` so every parsed
+  section rides along by construction; `CliConfig.copyWith` replaces the
+  drifted hand-rolled `withCustomProviders` field list (itself dropping
+  spills/subagents/waiting/jobs/agentMode/misuseBreaker/streamThinking
+  inside `saveCliConfig`'s merge step); the `_diskPreservedSections`
+  disk backstop covers every known top-level key. `spills:` renders in
+  `toYaml` (new `SpillsConfig.toYaml`) and `agent.misuseBreaker: false`
+  persists too; an unchanged save no longer rewrites the file at all.
+
 - gh-1556: bench pipeline stops bleeding score + fa deadline awareness.
   Bench: the harbor ladder kill uses the `[f]a` bracket trick and is
   wrapped so a kill failure can never replace the `TimeoutError` (the

@@ -1780,6 +1780,12 @@ const _diskPreservedSections = {
   'quota',
   'tui',
   'trajectory',
+  // The power section (issues #325/#326) and the `auto_update` scalar
+  // (issue #1377): known top-level keys the emitter writes only when
+  // non-default — a hand-written block survives a save from a config
+  // that does not carry them.
+  'power',
+  'auto_update',
 };
 
 /// Re-attaches the [_diskPreservedSections] blocks of [diskText] to

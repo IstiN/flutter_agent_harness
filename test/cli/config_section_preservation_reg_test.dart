@@ -24,8 +24,6 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
-import 'package:flutter_agent_harness/src/cli/headless_config.dart';
-import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
 import 'package:test/test.dart';
 
 File configFile(Directory tmp) => File('${tmp.path}/.fah/config.yaml');
