@@ -297,18 +297,25 @@ class AnchoredPatternSemanticsTest(unittest.TestCase):
         )
 
 
+# The harbor base module THIS module's fa_agent copy was classified
+# against, captured at import time: sibling test_fa_agent.py installs its
+# own (empty-table) stub modules over sys.modules["harbor.*"] when it
+# loads — discovery imports every module BEFORE running any test — so a
+# late sys.modules lookup would return a different stub whose
+# BaseInstalledAgent.ERROR_PATTERNS is empty and whose ApiRateLimitError
+# is a different class, breaking the override assertions in harbor-less
+# runs (gh-1592 review thread 1, pitfall 2).
+_ERROR_PATTERN_BASE = installed_base if REAL_HARBOR_BASE is None else (
+    harbor_base
+)
+
+
 def _api_rate_limit_error_cls():
-    if REAL_HARBOR_BASE is not None:
-        return REAL_HARBOR_BASE.ApiRateLimitError
-    return sys.modules["harbor.agents.installed.base"].ApiRateLimitError
+    return _ERROR_PATTERN_BASE.ApiRateLimitError
 
 
 def _inherited_error_patterns():
-    if REAL_HARBOR_BASE is not None:
-        return REAL_HARBOR_BASE.BaseInstalledAgent.ERROR_PATTERNS
-    return sys.modules[
-        "harbor.agents.installed.base"
-    ].BaseInstalledAgent.ERROR_PATTERNS
+    return _ERROR_PATTERN_BASE.BaseInstalledAgent.ERROR_PATTERNS
 
 
 @unittest.skipUnless(

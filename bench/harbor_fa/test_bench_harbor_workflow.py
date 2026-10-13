@@ -301,15 +301,20 @@ def _run_resolve(
 
 
 def _resolve_outputs(proc) -> dict:
-    if not proc.github_output.exists():
-        return {}
-    result = {}
-    for line in proc.github_output.read_text().splitlines():
-        if "=" in line:
-            key, _, value = line.partition("=")
-            result[key] = value
-    proc._tmp.cleanup()
-    return result
+    # try/finally: the no-output early return used to leak proc._tmp
+    # (ResourceWarning on GC) — same hygiene class as the gh-1592
+    # test_error_classifier review thread.
+    try:
+        if not proc.github_output.exists():
+            return {}
+        result = {}
+        for line in proc.github_output.read_text().splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                result[key] = value
+        return result
+    finally:
+        proc._tmp.cleanup()
 
 
 @unittest.skipUnless(
