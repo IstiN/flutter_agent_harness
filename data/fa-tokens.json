@@ -2580,5 +2580,16 @@
       "total": 241785,
       "model": "glm-5.3-flash"
     }
+  ],
+  "issue-1575": [
+    {
+      "leg": "dev",
+      "at": "2026-10-13T09:57:28Z",
+      "prompt": 85336,
+      "completion": 33259,
+      "total": 118595,
+      "cacheRead": 6131392,
+      "model": "glm-5.3-flash"
+    }
   ]
 }
