@@ -23,7 +23,13 @@ block a release again.
   seam, and Ctrl+V with a TEXT clipboard now inserts the clipboard text
   into the composer instead of printing the image probe's dead-end reason
   — bracketed-paste routing, gesture pairing and silent-failure semantics
-  unchanged.
+  unchanged. Review pass: the Windows `Get-Clipboard` read pins UTF-8
+  console output and normalizes embedded `\r\n` (OEM-code-page mojibake),
+  the Linux text backends pin `text/plain;charset=utf-8` (an image-only
+  clipboard can no longer leak bytes as "text"), the library doc no longer
+  overclaims the `FA_FAKE_PASTEBOARD` seam, and `FaTuiCallbacks` moved to
+  a `fa_tui_callbacks.dart` part file keeping `fa_tui.dart` under the
+  2800-line gate.
 
 - gh-1556: bench pipeline stops bleeding score + fa deadline awareness.
   Bench: the harbor ladder kill uses the `[f]a` bracket trick and is
