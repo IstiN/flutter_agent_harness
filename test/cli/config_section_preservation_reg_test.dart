@@ -233,4 +233,156 @@ void main() {
       expect(File(path).readAsStringSync(), textBefore);
     });
   });
+
+  group('a sanctioned mid-session write survives the next persist '
+      '(gh-1572 rework)', () {
+    late Directory tmp;
+    late LocalExecutionEnv env;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-gh1572-persist-');
+      env = LocalExecutionEnv(cwd: tmp.path);
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    /// Boots the settings-flow cli over the seeded user config. The
+    /// flow's own writes go through [env] (the seam the flows use); the
+    /// boot snapshot and every save go through the real file
+    /// (`loadCliConfig`/`saveCliConfig`), exactly the two views
+    /// bin/fah_runapp.dart holds.
+    (AgentCli, FakeCliIO) bootCli({int? contextWindowCap}) {
+      final io = FakeCliIO();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '${tmp.path}/sessions',
+          homeDir: tmp.path,
+          contextWindowCap: contextWindowCap,
+        ),
+        io: io,
+        streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+      );
+      return (cli, io);
+    }
+
+    /// The boot-shaped persistConfig save (bin/fah_runapp.dart): the
+    /// snapshot as the copyWith base, only the session-live overlays on
+    /// top.
+    Future<void> persistShapedSave(CliConfig snapshot) => saveCliConfig(
+      tmp.path,
+      snapshot.copyWith(
+        mode: 'code',
+        approvalMode: 'yolo',
+        allowedTools: const [],
+      ),
+    );
+
+    test('the settings clear-cap removal is not resurrected', () async {
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(ticketConfigYaml);
+      // Boot: the snapshot persistConfig copies from (it is a late final
+      // loaded once at boot).
+      var snapshot = loadCliConfig(tmp.path);
+      expect(snapshot.contextWindowCap, 256000);
+
+      final (cli, io) = bootCli(contextWindowCap: snapshot.contextWindowCap);
+      final flow = cli.startContextCapFlow();
+      io.sendLine('2'); // clear
+      io.sendLine('3'); // done
+      await flow;
+
+      final afterFlow = loadCliConfig(tmp.path);
+      expect(
+        afterFlow.contextWindowCap,
+        isNull,
+        reason: 'the clear-cap write must land on disk first',
+      );
+
+      // The rework wiring (bin/fah_runapp.dart): every sanctioned direct
+      // write re-syncs the snapshot, so the next persist renders the
+      // freshest on-disk truth.
+      snapshot = loadCliConfig(tmp.path);
+
+      // Any later persist trigger in the same session (/mode switch,
+      // approval change, skill toggle…).
+      await persistShapedSave(snapshot);
+
+      final reloaded = loadCliConfig(tmp.path);
+      expect(
+        reloaded.contextWindowCap,
+        isNull,
+        reason: 'the removal must survive the next persist in the session',
+      );
+      // The sibling keys the clear never touched survive verbatim.
+      expect(reloaded.agentLoadMode, 'pi');
+      expect(reloaded.misuseBreaker, isFalse);
+    });
+
+    test('the auto-update off→notify key drop is not resurrected',
+        () async {
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync('$ticketConfigYaml auto_update: false\n');
+      var snapshot = loadCliConfig(tmp.path);
+      expect(snapshot.autoUpdate, AutoUpdateMode.off);
+
+      final (cli, io) = bootCli()..$1.config.autoUpdate = AutoUpdateMode.off;
+      final flow = cli.startAutoUpdateFlow();
+      await flow;
+
+      expect(
+        loadCliConfig(tmp.path).autoUpdate,
+        AutoUpdateMode.notify,
+        reason: 'the key drop must land on disk first',
+      );
+
+      snapshot = loadCliConfig(tmp.path);
+      await persistShapedSave(snapshot);
+
+      expect(
+        loadCliConfig(tmp.path).autoUpdate,
+        AutoUpdateMode.notify,
+        reason: 'the drop must survive the next persist in the session',
+      );
+    });
+
+    test('a global compaction pick is not overwritten by the boot value',
+        () async {
+      // The boot-loaded engine is non-default (classic); the settings-hub
+      // pick is structured (global scope).
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync('$ticketConfigYaml'
+            'compaction:\n  engine: classic\n');
+      var snapshot = loadCliConfig(tmp.path);
+      expect(snapshot.compactionEngine, CompactionEngine.classic);
+
+      final cli = bootCli();
+      final flow = cli.startCompactionEngineFlow();
+      ioSendLine(cli, '2'); // structured
+      ioSendLine(cli, '3'); // global
+      await flow;
+
+      expect(
+        loadCliConfig(tmp.path).compactionEngine,
+        CompactionEngine.structured,
+        reason: 'the global pick must land on disk first',
+      );
+
+      snapshot = loadCliConfig(tmp.path);
+      await persistShapedSave(snapshot);
+
+      expect(
+        loadCliConfig(tmp.path).compactionEngine,
+        CompactionEngine.structured,
+        reason: 'the pick must survive the next persist in the session',
+      );
+    });
+  });
 }

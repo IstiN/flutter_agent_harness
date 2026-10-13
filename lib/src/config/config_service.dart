@@ -30,6 +30,7 @@ import 'dart:convert';
 import 'package:yaml/yaml.dart';
 
 import '../a2a/a2a_config.dart';
+import '../agent/stuck_tool.dart';
 import '../cli/custom_providers.dart';
 import '../compaction/compaction_engine.dart';
 import '../cube/config/cube_settings.dart';
@@ -1279,9 +1280,13 @@ void validateProviderTimeoutsSection(Object? node) {
 /// in `cli_config.dart` (pinned by test): the section takes exactly
 /// `contextWindowCap` (a positive integer at or above the compaction
 /// reserve — a cap below 16384 must never soften that floor; a cap above
-/// the catalog window is the #729 raise path and validates unchanged) and
+/// the catalog window is the #729 raise path and validates unchanged),
 /// `mode` (the load preset `default|pi|omp`, validated by the shared
-/// [agentLoadModeValidationError] rule).
+/// [agentLoadModeValidationError] rule), `misuseBreaker` (a boolean —
+/// gh-1572 makes the emitter render the kill switch, so the mirror has
+/// to accept it or `fa config check` false-fails on fa's own output) and
+/// `stuckTool` (validated with the section's own strict parser, the same
+/// one the boot parser applies).
 void validateAgentSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('must be a map, got: $node');
@@ -1303,6 +1308,18 @@ void validateAgentSection(Object? node) {
             'negative',
           );
         }
+      case 'misuseBreaker':
+        // The tool-misuse circuit breaker kill switch (gh-1572): mirrors
+        // `_parseAgentMisuseBreakerValue` in cli_config.dart — a boolean,
+        // `false` persisted, the `true` default never written.
+        if (entry.value is! bool) {
+          throw ConfigException('"agent.misuseBreaker" must be a boolean');
+        }
+      case 'stuckTool':
+        // The stuck-call supervision section (gh-1054): validated with
+        // its own strict parser — the exact one the boot parser applies,
+        // so the mirror cannot drift.
+        StuckToolConfig.fromYaml(entry.value);
       case 'mode':
         // The tool-load preset (issue #680): `default|pi|omp`, validated
         // by the shared rule in load_modes.dart (the same one the boot
