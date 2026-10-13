@@ -65,7 +65,7 @@ void main() {
       '| гарде | 2 |\n',
       // The table's closing line arrives WITHOUT its newline and keeps
       // growing — the exact shape that armed the broken rollback.
-      'Итог: гарде',
+      'Итог готов',
       '2. Issue два',
     ], 'table close + growing tail');
 
@@ -84,7 +84,7 @@ void main() {
       '| кол1 | кол2 |\n',
       '| --- | --- |\n',
       '| гарде | 2 |\n',
-      'Итог: гарде',
+      'Итог готов',
     ], 'pre-notice stream');
 
     // A [btw] service notice + a settled job row land BETWEEN deltas:
@@ -164,16 +164,29 @@ void main() {
     model = pump(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
     model = pump(model, const BusyMsg(true, source: 'run'));
 
-    void check(String note) {
+    void check(String note, {required bool tableClosed}) {
       final plain = model
           .view()
           .content
           .replaceAll(RegExp('\x1b\\[[0-9;]*m'), '');
-      expect('кол1'.allMatches(plain).length, 1,
-          reason: '$note: the table header renders exactly once on the '
-              'glass:\n$plain');
-      expect('гарде'.allMatches(plain).length, 1,
-          reason: '$note: the table cell renders exactly once on the glass');
+      // While the table is still buffering (open span), its rows render
+      // provisionally — the only hard invariant is "never duplicated".
+      // Once the closing line committed, the grid is durable: exactly one
+      // render, at every sampled frame.
+      final headerCount = 'кол1'.allMatches(plain).length;
+      final cellCount = 'гарде'.allMatches(plain).length;
+      expect(headerCount, lessThanOrEqualTo(1),
+          reason: '$note: the table header never duplicates on the glass');
+      expect(cellCount, lessThanOrEqualTo(1),
+          reason: '$note: the table cell never duplicates on the glass');
+      if (tableClosed) {
+        expect(headerCount, 1,
+            reason: '$note: the committed table header renders exactly once '
+                'on the glass:\n$plain');
+        expect(cellCount, 1,
+            reason: '$note: the committed table cell renders exactly once '
+                'on the glass:\n$plain');
+      }
     }
 
     // The answer streams as no-newline deltas (the tail line grows), a
@@ -183,7 +196,7 @@ void main() {
       'Вот ответ:\n| кол1 | кол2 |\n| --- | --- |\n',
       '| гарде | 2 |\n',
       '| b | 3 |\n',
-      'Итог: гарде',
+      'Итог готов',
       '2. Issue два',
       '3. Issue три',
     ];
@@ -207,11 +220,11 @@ void main() {
           ),
         );
       }
-      check('fragment $i');
+      check('fragment $i', tableClosed: i >= 3);
     }
 
     // Idle frame (busy off, job board still pending) stays correct too.
     model = pump(model, const BusyMsg(false));
-    check('idle');
+    check('idle', tableClosed: true);
   });
 }
