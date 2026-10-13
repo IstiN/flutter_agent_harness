@@ -1834,8 +1834,17 @@ void main() {
           cancelToken: token,
         );
 
-        await stream.toList();
+        final events = await stream.toList();
+        // ignore: avoid_print
+        for (final e in events) {
+          // ignore: avoid_print
+          if (e is TurnEndEvent) print('DBG TurnEnd ' + e.message.stopReason.name);
+          // ignore: avoid_print
+          if (e is AgentEndEvent) print('DBG AgentEnd ' + (e.messages.last as AssistantMessage).stopReason.name);
+        }
         final last = (await stream.result).last as AssistantMessage;
+        // ignore: avoid_print
+        print('DBG result last ' + last.stopReason.name + ' calls marker');
         expect(
           last.stopReason,
           StopReason.aborted,
@@ -1843,6 +1852,19 @@ void main() {
               'empty must take the explicit aborted terminal, never settle '
               'as the run final',
         );
+        // The empty must not escape as a settled turn either: no TurnEnd
+        // may carry the length-flagged empty as its outcome (an aborted
+        // run settling a turn on a silent empty is the gh-1577 class).
+        final turnEnds = events.whereType<TurnEndEvent>().toList();
+        expect(turnEnds, isNotEmpty);
+        for (final turnEnd in turnEnds) {
+          expect(
+            turnEnd.message.stopReason,
+            isNot(StopReason.length),
+            reason: 'an aborted run must never settle a turn on a '
+                'truncation-flagged empty',
+          );
+        }
       },
     );
 
@@ -1873,7 +1895,7 @@ void main() {
         );
 
         final sw = Stopwatch()..start();
-        await stream.toList();
+        final events = await stream.toList();
         sw.stop();
         expect(
           sw.elapsed,
