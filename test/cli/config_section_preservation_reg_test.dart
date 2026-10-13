@@ -153,11 +153,7 @@ void main() {
         // the base, only the session-live overlays on top. Explicit
         // --provider/--base-url/--model flags never touch the saved
         // defaults (the provider/model triple is per-folder state).
-        // ignore: unused_local_variable
-        final persistShaped = CliConfig(
-          providerKind: saved.providerKind,
-          modelId: saved.modelId,
-          baseUrl: saved.baseUrl,
+        final persistShaped = saved.copyWith(
           mode: 'code',
           approvalMode: 'yolo',
           allowedTools: const [],
@@ -169,15 +165,6 @@ void main() {
           skillToggles: saved.skillToggles,
           cube: saved.cube,
           tools: saved.tools,
-          promptOverrides: saved.promptOverrides,
-          ttsr: saved.ttsr,
-          memory: saved.memory,
-          redact: saved.redact,
-          a2a: saved.a2a,
-          providerTimeouts: saved.providerTimeouts,
-          images: saved.images,
-          fabric: saved.fabric,
-          powerSleepPrevention: saved.powerSleepPrevention,
         );
         expect(persistShaped.providerKind, saved.providerKind);
         expect(persistShaped.modelId, saved.modelId);
