@@ -25,6 +25,9 @@ import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
+import 'package:yaml/yaml.dart';
+
+import 'agent_cli_test_support.dart';
 
 File configFile(Directory tmp) => File('${tmp.path}/.fah/config.yaml');
 
@@ -282,36 +285,65 @@ void main() {
       ),
     );
 
+    /// Applies the settings-hub clear-cap write to the user config the
+    /// way `_clearContextCap` lands it: a surgical `removeYamlPath` of
+    /// the cap key (the whole block when it empties), then a direct file
+    /// write — no `saveCliConfig` involved.
+    Future<void> clearCapWrite() async {
+      final path = configFile(tmp).path;
+      final edited = removeYamlPath(
+        (await env.readTextFile(path)).getOrThrow(),
+        const ['agent', 'contextWindowCap'],
+      );
+      loadYaml(edited); // the flows validate before writing
+      await env.writeFile(path, edited);
+    }
+
+    /// Applies the auto-update off→notify write the way
+    /// `_dropAutoUpdateKey` lands it: the key line removed, everything
+    /// else byte-for-byte.
+    Future<void> dropAutoUpdateKeyWrite() async {
+      final path = configFile(tmp).path;
+      final edited = removeYamlPath((await env.readTextFile(path)).getOrThrow(), const [
+        'auto_update',
+      ]);
+      loadYaml(edited);
+      await env.writeFile(path, edited);
+    }
+
+    /// Applies the Compaction flow's global-scope pick the way
+    /// `_writeCompactionEngineYaml` lands it: the validated
+    /// `compaction.engine` upsert.
+    Future<void> globalCompactionPickWrite() async {
+      final path = configFile(tmp).path;
+      final edited = upsertYamlPath(
+        (await env.readTextFile(path)).getOrThrow(),
+        const ['compaction', 'engine'],
+        configLeafLines(CompactionEngine.structured.value, depth: 1),
+      );
+      loadYaml(edited);
+      await env.writeFile(path, edited);
+    }
+
     test('the settings clear-cap removal is not resurrected', () async {
       configFile(tmp)
         ..createSync(recursive: true)
         ..writeAsStringSync(ticketConfigYaml);
-      // Boot: the snapshot persistConfig copies from (it is a late final
-      // loaded once at boot).
-      var snapshot = loadCliConfig(tmp.path);
-      expect(snapshot.contextWindowCap, 256000);
+      // Boot: the snapshot persistConfig copies from (a late final,
+      // loaded once at boot — it knows nothing about the flow's write).
+      final bootSnapshot = loadCliConfig(tmp.path);
+      expect(bootSnapshot.contextWindowCap, 256000);
 
-      final (cli, io) = bootCli(contextWindowCap: snapshot.contextWindowCap);
-      final flow = cli.startContextCapFlow();
-      io.sendLine('2'); // clear
-      io.sendLine('3'); // done
-      await flow;
-
-      final afterFlow = loadCliConfig(tmp.path);
+      await clearCapWrite();
       expect(
-        afterFlow.contextWindowCap,
+        loadCliConfig(tmp.path).contextWindowCap,
         isNull,
         reason: 'the clear-cap write must land on disk first',
       );
 
-      // The rework wiring (bin/fah_runapp.dart): every sanctioned direct
-      // write re-syncs the snapshot, so the next persist renders the
-      // freshest on-disk truth.
-      snapshot = loadCliConfig(tmp.path);
-
-      // Any later persist trigger in the same session (/mode switch,
-      // approval change, skill toggle…).
-      await persistShapedSave(snapshot);
+      // The next persist in the same session (/mode switch, approval
+      // change, skill toggle…) saves from the BOOT snapshot.
+      await persistShapedSave(bootSnapshot);
 
       final reloaded = loadCliConfig(tmp.path);
       expect(
@@ -328,22 +360,18 @@ void main() {
         () async {
       configFile(tmp)
         ..createSync(recursive: true)
-        ..writeAsStringSync('$ticketConfigYaml auto_update: false\n');
-      var snapshot = loadCliConfig(tmp.path);
-      expect(snapshot.autoUpdate, AutoUpdateMode.off);
+        ..writeAsStringSync('${ticketConfigYaml}auto_update: false\n');
+      final bootSnapshot = loadCliConfig(tmp.path);
+      expect(bootSnapshot.autoUpdate, AutoUpdateMode.off);
 
-      final (cli, io) = bootCli()..$1.config.autoUpdate = AutoUpdateMode.off;
-      final flow = cli.startAutoUpdateFlow();
-      await flow;
-
+      await dropAutoUpdateKeyWrite();
       expect(
         loadCliConfig(tmp.path).autoUpdate,
         AutoUpdateMode.notify,
         reason: 'the key drop must land on disk first',
       );
 
-      snapshot = loadCliConfig(tmp.path);
-      await persistShapedSave(snapshot);
+      await persistShapedSave(bootSnapshot);
 
       expect(
         loadCliConfig(tmp.path).autoUpdate,
@@ -358,30 +386,45 @@ void main() {
       // pick is structured (global scope).
       configFile(tmp)
         ..createSync(recursive: true)
-        ..writeAsStringSync('$ticketConfigYaml'
-            'compaction:\n  engine: classic\n');
-      var snapshot = loadCliConfig(tmp.path);
-      expect(snapshot.compactionEngine, CompactionEngine.classic);
+        ..writeAsStringSync('${ticketConfigYaml}compaction:\n'
+            '  engine: classic\n');
+      final bootSnapshot = loadCliConfig(tmp.path);
+      expect(bootSnapshot.compactionEngine, CompactionEngine.classic);
 
-      final cli = bootCli();
-      final flow = cli.startCompactionEngineFlow();
-      ioSendLine(cli, '2'); // structured
-      ioSendLine(cli, '3'); // global
-      await flow;
-
+      await globalCompactionPickWrite();
       expect(
         loadCliConfig(tmp.path).compactionEngine,
         CompactionEngine.structured,
         reason: 'the global pick must land on disk first',
       );
 
-      snapshot = loadCliConfig(tmp.path);
-      await persistShapedSave(snapshot);
+      await persistShapedSave(bootSnapshot);
 
       expect(
         loadCliConfig(tmp.path).compactionEngine,
         CompactionEngine.structured,
         reason: 'the pick must survive the next persist in the session',
+      );
+    });
+
+    test('a providersQueue block survives a save the emitter cannot '
+        'render', () async {
+      // The queue section (issue #418) has no typed renderer at all —
+      // like `waiting:`, its raw on-disk block is the only faithful form,
+      // so the backstop must carry it.
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          'providersQueue:\n'
+          '  - name: kimi_me\n'
+          '    provider: kimi\n',
+        );
+      await saveCliConfig(tmp.path, CliConfig(mode: 'code'));
+      final text = File(configFile(tmp).path).readAsStringSync();
+      expect(
+        text,
+        contains('providersQueue:\n  - name: kimi_me\n    provider: kimi\n'),
+        reason: 'the raw queue block must survive a whole-file save',
       );
     });
   });
