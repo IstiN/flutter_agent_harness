@@ -65,6 +65,7 @@ import '../trajectory/event_projection.dart' show textPayloadOf;
 import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
+import 'empty_completion.dart';
 import 'finalize_gate.dart';
 import 'image_registry.dart';
 import 'misuse_breaker.dart';
@@ -72,6 +73,7 @@ import 'stuck_tool.dart';
 import 'tool_pairing.dart';
 
 part 'agent_loop_stuck_supervision.dart';
+part 'agent_loop_empty_completion.dart';
 
 /// Marker embedded in the over-window guard's error message (see
 /// [_streamAssistantResponse]): hosts match it to recognize "the loop
@@ -415,6 +417,9 @@ final class AgentLoopConfig {
     this.steeringNotifications,
     this.hasPendingSteering,
     this.maxEmptyRetries = 1,
+    this.emptyHiccupRetries = 3,
+    this.emptyHiccupBaseDelay = const Duration(milliseconds: 500),
+    this.emptyHiccupMaxBackoff = const Duration(milliseconds: 8000),
     this.maxSteeringTurns = 20,
     this.contextWindowCap,
     this.wireDump = false,
@@ -476,6 +481,22 @@ final class AgentLoopConfig {
   /// (one automatic retry — a blank answer never ends a run on the first
   /// try).
   final int maxEmptyRetries;
+
+  /// gh-1577: how many times an empty completion that follows PARTIAL
+  /// content (assistant text, tool activity, or a truncation signal — see
+  /// [classifyEmptyCompletion]'s `emptyAfterPartial` verdict) is retried
+  /// with exponential backoff before the run ends with an explicit
+  /// empty-exhaustion error instead of settling a silent success. Default:
+  /// 3. `0` restores the legacy accept-empty settle.
+  final int emptyHiccupRetries;
+
+  /// gh-1577: first backoff sleep between empty-hiccup retries (the
+  /// model-roles `retry.baseDelayMs` shape).
+  final Duration emptyHiccupBaseDelay;
+
+  /// gh-1577: cap on the exponential empty-hiccup backoff (the model-roles
+  /// `retry.maxBackoffMs` shape).
+  final Duration emptyHiccupMaxBackoff;
 
   /// How many steering batches may extend ONE run (mid-run user input or
   /// external mail). Without a cap, a self-sustaining agent chatter loop
@@ -557,6 +578,9 @@ final class AgentLoopConfig {
       steeringNotifications: steeringNotifications,
       hasPendingSteering: hasPendingSteering,
       maxEmptyRetries: maxEmptyRetries,
+      emptyHiccupRetries: emptyHiccupRetries,
+      emptyHiccupBaseDelay: emptyHiccupBaseDelay,
+      emptyHiccupMaxBackoff: emptyHiccupMaxBackoff,
       maxSteeringTurns: maxSteeringTurns,
       contextWindowCap: contextWindowCap,
       wireDump: wireDump,
@@ -1371,18 +1395,15 @@ Future<List<Message>> _steeringMessages(AgentLoopConfig config) async {
 /// A completion is degenerate-empty when the model stopped normally
 /// (`stop`) but produced no tool calls and no non-whitespace text — a
 /// known provider failure mode under load (the answer is simply blank).
-bool _isDegenerateEmpty(AssistantMessage message) {
-  if (message.stopReason != StopReason.stop) return false;
-  for (final block in message.content) {
-    if (block is ToolCall) return false;
-    if (block is TextContent && block.text.trim().isNotEmpty) return false;
-  }
-  return true;
-}
+/// The content check is shared with gh-1577's classifier.
+bool _isDegenerateEmpty(AssistantMessage message) =>
+    message.stopReason == StopReason.stop &&
+    isEmptyAssistantCompletion(message);
 
 /// Retries a degenerate-empty completion with the same context (bounded by
 /// `config.maxEmptyRetries`; a blank answer never ends a run on the first
 /// try). The retried messages stay in the transcript (truthful record) and
+/// the gh-1577 hiccup policy lives in `agent_loop_empty_completion.dart`.
 Future<(AssistantMessage, Context)> _retryDegenerateEmpty(
   AssistantMessage message,
   Context context,
@@ -1390,24 +1411,14 @@ Future<(AssistantMessage, Context)> _retryDegenerateEmpty(
   AgentEventSink emit,
   StreamFunction streamFunction,
   CancelToken? cancelToken,
-) async {
-  var retries = 0;
-  var current = message;
-  var out = context;
-  while (_isDegenerateEmpty(current) &&
-      retries < config.maxEmptyRetries &&
-      !(cancelToken?.isCancelled ?? false)) {
-    retries++;
-    (current, out) = await _streamAssistantResponse(
-      context,
-      config,
-      emit,
-      streamFunction,
-      cancelToken,
-    );
-  }
-  return (current, out);
-}
+) => retryEmptyCompletion(
+  message,
+  context,
+  config,
+  emit,
+  streamFunction,
+  cancelToken,
+);
 
 /// Streams one assistant response from the provider, emitting message
 /// lifecycle events and keeping the partial message in [context.messages]
