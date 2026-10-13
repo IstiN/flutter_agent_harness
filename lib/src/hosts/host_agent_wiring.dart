@@ -464,6 +464,18 @@ final class AgentWiringSpec {
   final Model model;
   final String systemPrompt;
   final int maxEmptyRetries;
+
+  /// gh-1577: the empty-hiccup retry budget, threaded next to
+  /// [maxEmptyRetries] so the CLI and every host can tune it (the loop
+  /// default is 3).
+  final int emptyHiccupRetries;
+
+  /// gh-1577: first backoff sleep between empty-hiccup retries (tests pin
+  /// it to [Duration.zero]).
+  final Duration emptyHiccupBaseDelay;
+
+  /// gh-1577: cap on the exponential empty-hiccup backoff.
+  final Duration emptyHiccupMaxBackoff;
   final void Function(Object error)? onRunIdleTimeout;
   final void Function()? onRunWatchdogPaused;
   final int? contextWindowCap;
@@ -476,6 +488,9 @@ final class AgentWiringSpec {
     required this.model,
     required this.systemPrompt,
     this.maxEmptyRetries = 1,
+    this.emptyHiccupRetries = 3,
+    this.emptyHiccupBaseDelay = const Duration(milliseconds: 500),
+    this.emptyHiccupMaxBackoff = const Duration(milliseconds: 8000),
     this.onRunIdleTimeout,
     this.onRunWatchdogPaused,
     this.contextWindowCap,
@@ -624,6 +639,9 @@ final class WiredAgentCore {
       streamFunction: wiredStream,
       toolRegistry: registry,
       maxEmptyRetries: spec.maxEmptyRetries,
+      emptyHiccupRetries: spec.emptyHiccupRetries,
+      emptyHiccupBaseDelay: spec.emptyHiccupBaseDelay,
+      emptyHiccupMaxBackoff: spec.emptyHiccupMaxBackoff,
       onRunIdleTimeout: spec.onRunIdleTimeout,
       onRunWatchdogPaused: spec.onRunWatchdogPaused,
       contextWindowCap: spec.contextWindowCap,
