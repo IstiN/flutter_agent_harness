@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- gh-1577: an empty assistant completion after partial content (assistant
+  text, tool activity, or a truncation signal earlier in the turn) is a
+  bounded-retry provider hiccup — up to `emptyHiccupRetries` (default 3)
+  re-streams with exponential backoff (`emptyHiccupBaseDelay`,
+  `emptyHiccupMaxBackoff`, both threaded through the `Agent` facade,
+  `AgentWiringSpec`, and the CLI config), and exhaustion ends the run with
+  a loud `StopReason.error` (headless exit 1, interactive error + prompt)
+  instead of the silent exit-0 settle that killed the gh-1577 trials.
+  Clean empties keep the #1085 M2b one-nudge semantics. The abort always
+  wins: a cancel racing the final retry settles `StopReason.aborted` for
+  any empty shape (the exit-contract race is pinned by tests), and the
+  backoff sleep is cancellation-aware.
+
 - gh-1556: bench pipeline stops bleeding score + fa deadline awareness.
   Bench: the harbor ladder kill uses the `[f]a` bracket trick and is
   wrapped so a kill failure can never replace the `TimeoutError` (the
