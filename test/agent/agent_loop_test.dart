@@ -1636,7 +1636,12 @@ void main() {
       ),
     ];
     final lengthEmptyTurn = [
-      DoneEvent(reason: StopReason.length, message: _assistant()),
+      // The loop consumes the MESSAGE's stopReason (DoneEvent.reason is not
+      // merged) — a real length cut flags the message itself.
+      DoneEvent(
+        reason: StopReason.length,
+        message: _assistant(stopReason: StopReason.length),
+      ),
     ];
 
     /// CLI-shaped loop config: the CLI's own nudge owns clean empties
@@ -1835,16 +1840,7 @@ void main() {
         );
 
         final events = await stream.toList();
-        // ignore: avoid_print
-        for (final e in events) {
-          // ignore: avoid_print
-          if (e is TurnEndEvent) print('DBG TurnEnd ' + e.message.stopReason.name);
-          // ignore: avoid_print
-          if (e is AgentEndEvent) print('DBG AgentEnd ' + (e.messages.last as AssistantMessage).stopReason.name);
-        }
         final last = (await stream.result).last as AssistantMessage;
-        // ignore: avoid_print
-        print('DBG result last ' + last.stopReason.name + ' calls marker');
         expect(
           last.stopReason,
           StopReason.aborted,

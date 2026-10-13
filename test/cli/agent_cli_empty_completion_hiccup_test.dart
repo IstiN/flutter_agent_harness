@@ -111,7 +111,12 @@ void main() {
       'length-flagged and silent-truncation-flagged empties never exit 0',
       () async {
         final lengthEmpty = [
-          DoneEvent(reason: StopReason.length, message: testAssistant()),
+          // The loop consumes the MESSAGE's stopReason (DoneEvent.reason is
+          // not merged) — a real length cut flags the message itself.
+          DoneEvent(
+            reason: StopReason.length,
+            message: testAssistant(stopReason: StopReason.length),
+          ),
         ];
         final silentTruncationEmpty = [
           DoneEvent(
@@ -137,6 +142,46 @@ void main() {
 
           expect(exitCode, 1);
         }
+      },
+    );
+
+    test(
+      'E2/E5: an abort landing with the FINAL hiccup retry (a length-flagged '
+      'empty) exits 130 — never a silent exit 0 on an aborted run',
+      () async {
+        final lengthEmpty = [
+          DoneEvent(
+            reason: StopReason.length,
+            message: testAssistant(stopReason: StopReason.length),
+          ),
+        ];
+        final stream = _CancelDuringFinalRetryStreamFunction([
+          truncatedToolCallTurn,
+          emptyTurn(),
+          lengthEmpty,
+        ]);
+        final cli = cliFor(stream);
+
+        final exit = cli.runHeadless('do the task');
+        // The fake holds the final retry's stream open until the cancel
+        // lands, so the interrupt is guaranteed to hit the race window.
+        var armed = false;
+        for (var i = 0; i < 400; i++) {
+          if (stream.calls >= 3) {
+            armed = true;
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect(armed, isTrue, reason: 'the final retry must be in flight');
+        io.interrupt();
+
+        final exitCode = await exit;
+        // ignore: avoid_print
+        print('DBG exit=' + exitCode.toString());
+        // ignore: avoid_print
+        print('DBG out=' + io.out.toString().replaceAll('\n', ' | '));
+        expect(exitCode, 130, reason: 'aborted run — never a silent exit 0');
       },
     );
   });
@@ -196,4 +241,40 @@ void main() {
       },
     );
   });
+}
+
+/// The E2/E5 race, scripted: the FINAL hiccup retry's stream is held open
+/// until the run token is cancelled, then completes with the provider's
+/// answer — an empty flagged `length`. The abort and the truncation-flagged
+/// empty therefore land together, exactly the window the loop's post-retry
+/// conversion must cover.
+class _CancelDuringFinalRetryStreamFunction extends FakeStreamFunction {
+  _CancelDuringFinalRetryStreamFunction(super.turns);
+
+  @override
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    final isFinal = contexts.length == turns.length - 1;
+    models.add(model);
+    contexts.add(
+      Context(
+        systemPrompt: context.systemPrompt,
+        messages: List.of(context.messages),
+        tools: context.tools,
+      ),
+    );
+    final stream = AssistantMessageEventStream();
+    for (final event in turns.removeAt(0)) {
+      stream.push(event);
+    }
+    if (isFinal && cancelToken != null) {
+      cancelToken.onCancel.then((_) => stream.end());
+    } else {
+      stream.end();
+    }
+    return stream;
+  }
 }
