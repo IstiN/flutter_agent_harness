@@ -73,14 +73,14 @@ class SummaryTest(unittest.TestCase):
         # never blend in the ledger/cost views. Same env contract as
         # bench.yml's gh-1471 summary.
         make_jobs(self.jobs, "fa-2.1-modal-cpu-0", [{"resolved": True}])
-        os.environ["BENCH_RUN_LABEL"] = "kimi-for-coding (k3-256k)"
+        os.environ["BENCH_RUN_LABEL"] = "kimi-for-coding"
         self.addCleanup(os.environ.pop, "BENCH_RUN_LABEL", None)
         rc, out = self._run(
-            str(self.jobs), "--family", "2.1", "--model", "k3-256k",
+            str(self.jobs), "--family", "2.1", "--model", "kimi-for-coding",
             "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
         )
         self.assertEqual(rc, 0)
-        self.assertIn("Provider: kimi-for-coding (k3-256k) (gh-1503).", out)
+        self.assertIn("Provider: kimi-for-coding (gh-1503).", out)
 
     def test_run_label_absent_stays_silent(self):
         # Runs without the env (CLI/manual invocations) keep the

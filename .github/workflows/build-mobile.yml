@@ -218,6 +218,11 @@ jobs:
         working-directory: flutter_app
         run: bundle install
 
+      # gh-1468: same seed as ci.yml build-android — the release lane runs
+      # the same flutter_gemma_litertlm hook download and rides the same
+      # release-asset CDN roulette without it.
+      - uses: ./.github/actions/flutter-gemma-android-seed
+
       # The lane wraps `flutter build appbundle --release`; the upload
       # keystore rides the ANDROID_* env vars (issue #289) and is decoded
       # by app/build.gradle.kts into the (gitignored) build dir — no
@@ -434,6 +439,10 @@ jobs:
           else
             echo "GOOGLE_SERVICES_JSON_BASE64 not set — building with the committed placeholder google-services.json"
           fi
+
+      # gh-1468: same seed as the ci.yml/ci AAB jobs — the flavor matrix
+      # runs the same flutter_gemma_litertlm hook download per leg.
+      - uses: ./.github/actions/flutter-gemma-android-seed
 
       # Same release keystore as the AAB job (contract: store and god sign
       # with the SAME release key — only the applicationId differs), same

@@ -12,7 +12,15 @@ import 'dart:convert';
 import 'dart:io';
 
 void main() {
-  final root = _repoRoot();
+  syncBlogPosts(_repoRoot());
+}
+
+/// Syncs the canonical `blog/posts` sources into the serving copy
+/// `site/blog/posts` and regenerates the posts.json manifest. Public so
+/// the GEO build path (ci.yml / test harness) can run the same sync
+/// before building — the site builder consumes the copy, and validating a
+/// stale copy would silently miss new or edited canonical posts.
+void syncBlogPosts(String root) {
   final postsDir = Directory('$root/blog/posts');
   final outDir = Directory('$root/site/blog/posts')
     ..createSync(recursive: true);

@@ -14,6 +14,7 @@
 ///   NOT deliver it again (idempotent by record id).
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -79,10 +80,24 @@ allowedTools: []
       // wake semantics (delivered immediately, nothing stranded). The
       // IDLE-ACK text was queued first (see above).
       await harness.runSlashCommand('idle hello');
-      await harness.waitForText(
-        'IDLE-ACK awake',
-        timeout: const Duration(seconds: 60),
-      );
+      // 120s, not 60s: this is the FIRST model request of a cold spawn
+      // under shard load, and the CLI's own connect watchdog is 180s
+      // (provider_common) — a 60s budget could only report a transient
+      // dispatch stall, never outlive one (gh-1385 red run 37624414995:
+      // spinner alive at 59s, zero provider bytes — the request was in
+      // flight, not lost).
+      try {
+        await harness.waitForText(
+          'IDLE-ACK awake',
+          timeout: const Duration(seconds: 120),
+        );
+      } on TimeoutException {
+        // Server-side truth for the next red: 0 = the request never
+        // dispatched; ≥1 = the response pipeline stalled, not the queue.
+        // ignore: avoid_print
+        print('MOCK-CHAT-CALLS ${server.chatCalls}');
+        rethrow;
+      }
 
       await harness.runSlashCommand('run the tool please');
       await harness.waitForText('bash', timeout: const Duration(seconds: 60));
@@ -126,7 +141,12 @@ allowedTools: []
       // rescued — nondeterministically failing that wait when recovery
       // batches both records into one turn (CI dispatch reds). A late
       // kill would just surface the mock's 500 (harmless to these
-      // assertions).
+      // assertions). The kill racing the soft-yield turn's own request
+      // (steer → yield → boundary → the request fires within
+      // milliseconds of the accept) is tolerated by the mock server: a
+      // client gone mid-request is a counted abort there, never an
+      // unhandled zone error (gh-1385 — the 2026-10-07 shard reds died
+      // in exactly that window).
       server.enqueueToolCall('bash', '{"command": "sleep 8"}');
       await harness.runSlashCommand('run the tool again');
       await harness.waitForText(
