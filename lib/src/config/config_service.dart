@@ -281,7 +281,8 @@ final class ConfigService {
       }
     }
     final projectPath = projectConfigPath;
-    if (globalPath != null && projectPath == globalPath) {
+    if (globalPath != null &&
+        _normalizePath(projectPath) == _normalizePath(globalPath)) {
       // cwd == home resolves the project scope to the user file itself; a
       // second pass would validate the same bytes twice and flag every
       // user-only key as dead config (gh-1573). One file, one pass.
@@ -292,9 +293,7 @@ final class ConfigService {
     }
     final projectText = await _readTextOrNull(projectPath);
     if (projectText == null) {
-      report.notes.add(
-        'project config absent (defaults apply): $projectPath',
-      );
+      report.notes.add('project config absent (defaults apply): $projectPath');
     } else {
       final projectWarnings = <ConfigDiagnostic>[];
       _collectDiagnostics(
@@ -623,6 +622,16 @@ final class ConfigService {
       return null;
     }
   }
+
+  /// Lexical spelling of [path] for the cwd == home guard: duplicate
+  /// slashes collapse, so a `$HOME`/cwd carrying a trailing slash (some
+  /// PAM setups compose `/home/user/`) still compares equal to its
+  /// canonical form — without this the guard misses and the same file is
+  /// validated twice, warning user-only keys as dead config (gh-1573).
+  /// Lexical only — the service has no `dart:io`, so symlink resolution
+  /// stays the host's job.
+  static String _normalizePath(String path) =>
+      path.replaceAll(RegExp('//+'), '/');
 
   /// Parses [key] into non-empty dotted segments.
   List<String> _parseKey(String key) {
