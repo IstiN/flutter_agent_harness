@@ -1279,22 +1279,8 @@ final class TranscriptMarkdown {
     if (!_tailIsFaithfulGrowth(src, boundary)) {
       return false; // replaced, not grown — keep the documented safe path
     }
-    // gh-1573: the boundary line CLOSED a streamed table, so its committed
-    // outputs embed the flushed grid. A rollback that re-walks the line
-    // with an empty parser buffer would re-emit only the bare line — the
-    // whole grid drops out of the view. Restore the buffered rows (the
-    // contiguous table-row source lines right before the boundary) so the
-    // resumed walk re-flushes the identical grid. The chunk-split shape
-    // stays on the rebuild path: a chunk prefix can re-classify as a fresh
-    // table row (`| … |`), which would render the split differently than
-    // the committed whole line did.
-    List<String>? seed;
-    if (_boundaryClosedPendingTable) {
-      if (src.length != _through) return false;
-      final from = _boundaryPendingFrom;
-      if (from < 0 || from >= _through - 1) return false;
-      seed = List<String>.of(src.sublist(from, _through - 1));
-    }
+    final (rollbackOk, seed) = _rollbackTableSeed(src);
+    if (!rollbackOk) return false;
     final edge = _through - 1;
     final fmtKept = _srcFmtStarts[edge];
     final rowKept = _srcRowStarts[edge];
@@ -1318,6 +1304,28 @@ final class TranscriptMarkdown {
     _boundaryPendingFrom = -1;
     _pendingSeedTable = seed;
     return true;
+  }
+
+  /// The pending-table half of the gh-1573 grown-tail rollback: the
+  /// boundary line CLOSED a streamed table, so its committed outputs
+  /// embed the flushed grid. A rollback that re-walks the line with an
+  /// empty parser buffer would re-emit only the bare line — the whole
+  /// grid drops out of the view. Returns the rows to restore (the
+  /// contiguous table-row source lines right before the boundary) so the
+  /// resumed walk re-flushes the identical grid. The chunk-split shape
+  /// stays on the rebuild path: a chunk prefix can re-classify as a fresh
+  /// table row (`| … |`), which would render the split differently than
+  /// the committed whole line did.
+  ///
+  /// Returns `(false, _)` when the rollback must be REFUSED (the caller
+  /// falls back to the full rebuild) and `(true, seed)` otherwise — seed
+  /// is null when the boundary line is table-free.
+  (bool, List<String>?) _rollbackTableSeed(List<String> src) {
+    if (!_boundaryClosedPendingTable) return (true, null);
+    if (src.length != _through) return (false, null);
+    final from = _boundaryPendingFrom;
+    if (from < 0 || from >= _through - 1) return (false, null);
+    return (true, List<String>.of(src.sublist(from, _through - 1)));
   }
 
   /// True when the boundary line was hard-split into the chunk lines
