@@ -154,10 +154,7 @@ void main() {
         for (var i = 0; i <= _asks.length; i++)
           (const [], textTurn('ack ${i + 1}')),
       ]);
-      await _runConversation(env, io, stream, userLines: [
-        'begin',
-        ..._asks,
-      ]);
+      await _runConversation(env, io, stream, userLines: ['begin', ..._asks]);
 
       final records = await _ledgerRecords(env);
       expect(records, isNotEmpty, reason: 'the first ingest persisted');
@@ -166,7 +163,8 @@ void main() {
       expect(
         records.length,
         lessThanOrEqualTo(2),
-        reason: 'ingests inside the persist window coalesce; the '
+        reason:
+            'ingests inside the persist window coalesce; the '
             'teardown flush lands the final state',
       );
       // The FINAL state reached the file: every ask is a durable open
@@ -198,7 +196,8 @@ void main() {
       expect(
         records,
         isEmpty,
-        reason: 'an empty ledger must never append — a no-ledger '
+        reason:
+            'an empty ledger must never append — a no-ledger '
             'session would otherwise grow one `[]` record per exit',
       );
     },

@@ -12,9 +12,8 @@ void main() {
     snapshots = [];
     return SubagentManager(
       parentSessionId: 'parent',
-      sink: (rows) async => snapshots.add({
-        for (final row in rows) row['id'] as String: row,
-      }),
+      sink: (rows) async =>
+          snapshots.add({for (final row in rows) row['id'] as String: row}),
       source: () async => const [],
     );
   }
@@ -90,9 +89,8 @@ void main() {
       now = DateTime(2026, 10, 13, 12);
       return SubagentManager(
         parentSessionId: 'parent',
-        sink: (rows) async => snapshots.add({
-          for (final row in rows) row['id'] as String: row,
-        }),
+        sink: (rows) async =>
+            snapshots.add({for (final row in rows) row['id'] as String: row}),
         source: () async => const [],
         clock: () => now,
         persistInterval: const Duration(milliseconds: 40),
@@ -171,7 +169,8 @@ void main() {
       expect(
         snapshots.length,
         afterRegistration + 1,
-        reason: 'exactly one flush lands — the trailing leg or the '
+        reason:
+            'exactly one flush lands — the trailing leg or the '
             'manual flush, never both (the deduper suppresses the '
             'byte-identical no-op)',
       );

@@ -794,17 +794,26 @@ final class SubagentManager {
   /// One persisted registry row with the display strings capped (gh-1073).
   Map<String, dynamic> _cappedRegistryRow(Map<String, dynamic> row) => {
     ...row,
-    'task': capLedgerText(row['task'] as String?,
-            maxChars: subagentRegistryTextCapChars) ??
+    'task':
+        capLedgerText(
+          row['task'] as String?,
+          maxChars: subagentRegistryTextCapChars,
+        ) ??
         '',
     if (row['context'] != null)
-      'context': capLedgerText(row['context'] as String?,
-          maxChars: subagentRegistryContextCapChars),
+      'context': capLedgerText(
+        row['context'] as String?,
+        maxChars: subagentRegistryContextCapChars,
+      ),
     if (row['error'] != null)
-      'error': capLedgerText(row['error'] as String?,
-          maxChars: subagentRegistryTextCapChars),
+      'error': capLedgerText(
+        row['error'] as String?,
+        maxChars: subagentRegistryTextCapChars,
+      ),
     if (row['lastReply'] != null)
-      'lastReply': capLedgerText(row['lastReply'] as String?,
-          maxChars: subagentRegistryReplyCapChars),
+      'lastReply': capLedgerText(
+        row['lastReply'] as String?,
+        maxChars: subagentRegistryReplyCapChars,
+      ),
   };
 }
