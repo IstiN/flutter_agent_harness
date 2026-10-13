@@ -466,11 +466,11 @@ extension AgentCliHubDriver on AgentCli {
     if (session == null) return Future.value();
     _persistChain = _persistChain
         .then((_) async {
-          // A board with no cards has nothing to say: an empty `[]`
-          // snapshot must not append (every no-job session would grow
-          // one at run finalize) and must not open a persist window.
-          // The check rides BEFORE the gate so it costs nothing when
-          // the window would refuse anyway.
+          // BEFORE the gate: an empty board must neither append nor
+          // stamp the window — an empty snapshot persisting would gate
+          // the first real snapshot for a whole interval. The
+          // toRecords() cost on refused mutations is a capped-list
+          // copy, not an encode.
           final records = _jobBoard.toRecords();
           if (records.isEmpty) return;
           // gh-1590: the window gate NEXT — a refused mutation reserves

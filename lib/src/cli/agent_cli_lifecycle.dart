@@ -106,8 +106,11 @@ extension AgentCliLifecycle on AgentCli {
     await _flushUsageLedger();
     // gh-1590: the REPL close flushes the coalesced job-board snapshot
     // and disarms the throttle's trailing leg — the last thing the
-    // process does must never be a pending ledger write.
+    // process does must never be a pending ledger write. The obligations
+    // ledger and the subagent registry flush the same way.
     await _flushJobBoardPersist();
+    await _flushObligationsLedger();
+    await _subagentManager.flushPersist();
   }
 
   /// Warm the endpoint metadata (model list, dial features, reported

@@ -129,7 +129,6 @@ final class SessionRepairReport {
   final int untouchedSegments;
 
   /// Human-readable summary lines for a CLI report.
-  /// Human-readable summary lines for a CLI report.
   List<String> summaryLines() {
     final droppedTotal = droppedByType.values.fold<int>(0, (a, b) => a + b);
     final droppedBytesTotal = droppedBytesByType.values.fold<int>(
@@ -174,8 +173,9 @@ final class SessionRepairReport {
     if (bytes >= (1 << 20)) {
       return '${(bytes / (1 << 20)).toStringAsFixed(1)} MB';
     }
-    if (bytes >= (1 << 10))
+    if (bytes >= (1 << 10)) {
       return '${(bytes / (1 << 10)).toStringAsFixed(1)} KB';
+    }
     return '$bytes B';
   }
 }

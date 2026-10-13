@@ -328,6 +328,7 @@ class AgentCli {
     MarkdownSurface? markdownSurface,
     DateTime Function()? waitingClock,
     Future<void> Function(Duration)? waitingSleep,
+    this.ledgerClock,
     SigintPolicy? sigintPolicy,
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
@@ -1193,6 +1194,13 @@ class AgentCli {
   /// waiting clock through it instead of really sleeping.
   final Future<void> Function(Duration) _waitingSleep;
 
+  /// Clock seam for the ledger persist windows (gh-1590 tests): the
+  /// `shell_job_registry` / `obligations_ledger` throttles read this
+  /// instead of [DateTime.now], so a test can pin the window (frozen
+  /// clock) and make record-count pins deterministic — a CI stall
+  /// cannot open a second window mid-test. Null = wall clock.
+  final DateTime Function()? ledgerClock;
+
   /// The session's retained-subagent registry (tests, the app settings
   /// Agents panel, hosts observing children).
   SubagentManager get subagentManager => _subagentManager;
@@ -1330,7 +1338,30 @@ class AgentCli {
   /// Reset in `_rehydrateJobBoard` next to the deduper; flushed and
   /// disarmed by `_flushJobBoardPersist` at run finalize / teardown.
   late final LedgerSnapshotThrottle _jobBoardPersistThrottle =
-      LedgerSnapshotThrottle(onFlushDue: () => unawaited(_persistJobBoard()));
+      LedgerSnapshotThrottle(
+        clock: ledgerClock,
+        onFlushDue: () => unawaited(_persistJobBoard()),
+      );
+
+  /// gh-1590 (review IMPORTANT): bounds WHEN `obligations_ledger`
+  /// snapshots may append — the per-message ingest coalesces inside the
+  /// persist window behind the trailing flush (a classifying message
+  /// used to append one full snapshot, each re-serializing every entry).
+  /// Deliberate writes (`obligation_mark_done`, pending-wait records)
+  /// bypass the window. Reset in `_obligationsWriterFor` next to the
+  /// writer swap; flushed and disarmed by `_flushObligationsLedger` at
+  /// run finalize / teardown.
+  late final LedgerSnapshotThrottle _obligationsPersistThrottle =
+      LedgerSnapshotThrottle(
+        clock: ledgerClock,
+        onFlushDue: () => unawaited(_flushCoalescedObligations()),
+      );
+
+  /// gh-1590: suppresses byte-identical `obligations_ledger` snapshot
+  /// appends — without it every no-ledger session would grow one
+  /// identical snapshot per teardown flush. Reset next to the throttle.
+  final LedgerSnapshotDeduper _obligationsPersistDeduper =
+      LedgerSnapshotDeduper();
 
   /// The obligations ledger writer (issue #1380 A1) and the session it was
   /// rehydrated from: cumulative in-memory state reloaded from the
@@ -2000,8 +2031,11 @@ class AgentCli {
       // gh-1590: land a coalesced job-board snapshot and disarm the
       // throttle's trailing leg — a headless exit must not leave a
       // pending Timer holding the isolate, nor a final board state
-      // missing from the ledger.
+      // missing from the ledger. The obligations ledger and the
+      // subagent registry flush the same way.
       await _flushJobBoardPersist();
+      await _flushObligationsLedger();
+      await _subagentManager.flushPersist();
     }
     // The exit code describes the LAST completed turn's terminal outcome
     // (captured from the turn events above) — not the visible transcript,

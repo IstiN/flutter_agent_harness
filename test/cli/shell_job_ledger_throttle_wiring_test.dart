@@ -12,6 +12,11 @@ library;
 /// ticket's session). With the write-time throttle the mutations inside
 /// the persist window coalesce into ONE snapshot plus the run-finalize
 /// flush.
+///
+/// The persist window is pinned through the CLI's `ledgerClock` seam
+/// (frozen): the record count no longer depends on all 8 mutations
+/// landing inside one real 30 s window — a CI stall cannot open a
+/// second window and flake the count.
 
 import 'dart:async';
 import 'dart:convert';
@@ -199,6 +204,10 @@ void main() {
         ),
         io: io,
         streamFunction: stream.call,
+        // The frozen clock pins the persist window (review, gh-1590):
+        // the record-count pin below is deterministic, not dependent on
+        // a healthy runner finishing the run inside 30 s.
+        ledgerClock: () => DateTime(2026, 10, 13, 12),
       );
       final run = cli.runHeadless('spawn the background jobs');
       await _waitFor(
@@ -268,6 +277,7 @@ void main() {
           stream.end();
           return stream;
         },
+        ledgerClock: () => DateTime(2026, 10, 13, 12),
       );
       final code = await cli.runHeadless('answer without any jobs');
       expect(code, 0);

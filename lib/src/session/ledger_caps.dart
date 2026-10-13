@@ -95,9 +95,8 @@ final class LedgerSnapshotThrottle {
   LedgerSnapshotThrottle({
     this.minInterval = ledgerSnapshotPersistInterval,
     DateTime Function()? clock,
-    void Function()? onFlushDue,
-  }) : _clock = clock ?? DateTime.now,
-       _onFlushDue = onFlushDue;
+    this._onFlushDue,
+  }) : _clock = clock ?? DateTime.now;
 
   /// How long one persisted snapshot owns the window.
   final Duration minInterval;

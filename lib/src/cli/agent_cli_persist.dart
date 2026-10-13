@@ -67,15 +67,10 @@ extension AgentCliPersist on AgentCli {
       at: message.timestamp,
     );
     if (payload == null) return;
-    try {
-      await session.appendCustomEntry(
-        customType: obligationsLedgerRecordType,
-        data: payload,
-      );
-    } on Object {
-      // Swallowed deliberately (LedgerSnapshotDeduper protocol note): a
-      // failed append must not poison every later write.
-    }
+    // gh-1590: rate-bounded — an ingest inside the persist window
+    // coalesces behind the trailing flush (the writer's cumulative
+    // state carries it; the next snapshot heals a lost one).
+    await _appendObligationsSnapshot(session, payload);
   }
 
   /// The `obligation_mark_done` close path (issue #1380 lifecycle): marks
@@ -112,12 +107,9 @@ extension AgentCliPersist on AgentCli {
       return 'no obligation carries id $id. Open ids: '
           '${ids.isEmpty ? "(none)" : ids.join(", ")}';
     }
-    try {
-      await session.appendCustomEntry(
-        customType: obligationsLedgerRecordType,
-        data: payload,
-      );
-    } on Object {
+    // Deliberate agent-visible write: bypasses the persist window — the
+    // close must land NOW, and the agent must see a failed landing.
+    if (!await _appendObligationsSnapshot(session, payload, force: true)) {
       return 'marking $id ${parsed.jsonName} failed — the snapshot did not '
           'persist; try again';
     }
@@ -137,6 +129,24 @@ extension AgentCliPersist on AgentCli {
     if (existing != null && identical(_obligationsWriterSession, session)) {
       return existing;
     }
+    // Session switch (gh-1590): land the previous session's coalesced
+    // ingest into ITS file before the writer swaps — the entries belong
+    // to that session's transcript (the deduper suppresses a no-op).
+    if (existing != null) {
+      final previous = _obligationsWriterSession;
+      if (previous != null) {
+        await _appendObligationsSnapshot(
+          previous,
+          existing.ledger.toPayload(),
+          force: true,
+        );
+      }
+    }
+    // gh-1590: the persist window opens with the (re)hydrated writer —
+    // a session switch never inherits the previous session's window or
+    // dedupe state (the same reset `_rehydrateJobBoard` performs).
+    _obligationsPersistThrottle.reset();
+    _obligationsPersistDeduper.reset();
     final ledger = await _latestObligationsFromScan(session);
     final writer = ObligationsLedgerWriter(initial: ledger);
     _obligationsWriterSession = session;
@@ -218,17 +228,81 @@ extension AgentCliPersist on AgentCli {
     if (payload == null) {
       return 'pending-wait already recorded for this timer';
     }
-    try {
-      await session.appendCustomEntry(
-        customType: obligationsLedgerRecordType,
-        data: payload,
-      );
-    } on Object {
+    // Deliberate write: bypasses the persist window — the ledger note
+    // for a freshly armed timer must not wait for the trailing flush.
+    if (!await _appendObligationsSnapshot(session, payload, force: true)) {
       return 'recording the pending-wait failed — the snapshot did not '
           'persist; it rides the next successful ledger write';
     }
     return 'pending-wait recorded: the ledger now carries the reason this '
         'timer exists';
+  }
+
+  /// Appends one `obligations_ledger` snapshot (gh-1590): rate-bounded
+  /// like the other latest-snapshot-wins ledgers — the gate refuses
+  /// inside the persist window ([ledgerSnapshotPersistInterval], the
+  /// coalesced state rides the trailing flush), the deduper suppresses
+  /// byte-identical appends (a no-op teardown flush must not grow the
+  /// file). [force] bypasses the window for the deliberate close /
+  /// pending-wait paths and the shutdown flush. Returns whether the
+  /// snapshot LANDED (false: coalesced, deduped, empty, or failed).
+  Future<bool> _appendObligationsSnapshot(
+    Session session,
+    List<Map<String, Object?>> payload, {
+    bool force = false,
+  }) async {
+    // An empty ledger has nothing to say: an empty `[]` snapshot must
+    // not append (every no-ledger session would grow one at teardown)
+    // and must not stamp a persist window.
+    if (payload.isEmpty) return false;
+    if (!force && !_obligationsPersistThrottle.shouldPersistNow()) {
+      return false;
+    }
+    // Serialize ONCE — the dedupe key must be the exact payload that
+    // gets appended.
+    final json = jsonEncode(payload);
+    if (!_obligationsPersistDeduper.shouldPersist(json)) return false;
+    try {
+      await session.appendCustomEntry(
+        customType: obligationsLedgerRecordType,
+        data: payload,
+      );
+      _obligationsPersistDeduper.confirmPersisted();
+      _obligationsPersistThrottle.confirmPersisted();
+      return true;
+    } on Object {
+      // Swallowed deliberately (LedgerSnapshotDeduper protocol note): a
+      // failed append must not poison every later write — roll the
+      // deduper back so the retried identical snapshot is NOT skipped.
+      _obligationsPersistDeduper.revertFailedPersist();
+      return false;
+    }
+  }
+
+  /// The trailing flush leg for a coalesced ingest (gh-1590): re-runs
+  /// the persist with the writer's CURRENT full payload — the window has
+  /// elapsed, so the gate passes naturally.
+  Future<void> _flushCoalescedObligations() async {
+    final session = _session;
+    final writer = _obligationsWriter;
+    if (session == null || writer == null) return;
+    await _appendObligationsSnapshot(session, writer.ledger.toPayload());
+  }
+
+  /// gh-1590: the shutdown flush for the obligations ledger — a
+  /// coalesced ingest lands NOW (the deduper suppresses a no-op) and
+  /// the throttle's trailing Timer leg disarms: a pending Timer must
+  /// never hold the isolate at process exit.
+  Future<void> _flushObligationsLedger() {
+    _obligationsPersistThrottle.dispose();
+    final session = _session;
+    final writer = _obligationsWriter;
+    if (session == null || writer == null) return Future.value();
+    return _appendObligationsSnapshot(
+      session,
+      writer.ledger.toPayload(),
+      force: true,
+    );
   }
 
   /// Handles a CodeMie auth-session expiry if [message] matches one. Returns

@@ -155,7 +155,7 @@ void main() {
       // grew one full snapshot per message/reply.
       for (var i = 1; i <= 4; i++) {
         await manager.recordReply('child-$i', 'reply $i');
-        await manager.recordCompaction('child-$i', freedTokens: 100 * i);
+        manager.recordCompaction('child-$i', freedTokens: 100 * i);
       }
       expect(
         snapshots.length,
