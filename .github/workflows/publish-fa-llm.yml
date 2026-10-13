@@ -28,5 +28,30 @@ jobs:
 
       - run: dart pub get
 
+      # Pre-flight (issue #1511): pub.dev OIDC publishing can only upload new
+      # VERSIONS of an existing package — the first upload must be manual.
+      # Probe the package; on 404 fail loudly with the actionable steps.
+      - name: Pre-flight — package must already exist on pub.dev
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o /dev/null -w '%{http_code}' -I \
+            --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
+            https://pub.dev/api/packages/fa_llm || true)
+          if [ "$code" = "404" ]; then
+            echo "::error::fa_llm does not exist on pub.dev yet."
+            echo "Automated (OIDC) publishing can only upload new VERSIONS of an"
+            echo "existing package — the first upload must be done manually by an"
+            echo "authenticated owner:"
+            echo "  cd packages/fa_llm && dart pub publish"
+            echo "Then add the OIDC publisher on pub.dev (package admin → automated"
+            echo "publishing → GitHub Actions, repo IstiN/flutter_agent_harness,"
+            echo "workflow publish-fa-llm.yml, tag pattern fa_llm-v*)."
+            echo "See https://github.com/IstiN/flutter_agent_harness/issues/1511"
+            exit 10
+          fi
+          if [ "$code" != "200" ]; then
+            echo "::warning::pub.dev probe returned HTTP '${code:-<none>}' (expected 200); continuing anyway."
+          fi
+
       - name: Publish to pub.dev
         run: dart pub publish --force
