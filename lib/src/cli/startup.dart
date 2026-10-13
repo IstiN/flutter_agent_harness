@@ -458,8 +458,13 @@ Set<String> roleKeyNames(ModelRolesConfig rolesConfig) {
   return {
     for (final ref in refs) ...[
       if (ref.apiKeyName != null) ref.apiKeyName!,
+      // gh-1570 incident REG: preload every cross-version spelling of the
+      // endpoint's slot, mirroring ModelRolesResolver
+      // ._endpointScopedKeyNames exactly — a key stored under the
+      // previous release's slot name must be IN the snapshot for the
+      // resolver's fallback to find it.
       if (_refNeedsEndpointSlot(ref))
-        CustomProviderRegistry.keyNameFor(ref.baseUrl!),
+        ...CustomProviderRegistry.keySlotCandidates(ref.baseUrl!),
     ],
   };
 }

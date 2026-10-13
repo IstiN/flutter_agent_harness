@@ -111,9 +111,16 @@ String? _storedValueFor(
   Iterable<String>? scopedKeyNames,
 }) {
   if (baseUrl != null) {
+    // gh-1570 incident REG: canonical slot first, then the saved entries'
+    // own slots, then the cross-version spellings of the endpoint's slot —
+    // a key stored by an older build keeps resolving after an update.
+    final legacySlots = CustomProviderRegistry.keySlotCandidates(
+      baseUrl,
+    ).skip(1);
     final stored = _firstStoredValue([
       CustomProviderRegistry.keyNameFor(baseUrl),
       ...?scopedKeyNames,
+      ...legacySlots,
     ], keys);
     if (stored != null) return stored;
   }
@@ -137,4 +144,59 @@ String? _firstStoredValue(List<String> names, SecureKeyCache keys) {
     if (stored != null && stored.isNotEmpty) return stored;
   }
   return null;
+}
+
+/// One known (endpoint, record) pair the boot migration considers: a
+/// saved custom registry entry or a roles chain ref's endpoint.
+typedef KeySlotMigrationSource = ({
+  String baseUrl,
+  String? providerName,
+  String? pinnedKeyName,
+});
+
+/// Boot-time migration of key slots stranded by a derivation change
+/// (gh-1570 incident: fa 1.0.556 → 1.0.564 moved a roles entry's endpoint
+/// spelling, and the key stored under the old slot stopped resolving).
+/// For each known endpoint, when the canonical slot is EMPTY and a legacy
+/// cross-spelling slot holds a value, the value is COPIED onto the
+/// canonical slot — non-destructive (the legacy slot stays, so a
+/// rollback keeps working) — and a notice line is returned for the boot
+/// to print. Keychain explicitly in scope: [keys].save writes through to
+/// the OS store; an unavailable or failing store degrades to a notice
+/// (resolution still falls back to the legacy slot), never a boot
+/// failure. A canonical slot that already holds a value is never touched.
+Future<List<String>> migrateLegacyKeySlots(
+  Iterable<KeySlotMigrationSource> migrations,
+  SecureKeyCache keys,
+) async {
+  final notices = <String>[];
+  if (!keys.available) return notices;
+  for (final (:baseUrl, providerName: name, pinnedKeyName: pinned)
+      in migrations) {
+    final canonical =
+        pinned ??
+        CustomProviderRegistry.keyNameFor(baseUrl, providerName: name);
+    if (keys.read(canonical) != null) continue;
+    for (final legacy
+        in CustomProviderRegistry.keySlotCandidates(
+          baseUrl,
+          providerName: name,
+        )) {
+      if (legacy == canonical) continue;
+      final value = keys.read(legacy);
+      if (value == null) continue;
+      final copied = await keys.save(canonical, value);
+      notices.add(
+        copied
+            ? 'migrated the API key for "$baseUrl" from legacy key slot '
+                '"$legacy" to "$canonical" (the legacy slot is kept)'
+            : 'could not migrate the API key for "$baseUrl" from "$legacy" '
+                'to "$canonical" '
+                '(${keys.lastSaveError ?? 'secure store refused the write'}) '
+                '— resolution still falls back to the legacy slot',
+      );
+      break; // one stranded source per canonical slot
+    }
+  }
+  return notices;
 }

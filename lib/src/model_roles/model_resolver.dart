@@ -13,8 +13,9 @@
 ///
 /// Chain entries whose API key is absent from the secrets snapshot are
 /// skipped (omp ignores uncredentialed fallback targets) and reported in
-/// [skippedEntries]; a role whose chain resolves to nothing throws
-/// [ConfigException].
+/// [skippedEntries]; a role whose chain resolves to nothing throws the
+/// degradable [UnusableRoleChainException] (gh-1570: never a plain boot
+/// exit on a recoverable config).
 library;
 
 import '../agent/agent.dart';
@@ -31,13 +32,28 @@ import 'provider_catalog.dart';
 import '../providers/silent_stream_policy.dart';
 import '../providers/transient_retry_stream.dart' show transientRetryNotice;
 
+/// gh-760 (review): the role's chain has NO usable entry. The boot
+/// boundary degrades THIS shape to the legacy single-model path with a
+/// loud, named warning — never process exit. gh-1570 (incident
+/// 2026-10-12) generalized the contract: a recoverable aggregate (every
+/// entry missing its key — set it with `/key set`, reboot, repaired) is
+/// the same degrade, because hard-exiting the binary locks the user out
+/// of the tool exactly when they need it to repair the config. Known
+/// subclasses mark WHY the chain died; the boot treats them identically.
+final class UnusableRoleChainException extends ConfigException {
+  /// Creates the exception with the joined skip reasons.
+  const UnusableRoleChainException(super.message);
+}
+
 /// gh-760 (review): the role's chain has NO usable entry AND the skip
 /// reasons include unknown providers — a config written by a newer
-/// app/CLI version. The boot boundary degrades exactly THIS case to the
-/// legacy single-model path; a chain whose known providers merely miss
-/// their keys throws plain [ConfigException] (a current-version
-/// misconfiguration stays a loud boot failure, the pre-#760 contract).
-final class UnknownProviderRoleException extends ConfigException {
+/// app/CLI version. A typed subtype of the degradable
+/// [UnusableRoleChainException] so callers can still distinguish
+/// version skew from a current-version recoverable gap; the boot
+/// degrades both identically (the drop is whole-resolver BY DESIGN —
+/// gh-760 review: the per-turn main-model path re-enters chainFor, so a
+/// half-alive resolver would move the failure to mid-session).
+final class UnknownProviderRoleException extends UnusableRoleChainException {
   /// Creates the exception with the joined skip reasons.
   const UnknownProviderRoleException(super.message);
 }
@@ -163,13 +179,16 @@ final class ModelRolesResolver {
     if (entries.isEmpty) {
       final message =
           'role "$role" has no usable chain entry: ${skipped.join('; ')}';
-      // gh-760: degrade, never brick — but only the version-skew shape.
-      // Unknown providers (a newer app/CLI wrote the config) throw the
-      // dedicated subtype the boot boundary degrades on; known providers
-      // missing keys stay a plain ConfigException (loud boot failure).
+      // gh-760: degrade, never brick. Unknown providers (a config written
+      // by a newer app/CLI) throw the dedicated version-skew subtype.
+      // gh-1570 (incident 2026-10-12): a chain of KNOWN providers merely
+      // missing keys degrades TOO — the same degradable base, never a
+      // plain ConfigException: the boot must not process-exit on a
+      // condition a `/key set` repairs (the old pre-#760 loud-failure
+      // stance locked the user out of the repair tool itself).
       throw sawUnknownProvider
           ? UnknownProviderRoleException(message)
-          : ConfigException(message);
+          : UnusableRoleChainException(message);
     }
     return entries;
   }
@@ -329,10 +348,13 @@ final class ModelRolesResolver {
     if (explicit != null) {
       return collectKeyStack(_secrets, explicit).isEmpty ? null : explicit;
     }
-    final scopedName = _endpointScopedKeyName(ref, spec);
-    if (scopedName != null &&
-        collectKeyStack(_secrets, scopedName).isNotEmpty) {
-      return scopedName;
+    // gh-1570 incident REG: probe every cross-version spelling of the
+    // endpoint's slot — a key stored under the previous release's name
+    // keeps resolving (canonical first, so a fresh save always wins).
+    for (final scopedName in _endpointScopedKeyNames(ref, spec)) {
+      if (collectKeyStack(_secrets, scopedName).isNotEmpty) {
+        return scopedName;
+      }
     }
     for (final candidate in spec.apiKeyEnvNames) {
       if (collectKeyStack(_secrets, candidate).isNotEmpty) return candidate;
@@ -340,20 +362,27 @@ final class ModelRolesResolver {
     return null;
   }
 
-  /// The endpoint-scoped `FA_KEY_<HOST>` name for a chain entry pinned to
-  /// a non-default endpoint, else null. The snapshot carries the slot's
-  /// value when the host collected it (the startup snapshot includes
-  /// every custom-endpoint slot a roles chain can need — gh-1000).
-  String? _endpointScopedKeyName(ModelRef ref, ProviderSpec spec) {
+  /// The endpoint-scoped `FA_KEY_<HOST>` slot names for a chain entry
+  /// pinned to a non-default endpoint, canonical first — else empty. The
+  /// snapshot carries every cross-spelling slot's value when the host
+  /// collected them (the startup snapshot preloads the same set —
+  /// gh-1000, gh-1570).
+  List<String> _endpointScopedKeyNames(ModelRef ref, ProviderSpec spec) {
     final baseUrl = ref.baseUrl;
     // Trailing-slash-normalized (the shared sameEndpoint rule): a default
     // endpoint saved with a trailing slash must not mint a bogus scoped
     // slot — one endpoint-equality rule with key_status (round-3 review).
     if (baseUrl == null || sameEndpoint(baseUrl, spec.defaultBaseUrl)) {
-      return null;
+      return const [];
     }
-    return CustomProviderRegistry.keyNameFor(baseUrl);
+    return CustomProviderRegistry.keySlotCandidates(baseUrl);
   }
+
+  /// The canonical endpoint-scoped slot for [ref] — the name the
+  /// missing-key hint tells the user to set (the fix-it target), not the
+  /// whole fallback set.
+  String? _endpointScopedKeyName(ModelRef ref, ProviderSpec spec) =>
+      _endpointScopedKeyNames(ref, spec).firstOrNull;
 
   /// The missing-key hint for [ref]'s skip reason: an explicitly pinned
   /// `apiKeyName` names THAT slot (the only name that would resolve it —

@@ -514,6 +514,39 @@ final class CustomProviderRegistry {
         : '${base}_$name';
   }
 
+  /// Every key-slot name the SAME endpoint ever derived, canonical first —
+  /// the cross-version stability contract (gh-1570 incident REG). A slot
+  /// name is a persistent contract: a key stored by an older build under
+  /// THAT build's spelling of the derivation must keep resolving after an
+  /// update changes the spelling, so resolution probes the whole set and
+  /// the boot migrates a stranded value forward (gh-1570 review).
+  ///
+  /// Today the drift class is the URL spelling: a scheme-less endpoint
+  /// (`api.kimi.com/kimi-ira`) folds host AND path into the slug
+  /// (`FA_KEY_API_KIMI_COM_KIMI_IRA`) while the same endpoint spelled with
+  /// its scheme derives the host-only slot (`FA_KEY_API_KIMI_COM`) —
+  /// exactly the 1.0.556 → 1.0.564 lockout. Canonical first; never empty.
+  static List<String> keySlotCandidates(
+    String baseUrl, {
+    String? providerName,
+  }) {
+    final candidates = <String>[
+      keyNameFor(baseUrl, providerName: providerName),
+    ];
+    final uri = Uri.tryParse(baseUrl);
+    if (uri == null) return candidates;
+    final hasHost = uri.host.isNotEmpty;
+    // The cross-spelling twin: prepend the scheme when the saved endpoint
+    // lacks one, strip it when it has one. The scheme only shifts the
+    // default-port fold (443 vs none) — the slug stays comparable.
+    final twin = hasHost
+        ? baseUrl.substring(baseUrl.indexOf('://') + 3)
+        : 'https://$baseUrl';
+    final twinName = keyNameFor(twin, providerName: providerName);
+    if (!candidates.contains(twinName)) candidates.add(twinName);
+    return candidates;
+  }
+
   /// The secure-store/env key name backing a connected Copilot account:
   /// `FA_KEY_COPILOT_<SANITIZED_ENTRY_NAME>` (goal/copilot_provider.md).
   /// Scoped to the ENTRY (not the host) so several accounts — possibly on

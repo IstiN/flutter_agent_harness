@@ -378,9 +378,9 @@ void main() {
       );
     });
 
-    test('a KNOWN provider missing its key stays a plain ConfigException '
-        '(gh-760 review: current-version misconfiguration hard-fails, '
-        'the boot does NOT degrade it)', () {
+    test('a KNOWN provider missing its key throws the DEGRADE subtype '
+        '(gh-1570 incident: a recoverable missing key must never '
+        'hard-exit the binary)', () {
       final resolver = ModelRolesResolver(
         config: ModelRolesConfig(
           roles: const {
@@ -398,10 +398,15 @@ void main() {
       } on UnknownProviderRoleException {
         fail(
           'missing keys on a KNOWN provider is not version skew — '
-          'it must stay a plain ConfigException',
+          'it must not classify as UnknownProviderRoleException',
         );
-      } on ConfigException {
-        // Expected: the pre-#760 loud failure the boot maps to _fail.
+      } on UnusableRoleChainException catch (error) {
+        // gh-1570 review (incident 2026-10-12): the aggregate
+        // no-usable-entry outcome is RECOVERABLE — set the key, reboot.
+        // The degradable subtype is what the boot boundary catches and
+        // degrades on (naming the skipped entries), never _fail.
+        expect(error.message, contains('missing API key'));
+        expect(error.message, contains('claude-smol'));
       }
     });
 
@@ -427,9 +432,46 @@ void main() {
           'the skip reason embedding a user-controlled model id must '
           'not classify a known provider as version skew',
         );
-      } on ConfigException {
-        // Expected.
+      } on UnusableRoleChainException {
+        // Expected: the degradable no-usable-entry shape (gh-1570) — the
+        // user-controlled id must still not classify as version skew.
       }
+    });
+
+    test('a key stored under the PREVIOUS release slot name still resolves '
+        'after the endpoint spelling changes (gh-1570 incident REG)', () {
+      // The incident: fa 1.0.556 → 1.0.564 moved a roles entry's endpoint
+      // spelling, so the record-scoped derivation moved off the slot the
+      // key was stored under (FA_KEY_API_KIMI_COM, the host slug) onto
+      // FA_KEY_API_KIMI_COM_KIMI_IRA (the path folded in) — and the boot
+      // called the key missing. Key-slot names are a cross-version
+      // contract: resolution must fall back to the legacy cross-spelling
+      // slot for the same endpoint.
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(
+                provider: 'kimi',
+                modelId: 'kimi-for-coding',
+                baseUrl: 'api.kimi.com/kimi-ira',
+              ),
+            ],
+          },
+        ),
+        secrets: const {
+          // Only the PRE-update slot holds the key.
+          'FA_KEY_API_KIMI_COM': 'legacy-kimi-key',
+        },
+        streamFactory: _neverStream,
+      );
+      final entries = resolver.chainFor('default');
+      expect(entries, isNotNull);
+      expect(entries, hasLength(1));
+      expect(entries!.single.keyRing.baseName, 'FA_KEY_API_KIMI_COM');
+      expect(entries.single.keyRing.currentCredential.value,
+          'legacy-kimi-key');
+      expect(resolver.skippedEntries['default'], isEmpty);
     });
 
     test('a roles entry naming an adapter KIND resolves (gh-760 review)', () {
