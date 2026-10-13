@@ -36,11 +36,28 @@ extension AgentCliDiagLog on AgentCli {
       if (!_diagnosticLogDirEnsured) {
         _diagnosticLogDirEnsured = true;
         await _env.createDir('${config.homeDir}/.fah/logs', recursive: true);
+        await _rotateDiagnosticLogIfOversized(path);
       }
       await _env.appendFile(path, line);
     } catch (_) {
       // Diagnostics must never break the CLI.
     }
+  }
+
+  /// Rotates [path] to `fa.log.1` when it exceeds
+  /// [AgentCli.diagnosticLogMaxBytes]. Runs once per process (first log
+  /// write), so parallel fa processes can race the rename — losing a few
+  /// diagnostics lines is acceptable for a post-mortem file. The rename
+  /// keeps the previous log available; a backend that reports rename as
+  /// unsupported (CwdOverrideEnv forwards the capability only when the
+  /// delegate has it) falls back to truncating in place.
+  Future<void> _rotateDiagnosticLogIfOversized(String path) async {
+    final info = await _env.fileInfo(path);
+    final size = info.valueOrNull?.size ?? 0;
+    if (size <= AgentCli.diagnosticLogMaxBytes) return;
+    final renamed = await _env.renamePath(path, '$path.1');
+    if (renamed.isOk) return;
+    await _env.writeFile(path, '');
   }
 
   /// Path of the diagnostic log file under `~/.fah/logs/fa.log`. Null
