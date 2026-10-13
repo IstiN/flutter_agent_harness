@@ -50,8 +50,11 @@ import base64
 import json
 import os
 import shlex
+import signal
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -122,12 +125,12 @@ class FaAgent(BaseInstalledAgent):
         key_var = json.loads(os.environ["FA_PROVIDER_CONFIG"]).get("apiKeyEnvVar")
         if key_var and os.environ.get(key_var):
             env[f"{key_var}_BASE64"] = _b64(os.environ[key_var])
-        # gh-1556 AC7: fa's deadline awareness rides the same env — the
-        # adapter's effective kill cap minus the wrap-up margin, computed
-        # once when the deadline run starts (see _run_with_deadline, which
-        # stashes the exact value the audit then records). With no timeout
-        # knob there is no adapter cap (the dataset-declared task caps are
-        # harbor's own) and the export is absent: fa never invents a clock.
+        # gh-1556 AC7 + gh-1576: fa's deadline awareness rides the same env
+        # — the effective cap (min of the external harness cap and the
+        # adapter knobs) minus the wrap-up margin, computed once when the
+        # deadline run starts (see _resolve_deadline, which stashes the
+        # exact value the audit then records). With no cap input at all
+        # the export is absent: fa never invents a clock.
         deadline = getattr(self, "_deadline_epoch_ms", None)
         if deadline is not None:
             env["FA_DEADLINE_EPOCH_MS"] = str(deadline)
@@ -184,15 +187,23 @@ class FaAgent(BaseInstalledAgent):
         context: AgentContext,
     ) -> None:
         knobs = _timeout.TimeoutKnobs.from_env()
-        if knobs is None:
-            # gh-1556 AC7: no adapter cap => no deadline export (also
-            # clear any stash from a previous supervised run on a
-            # re-used agent object — fa never sees a stale clock).
-            self._deadline_epoch_ms = None
+        # gh-1576 cap resolution (I1): the effective cap is min(external
+        # harness cap, adapter knobs); with NO known input the contract is
+        # byte-identical — no deadline export, no audit, plain exec.
+        cap, deadline = _timeout.resolve_deadline(knobs)
+        self._cap = cap
+        self._deadline_epoch_ms = deadline
+        if cap is None:
             await self.exec_as_agent(
                 environment, command=self._agent_command(instruction),
                 env=self._provider_env,
             )
+            return
+        if knobs is None:
+            # A known external cap with no adapter knobs: the harness owns
+            # the kill (we do not supervise), but fa still learns the true
+            # budget (I1) and the trial still leaves an audit trail (I2).
+            await self._run_external_cap_only(instruction, environment)
             return
         await self._run_with_deadline(knobs, instruction, environment)
 
@@ -222,7 +233,21 @@ class FaAgent(BaseInstalledAgent):
         classifies as AgentTimeoutError exactly as today. Natural
         completion (including a non-zero fa exit) re-raises whatever the
         exec raised, byte-for-byte today's semantics.
+
+        gh-1576: the kill deadlines clamp to the external harness cap (the
+        decider dies at min(knob deadline, external) and names the winner
+        external_cap), the audit is checkpointed incrementally so even a
+        SIGKILL leaves the last progress sample, and BOTH external kill
+        paths — a cancellation of this coroutine (harbor's own wait_for
+        firing first) and a SIGTERM/SIGINT to this process — flush a final
+        outcome=external_kill record (I2). The incremental checkpoints are
+        what survives a SIGKILL; nothing else can (non-goal E3).
         """
+        cap, deadline = _timeout.resolve_deadline(knobs)
+        self._cap = cap
+        self._deadline_epoch_ms = deadline
+        self._run_environment = environment
+        self._external_kill_flushed = False
         ladder = (
             # gh-1556 (Class C): parity with bench/terminal_bench/
             # fa_agent.py — when a watch knob is set the kill decision is
@@ -230,92 +255,285 @@ class FaAgent(BaseInstalledAgent):
             # retired byte-growth ladder. bench-harbor.yml now sets the
             # knobs on every shard, so watch mode is the bench default;
             # with knobs removed the legacy ProgressLadder runs
-            # byte-for-byte (round-2 REG).
-            _timeout.ProgressWatch(knobs)
+            # byte-for-byte (round-2 REG). gh-1576: both deciders clamp
+            # their kill deadline to the external cap when one is known.
+            _timeout.ProgressWatch(
+                knobs,
+                external_cap_sec=cap.external_cap_sec if cap else None,
+            )
             if knobs.progress_watch
-            else _timeout.ProgressLadder(knobs)
-        )
-        # gh-1556 AC7: the wrap-up deadline exported to fa (via
-        # _provider_env) is computed once here, at run start, and the
-        # audit below records this exact value.
-        self._deadline_epoch_ms = _timeout.deadline_epoch_ms(
-            knobs, int(time.time() * 1000)
+            else _timeout.ProgressLadder(
+                knobs,
+                external_cap_sec=cap.external_cap_sec if cap else None,
+            )
         )
         loop = asyncio.get_running_loop()
         start = loop.time()
         outcome = None
+        self._audit_terminal = False
+        self._checkpoint_state = None
         exec_task = asyncio.create_task(
             self.exec_as_agent(
                 environment, command=self._agent_command(instruction),
                 env=self._provider_env,
             )
         )
-        while not exec_task.done():
-            remaining = ladder.kill_at - (loop.time() - start)
-            await asyncio.sleep(min(_POLL_SEC, max(remaining, 0.05)))
-            outcome = ladder.evaluate(
-                loop.time() - start, await self._progress_bytes(environment)
-            )
-            if outcome:
-                # gh-1556 AC1: the kill is best-effort and can never
-                # replace the ladder's TimeoutError. The pre-fix command
-                # was `pkill -f 'fa --session-root'` — the exec wrapper's
-                # OWN cmdline contains that pattern, so pkill SIGTERMed
-                # its own shell (exit 143), the exception skipped the
-                # audit write AND the TimeoutError, and harbor recorded a
-                # ladder kill as an agent crash (TB 2.0 run 38150649548:
-                # a SOLVED task scored 0). The bracket trick matches the
-                # agent process but not this command line, and any kill
-                # failure is swallowed: harbor's own task timeout still
-                # bounds the trial.
-                try:
-                    await self.exec_as_root(
-                        environment,
-                        command="pkill -f '[f]a --session-root' || true",
-                        timeout_sec=15,
+        try:
+            with self._kill_auditors():
+                while not exec_task.done():
+                    remaining = ladder.kill_at - (loop.time() - start)
+                    await asyncio.sleep(min(_POLL_SEC, max(remaining, 0.05)))
+                    outcome = ladder.evaluate(
+                        loop.time() - start, await self._progress_bytes(environment)
                     )
-                except Exception:
-                    pass
+                    await self._maybe_checkpoint(environment, knobs, ladder)
+                    if outcome:
+                        # gh-1556 AC1: the kill is best-effort and can never
+                        # replace the ladder's TimeoutError. The pre-fix command
+                        # was `pkill -f 'fa --session-root'` — the exec wrapper's
+                        # OWN cmdline contains that pattern, so pkill SIGTERMed
+                        # its own shell (exit 143), the exception skipped the
+                        # audit write AND the TimeoutError, and harbor recorded a
+                        # ladder kill as an agent crash (TB 2.0 run 38150649548:
+                        # a SOLVED task scored 0). The bracket trick matches the
+                        # agent process but not this command line, and any kill
+                        # failure is swallowed: harbor's own task timeout still
+                        # bounds the trial.
+                        try:
+                            await self.exec_as_root(
+                                environment,
+                                command="pkill -f '[f]a --session-root' || true",
+                                timeout_sec=15,
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            await asyncio.wait_for(asyncio.shield(exec_task), timeout=60)
+                        except Exception:
+                            pass
+                        if not exec_task.done():
+                            exec_task.cancel()
+                            # An abandoned cancelled task is GC-destroyed with
+                            # "pending task" warnings and its exception never
+                            # retrieved - await the cancellation instead. Only our
+                            # own cancellation is swallowed; an external cancel of
+                            # this coroutine still propagates.
+                            try:
+                                await exec_task
+                            except asyncio.CancelledError:
+                                if not exec_task.cancelled():
+                                    raise
+                            except Exception:
+                                pass
+                        break
+            # Natural completion: awaiting the task surfaces the exec's own
+            # failure (e.g. NonZeroAgentExitCodeError) - today's semantics
+            # verbatim. The audit records the true outcome class: a crash must
+            # not be labelled "completed" (issue #1122 round 1).
+            error = None
+            if not outcome:
                 try:
-                    await asyncio.wait_for(asyncio.shield(exec_task), timeout=60)
-                except Exception:
-                    pass
-                if not exec_task.done():
-                    exec_task.cancel()
-                    # An abandoned cancelled task is GC-destroyed with
-                    # "pending task" warnings and its exception never
-                    # retrieved - await the cancellation instead. Only our
-                    # own cancellation is swallowed; an external cancel of
-                    # this coroutine still propagates.
-                    try:
-                        await exec_task
-                    except asyncio.CancelledError:
-                        if not exec_task.cancelled():
-                            raise
-                    except Exception:
-                        pass
-                break
-        # Natural completion: awaiting the task surfaces the exec's own
-        # failure (e.g. NonZeroAgentExitCodeError) - today's semantics
-        # verbatim. The audit records the true outcome class: a crash must
-        # not be labelled "completed" (issue #1122 round 1).
-        error = None
-        if not outcome:
-            try:
-                await exec_task
-            except BaseException as exc:  # noqa: BLE001 - re-raised below
-                error = exc
-        await self._write_audit(
-            environment, knobs, ladder,
-            outcome or ("crashed" if error is not None else "completed"),
-            deadline_epoch_ms=self._deadline_epoch_ms,
-        )
+                    await exec_task
+                except BaseException as exc:  # noqa: BLE001 - re-raised below
+                    error = exc
+            await self._write_audit(
+                environment, knobs, ladder,
+                outcome or ("crashed" if error is not None else "completed"),
+                deadline_epoch_ms=self._deadline_epoch_ms,
+                cap=cap,
+            )
+        except asyncio.CancelledError:
+            # gh-1576 (I2): harbor's wait_for fired first — the incident's
+            # exact kill class (run 38271607849: four trials killed at
+            # 1800.000s, zero audit files). The container is still up
+            # during teardown, so the flush lands. Never masked by an exec
+            # failure; the cancellation always re-raises.
+            await self._flush_external_kill_audit(
+                environment, knobs, ladder, cap, cause="cancelled"
+            )
+            raise
         if outcome:
             raise asyncio.TimeoutError(
                 f"fa agent killed by bench timeout ladder: {outcome}"
             )
         if error is not None:
             raise error
+
+    async def _run_external_cap_only(self, instruction: str, environment) -> None:
+        """Unsupervised exec under a known external cap (gh-1576).
+
+        The harness owns the kill; the adapter's whole job here is I1+I2:
+        fa sees the truthful deadline (via _provider_env) and every
+        termination — clean exit, external cancellation, SIGTERM — leaves
+        the audit record.
+        """
+        cap = self._cap
+        self._run_environment = environment
+        self._external_kill_flushed = False
+        try:
+            with self._kill_auditors():
+                await self.exec_as_agent(
+                    environment, command=self._agent_command(instruction),
+                    env=self._provider_env,
+                )
+        except asyncio.CancelledError:
+            await self._flush_external_kill_audit(
+                environment, None, None, cap, cause="cancelled"
+            )
+            raise
+        await self._write_audit(
+            environment, None, None, "completed",
+            deadline_epoch_ms=self._deadline_epoch_ms,
+            cap=cap,
+        )
+
+    # ── gh-1576: external-kill audit trail (I2) ──────────────────────────
+
+    @contextmanager
+    def _kill_auditors(self):
+        """SIGTERM/SIGINT handlers that flush the audit before dying.
+
+        Installed for the duration of a supervised (or external-cap-only)
+        run, main thread only, and restored afterwards — harbor's own
+        handlers (e.g. jobs.py's SIGTERM→KeyboardInterrupt) are captured
+        and re-delivered once the flush lands, so termination semantics
+        are honored, just a few seconds later.
+        """
+        loop = asyncio.get_running_loop()
+        if (
+            threading.current_thread() is not threading.main_thread()
+            or not hasattr(loop, "add_signal_handler")
+        ):
+            yield
+            return
+        installed = []
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                previous = signal.getsignal(sig)
+                loop.add_signal_handler(
+                    sig, self._on_external_signal, sig.name, loop, previous
+                )
+                installed.append((sig, previous))
+            except (NotImplementedError, RuntimeError, ValueError, OSError):
+                continue
+        try:
+            yield
+        finally:
+            for sig, _previous in installed:
+                try:
+                    loop.remove_signal_handler(sig)
+                except (NotImplementedError, RuntimeError, ValueError):
+                    pass
+
+    def _on_external_signal(self, signame: str, loop, previous) -> None:
+        """Sync signal-handler body: schedule the audit flush.
+
+        Runs on the main thread at an arbitrary bytecode boundary — all
+        loop interaction goes through call_soon_threadsafe. `previous`
+        reaching the flush means the signal is re-delivered to its
+        original disposition once the audit landed (tests pass None).
+        """
+        try:
+            loop.call_soon_threadsafe(
+                self._flush_external_kill, signame, None, previous
+            )
+        except RuntimeError:
+            pass  # loop already closed — nothing left to flush into
+
+    def _flush_external_kill(self, signame: str, cause: str, previous=None) -> None:
+        """Write the final external_kill audit once, then honor the signal.
+
+        Idempotent against the cancel-path flush (first writer wins).
+        With a `previous` disposition (the production signal path), the
+        signal is restored and re-delivered to it after the flush —
+        the process still dies, the audit just outlives the race.
+        """
+        if getattr(self, "_external_kill_flushed", False):
+            return
+        self._external_kill_flushed = True
+        environment = getattr(self, "_run_environment", None)
+
+        async def _write():
+            if environment is None:
+                return
+            await self._write_audit(
+                environment,
+                None,
+                None,
+                "external_kill",
+                deadline_epoch_ms=getattr(self, "_deadline_epoch_ms", None),
+                cap=getattr(self, "_cap", None),
+                external_kill={"signal": signame, "cause": cause},
+            )
+
+        task = asyncio.ensure_future(_write())
+
+        def _rehonor(done):
+            if previous is None:
+                return
+            sig = getattr(signal, signame, None)
+            if sig is None:
+                return
+            try:
+                signal.signal(sig, previous)
+                os.kill(os.getpid(), sig)
+            except (ValueError, OSError, TypeError):
+                pass
+
+        task.add_done_callback(_rehonor)
+
+    async def _flush_external_kill_audit(
+        self, environment, knobs, ladder, cap, cause: str
+    ) -> None:
+        """The cancellation-path flush: bounded, best-effort, then reraise."""
+        if getattr(self, "_external_kill_flushed", False):
+            return
+        self._external_kill_flushed = True
+        try:
+            await asyncio.wait_for(
+                self._write_audit(
+                    environment,
+                    knobs,
+                    ladder,
+                    "external_kill",
+                    deadline_epoch_ms=getattr(self, "_deadline_epoch_ms", None),
+                    cap=cap,
+                    external_kill={"signal": None, "cause": cause},
+                ),
+                timeout=15,
+            )
+        except Exception:
+            pass  # never mask the cancellation with an audit failure
+
+    async def _maybe_checkpoint(self, environment, knobs, ladder) -> None:
+        """Incremental audit checkpoint (I2/E3): a partial marker per
+        changed sample, so even a SIGKILL leaves the last progress state.
+        Fail-soft by contract; skipped when nothing changed (a silent
+        agent checkpoints once, then stops touching the file).
+        """
+        state = (
+            getattr(ladder, "last_bytes", 0),
+            round(getattr(ladder, "kill_at", 0.0), 3),
+            len(getattr(ladder, "events", []) or []),
+        )
+        if state == self._checkpoint_state:
+            return
+        self._checkpoint_state = state
+        try:
+            await asyncio.wait_for(
+                self._write_audit(
+                    environment,
+                    knobs,
+                    ladder,
+                    "running",
+                    deadline_epoch_ms=self._deadline_epoch_ms,
+                    cap=getattr(self, "_cap", None),
+                    checkpoint=True,
+                ),
+                timeout=10,
+            )
+        except Exception:
+            pass  # a lost checkpoint must never fail the trial
 
     async def _progress_bytes(self, environment) -> int | None:
         try:
@@ -331,7 +549,8 @@ class FaAgent(BaseInstalledAgent):
         return None
 
     async def _write_audit(
-        self, environment, knobs, ladder, outcome, deadline_epoch_ms=None
+        self, environment, knobs, ladder, outcome, deadline_epoch_ms=None,
+        cap=None, checkpoint=False, external_kill=None,
     ) -> None:
         # AC4 (issue #1122): audit trail synced back with the agent logs.
         # AC6 (issue #1185): the audit also documents the harness-originated
@@ -341,19 +560,28 @@ class FaAgent(BaseInstalledAgent):
         # trial can leave tens of MB of pane bytes, and a transport decode
         # would make len(utf-8) disagree with the ladder's live wc -c).
         # Fields drop when the stream is unreadable, never fabricated.
-        progress, liveness = await self._measure_streams(environment)
-        payload = base64.b64encode(
-            json.dumps(
-                _timeout.audit_dict(
-                    knobs,
-                    ladder,
-                    outcome,
-                    progress_bytes=progress,
-                    liveness_bytes=liveness,
-                    deadline_epoch_ms=deadline_epoch_ms,
-                )
-            ).encode()
-        ).decode()
+        # gh-1576: cap carries the cap-resolution block (winning source +
+        # both inputs); checkpoint rows skip the stream measurement (they
+        # are partial markers, written on the poll loop) and an
+        # external_kill flush records which signal/cause ended the trial.
+        if checkpoint:
+            progress = liveness = None
+        else:
+            progress, liveness = await self._measure_streams(environment)
+        record = _timeout.audit_dict(
+            knobs,
+            ladder if knobs is not None else None,
+            outcome,
+            progress_bytes=progress,
+            liveness_bytes=liveness,
+            deadline_epoch_ms=deadline_epoch_ms,
+            cap=cap,
+        )
+        if checkpoint:
+            record["checkpoint"] = True
+        if external_kill:
+            record["external_kill"] = external_kill
+        payload = base64.b64encode(json.dumps(record).encode()).decode()
         try:
             await self.exec_as_agent(
                 environment,
