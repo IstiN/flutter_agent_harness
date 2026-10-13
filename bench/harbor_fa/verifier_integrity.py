@@ -49,6 +49,9 @@ in any browser/HTTP-driven verifier of any family is caught. Patterns are
 bounded literal+simple-regex matches over a line stream — no nested
 quantifiers, no backreferences — so a 100 MB stdout parses in linear
 time (UT-4 pins the bound).
+
+Upstream escalation (the task-side fix, fail-or-retry instead of a
+silent skip): harbor-framework/terminal-bench-2#89.
 """
 from __future__ import annotations
 
