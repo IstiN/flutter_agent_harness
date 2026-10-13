@@ -101,6 +101,10 @@ void main() {
           'agent_directory': 'task',
           'agent_message': 'task',
           'reply': 'task',
+          // The shared builder (slice 5) wires the obligations ledger's
+          // close path (issue #1380) — the app table never listed the
+          // family because the old hand-maintained wiring skipped it.
+          'obligation_mark_done': 'obligations',
         };
         for (final name in service.toolsForTest.map((tool) => tool.name)) {
           final id = toolAvailabilityIdOf(name);
