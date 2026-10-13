@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Regenerates the pinned verifier-stdout fixtures for gh-1579.
 
+Only the five SYNTHESIZED ``*-test-stdout.txt`` files are (re)written
+here. The ``*-test-stdout.real.txt`` siblings are pinned REAL artifact
+bytes from run 38271607849 — not regenerable, never touched (provenance
+and checksums in README.md).
+
 The incident fixture synthesizes the artifact described in gh-1579 (run
 38271607849, job `fa-2.1-docker-cpu-4`, trial
 `filter-js-from-html__hoBwRwp`, `verifier/test-stdout.txt`): 28
@@ -120,10 +125,17 @@ CLEAN_FOOTER = [
 
 
 def main() -> None:
-    (_HERE / "filter-js-from-html__hoBwRwp-test-stdout.txt").write_text(INCIDENT)
+    # encoding pinned: the fixtures carry "✓" and the docstring promises
+    # byte-stable output — never the locale default (cp1252 would crash
+    # or silently re-encode on Windows). The two *-test-stdout.real.txt
+    # artifacts are NOT generated here — they are pinned real bytes (see
+    # README.md) and regeneration must never touch them.
+    (_HERE / "filter-js-from-html__hoBwRwp-test-stdout.txt").write_text(
+        INCIDENT, encoding="utf-8"
+    )
     for trial, retries in CLEAN.items():
         (_HERE / f"filter-js-from-html__{trial}-test-stdout.txt").write_text(
-            _emit(trial, (), retries, CLEAN_FOOTER)
+            _emit(trial, (), retries, CLEAN_FOOTER), encoding="utf-8"
         )
     print("wrote", 1 + len(CLEAN), "fixtures to", _HERE)
 
