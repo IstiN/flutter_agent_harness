@@ -158,19 +158,28 @@ final class HerdrReporter {
   /// characters anywhere, ≤64 args, ≤8 KiB total. fa's own argv is the
   /// static `fa --session <id>` and always passes — the check exists as
   /// defense in depth so a future change cannot ship a rule-breaking argv.
-  static bool resumeArgvValid(List<String> argv) {
-    if (argv.isEmpty || argv.length > 64) return false;
-    var total = 0;
-    for (final arg in argv) {
-      total += arg.length;
-      if (total > _resumeArgvMaxBytes) return false;
-    }
-    final head = argv.first;
-    if (head.isEmpty || head.contains('/') || head.contains(r'\')) return false;
+  static bool resumeArgvValid(List<String> argv) =>
+      argv.isNotEmpty &&
+      argv.length <= _resumeArgvMaxArgs &&
+      _resumeArgvTotalBytes(argv) <= _resumeArgvMaxBytes &&
+      _resumeHeadValid(argv.first) &&
+      _resumeCharsValid(argv);
+
+  static const int _resumeArgvMaxArgs = 64;
+
+  static int _resumeArgvTotalBytes(List<String> argv) =>
+      argv.fold<int>(0, (total, arg) => total + arg.length);
+
+  /// First word a plain command name on PATH: non-empty, no path
+  /// separators (either slash direction).
+  static bool _resumeHeadValid(String head) =>
+      head.isNotEmpty && !head.contains('/') && !head.contains(r'\');
+
+  /// No apostrophe (herdr's quoting hazard), no C0 controls, no DEL.
+  static bool _resumeCharsValid(List<String> argv) {
     for (final arg in argv) {
       for (var i = 0; i < arg.length; i++) {
         final unit = arg.codeUnitAt(i);
-        // Apostrophe (herdr's quoting hazard) + C0 controls + DEL.
         if (unit == 0x27 || unit < 0x20 || unit == 0x7f) return false;
       }
     }
