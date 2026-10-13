@@ -519,5 +519,150 @@ void main() {
         reason: 'the raw queue block must survive a whole-file save',
       );
     });
+
+    /// Waits until [predicate] holds against the accumulated flow output.
+    /// The flows loop on their menus, so steps are sequenced by picker
+    /// renders (`type a number:` prints once per render), never by
+    /// re-matching earlier text (the settings_flow_test pattern).
+    Future<void> waitForIo(
+      FakeCliIO io,
+      bool Function() predicate, {
+      Duration timeout = const Duration(seconds: 10),
+    }) async {
+      final deadline = DateTime.now().add(timeout);
+      while (!predicate()) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('timed out waiting for flow output; got:\n${io.out}');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    }
+
+    Future<void> waitRenders(FakeCliIO io, int n) => waitForIo(
+      io,
+      () => 'type a number:'.allMatches(io.out.toString()).length >= n,
+    );
+
+    test('the real ttsr toggle flow fires the re-sync hook', () async {
+      // _writeTtsrSection is a direct USER-config writer, exactly like
+      // _clearContextCap/_dropAutoUpdateKey — it must fire the hook or
+      // the next persist re-renders the boot block over the edit.
+      var resyncs = 0;
+      final (cli, io) = bootCli(onUserConfigFileChanged: () async {
+        resyncs++;
+      });
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          'model: test-model\n'
+          'ttsr:\n'
+          '  rules:\n'
+          '    - name: no-secrets\n'
+          "      pattern: 'sk-[a-zA-Z0-9]{8}'\n"
+          '      body: Never echo secrets.\n'
+          '      enabled: false\n',
+        );
+
+      final flow = cli.startTtsrRulesFlow();
+      await waitRenders(io, 1); // main menu (rule/add/done)
+      io.sendLine('1'); // the no-secrets rule → its submenu
+      await waitRenders(io, 2); // rule submenu (toggle/delete/back)
+      io.sendLine('1'); // toggle → enable
+      await waitForIo(io, () => io.out.toString().contains('ttsr saved →'));
+      await waitRenders(io, 3); // the main menu re-rendered
+      io.sendLine('3'); // done (1=rule, 2=add, 3=done)
+      await flow;
+
+      expect(resyncs, 1, reason: 'the ttsr write must fire the hook');
+      expect(
+        loadCliConfig(tmp.path).ttsr?.rules.single.enabled,
+        isTrue,
+        reason: 'the toggle must land on disk',
+      );
+    });
+
+    test('the real mcp edit flow fires the re-sync hook', () async {
+      // _writeMcpSection is the last remaining direct USER-config writer
+      // without the hook — same data-loss class as the ttsr flow.
+      var resyncs = 0;
+      final (cli, io) = bootCli(onUserConfigFileChanged: () async {
+        resyncs++;
+      });
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          'model: test-model\n'
+          'mcp:\n'
+          '  servers:\n'
+          '    fs:\n'
+          '      command: npx\n'
+          "      args: ['-y', '@modelcontextprotocol/server-fs', '/tmp']\n",
+        );
+
+      final flow = cli.startMcpServersFlow();
+      await waitRenders(io, 1); // main menu (fs/add/done)
+      io.sendLine('1'); // the fs server → its submenu
+      await waitRenders(io, 2); // server submenu (edit/delete/back)
+      io.sendLine('1'); // edit
+      await waitForIo(io, () => io.out.toString().contains('command ('));
+      io.sendLine('node2'); // command
+      io.sendLine('srv.js, --port, 9'); // args
+      io.sendLine('BAZ=qux'); // env
+      await waitForIo(io, () => io.out.toString().contains('mcp saved →'));
+      await waitRenders(io, 3); // the main menu re-rendered
+      io.sendLine('3'); // done (1=fs, 2=add, 3=done)
+      await flow;
+
+      expect(resyncs, 1, reason: 'the mcp write must fire the hook');
+      final server =
+          loadCliConfig(tmp.path).mcp?.servers['fs'] as McpStdioServerConfig?;
+      expect(server?.command, 'node2', reason: 'the edit must land on disk');
+    });
+
+    test('the ttsr toggle survives the next persist (flow re-sync)',
+        () async {
+      // End to end: boot snapshot → the real flow's write → the hook
+      // re-sync (wired exactly like bin/fah_runapp.dart) → the
+      // boot-shaped persist. Without the hook the save re-renders the
+      // stale boot block (enabled: false) over the toggle.
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          'model: test-model\n'
+          'ttsr:\n'
+          '  rules:\n'
+          '    - name: no-secrets\n'
+          "      pattern: 'sk-[a-zA-Z0-9]{8}'\n"
+          '      body: Never echo secrets.\n'
+          '      enabled: false\n',
+        );
+      var snapshot = loadCliConfig(tmp.path);
+      expect(snapshot.ttsr?.rules.single.enabled, isFalse);
+
+      final (cli, io) = bootCli(
+        onUserConfigFileChanged: () async {
+          snapshot = loadCliConfig(tmp.path);
+        },
+      );
+      final flow = cli.startTtsrRulesFlow();
+      await waitRenders(io, 1);
+      io.sendLine('1');
+      await waitRenders(io, 2);
+      io.sendLine('1');
+      await waitForIo(io, () => io.out.toString().contains('ttsr saved →'));
+      await waitRenders(io, 3);
+      io.sendLine('3');
+      await flow;
+
+      await persistShapedSave(snapshot);
+
+      expect(
+        loadCliConfig(tmp.path).ttsr?.rules.single.enabled,
+        isTrue,
+        reason:
+            'the toggle survives the persist because the flow re-synced '
+            'the snapshot through the hook',
+      );
+    });
   });
 }
