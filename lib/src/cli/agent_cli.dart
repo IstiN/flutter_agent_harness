@@ -48,6 +48,7 @@ import 'key_status.dart';
 import 'provider_error_text.dart';
 import 'sigint_action.dart';
 import '../agent/agent_loop.dart';
+import '../agent/empty_completion.dart';
 import '../agent/finalize_gate.dart';
 import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
@@ -631,6 +632,11 @@ class AgentCli {
         // The CLI handles empty-response retries itself with a 'continue'
         // nudge so the transcript reflects the retry explicitly.
         maxEmptyRetries: 0,
+        // gh-1577: the bounded hiccup budget rides the config so hosts and
+        // tests can tune N and pin the backoff.
+        emptyHiccupRetries: config.emptyHiccupRetries,
+        emptyHiccupBaseDelay: config.emptyHiccupBaseDelay,
+        emptyHiccupMaxBackoff: config.emptyHiccupMaxBackoff,
         // Post-mortem "who held the busy row": the run idle watchdog's fire
         // lands in fa.log with the session id.
         onRunIdleTimeout: (error) =>
