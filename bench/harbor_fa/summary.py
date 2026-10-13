@@ -405,10 +405,15 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
             f" {total_resolved}/{total_rows} trials ({rate}) | {cost_cell} |"
             f" {ledger['run_url']} |",
         ]
-        if compromised_entries:
+        if total_compromised:
             # gh-1579/IT-4: the pasted row must never silently include
-            # compromised trials — the caveat sits inside the paste block.
-            n = len(compromised_entries)
+            # compromised trials — the caveat sits inside the paste block
+            # and counts SCORED trials only: an errored-but-compromised
+            # trial was already outside resolution via the errored class
+            # (gh-1556) before the gate saw it, so it is listed in the
+            # breakdown above without changing this caveat's pool-delta
+            # claim.
+            n = total_compromised
             noun = "trial" if n == 1 else "trials"
             verb = "is" if n == 1 else "are"
             lines.append("")

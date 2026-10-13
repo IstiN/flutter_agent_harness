@@ -24,7 +24,10 @@ Signals (the core set):
   the preceding ``RUN BATCH N (contains K tests)`` header (batch id +
   skipped-test count). A failure seen before any header binds to no
   batch (batch=None, E1) and contributes 0 to ``skipped_tests``. One
-  signal per batch (repeat failures in the same batch count once).
+  signal per batch (repeat failures in the same batch count once) and
+  one-shot per batch id: a batch that failed and later re-runs all its
+  vectors under a second header is still flagged — deliberate until
+  upstream ships a distinguishable retry marker (terminal-bench-2#89).
 - S2 ``RetryStorm`` — urllib3 ``Retrying (...)`` / ``ConnectionResetError``
   churn. At/above ``RETRY_STORM_THRESHOLD`` alone it downgrades the
   verdict to ``suspect`` (annotation only, never a score change); the
@@ -47,8 +50,9 @@ Statuses:
 The detector matches patterns, not task names (I3): the same failure mode
 in any browser/HTTP-driven verifier of any family is caught. Patterns are
 bounded literal+simple-regex matches over a line stream — no nested
-quantifiers, no backreferences — so a 100 MB stdout parses in linear
-time (UT-4 pins the bound).
+quantifiers, no backreferences — so stdout parses in linear time (UT-4
+pins the property on a 10 MB adversarial blob with a scaled assertion;
+the bound is the linearity, not the absolute size).
 
 Upstream escalation (the task-side fix, fail-or-retry instead of a
 silent skip): harbor-framework/terminal-bench-2#89.
@@ -86,7 +90,19 @@ _CLAIM_RE = re.compile(r"✓.*\bblocked all (\d+)\b")
 
 @dataclass(frozen=True)
 class FailedLoad:
-    """S1: a page the verifier failed to load — its tests never ran."""
+    """S1: a page the verifier failed to load — its tests never ran.
+
+    One-shot per batch id, by design: once a batch id is in
+    ``seen_batches`` nothing can un-signal it. If upstream adopts the
+    retry variant of the fail-or-retry patch (AC9,
+    harbor-framework/terminal-bench-2#89), a batch that failed to load
+    and then re-ran successfully under a second ``RUN BATCH N`` header
+    is STILL flagged — until upstream emits a distinguishable retry
+    marker, a recovering re-run is indistinguishable from the incident's
+    silent skip, and the gate fails closed (a false COMPROMISED
+    quarantines one honest trial; a false ok re-admits a lying verdict).
+    Pinned by
+    BatchBindingTest.test_batch_reheadered_after_failure_still_compromised."""
 
     batch: int | None  # None = seen before any RUN BATCH header (E1)
     n_tests: int | None
@@ -148,6 +164,7 @@ def classify(stdout_text: str | None) -> IntegrityVerdict:
 
     loads: list[FailedLoad] = []
     seen_batches: set[int] = set()
+    has_unknown = False  # one E1 signal no matter how many prologue hiccups
     current: tuple[int, int] | None = None  # (batch id, n tests)
     retry_count = 0
     claim: SuccessClaim | None = None
@@ -161,8 +178,12 @@ def classify(stdout_text: str | None) -> IntegrityVerdict:
             continue
         if _FAILED_LOAD_RE.search(line):
             if current is None:
-                # E1: outside any batch — kept, but never misattributed.
-                loads.append(FailedLoad(None, None))
+                # E1: outside any batch — kept, but never misattributed,
+                # and deduped like batch-bound signals so the report
+                # line stays stable across a flapping prologue.
+                if not has_unknown:
+                    loads.append(FailedLoad(None, None))
+                    has_unknown = True
             elif current[0] not in seen_batches:
                 loads.append(FailedLoad(current[0], current[1]))
                 seen_batches.add(current[0])
@@ -203,8 +224,11 @@ def read_stdout(trial_dir: Path) -> tuple[str | None, str]:
     """Read ``<trial>/verifier/test-stdout.txt`` → (text, reason).
 
     text is None unless the file exists, decodes as UTF-8, and is
-    non-blank; reason is one of ``missing`` | ``undecodable`` | ``empty``
-    | ``ok``. The caller treats None as UNREADABLE (I2) — never as clean.
+    non-blank; reason is one of ``missing`` | ``io-error`` |
+    ``undecodable`` | ``empty`` | ``ok`` — an ``OSError`` on read is
+    ``io-error`` (a filesystem/permissions problem, not a decoding one)
+    so the report routes the post-mortem correctly. The caller treats
+    None as UNREADABLE (I2) — never as clean.
     """
     path = Path(trial_dir) / "verifier" / "test-stdout.txt"
     try:
@@ -212,7 +236,7 @@ def read_stdout(trial_dir: Path) -> tuple[str | None, str]:
     except (FileNotFoundError, NotADirectoryError):
         return None, "missing"
     except OSError:
-        return None, "undecodable"
+        return None, "io-error"
     try:
         text = raw.decode("utf-8")
     except (UnicodeDecodeError, ValueError):
