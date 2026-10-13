@@ -33,6 +33,14 @@
 # Local packages: only the fa_llm_mock dev-dependency ships.
 /packages/*
 !/packages/fa_llm_mock/
+# gh-1511: pubignore-ONLY negation — pub walks ignore rules up to the
+# git root, so /packages/* above hid packages/fa_llm from its OWN
+# publish ("The pubspec is hidden" + "missing LICENSE" on
+# `dart pub publish --dry-run`). The staging rsync deliberately keeps
+# fa_llm out of the core payload (not a core path dep) — the divergence
+# is pinned by test/publish_staging_test.dart (explicit-allowlist +
+# anti-drift tests). fa_llm_flutter stays hidden: publish_to: none.
+!/packages/fa_llm/
 
 # Workspace-only dart_tui vendor pin — never published (see its header);
 # shipped, it re-dangles dart_tui onto the excluded vendor dir (v0.1.407).
