@@ -498,6 +498,31 @@ jobs:
       - name: CRAP badge/config sync guard
         run: python3 scripts/check_crap_guards.py
 
+      # gh-1476 AC5 (PR #1479 owner directive): the GEO layer is built at
+      # deploy time — gitignored, never committed, nothing to drift
+      # against. So the gate builds to a temp dir and validates the
+      # OUTPUT: test/site/* (no-JS crawl, robots contract, sitemap
+      # integrity, JSON-LD, llms guards) serve the temp tree over loopback
+      # HTTP via FA_SITE_ROOT. Stronger than the old `--check` drift gate:
+      # it tests the builder itself, and hand-edited generated HTML is
+      # uncommittable by construction.
+      - name: GEO site build + validation (gh-1476 AC5)
+        run: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          # The builder's post input is the site/blog/posts COPY of the
+          # canonical blog/posts — keep them pinned together so the gate
+          # can never validate a stale or hand-edited copy (gh-1476
+          # review). PRE-sync diff: an in-place edit of the copy is red
+          # (the deploy's build_blog would silently discard it). Sync,
+          # then POST-sync diff: a new or edited canonical post that was
+          # never copied into site/blog/posts is red.
+          git diff --exit-code -- site/blog/posts site/blog/posts.json
+          dart scripts/build_blog.dart
+          git diff --exit-code -- site/blog/posts site/blog/posts.json
+          dart scripts/build_site.dart --out "$d/site"
+          FA_SITE_ROOT="$d/site" dart test test/site/
+
       # gh-1199 AC2: the deterministic-gate boundary is self-enforcing —
       # an integration-tagged test that looks live (real provider URL, or
       # a credential-key literal with no mock/loopback in sight) without
@@ -548,6 +573,26 @@ jobs:
       # ratchet cannot rot silently (#1100 pattern).
       - name: Duration budget gate self-test (gh-1300 AC6)
         run: bash scripts/duration_budget_selftest.sh
+
+      # gh-1364: the flake watcher's issue dedup is fixture-self-tested
+      # against a stubbed gh (no network) — a tracker whose title carries
+      # the `(#<digits>...` suffix GitHub search silently cannot see is
+      # still found (no --search anywhere; dedup keys on the body's
+      # **File**: path, not the truncated title), a create landing beside
+      # an existing open tracker closes itself and fails loudly, a closed
+      # tracker is re-opened instead of re-filed next to, and runs already
+      # in comments are not re-commented (#1100 pattern).
+      - name: Flake watcher dedup self-test (gh-1364)
+        run: bash scripts/flake_watch_selftest.sh
+
+      # gh-1568: the SM merge guard's gh-side lookups are fixture-tested
+      # against the REAL commits-API shape (tree nested under `commit`)
+      # on a PATH-stubbed gh — the `.tree.sha` jq bug false-alarmed every
+      # merge-commit landing, and the missing conclusion field made the
+      # live path alarm on every push. Covers tree/head/race/404 paths
+      # and the self-diagnosing alarm body (#1100 pattern).
+      - name: SM merge guard self-test (gh-1568)
+        run: bash scripts/sm_merge_guard_selftest.sh
 
       # #1431: the size-budget gate's own red exits are fixture-tested
       # (#1100 pattern) — an engine rev-hash rename must UPDATE not NEW,
@@ -1013,6 +1058,14 @@ jobs:
           # ~1 s per spawn instead of the JIT VM+CFE compile (~30 s on
           # loaded ARM runners). Per-test isolation is unchanged.
           FA_BIN: ${{ github.workspace }}/fa-local/bundle/bin/fah
+          # Issue #1391: stretch every PTY-harness wait budget 2x on this
+          # merge-blocking leg. SM dispatch waves pack the hosted-arm pool
+          # (refresh waves supersede PR heads mid-run), and drilled reds
+          # are all single tests popping quiet-runner budgets inside
+          # otherwise-green 60-70-test shards. Local runs and the nightly
+          # leave the var unset and keep the exact legacy budgets (the
+          # nightly's unsupervised verdicts feed quarantine decisions).
+          FA_PTY_BUDGET_SCALE: '2'
         run: |
           # gh-1199 AC1: --exclude-tag llm keeps every live-provider file
           # out of the merge-blocking selection (manifest unit AND runtime
@@ -1298,6 +1351,11 @@ jobs:
           dart bin/fah.dart --help > /dev/null
           dart run bin/fah.dart --help > /dev/null
       - name: flutter test test/cli_visual --tags integration
+        env:
+          # Issue #1391: same load-stretch as the PTY/CLI shards above —
+          # this merge-blocking leg drives the real CLI through the same
+          # harness waits and shares the dispatch-wave packing.
+          FA_PTY_BUDGET_SCALE: '2'
         run: cd flutter_app && flutter test test/cli_visual --tags integration
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -2264,6 +2322,12 @@ jobs:
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
       - uses: ./.github/actions/flutter-pub-get
+
+      # gh-1468: pre-seed the flutter_gemma LiteRT-LM Android cache so the
+      # build hook never downloads litertlm-android_arm64.tar.gz mid-build
+      # — one release-asset CDN 500 red'd this leg and the aggregate
+      # Quality gate. Same hardening as the macOS companion-dylibs step.
+      - uses: ./.github/actions/flutter-gemma-android-seed
 
       - name: flutter build apk (debug)
         run: cd flutter_app && flutter build apk --debug --flavor store

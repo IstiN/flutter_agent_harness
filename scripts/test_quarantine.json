@@ -99,16 +99,6 @@
       ]
     },
     {
-      "file": "test/integration/wire_serve_cli_test.dart",
-      "test": "E4 + authn-lite: bad token is rejected; token stays out of records",
-      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1360",
-      "since": "2026-10-07",
-      "runs": [
-        37552613207,
-        37459648403
-      ]
-    },
-    {
       "file": "test/integration/steering_persistence_pty_test.dart",
       "test": "steering lifecycle + restart recovery over a real PTY (issue #437 AC2, AC5, E1)",
       "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1385",
@@ -149,6 +139,16 @@
         38026164420,
         38018978560,
         37962382097
+      ]
+    },
+    {
+      "file": "test/integration/fa_tui_follow_pty_test.dart",
+      "test": "PTY: scroll-up mid-run holds the fold, arrivals count, End returns live",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1467",
+      "since": "2026-10-11",
+      "runs": [
+        38047875908,
+        38041880102
       ]
     }
   ]

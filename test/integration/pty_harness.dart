@@ -30,6 +30,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter_agent_harness/src/cli/pty_wait_budget.dart';
 import 'package:pty2/pty2.dart';
 import 'package:xterm/xterm.dart';
 
@@ -269,6 +270,16 @@ final class FaCliHarness {
 
   var _closed = false;
 
+  /// Load-aware wait budgets (issue #1391): every [timeout] this harness
+  /// waits by is multiplied by the ambient `FA_PTY_BUDGET_SCALE` (unset →
+  /// 1.0 → exact legacy budgets). The merge-blocking CI legs export 2 —
+  /// SM dispatch waves pack the hosted-arm pool and stretch every spawn /
+  /// round-trip / repaint past the quiet-runner budgets; see
+  /// `lib/src/cli/pty_wait_budget.dart` for the drilled-failure rationale.
+  static double get waitBudgetScale => resolvePtyWaitBudgetScale(
+    envValue: Platform.environment[kPtyWaitBudgetScaleEnv],
+  );
+
   /// Spawns the Fa CLI with a PTY of fixed size.
   ///
   /// [args] are extra CLI arguments (e.g., `['--model', 'test-model']`).
@@ -471,7 +482,8 @@ final class FaCliHarness {
     int settleMs = 200,
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    final deadline = DateTime.now().add(timeout);
+    final budget = scalePtyWaitBudget(timeout, waitBudgetScale);
+    final deadline = DateTime.now().add(budget);
     var lastLength = -1;
     var stableTurns = 0;
     while (DateTime.now().isBefore(deadline)) {
@@ -502,7 +514,7 @@ final class FaCliHarness {
       screenText: () => screenText,
       rawTail: _rawTail,
       what: '"$pattern" in output',
-      timeout: timeout,
+      timeout: scalePtyWaitBudget(timeout, waitBudgetScale),
     );
   }
 
@@ -539,7 +551,7 @@ final class FaCliHarness {
       screenText: () => screenText,
       rawTail: _rawTail,
       what: '"$pattern" on screen',
-      timeout: timeout,
+      timeout: scalePtyWaitBudget(timeout, waitBudgetScale),
     );
   }
 
@@ -564,7 +576,7 @@ final class FaCliHarness {
       screenText: () => screenText,
       rawTail: _rawTail,
       what: what,
-      timeout: timeout,
+      timeout: scalePtyWaitBudget(timeout, waitBudgetScale),
     );
   }
 

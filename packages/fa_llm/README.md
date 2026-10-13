@@ -52,3 +52,24 @@ rewritten.
 - Ollama local inference
 - Provider configuration and resolution
 - Token counting and context window management
+
+## Publishing
+
+Tags matching `fa_llm-v*` trigger `.github/workflows/publish-fa-llm.yml`,
+which publishes to pub.dev via OIDC (no tokens; pub.dev verifies the
+GitHub identity).
+
+**First publish of a new package is manual** (issue #1511): pub.dev OIDC
+publishing can only upload new *versions* of an *existing* package, so the
+very first upload must come from an authenticated owner:
+
+1. `cd packages/fa_llm && dart pub publish` (logged-in user account).
+2. On pub.dev: package admin → automated publishing → GitHub Actions,
+   repo `IstiN/flutter_agent_harness`, workflow `publish-fa-llm.yml`,
+   tag pattern `fa_llm-v*`.
+3. Push the tag — the workflow takes over from there.
+
+The workflow pre-flights this: it HEAD-probes
+`https://pub.dev/api/packages/fa_llm` and fails with the actionable
+message (exit code 10) if the package does not exist yet, instead of a
+bare `Only users are allowed to upload new packages.` server error.
