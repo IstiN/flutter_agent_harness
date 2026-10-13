@@ -615,7 +615,7 @@ Future<void> _runApp(List<String> args) async {
       ),
     if (saved.modelRoles case final roles?)
       for (final chain in [
-        ...roles.values,
+        ...roles.roles.values,
         for (final override in roles.pathOverrides) ...override.roles.values,
       ])
         for (final ref in chain)

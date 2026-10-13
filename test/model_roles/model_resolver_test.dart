@@ -439,8 +439,7 @@ void main() {
     });
 
     test('a key stored under the PREVIOUS release slot name still resolves '
-        'after the record-scoped derivation moves (gh-1570 incident REG)',
-        () {
+        'after the record-scoped derivation moves (gh-1570 incident REG)', () {
       // The incident: fa 1.0.556 → 1.0.564 moved the record-scoped slot
       // derivation, so the pinned slot FA_KEY_API_KIMI_COM_KIMI_IRA went
       // empty while the key sat on the host-scoped slot
@@ -471,10 +470,7 @@ void main() {
       expect(entries, isNotNull);
       expect(entries, hasLength(1));
       expect(entries!.single.keyRing.baseName, 'FA_KEY_API_KIMI_COM');
-      expect(
-        entries.single.keyRing.currentCredential.value,
-        'legacy-kimi-key',
-      );
+      expect(entries.single.keyRing.currentCredential.value, 'legacy-kimi-key');
       expect(resolver.skippedEntries['default'], isEmpty);
     });
 

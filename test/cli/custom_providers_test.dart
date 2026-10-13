@@ -255,10 +255,9 @@ void main() {
       );
       // Without a record name the canonical IS the host-scoped slot —
       // a single candidate, no duplicates.
-      expect(
-        CustomProviderRegistry.keySlotCandidates('https://api.kimi.com'),
-        ['FA_KEY_API_KIMI_COM'],
-      );
+      expect(CustomProviderRegistry.keySlotCandidates('https://api.kimi.com'), [
+        'FA_KEY_API_KIMI_COM',
+      ]);
     });
 
     test('copilotEntryKeyName scopes to the entry name', () {

@@ -122,10 +122,9 @@ void main() {
     const kimiUrl = 'https://api.kimi.com/coding/v1';
 
     test('the pinned entry slot beats the host-scoped slot', () async {
-      final store =
-          FakeSecureKeyStore()
-            ..map['FA_KEY_API_KIMI_COM'] = 'host-scoped-wrong-account'
-            ..map['FA_KEY_API_KIMI_COM_KIMI_ME'] = 'kimi-me-key';
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_API_KIMI_COM'] = 'host-scoped-wrong-account'
+        ..map['FA_KEY_API_KIMI_COM_KIMI_ME'] = 'kimi-me-key';
       final keys = SecureKeyCache(store);
       await keys.preload(store.map.keys.toList());
 
@@ -217,20 +216,18 @@ void main() {
       final store = FakeSecureKeyStore()
         ..map['FA_KEY_API_KIMI_COM'] = 'legacy-kimi-key';
       final keys = SecureKeyCache(store);
-      await keys.preload(
-        const ['FA_KEY_API_KIMI_COM_KIMI_IRA', 'FA_KEY_API_KIMI_COM'],
-      );
+      await keys.preload(const [
+        'FA_KEY_API_KIMI_COM_KIMI_IRA',
+        'FA_KEY_API_KIMI_COM',
+      ]);
 
-      final notices = await migrateLegacyKeySlots(
-        const [
-          (
-            baseUrl: 'https://api.kimi.com',
-            providerName: 'kimi-ira',
-            pinnedKeyName: null,
-          ),
-        ],
-        keys,
-      );
+      final notices = await migrateLegacyKeySlots(const [
+        (
+          baseUrl: 'https://api.kimi.com',
+          providerName: 'kimi-ira',
+          pinnedKeyName: null,
+        ),
+      ], keys);
 
       // The canonical slot now resolves; the legacy slot is KEPT (a
       // rollback keeps working); the notice names both slots.
@@ -242,44 +239,39 @@ void main() {
       expect(notices.single, contains('migrated'));
     });
 
-    test('a canonical slot that already holds a value is never touched',
-        () async {
-      final store = FakeSecureKeyStore()
-        ..map['FA_KEY_API_KIMI_COM'] = 'legacy-kimi-key'
-        ..map['FA_KEY_API_KIMI_COM_KIMI_IRA'] = 'current-key';
-      final keys = SecureKeyCache(store);
-      await keys.preload(const ['FA_KEY_API_KIMI_COM_KIMI_IRA']);
+    test(
+      'a canonical slot that already holds a value is never touched',
+      () async {
+        final store = FakeSecureKeyStore()
+          ..map['FA_KEY_API_KIMI_COM'] = 'legacy-kimi-key'
+          ..map['FA_KEY_API_KIMI_COM_KIMI_IRA'] = 'current-key';
+        final keys = SecureKeyCache(store);
+        await keys.preload(const ['FA_KEY_API_KIMI_COM_KIMI_IRA']);
 
-      final notices = await migrateLegacyKeySlots(
-        const [
+        final notices = await migrateLegacyKeySlots(const [
           (
             baseUrl: 'https://api.kimi.com',
             providerName: 'kimi-ira',
             pinnedKeyName: null,
           ),
-        ],
-        keys,
-      );
+        ], keys);
 
-      expect(notices, isEmpty);
-      expect(store.map['FA_KEY_API_KIMI_COM_KIMI_IRA'], 'current-key');
-    });
+        expect(notices, isEmpty);
+        expect(store.map['FA_KEY_API_KIMI_COM_KIMI_IRA'], 'current-key');
+      },
+    );
 
-    test('an unavailable store stays quiet — never a boot failure',
-        () async {
+    test('an unavailable store stays quiet — never a boot failure', () async {
       final keys = SecureKeyCache(FakeSecureKeyStore(available: false));
       await keys.preload(const []);
 
-      final notices = await migrateLegacyKeySlots(
-        const [
-          (
-            baseUrl: 'https://api.kimi.com',
-            providerName: 'kimi-ira',
-            pinnedKeyName: null,
-          ),
-        ],
-        keys,
-      );
+      final notices = await migrateLegacyKeySlots(const [
+        (
+          baseUrl: 'https://api.kimi.com',
+          providerName: 'kimi-ira',
+          pinnedKeyName: null,
+        ),
+      ], keys);
 
       expect(notices, isEmpty);
     });
@@ -292,16 +284,13 @@ void main() {
       final keys = SecureKeyCache(store);
       await keys.preload(const ['FA_KEY_API_KIMI_COM']);
 
-      final notices = await migrateLegacyKeySlots(
-        const [
-          (
-            baseUrl: 'https://api.kimi.com',
-            providerName: 'kimi-ira',
-            pinnedKeyName: null,
-          ),
-        ],
-        keys,
-      );
+      final notices = await migrateLegacyKeySlots(const [
+        (
+          baseUrl: 'https://api.kimi.com',
+          providerName: 'kimi-ira',
+          pinnedKeyName: null,
+        ),
+      ], keys);
 
       expect(notices, hasLength(1));
       expect(notices.single, contains('could not migrate'));

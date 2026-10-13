@@ -170,11 +170,10 @@ Future<List<String>> migrateLegacyKeySlots(
         pinned ??
         CustomProviderRegistry.keyNameFor(baseUrl, providerName: name);
     if (keys.read(canonical) != null) continue;
-    for (final legacy
-        in CustomProviderRegistry.keySlotCandidates(
-          baseUrl,
-          providerName: name,
-        )) {
+    for (final legacy in CustomProviderRegistry.keySlotCandidates(
+      baseUrl,
+      providerName: name,
+    )) {
       if (legacy == canonical) continue;
       final value = keys.read(legacy);
       if (value == null) continue;
@@ -182,11 +181,11 @@ Future<List<String>> migrateLegacyKeySlots(
       notices.add(
         copied
             ? 'migrated the API key for "$baseUrl" from legacy key slot '
-                '"$legacy" to "$canonical" (the legacy slot is kept)'
+                  '"$legacy" to "$canonical" (the legacy slot is kept)'
             : 'could not migrate the API key for "$baseUrl" from "$legacy" '
-                'to "$canonical" '
-                '(${keys.lastSaveError ?? 'secure store refused the write'}) '
-                '— resolution still falls back to the legacy slot',
+                  'to "$canonical" '
+                  '(${keys.lastSaveError ?? 'secure store refused the write'}) '
+                  '— resolution still falls back to the legacy slot',
       );
       break; // one stranded source per canonical slot
     }
