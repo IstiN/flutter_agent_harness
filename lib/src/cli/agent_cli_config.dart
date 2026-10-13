@@ -112,6 +112,12 @@ final class AgentCliConfig {
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
     this.stuckTool,
+    // gh-1577: the empty-hiccup retry knobs, threaded next to the loop's
+    // maxEmptyRetries so hosts/tests can tune the budget and pin the
+    // backoff (tests pass Duration.zero). Defaults match the loop's.
+    this.emptyHiccupRetries = 3,
+    this.emptyHiccupBaseDelay = const Duration(milliseconds: 500),
+    this.emptyHiccupMaxBackoff = const Duration(milliseconds: 8000),
     this.headlessRun = false,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
@@ -211,6 +217,16 @@ final class AgentCliConfig {
   /// cancel/retry/convert follow-up. `null` = unsupervised (the loop runs
   /// byte-identically to before).
   final StuckToolConfig? stuckTool;
+
+  /// gh-1577: empty-hiccup retry budget (see
+  /// [AgentLoopConfig.emptyHiccupRetries]).
+  final int emptyHiccupRetries;
+
+  /// gh-1577: first backoff sleep between empty-hiccup retries.
+  final Duration emptyHiccupBaseDelay;
+
+  /// gh-1577: cap on the exponential empty-hiccup backoff.
+  final Duration emptyHiccupMaxBackoff;
 
   /// Whether this process drives a headless run (`fah run "<prompt>"` and
   /// friends) as opposed to an interactive REPL/TUI session. Set by the
