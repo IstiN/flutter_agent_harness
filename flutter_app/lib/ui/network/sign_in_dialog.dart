@@ -34,10 +34,9 @@ Future<void> showSignInDialog(
   );
 }
 
-/// The sign-in form: provider buttons (or the mobile note on
-/// iOS/Android — the `fa://` redirect is not allowlisted server-side
-/// yet), the developer login form, the server's error message on
-/// failure, and busy indicators while a flow is in flight.
+/// The sign-in form: provider buttons (everywhere but web, which has no
+/// callback receiver), the developer login form, the server's error
+/// message on failure, and busy indicators while a flow is in flight.
 class SignInDialog extends StatefulWidget {
   const SignInDialog({super.key, required this.manager});
 
@@ -63,12 +62,11 @@ class _SignInDialogState extends State<SignInDialog> {
   String? _busyProvider;
   bool _devBusy = false;
 
-  /// Provider sign-in needs the loopback listener; on iOS/Android the
-  /// `fa://` custom-scheme redirect is not allowlisted server-side yet,
-  /// so only the developer section works there.
-  bool get _mobileOnly =>
-      defaultTargetPlatform == TargetPlatform.iOS ||
-      defaultTargetPlatform == TargetPlatform.android;
+  /// Provider sign-in rides the platform callback receiver: desktop uses
+  /// the RFC 8252 loopback, iOS/Android the `fah://oauth/network`
+  /// deep-link (both wired in `startOAuthCallbackReceiverImpl`). Web has
+  /// no receiver at all — the loopback stub throws there.
+  bool get _providerSignInSupported => !kIsWeb;
 
   @override
   void initState() {
@@ -186,7 +184,7 @@ class _SignInDialogState extends State<SignInDialog> {
             ).textTheme.bodySmall?.copyWith(color: colors.dim),
           ),
           const SizedBox(height: 12),
-          if (_mobileOnly)
+          if (!_providerSignInSupported)
             Text(
               context.l10n.networkSignInMobileNote,
               key: const ValueKey('signInMobileNote'),
