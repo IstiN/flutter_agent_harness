@@ -138,6 +138,26 @@ void main() {
       },
     );
 
+    test(
+      'cwd == home: the project pass is skipped — one file, one pass (gh-1573)',
+      () async {
+        // Running with cwd == home resolves the project config to the same
+        // file as the global config; the second pass must not re-validate
+        // those bytes or flag user-only keys as dead config.
+        await env.writeFile(_globalConfig, _validGlobal);
+        final homeEnv = MemoryExecutionEnv(cwd: '/home');
+        final homeService = ConfigService(env: homeEnv, homeDir: '/home');
+        await homeEnv.writeFile(_globalConfig, _validGlobal);
+        final report = await checkOrThrow(homeService);
+        expect(
+          report.warnings,
+          isEmpty,
+          reason: 'user-only keys in ~/.fah/config.yaml are not dead config',
+        );
+        expect(report.notes.join('\n'), contains('project config'));
+      },
+    );
+
     test('bad providerTimeouts and skills sections fail', () async {
       await env.writeFile(
         _globalConfig,

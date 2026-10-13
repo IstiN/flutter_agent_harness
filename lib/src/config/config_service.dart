@@ -280,16 +280,26 @@ final class ConfigService {
         _collectHostWarnings(_tryParse(text), globalPath, report.warnings);
       }
     }
-    final projectText = await _readTextOrNull(projectConfigPath);
+    final projectPath = projectConfigPath;
+    if (globalPath != null && projectPath == globalPath) {
+      // cwd == home resolves the project scope to the user file itself; a
+      // second pass would validate the same bytes twice and flag every
+      // user-only key as dead config (gh-1573). One file, one pass.
+      report.notes.add(
+        'project config resolves to the global file — skipped: $projectPath',
+      );
+      return report;
+    }
+    final projectText = await _readTextOrNull(projectPath);
     if (projectText == null) {
       report.notes.add(
-        'project config absent (defaults apply): $projectConfigPath',
+        'project config absent (defaults apply): $projectPath',
       );
     } else {
       final projectWarnings = <ConfigDiagnostic>[];
       _collectDiagnostics(
         projectText,
-        projectConfigPath,
+        projectPath,
         report.errors,
         projectWarnings,
       );
@@ -301,7 +311,7 @@ final class ConfigService {
           if (!_projectSections.contains('$key')) {
             report.warnings.add(
               ConfigDiagnostic(
-                projectConfigPath,
+                projectPath,
                 '"$key" in the project file is dead config — only '
                 '${_projectSections.join('/')} are read from here',
               ),
@@ -309,7 +319,7 @@ final class ConfigService {
           }
         }
       }
-      _collectHostWarnings(doc, projectConfigPath, report.warnings);
+      _collectHostWarnings(doc, projectPath, report.warnings);
     }
     return report;
   }
