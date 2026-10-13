@@ -757,9 +757,7 @@ class AgentCli {
     // same always-registered graceful contract as ask/request_secret —
     // the search degrades to an honest cannot-search result when no
     // session file backs the host.
-    _toolRegistry.register(
-      sessionSearchTool(search: searchSessionArchive),
-    );
+    _toolRegistry.register(sessionSearchTool(search: searchSessionArchive));
     // Pending-wait obligations (issue #1380 AC5): a successful
     // schedule_message arms a timer — the ledger learns why it exists.
     _attachObligationPendingWaits();
@@ -1324,6 +1322,15 @@ class AgentCli {
   /// gh-1073: suppresses byte-identical `shell_job_registry` snapshot
   /// appends (reset in `_rehydrateJobBoard` on every session load).
   final LedgerSnapshotDeduper _jobBoardPersistDeduper = LedgerSnapshotDeduper();
+
+  /// gh-1590: bounds WHEN `shell_job_registry` snapshots may append —
+  /// mutations inside the persist window coalesce behind one snapshot
+  /// plus a trailing flush, so N board state changes no longer append N
+  /// full records (only the latest snapshot is ever read on resume).
+  /// Reset in `_rehydrateJobBoard` next to the deduper; flushed and
+  /// disarmed by `_flushJobBoardPersist` at run finalize / teardown.
+  late final LedgerSnapshotThrottle _jobBoardPersistThrottle =
+      LedgerSnapshotThrottle(onFlushDue: () => unawaited(_persistJobBoard()));
 
   /// The obligations ledger writer (issue #1380 A1) and the session it was
   /// rehydrated from: cumulative in-memory state reloaded from the
@@ -1990,6 +1997,11 @@ class AgentCli {
       // the token reporter greps the captured run log. Stdout stays the
       // pipeable prose stream (issue #774 AC3).
       await _flushUsageLedger(mirrorTokensLineToRunLog: true);
+      // gh-1590: land a coalesced job-board snapshot and disarm the
+      // throttle's trailing leg — a headless exit must not leave a
+      // pending Timer holding the isolate, nor a final board state
+      // missing from the ledger.
+      await _flushJobBoardPersist();
     }
     // The exit code describes the LAST completed turn's terminal outcome
     // (captured from the turn events above) — not the visible transcript,

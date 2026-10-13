@@ -77,6 +77,7 @@ final class LedgerSnapshotDeduper {
     _pendingJson = null;
   }
 }
+
 /// Write-site rate bound for a latest-snapshot-wins ledger (gh-1590): a
 /// companion to [LedgerSnapshotDeduper] that bounds WHEN snapshots may
 /// append, while the deduper bounds WHICH payloads are worth appending.
@@ -106,7 +107,6 @@ final class LedgerSnapshotThrottle {
   /// Called by the production trailing leg when [poll] turns due — the
   /// writer re-runs its persist (the deduper still suppresses a no-op).
   final void Function()? _onFlushDue;
-
 
   DateTime? _lastPersistAt;
 

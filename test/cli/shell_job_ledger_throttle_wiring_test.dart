@@ -2,15 +2,16 @@
 library;
 
 /// gh-1590 acceptance: N shell-job state changes leave at most a small
-/// constant of `shell_job_registry` records in the session file.
+/// constant of `shell_job_registry` records in the session file, and the
+/// last record carries the FINAL board state (every job terminal) so a
+/// resume rehydrates truthfully.
 ///
 /// Before the fix every board mutation appended one full snapshot — the
 /// deduper only suppressed byte-identical payloads, so k jobs starting
 /// and settling appended 2k records (1,635 records / 136 MB on the
 /// ticket's session). With the write-time throttle the mutations inside
-/// the window coalesce into ONE snapshot, and the run-finalize flush
-/// lands the final state (every job terminal) so resume never loses a
-/// settle.
+/// the persist window coalesce into ONE snapshot plus the run-finalize
+/// flush.
 
 import 'dart:async';
 import 'dart:convert';
@@ -43,34 +44,30 @@ class _ThrottleShell implements Shell, BackgroundShell {
     );
   }
 
-  @Override
+  @override
   Future<Result<ShellJob, ExecutionError>> startShellJob(
     String command, {
     required String id,
     required String logPath,
     ShellExecOptions? options,
   }) async {
-    final job = _ThrottleJob(id: id, command: command, logPath: logPath);
+    final job = _ThrottleJob(command: command, logPath: logPath);
     jobs.add(job);
     return Ok(job);
   }
 }
 
 final class _ThrottleJob implements ShellJob {
-  _ThrottleJob({
-    required this.id,
-    required this.command,
-    required this.logPath,
-  });
+  _ThrottleJob({required this.command, required this.logPath});
 
-  final String id;
+  /// The registry id the board assigns (overrides the shell-provided one).
+  String get id => logPath.split('/').last;
+
   final String command;
   final String logPath;
   int? _exitCode;
   final _settled = Completer<void>();
 
-  @override
-  String get id => id;
   @override
   int? get pid => null;
   @override
@@ -97,7 +94,44 @@ final class _ThrottleJob implements ShellJob {
   Future<void> stop() async => finish(9);
 }
 
-Future<void> _waitFor(bool Function() condition, {required String reason}) async {
+/// Streams the scripted turns: run 1 opens all [jobCount] background jobs
+/// in one tool round and ends the turn; every later run (settle-notice
+/// reactions) answers 'ack.'.
+class _JobSpawnerStream {
+  _JobSpawnerStream({required this.jobCount});
+
+  final int jobCount;
+  var leadPlayed = false;
+
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    final script = leadPlayed
+        ? textTurn('ack.')
+        : toolTurn([
+            for (var i = 1; i <= jobCount; i++)
+              ToolCall(
+                id: 't$i',
+                name: 'bash',
+                arguments: {'command': 'sleep 60 # job $i', 'background': true},
+              ),
+          ]);
+    leadPlayed = true;
+    final stream = AssistantMessageEventStream();
+    for (final event in script) {
+      stream.push(event);
+    }
+    stream.end();
+    return stream;
+  }
+}
+
+Future<void> _waitFor(
+  bool Function() condition, {
+  required String reason,
+}) async {
   for (var i = 0; i < 4000; i++) {
     if (condition()) return;
     await Future<void>.delayed(const Duration(milliseconds: 5));
@@ -105,29 +139,29 @@ Future<void> _waitFor(bool Function() condition, {required String reason}) async
   fail('timed out waiting: $reason');
 }
 
-/// Every `.jsonl` file under [root] (MemoryFileSystem has no recursive
-/// listing — sessions live one cwd-slug level down).
+/// Every `.jsonl` file under [root] (sessions live one cwd-slug level
+/// down; MemoryFileSystem has no recursive listing).
 Future<List<String>> _sessionFiles(FileSystem fs, String root) async {
   final found = <String>[];
   final listed = await fs.listDir(root);
   if (listed.isErr) return found;
-  for (final entry in listed.valueOrNull!) {
-    if (entry.kind == FileKind.directory) {
-      found.addAll(await _sessionFiles(fs, '$root/${entry.name}'));
-    } else if (entry.name.endsWith('.jsonl')) {
-      found.add('$root/${entry.name}');
+  for (final info in listed.valueOrNull!) {
+    if (info.kind == FileKind.directory) {
+      found.addAll(await _sessionFiles(fs, info.path));
+    } else if (info.name.endsWith('.jsonl')) {
+      found.add(info.path);
     }
   }
   return found;
 }
 
-/// The `shell_job_registry` records of a session file, in file order.
+/// The `shell_job_registry` payloads of a session file, in file order.
 Future<List<List<dynamic>>> shellJobRegistryRecords(
   FileSystem fs,
   String path,
 ) async {
   final content = (await fs.readTextFile(path)).getOrThrow();
-  final records = <List<dynamic>>[];
+  final payloads = <List<dynamic>>[];
   for (final line in content.split('\n')) {
     if (line.trim().isEmpty) continue;
     final decoded = jsonDecode(line);
@@ -135,78 +169,74 @@ Future<List<List<dynamic>>> shellJobRegistryRecords(
     if (decoded['type'] != 'custom') continue;
     if (decoded['customType'] != 'shell_job_registry') continue;
     final data = decoded['data'];
-    if (data is List) records.add(data);
+    if (data is List) payloads.add(data);
   }
-  return records;
+  return payloads;
 }
 
 void main() {
   test(
     'N shell-job state changes leave a small constant of '
-    'shell_job_registry records, the last carrying every terminal state '
+    'shell_job_registry records; the last carries every terminal state '
     '(gh-1590)',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
       const jobCount = 4;
       final io = FakeCliIO();
       final shell = _ThrottleShell();
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final stream = _JobSpawnerStream(jobCount: jobCount);
       final cli = AgentCli(
         config: AgentCliConfig(
           model: testModel,
           apiKey: '[REDACTED:Sensitive Value]',
-          env: MemoryExecutionEnv(cwd: '/work', shell: shell),
+          env: env,
           sessionRoot: '/sessions',
           approvalMode: ApprovalMode.yolo,
         ),
         io: io,
-        // The lead turn starts every job in one tool round and ends the
-        // turn; the settle-notice reaction runs answer 'ack.'.
-        streamFunction: (model, context, {cancelToken}) {
-          final stream = AssistantMessageEventStream();
-          final firstRun = context.messages
-              .whereType<UserMessage>()
-              .where((m) => m.content.toString().contains('spawn the jobs'))
-              .isNotEmpty;
-          for (final event in firstRun
-              ? toolTurn([
-                  for (var i = 1; i <= jobCount; i++)
-                    ToolCall(
-                      id: 't$i',
-                      name: 'bash',
-                      arguments: {
-                        'command': 'sleep 60 & # job $i',
-                        'background': true,
-                      },
-                    ),
-                ])
-              : textTurn('ack.')).withTimeout()
-          // ignore: unnecessary_statements
-              ;
-          stream.end();
-          return stream;
-        },
+        streamFunction: stream.call,
       );
-      final run = cli.runHeadless('spawn the jobs');
+      final run = cli.runHeadless('spawn the background jobs');
       await _waitFor(
         () => shell.jobs.length == jobCount,
         reason: 'all $jobCount jobs register',
       );
-      // Every job settles — with a per-mutation append that alone would
-      // write jobCount more snapshots.
+      // Every job settles — with the old per-mutation append that alone
+      // wrote jobCount more full snapshots.
       for (final job in shell.jobs) {
         job.finish(0);
       }
       final code = await run;
       expect(code, 0, reason: 'the run completes with the settled jobs');
 
-      final files = await _sessionFiles(
-        MemoryExecutionEnv(cwd: '/work', shell: shell),
-        '/sessions',
+      final files = await _sessionFiles(env, '/sessions');
+      expect(files, hasLength(1), reason: 'one session file was written');
+      final payloads = await shellJobRegistryRecords(env, files.single);
+      expect(
+        payloads,
+        isNotEmpty,
+        reason: 'the board state persisted at least once',
       );
-      // The env above is the CLI's own store; resolve through a fresh
-      // view of the SAME in-memory tree is impossible — read via the
-      // config env captured at construction instead.
-      fail('placeholder — replaced below');
+      // gh-1590 acceptance: 2k state changes (k starts + k settles) leave
+      // a SMALL CONSTANT of records — one snapshot plus the finalize
+      // flush — instead of one record per change.
+      expect(
+        payloads.length,
+        lessThanOrEqualTo(2),
+        reason: 'mutations inside the persist window coalesce',
+      );
+      // The FINAL state reached the file: every job terminal — a resume
+      // rehydrates through the LAST record and must never show running.
+      final finalBoard = payloads.last;
+      expect(finalBoard, hasLength(jobCount));
+      for (final card in finalBoard) {
+        expect(
+          (card as Map)['state'],
+          'done',
+          reason: 'the flush lands the final board state',
+        );
+      }
     },
   );
 }

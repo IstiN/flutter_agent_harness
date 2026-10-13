@@ -152,7 +152,7 @@ final class SessionRepairReport {
         'kept the latest snapshot of: ${_counts(keptLatestByType)}',
       if (untouchedSegments > 0)
         '$untouchedSegments rotated segment(s) untouched — ledger '
-        'records remain in ${path.split('/').last}.part-*',
+            'records remain in ${path.split('/').last}.part-*',
       '${_bytes(bytesBefore)} → ${_bytes(bytesAfter)}'
           '${dryRun ? ' (projected)' : ' · original kept at $backupPath'}',
     ];
@@ -164,7 +164,7 @@ final class SessionRepairReport {
   ]) => [
     for (final entry in counts.entries)
       '${entry.key}×'
-      '${formatValue == null ? entry.value : formatValue(entry.value)}',
+          '${formatValue == null ? entry.value : formatValue(entry.value)}',
   ].join(', ');
 
   static String _bytes(int bytes) {
@@ -174,7 +174,8 @@ final class SessionRepairReport {
     if (bytes >= (1 << 20)) {
       return '${(bytes / (1 << 20)).toStringAsFixed(1)} MB';
     }
-    if (bytes >= (1 << 10)) return '${(bytes / (1 << 10)).toStringAsFixed(1)} KB';
+    if (bytes >= (1 << 10))
+      return '${(bytes / (1 << 10)).toStringAsFixed(1)} KB';
     return '$bytes B';
   }
 }
@@ -303,13 +304,15 @@ Future<SessionRepairReport> repairSessionLedgers(
 /// The repair IO surface: a [RangedReadFileSystem] (bounded streaming)
 /// plus a [RenamableFileSystem] (atomic swap). Anything else fails with
 /// [SessionRepairErrorCode.unsupported] rather than half-applying.
-({RangedReadFileSystem ranged, RenamableFileSystem renamable})
-_repairIoSurface(FileSystem fs) {
+({RangedReadFileSystem ranged, RenamableFileSystem renamable}) _repairIoSurface(
+  FileSystem fs,
+) {
   final Object maybeRanged = fs;
   final Object maybeRenamable = fs;
   final ranged = maybeRanged is RangedReadFileSystem ? maybeRanged : null;
-  final renamable =
-      maybeRenamable is RenamableFileSystem ? maybeRenamable : null;
+  final renamable = maybeRenamable is RenamableFileSystem
+      ? maybeRenamable
+      : null;
   if (ranged == null || renamable == null) {
     throw SessionRepairException(
       'session repair needs byte-range reads and an atomic rename; this '

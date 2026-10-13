@@ -104,6 +104,10 @@ extension AgentCliLifecycle on AgentCli {
     // a deleted session has no chain to fold and no artifact should
     // outlive it.
     await _flushUsageLedger();
+    // gh-1590: the REPL close flushes the coalesced job-board snapshot
+    // and disarms the throttle's trailing leg — the last thing the
+    // process does must never be a pending ledger write.
+    await _flushJobBoardPersist();
   }
 
   /// Warm the endpoint metadata (model list, dial features, reported

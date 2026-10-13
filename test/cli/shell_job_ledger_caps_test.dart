@@ -32,8 +32,7 @@ void main() {
       expect(records.last['id'], 'sh-${shellJobBoardPersistedCardCap + 20}');
     });
 
-    test('a rehydrated board from capped records is still terminal-safe',
-        () {
+    test('a rehydrated board from capped records is still terminal-safe', () {
       final board = ShellJobBoard();
       for (var i = 1; i <= shellJobBoardPersistedCardCap + 5; i++) {
         board.start(_card('sh-$i'));
@@ -57,10 +56,11 @@ void main() {
           detail: huge,
         );
       final records = board.toRecords();
-      expect((records.single['label'] as String).length,
-          ledgerTextCapChars);
-      expect((records.single['detail'] as String).length,
-          lessThanOrEqualTo(ledgerTextCapChars));
+      expect((records.single['label'] as String).length, ledgerTextCapChars);
+      expect(
+        (records.single['detail'] as String).length,
+        lessThanOrEqualTo(ledgerTextCapChars),
+      );
       // The LIVE board keeps the full label for rendering — the cap is
       // the persisted record's alone.
       expect(board.allCards.single.label.length, huge.length);
@@ -108,8 +108,11 @@ void main() {
         minInterval: const Duration(seconds: 30),
         clock: () => now,
       );
-      expect(throttle.shouldPersistNow(), isTrue,
-          reason: 'a never-persisted ledger appends its first snapshot');
+      expect(
+        throttle.shouldPersistNow(),
+        isTrue,
+        reason: 'a never-persisted ledger appends its first snapshot',
+      );
       throttle.confirmPersisted();
       // gh-1590 acceptance shape: N shell-job state changes inside the
       // window must leave ONE snapshot, not N — the deduper only
@@ -117,11 +120,17 @@ void main() {
       // states once appended 1,635 records.
       for (var i = 1; i <= 25; i++) {
         now = now.add(const Duration(seconds: 1));
-        expect(throttle.shouldPersistNow(), isFalse,
-            reason: 'mutation $i inside the window coalesces');
+        expect(
+          throttle.shouldPersistNow(),
+          isFalse,
+          reason: 'mutation $i inside the window coalesces',
+        );
       }
-      expect(throttle.hasPending, isTrue,
-          reason: 'the coalesced state reserves a trailing flush');
+      expect(
+        throttle.hasPending,
+        isTrue,
+        reason: 'the coalesced state reserves a trailing flush',
+      );
     });
 
     test('the trailing flush becomes due one window after the first '
@@ -159,9 +168,13 @@ void main() {
       expect(throttle.shouldPersistNow(), isTrue);
       throttle.confirmPersisted();
       now = now.add(const Duration(seconds: 31));
-      expect(throttle.shouldPersistNow(), isTrue,
-          reason: 'an idle window re-opens without needing the trailing '
-              'flush');
+      expect(
+        throttle.shouldPersistNow(),
+        isTrue,
+        reason:
+            'an idle window re-opens without needing the trailing '
+            'flush',
+      );
       throttle.confirmPersisted();
       expect(throttle.hasPending, isFalse);
     });
@@ -177,9 +190,13 @@ void main() {
       now = now.add(const Duration(seconds: 1));
       expect(throttle.shouldPersistNow(), isFalse);
       throttle.reset();
-      expect(throttle.shouldPersistNow(), isTrue,
-          reason: 'a rehydrated board persists its first snapshot at '
-              'once — the deduper reset next to it depends on that');
+      expect(
+        throttle.shouldPersistNow(),
+        isTrue,
+        reason:
+            'a rehydrated board persists its first snapshot at '
+            'once — the deduper reset next to it depends on that',
+      );
     });
 
     test('a refusal arms the production trailing leg, and its flush '
@@ -200,10 +217,18 @@ void main() {
       // A refusal arms the leg…
       expect(throttle.shouldPersistNow(), isFalse);
       await Future<void>.delayed(const Duration(milliseconds: 120));
-      expect(fired, 1, reason: 'the trailing leg lands the coalesced '
-          'snapshot when the mutations stop');
-      expect(throttle.hasPending, isFalse,
-          reason: 'the flush consumed the pending reservation');
+      expect(
+        fired,
+        1,
+        reason:
+            'the trailing leg lands the coalesced '
+            'snapshot when the mutations stop',
+      );
+      expect(
+        throttle.hasPending,
+        isFalse,
+        reason: 'the flush consumed the pending reservation',
+      );
     });
 
     test('dispose disarms the trailing leg mid-flight', () async {
@@ -218,8 +243,13 @@ void main() {
       // The shutdown flush disposes BEFORE the leg can fire.
       throttle.dispose();
       await Future<void>.delayed(const Duration(milliseconds: 120));
-      expect(fired, 0, reason: 'a disposed throttle never fires — the '
-          'shutdown flush replaces it');
+      expect(
+        fired,
+        0,
+        reason:
+            'a disposed throttle never fires — the '
+            'shutdown flush replaces it',
+      );
     });
   });
 }
