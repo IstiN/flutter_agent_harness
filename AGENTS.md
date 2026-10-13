@@ -2078,8 +2078,9 @@ binds, the audit's `cap_resolution` block records the winning source and
 both inputs; the adapter's own kill at the cap is outcome `external_cap`,
 and an unsupervised external kill (harbor's wait_for / SIGTERM) flushes
 outcome `external_kill` (an absent export = unknown: the knobs rule
-alone). Every trial
-dir carries
+alone).
+
+Every trial dir carries
 `bench_metrics.json` (per-request wall/first-byte, ConnTrace socket
 events, watchdog fires) and, on a stall, `hang-*.json` — replay one
 from any machine with `scripts/replay_hang.sh <file> [url]`.

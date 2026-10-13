@@ -257,12 +257,17 @@ def _trial_dirs(runs_dir: Path) -> dict:
 # their killer in the audit, so neither may read as a bench-inflicted
 # contradiction (a verdict missing here silently no-ops into a false
 # "killed while progressing" claim — the gh-1556 lesson).
+# Review round 2: `running` is the incremental checkpoint's "no verdict
+# yet" — the residue a SIGKILL leaves when the final write never lands.
+# It names NO bench kill, so a checkpoint-only audit can never be a
+# contradiction either. Keep in lockstep with post_mortem_usage.py.
 _AUDIT_JUSTIFIED = (
     "stall",
     "hard-ceiling",
     "abs_ceiling",
     "external_cap",
     "external_kill",
+    "running",
 )
 
 

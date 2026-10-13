@@ -91,6 +91,137 @@ _POLL_SEC = 5.0
 _AUDIT_PATH = "/logs/agent/fa-timeout-metadata.json"
 
 
+# ── gh-1576: external-kill audit trail (I2) — signal lifecycle ──────────
+# ONE process-level disposition per signal, held on behalf of every live
+# FaAgent trial in the loop (the workflow exposes --n-concurrent):
+# the FIRST trial captures the process's previous disposition and
+# installs, overlapping trials attach to the same holder, and the LAST
+# release removes the handler and RESTORES the captured disposition.
+# (Review round 2, PRRT_kwDOTXdlLc6sD_xd: a bare
+# loop.remove_signal_handler leaves SIG_DFL behind — the captured
+# `previous` (harbor's graceful handler) permanently gone for the rest
+# of the process — and per-trial installs clobber each other when
+# trials overlap.)
+_AUDIT_SIGNAL_HOLDER: dict = {}
+
+
+def _previous_restorable(previous) -> bool:
+    """False when the captured disposition cannot be restored from here.
+
+    `asyncio.unix_events._sighandler_noop` means ANOTHER loop owns the
+    signal via its own add_signal_handler registration — we can neither
+    re-register their callback nor faithfully restore it, so we prefer
+    NOT installing over half-restoring (the cancel-path flush still
+    covers I2). Python-level callables, SIG_DFL, SIG_IGN and
+    default_int_handler are all restorable via signal.signal.
+    """
+    unix_events = getattr(asyncio, "unix_events", None)
+    noop = getattr(signal, "sighandler_noop", None) or getattr(
+        unix_events, "_sighandler_noop", None
+    )
+    return not (noop is not None and previous is noop)
+
+
+def _hold_signal_auditor(agent, sig, loop) -> bool:
+    """Attach `agent` to the signal's audit holder; install if first.
+
+    Returns False (installs nothing) when the disposition is owned by
+    another loop or cannot be captured/restored — best-effort by
+    contract.
+    """
+    entry = _AUDIT_SIGNAL_HOLDER.get(sig)
+    if entry is not None:
+        if entry["loop"] is not loop:
+            return False  # another loop owns the disposition — skip
+        if agent in entry["agents"]:
+            return True  # idempotent attach
+        entry["refs"] += 1
+        entry["agents"].append(agent)
+        return True
+    previous = signal.getsignal(sig)
+    if not _previous_restorable(previous):
+        return False
+    try:
+        loop.add_signal_handler(
+            sig, _dispatch_external_kill, sig.name, loop, previous
+        )
+    except (NotImplementedError, RuntimeError, ValueError, OSError):
+        return False
+    _AUDIT_SIGNAL_HOLDER[sig] = {
+        "refs": 1,
+        "previous": previous,
+        "loop": loop,
+        "agents": [agent],
+    }
+    return True
+
+
+def _release_signal_auditor(agent, sig, loop) -> None:
+    """Detach `agent`; the LAST release restores the previous disposition."""
+    entry = _AUDIT_SIGNAL_HOLDER.get(sig)
+    if entry is None:
+        return
+    if agent in entry["agents"]:
+        entry["agents"].remove(agent)
+        entry["refs"] -= 1
+    if entry["refs"] > 0:
+        return
+    del _AUDIT_SIGNAL_HOLDER[sig]
+    try:
+        loop.remove_signal_handler(sig)
+    except (NotImplementedError, RuntimeError, ValueError):
+        pass
+    previous = entry["previous"]
+    if previous is not None:
+        try:
+            signal.signal(sig, previous)
+        except (ValueError, OSError, TypeError):
+            pass
+
+
+def _dispatch_external_kill(signame: str, loop, previous) -> None:
+    """Sync signal-handler body: flush EVERY live trial's audit.
+
+    Runs on the main thread at an arbitrary bytecode boundary — all loop
+    interaction goes through call_soon_threadsafe. With a `previous`
+    disposition (the production signal path), the signal is restored and
+    re-delivered once every flush write has landed — the process still
+    dies, the audits just outlive the race. previous=None (tests) skips
+    the re-delivery.
+    """
+    sig = getattr(signal, signame, None)
+    entry = _AUDIT_SIGNAL_HOLDER.get(sig) if sig is not None else None
+    agents = list(entry["agents"]) if entry else []
+
+    def _flush_all() -> None:
+        writes = []
+        for agent in agents:
+            task = agent._schedule_external_kill_write(signame, None)
+            if task is not None:
+                writes.append(task)
+
+        def _rehonor(_done=None) -> None:
+            if previous is None or sig is None:
+                return
+            try:
+                signal.signal(sig, previous)
+                os.kill(os.getpid(), sig)
+            except (ValueError, OSError, TypeError):
+                pass
+
+        if previous is None or sig is None:
+            return
+        if writes:
+            asyncio.gather(*writes).add_done_callback(_rehonor)
+        else:
+            _rehonor()
+
+    try:
+        loop.call_soon_threadsafe(_flush_all)
+    except RuntimeError:
+        pass  # loop already closed — nothing left to flush into
+
+
 class FaAgent(BaseInstalledAgent):
     @staticmethod
     def name() -> str:
@@ -270,7 +401,6 @@ class FaAgent(BaseInstalledAgent):
         loop = asyncio.get_running_loop()
         start = loop.time()
         outcome = None
-        self._audit_terminal = False
         self._checkpoint_state = None
         exec_task = asyncio.create_task(
             self.exec_as_agent(
@@ -370,6 +500,7 @@ class FaAgent(BaseInstalledAgent):
         cap = self._cap
         self._run_environment = environment
         self._external_kill_flushed = False
+        error = None
         try:
             with self._kill_auditors():
                 await self.exec_as_agent(
@@ -381,11 +512,21 @@ class FaAgent(BaseInstalledAgent):
                 environment, None, None, cap, cause="cancelled"
             )
             raise
+        except BaseException as exc:  # noqa: BLE001 - re-raised below
+            # I2 (review round 2): a crashed exec (harbor's
+            # NonZeroAgentExitCodeError after a non-zero fa exit) used to
+            # propagate without any audit — the exact "the kill came from
+            # outside, the audit writer never ran" gap this card closes.
+            # Mirror the supervised sibling: audit, then re-raise.
+            error = exc
         await self._write_audit(
-            environment, None, None, "completed",
+            environment, None, None,
+            "crashed" if error is not None else "completed",
             deadline_epoch_ms=self._deadline_epoch_ms,
             cap=cap,
         )
+        if error is not None:
+            raise error
 
     # ── gh-1576: external-kill audit trail (I2) ──────────────────────────
 
@@ -394,10 +535,15 @@ class FaAgent(BaseInstalledAgent):
         """SIGTERM/SIGINT handlers that flush the audit before dying.
 
         Installed for the duration of a supervised (or external-cap-only)
-        run, main thread only, and restored afterwards — harbor's own
-        handlers (e.g. jobs.py's SIGTERM→KeyboardInterrupt) are captured
-        and re-delivered once the flush lands, so termination semantics
-        are honored, just a few seconds later.
+        run, main thread only, and restored afterwards. The disposition
+        is held PER PROCESS (module-level holder): overlapping trials
+        (--n-concurrent > 1) attach to the same handler, and the captured
+        `previous` disposition is restored by the LAST release — a bare
+        loop.remove_signal_handler would leave SIG_DFL behind, killing
+        harbor's graceful handling for the rest of the process. A
+        disposition we cannot faithfully restore (another loop's
+        add_signal_handler registration) is never stolen: we skip the
+        install (the cancel-path flush still covers I2).
         """
         loop = asyncio.get_running_loop()
         if (
@@ -406,50 +552,26 @@ class FaAgent(BaseInstalledAgent):
         ):
             yield
             return
-        installed = []
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            try:
-                previous = signal.getsignal(sig)
-                loop.add_signal_handler(
-                    sig, self._on_external_signal, sig.name, loop, previous
-                )
-                installed.append((sig, previous))
-            except (NotImplementedError, RuntimeError, ValueError, OSError):
-                continue
+        held = [
+            sig
+            for sig in (signal.SIGTERM, signal.SIGINT)
+            if _hold_signal_auditor(self, sig, loop)
+        ]
         try:
             yield
         finally:
-            for sig, _previous in installed:
-                try:
-                    loop.remove_signal_handler(sig)
-                except (NotImplementedError, RuntimeError, ValueError):
-                    pass
+            for sig in held:
+                _release_signal_auditor(self, sig, loop)
 
-    def _on_external_signal(self, signame: str, loop, previous) -> None:
-        """Sync signal-handler body: schedule the audit flush.
+    def _schedule_external_kill_write(self, signame: str, cause: str):
+        """The once-per-trial external_kill audit write task (or None).
 
-        Runs on the main thread at an arbitrary bytecode boundary — all
-        loop interaction goes through call_soon_threadsafe. `previous`
-        reaching the flush means the signal is re-delivered to its
-        original disposition once the audit landed (tests pass None).
-        """
-        try:
-            loop.call_soon_threadsafe(
-                self._flush_external_kill, signame, None, previous
-            )
-        except RuntimeError:
-            pass  # loop already closed — nothing left to flush into
-
-    def _flush_external_kill(self, signame: str, cause: str, previous=None) -> None:
-        """Write the final external_kill audit once, then honor the signal.
-
-        Idempotent against the cancel-path flush (first writer wins).
-        With a `previous` disposition (the production signal path), the
-        signal is restored and re-delivered to it after the flush —
-        the process still dies, the audit just outlives the race.
+        Idempotent against the cancel-path flush (first writer wins);
+        the signal dispatch rehonors the captured disposition after the
+        LAST live trial's write lands.
         """
         if getattr(self, "_external_kill_flushed", False):
-            return
+            return None
         self._external_kill_flushed = True
         environment = getattr(self, "_run_environment", None)
 
@@ -466,21 +588,7 @@ class FaAgent(BaseInstalledAgent):
                 external_kill={"signal": signame, "cause": cause},
             )
 
-        task = asyncio.ensure_future(_write())
-
-        def _rehonor(done):
-            if previous is None:
-                return
-            sig = getattr(signal, signame, None)
-            if sig is None:
-                return
-            try:
-                signal.signal(sig, previous)
-                os.kill(os.getpid(), sig)
-            except (ValueError, OSError, TypeError):
-                pass
-
-        task.add_done_callback(_rehonor)
+        return asyncio.ensure_future(_write())
 
     async def _flush_external_kill_audit(
         self, environment, knobs, ladder, cap, cause: str

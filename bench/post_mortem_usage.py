@@ -137,12 +137,17 @@ def _fold_row(row, session_dirs):
 # the audit, so neither may read as a bench-inflicted contradiction (a
 # verdict missing here silently no-ops into a false violation — the
 # gh-1556 lesson).
+# Review round 2: `running` is the incremental checkpoint's "no verdict
+# yet" — the residue a SIGKILL leaves when the final write never lands.
+# It names NO bench kill, so a checkpoint-only audit can never be a
+# violation either. Keep in lockstep with terminal_bench/summary.py.
 _AUDIT_JUSTIFIED = (
     "stall",
     "hard-ceiling",
     "abs_ceiling",
     "external_cap",
     "external_kill",
+    "running",
 )
 
 

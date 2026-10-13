@@ -28,7 +28,9 @@ import base64
 import importlib.util
 import json
 import os
+import signal
 import sys
+import threading
 import time
 import warnings
 import types
@@ -132,10 +134,12 @@ class FakeAgent(fa_agent.FaAgent):
     and `counter` makes the progress samples grow (gh-1576 checkpoints).
     """
 
-    def __init__(self, fail_pkill=False, launch_delay=None, counter=None):
+    def __init__(self, fail_pkill=False, launch_delay=None, counter=None,
+                 launch_error=None):
         self._version = None
         self.fail_pkill = fail_pkill
         self.launch_delay = launch_delay
+        self.launch_error = launch_error
         self.counter = counter
         self.root_calls = []
         self.launch_env = None
@@ -157,6 +161,10 @@ class FakeAgent(fa_agent.FaAgent):
         if _AGENT_LAUNCH_SNIPPET in command:
             self.launch_env = env
             self.killed = asyncio.Event()
+            if self.launch_error is not None:
+                # The crashed-exec shape (e.g. harbor's
+                # NonZeroAgentExitCodeError after a non-zero fa exit).
+                raise self.launch_error
             if self.launch_delay is not None:
                 await asyncio.sleep(self.launch_delay)
                 return _ExecResult()
@@ -400,24 +408,22 @@ class ExternalCapAdapterTest(unittest.TestCase):
         )
 
     def test_it3_sigterm_handler_flushes_external_kill_audit(self):
-        # IT-3: the SIGTERM path — the installed handler schedules the
-        # same flush (previous=None in the test = no re-signal chain).
+        # IT-3: the installed handler dispatches the flush for every
+        # attached trial (previous=None in the test = no re-signal chain).
+        if threading.current_thread() is not threading.main_thread():
+            self.skipTest("signal handlers need the main thread")
         agent = FakeAgent()
-
-        async def scenario():
-            task = asyncio.create_task(
-                agent._run_with_deadline(self._knobs(), "task", object())
+        agent._run_environment = object()  # the supervised run stashes it
+        loop = asyncio.new_event_loop()
+        try:
+            self.assertTrue(
+                fa_agent._hold_signal_auditor(agent, signal.SIGTERM, loop)
             )
-            await asyncio.sleep(0.05)
-            agent._on_external_signal(
-                "SIGTERM", asyncio.get_running_loop(), None
-            )
-            await asyncio.sleep(0.2)
-            task.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await task
-
-        asyncio.run(scenario())
+            fa_agent._dispatch_external_kill("SIGTERM", loop, None)
+            loop.run_until_complete(asyncio.sleep(0.2))
+        finally:
+            fa_agent._release_signal_auditor(agent, signal.SIGTERM, loop)
+            loop.close()
         killed = [
             p
             for p in agent.audit_payloads
@@ -510,6 +516,22 @@ class ExternalCapOnlyRunTest(unittest.TestCase):
         self.assertIsNotNone(agent.audit_payload)
         self.assertEqual(agent.audit_payload["outcome"], "external_kill")
 
+    def test_crashed_exec_still_leaves_the_audit(self):
+        # I2: every termination leaves the audit. A crashed exec (e.g.
+        # harbor's NonZeroAgentExitCodeError after a non-zero fa exit) on
+        # this path used to propagate without writing anything — exactly
+        # the "the kill came from outside, the audit writer never ran" gap
+        # this card exists to close (review round 2). Mirrors the
+        # supervised sibling's `crashed` handling.
+        agent = FakeAgent(launch_error=RuntimeError("NonZeroAgentExitCodeError: 1"))
+        with self.assertRaises(RuntimeError):
+            asyncio.run(agent.run("instruction", object(), {}))
+        payload = agent.audit_payload
+        self.assertIsNotNone(payload, agent.audit_payloads)
+        self.assertEqual(payload["outcome"], "crashed")
+        self.assertEqual(payload["policy"], "external-cap")
+        self.assertEqual(payload["cap_resolution"]["winning_cap_source"], "external")
+
     def test_no_cap_no_knobs_stays_byte_identical(self):
         # AC5/REG-2: without the cap env the unsupervised path exports
         # nothing and writes no audit — exactly today's behavior.
@@ -523,6 +545,170 @@ class ExternalCapOnlyRunTest(unittest.TestCase):
         asyncio.run(agent.run("instruction", object(), {}))
         self.assertNotIn("FA_DEADLINE_EPOCH_MS", agent.launch_env)
         self.assertIsNone(agent.audit_payload)
+
+
+class SignalLifecycleTest(unittest.TestCase):
+    """Review round 2 (`PRRT_kwDOTXdlLc6sD_xd`): the SIGTERM/SIGINT audit
+    handler must honor the process's signal lifecycle.
+
+    - the captured `previous` disposition is RESTORED by the teardown —
+      `loop.remove_signal_handler` alone leaves SIG_DFL behind, so a later
+      process-level SIGTERM would bypass harbor's graceful handling for
+      the rest of the process;
+    - a disposition we cannot faithfully restore (another loop's
+      add_signal_handler registration, seen as `signal._sighandler_noop`)
+      is never stolen — skipping the install is safe (the cancel-path
+      flush still covers I2), half-restoring is not;
+    - overlapping trials (`--n-concurrent` > 1) share ONE holder: the
+      first release must not strip the handler a live trial still needs;
+      the last release restores.
+    """
+
+    WATCH_ENV = {
+        "FA_PROGRESS_EXTENSION": "1",
+        "FA_STALL_GAP_SEC": "360",
+        "FA_AGENT_TIMEOUT_ABS_CEILING_SEC": "3600",
+        "FA_PROVIDER_CONFIG": '{"apiKeyEnvVar": "FA_KEY_FAKE"}',
+        "FA_KEY_FAKE": "secret",
+    }
+
+    def setUp(self):
+        env = _clean_env(**self.WATCH_ENV)
+        env.start()
+        self.addCleanup(env.stop)
+
+    def _noop_sentinel(self):
+        """The disposition another loop's add_signal_handler installs."""
+        unix_events = getattr(asyncio, "unix_events", None)
+        return (
+            getattr(signal, "sighandler_noop", None)
+            or getattr(unix_events, "_sighandler_noop", None)
+        )
+
+    def test_kill_auditors_restore_the_captured_disposition(self):
+        if threading.current_thread() is not threading.main_thread():
+            self.skipTest("signal handlers need the main thread")
+        recorder = mock.Mock(name="harbor_sigterm_handler")
+        original = signal.getsignal(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, recorder)
+        try:
+            agent = FakeAgent(launch_delay=0.1)
+            with mock.patch.object(fa_agent, "_POLL_SEC", 0.05):
+                asyncio.run(
+                    agent._run_with_deadline(
+                        fa_agent_timeout.TimeoutKnobs.from_env(), "task", object()
+                    )
+                )
+            self.assertIs(signal.getsignal(signal.SIGTERM), recorder)
+        finally:
+            signal.signal(signal.SIGTERM, original)
+
+    def test_kill_auditors_skip_a_disposition_they_cannot_restore(self):
+        if threading.current_thread() is not threading.main_thread():
+            self.skipTest("signal handlers need the main thread")
+        # Simulate harbor's own loop-level registration: the process
+        # disposition becomes the noop sentinel, which we cannot restore.
+        original = signal.getsignal(signal.SIGTERM)
+        outer = asyncio.new_event_loop()
+        try:
+            outer.add_signal_handler(signal.SIGTERM, lambda: None)
+            noop = signal.getsignal(signal.SIGTERM)
+            self.assertIs(noop, self._noop_sentinel())
+            agent = FakeAgent(launch_delay=0.05)
+
+            async def scenario():
+                await agent._run_with_deadline(
+                    fa_agent_timeout.TimeoutKnobs.from_env(), "task", object()
+                )
+
+            with mock.patch.object(fa_agent, "_POLL_SEC", 0.05):
+                asyncio.run(scenario())
+            # Not stolen: still the other loop's noop disposition, and
+            # the natural-completion audit still landed (I2 unaffected).
+            self.assertIs(signal.getsignal(signal.SIGTERM), noop)
+            self.assertIsNotNone(agent.audit_payload)
+            self.assertEqual(agent.audit_payload["outcome"], "completed")
+        finally:
+            outer.remove_signal_handler(signal.SIGTERM)
+            outer.close()
+            signal.signal(signal.SIGTERM, original)
+
+    def test_overlapping_trials_share_one_disposition(self):
+        if threading.current_thread() is not threading.main_thread():
+            self.skipTest("signal handlers need the main thread")
+        original = signal.getsignal(signal.SIGTERM)
+        self.assertIs(original, signal.SIG_DFL)  # the state this pins on
+        noop = self._noop_sentinel()
+        a = FakeAgent(launch_delay=0.25)
+        b = FakeAgent(launch_delay=0.5)
+
+        async def scenario():
+            ta = asyncio.create_task(
+                a._run_with_deadline(
+                    fa_agent_timeout.TimeoutKnobs.from_env(), "task", object()
+                )
+            )
+            tb = asyncio.create_task(
+                b._run_with_deadline(
+                    fa_agent_timeout.TimeoutKnobs.from_env(), "task", object()
+                )
+            )
+            await asyncio.sleep(0.1)
+            during = signal.getsignal(signal.SIGTERM)
+            await ta
+            after_first = signal.getsignal(signal.SIGTERM)  # b still live
+            await tb
+            after_last = signal.getsignal(signal.SIGTERM)
+            return during, after_first, after_last
+
+        try:
+            with mock.patch.object(fa_agent, "_POLL_SEC", 0.05):
+                during, after_first, after_last = asyncio.run(scenario())
+            self.assertIs(during, noop)  # installed while both run
+            # The first release must NOT strip the handler the live
+            # trial still holds (the pre-fix per-trial remove did).
+            self.assertIs(after_first, noop)
+            self.assertIs(after_last, signal.SIG_DFL)  # last release restores
+        finally:
+            signal.signal(signal.SIGTERM, original)
+
+    def test_dispatch_flushes_every_live_trial_then_rehonors(self):
+        # One process handler serves every live trial: the dispatch
+        # flushes EACH attached agent's audit, and only after the last
+        # write lands is the captured disposition restored and the
+        # signal re-delivered (the process still dies; the audits
+        # outlive the race). This also pins the _rehonor chain the
+        # round-1 tests left uncovered (every test passed previous=None).
+        if threading.current_thread() is not threading.main_thread():
+            self.skipTest("signal handlers need the main thread")
+        original = signal.getsignal(signal.SIGTERM)
+        loop = asyncio.new_event_loop()
+        a, b = FakeAgent(), FakeAgent()
+        a._run_environment = object()
+        b._run_environment = object()
+        try:
+            for agent in (a, b):
+                self.assertTrue(
+                    fa_agent._hold_signal_auditor(agent, signal.SIGTERM, loop)
+                )
+            recorder = mock.Mock(name="harbor_sigterm_handler")
+            with mock.patch.object(signal, "signal") as fake_signal, \
+                    mock.patch.object(os, "kill") as fake_kill:
+                fa_agent._dispatch_external_kill("SIGTERM", loop, recorder)
+                loop.run_until_complete(asyncio.sleep(0.3))
+            killed = [
+                p for p in (*a.audit_payloads, *b.audit_payloads)
+                if p.get("outcome") == "external_kill"
+                and p.get("external_kill", {}).get("signal") == "SIGTERM"
+            ]
+            self.assertEqual(len(killed), 2, (a.audit_payloads, b.audit_payloads))
+            fake_signal.assert_called_once_with(signal.SIGTERM, recorder)
+            fake_kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+        finally:
+            for agent in (a, b):
+                fa_agent._release_signal_auditor(agent, signal.SIGTERM, loop)
+            loop.close()
+            signal.signal(signal.SIGTERM, original)
 
 
 if __name__ == "__main__":

@@ -279,6 +279,16 @@ class FaAgent(AbstractInstalledAgent):
             # unsupervised termination lands the audit — the failure mode
             # the harness recorded IS the outcome class.
             if cap is not None:
+                # knobs=None: the adapter never supervises — an
+                # agent_timeout classification is the HARNESS's own kill
+                # (it came from outside the adapter), so the audit says
+                # the recognized verdict `external_kill`. A raw
+                # failure-mode string is absent from both
+                # honesty-justified sets (terminal_bench/summary.py +
+                # post_mortem_usage.py — change both together) and reads
+                # as a false contradiction (review round 2, the gh-1556
+                # lesson). Other failure modes stay raw: the harness's
+                # classification IS the truthful outcome.
                 self._write_audit(
                     logging_dir,
                     None,
@@ -286,7 +296,11 @@ class FaAgent(AbstractInstalledAgent):
                     (
                         "completed"
                         if result.failure_mode in (None, FailureMode.NONE)
-                        else str(result.failure_mode.value)
+                        else (
+                            "external_kill"
+                            if result.failure_mode == FailureMode.AGENT_TIMEOUT
+                            else str(result.failure_mode.value)
+                        )
                     ),
                     deadline_epoch_ms=deadline_ms,
                     cap=cap,
