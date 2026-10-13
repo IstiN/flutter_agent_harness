@@ -705,6 +705,58 @@ void main() {
       expect(script, contains(r'Join-Path $installDir "lib"'));
       expect(script, contains(r'Join-Path $installDir "bin"'));
     });
+
+    test('site/install.sh.template matches the generated ../lib layout', () {
+      // site/install.sh is GENERATED from the template
+      // (`dart run scripts/gen_installers.dart`); a template left on the
+      // old <install_dir>/lib layout resurrects gh-1574 on the next
+      // regeneration (gh-1574 r2 review).
+      final template = File('site/install.sh.template').readAsStringSync();
+      expect(
+        template,
+        contains(r'lib_dir="$install_dir/../lib"'),
+        reason: 'the template feeds the generated installer — bundle libs '
+            'must be copied to <install_dir>/../lib there too',
+      );
+      expect(
+        template.contains(r'"$install_dir/lib"'),
+        isFalse,
+        reason: 'installing into <install_dir>/lib is the gh-1574 bug — '
+            'the binary looks in <exe_dir>/../lib',
+      );
+    });
+
+    test('the POSIX installers surface lib-copy failures (gh-1574 r2)', () {
+      // A silently-swallowed lib copy (`2>/dev/null || true`) installs a
+      // binary that reports success but cannot load SQLite — exactly the
+      // gh-1574 symptom, undiscoverable. The copy must be able to fail,
+      // and the failure must name the target directory.
+      for (final path in [
+        'site/install.sh.template',
+        'site/install.sh',
+        'install_local.sh',
+      ]) {
+        final script = File(path).readAsStringSync();
+        final copyLine = script
+            .split('\n')
+            .firstWhere((line) => line.contains('bundle/lib/'));
+        expect(
+          copyLine.contains('|| true'),
+          isFalse,
+          reason: '$path must not swallow a failed lib copy',
+        );
+        expect(
+          copyLine.contains('2>/dev/null'),
+          isFalse,
+          reason: '$path must not silence a failed lib copy',
+        );
+        expect(
+          script,
+          contains('SQLite reads will fail'),
+          reason: '$path must warn (naming the lib dir) when the copy fails',
+        );
+      }
+    });
   });
 
   group('fallbackZipUpdate', () {
