@@ -97,8 +97,6 @@ void main() {
         io.interrupt();
 
         final exitCode = await exit;
-        // ignore: avoid_print
-        // ignore: avoid_print
         expect(exitCode, 130, reason: 'aborted run — never a silent exit 0');
       },
     );
