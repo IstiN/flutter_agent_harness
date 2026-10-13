@@ -525,6 +525,114 @@ class MixedTimezoneRenderTest(unittest.TestCase):
         )
 
 
+class MalformedRewardsTest(unittest.TestCase):
+    """E5 completion (rework thread PRRT_kwDOTXdlLc6sGjPV): a
+    verifier_result whose rewards values are not numeric — or whose
+    rewards is not a dict at all — degrades instead of crashing the
+    whole summary render."""
+
+    def setUp(self):
+        self._summary_bak = os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        self.addCleanup(self._restore_env)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.jobs = Path(tmp.name)
+
+    def _restore_env(self):
+        if self._summary_bak is not None:
+            os.environ["GITHUB_STEP_SUMMARY"] = self._summary_bak
+
+    def _run(self, *argv) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = main(list(argv))
+        return rc, out.getvalue()
+
+    def test_non_numeric_reward_value_degrades(self):
+        # {"r": "high"} used to raise ValueError inside float(v).
+        job = self.jobs / "fa-2.1-docker-cpu-0"
+        write_result(
+            job / "labeled",
+            {"verifier_result": {"rewards": {"r": "high"}}},
+        )
+        rc, out = self._run(str(self.jobs))
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 0/1 scored trials**", out)
+
+    def test_null_reward_value_degrades(self):
+        # {"r": null} used to raise TypeError inside float(v).
+        job = self.jobs / "fa-2.1-docker-cpu-0"
+        write_result(job / "nulled", {"verifier_result": {"rewards": {"r": None}}})
+        rc, out = self._run(str(self.jobs))
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 0/1 scored trials**", out)
+
+    def test_mixed_numeric_and_garbage_rewards(self):
+        # Unparseable values are skipped; the numeric ones still score.
+        job = self.jobs / "fa-2.1-docker-cpu-0"
+        write_result(
+            job / "mixed",
+            {"verifier_result": {"rewards": {"a": 1.0, "b": "high", "c": None}}},
+        )
+        rc, out = self._run(str(self.jobs))
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 1/1 scored trials**", out)
+
+    def test_non_dict_rewards_degrade(self):
+        # A truthy non-dict rewards used to raise AttributeError on
+        # .values() — the E5 dict-guard pattern applies here too.
+        job = self.jobs / "fa-2.1-docker-cpu-0"
+        write_result(job / "stringy", {"verifier_result": {"rewards": "garbage"}})
+        rc, out = self._run(str(self.jobs))
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 0/1 scored trials**", out)
+
+
+class TolerantRowKeysTest(unittest.TestCase):
+    """render() reads the gh-1578 row keys tolerantly (rework thread
+    PRRT_kwDOTXdlLc6sGjRj) — the gh-1579 _status() precedent: hand-built
+    rows that predate the verifier_timeout/hang_secs keys render without
+    a KeyError."""
+
+    @staticmethod
+    def _legacy_row(**kw):
+        # The row shape BEFORE gh-1578 added verifier_timeout/hang_secs.
+        row = {
+            "resolved": False,
+            "exception": "",
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cost": None,
+            "estimated": 0,
+            "checklist": "checklist: none",
+            "trial": "j/legacy",
+        }
+        row.update(kw)
+        return row
+
+    def test_legacy_row_without_gh1578_keys_renders(self):
+        rows = [self._legacy_row(resolved=True)]
+        lines, problems = render({"cpu": rows, "gpu": []})
+        self.assertEqual(problems, [])
+        self.assertIn("**Resolution: 1/1 scored trials**", "\n".join(lines))
+
+    def test_legacy_errored_row_without_gh1578_keys_renders(self):
+        rows = [self._legacy_row(exception="AgentTimeoutError")]
+        lines, _ = render({"cpu": rows, "gpu": []})
+        self.assertIn(
+            "Errored trials (harness/infra failure, not scored): AgentTimeoutError ×1",
+            "\n".join(lines),
+        )
+
+    def test_verifier_timeout_row_without_hang_secs(self):
+        rows = [self._legacy_row(exception="VerifierTimeoutError",
+                                 verifier_timeout=True)]
+        lines, _ = render({"cpu": rows, "gpu": []})
+        out = "\n".join(lines)
+        self.assertIn("agent code hung the verifier", out)
+        self.assertIn("- j/legacy: VerifierTimeoutError, duration unknown", out)
+
+
 @unittest.skipUnless(
     os.environ.get("HARBOR_JOBS_DIR"),
     "E2E-1 needs the real fa-2.1-docker-cpu-4 artifacts (run 38271607849); "

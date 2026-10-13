@@ -135,7 +135,9 @@ def _parse_iso_ts(value) -> "datetime | None":
 def _hang_seconds(data: dict) -> "float | None":
     """gh-1578 AC6: the wall-clock a verifier hang burned — from the
     exception message («timed out after N seconds») when parseable, else
-    the started_at/finished_at delta. None when neither survives."""
+    the started_at/finished_at delta (whole-trial wall-clock — agent
+    time included — only an upper bound on the verifier hang). None when
+    neither survives."""
     info = data.get("exception_info")
     message = info.get("exception_message") if isinstance(info, dict) else None
     match = _HANG_SECS_RE.search(str(message or ""))
@@ -252,8 +254,20 @@ def _trial_rows(job_dir: Path) -> list[dict]:
         if not isinstance(data, dict):
             continue
         verdict = data.get("verifier_result")
-        rewards = (verdict.get("rewards") if isinstance(verdict, dict) else None) or {}
-        scores = [float(v) for v in rewards.values()]
+        # E5 (rework thread): the same tolerant-read contract as
+        # exception_info below — a truthy non-dict rewards degrades to
+        # no rewards, never an AttributeError on .values().
+        raw_rewards = verdict.get("rewards") if isinstance(verdict, dict) else None
+        rewards = raw_rewards if isinstance(raw_rewards, dict) else {}
+        # E5 (rework thread): a rewards value that is not numeric (a
+        # label, null) is skipped, never a ValueError/TypeError killing
+        # the render — the numeric values still score.
+        scores = []
+        for value in rewards.values():
+            try:
+                scores.append(float(value))
+            except (TypeError, ValueError):
+                pass
         resolved = bool(scores) and all(v >= 1.0 for v in scores)
         # Tolerate malformed/missing exception_info (E5): no dict, no
         # class — never an AttributeError, never verifier_timeout.
@@ -463,12 +477,14 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
     # property test pins. Exit-code semantics untouched (gh-1556): no
     # errored class reddens the job by itself.
     verifier_hangs = [
-        r for rows in splits.values() for r in rows if r["verifier_timeout"]
+        r for rows in splits.values() for r in rows if r.get("verifier_timeout")
     ]
     exceptions: dict[str, int] = {}
     for rows in splits.values():
         for r in rows:
-            if r["exception"] and not r["verifier_timeout"]:
+            # Tolerant key access (gh-1579 _status precedent): hand-built
+            # rows predating the gh-1578 keys count as legacy, no KeyError.
+            if r["exception"] and not r.get("verifier_timeout"):
                 exceptions[r["exception"]] = exceptions.get(r["exception"], 0) + 1
     if verifier_hangs:
         per_class: dict[str, int] = {}
@@ -478,7 +494,7 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
             f"{k} ×{v}" for k, v in sorted(per_class.items())
         )
         burned = sum(
-            r["hang_secs"] for r in verifier_hangs if r["hang_secs"] is not None
+            r.get("hang_secs") for r in verifier_hangs if r.get("hang_secs") is not None
         )
         if burned:
             header += f" — ~{burned:.0f}s verifier wall-clock burned"
@@ -486,8 +502,8 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
         lines.append(header)
         for r in sorted(verifier_hangs, key=lambda r: r["trial"]):
             detail = (
-                _format_hang_secs(r["hang_secs"])
-                if r["hang_secs"] is not None
+                _format_hang_secs(r.get("hang_secs"))
+                if r.get("hang_secs") is not None
                 else "duration unknown"
             )
             lines.append(f"- {r['trial']}: {r['exception']}, {detail}")
