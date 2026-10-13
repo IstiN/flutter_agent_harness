@@ -254,10 +254,10 @@ class ProviderLabelTest(unittest.TestCase):
 
     def test_render_tags_the_provider_label(self):
         lines, _ = summary.render(
-            self.runs, run_label="kimi-for-coding (k3-256k)"
+            self.runs, run_label="kimi-for-coding"
         )
         self.assertEqual(
-            lines[2], "Provider: kimi-for-coding (k3-256k) (gh-1471)."
+            lines[2], "Provider: kimi-for-coding (gh-1471)."
         )
 
     def test_no_label_keeps_the_header_stock(self):
