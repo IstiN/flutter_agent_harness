@@ -36,32 +36,14 @@ void main() {
       );
     });
 
-    test('UT-2: empty after a StopReason.length message → emptyAfterPartial', () {
-      final turn = [
-        UserMessage.text('go'),
-        assistant(
-          content: [TextContent(text: 'partial')],
-          stopReason: StopReason.length,
-        ),
-        assistant(),
-      ];
-      expect(
-        classifyEmptyCompletion(turn, turn.last as AssistantMessage),
-        EmptyCompletionVerdict.emptyAfterPartial,
-      );
-    });
-
     test(
-      'UT-2: empty after a silent-truncation-flagged message → '
-      'emptyAfterPartial',
+      'UT-2: empty after a StopReason.length message → emptyAfterPartial',
       () {
         final turn = [
           UserMessage.text('go'),
           assistant(
             content: [TextContent(text: 'partial')],
-            errorMessage:
-                'stream ended without finish_reason — the reply may be '
-                'truncated',
+            stopReason: StopReason.length,
           ),
           assistant(),
         ];
@@ -72,10 +54,30 @@ void main() {
       },
     );
 
+    test('UT-2: empty after a silent-truncation-flagged message → '
+        'emptyAfterPartial', () {
+      final turn = [
+        UserMessage.text('go'),
+        assistant(
+          content: [TextContent(text: 'partial')],
+          errorMessage:
+              'stream ended without finish_reason — the reply may be '
+              'truncated',
+        ),
+        assistant(),
+      ];
+      expect(
+        classifyEmptyCompletion(turn, turn.last as AssistantMessage),
+        EmptyCompletionVerdict.emptyAfterPartial,
+      );
+    });
+
     test('UT-1: empty after tool activity in the turn → emptyAfterPartial', () {
       final turn = [
         UserMessage.text('go'),
-        assistant(content: [ToolCall(id: 'c1', name: 'bash', arguments: {})]),
+        assistant(
+          content: [ToolCall(id: 'c1', name: 'bash', arguments: {})],
+        ),
         ToolResultMessage(
           toolCallId: 'c1',
           toolName: 'bash',
@@ -99,36 +101,30 @@ void main() {
       );
     });
 
-    test(
-      'UT-3/E1: the partial-content window is the TURN — an old truncation '
-      'from a previous turn cannot resurrect retries',
-      () {
-        final history = [
-          UserMessage.text('earlier task'),
-          assistant(
-            content: [TextContent(text: 'truncated back then')],
-            stopReason: StopReason.length,
-          ),
-          ToolResultMessage(
-            toolCallId: 'c9',
-            toolName: 'bash',
-            content: [TextContent(text: 'out')],
-            isError: false,
-            timestamp: DateTime.utc(2026),
-          ),
-          // A fresh logical turn begins here.
-          UserMessage.text('new question'),
-          assistant(),
-        ];
-        expect(
-          classifyEmptyCompletion(
-          history,
-          history.last as AssistantMessage,
+    test('UT-3/E1: the partial-content window is the TURN — an old truncation '
+        'from a previous turn cannot resurrect retries', () {
+      final history = [
+        UserMessage.text('earlier task'),
+        assistant(
+          content: [TextContent(text: 'truncated back then')],
+          stopReason: StopReason.length,
         ),
-          EmptyCompletionVerdict.cleanEmpty,
-        );
-      },
-    );
+        ToolResultMessage(
+          toolCallId: 'c9',
+          toolName: 'bash',
+          content: [TextContent(text: 'out')],
+          isError: false,
+          timestamp: DateTime.utc(2026),
+        ),
+        // A fresh logical turn begins here.
+        UserMessage.text('new question'),
+        assistant(),
+      ];
+      expect(
+        classifyEmptyCompletion(history, history.last as AssistantMessage),
+        EmptyCompletionVerdict.cleanEmpty,
+      );
+    });
 
     test('UT-3: aborted stop is never classified empty (guard kept)', () {
       final turn = [
@@ -146,27 +142,29 @@ void main() {
     });
 
     test('UT-3: error stop is never classified empty (guard kept)', () {
-      final turn = [UserMessage.text('go'), assistant(stopReason: StopReason.error, errorMessage: 'boom')];
+      final turn = [
+        UserMessage.text('go'),
+        assistant(stopReason: StopReason.error, errorMessage: 'boom'),
+      ];
       expect(
         classifyEmptyCompletion(turn, turn.last as AssistantMessage),
         EmptyCompletionVerdict.abortedOrError,
       );
     });
 
-    test(
-      'UT-5: thinking-only WITH a tool call is not empty (ToolCall boundary '
-      'survives)',
-      () {
-        final message = assistant(content: [
+    test('UT-5: thinking-only WITH a tool call is not empty (ToolCall boundary '
+        'survives)', () {
+      final message = assistant(
+        content: [
           ThinkingContent(thinking: 'reasoning...'),
           const ToolCall(id: 'c1', name: 'bash', arguments: {}),
-        ]);
-        expect(
-          classifyEmptyCompletion([UserMessage.text('go'), message], message),
-          EmptyCompletionVerdict.notEmpty,
-        );
-      },
-    );
+        ],
+      );
+      expect(
+        classifyEmptyCompletion([UserMessage.text('go'), message], message),
+        EmptyCompletionVerdict.notEmpty,
+      );
+    });
 
     test('UT-5: thinking-only without text or tool calls IS empty', () {
       final message = assistant(
@@ -194,41 +192,48 @@ void main() {
       );
     });
 
-    test(
-      'E6: an empty message that is itself truncation-flagged is hiccup '
-      'evidence on its own',
-      () {
-        final turn = [
-          UserMessage.text('go'),
-          assistant(
-            errorMessage:
-                'stream ended without finish_reason — the reply may be '
-                'truncated',
-          ),
-        ];
-        expect(
-          classifyEmptyCompletion(turn, turn.last as AssistantMessage),
-          EmptyCompletionVerdict.emptyAfterPartial,
-        );
-      },
-    );
+    test('E6: an empty message that is itself truncation-flagged is hiccup '
+        'evidence on its own', () {
+      final turn = [
+        UserMessage.text('go'),
+        assistant(
+          errorMessage:
+              'stream ended without finish_reason — the reply may be '
+              'truncated',
+        ),
+      ];
+      expect(
+        classifyEmptyCompletion(turn, turn.last as AssistantMessage),
+        EmptyCompletionVerdict.emptyAfterPartial,
+      );
+    });
   });
 
   group('emptyHiccupBackoffFor (UT-4)', () {
     test('exponential from the base, capped at the max, deterministic', () {
       const base = Duration(milliseconds: 500);
       const max = Duration(seconds: 8);
-      expect(emptyHiccupBackoffFor(attempt: 0, baseDelay: base, maxBackoff: max),
-          const Duration(milliseconds: 500));
-      expect(emptyHiccupBackoffFor(attempt: 1, baseDelay: base, maxBackoff: max),
-          const Duration(milliseconds: 1000));
-      expect(emptyHiccupBackoffFor(attempt: 2, baseDelay: base, maxBackoff: max),
-          const Duration(milliseconds: 2000));
-      expect(emptyHiccupBackoffFor(attempt: 3, baseDelay: base, maxBackoff: max),
-          const Duration(milliseconds: 4000));
+      expect(
+        emptyHiccupBackoffFor(attempt: 0, baseDelay: base, maxBackoff: max),
+        const Duration(milliseconds: 500),
+      );
+      expect(
+        emptyHiccupBackoffFor(attempt: 1, baseDelay: base, maxBackoff: max),
+        const Duration(milliseconds: 1000),
+      );
+      expect(
+        emptyHiccupBackoffFor(attempt: 2, baseDelay: base, maxBackoff: max),
+        const Duration(milliseconds: 2000),
+      );
+      expect(
+        emptyHiccupBackoffFor(attempt: 3, baseDelay: base, maxBackoff: max),
+        const Duration(milliseconds: 4000),
+      );
       // The cap holds for absurd attempt numbers.
-      expect(emptyHiccupBackoffFor(attempt: 20, baseDelay: base, maxBackoff: max),
-          max);
+      expect(
+        emptyHiccupBackoffFor(attempt: 20, baseDelay: base, maxBackoff: max),
+        max,
+      );
     });
   });
 

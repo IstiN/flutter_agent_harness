@@ -1809,36 +1809,33 @@ void main() {
       },
     );
 
-    test(
-      'UT: emptyHiccupRetries: 0 is not an escape hatch — the exhaustion '
-      'error fires after the maxEmptyRetries budget',
-      () async {
-        final fake = _FakeStreamFunction([
-          _toolTurn([_call('c1', 'noop')]),
-          emptyTurn,
-          _textTurn('never reached'),
-        ]);
-        final stream = agentLoop(
-          prompts: [UserMessage.text('do the task')],
-          context: const Context(messages: []),
-          config: const AgentLoopConfig(
-            model: _model,
-            maxEmptyRetries: 0,
-            emptyHiccupRetries: 0,
-            emptyHiccupBaseDelay: Duration.zero,
-          ),
-          streamFunction: fake.call,
-          toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
-        );
+    test('UT: emptyHiccupRetries: 0 is not an escape hatch — the exhaustion '
+        'error fires after the maxEmptyRetries budget', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('c1', 'noop')]),
+        emptyTurn,
+        _textTurn('never reached'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('do the task')],
+        context: const Context(messages: []),
+        config: const AgentLoopConfig(
+          model: _model,
+          maxEmptyRetries: 0,
+          emptyHiccupRetries: 0,
+          emptyHiccupBaseDelay: Duration.zero,
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
+      );
 
-        await stream.toList();
-        final last = (await stream.result).last as AssistantMessage;
-        expect(last.stopReason, StopReason.error);
-        expect(fake.calls, 2, reason: 'the original blank only — no retries');
-        expect(last.errorMessage, contains('0 retries'));
-        expect(last.errorMessage, contains('1 attempts'));
-      },
-    );
+      await stream.toList();
+      final last = (await stream.result).last as AssistantMessage;
+      expect(last.stopReason, StopReason.error);
+      expect(fake.calls, 2, reason: 'the original blank only — no retries');
+      expect(last.errorMessage, contains('0 retries'));
+      expect(last.errorMessage, contains('1 attempts'));
+    });
 
     test('E5/E2: an abort racing the FINAL hiccup retry wins over any empty '
         'shape — a length-flagged empty settles aborted, never escapes as a '

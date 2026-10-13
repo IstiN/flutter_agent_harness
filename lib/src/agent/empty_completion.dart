@@ -116,8 +116,7 @@ bool _turnCarriesPartialContent(
 /// a natural `stop`, see the openai-completions adapter).
 bool _carriesTruncationSignal(AssistantMessage message) {
   if (message.stopReason == StopReason.length) return true;
-  return message.stopReason == StopReason.stop &&
-      message.errorMessage != null;
+  return message.stopReason == StopReason.stop && message.errorMessage != null;
 }
 
 /// Backoff before empty-hiccup retry [attempt] (0-based): exponential from
