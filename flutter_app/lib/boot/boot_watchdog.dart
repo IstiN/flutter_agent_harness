@@ -120,9 +120,9 @@ final class BootWatchdog {
   /// production always arms.
   static bool get _underTestBinding {
     try {
-      return WidgetsBinding.instance.runtimeType
-          .toString()
-          .contains('TestWidgetsFlutterBinding');
+      return WidgetsBinding.instance.runtimeType.toString().contains(
+        'TestWidgetsFlutterBinding',
+      );
     } on FlutterError {
       return false; // No binding (pure-Dart fake_async runs) → arm.
     }

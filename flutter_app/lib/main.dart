@@ -701,6 +701,8 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
           sessionKeys: widget.sessionKeysStore,
           providerRegistry: widget.registry,
           taskModelsStore: widget.taskModelsStore,
+        ),
+      );
       BootSteps.mark('restore:session');
       // The restore chain is done — disarm the watchdog's restore phase
       // HERE, not in the finally below: `await navigator.pushReplacement`
@@ -712,8 +714,6 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       // failure-path net (restoreDone is idempotent): a restore that
       // THREW never reached here and is disarmed on the way out.
       kBootWatchdog.restoreDone();
-      if (!mounted) return;
-      BootSteps.mark('restore:session');
       if (!mounted) return;
       AppAnalytics.instance.bootstrapResult('chat');
       // Use the Navigator's context, not the State's — after a hot restart

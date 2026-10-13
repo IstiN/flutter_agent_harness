@@ -212,6 +212,28 @@ void main() {
       });
     });
 
+    test('a successful restore stays silent while the user sits on home', () {
+      fakeAsync((async) {
+        final breadcrumbs = <String>[];
+        final watchdog = watchdogWith(breadcrumbs);
+        watchdog.install();
+        async.elapse(const Duration(seconds: 3));
+        watchdog.firstFrame();
+        // The `_boot` wiring shape: the restore phase is armed for the
+        // restore chain…
+        watchdog.beginRestore();
+        async.elapse(const Duration(seconds: 2));
+        // …and disarmed the moment the restore completes — BEFORE the
+        // home navigation. `pushReplacement` stays pending for as long as
+        // the user sits on home, so disarming in a `finally` after it
+        // would keep the phase armed for the whole session and breadcrumb
+        // every healthy launch from 10 s after boot.
+        watchdog.restoreDone();
+        async.elapse(const Duration(minutes: 30));
+        expect(breadcrumbs, isEmpty);
+      });
+    });
+
     test('restoreDone is a no-op when no restore was armed', () {
       fakeAsync((async) {
         final breadcrumbs = <String>[];
@@ -297,6 +319,54 @@ void main() {
           breadcrumbs.where((b) => b.contains('restore not completed')).length,
           10,
         );
+      });
+    });
+  });
+
+  group('BootWatchdog under the flutter test binding', () {
+    testWidgets('the default watchdog arms no timers — nothing left pending', (
+      tester,
+    ) async {
+      // Regression for the gh-1507 validation red: pre-fix, the boot
+      // wiring armed real watchdog timers inside `testWidgets` boot flows,
+      // and tests that end mid-restore (boot-spinner) or parked on home
+      // died on the binding's `!timersPending` invariant. The default
+      // constructor detects the test binding and records phases without
+      // arming — production (no test binding) always arms.
+      final breadcrumbs = <String>[];
+      final watchdog = BootWatchdog(
+        threshold: const Duration(seconds: 4),
+        restoreThreshold: const Duration(seconds: 10),
+        repeatInterval: const Duration(seconds: 30),
+        onBreadcrumb: breadcrumbs.add,
+      );
+      watchdog.install();
+      watchdog.firstFrame();
+      watchdog.beginRestore();
+      // Elapse past BOTH thresholds: pre-fix the restore timer fires here
+      // (and anything unfired stays pending at test end — invariant fail).
+      await tester.pump(const Duration(seconds: 11));
+      expect(breadcrumbs, isEmpty);
+      watchdog.restoreDone();
+    });
+
+    test('timersEnabled: true opts a test-hosted instance back in', () {
+      fakeAsync((async) {
+        final breadcrumbs = <String>[];
+        final watchdog = BootWatchdog(
+          threshold: const Duration(seconds: 4),
+          restoreThreshold: const Duration(seconds: 10),
+          repeatInterval: const Duration(seconds: 30),
+          onBreadcrumb: breadcrumbs.add,
+          timersEnabled: true,
+        );
+        watchdog.install();
+        async.elapse(const Duration(seconds: 3));
+        watchdog.firstFrame();
+        watchdog.beginRestore();
+        async.elapse(const Duration(seconds: 11));
+        expect(breadcrumbs, hasLength(1));
+        expect(breadcrumbs.single, contains('restore not completed'));
       });
     });
   });
