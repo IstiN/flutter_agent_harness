@@ -2073,9 +2073,12 @@ adapter (tb `--global-agent-timeout-sec`, harbor's per-task
 workflows export it as `FA_EXTERNAL_CAP_SEC` (a harbor shard gets the
 min of its tasks' declared timeouts via `bench/harbor_fa/split_tasks.py`)
 and the shared `bench/fa_agent_timeout.py` folds it into the deadline
-via min() — fa's clock can never outlive the harness kill, and when the
-cap fires the audit says `cap_exceeded` with the source env in the
-reason (an absent export = unknown: the knobs rule alone). Every trial
+via min() — fa's clock can never outlive the harness kill. When the cap
+binds, the audit's `cap_resolution` block records the winning source and
+both inputs; the adapter's own kill at the cap is outcome `external_cap`,
+and an unsupervised external kill (harbor's wait_for / SIGTERM) flushes
+outcome `external_kill` (an absent export = unknown: the knobs rule
+alone). Every trial
 dir carries
 `bench_metrics.json` (per-request wall/first-byte, ConnTrace socket
 events, watchdog fires) and, on a stall, `hang-*.json` — replay one

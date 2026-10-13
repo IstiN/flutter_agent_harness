@@ -528,9 +528,11 @@ jobs:
           # as an empty env var = unknown: the knobs rule alone,
           # byte-identical (AC5, no invented clock — E1). When present,
           # bench/fa_agent_timeout.py folds it in via min() so fa's
-          # deadline can never outlive harbor's per-task kill (I1) —
-          # turning harbor's invisible asyncio.wait_for TimeoutError into
-          # an annotated cap_exceeded.
+          # deadline can never outlive harbor's per-task kill (I1) — the
+          # adapter decides the kill at the cap and the audit names it
+          # (outcome `external_cap`); a kill that still comes from
+          # outside (harbor's wait_for / SIGTERM) flushes outcome
+          # `external_kill` (I2).
           FA_EXTERNAL_CAP_SEC: ${{ matrix.external_cap }}
           # shard task names: dataset dir names, no whitespace — safe to word-split.
           SHARD_TASKS: ${{ matrix.tasks }}

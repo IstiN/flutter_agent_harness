@@ -230,6 +230,42 @@ class ScoreHonestyTest(unittest.TestCase):
         _, problems = summary.render(self.runs)
         self.assertEqual(problems, [])
 
+    def test_external_cap_kill_is_a_justified_audit_outcome(self):
+        # gh-1576: when the external harness cap binds, the decider's
+        # verdict is `external_cap` — the harness's own declared kill, not
+        # a bench contradiction. A renamed verdict missing from the
+        # justified set silently no-ops into a false contradiction (the
+        # gh-1556 lesson): an audit that NAMES the cap kill must justify
+        # the row even with a steadily progressing session.
+        _results(
+            self.runs / "shard-0",
+            [_row("t1", "t1__trial", mode="agent_timeout")],
+        )
+        _session(self.runs, "t1", "t1__trial", [60, 90])
+        trial_dir = self.runs / "shard-0" / "t1" / "t1__trial"
+        (trial_dir / "fa-agent-timeout.json").write_text(
+            json.dumps({"outcome": "external_cap"})
+        )
+        _, problems = summary.render(self.runs)
+        self.assertEqual(problems, [])
+
+    def test_external_kill_flush_is_a_justified_audit_outcome(self):
+        # gh-1576 I2: an unsupervised external kill (the harness's own
+        # wait_for / SIGTERM) still lands an audit naming it — the
+        # classification is the harness's, so it can never read as a
+        # bench-inflicted contradiction.
+        _results(
+            self.runs / "shard-0",
+            [_row("t1", "t1__trial", mode="agent_timeout")],
+        )
+        _session(self.runs, "t1", "t1__trial", [60, 90])
+        trial_dir = self.runs / "shard-0" / "t1" / "t1__trial"
+        (trial_dir / "fa-agent-timeout.json").write_text(
+            json.dumps({"outcome": "external_kill"})
+        )
+        _, problems = summary.render(self.runs)
+        self.assertEqual(problems, [])
+
     def test_missing_session_data_degrades_silently(self):
         # E4: no session logs at all -> no crash, no contradiction claim.
         _results(

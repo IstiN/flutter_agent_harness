@@ -127,10 +127,10 @@ class FaAgent(BaseInstalledAgent):
             env[f"{key_var}_BASE64"] = _b64(os.environ[key_var])
         # gh-1556 AC7 + gh-1576: fa's deadline awareness rides the same env
         # — the effective cap (min of the external harness cap and the
-        # adapter knobs) minus the wrap-up margin, computed once when the
-        # deadline run starts (see _resolve_deadline, which stashes the
-        # exact value the audit then records). With no cap input at all
-        # the export is absent: fa never invents a clock.
+        # adapter knobs) minus the wrap-up margin, resolved once in run()
+        # via _timeout.resolve_deadline and stashed on self, so the audit
+        # records the exact value this export carries. With no cap input
+        # at all the export is absent: fa never invents a clock.
         deadline = getattr(self, "_deadline_epoch_ms", None)
         if deadline is not None:
             env["FA_DEADLINE_EPOCH_MS"] = str(deadline)
