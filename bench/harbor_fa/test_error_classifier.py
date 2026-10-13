@@ -31,6 +31,7 @@ Two suites live here:
   REAL ``_classify_exec_error`` end to end.
 """
 import importlib
+import importlib.machinery
 import importlib.util
 import dataclasses
 import re
@@ -58,10 +59,15 @@ except ImportError:
     REAL_HARBOR_BASE = None
 
 # The anchored-only stdlib suite still needs fa_agent importable when the
-# real harbor is absent: reuse the sibling module's minimal harbor stub
-# surface (same shape test_fa_agent.py installs), without importing that
-# module — unittest discovery orders modules alphabetically and this file
-# may load first.
+# real harbor is absent: install a minimal harbor stub surface covering
+# EVERY module fa_agent.py imports — `harbor.agents.installed.base`,
+# `harbor.environments.base` AND `harbor.models.agent.context` (gh-1592
+# review thread 1: stubbing only `harbor.agents.*` let the harbor-less
+# run die with `ModuleNotFoundError: No module named
+# 'harbor.environments'` at fa_agent import). Same shape as
+# test_fa_agent._install_harbor_stubs(), without importing that module —
+# unittest discovery orders modules alphabetically and this file may
+# load first.
 if REAL_HARBOR_BASE is None:
     def _module(name):
         mod = importlib.util.module_from_spec(
@@ -82,42 +88,69 @@ if REAL_HARBOR_BASE is None:
     installed_base = _module("harbor.agents.installed.base")
     agents.installed.base = installed_base
 
-    class _StubBaseInstalledAgent:
-        ERROR_PATTERNS = []
-
     @dataclasses.dataclass
     class _StubErrorPattern:
         pattern: str
         exception: type
 
+    class ApiRateLimitError(RuntimeError):
+        pass
+
+    class _StubBaseInstalledAgent:
+        # Seed the INHERITED broad pair exactly as harbor 0.23.0 ships
+        # it (gh-1592 review thread 1): FaAgent's override filters this
+        # table, and test_override_replaces_unanchored_rate_limit_patterns
+        # asserts the anchored entries replace the inherited ones
+        # one-for-one — an empty stub table degenerates that assertion
+        # to `2 == 0`.
+        ERROR_PATTERNS = [
+            _StubErrorPattern(r"rate.?limit", ApiRateLimitError),
+            _StubErrorPattern(r"too many requests", ApiRateLimitError),
+        ]
+
     installed_base.BaseInstalledAgent = _StubBaseInstalledAgent
     installed_base.ErrorPattern = _StubErrorPattern
-    installed_base.ApiRateLimitError = type(
-        "ApiRateLimitError", (RuntimeError,), {}
-    )
+    installed_base.ApiRateLimitError = ApiRateLimitError
 
-    def _load_fa_agent():
-        spec = importlib.util.spec_from_file_location(
-            "fa_agent_gh1592", Path(__file__).resolve().parent / "fa_agent.py"
-        )
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["fa_agent_gh1592"] = module
-        spec.loader.exec_module(module)
-        return module
+    environments = _module("harbor.environments")
+    harbor.environments = environments
+    environments.__path__ = []
+    env_base = _module("harbor.environments.base")
+    environments.base = env_base
 
-    fa_agent = _load_fa_agent()
-else:
+    class _StubBaseEnvironment:
+        pass
+
+    env_base.BaseEnvironment = _StubBaseEnvironment
+
+    models = _module("harbor.models")
+    harbor.models = models
+    models.__path__ = []
+    models_agent = _module("harbor.models.agent")
+    models.agent = models_agent
+    models_agent.__path__ = []
+    context = _module("harbor.models.agent.context")
+    models_agent.context = context
+    context.AgentContext = dict
+
+
+def _load_fa_agent():
     spec = importlib.util.spec_from_file_location(
         "fa_agent_gh1592", Path(__file__).resolve().parent / "fa_agent.py"
     )
-    fa_agent = importlib.util.module_from_spec(spec)
-    sys.modules["fa_agent_gh1592"] = fa_agent
-    spec.loader.exec_module(fa_agent)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["fa_agent_gh1592"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+fa_agent = _load_fa_agent()
 
 
 # ---------------------------------------------------------------------------
 # Fixtures. No stray standalone "429" tokens outside the intended provider
-# error lines — the anchor is \b429\b on the same line.
+# error lines — the anchor is a 429 token free of adjacent digits/dots on
+# the same line (see DECIMAL_ADJACENT_429_OUTPUTS for the guarded class).
 # ---------------------------------------------------------------------------
 
 # The incident shape: a timeout-killed launch exec whose tee'd output
@@ -143,6 +176,20 @@ STATUSLESS_RATE_LIMIT_OUTPUTS = [
     "[roles] too many requests observed on dial/dial-model — backing off",
     "Provider chain exhausted: every chain model is rate limited and "
     "cooling down.",
+]
+
+# Decimal-adjacent 429 (gh-1592 review thread 2): `\b429\b` matched the
+# `429` inside decimals (`.` is a non-word char, so both sides of `429`
+# in `0.429` are word boundaries) — echoed output pairing a decimal with
+# rate-limit wording re-triggered the misclassification. The anchored
+# token must reject digits/dots on BOTH sides.
+DECIMAL_ADJACENT_429_OUTPUTS = [
+    # Decimal left of the token (the reviewer's verified shape).
+    "tokens=0.429 rate limit guidance echoed for org-ab12",
+    # Decimal right of the token (`429.5` must not tokenize as 429).
+    "backoff 429.5s applied — rate limit advisory, not a hard failure",
+    # Longer number swallowing the token on the left.
+    "quota window 1429s while rate limited — nothing to classify",
 ]
 
 # Real provider-error signatures: 429 and the wording share ONE line.
@@ -215,6 +262,15 @@ class AnchoredPatternSemanticsTest(unittest.TestCase):
             with self.subTest(text=text[:60]):
                 self.assertFalse(_any_rate_limit_match(text))
 
+    def test_decimal_adjacent_429_is_not_rate_limit(self):
+        # gh-1592 review thread 2: `\b429\b` matched inside decimals
+        # (`0.429`, `429.5`, `1429`) — the token guard must reject
+        # digit/dot adjacency on both sides so echoed decimals paired
+        # with rate-limit wording stay unclassified.
+        for text in DECIMAL_ADJACENT_429_OUTPUTS:
+            with self.subTest(text=text[:60]):
+                self.assertFalse(_any_rate_limit_match(text))
+
     def test_real_429_signatures_still_classify(self):
         # Recall guard: every structured provider-error signature keeps
         # classifying — 429 and the wording on the SAME line.
@@ -263,7 +319,12 @@ class RealClassifierRegressionTest(unittest.TestCase):
     """Drives harbor's REAL _classify_exec_error end to end (gh-1592)."""
 
     def setUp(self):
-        self.agent = fa_agent.FaAgent(Path(tempfile.mkdtemp()) / "logs")
+        # tempfile.TemporaryDirectory + addCleanup (gh-1592 review
+        # thread 4): a bare mkdtemp() leaked its dir every test and
+        # surfaced as ResourceWarning on GC.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.agent = fa_agent.FaAgent(Path(tmp.name) / "logs")
 
     def _classify(self, stdout):
         result = type("ExecResult", (), {})()
@@ -288,6 +349,17 @@ class RealClassifierRegressionTest(unittest.TestCase):
 
     def test_statusless_rate_limit_prose_is_not_api_rate_limit(self):
         for text in STATUSLESS_RATE_LIMIT_OUTPUTS:
+            with self.subTest(text=text[:60]):
+                error = self._classify(text)
+                self.assertNotIsInstance(
+                    error, REAL_HARBOR_BASE.ApiRateLimitError
+                )
+
+    def test_decimal_adjacent_429_is_not_api_rate_limit(self):
+        # gh-1592 review thread 2, driven through the REAL classifier:
+        # decimals like `0.429` on a rate-limit-wording line must not
+        # classify (harbor's retry policy would retry a non-429 failure).
+        for text in DECIMAL_ADJACENT_429_OUTPUTS:
             with self.subTest(text=text[:60]):
                 error = self._classify(text)
                 self.assertNotIsInstance(

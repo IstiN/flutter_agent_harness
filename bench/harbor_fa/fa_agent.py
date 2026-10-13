@@ -89,13 +89,22 @@ _VERSION = "0.1.0"
 # `<statusCode>: <message>`, raw HTTP status lines are `HTTP/1.1 429 …`,
 # JSON error bodies carry the `"code": 429` inline on one line), while
 # fa's own notice lines and echoed prose carry no 429 on the line.
+# The token itself is guarded against digit/dot adjacency —
+# `(?<![\d.])429(?![\d.])` (gh-1592 review): `\b429\b` still matched the
+# `429` inside decimals like `0.429` / `429.5` (`.` is a non-word char,
+# so both sides of the token were boundaries), letting echoed output that
+# pairs a decimal with rate-limit wording re-trigger the
+# misclassification; the lookarounds keep every real shape (`429: …`,
+# `HTTP/1.1 429 …`, `"code": 429`) while rejecting `0.429`, `429.5`,
+# `1429`.
 # `(?im)` rides the pattern because harbor compiles with re.IGNORECASE
 # only; the `^` anchors each attempt to a line start so classification
 # stays linear over multi-MB tee'd streams, and the `[^\r\n]*` spans keep
 # every match line-scoped.
+_429_TOKEN = r"(?<![\d.])429(?![\d.])"
 _429_SAME_LINE = (
-    r"(?im)^[^\r\n]*\b429\b[^\r\n]*{word}[^\r\n]*"
-    r"|^[^\r\n]*{word}[^\r\n]*\b429\b[^\r\n]*"
+    r"(?im)^[^\r\n]*" + _429_TOKEN + r"[^\r\n]*{word}[^\r\n]*"
+    r"|^[^\r\n]*{word}[^\r\n]*" + _429_TOKEN + r"[^\r\n]*"
 )
 _ANCHORED_RATE_LIMIT_PATTERNS = [
     # Replaces the inherited `rate.?limit` substring entry.
@@ -131,10 +140,19 @@ class FaAgent(BaseInstalledAgent):
     # substrings (see _ANCHORED_RATE_LIMIT_PATTERNS above) — replace the
     # pair, keep every other entry (auth, usage-limit, capacity, safety,
     # transport, the `API Error` catch-all) byte-identical so the rest of
-    # harbor's classification policy is untouched. Matching is
-    # position-based (last match wins), so the appended anchored entries
-    # also outrank the generic `API Error` catch-all on a line carrying
-    # both.
+    # harbor's classification policy is untouched. When several patterns
+    # match the same text, harbor keeps the match with the LARGEST span
+    # (exact ties go to the earlier-compiled pattern), so on a line
+    # carrying both a 429 wording and the `API Error` catch-all the
+    # anchored entries win because their match spans to END-OF-LINE —
+    # table position is irrelevant here (appended-last would actually
+    # LOSE an exact tie). That full-line span also flips one contrived
+    # same-line tie vs the pre-fix table: rate-limit wording placed
+    # before a later same-line transport needle (e.g. "could not resolve
+    # host") now classifies ApiRateLimitError where the broad pair let
+    # the transport class win on span. Both classes are retryable and
+    # real provider-429 lines carry no transport phrasing, so the flip
+    # is accepted (verified against harbor 0.23.0, gh-1592 review).
     ERROR_PATTERNS = [
         p
         for p in BaseInstalledAgent.ERROR_PATTERNS
