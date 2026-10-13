@@ -473,8 +473,6 @@ class IntegrityGateTest(unittest.TestCase):
         if self._summary_bak is not None:
             os.environ["GITHUB_STEP_SUMMARY"] = self._summary_bak
         if self._label_bak is not None:
-            os.environ["GITHUB_STEP_SUMMARY"] = self._summary_bak
-        if self._label_bak is not None:
             os.environ["BENCH_RUN_LABEL"] = self._label_bak
 
     def _run(self, *argv) -> tuple[int, str]:
@@ -575,7 +573,7 @@ class IntegrityGateTest(unittest.TestCase):
         self.assertNotIn("Verifier-compromised", out)
         self.assertNotIn("Verifier-suspect", out)
         # The failing trial is not flagged: unreadable matters on passes.
-        self.assertNotIn("trial-1", out.split("Verifier-unreadable")[1].split("\n")[0])
+        self.assertNotIn("trial-1 (stdout missing)", out)
         self.assertIn(
             "fa-4.0-docker-cpu-0/trial-0 (stdout missing) ×1",
             out,
@@ -674,6 +672,64 @@ class IntegrityGateTest(unittest.TestCase):
         self.assertNotIn("Verifier-compromised", out)
         self.assertNotIn("Verifier-suspect", out)
         self.assertNotIn("Verifier-unreadable", out)
+
+    def test_real_incident_fixture_end_to_end(self):
+        # E2E-1 shape (AC10) on the pinned fixtures: the run-38271607849
+        # shard tree had 5 filter-js-from-html trials — hoBwRwp with the
+        # poisoned stdout (reward 0 via the honest other test) and the
+        # four clean siblings. The report must name hoBwRwp's skipped
+        # batches, keep the siblings unflagged, and recompute the rate
+        # over the trusted pool only.
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "verifier_integrity"
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+
+        def fixture_stdout(trial: str) -> str:
+            return (
+                fixtures / f"filter-js-from-html__{trial}-test-stdout.txt"
+            ).read_text()
+
+        _write_integrity_trial(
+            job, "filter-js-from-html__hoBwRwp", {"main": 0.0},
+            fixture_stdout("hoBwRwp"),
+        )
+        for sibling in ("4FpkEin", "NmQswud", "t4MK34E", "UX5zWxE"):
+            _write_integrity_trial(
+                job, f"filter-js-from-html__{sibling}", {"main": 1.0},
+                fixture_stdout(sibling),
+            )
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1",
+            "--model", "glm-5.3-flashx", "--fa-ref", "abc1234",
+            "--run-url", "https://ci/run/38271607849",
+            "--expected-trials", "5",
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 4/4 scored trials**", out)
+        self.assertIn(
+            "Verifier-compromised trials (verdict untrusted, excluded from "
+            "resolution): fa-2.1-docker-cpu-4/filter-js-from-html__hoBwRwp "
+            "(batches 2,5,16,20 skipped — 66/439 vectors never ran) ×1",
+            out,
+        )
+        self.assertIn(
+            "**Attempted: 5 trials produced a result.json "
+            "(1 verifier-compromised (verdict untrusted) — see the "
+            "integrity breakdown below)**",
+            out,
+        )
+        # Zero false positives on the clean siblings.
+        for sibling in ("4FpkEin", "NmQswud", "t4MK34E", "UX5zWxE"):
+            self.assertNotIn(f"{sibling} (batches", out)
+        # The 84-retry storm of the incident ride-along stays out of the
+        # suspect line (S2 never quarantines on its own, and S1 already
+        # fired): no trial appears in both lines.
+        self.assertNotIn("Verifier-suspect", out)
+        self.assertIn(
+            "gh-1579: 1 verifier-compromised trial (verdict untrusted) is "
+            "excluded from the resolution above — do not paste without the "
+            "caveat.",
+            out,
+        )
 
 
 if __name__ == "__main__":
