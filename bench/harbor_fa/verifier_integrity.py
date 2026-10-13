@@ -28,6 +28,9 @@ Signals (the core set):
   one-shot per batch id: a batch that failed and later re-runs all its
   vectors under a second header is still flagged — deliberate until
   upstream ships a distinguishable retry marker (terminal-bench-2#89).
+  The binding is forward-persistent: a failure line after the final
+  batch's output still names the last header seen (no per-vector
+  result stream exists to end a batch's region; pinned deliberately).
 - S2 ``RetryStorm`` — urllib3 ``Retrying (...)`` / ``ConnectionResetError``
   churn. At/above ``RETRY_STORM_THRESHOLD`` alone it downgrades the
   verdict to ``suspect`` (annotation only, never a score change); the
@@ -176,6 +179,11 @@ def classify(stdout_text: str | None) -> IntegrityVerdict:
             current = (int(header.group(1)), int(header.group(2)))
             header_total += current[1]
             continue
+        # `current` deliberately persists until the next header: real
+        # verifier stdout emits no one-line-per-vector stream to count a
+        # batch as consumed, so a trailing failure line binds to the
+        # last header seen (pinned by BatchBindingTest
+        # .test_trailing_failure_line_after_last_batch_binds_to_it).
         if _FAILED_LOAD_RE.search(line):
             if current is None:
                 # E1: outside any batch — kept, but never misattributed,

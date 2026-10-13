@@ -40,9 +40,9 @@ SIBLINGS = ("4FpkEin", "NmQswud", "t4MK34E", "UX5zWxE")
 
 
 def _fixture(name: str) -> str:
-    return (FIXTURES / f"filter-js-from-html__{name}-test-stdout.txt").read_text(
-        encoding="utf-8"
-    )
+    return (
+        FIXTURES / f"filter-js-from-html__{name}-test-stdout.txt"
+    ).read_text(encoding="utf-8")
 
 
 def _fixture_real(name: str) -> str:
@@ -351,6 +351,30 @@ class BatchBindingTest(unittest.TestCase):
         self.assertEqual(verdict.status, vi.COMPROMISED)
         self.assertEqual([s.batch for s in _loads(verdict)], [2])
         self.assertEqual(verdict.skipped_tests, 17)
+
+    def test_trailing_failure_line_after_last_batch_binds_to_it(self):
+        # Deliberate contract (review round 2): `current` is NOT reset
+        # when a batch's output ends — there is no parseable one-line-
+        # per-vector result stream to count a batch as consumed (the
+        # real run-38271607849 stdout spans ~5 lines per batch whatever
+        # the declared test count), so a failure-shaped line after the
+        # final batch's output (e.g. a teardown traceback echo) binds to
+        # the last header seen. At worst this distorts WHICH batch the
+        # report names as skipped; the real incident artifact has zero
+        # failure lines after its last header. Revisit only if a real
+        # artifact ever shows a post-batch false S1.
+        text = (
+            "RUN BATCH 1 (contains 16 tests)\n"
+            "v1-1: <img src=x onerror=alert(1)> -> blocked\n"
+            "RUN BATCH 28 (contains 15 tests)\n"
+            "v28-1: <svg onload=alert(2)> -> blocked\n"
+            "E Failed to load URL: HTTPConnectionPool(host='localhost', "
+            "port=50085): Read timed out. (read timeout=120)\n"
+        )
+        verdict = vi.classify(text)
+        self.assertEqual(verdict.status, vi.COMPROMISED)
+        self.assertEqual([s.batch for s in _loads(verdict)], [28])
+        self.assertEqual(verdict.skipped_tests, 15)
 
     def test_repeat_failure_in_the_same_batch_counts_once(self):
         text = (

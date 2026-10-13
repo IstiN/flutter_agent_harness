@@ -729,7 +729,7 @@ class IntegrityGateTest(unittest.TestCase):
         def fixture_stdout(trial: str) -> str:
             return (
                 fixtures / f"filter-js-from-html__{trial}-test-stdout.txt"
-            ).read_text()
+            ).read_text(encoding="utf-8")
 
         _write_integrity_trial(
             job, "filter-js-from-html__hoBwRwp", {"main": 0.0},
