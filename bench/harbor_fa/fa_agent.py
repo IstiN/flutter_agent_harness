@@ -58,7 +58,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import fa_agent_timeout as _timeout
 
-from harbor.agents.installed.base import BaseInstalledAgent
+from harbor.agents.installed.base import (
+    ApiRateLimitError,
+    BaseInstalledAgent,
+    ErrorPattern,
+)
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
