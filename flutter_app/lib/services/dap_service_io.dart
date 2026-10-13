@@ -12,6 +12,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show JsonlSessionRepo, SessionMetadata;
 import 'package:flutter_agent_harness/io.dart' show LocalExecutionEnv;
 
+import 'package:fa/services/dap_home.dart';
 import 'package:fa/services/sessions_root.dart';
 
 import 'dap_service.dart';
@@ -23,16 +24,21 @@ import 'dap_service.dart';
 final class IoDapHubService implements DapHubService {
   IoDapHubService({
     Map<String, String>? environment,
-    this.home,
+    String? home,
     this.probeTimeout = const Duration(seconds: 5),
-  }) : environment = environment ?? Platform.environment;
+  }) : environment = environment ?? Platform.environment,
+       _home = home;
 
   /// Injected environment (defaults to `Platform.environment`; test seam —
   /// pointing `HOME` at a temp dir keeps tests off the real `~/.dap`).
   final Map<String, String> environment;
 
-  /// Home directory for the `~/.dap` layout (test seam).
-  final String? home;
+  final String? _home;
+
+  /// Home directory for the `~/.dap` layout: the injected test seam, else the
+  /// mobile sandbox ([dapHomeOverride] — `/` is read-only on Android/iOS),
+  /// else null (the package's `$HOME`).
+  String? get home => resolveDapHome(_home);
 
   /// How long the live probe waits for the hub's welcome before reporting
   /// unreachable — the client keeps reconnecting forever otherwise.

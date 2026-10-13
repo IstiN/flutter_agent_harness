@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/dap_home.dart';
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
@@ -70,6 +71,9 @@ Future<ExecutionEnv> createMobileSandboxEnv({
   final appDir = await getApplicationDocumentsDirectory();
   final sandbox = Directory('${appDir.path}/fah_sandbox');
   await sandbox.create(recursive: true);
+  // Android/iOS have no HOME and a read-only `/`: keep the `~/.dap` hub
+  // config inside the sandbox so Settings → Agent network survives restarts.
+  dapHomeOverride = sandbox.path;
 
   // Both Android and iOS run the WASI sandbox shell; on iOS the wasm_run
   // library is statically linked into the app binary (see setUpWasmRuntime).
