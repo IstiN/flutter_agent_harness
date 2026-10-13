@@ -9,6 +9,24 @@ String _text(ToolExecutionResult result) {
   return result.content.whereType<TextContent>().map((b) => b.text).join();
 }
 
+/// The dart:ffi resolver's failure for a missing bundled libsqlite3, as
+/// reported on macOS (gh-1574 ticket) — installed at `~/.local/bin/fa`, the
+/// native-assets resolver looks in `~/.local/lib/` and finds nothing.
+final _macMissingDylibError = ArgumentError(
+  "Couldn't resolve native function 'sqlite3_initialize' in "
+  "'package:sqlite3/src/ffi/libsqlite3.g.dart' : Failed to load dynamic "
+  "library '/Users/someone/.local/libsqlite3.dylib' (no such file)",
+);
+
+/// The same failure on Linux (`libsqlite3.so`).
+final _linuxMissingDylibError = ArgumentError(
+  "Couldn't resolve native function 'sqlite3_initialize' in "
+  "'package:sqlite3/src/ffi/libsqlite3.g.dart' : Failed to load dynamic "
+  "library '../lib/libsqlite3.so' relative to '/usr/local/bin/fa': Failed "
+  "to load dynamic library '/usr/local/lib/libsqlite3.so': cannot open "
+  'shared object file: No such file or directory',
+);
+
 void main() {
   late Directory tempDir;
   late LocalExecutionEnv env;
@@ -267,5 +285,88 @@ void main() {
         'query to page through more]',
       ),
     );
+  });
+
+  group('missing bundled library degrades cleanly (gh-1574)', () {
+    test('the ffi resolver failure shape is recognized', () {
+      expect(isSqliteDynamicLibraryLoadFailure(_macMissingDylibError), isTrue);
+      expect(
+        isSqliteDynamicLibraryLoadFailure(_linuxMissingDylibError),
+        isTrue,
+      );
+    });
+
+    test('database-level errors are not misclassified', () {
+      expect(
+        isSqliteDynamicLibraryLoadFailure(
+          ArgumentError.value('x', 'path', 'must not be empty'),
+        ),
+        isFalse,
+      );
+      expect(
+        isSqliteDynamicLibraryLoadFailure(
+          SqliteException(1, 'file is not a database', 'notadb'),
+        ),
+        isFalse,
+      );
+      expect(isSqliteDynamicLibraryLoadFailure(StateError('boom')), isFalse);
+    });
+
+    test('openReadOnly maps the load failure to a clean sqlite-unavailable '
+        'note', () {
+      final engine = Sqlite3Engine(
+        openOverride: (path) => throw _macMissingDylibError,
+      );
+      expect(
+        engine.openReadOnly('${tempDir.path}/data.db'),
+        throwsA(
+          isA<StateError>()
+              .having(
+                (e) => e.message,
+                'message',
+                contains('SQLite is unavailable'),
+              )
+              .having(
+                (e) => e.message,
+                'message mentions the repair',
+                contains('fa update'),
+              )
+              .having(
+                (e) => e.message,
+                'message is not the raw ffi dump',
+                isNot(contains("Couldn't resolve native function")),
+              ),
+        ),
+      );
+    });
+
+    test('openReadOnly rethrows non-load failures untouched', () {
+      final original = SqliteException(26, 'file is not a database', 'notadb');
+      final engine = Sqlite3Engine(openOverride: (path) => throw original);
+      expect(
+        engine.openReadOnly('${tempDir.path}/data.db'),
+        throwsA(same(original)),
+      );
+    });
+
+    test('the read tool surfaces the clean note, not the raw ffi error',
+        () async {
+      final engine = Sqlite3Engine(
+        openOverride: (path) => throw _linuxMissingDylibError,
+      );
+      final brokenTool = readFileTool(env, sqlite: engine);
+      expect(
+        brokenTool.execute({'path': 'data.db'}, null, null),
+        throwsA(
+          isA<StateError>()
+              .having((e) => e.message, 'message', contains('unavailable'))
+              .having(
+                (e) => e.message,
+                'message is not the raw ffi dump',
+                isNot(contains('libsqlite3.g.dart')),
+              ),
+        ),
+      );
+    });
   });
 }

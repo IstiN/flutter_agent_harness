@@ -585,6 +585,105 @@ void main() {
     });
   });
 
+  group('copyBundleLibs (gh-1574 installer layout)', () {
+    test('installs bundle libs where the binary looks: <installDir>/../lib',
+        () async {
+      final tmp = await Directory.systemTemp.createTemp('fa_bundle_libs');
+      try {
+        final bundle = Directory('${tmp.path}/bundle')
+          ..createSync(recursive: true);
+        File('${bundle.path}/lib/libsqlite3.dylib')
+            .writeAsStringSync('dylib');
+        File('${bundle.path}/lib/libsqlite3.so').writeAsStringSync('so');
+        final installDir = Directory('${tmp.path}/home/.local/bin')
+          ..createSync(recursive: true);
+        File('${installDir.path}/fa').writeAsStringSync('exe');
+
+        await copyBundleLibs(bundle, installDir);
+
+        // The AOT binary's native-assets resolver reads <exe_dir>/../lib —
+        // with the exe at <installDir>/fa that is <installDir>/../lib.
+        final libDir = Directory('${installDir.parent.path}/lib');
+        expect(
+          File('${libDir.path}/libsqlite3.dylib').readAsStringSync(),
+          'dylib',
+        );
+        expect(File('${libDir.path}/libsqlite3.so').readAsStringSync(), 'so');
+      } finally {
+        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      }
+    });
+
+    test('does not install bundle libs beside the binary '
+        '(the broken gh-1574 layout)', () async {
+      final tmp = await Directory.systemTemp.createTemp('fa_bundle_libs_old');
+      try {
+        final bundle = Directory('${tmp.path}/bundle')
+          ..createSync(recursive: true);
+        File('${bundle.path}/lib/libsqlite3.dylib')
+            .writeAsStringSync('dylib');
+        final installDir = Directory('${tmp.path}/home/.local/bin')
+          ..createSync(recursive: true);
+
+        await copyBundleLibs(bundle, installDir);
+
+        expect(Directory('${installDir.path}/lib').existsSync(), isFalse,
+            reason: 'libs must not land in <installDir>/lib — the binary '
+                'looks in <exe_dir>/../lib (gh-1574)');
+      } finally {
+        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      }
+    });
+
+    test('a bundle without a lib directory is a no-op', () async {
+      final tmp = await Directory.systemTemp.createTemp('fa_bundle_libs_none');
+      try {
+        final bundle = Directory('${tmp.path}/bundle')
+          ..createSync(recursive: true);
+        final installDir = Directory('${tmp.path}/home/.local/bin')
+          ..createSync(recursive: true);
+
+        await copyBundleLibs(bundle, installDir);
+
+        expect(Directory('${installDir.parent.path}/lib').existsSync(), isFalse);
+      } finally {
+        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      }
+    });
+  });
+
+  group('installer scripts install libs where the binary looks (gh-1574)', () {
+    // Static layout contract: the AOT binary resolves its bundled sqlite3 as
+    // <exe_dir>/../lib/<name>. With the exe installed flat into the install
+    // directory, every installer must copy bundle libs to
+    // <install_dir>/../lib — never <install_dir>/lib (gh-1574).
+    test('install_local.sh targets <INSTALL_DIR>/../lib', () {
+      final script = File('install_local.sh').readAsStringSync();
+      expect(script, contains(r'"$INSTALL_DIR/../lib/"'),
+          reason: 'bundle libs must be copied to <install_dir>/../lib');
+      expect(script.contains(r'"$INSTALL_DIR/lib"'), isFalse,
+          reason: 'installing into <install_dir>/lib is the gh-1574 bug — '
+              'the binary looks in <exe_dir>/../lib');
+    });
+
+    test('site/install.sh targets <install_dir>/../lib', () {
+      final script = File('site/install.sh').readAsStringSync();
+      expect(script, contains(r'lib_dir="$install_dir/../lib"'),
+          reason: 'bundle libs must be copied to <install_dir>/../lib');
+      expect(script.contains(r'"$install_dir/lib"'), isFalse,
+          reason: 'installing into <install_dir>/lib is the gh-1574 bug — '
+              'the binary looks in <exe_dir>/../lib');
+    });
+
+    test('site/install.ps1 keeps <installDir>\lib (exe lives in bin/)', () {
+      // Windows is correct already: the exe goes to <root>\bin\fa.exe, so
+      // the native-assets lookup <exe_dir>\..\lib resolves to <root>\lib.
+      final script = File('site/install.ps1').readAsStringSync();
+      expect(script, contains('Join-Path $installDir "lib"'));
+      expect(script, contains('Join-Path $installDir "bin"'));
+    });
+  });
+
   group('fallbackZipUpdate', () {
     test('extracts and swaps the macOS binary from a zip asset', () async {
       final target = File('${temp.path}/fa')..writeAsStringSync('old');
