@@ -190,9 +190,8 @@ void main() {
       });
     });
 
-    testWidgets('iOS shows the mobile note instead of provider buttons', (
-      tester,
-    ) async {
+    testWidgets('iOS shows the provider buttons like desktop (deep-link '
+        'callback receiver)', (tester) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       try {
         final manager = await _manager(FakeHttpClient());
@@ -201,8 +200,10 @@ void main() {
         await _openDialog(tester);
         await tester.pump();
 
-        expect(find.byKey(const ValueKey('signInMobileNote')), findsOneWidget);
-        expect(find.text('Continue with Google'), findsNothing);
+        // The mobile note is gone: the fah://oauth/network deep link is
+        // allowlisted server-side and the provider flow works on device.
+        expect(find.byKey(const ValueKey('signInMobileNote')), findsNothing);
+        expect(find.text('Continue with Google'), findsOneWidget);
         // The developer section still works on mobile.
         expect(find.text('Developer (local only)'), findsOneWidget);
       } finally {
