@@ -89,13 +89,8 @@ String? resolveEndpointKeyName({
     storeRead,
   );
   if (pinned != null) return pinned;
-  // gh-1570 incident REG: probe every cross-version spelling of the
-  // endpoint's slot, canonical first — a key stored under the previous
-  // release's slot name keeps resolving after an update (the boot
-  // migrates the stranded value forward).
-  for (final scoped in CustomProviderRegistry.keySlotCandidates(baseUrl)) {
-    if (_hasStoreValue(scoped, storeRead)) return scoped;
-  }
+  final scoped = CustomProviderRegistry.keyNameFor(baseUrl);
+  if (_hasStoreValue(scoped, storeRead)) return scoped;
   if (defaultEndpoint) return _legacyEnvSlotName(envNames, storeRead);
   return null;
 }

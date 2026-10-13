@@ -619,11 +619,14 @@ Future<void> _runApp(List<String> args) async {
         for (final override in roles.pathOverrides) ...override.roles.values,
       ])
         for (final ref in chain)
-          if (ref.baseUrl != null && ref.apiKeyName == null)
+          if (ref.baseUrl != null)
             (
               baseUrl: ref.baseUrl!,
               providerName: null,
-              pinnedKeyName: null,
+              // An explicitly pinned ref migrates onto ITS slot (the pin
+              // is the contract surface); unpinned refs onto the
+              // endpoint's canonical slot.
+              pinnedKeyName: ref.apiKeyName,
             ),
   ], keyCache)) {
     stderr.writeln(line);

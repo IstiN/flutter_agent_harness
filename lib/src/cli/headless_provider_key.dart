@@ -111,16 +111,9 @@ String? _storedValueFor(
   Iterable<String>? scopedKeyNames,
 }) {
   if (baseUrl != null) {
-    // gh-1570 incident REG: canonical slot first, then the saved entries'
-    // own slots, then the cross-version spellings of the endpoint's slot —
-    // a key stored by an older build keeps resolving after an update.
-    final legacySlots = CustomProviderRegistry.keySlotCandidates(
-      baseUrl,
-    ).skip(1);
     final stored = _firstStoredValue([
       CustomProviderRegistry.keyNameFor(baseUrl),
       ...?scopedKeyNames,
-      ...legacySlots,
     ], keys);
     if (stored != null) return stored;
   }

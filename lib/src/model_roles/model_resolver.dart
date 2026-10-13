@@ -346,15 +346,38 @@ final class ModelRolesResolver {
   String? _keyBaseName(ModelRef ref, ProviderSpec spec) {
     final explicit = ref.apiKeyName;
     if (explicit != null) {
-      return collectKeyStack(_secrets, explicit).isEmpty ? null : explicit;
+      if (collectKeyStack(_secrets, explicit).isNotEmpty) return explicit;
+      // gh-1570 incident REG: the pin NAMES a slot, but a derivation
+      // change across versions can leave the key under the previous
+      // release's name (the 1.0.556 → 1.0.564 lockout: the record-scoped
+      // pin went unpopulated while the key sat on the host-scoped slot).
+      // The pin stays first choice; an empty pin falls back to the
+      // endpoint's own slot family (canonical + host-scoped) before the
+      // ref is declared key-missing.
+      return _firstConfigured(ref, spec) ?? _missingPinFallback(ref);
     }
-    // gh-1570 incident REG: probe every cross-version spelling of the
-    // endpoint's slot — a key stored under the previous release's name
-    // keeps resolving (canonical first, so a fresh save always wins).
-    for (final scopedName in _endpointScopedKeyNames(ref, spec)) {
-      if (collectKeyStack(_secrets, scopedName).isNotEmpty) {
-        return scopedName;
-      }
+    return _firstConfigured(ref, spec);
+  }
+
+  /// The endpoint-scoped candidate slots (gh-1570 cross-version set,
+  /// canonical first) probed when a ref's explicit pin is EMPTY: the pin's
+  /// own endpoint family, regardless of whether the endpoint is the
+  /// catalog default (the incident pin sat on kimi's default URL).
+  String? _missingPinFallback(ModelRef ref) {
+    final baseUrl = ref.baseUrl;
+    if (baseUrl == null) return null;
+    for (final scoped in CustomProviderRegistry.keySlotCandidates(baseUrl)) {
+      if (collectKeyStack(_secrets, scoped).isNotEmpty) return scoped;
+    }
+    return null;
+  }
+
+  /// The pre-gh-1570 resolution order for an unpinned ref: the
+  /// endpoint-scoped slots (cross-version set), then the provider's env
+  /// names — the first base with a configured key wins.
+  String? _firstConfigured(ModelRef ref, ProviderSpec spec) {
+    for (final scoped in _endpointScopedKeyNames(ref, spec)) {
+      if (collectKeyStack(_secrets, scoped).isNotEmpty) return scoped;
     }
     for (final candidate in spec.apiKeyEnvNames) {
       if (collectKeyStack(_secrets, candidate).isNotEmpty) return candidate;

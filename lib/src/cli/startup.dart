@@ -458,12 +458,16 @@ Set<String> roleKeyNames(ModelRolesConfig rolesConfig) {
   return {
     for (final ref in refs) ...[
       if (ref.apiKeyName != null) ref.apiKeyName!,
-      // gh-1570 incident REG: preload every cross-version spelling of the
-      // endpoint's slot, mirroring ModelRolesResolver
-      // ._endpointScopedKeyNames exactly — a key stored under the
-      // previous release's slot name must be IN the snapshot for the
-      // resolver's fallback to find it.
+      // gh-1570 incident REG: the resolver's fallbacks probe the whole
+      // cross-version slot family, so the snapshot must carry it — the
+      // endpoint-scoped candidates of every custom-endpoint ref (the
+      // unpinned leg, mirroring ModelRolesResolver
+      // ._endpointScopedKeyNames exactly) plus, for an explicitly pinned
+      // ref, the pin's own endpoint family (the empty-pin fallback set —
+      // the 1.0.556 → 1.0.564 lockout shape).
       if (_refNeedsEndpointSlot(ref))
+        ...CustomProviderRegistry.keySlotCandidates(ref.baseUrl!),
+      if (ref.apiKeyName != null && ref.baseUrl != null)
         ...CustomProviderRegistry.keySlotCandidates(ref.baseUrl!),
     ],
   };

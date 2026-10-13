@@ -439,14 +439,15 @@ void main() {
     });
 
     test('a key stored under the PREVIOUS release slot name still resolves '
-        'after the endpoint spelling changes (gh-1570 incident REG)', () {
-      // The incident: fa 1.0.556 → 1.0.564 moved a roles entry's endpoint
-      // spelling, so the record-scoped derivation moved off the slot the
-      // key was stored under (FA_KEY_API_KIMI_COM, the host slug) onto
-      // FA_KEY_API_KIMI_COM_KIMI_IRA (the path folded in) — and the boot
-      // called the key missing. Key-slot names are a cross-version
-      // contract: resolution must fall back to the legacy cross-spelling
-      // slot for the same endpoint.
+        'after the record-scoped derivation moves (gh-1570 incident REG)',
+        () {
+      // The incident: fa 1.0.556 → 1.0.564 moved the record-scoped slot
+      // derivation, so the pinned slot FA_KEY_API_KIMI_COM_KIMI_IRA went
+      // empty while the key sat on the host-scoped slot
+      // FA_KEY_API_KIMI_COM — and the boot called the key missing. A slot
+      // name is a cross-version contract: an empty pin falls back to the
+      // endpoint's own slot family (canonical first), and the boot
+      // migrates the stranded value onto the canonical slot.
       final resolver = ModelRolesResolver(
         config: ModelRolesConfig(
           roles: const {
@@ -454,13 +455,14 @@ void main() {
               ModelRef(
                 provider: 'kimi',
                 modelId: 'kimi-for-coding',
-                baseUrl: 'api.kimi.com/kimi-ira',
+                baseUrl: 'https://api.kimi.com/coding/v1',
+                apiKeyName: 'FA_KEY_API_KIMI_COM_KIMI_IRA',
               ),
             ],
           },
         ),
         secrets: const {
-          // Only the PRE-update slot holds the key.
+          // Only the PRE-update (host-scoped) slot holds the key.
           'FA_KEY_API_KIMI_COM': 'legacy-kimi-key',
         },
         streamFactory: _neverStream,
@@ -469,8 +471,10 @@ void main() {
       expect(entries, isNotNull);
       expect(entries, hasLength(1));
       expect(entries!.single.keyRing.baseName, 'FA_KEY_API_KIMI_COM');
-      expect(entries.single.keyRing.currentCredential.value,
-          'legacy-kimi-key');
+      expect(
+        entries.single.keyRing.currentCredential.value,
+        'legacy-kimi-key',
+      );
       expect(resolver.skippedEntries['default'], isEmpty);
     });
 

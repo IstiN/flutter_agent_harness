@@ -521,11 +521,14 @@ final class CustomProviderRegistry {
   /// update changes the spelling, so resolution probes the whole set and
   /// the boot migrates a stranded value forward (gh-1570 review).
   ///
-  /// Today the drift class is the URL spelling: a scheme-less endpoint
-  /// (`api.kimi.com/kimi-ira`) folds host AND path into the slug
-  /// (`FA_KEY_API_KIMI_COM_KIMI_IRA`) while the same endpoint spelled with
-  /// its scheme derives the host-only slot (`FA_KEY_API_KIMI_COM`) —
-  /// exactly the 1.0.556 → 1.0.564 lockout. Canonical first; never empty.
+  /// Today the drift class is the record scoping: a record-scoped slot
+  /// (`keyNameFor(url, providerName: 'kimi-ira')` →
+  /// `FA_KEY_API_KIMI_COM_KIMI_IRA`) sits next to the host-scoped shape
+  /// (`FA_KEY_API_KIMI_COM`) the same endpoint wrote before the record
+  /// rule (or via the /provider flow) — exactly the 1.0.556 → 1.0.564
+  /// lockout pair. Canonical first; never empty; both entries derive from
+  /// the endpoint's host slug only (a scheme-less spelling has no URI
+  /// authority and never produced a host slug in any version).
   static List<String> keySlotCandidates(
     String baseUrl, {
     String? providerName,
@@ -533,17 +536,8 @@ final class CustomProviderRegistry {
     final candidates = <String>[
       keyNameFor(baseUrl, providerName: providerName),
     ];
-    final uri = Uri.tryParse(baseUrl);
-    if (uri == null) return candidates;
-    final hasHost = uri.host.isNotEmpty;
-    // The cross-spelling twin: prepend the scheme when the saved endpoint
-    // lacks one, strip it when it has one. The scheme only shifts the
-    // default-port fold (443 vs none) — the slug stays comparable.
-    final twin = hasHost
-        ? baseUrl.substring(baseUrl.indexOf('://') + 3)
-        : 'https://$baseUrl';
-    final twinName = keyNameFor(twin, providerName: providerName);
-    if (!candidates.contains(twinName)) candidates.add(twinName);
+    final hostScoped = keyNameFor(baseUrl);
+    if (!candidates.contains(hostScoped)) candidates.add(hostScoped);
     return candidates;
   }
 
