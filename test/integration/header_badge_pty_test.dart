@@ -1,6 +1,6 @@
 @TestOn('vm')
 @Tags(['integration'])
-@Timeout(Duration(minutes: 5))
+@Timeout(Duration(minutes: 6)) // never clip a wait: budgets sum to ~310 s (gh-1469)
 /// Issue #438 AC3 — the over-window badge: a mid-run auto-compaction that
 /// frees the window shows «[auto-compacted · continuing]» in the TUI
 /// status row while the run continues, and it clears when the turn
@@ -61,9 +61,12 @@ void main() {
     await harness.waitForText(foldBadge, timeout: const Duration(seconds: 30));
 
     // Settled: the badge clears from the status row (the receipt stays).
+    // 90 s (gh-1469): a re-fold riding the red run's razor-thin overflow
+    // margin stretches the turn by a full relief chain (judge +
+    // summarizer + rebuilt request) — the red run outlived 30 s.
     await harness.waitForText(
       'done: recovered',
-      timeout: const Duration(seconds: 30),
+      timeout: const Duration(seconds: 90),
     );
     await harness.waitForOutput(
       settleMs: 600,
@@ -75,10 +78,12 @@ void main() {
       reason: 'the badge must clear when the turn settles',
     );
 
-    // E1: a fresh run starts badge-free — no fold, no badge.
+    // E1: a fresh run starts badge-free — no fold, no badge. 90 s (same
+    // gh-1469 relief-chain face: an E1 re-fold on a loaded runner ground
+    // past the 30 s budget with the guard still mid-relief).
     harness.sendText('say hi');
     harness.sendEnter();
-    await harness.waitForText('hi!', timeout: const Duration(seconds: 30));
+    await harness.waitForText('hi!', timeout: const Duration(seconds: 90));
     await harness.waitForOutput(
       settleMs: 600,
       timeout: const Duration(seconds: 20),
@@ -116,9 +121,14 @@ agent:
 /// agent turns issue `read` tool calls, the hide-judge gets picks, the
 /// checkpoint summarizer gets text, and the post-fold continuation reply
 /// streams SLOWLY so the badge-on-screen window is catchable.
+/// The fold checkpoint summary text — also the dispatch marker for the
+/// post-fold continuation request; the reply and the check must never
+/// drift apart, or the continuation silently falls through to the reads
+/// reply (the gh-1469 starvation class, but silent).
+const _foldCheckpoint = 'checkpoint: the word-count investigation';
+
 final class _FoldingMock {
   HttpServer? _server;
-  var agentTurns = 0;
 
   int get port => _server!.port;
 
@@ -146,28 +156,31 @@ final class _FoldingMock {
       }
       // The checkpoint/classic summarizer: the summary text.
       if (body.contains('<conversation>')) {
-        await _sse(request, [
-          _textChunk('checkpoint: the word-count investigation'),
-        ]);
+        await _sse(request, [_textChunk(_foldCheckpoint)]);
         return;
       }
-      // Agent turns: two turns of eight parallel reads would be ideal,
-      // but one turn carrying all eight reads already overflows the
-      // 16384-token window at the second request. First agent turn: the
-      // reads; the post-fold continuation (slow, so the badge frame is
-      // catchable); anything later: plain quick replies.
-      agentTurns++;
-      if (agentTurns == 1) {
-        await _sse(request, [_readsTurnChunk()]);
+      // Agent turns, CONTENT-addressed (gh-1469): the over-window guard's
+      // relief REPLACES the overflowing request with a rebuilt one, so a
+      // fold retry arrives as a fresh request a request-count cannot
+      // distinguish — the counter used to hand the next scripted reply to
+      // a fold retry and starve the real turn (red run 37962382097: the
+      // ×3 fold chain consumed slots until "hi!" never rendered inside
+      // its 30 s wait). Dispatch on the payload instead: the E1 ask
+      // replies "hi!", a request already carrying the turn-1 checkpoint
+      // summary is the post-fold continuation (slow, so the badge frame
+      // is catchable), and the only request left is the first turn's
+      // reads — every fold retry now re-receives ITS OWN reply.
+      if (body.contains('say hi')) {
+        await _sse(request, [_textChunk('hi!')]);
         return;
       }
-      if (agentTurns == 2) {
+      if (body.contains(_foldCheckpoint)) {
         await _sse(request, [
           _textChunk('done: recovered'),
         ], delay: const Duration(milliseconds: 2500));
         return;
       }
-      await _sse(request, [_textChunk('hi!')]);
+      await _sse(request, [_readsTurnChunk()]);
     });
   }
 
