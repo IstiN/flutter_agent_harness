@@ -203,6 +203,9 @@ class Agent {
     QueueMode followUpMode = QueueMode.oneAtATime,
     this.toolExecution = ToolExecutionMode.parallel,
     this.maxEmptyRetries = 1,
+    this.emptyHiccupRetries = 3,
+    this.emptyHiccupBaseDelay = const Duration(milliseconds: 500),
+    this.emptyHiccupMaxBackoff = const Duration(milliseconds: 8000),
     this.runIdleTimeout = defaultRunIdleTimeout,
     this.onRunIdleTimeout,
     this.onRunWatchdogPaused,
@@ -378,6 +381,20 @@ class Agent {
   /// How many times a degenerate-empty assistant response is retried within
   /// the loop before the turn is accepted. Default: 1.
   final int maxEmptyRetries;
+
+  /// gh-1577: how many times an empty completion that follows PARTIAL
+  /// content is retried with exponential backoff before the run ends with
+  /// the explicit empty-exhaustion error. See
+  /// [AgentLoopConfig.emptyHiccupRetries]. Default: 3.
+  final int emptyHiccupRetries;
+
+  /// gh-1577: first backoff sleep between empty-hiccup retries. See
+  /// [AgentLoopConfig.emptyHiccupBaseDelay]. Default: 500ms.
+  final Duration emptyHiccupBaseDelay;
+
+  /// gh-1577: cap on the exponential empty-hiccup backoff. See
+  /// [AgentLoopConfig.emptyHiccupMaxBackoff]. Default: 8s.
+  final Duration emptyHiccupMaxBackoff;
 
   /// Current agent state.
   AgentState get state => _state;
@@ -636,6 +653,9 @@ class Agent {
           ? null
           : () => externalSteeringProbe!(),
       maxEmptyRetries: maxEmptyRetries,
+      emptyHiccupRetries: emptyHiccupRetries,
+      emptyHiccupBaseDelay: emptyHiccupBaseDelay,
+      emptyHiccupMaxBackoff: emptyHiccupMaxBackoff,
       wireDump: wireDump,
     );
   }
