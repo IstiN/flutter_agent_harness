@@ -1365,4 +1365,76 @@ void main() {
       expect(snapshot.blobs.systemPrompts, isEmpty);
     });
   });
+
+  group('synthetic row replacement (live mirroring)', () {
+    AssistantMessage streamedAssistant(DateTime timestamp) => AssistantMessage(
+      content: const [
+        TextContent(text: 'running'),
+        ToolCall(id: 'c1', name: 'bash', arguments: {'cmd': 'ls'}),
+      ],
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      model: 'claude-test',
+      usage: const Usage(
+        input: 10,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 12,
+        cost: UsageCost(),
+      ),
+      stopReason: StopReason.stop,
+      timestamp: timestamp,
+    );
+
+    test('a synthetic row that is no longer the tail is filtered out of the '
+        'middle with a full index rebuild (non-tail discard)', () {
+      final builder = TrajectorySnapshotBuilder();
+      builder.append(_userRecord('u1'));
+      // Turn 1 step 1 streams: a synthetic assistant row plus its
+      // synthetic tool row, keyed `1\0<step 1>`.
+      builder.applyEvent(MessageEndEvent(streamedAssistant(_at(1))));
+      // A queued prompt streams into turn 2 — the turn-1 synthetic rows
+      // are no longer the tail, so the fast truncation path cannot
+      // replace them.
+      builder.applyEvent(
+        MessageEndEvent(UserMessage.text('queued', timestamp: _at(2))),
+      );
+      final midStream = builder.build();
+      expect(midStream.records, hasLength(4));
+      expect(
+        midStream.records.last,
+        isA<TrajectoryUserRecord>(),
+        reason: 'the turn-1 synthetic rows sit mid-ledger now',
+      );
+
+      // The real turn-1 assistant lands: its synthetic rows must be
+      // filtered out of the middle and the tool-row index rebuilt.
+      final snapshot = builder.append(
+        _assistantRecord(
+          'a1',
+          parentId: 'u1',
+          content: const [
+            TextContent(text: 'answer'),
+            ToolCall(id: 'c1', name: 'bash', arguments: {'cmd': 'ls'}),
+          ],
+        ),
+      );
+      expect(snapshot.records, hasLength(4));
+      final assistants = snapshot.records
+          .whereType<TrajectoryAssistantRecord>()
+          .toList();
+      expect(assistants, hasLength(1), reason: 'the streamed ghost is gone');
+      expect(assistants.single.turn, 1);
+      expect(assistants.single.step, 1);
+      final tools = snapshot.records.whereType<TrajectoryToolRecord>();
+      expect(tools, hasLength(1));
+      expect(tools.single.callId, 'c1');
+      expect(tools.single.index, 4);
+      // The queued turn-2 prompt row survives the mid-ledger filter.
+      final queued = snapshot.records[1];
+      expect(queued, isA<TrajectoryUserRecord>());
+      expect((queued as TrajectoryUserRecord).text, 'queued');
+    });
+  });
 }
