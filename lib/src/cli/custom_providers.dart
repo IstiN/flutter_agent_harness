@@ -514,6 +514,33 @@ final class CustomProviderRegistry {
         : '${base}_$name';
   }
 
+  /// Every key-slot name the SAME endpoint ever derived, canonical first —
+  /// the cross-version stability contract (gh-1570 incident REG). A slot
+  /// name is a persistent contract: a key stored by an older build under
+  /// THAT build's spelling of the derivation must keep resolving after an
+  /// update changes the spelling, so resolution probes the whole set and
+  /// the boot migrates a stranded value forward (gh-1570 review).
+  ///
+  /// Today the drift class is the record scoping: a record-scoped slot
+  /// (`keyNameFor(url, providerName: 'kimi-ira')` →
+  /// `FA_KEY_API_KIMI_COM_KIMI_IRA`) sits next to the host-scoped shape
+  /// (`FA_KEY_API_KIMI_COM`) the same endpoint wrote before the record
+  /// rule (or via the /provider flow) — exactly the 1.0.556 → 1.0.564
+  /// lockout pair. Canonical first; never empty; both entries derive from
+  /// the endpoint's host slug only (a scheme-less spelling has no URI
+  /// authority and never produced a host slug in any version).
+  static List<String> keySlotCandidates(
+    String baseUrl, {
+    String? providerName,
+  }) {
+    final candidates = <String>[
+      keyNameFor(baseUrl, providerName: providerName),
+    ];
+    final hostScoped = keyNameFor(baseUrl);
+    if (!candidates.contains(hostScoped)) candidates.add(hostScoped);
+    return candidates;
+  }
+
   /// The secure-store/env key name backing a connected Copilot account:
   /// `FA_KEY_COPILOT_<SANITIZED_ENTRY_NAME>` (goal/copilot_provider.md).
   /// Scoped to the ENTRY (not the host) so several accounts — possibly on
