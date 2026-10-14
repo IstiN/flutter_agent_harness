@@ -179,7 +179,8 @@ int compareVersions(String a, String b) {
 /// The pinned release trust anchor — byte-identical to
 /// TRUSTED_SIGNING_PEM in site/install.sh. Archives are only applied when
 /// their signed SHA256SUMS verifies against this key.
-const String kFaReleaseSigningPem = '-----BEGIN PUBLIC KEY-----\n'
+const String kFaReleaseSigningPem =
+    '-----BEGIN PUBLIC KEY-----\n'
     'MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA/F/wk8xOz9U/sjsGJKn2\n'
     'sDuqF3KxG8UXJsC95fSp6Bpm3hjPEVF1wsYycEy4KeCRpKBeyJGqhIoiEBeQBUgz\n'
     'NKEOjEoGuZxLgtOL2/0OkDVLpXA/q5gmdey0yWx+P5I9ShDMuQWgbG1wR55ti6lD\n'
@@ -233,7 +234,15 @@ final class _DerReader {
 
 /// The rsaEncryption OID (1.2.840.113549.1.1.1) in DER form.
 const _rsaEncryptionOid = [
-  0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+  0x2a,
+  0x86,
+  0x48,
+  0x86,
+  0xf7,
+  0x0d,
+  0x01,
+  0x01,
+  0x01,
 ];
 
 /// Drops the sign padding of a DER positive INTEGER (one leading 0x00).
@@ -243,8 +252,9 @@ List<int> _unsignedInteger(List<int> bytes) =>
 /// Reads an unsigned big-endian byte list (DER INTEGER content) as a
 /// [BigInt] for pointycastle's RSA key.
 BigInt _bytesToBigInt(List<int> bytes) => BigInt.parse(
-    bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(),
-    radix: 16);
+  bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(),
+  radix: 16,
+);
 
 /// Parses a PEM `BEGIN PUBLIC KEY` (SPKI) RSA public key into its
 /// modulus/exponent bytes. Public for the provenance tests.
@@ -262,9 +272,7 @@ RsaPublicKey rsaPublicKeyFromPem(String pem) {
     throw const FormatException('not an rsaEncryption SPKI');
   }
   // BIT STRING: one unused-bits octet, then SEQUENCE{INTEGER n, INTEGER e}.
-  final rsa = _DerReader(
-    _DerReader(content.take(0x03).sublist(1)).take(0x30),
-  );
+  final rsa = _DerReader(_DerReader(content.take(0x03).sublist(1)).take(0x30));
   return RsaPublicKey(
     n: _unsignedInteger(rsa.take(0x02)), // INTEGER modulus
     e: _unsignedInteger(rsa.take(0x02)), // INTEGER exponent
@@ -305,9 +313,7 @@ Future<bool> verifyReleaseProvenance({
     final sumsUri = Uri.parse(
       'https://github.com/$_repo/releases/download/$tag/SHA256SUMS',
     );
-    final sums = await client
-        .get(sumsUri)
-        .timeout(kFaUpdateNetworkTimeout);
+    final sums = await client.get(sumsUri).timeout(kFaUpdateNetworkTimeout);
     final sig = await client
         .get(sumsUri.replace(path: '${sumsUri.path}.sig'))
         .timeout(kFaUpdateNetworkTimeout);
@@ -331,8 +337,7 @@ Future<bool> verifyReleaseProvenance({
     if (!verified) return false;
     final expected = _manifestDigest(sums.body, archiveName);
     if (expected == null) return false;
-    return sha256.convert(archiveBytes).toString() ==
-        expected.toLowerCase();
+    return sha256.convert(archiveBytes).toString() == expected.toLowerCase();
   } catch (_) {
     return false;
   }
@@ -612,11 +617,17 @@ Future<String?> extractArchive(
   return 'unknown archive format: $archiveName';
 }
 
-/// Copies the `bundle/lib/` shared libraries next to the binary.
-Future<void> _copyBundleLibs(Directory bundleDir, Directory installDir) async {
+/// Copies the `bundle/lib/` shared libraries to `<installDir>/../lib` — the
+/// directory the AOT binary's native-assets resolver reads
+/// (`<exe_dir>/../lib`; the `dart build cli` bundle layout is
+/// `bin/<exe>` + `lib/<dylibs>`). Installing beside the binary instead
+/// (`<installDir>/lib`) breaks SQLite loads on flat installs (gh-1574).
+///
+/// Public so the self-management unit tests can pin the layout.
+Future<void> copyBundleLibs(Directory bundleDir, Directory installDir) async {
   final srcLib = Directory('${bundleDir.path}/lib');
   if (!srcLib.existsSync()) return;
-  final libDir = Directory('${installDir.path}/lib');
+  final libDir = Directory('${installDir.parent.path}/lib');
   libDir.createSync(recursive: true);
   await for (final entity in srcLib.list()) {
     if (entity is File) {
@@ -664,7 +675,7 @@ Future<int> _extractAndSwap(
     final staging = '$target.new';
     await File(staging).writeAsBytes(srcExe.readAsBytesSync());
     await _atomicSwap(staging, target, runProcess);
-    await _copyBundleLibs(bundleDir, installDir);
+    await copyBundleLibs(bundleDir, installDir);
     // Copy version.txt so the new binary reports its version correctly.
     final srcVersion = File('${bundleDir.path}/version.txt');
     if (srcVersion.existsSync()) {
@@ -780,8 +791,9 @@ void _writeConvergence(String? statePath, String tag) {
   if (statePath == null) return;
   try {
     final previous = _readConvergence(statePath);
-    final attempts =
-        previous != null && previous.tag == tag ? previous.attempts + 1 : 1;
+    final attempts = previous != null && previous.tag == tag
+        ? previous.attempts + 1
+        : 1;
     final file = File(statePath);
     file.parent.createSync(recursive: true);
     file.writeAsStringSync(jsonEncode({'tag': tag, 'attempts': attempts}));
@@ -915,7 +927,11 @@ Future<ApplyUpdateOutcome> applyUpdate({
 
 /// One resolved update candidate: [stop] non-null ends the update with
 /// that outcome; otherwise [tag]/[latest] name the release to apply.
-typedef _ResolvedUpdate = ({ApplyUpdateOutcome? stop, String? tag, String? latest});
+typedef _ResolvedUpdate = ({
+  ApplyUpdateOutcome? stop,
+  String? tag,
+  String? latest,
+});
 
 /// Fetches the latest tag and resolves it against the current version and
 /// the convergence ledger (issue #1377): up to date closes the loop (the
@@ -954,11 +970,7 @@ Future<_ResolvedUpdate> _resolveUpdateTarget({
       'fa update paused: v$latest attempted ${convergence.attempts}× '
       'and still not resolving — not respawning again',
     );
-    return (
-      stop: ApplyUpdateOutcome.convergenceGuard,
-      tag: null,
-      latest: null,
-    );
+    return (stop: ApplyUpdateOutcome.convergenceGuard, tag: null, latest: null);
   }
   _writeConvergence(state, tag);
   return (stop: null, tag: tag, latest: latest);
@@ -1023,9 +1035,9 @@ Future<({ApplyUpdateOutcome? stop, List<int> bytes})> _downloadVerifiedArchive({
   if (streamed.statusCode != 200) {
     return (stop: ApplyUpdateOutcome.downloadFailed, bytes: const <int>[]);
   }
-  final bytes = await streamed.stream
-      .toBytes()
-      .timeout(kFaUpdateArchiveTimeout);
+  final bytes = await streamed.stream.toBytes().timeout(
+    kFaUpdateArchiveTimeout,
+  );
   if (!await verifyReleaseProvenance(
     client: client,
     tag: tag,
@@ -1115,11 +1127,7 @@ Future<bool> _restartAfterUpdate(
 /// inherited) and outlives this process — the spawn-successor-then-exit
 /// restart contract (Dart has no exec-replace).
 Future<Process> _startSuccessor(String exe, List<String> args) {
-  return Process.start(
-    exe,
-    args,
-    mode: ProcessStartMode.detachedWithStdio,
-  );
+  return Process.start(exe, args, mode: ProcessStartMode.detachedWithStdio);
 }
 
 /// Spawns the freshly installed fa over this one. [launchArgs] is the
