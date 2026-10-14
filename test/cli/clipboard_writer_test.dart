@@ -129,5 +129,33 @@ void main() {
         expect(runner.calls, isEmpty);
       },
     );
+
+    test(
+      'no platform pin: the host platform resolves the clipboard path',
+      () async {
+        // Exercises the host-[Platform] fallback arm of the platform
+        // resolution (every other test pins `platform:` explicitly, so the
+        // macOS/Linux/Windows detection never ran — CRAP 15.55 on the
+        // merged-shard lcov, CI guards leg). The runner stays injected:
+        // no real pasteboard is touched on any dev host.
+        final runner = _RecordingRunner(0);
+
+        final result = await writeClipboardText(
+          'gho_TOKEN',
+          runner: runner.call,
+        );
+
+        expect(result, isA<PasteboardWriteOk>());
+        expect(runner.calls, hasLength(1));
+        final expected = Platform.isMacOS
+            ? 'pbcopy'
+            : Platform.isWindows
+            ? 'clip'
+            : 'xclip';
+        expect(runner.calls.single.$1, expected);
+        // The credential rides stdin regardless of which arm ran.
+        expect(runner.calls.single.$3, 'gho_TOKEN');
+      },
+    );
   });
 }
