@@ -599,7 +599,7 @@ String _clip(String text, int width) {
 /// visible columns (gh-1433 AC9 log face): physical lines keep their
 /// breaks, long lines wrap, and the whole body stops at
 /// [logFaceCardMaxBodyChars] with an explicit `(+N more chars, see
-/// <log>)` pointer (E7) — never a silent ellipsis.
+/// `<log>`)` pointer (E7) — never a silent ellipsis.
 List<String> _wrapCardBody(String text, int width) {
   final rows = <String>[];
   var emitted = 0;
