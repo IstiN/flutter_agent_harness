@@ -47,6 +47,40 @@ void main() {
     for (final id in invalid) {
       test('rejects "$id"', () => expect(AppStorage.isValidId(id), isFalse));
     }
+
+    test('the escape floor resolves legacy ids the strict pattern rejects', () {
+      // Existing user stores hold dirs the canonical pattern does not
+      // allow; the listing must not hide a user's app over its name.
+      expect(AppStorage.isResolvableId('bad_types'), isTrue);
+      expect(AppStorage.isResolvableId('a'), isTrue);
+      expect(AppStorage.appDir('bad_types'), 'apps/bad_types');
+    });
+
+    test('the escape floor still rejects every AC4 shape', () {
+      for (final hostile in [
+        '',
+        '..',
+        '../x',
+        'a/../b',
+        '/abs',
+        'apps/../evil',
+        'a/b',
+        'a\\b',
+        '.hidden',
+        '.',
+      ]) {
+        expect(
+          AppStorage.isResolvableId(hostile),
+          isFalse,
+          reason: 'isResolvableId("$hostile") must be false',
+        );
+        expect(
+          () => AppStorage.appDir(hostile),
+          throwsA(isA<ArgumentError>()),
+          reason: 'appDir("$hostile") must be rejected',
+        );
+      }
+    });
   });
 
   group('AppStorage path resolution (gh-1614 I1)', () {
@@ -65,7 +99,10 @@ void main() {
     });
 
     test('appFile allows subdirectory file names inside the app dir', () {
-      expect(AppStorage.appFile('2048', 'game/main.js'), 'apps/2048/game/main.js');
+      expect(
+        AppStorage.appFile('2048', 'game/main.js'),
+        'apps/2048/game/main.js',
+      );
       expect(AppStorage.appFile('2048', 'icon.svg'), 'apps/2048/icon.svg');
     });
 

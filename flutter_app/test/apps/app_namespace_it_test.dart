@@ -7,6 +7,9 @@ import 'dart:convert';
 import 'package:fa/apps/app_storage.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/sandbox/fs_persistence.dart';
+import 'package:fa/sandbox/memory_shell.dart';
+import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -91,25 +94,74 @@ void main() {
       expect((await store.listApps()).single.error, isNull);
     });
 
-    test('REG-1: the store probes the exact path the boot path checks',
-        () async {
-      final env = MemoryExecutionEnv();
-      await env.writeFile(
-        'apps/2048/manifest.json',
-        jsonEncode({'id': '2048', 'name': '2048'}),
-      );
-      final apps = await (await storeWith(env)).listApps();
+    test(
+      'REG-1: the store probes the exact path the boot path checks',
+      () async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile(
+          'apps/2048/manifest.json',
+          jsonEncode({'id': '2048', 'name': '2048'}),
+        );
+        final apps = await (await storeWith(env)).listApps();
 
-      // The listing's missing-files state names the very path the boot
-      // resolver probes — one root, one path shape (gh-1614 I1).
-      expect(apps.single.error, contains(AppStorage.entryPath('2048')));
-      final reader = JsAppEngine.appWidgetFileReaderForTest(
-        env: env,
-        dir: 'apps/2048',
-        entryFile: 'widget.js',
+        // The listing's missing-files state names the very path the boot
+        // resolver probes — one root, one path shape (gh-1614 I1).
+        expect(apps.single.error, contains(AppStorage.entryPath('2048')));
+        final reader = JsAppEngine.appWidgetFileReaderForTest(
+          env: env,
+          dir: 'apps/2048',
+          entryFile: 'widget.js',
+        );
+        expect(await reader.exists(AppStorage.entryPath('2048')), isFalse);
+        expect(await reader.exists(AppStorage.manifestPath('2048')), isTrue);
+      },
+    );
+
+    test('AC3: a torn web-snapshot restore (manifest persisted, entry '
+        'lost) lists the missing-files state — never a startable-looking '
+        'tile', () async {
+      // The crafted divergent state behind the original report: the
+      // IndexedDB snapshot persisted mid-install, restoring the manifest
+      // while the entry never landed. The listing must render the honest
+      // state; a tap must not reach the engine.
+      final store = InMemoryFsSnapshotStore();
+      await store.save({
+        PersistentWebExecutionEnv.storageKey: jsonEncode({
+          'version': PersistentWebExecutionEnv.snapshotVersion,
+          'dirs': ['apps/2048'],
+          'files': [
+            {
+              'path': 'apps/2048/manifest.json',
+              'data': base64Encode(
+                utf8.encode(jsonEncode({'id': '2048', 'name': '2048'})),
+              ),
+            },
+          ],
+        }),
+      });
+      final shell = MemoryShell();
+      final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+      shell.attach(env);
+      final restored = await PersistentWebExecutionEnv.restore(env, store);
+
+      expect(
+        (await restored.exists('apps/2048/manifest.json')).valueOrNull,
+        isTrue,
+        reason: 'precondition: the manifest WAS restored',
       );
-      expect(await reader.exists(AppStorage.entryPath('2048')), isFalse);
-      expect(await reader.exists(AppStorage.manifestPath('2048')), isTrue);
+      expect(
+        (await restored.exists('apps/2048/widget.js')).valueOrNull,
+        isFalse,
+        reason: 'precondition: the entry was lost',
+      );
+
+      final apps = await AppsStore(
+        restored,
+        readAsset: (path) async => '',
+      ).listApps();
+      expect(apps, hasLength(1));
+      expect(apps.single.error, contains('apps/2048/widget.js'));
+      expect(apps.single.error, contains('apps/2048/'));
     });
   });
 
@@ -169,38 +221,40 @@ void main() {
   });
 
   group('gh-1614 AC1/I3: honest boot failures (entry assembly)', () {
-    test('missing entry (manifest present) names the root and the path',
-        () async {
-      final env = MemoryExecutionEnv();
-      await env.writeFile(
-        'apps/2048/manifest.json',
-        jsonEncode({'id': '2048', 'name': '2048'}),
-      );
-      await expectLater(
-        JsAppEngine.assembleEntryJsForTest(
-          env: env,
-          dir: 'apps/2048',
-          entryFile: 'widget.js',
-        ),
-        throwsA(
-          isA<StateError>()
-              .having(
-                (e) => e.message,
-                'message',
-                allOf([
-                  contains('app entry not found'),
-                  contains('apps/2048/'),
-                  contains('apps/2048/widget.js'),
-                ]),
-              )
-              .having(
-                (e) => e.message,
-                'manifest is present — only the entry is named missing',
-                isNot(contains('manifest.json')),
-              ),
-        ),
-      );
-    });
+    test(
+      'missing entry (manifest present) names the root and the path',
+      () async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile(
+          'apps/2048/manifest.json',
+          jsonEncode({'id': '2048', 'name': '2048'}),
+        );
+        await expectLater(
+          JsAppEngine.assembleEntryJsForTest(
+            env: env,
+            dir: 'apps/2048',
+            entryFile: 'widget.js',
+          ),
+          throwsA(
+            isA<StateError>()
+                .having(
+                  (e) => e.message,
+                  'message',
+                  allOf([
+                    contains('app entry not found'),
+                    contains('apps/2048/'),
+                    contains('apps/2048/widget.js'),
+                  ]),
+                )
+                .having(
+                  (e) => e.message,
+                  'manifest is present — only the entry is named missing',
+                  isNot(contains('manifest.json')),
+                ),
+          ),
+        );
+      },
+    );
 
     test('a missing dir names every missing file', () async {
       final env = MemoryExecutionEnv();

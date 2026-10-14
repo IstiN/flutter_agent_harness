@@ -648,14 +648,15 @@ class AppsStore {
       if (entry.kind != FileKind.directory) continue;
       final id = entry.name;
       if (id.startsWith('.')) continue;
-      // gh-1614 AC4 (list side): a directory whose name cannot live in
-      // the shared namespace is never listed — it could never boot through
-      // the resolver anyway. Logged so the leftover stays discoverable.
-      if (!AppStorage.isValidId(id)) {
+      // gh-1614 AC4 (list side): a directory whose name cannot resolve
+      // inside the shared namespace is never listed — it could never boot
+      // through the resolver anyway. Logged so the leftover stays
+      // discoverable.
+      if (!AppStorage.isResolvableId(id)) {
         AppLog.i(
           'apps',
-          'skipping non-conforming app dir "$id" — ids must match '
-              '${AppStorage.idPattern.pattern}',
+          'skipping non-resolvable app dir "$id" — an app id must be a '
+              'single plain segment (no "..", no "/", no absolute form)',
         );
         continue;
       }
@@ -673,7 +674,8 @@ class AppsStore {
       final missingEntry =
           ((await _env.exists(AppStorage.entryPath(id))).valueOrNull ?? false)
           ? null
-          : _missingEntryMessage(id);      final cached = _parsedApps[id];
+          : _missingEntryMessage(id);
+      final cached = _parsedApps[id];
       if (cached != null &&
           _manifestHashes[id] == hash &&
           missingEntry == null &&
@@ -976,7 +978,8 @@ class AppsStore {
   static String _missingEntryMessage(
     String id, {
     String entry = AppStorage.defaultEntry,
-  }) => 'stored files missing under ${AppStorage.root}/$id/ — the app '
+  }) =>
+      'stored files missing under ${AppStorage.root}/$id/ — the app '
       'cannot start: ${AppStorage.entryPath(id, entry)} is missing or '
       'unreadable. Reinstall the app from the widgets catalog, or ask Fa '
       'to recreate it.';
@@ -1080,8 +1083,7 @@ class AppsStore {
     for (final ref in refs) {
       if (files.containsKey(ref)) continue;
       final onDisk =
-          (await _env.exists(AppStorage.appFile(id, ref))).valueOrNull ??
-          false;
+          (await _env.exists(AppStorage.appFile(id, ref))).valueOrNull ?? false;
       if (!onDisk) {
         throw StateError(
           'install of $id rejected: manifest i18n ref "$ref" is missing '

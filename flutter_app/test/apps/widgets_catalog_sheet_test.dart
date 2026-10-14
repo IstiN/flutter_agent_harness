@@ -266,6 +266,10 @@ void main() {
       'apps/focus-timer/manifest.json',
       '{"id":"focus-timer","name":"Focus Timer","version":"0.9.0"}',
     );
+    // A stored app ships its entry — the gh-1614 bootability probe would
+    // (honestly) flag a manifest-only dir as missing-files, which would
+    // swap the Update affordance for the broken-app state.
+    await env.writeFile('apps/focus-timer/widget.js', '// timer');
     await pumpSheet(tester, env: env, client: okServer());
     expect(find.widgetWithText(FilledButton, 'Update'), findsOneWidget);
   });

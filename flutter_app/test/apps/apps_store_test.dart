@@ -801,10 +801,12 @@ iOS row <!-- fa-platforms: ios -->
         'apps/bad_types/manifest.json',
         '{"id": "bad_types", "name": "Bad", "allowedCommands": 5}',
       );
+      await env.writeFile('apps/bad_types/widget.js', '// entry');
       await env.writeFile(
         'apps/ok/manifest.json',
         '{"id": "ok", "name": "Ok"}',
       );
+      await env.writeFile('apps/ok/widget.js', '// entry');
       final apps = await AppsStore(env, readAsset: _fakeAssets).listApps();
       // One flagged tile — the listing (and the healthy neighbor) survives.
       expect(apps, hasLength(2));
