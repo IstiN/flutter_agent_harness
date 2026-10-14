@@ -242,9 +242,13 @@ class Agent {
   _ActiveRun? _activeRun;
   Timer? _runWatchdogTimer;
 
-  /// The window the armed timer currently waits out — the derived
-  /// [runIdleWindow].window at arm time (gh-1617); the fire reports it.
-  Duration _armedRunIdleWindow = defaultRunIdleTimeout;
+  /// The window info the armed timer currently waits under — captured at
+  /// arm time (gh-1617); the fire reports exactly what governed the wait.
+  ({Duration window, String source, bool raised}) _armedRunIdleInfo = (
+    window: defaultRunIdleTimeout,
+    source: 'default',
+    raised: false,
+  );
 
   /// Backstop for wedged runs: when no [AgentEvent] arrives for this long
   /// outside tool execution (a stalled provider connection whose socket
@@ -779,7 +783,7 @@ class Agent {
     // live re-arm of an already-armed timer). Nothing configured keeps
     // [runIdleTimeout] byte-for-byte (AC3).
     final window = runIdleWindow.window;
-    _armedRunIdleWindow = window;
+    _armedRunIdleInfo = runIdleWindow;
     _runWatchdogTimer = Timer(window, _onRunWatchdogFired);
   }
 
@@ -792,11 +796,7 @@ class Agent {
   /// `global`), `raised` is true when a config governs (window > floor).
   /// Hosts render this on the stall surfaces so a wide configured window
   /// never reads as a hang.
-  ({
-    Duration window,
-    String source,
-    bool raised,
-  }) get runIdleWindow {
+  ({Duration window, String source, bool raised}) get runIdleWindow {
     final explicit = explicitStreamIdleForModel(_state.model);
     final window = runIdleWatchdogWindow(
       floor: runIdleTimeout,
@@ -823,10 +823,9 @@ class Agent {
     // source, so a wide patience never reads as a hang in the post-
     // mortem. Nothing configured keeps the pre-ticket wording
     // byte-for-byte (AC3).
-    final window = _armedRunIdleWindow;
-    final info = runIdleWindow;
-    final naming = info.raised
-        ? ', ${describeRunIdleWindow(window, info.source)}'
+    final window = _armedRunIdleInfo.window;
+    final naming = _armedRunIdleInfo.raised
+        ? ', ${describeRunIdleWindow(window, _armedRunIdleInfo.source)}'
         : '';
     final error = RunIdleWatchdogFire(
       'agent run produced no events for '

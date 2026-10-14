@@ -397,7 +397,8 @@ ResolvedProviderTimeouts resolveProviderTimeouts({Uri? url, String? name}) {
 /// `sendWatchedProviderRequest` seam): the per-provider precedence chain
 /// wins over the global effective value, which already folds the section
 /// + env.
-Duration providerConnectTimeoutForUrl(Uri url) {  if (providerTuningRegistry.isEmpty) return effectiveProviderConnectTimeout;
+Duration providerConnectTimeoutForUrl(Uri url) {
+  if (providerTuningRegistry.isEmpty) return effectiveProviderConnectTimeout;
   for (final entry in providerTuningRegistry.matchesForUrl(url)) {
     final value = entry.connect;
     if (value != null) return value;

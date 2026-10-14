@@ -534,14 +534,11 @@ Future<bool> _afterTransientFailure(
   // governed this kill (the agent arms the timer with the derived
   // window) — the replay-budget math and the terminal story read it
   // BEFORE the latch re-arms (the reset wipes the reason).
-  final watchdogWindow =
-      cancelToken?.cancelReason is RunIdleWatchdogFire
+  final watchdogWindow = cancelToken?.cancelReason is RunIdleWatchdogFire
       ? (cancelToken!.cancelReason as RunIdleWatchdogFire).duration
       : null;
   final windowStory = _zeroByteWindowStory(model, watchdogWindow);
-  state.attemptLog.add(
-    _replayReason(watchdogReplay, error, windowStory),
-  );
+  state.attemptLog.add(_replayReason(watchdogReplay, error, windowStory));
   _rearmWatchdogLatch(cancelToken, watchdogReplay);
   // gh-1308: replaying into an endpoint that produced NOTHING is bounded
   // separately from the generic budget — every watchdog kill costs a full
@@ -570,7 +567,12 @@ Future<bool> _afterTransientFailure(
   if (state.zeroByteKills >= zeroByteBudget) {
     _pushTerminal(
       out,
-      _zeroByteStallTerminal(model, state.attemptLog, state.startedAt, windowStory),
+      _zeroByteStallTerminal(
+        model,
+        state.attemptLog,
+        state.startedAt,
+        windowStory,
+      ),
       resume,
     );
     return false;
@@ -685,10 +687,7 @@ final class _ZeroByteWindowStory {
 /// — the fire carries the agent's derived window), falling back to the
 /// gh-1554 precedence and then the provider default for direct-ladder
 /// callers whose cancel reason carries no duration.
-_ZeroByteWindowStory _zeroByteWindowStory(
-  Model model,
-  Duration? fireWindow,
-) {
+_ZeroByteWindowStory _zeroByteWindowStory(Model model, Duration? fireWindow) {
   final explicit = explicitStreamIdleForModel(model);
   final window = fireWindow ?? explicit?.$1 ?? providerStreamIdleTimeout;
   return _ZeroByteWindowStory(
