@@ -26,6 +26,23 @@ block a release again.
   path). A new path-triggered `installer-portability` CI leg proves the
   script under dash + busybox ash (ubuntu) and bash (macOS) on every
   `site/**` or generator change.
+- gh-1575: macOS clipboard paste fixed for TIFF-only pasteboards + the
+  Ctrl+V text fallback. `_readMacos` probes `«class TIFF»` after PNGf/JPEG
+  miss and converts via `sips -s format png` (a Preview/browser copy used
+  to dead-end on `clipboard holds no image`; a failed conversion keeps the
+  unavailable fall-through and every scratch file is cleaned up); new
+  `readPasteboardText` (`pbpaste` / xclip+wl-paste / PowerShell
+  Get-Clipboard) behind the same injectable `ProcessRunner`/`platform:`
+  seam, and Ctrl+V with a TEXT clipboard now inserts the clipboard text
+  into the composer instead of printing the image probe's dead-end reason
+  — bracketed-paste routing, gesture pairing and silent-failure semantics
+  unchanged. Review pass: the Windows `Get-Clipboard` read pins UTF-8
+  console output and normalizes embedded `\r\n` (OEM-code-page mojibake),
+  the Linux text backends pin `text/plain;charset=utf-8` (an image-only
+  clipboard can no longer leak bytes as "text"), the library doc no longer
+  overclaims the `FA_FAKE_PASTEBOARD` seam, and `FaTuiCallbacks` moved to
+  a `fa_tui_callbacks.dart` part file keeping `fa_tui.dart` under the
+  2800-line gate.
 
 - gh-1555 (W1, lazy/windowed-everywhere reads): the legacy full-open call
   sites migrate to windowed opens, so a session ledger past the gh-1073
