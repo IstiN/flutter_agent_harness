@@ -2,6 +2,13 @@ part of 'fah.dart';
 
 Future<void> _runApp(List<String> args) async {
   final packageVersion = _packageVersion();
+  // The Copilot PAT-mode user-agent carries the real fa version + OS
+  // (`copilot/<version> (<os>) term/unknown`) — lib/ stays pure Dart, so
+  // the host installs the identity at startup.
+  installCopilotCliIdentity(
+    version: packageVersion,
+    os: Platform.operatingSystem,
+  );
   _applyProviderFilterEnv();
   // Platform-aware chord display (issue #809): Option/Cmd labels on macOS.
   tuiKeyHintDarwin = Platform.isMacOS;

@@ -17,6 +17,9 @@ import 'dart:io';
 
 import 'paste_image.dart';
 
+export 'paste_image.dart'
+    show PasteboardWriteOk, PasteboardWriteResult, PasteboardWriteUnavailable;
+
 /// Runs a process to completion with [stdinText] written to its standard
 /// input (injectable `Process` layer).
 typedef ClipboardWriteRunner =

@@ -13,6 +13,20 @@ See [cli.md](cli.md) for the `/settings` hub and CLI flags.
 | `anthropic` | env `ANTHROPIC_API_KEY` | `api: 'anthropic-messages'`, `https://api.anthropic.com` | context window 200k / max 16k |
 | `google` | env `GOOGLE_API_KEY` | `api: 'google-generative-ai'`, `https://generativelanguage.googleapis.com/v1beta` (also Gemini media — see `MediaGateway`) | context window 1M / max 16k |
 | `openrouter` | env `OPENROUTER_API_KEY` (or `OPENAI_API_KEY`); OAuth PKCE via `lib/src/providers/openrouter_oauth.dart` + `services/openrouter_oauth_*` | `api: 'openai-completions'`, `https://openrouter.ai/api/v1` | `/api/v1/models` |
+| `copilot` | GitHub credential → short-lived Copilot API token exchange (`copilot_internal/v2/token`); see the Copilot section below | `api: 'openai-completions'` over the plan host (individual/business/enterprise/custom); token `proxy-ep` picks the tenant API host | `/models` (picker-enabled, tool-call capable, `/chat/completions`-capable entries) |
+
+## GitHub Copilot credentials
+
+Three supported GitHub credential shapes (`lib/src/providers/copilot_oauth.dart`):
+
+| Credential | Support |
+| --- | --- |
+| Device-flow OAuth token (`gho_`/`ghu_`) | **Recommended.** `/provider copilot` → GitHub device flow; exchanged for a ~30-min Copilot API token (single-flight, proactive refresh 2 min before expiry, one 401/403 refresh+retry) |
+| `COPILOT_GITHUB_TOKEN` env (headless) | An OAuth token (exchanged like above) **or** a fine-grained PAT (`github_pat_…`) |
+| Fine-grained PAT (pasted or env) | **PAT mode:** the exchange is skipped entirely — the raw PAT is the Bearer against the configured base URL (the seat's tier host), with the official Copilot CLI's first-party identity headers (`copilot-integration-id: copilot-developer-cli`, `user-agent: copilot/<fa-version> (<os>) term/unknown`) — the only request shape the Copilot API accepts a PAT with. No 401 refresh-retry (nothing to refresh). Requires the token's **"Copilot Requests"** permission and a Copilot seat |
+| Classic PAT (`ghp_…`) | Never supported by Copilot — rejected at paste time |
+
+Headless flows: `--provider copilot --model <id>` with `COPILOT_GITHUB_TOKEN` (OAuth or fine-grained PAT), or a saved entry's key slot (`FA_KEY_COPILOT_<NAME>`). `/provider export` copies the saved Copilot account's full token to the clipboard (picker on several accounts; the token never prints to the transcript).
 
 ## CLI flags
 

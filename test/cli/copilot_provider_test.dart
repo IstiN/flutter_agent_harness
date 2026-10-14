@@ -438,19 +438,20 @@ void main() {
       'a dead token exchange is reported before manual model entry',
       () async {
         final fake = FakeStreamFunction([textTurn('ok')]);
-        final deadExchange = http_testing.MockClient((request) async {
+        // PAT mode never calls the exchange; the Copilot API rejects the
+        // permission-less PAT at /models with a 401 (mocked here).
+        final deadPat = http_testing.MockClient((request) async {
           if (request.url.host == 'api.github.com') {
-            return http.Response(
-              '{"documentation_url":"https://docs.github.com/rest",'
-              '"message":"Not Found","status":"404"}',
-              404,
-            );
+            fail('PAT mode must never call the token exchange');
+          }
+          if (request.url.path.endsWith('/models')) {
+            return http.Response('{"message":"Bad credentials"}', 401);
           }
           return http.Response('{"data":[]}', 200);
         });
         final registry = CustomProviderRegistry([]);
         final cli = cliFor(
-          modelsHttpClient: deadExchange,
+          modelsHttpClient: deadPat,
           fake.call,
           envVarValue: (_) => null,
           customProviders: registry,
@@ -469,9 +470,9 @@ void main() {
         io.sendLine('');
         await waitForIt(() => io.out.toString().contains('Copilot plan'));
         io.sendLine('1'); // individual
-        // The exchange failure is surfaced, not swallowed into an empty
-        // model list.
-        await waitForIt(() => io.out.toString().contains('token exchange'));
+        // The Copilot API rejection is surfaced at the model fetch, not
+        // swallowed into a silent manual-entry drop.
+        await waitForIt(() => io.out.toString().contains('returned no models'));
         await waitForIt(() => io.out.toString().contains('model id: '));
         io.sendLine('gpt-4.1');
         await waitForIt(
@@ -481,8 +482,8 @@ void main() {
         await run;
 
         final output = io.out.toString();
-        expect(output, contains('token exchange'));
-        expect(output, contains('404'));
+        expect(output, contains('returned no models'));
+        expect(output, contains('Copilot Requests'));
         expect(registry.find('copilot-hubot')!.modelId, 'gpt-4.1');
       },
     );
