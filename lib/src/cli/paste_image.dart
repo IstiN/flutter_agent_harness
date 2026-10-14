@@ -139,6 +139,19 @@ final class PasteboardWriteUnavailable extends PasteboardWriteResult {
   final String reason;
 }
 
+/// TEXT clipboard content (gh-1575): the Ctrl+V image probe falls back to
+/// the platform text reader (`pbpaste` / xclip / Get-Clipboard) when the
+/// pasteboard holds no image — the composer inserts [text] instead of
+/// printing the image probe's dead-end reason. Produced only by the IO
+/// glue in `clipboard_reader.dart`; a text result never carries image
+/// bytes, so it can never become a chip.
+final class PasteboardText extends PasteboardRead {
+  const PasteboardText(this.text);
+
+  /// The clipboard's plain text (UTF-8 decoded, untrimmed).
+  final String text;
+}
+
 /// The clean note for a terminal with no reachable pasteboard (edge E1):
 /// names what happened and the file-path fallback.
 const clipboardUnavailableHint =
