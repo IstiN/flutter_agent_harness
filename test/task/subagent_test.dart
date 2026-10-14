@@ -516,6 +516,30 @@ void main() {
       );
 
       test(
+        'hub-shaped recipients pass the guard through the SWAPPABLE wrapper '
+        '(app/CLI hand the manager the wrapper, hub composite swapped in)',
+        () async {
+          final hub = _FakeHub()..resolvable.add('582cf4361566292c');
+          final swappable = SwappableMessagingRepository(repo);
+          final routed = SubagentManager(
+            parentSessionId: 'p',
+            messaging: swappable,
+          )..mailboxPrefix = 'sess1';
+          // File layer only: a hub peer id is still honestly unknown.
+          expect(
+            () => routed.enqueueMessage('582cf4361566292c', note('pong')),
+            throwsStateError,
+          );
+          swappable.swap(
+            FallbackMessagingRepository(primary: hub, fallback: repo),
+          );
+          await routed.enqueueMessage('582cf4361566292c', note('PONG'));
+          expect(hub.sent.single.toId, '582cf4361566292c');
+          expect(hub.sent.single.text, 'PONG');
+        },
+      );
+
+      test(
         'unresolvable recipients still fail honestly on a live hub',
         () async {
           final fabric = FallbackMessagingRepository(

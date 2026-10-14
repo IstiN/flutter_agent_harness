@@ -12,6 +12,7 @@ import 'dart:convert';
 import '../env/execution_env.dart';
 import '../session/session_repo.dart';
 import 'agent_message.dart';
+import 'fallback_messaging_repository.dart' show RoutingMessagingRepository;
 import 'messaging_repository.dart';
 
 /// File-based messaging repository. Layout:
@@ -571,7 +572,16 @@ Future<int> _moveInboxFiles(
 /// root (macOS App Group) to `~/.fah/sessions`, the mailboxes must move with
 /// it — a fabric pinned to the old root would let an attached app write into
 /// inboxes no running process ever drains.
-final class SwappableMessagingRepository implements MessagingRepository {
+///
+/// It also forwards [RoutingMessagingRepository] to the CURRENT delegate:
+/// hosts hand the subagent manager THIS wrapper while the hub-primary
+/// composite is swapped in underneath at runtime (app opt-in), so the
+/// manager's recipient guard must see through it — otherwise a hub peer
+/// id/name/#channel is rejected as an "unknown subagent" even though the
+/// composite can route it. A non-routing delegate (bare file layer)
+/// answers "not connected / unresolvable", i.e. local routing only.
+final class SwappableMessagingRepository
+    implements MessagingRepository, RoutingMessagingRepository {
   SwappableMessagingRepository(MessagingRepository initial) : _inner = initial;
 
   MessagingRepository _inner;
@@ -579,6 +589,18 @@ final class SwappableMessagingRepository implements MessagingRepository {
   /// Atomically replaces the delegate repository. In-flight calls finish on
   /// their old delegate; every later call goes to [repo].
   void swap(MessagingRepository repo) => _inner = repo;
+
+  RoutingMessagingRepository? get _router =>
+      _inner is RoutingMessagingRepository
+      ? _inner as RoutingMessagingRepository
+      : null;
+
+  @override
+  bool get isConnected => _router?.isConnected ?? false;
+
+  @override
+  Future<String?> resolveTarget(String toId) async =>
+      await _router?.resolveTarget(toId);
 
   @override
   Future<void> register(

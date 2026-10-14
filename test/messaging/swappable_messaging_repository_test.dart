@@ -2,7 +2,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 /// Recording fake over the [MessagingRepository] interface.
-final class _RecordingRepo implements MessagingRepository {
+class _RecordingRepo implements MessagingRepository {
   final sent = <AgentMessage>[];
   final registered = <String>[];
   final touched = <String>[];
@@ -71,4 +71,35 @@ void main() {
     expect(first.touched, hasLength(1));
     expect(second.touched, ['main']);
   });
+
+  test('routing capability follows the CURRENT delegate (hub composite '
+      'swapped in under the wrapper is visible to recipient guards)', () async {
+    final fabric = SwappableMessagingRepository(_RecordingRepo());
+    // Bare file layer: no hub — not connected, nothing resolvable.
+    expect(fabric.isConnected, isFalse);
+    expect(await fabric.resolveTarget('d295dcc79012f015'), isNull);
+
+    final hub = _RoutingRepo()..resolvable.add('d295dcc79012f015');
+    fabric.swap(hub);
+    expect(fabric.isConnected, isTrue);
+    expect(await fabric.resolveTarget('d295dcc79012f015'), 'd295dcc79012f015');
+    expect(await fabric.resolveTarget('nobody'), isNull);
+
+    // Swapping back to the file layer withdraws the capability.
+    fabric.swap(_RecordingRepo());
+    expect(fabric.isConnected, isFalse);
+    expect(await fabric.resolveTarget('d295dcc79012f015'), isNull);
+  });
+}
+
+final class _RoutingRepo extends _RecordingRepo
+    implements RoutingMessagingRepository {
+  final resolvable = <String>{};
+
+  @override
+  bool get isConnected => true;
+
+  @override
+  Future<String?> resolveTarget(String toId) async =>
+      resolvable.contains(toId) ? toId : null;
 }
