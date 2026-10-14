@@ -10,7 +10,7 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 BUNDLE_DIR="$REPO_ROOT/fa-local/bundle"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
-mkdir -p "$INSTALL_DIR/lib"
+mkdir -p "$INSTALL_DIR/../lib"
 
 cd "$REPO_ROOT"
 
@@ -37,8 +37,14 @@ if [ "$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
   codesign -s - -f "$INSTALL_DIR/fa" >/dev/null 2>&1 || true
 fi
 cp "$BUNDLE_DIR/version.txt" "$INSTALL_DIR/version.txt"
+# gh-1574: the AOT binary's native-assets resolver looks for the bundle
+# libs in <exe_dir>/../lib — with the exe at $INSTALL_DIR/fa that is
+# $INSTALL_DIR/../lib (e.g. ~/.local/lib for ~/.local/bin/fa), never
+# $INSTALL_DIR/lib.
 if [ -d "$BUNDLE_DIR/lib" ]; then
-  cp -R "$BUNDLE_DIR/lib/"* "$INSTALL_DIR/lib/" 2>/dev/null || true
+  if ! cp -R "$BUNDLE_DIR/lib/"* "$INSTALL_DIR/../lib/"; then
+    echo "⚠  failed to copy the bundle libs into $INSTALL_DIR/../lib — SQLite reads will fail until that directory holds the bundled libsqlite3; check permissions and disk space, then reinstall" >&2
+  fi
 fi
 
 echo "→ Installed $INSTALL_DIR/fa"
