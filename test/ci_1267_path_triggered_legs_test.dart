@@ -193,10 +193,12 @@ void main() {
       );
       expect(
         body,
-        contains('pty-coverage-gate|pty-visual|flutter-app-lock-smoke)'),
+        contains('pty-coverage-gate|pty-visual|flutter-app-lock-smoke'
+            '|installer-portability)'),
         reason: 'platform class (#1368): a red windows release build blocks '
             'the MERGE via the aggregate but never holds the pure-Dart '
-            'publish hostage',
+            'publish hostage (gh-1596 grew the class with the installer '
+            'sh-portability leg)',
       );
     });
   });
