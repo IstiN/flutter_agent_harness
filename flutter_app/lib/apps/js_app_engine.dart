@@ -16,6 +16,7 @@ import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:fa/apps/app_storage.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/app_log.dart';
