@@ -1013,18 +1013,9 @@ extension AgentCliShellJobSettle on AgentCli {
       _style.dim('[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}'),
     );
     if (_exited) return;
-    final message =
-        '<system-notice>\n'
-        'Background shell job ${job.id} finished with exit code '
-        '${job.exitCode}.\n'
-        // Issue #599: the preview, never the multi-line body — this
-        // notice is echoed into the transcript verbatim, and the full
-        // command lives in the job log (right below).
-        'Command: ${shellJobCommandPreview(job.command)}\n'
-        'Log: ${job.logPath}\n'
-        'Check the result with bash_job (action: output) or by reading the '
-        'log file, and act on it when the result was awaited.\n'
-        '</system-notice>';
+    // The shared composer (gh-1604): the command rides the bounded
+    // first/last ~120-char label, never the full body.
+    final message = shellJobSettleNoticeText(job);
     // The notice is a persisted user message: echo it into the live
     // transcript through the same system-notice renderer the replay path
     // uses (#446), so resume matches live 1:1. Steered messages skip the
