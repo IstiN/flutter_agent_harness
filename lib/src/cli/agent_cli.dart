@@ -291,6 +291,7 @@ part 'agent_cli_steering.dart';
 part 'agent_cli_tools.dart';
 part 'agent_cli_io.dart';
 part 'agent_cli_hep_io.dart';
+part 'agent_cli_headless_exit.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_waiting.dart';
 part 'agent_cli_subagent_board.dart';
@@ -310,6 +311,13 @@ part 'agent_cli_input.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
+
+/// gh-1603: the explicit headless marker for a run that settled WITHOUT a
+/// final answer (an unrecoverable empty completion after the nudge budget).
+/// Written to the diagnostics channel next to a non-zero exit so the bench
+/// adapter can classify "ended mid-task" instead of recording a clean
+/// completion.
+const String headlessIncompleteMarker = '__FA_INCOMPLETE';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -1932,12 +1940,19 @@ class AgentCli {
     // `state.messages` — the last completed turn's stop reason is taken
     // from the turn events as they fire, before any folding.
     StopReason? terminalStopReason;
+    // gh-1603: set inside the guarded section right after the settle (the
+    // probe must run before post-run compaction folds the transcript).
+    var endedOnEmptyCompletion = false;
     final turnSub = _agent.subscribe((event, _) {
       if (event is TurnEndEvent) {
         terminalStopReason = event.message.stopReason;
       }
     });
     _headlessMode = true;
+    // gh-1603: unattended runs get a wider empty-reply nudge budget than
+    // the REPL's one-shot (#1085 M2b) — the session may end only after
+    // `1 + headlessEmptyReplyNudges` consecutive unrecoverable empties.
+    _emptyReplyNudgesLeft = config.headlessEmptyReplyNudges;
     try {
       // The same pre-flight compaction guard as the REPL's [_runPrompt]:
       // a resumed session already over the threshold must compact BEFORE
@@ -1971,6 +1986,13 @@ class AgentCli {
         lastMessage,
         isAutoContinue: false,
       );
+      // gh-1603: captured BEFORE [_afterRun] — post-run compaction folds
+      // assistant turns out of the visible transcript (issue #413), so the
+      // last-message probe is only valid here. A run that still settles on
+      // an empty completion after the nudge budget is an UNFINISHED session
+      // (no final answer was produced); error/aborted terminals keep their
+      // own exit codes below.
+      endedOnEmptyCompletion = _settledOnEmptyCompletion();
       // Awaits any in-flight TTSR retry chain, persists the messages, and
       // auto-compacts — the same end-of-turn sequence as a REPL run. The
       // continuation paths recurse through [_runPrompt], which finalizes
@@ -2013,17 +2035,13 @@ class AgentCli {
       // pipeable prose stream (issue #774 AC3).
       await _flushUsageLedger(mirrorTokensLineToRunLog: true);
     }
-    // The exit code describes the LAST completed turn's terminal outcome
-    // (captured from the turn events above) — not the visible transcript,
-    // which post-run compaction rebuilds: the checkpoint fold drops the
-    // assistant turns entirely, and the classic trim marker lands after
-    // the error stop; both used to mask a failed run as exit 0 (issue
-    // #413).
-    return switch (terminalStopReason) {
-      StopReason.error => 1,
-      StopReason.aborted => 130,
-      _ => 0,
-    };
+    // gh-1603: the exit-code policy lives in the part-file extension — an
+    // unfinished session prints the explicit marker and exits 1; error/
+    // aborted terminals keep their own codes.
+    return _headlessExitCode(
+      endedOnEmptyCompletion: endedOnEmptyCompletion,
+      terminalStopReason: terminalStopReason,
+    );
   }
 
   /// Runs one user prompt to completion. On a CodeMie auth-session expiry,

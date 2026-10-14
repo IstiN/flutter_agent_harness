@@ -17,6 +17,13 @@
 ///   maps it to non-zero and the interactive mode prints it and returns to
 ///   the prompt — instead of the silent exit-0 settle that killed the
 ///   gh-1577 trials mid-task.
+///
+/// gh-1603: the first re-stream replays the plain request; from the second
+/// on, the request carries the [emptyContinuationNudge] user message — a
+/// cap-truncated reasoning model re-streamed verbatim repeats the empty
+/// outcome, the nudge is the new signal that breaks the symmetry. The
+/// classifier treats the exact nudge message as transparent, so the turn's
+/// partial-content window survives a nudged retry.
 part of 'agent_loop.dart';
 
 /// See the library doc above.
@@ -82,6 +89,20 @@ Future<(AssistantMessage, Context)> retryEmptyCompletion(
         ]);
       }
       hiccup++;
+    }
+    // gh-1603: the FIRST re-stream replays the plain request; from the
+    // second on, the previous retry already came back empty — inject the
+    // continuation nudge so the request carries new signal (a cap-truncated
+    // reasoning model re-streamed verbatim repeats the empty outcome). The
+    // MessageStart/End pair lands the nudge in the host transcript and
+    // session record (same as steering injections — a truthful record, the
+    // gh-1577 invariant); the classifier treats the exact nudge message as
+    // transparent, so the turn's partial-content window survives it.
+    if (generic + hiccup >= 2) {
+      final nudge = UserMessage.text(emptyContinuationNudge);
+      await emit(MessageStartEvent(nudge));
+      await emit(MessageEndEvent(nudge));
+      out.messages.add(nudge);
     }
     (current, out) = await _streamAssistantResponse(
       out,
