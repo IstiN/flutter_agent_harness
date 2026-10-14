@@ -1013,9 +1013,9 @@ int _bySettledDescending(ShellJobEntry a, ShellJobEntry b) {
 
 String _shellJobStatusLine(ShellJobEntry entry) {
   final state = entry.isRunning ? 'running' : 'exited(${entry.exitCode})';
-  final command = entry.command.length > 80
-      ? '${entry.command.substring(0, 79)}…'
-      : entry.command;
+  // gh-1604: first/last ~120 chars of the flattened command — a multi-KB
+  // pipeline never renders in full into the wall again.
+  final command = shellJobCommandLabel(entry.command);
   // gh-1438: exited rows carry their age — a settled-but-never-collected
   // job is the exact thing stale-id polling hunts for.
   final ago = entry.isRunning ? '' : ' — exited ${_settledAgo(entry)}';
