@@ -57,5 +57,19 @@ void main() {
             '  dart run scripts/gen_installers.dart',
       );
     });
+    if (artifact.endsWith('.ps1')) {
+      // PS 5.1 reads BOM-less scripts in the system ANSI code page and
+      // mojibakes the UTF-8 glyphs at parse time — the write-time BOM is
+      // part of the artifact (readAsStringSync strips it, so assert bytes).
+      test('$artifact keeps its UTF-8 BOM', () {
+        final bytes = File('$root/$artifact').readAsBytesSync();
+        expect(
+          bytes.sublist(0, 3),
+          [0xEF, 0xBB, 0xBF],
+          reason: '$artifact lost its UTF-8 BOM — PS 5.1 would parse the '
+              'banner/glyphs through the ANSI code page',
+        );
+      });
+    }
   }
 }

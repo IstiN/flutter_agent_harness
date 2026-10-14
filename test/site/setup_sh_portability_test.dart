@@ -212,7 +212,7 @@ void main() {
             reason: 'provider $id missing from the model-selection case');
         expect(
           block!.group(1)!,
-          contains('ask model "Model id on that endpoint"'),
+          contains(r'model=$(ask "Model id on that endpoint")'),
           reason: 'no presets for $id — the wizard must ask for the model '
               'id directly instead of showing a fake numbered menu',
         );
