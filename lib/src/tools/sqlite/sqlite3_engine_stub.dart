@@ -11,8 +11,13 @@ import 'sqlite_reader.dart';
 
 /// A [SqliteEngine] that is never usable on the web.
 final class Sqlite3Engine implements SqliteEngine {
-  /// Creates an engine.
-  const Sqlite3Engine();
+  /// Creates an engine. [openOverride] and [layoutRepair] are accepted for
+  /// API parity with the FFI engine; the web engine never opens a database.
+  final SqliteOpen? openOverride;
+
+  final bool Function()? layoutRepair;
+
+  const Sqlite3Engine({this.openOverride, this.layoutRepair});
 
   @override
   SqliteDatabase openReadOnly(String path) => throw UnsupportedError(
@@ -20,3 +25,8 @@ final class Sqlite3Engine implements SqliteEngine {
     'available on the web',
   );
 }
+
+/// Web stub for the gh-1574 layout repair (`repairStaleSqliteBundleLayout`
+/// parity with the FFI engine): there is no installed-binary layout to heal
+/// on the web.
+bool repairStaleSqliteBundleLayout({String? executablePath}) => false;
