@@ -62,8 +62,12 @@ Future<void> loadUnpackedWidget(
     return;
   }
 
-  // Replace check (AC4/E3): an existing id needs an explicit confirm —
-  // the dialog names the old install and its source.
+  // Replace check (AC4/E3): ANY app already occupying the id needs an
+  // explicit confirm — including agent-created apps with no install
+  // record (their code would be overwritten without the recorded hashes
+  // protecting anything), so the warning keys off existence, not off the
+  // install record. The unknown source is labeled honestly (see the
+  // `agentCreatedSource` sentinel) instead of reading as a fresh load.
   final existing = await store.listApps();
   if (!context.mounted) return;
   final replaced = existing.where((app) => app.id == inspection.id).toList();
@@ -79,7 +83,9 @@ Future<void> loadUnpackedWidget(
       version: inspection.version,
       network: inspection.network,
       allowedCommands: inspection.allowedCommands,
-      existingSource: existingApp?.installSource,
+      existingSource: existingApp == null
+          ? null
+          : (existingApp.installSource ?? UnpackedWidgetLoader.agentCreatedSource),
       existingVersion: existingApp?.version,
     ),
   );
@@ -167,7 +173,9 @@ class UnpackedLoadConfirmDialog extends StatelessWidget {
   final List<String> allowedCommands;
 
   /// The existing install this load replaces: its source
-  /// (`catalog` | `unpacked`) and version. Null when the id is fresh.
+  /// (`catalog` | `unpacked`), the [UnpackedWidgetLoader.agentCreatedSource]
+  /// sentinel for an app with no install record (agent-created), or null
+  /// when the id is fresh.
   final String? existingSource;
   final String? existingVersion;
 
@@ -176,6 +184,11 @@ class UnpackedLoadConfirmDialog extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final replaces = existingSource != null;
+    final sourceLabel = switch (existingSource) {
+      UnpackedWidgetLoader.origin => l10n.unpackedSourceUnpacked,
+      UnpackedWidgetLoader.agentCreatedSource => l10n.unpackedSourceAgent,
+      _ => l10n.unpackedSourceCatalog,
+    };
     return AlertDialog(
       icon: const Icon(Icons.folder_open),
       title: Text(l10n.unpackedLoadTitle),
@@ -208,9 +221,7 @@ class UnpackedLoadConfirmDialog extends StatelessWidget {
                     Expanded(
                       child: Text(
                         l10n.unpackedLoadReplaceNote(
-                          existingSource == UnpackedWidgetLoader.origin
-                              ? l10n.unpackedSourceUnpacked
-                              : l10n.unpackedSourceCatalog,
+                          sourceLabel,
                           existingVersion ?? '',
                         ),
                         style: theme.textTheme.bodySmall?.copyWith(

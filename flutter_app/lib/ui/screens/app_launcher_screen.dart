@@ -1657,7 +1657,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// #866): the app stays on the grid — flagged, never fatal.
   /// gh-1616 I3: a small corner badge on tiles loaded from a local folder
   /// ("unpacked" provenance), so the grid shows the install source at a
-  /// glance. Composes with the seed-error badge (both can show at once).
+  /// glance. Composes with the seed-error badge (both can show at once):
+  /// it hugs the TOP-LEFT corner while the error badge keeps the
+  /// top-right, so a broken unpacked app still shows both — the folder
+  /// badge must never paint over the copyable-error affordance.
   Widget _maybeUnpackedBadge(FahColors colors, String key, Widget tile) {
     if (!key.startsWith('app:')) return tile;
     final app = _appsById[key.substring(4)];
@@ -1670,7 +1673,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         tile,
         Positioned(
           top: -3,
-          right: -3,
+          left: -3,
           child: Tooltip(
             message: context.l10n.unpackedSourceBadgeTooltip,
             child: Container(

@@ -1,4 +1,6 @@
 // l10n:ignore-file — prototype redesign ships en-only copy for now
+// (the "Load unpacked" button below is the one deliberate exception: the
+// key already exists for the launcher row, so it is reused).
 import 'dart:async';
 
 import 'package:fa/apps/app_icon.dart';
@@ -7,6 +9,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/unpacked_load_flow.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:fa/apps/js_app_navigation.dart';
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';

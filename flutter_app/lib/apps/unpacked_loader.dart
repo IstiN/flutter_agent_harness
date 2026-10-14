@@ -45,7 +45,14 @@ class UnpackedInspection {
 
   /// The manifest id — the destination folder name under `apps/`. Null
   /// when the manifest never parsed (the load is refused anyway).
-  String? get id => validation.id;
+  ///
+  /// Trimmed: the id rule (`^[a-z0-9][a-z0-9-]{1,31}$`) is enforced on
+  /// `id.trim()` (the same value `WidgetManifest.fromJson` stores), so
+  /// every consumer — the replace lookup, the confirm dialog, the install
+  /// folder — sees the rule-enforced form. A padded manifest id
+  /// (`" fa-agents "`) lands in `apps/fa-agents/`, never in a
+  /// space-padded folder that violates the rule it just passed.
+  String? get id => validation.id?.trim();
   String? get name => validation.name;
   String? get version => validation.version;
 
@@ -85,6 +92,14 @@ class UnpackedWidgetLoader {
   /// The unpacked install origin recorded in `apps/.installed.json`
   /// (invariant I3 — provenance is data the UI and the updater read).
   static const String origin = 'unpacked';
+
+  /// The synthesized source the load confirm shows for an existing app
+  /// with NO install record (agent-created via the file tools): the
+  /// replace warning must still fire (AC4 — any existing id is replaced
+  /// by a load), and the label names the honest provenance — "created by
+  /// the agent" — instead of inventing a fake install. Never written to
+  /// `.installed.json`; purely a dialog-input marker.
+  static const String agentCreatedSource = 'agent';
 
   /// Validates a picked folder (no writes). Deterministic and pure with
   /// respect to the env — the UI can show issues before any confirm.

@@ -9,8 +9,8 @@ library;
 import 'dart:typed_data';
 
 import 'package:fa/apps/unpacked_load_flow.dart';
+import 'package:fa/apps/unpacked_loader.dart';
 import 'package:fa/apps/widget_payload_validator.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
@@ -49,6 +49,25 @@ void main() {
       size: goldenSizeTall,
     );
     await expectGolden(tester, 'unpacked_load_confirm_replace');
+  });
+
+  testWidgets('load confirmation names an agent-created app as the source', (
+    tester,
+  ) async {
+    // An existing app with NO install record (agent-created): the replace
+    // warning fires with the honest "created by the agent" provenance.
+    await pumpGolden(
+      tester,
+      const UnpackedLoadConfirmDialog(
+        id: 'focus-timer',
+        name: 'Focus Timer',
+        version: '0.3.0',
+        existingSource: UnpackedWidgetLoader.agentCreatedSource,
+        existingVersion: '0.2.0',
+      ),
+      size: goldenSizeTall,
+    );
+    await expectGolden(tester, 'unpacked_load_confirm_replace_agent');
   });
 
   testWidgets('the named-issues dialog lists the validator errors', (

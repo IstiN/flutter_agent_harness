@@ -87,6 +87,44 @@ void main() {
         },
       );
 
+      test(
+        'a whitespace-padded manifest id installs under the trimmed id',
+        () async {
+          // The id rule runs against `id.trim()` (and WidgetManifest
+          // itself trims), so the folder the widget lands in and the
+          // `.installed.json` key must carry the trimmed, rule-enforced
+          // form — never a padded `apps/ fa-agents /` (gh-1616 review).
+          final env = MemoryExecutionEnv();
+          final loader = UnpackedWidgetLoader(env: env);
+          final inspection = await loader.inspect(folder(id: ' fa-agents '));
+          expect(inspection.isValid, isTrue, reason: '${inspection.errors}');
+          expect(inspection.id, 'fa-agents');
+
+          await loader.install(inspection);
+
+          expect(
+            (await env.listDir('apps')).valueOrNull ?? const <String>[],
+            ['fa-agents'],
+            reason: 'no space-padded sibling folder may be created',
+          );
+          expect(
+            (await env.readTextFile(
+              'apps/fa-agents/manifest.json',
+            )).valueOrNull,
+            isNotNull,
+          );
+          final meta = castMeta(
+            jsonDecode(
+              (await env.readTextFile(
+                AppsStore.installedMetaFile,
+              )).getOrThrow(),
+            ),
+          );
+          expect(meta.keys, contains('fa-agents'));
+          expect(meta.keys, isNot(contains(' fa-agents ')));
+        },
+      );
+
       test('multi-file folders land nested under apps/<id>/', () async {
         final env = MemoryExecutionEnv();
         final loader = UnpackedWidgetLoader(env: env);

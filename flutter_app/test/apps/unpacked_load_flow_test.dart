@@ -222,6 +222,93 @@ void main() {
     );
   });
 
+  testWidgets('AC4: replacing an agent-created app (no install record) warns', (
+    tester,
+  ) async {
+    final (env, _) = await _pump(tester, _StubPicker(goodFolder()));
+    // An agent-created app: files written straight into apps/<id>/ by the
+    // agent's file tools — NO `.installed.json` record, so installSource
+    // is null. Loading the same id overwrites that code, so the replace
+    // warning must still fire (AC4), naming the honest provenance.
+    await env.writeFile(
+      'apps/fa-agents/manifest.json',
+      jsonEncode({'id': 'fa-agents', 'name': 'Agent build', 'version': '0.1.0'}),
+    );
+    await env.writeFile('apps/fa-agents/widget.js', 'agent-code');
+
+    await tester.tap(find.text('load'));
+    await tester.pumpAndSettle();
+
+    // The replace warning — not a plain fresh-load confirm.
+    expect(find.byIcon(Icons.warning_amber_outlined), findsOneWidget);
+    expect(find.text('Replace'), findsOneWidget);
+    expect(find.textContaining('agent'), findsWidgets);
+    expect(find.textContaining('0.1.0'), findsOneWidget);
+
+    // Cancel → the agent-created code survives untouched.
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(
+      (await env.readTextFile('apps/fa-agents/widget.js')).valueOrNull,
+      'agent-code',
+    );
+  });
+
+  testWidgets(
+    'AC4: a padded-id pick still warns over the trimmed-id install',
+    (tester) async {
+      // The id is trimmed before the replace lookup (gh-1616 review): a
+      // " fa-agents " manifest must be recognized as replacing the
+      // existing fa-agents install, not as a fresh id.
+      final (env, manager) = await _pump(tester, _StubPicker(const {}));
+      final store = AppsStore(env, readAsset: (_) async => '');
+      await store.installWidget(
+        id: 'fa-agents',
+        version: '2.0.0',
+        files: {
+          'manifest.json': utf8.encode(
+            jsonEncode({'id': 'fa-agents', 'name': 'Cat', 'version': '2.0.0'}),
+          ),
+          'widget.js': utf8.encode('catalog'),
+        },
+      );
+
+      final padded = {
+        'fa-agents/manifest.json': utf8.encode(
+          jsonEncode({
+            'id': ' fa-agents ',
+            'name': 'FA Agents',
+            'version': '0.3.0',
+          }),
+        ),
+        'fa-agents/widget.js': utf8.encode('jsr.render(null);'),
+      };
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => loadUnpackedWidget(
+                  context,
+                  manager: manager,
+                  appsStore: store,
+                  picker: _StubPicker(padded),
+                ),
+                child: const Text('load'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('load'));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.warning_amber_outlined), findsOneWidget);
+      expect(find.text('Replace'), findsOneWidget);
+    },
+  );
+
   testWidgets('E1: an empty pick (vanished folder) is a silent no-op', (
     tester,
   ) async {
