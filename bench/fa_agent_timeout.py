@@ -68,6 +68,33 @@ margin) into the agent session, so fa's own deadline awareness can steer
 wrap-up before the kill. With no knobs the export is absent — fa never
 invents a clock (see deadline_epoch_ms / deadline_env_from).
 
+Round 5 (gh-1576) — cap resolution: the deadline becomes TRUTHFUL when an
+external harness caps the trial below fa's own knobs. The incident
+(TB 2.1, run 38271607849): harbor hard-killed four extract-moves-from-video
+trials at the dataset-declared 1800s while fa planned against the adapter's
+3600s abs ceiling — the T-3min wrap-up steer was armed at minute 57 and
+never fired, and the audit writer never ran because the kill came from
+outside. The fix is a protocol, not a knob: the workflow resolves each
+shard task's declared agent timeout (task.toml `[agent] timeout_sec`)
+BEFORE launch and exports it as
+
+  FA_EXTERNAL_CAP_SEC          external harness cap seconds (empty/absent
+                               = unknown — knobs rule alone, byte-for-byte
+                               today; malformed/<= 0/absurd values are
+                               rejected with a warning, knobs-only fallback)
+
+and every deadline computation composes effective_cap = min(external,
+knob) with the winning source recorded in the audit. Invariant I1: fa
+NEVER sees a deadline later than any known external cap. Invariant I2:
+every trial termination leaves the audit (the adapters add incremental
+checkpoints plus a SIGTERM/SIGINT and cancellation flush so an external
+kill still lands a final record with outcome external_kill; the adapter's
+own kill AT the external cap is outcome external_cap). The ProgressWatch /
+ProgressLadder kill deadlines clamp to the external cap the same way, so
+the adapter — not harbor's blind wait_for — decides and audits the kill
+whenever it can. SIGKILL still leaves nothing in-container (non-goal);
+the incremental checkpoints are the best-effort residue.
+
 Extension signal (E1): the counters fed to ProgressLadder measure the
 agent process's own output bytes. The harness itself emits nothing into
 that stream on a timer — EXCEPT fa's own liveness lines (the ⏳ tool
@@ -84,6 +111,7 @@ from __future__ import annotations
 import math
 import os
 import time
+import warnings
 from dataclasses import dataclass, field
 
 _BASE_DEFAULT = 360.0
@@ -139,6 +167,139 @@ def _flag(env, name, default=False):
     # A mistyped flag must never silently disable the extension (a silent
     # mis-parse costs a multi-hour run) - fail loud, same as _number().
     raise ValueError(f"{name} must be boolean (true/false), got: {raw!r}")
+
+
+# ── Cap resolution (gh-1576) ─────────────────────────────────────────────
+# The external harness cap (harbor's per-task `[agent] timeout_sec`, tb's
+# harness cap) resolved by the workflow BEFORE launch and exported as
+# FA_EXTERNAL_CAP_SEC. Unlike the knob knobs (fail-loud: a mistyped knob
+# costs a whole shard) a malformed cap DEGRADES: knobs-only fallback with
+# a warning — the run must never crash inside a trial over harness
+# metadata, and it must never arm a clock off garbage either.
+EXTERNAL_CAP_ENV = "FA_EXTERNAL_CAP_SEC"
+
+# Anything above this is rejected as absurd rather than trusted: the
+# exported deadline is now_ms + cap*1000 and must stay inside an int64
+# (Dart int) with room to spare. Real harness caps are minutes-to-hours;
+# 1e12 seconds (~31,700 years) is unreachably far above any of them.
+_EXTERNAL_CAP_MAX_SEC = 1e12
+
+EXTERNAL_KNOWN = "known"
+EXTERNAL_UNKNOWN = "unknown"
+EXTERNAL_REJECTED = "rejected"
+
+# The verdict name for the audit's outcome field when the external cap
+# is what binds the kill deadline (the knob-clock verdicts keep theirs).
+_EXTERNAL_CAP = "external_cap"
+
+
+def external_cap_from_env(env=None, quiet: bool = False):
+    """(cap_sec | None, status) for FA_EXTERNAL_CAP_SEC — never raises.
+
+    status: EXTERNAL_KNOWN (a finite, positive, sane number) |
+    EXTERNAL_UNKNOWN (absent or blank — no cap was exported) |
+    EXTERNAL_REJECTED (malformed / <= 0 / non-finite / absurdly large:
+    ignored with a warning, knobs-only fallback — AC8). quiet=True
+    suppresses the warning for callers that log it themselves.
+    """
+    raw = _optional(env if env is not None else os.environ, EXTERNAL_CAP_ENV)
+    if raw is None:
+        return None, EXTERNAL_UNKNOWN
+    try:
+        value = float(raw)
+    except ValueError:
+        return _reject(raw, quiet)
+    if not math.isfinite(value) or value <= 0 or value > _EXTERNAL_CAP_MAX_SEC:
+        return _reject(raw, quiet)
+    return value, EXTERNAL_KNOWN
+
+
+def _reject(raw: str, quiet: bool):
+    if not quiet:
+        warnings.warn(
+            f"{EXTERNAL_CAP_ENV}={raw!r} is not a usable cap (need a finite "
+            f"positive number of seconds <= {_EXTERNAL_CAP_MAX_SEC:g}); "
+            "ignoring it — the effective cap falls back to the adapter "
+            "knobs alone (gh-1576 AC8)",
+            UserWarning,
+            stacklevel=3,
+        )
+    return None, EXTERNAL_REJECTED
+
+
+@dataclass(frozen=True)
+class CapResolution:
+    """The min() of every known cap input, with the winner recorded (I1).
+
+    knob_cap_sec is None when no adapter knob is set (the adapter's own
+    cap is unknown); external_cap_sec is None when the external cap is
+    unknown or rejected (status says which). At least one input is known
+    whenever a CapResolution exists — resolve_cap returns None when
+    NOTHING is known, the byte-identical no-clock contract.
+    """
+
+    external_cap_status: str
+    effective_cap_sec: float
+    winning_cap_source: str
+    knob_cap_sec: float | None = None
+    external_cap_sec: float | None = None
+    # E7: the wrap-up margin does not fit under the cap — the deadline
+    # clamps instead of lying (or going negative). Recorded, not silent.
+    deadline_clamped: bool = False
+
+    def audit_fields(self, deadline_epoch_ms: int | None = None) -> dict:
+        """The audit's cap_resolution block (AC2: source + both inputs)."""
+        fields = {
+            "external_cap_status": self.external_cap_status,
+            "effective_cap_sec": self.effective_cap_sec,
+            "winning_cap_source": self.winning_cap_source,
+            "deadline_clamped": self.deadline_clamped,
+        }
+        if self.external_cap_sec is not None:
+            fields["external_cap_sec"] = self.external_cap_sec
+        if self.knob_cap_sec is not None:
+            fields["knob_cap_sec"] = self.knob_cap_sec
+        if deadline_epoch_ms is not None:
+            fields["deadline_epoch_ms"] = deadline_epoch_ms
+        return fields
+
+
+def resolve_cap(
+    knobs: "TimeoutKnobs | None",
+    env=None,
+    test_budget_sec: float = 0.0,
+    quiet: bool = False,
+) -> "CapResolution | None":
+    """Compose every known cap input: effective = min(external, knobs).
+
+    Returns None only when NO input is known — no knobs and no usable
+    external cap — the pre-gh-1576 no-clock contract byte-for-byte
+    (AC5/REG-2). The winning source is `external` on ties (E5): the
+    harness is the stricter truth.
+    """
+    external, status = external_cap_from_env(env, quiet=quiet)
+    knob_cap = (
+        effective_cap_sec(knobs, test_budget_sec) if knobs is not None else None
+    )
+    if knob_cap is None and external is None:
+        return None
+    if external is None:
+        effective, source = knob_cap, "knobs"
+    elif knob_cap is None:
+        effective, source = external, "external"
+    else:
+        effective = min(external, knob_cap)
+        source = "external" if external <= knob_cap else "knobs"
+    return CapResolution(
+        external_cap_status=status,
+        effective_cap_sec=effective,
+        winning_cap_source=source,
+        knob_cap_sec=knob_cap,
+        external_cap_sec=external,
+        # E7: the shipped wrap-up margin cannot fit under this cap — the
+        # deadline will clamp to the cap itself (recorded in the audit).
+        deadline_clamped=effective - _DEADLINE_MARGIN_SEC <= 0,
+    )
 
 
 @dataclass(frozen=True)
@@ -223,6 +384,12 @@ class ProgressLadder:
     the regression pin: a silent agent dies at the base cap exactly as
     today. Every progress-driven deadline push is recorded in `events`
     for the run-metadata audit trail.
+
+    gh-1576: external_cap_sec (a known external harness cap) clamps every
+    deadline — the trial can never be killed later than the harness would
+    (I1); when the external bound is what binds (<= the knob deadline,
+    ties included) the verdict names it external_cap so the audit says
+    which clock fired. None (default) is byte-identical legacy behavior.
     """
 
     knobs: TimeoutKnobs
@@ -230,12 +397,26 @@ class ProgressLadder:
     last_bytes: int = 0
     kill_at: float = 0.0
     events: list = field(default_factory=list)
+    external_cap_sec: float | None = None
 
     def __post_init__(self):
         # The standing deadline starts at the base cap — the regression pin:
         # a fully silent agent dies exactly at today's flat cap, even when
         # the idle window is larger than the base.
-        self.kill_at = self.knobs.base_sec
+        self._knob_kill_at = self.knobs.base_sec
+        self.kill_at = self._capped(self._knob_kill_at)
+
+    def _capped(self, deadline: float) -> float:
+        if self.external_cap_sec is None:
+            return deadline
+        return min(deadline, self.external_cap_sec)
+
+    def _external_binds(self) -> bool:
+        """The external cap (ties included, E5) is the binding deadline."""
+        return (
+            self.external_cap_sec is not None
+            and self.external_cap_sec <= self._knob_kill_at
+        )
 
     def _deadline_from(self, progress_elapsed: float) -> float:
         if not self.knobs.progress_extension:
@@ -249,24 +430,28 @@ class ProgressLadder:
         """Feed one sample; None = keep going, else 'stall' | 'hard-ceiling'.
 
         output_bytes None means the sample could not be read this poll —
-        the ladder keeps its previous notion of progress.
+        the ladder keeps its previous notion of progress. gh-1576: a
+        binding external cap yields 'external_cap' instead.
         """
         if output_bytes is not None and output_bytes > self.last_bytes:
             self.last_bytes = output_bytes
             if elapsed > self.last_progress_at:
                 new_deadline = self._deadline_from(elapsed)
-                if new_deadline > self.kill_at:
+                if new_deadline > self._knob_kill_at:
                     self.events.append(
                         {
                             "at_sec": round(elapsed, 3),
                             "output_bytes": self.last_bytes,
-                            "deadline_sec": round(new_deadline, 3),
+                            "deadline_sec": round(self._capped(new_deadline), 3),
                         }
                     )
-                    self.kill_at = new_deadline
+                    self._knob_kill_at = new_deadline
+                    self.kill_at = self._capped(new_deadline)
             self.last_progress_at = elapsed
         if elapsed < self.kill_at:
             return None
+        if self._external_binds():
+            return _EXTERNAL_CAP
         if self.kill_at >= self.knobs.ceiling_sec and self.ceiling_is_extension():
             return _HARD_CEILING
         return _STALL
@@ -299,6 +484,12 @@ class ProgressWatch:
     - new output bytes after a stall detection re-freeze the ladder
       (hysteresis, E1): the verdict cannot flap while the agent resumes.
     - extension disabled: flat base cap, the legacy regression pin.
+
+    gh-1576: external_cap_sec (a known external harness cap) clamps every
+    kill deadline — a progressing trial dies at the harness guillotine
+    (decided HERE, audited, instead of harbor's blind wait_for), and the
+    verdict names external_cap whenever the external bound is what binds.
+    None (default) is byte-identical legacy behavior.
     """
 
     knobs: TimeoutKnobs
@@ -308,12 +499,26 @@ class ProgressWatch:
     kill_at: float = 0.0
     stalled: bool = False
     events: list = field(default_factory=list)
+    external_cap_sec: float | None = None
 
     def __post_init__(self):
         # Progressing (extension on) starts against the absolute ceiling;
         # extension off is the legacy flat base cap — the regression pin.
-        self.kill_at = (
+        self._knob_kill_at = (
             self._abs_deadline if self.knobs.progress_extension else self.knobs.base_sec
+        )
+        self.kill_at = self._capped(self._knob_kill_at)
+
+    def _capped(self, deadline: float) -> float:
+        if self.external_cap_sec is None:
+            return deadline
+        return min(deadline, self.external_cap_sec)
+
+    def _external_binds(self) -> bool:
+        """The external cap (ties included, E5) is the binding deadline."""
+        return (
+            self.external_cap_sec is not None
+            and self.external_cap_sec <= self._knob_kill_at
         )
 
     @property
@@ -324,7 +529,8 @@ class ProgressWatch:
         """Feed one sample; None = keep going, else 'stall' | 'abs_ceiling'.
 
         output_bytes None means the sample could not be read this poll —
-        the watch keeps its previous notion of progress.
+        the watch keeps its previous notion of progress. gh-1576: a
+        binding external cap yields 'external_cap' instead.
         """
         progressed = output_bytes is not None and output_bytes > self.last_bytes
         if progressed:
@@ -340,7 +546,9 @@ class ProgressWatch:
                 )
             self.last_progress_at = elapsed
         if not self.knobs.progress_extension:
-            return None if elapsed < self.knobs.base_sec else _STALL
+            if elapsed < self.kill_at:
+                return None
+            return _EXTERNAL_CAP if self._external_binds() else _STALL
         gap = elapsed - self.last_progress_at
         if not self.stalled and gap >= self.knobs.watch_stall_gap_sec:
             # A gap at/over the threshold is the stall proof; the verdict
@@ -350,9 +558,15 @@ class ProgressWatch:
             # Ladder counting resumed: the deadline was pinned at detection
             # (max(detection moment, last progress + idle window)), so a
             # stall_gap under the idle window still waits the window out.
-            return None if elapsed < self.kill_at else _STALL
-        if elapsed >= self._abs_deadline:
-            return _ABS_CEILING
+            if elapsed < self.kill_at:
+                return None
+            return _EXTERNAL_CAP if self._external_binds() else _STALL
+        # Progressing: the only kill is the absolute ceiling — CAPPED by a
+        # known external harness cap (I1), never the stall-pinned kill_at
+        # (a resumed trial re-freezes against the ceiling, not the old
+        # pin — the byte-identical pre-gh-1576 branch tested _abs_deadline).
+        if elapsed >= self._capped(self._abs_deadline):
+            return _EXTERNAL_CAP if self._external_binds() else _ABS_CEILING
         return None
 
     def _mark_stalled(self, elapsed: float, gap: float) -> None:
@@ -364,10 +578,11 @@ class ProgressWatch:
                 "at_sec": round(elapsed, 3),
                 "gap_sec": round(gap, 3),
                 "last_progress_sec": round(self.last_progress_at, 3),
-                "deadline_sec": round(deadline, 3),
+                "deadline_sec": round(self._capped(deadline), 3),
             }
         )
-        self.kill_at = deadline
+        self._knob_kill_at = deadline
+        self.kill_at = self._capped(deadline)
 
 
 def audit_dict(
@@ -377,6 +592,7 @@ def audit_dict(
     progress_bytes: int | None = None,
     liveness_bytes: int | None = None,
     deadline_epoch_ms: int | None = None,
+    cap: "CapResolution | None" = None,
 ):
     """Trial-artifact audit record (what extended, when, why).
 
@@ -389,13 +605,23 @@ def audit_dict(
     counts as progress. Documented, not subtracted: the model legitimately
     reads its own logs, so separating the two streams perfectly is not
     attempted; the audit makes the inflation visible per trial.
+
+    gh-1576: `cap` (a resolve_cap result) adds the cap_resolution block —
+    the winning cap source and BOTH input values (AC2) — and omits the
+    block entirely when no cap was resolved (byte-identical legacy audit).
+    knobs=None (the external-cap-only unsupervised run) renders policy
+    "external-cap" and drops the knobs block.
     """
     record = {
         "issue": 1122,
         "policy": (
-            "progress-watch"
-            if getattr(knobs, "progress_watch", False)
-            else ("progress-aware" if knobs.progress_extension else "flat-cap")
+            "external-cap"
+            if knobs is None
+            else (
+                "progress-watch"
+                if getattr(knobs, "progress_watch", False)
+                else ("progress-aware" if knobs.progress_extension else "flat-cap")
+            )
         ),
         "outcome": outcome or "completed",
         # gh-1556 AC7: the deadline exported to fa as FA_DEADLINE_EPOCH_MS
@@ -406,27 +632,37 @@ def audit_dict(
             if deadline_epoch_ms is not None
             else {}
         ),
-        "knobs": {
-            "base_sec": knobs.base_sec,
-            "progress_extension": knobs.progress_extension,
-            "idle_window_sec": knobs.idle_window_sec,
-            "ceiling_multiplier": knobs.ceiling_multiplier,
-            "ceiling_sec": knobs.ceiling_sec,
-            # Round-3 (issue #1392): effective watch knobs render in the
-            # audit only when the gap-aware decision is active.
-            **(
-                {
-                    "stall_gap_sec": knobs.watch_stall_gap_sec,
-                    "abs_ceiling_sec": knobs.watch_abs_ceiling_sec,
+        # gh-1576: which clock won — the external harness cap or the
+        # adapter knobs — and both inputs (AC2). Never any other env
+        # value: the cap inputs are integers, the block is a fixed shape.
+        **({"cap_resolution": cap.audit_fields(deadline_epoch_ms)} if cap else {}),
+        **(
+            {
+                "knobs": {
+                    "base_sec": knobs.base_sec,
+                    "progress_extension": knobs.progress_extension,
+                    "idle_window_sec": knobs.idle_window_sec,
+                    "ceiling_multiplier": knobs.ceiling_multiplier,
+                    "ceiling_sec": knobs.ceiling_sec,
+                    # Round-3 (issue #1392): effective watch knobs render in
+                    # the audit only when the gap-aware decision is active.
+                    **(
+                        {
+                            "stall_gap_sec": knobs.watch_stall_gap_sec,
+                            "abs_ceiling_sec": knobs.watch_abs_ceiling_sec,
+                        }
+                        if getattr(knobs, "progress_watch", False)
+                        else {}
+                    ),
                 }
-                if getattr(knobs, "progress_watch", False)
-                else {}
-            ),
-        },
-        "last_progress_sec": round(ladder.last_progress_at, 3),
-        "last_output_bytes": ladder.last_bytes,
-        "deadline_sec": round(ladder.kill_at, 3),
-        "extensions": ladder.events,
+            }
+            if knobs is not None
+            else {}
+        ),
+        "last_progress_sec": round(getattr(ladder, "last_progress_at", 0.0), 3),
+        "last_output_bytes": getattr(ladder, "last_bytes", 0),
+        "deadline_sec": round(getattr(ladder, "kill_at", 0.0), 3),
+        "extensions": getattr(ladder, "events", []) or [],
     }
     if progress_bytes is not None:
         record["progress_sample_bytes"] = progress_bytes
@@ -526,25 +762,77 @@ def effective_cap_sec(knobs: TimeoutKnobs, test_budget_sec: float = 0.0) -> floa
     return knobs.base_sec
 
 
+def deadline_from_cap(
+    cap: "CapResolution",
+    now_ms: int,
+    margin_sec: float = _DEADLINE_MARGIN_SEC,
+) -> int:
+    """Epoch-ms deadline from an already-resolved cap (gh-1576).
+
+    The min() already happened in resolve_cap; this only projects it:
+    deadline = now + max(effective - margin, min(remaining-floor, effective)).
+    The floor is itself clamped to the cap (E7): a tiny cap yields
+    deadline == start + cap (zero wrap-up margin) rather than a deadline
+    PAST the kill — the clock never lies, and never goes negative.
+    """
+    effective = cap.effective_cap_sec
+    floor = min(_DEADLINE_MIN_REMAINING_SEC, effective)
+    remaining = max(effective - margin_sec, floor)
+    return int(now_ms + remaining * 1000)
+
+
 def deadline_epoch_ms(
     knobs: TimeoutKnobs | None,
     now_ms: int,
     test_budget_sec: float = 0.0,
     margin_sec: float = _DEADLINE_MARGIN_SEC,
+    external_cap_sec: float | None = None,
 ) -> int | None:
     """Epoch-ms deadline for fa's FA_DEADLINE_EPOCH_MS, or None when off.
 
     now_ms is injected (not read from a wall clock) so the decision is
     deterministic and unit-testable. None propagates the "no adapter cap
     => feature off" contract — fa never sees a fabricated clock.
+
+    gh-1576 (I1): external_cap_sec (when known) caps the projection —
+    effective = min(knob cap, external) — so fa NEVER sees a deadline
+    later than a known external harness kill.
     """
-    if knobs is None:
-        return None
-    remaining = max(
-        effective_cap_sec(knobs, test_budget_sec) - margin_sec,
-        _DEADLINE_MIN_REMAINING_SEC,
+    knob_cap = (
+        effective_cap_sec(knobs, test_budget_sec) if knobs is not None else None
     )
+    if knob_cap is None and external_cap_sec is None:
+        return None
+    if knob_cap is None:
+        effective = external_cap_sec
+    elif external_cap_sec is None:
+        effective = knob_cap
+    else:
+        effective = min(knob_cap, external_cap_sec)
+    floor = min(_DEADLINE_MIN_REMAINING_SEC, effective)
+    remaining = max(effective - margin_sec, floor)
     return int(now_ms + remaining * 1000)
+
+
+def resolve_deadline(
+    knobs: TimeoutKnobs | None,
+    env=None,
+    now_ms: int | None = None,
+    test_budget_sec: float = 0.0,
+):
+    """One call for the adapters: (cap, deadline) from the resolved env.
+
+    cap is the resolve_cap result (winning source + both inputs, for the
+    audit); deadline the matching FA_DEADLINE_EPOCH_MS value. Both None
+    when no cap input is known — the byte-identical no-clock contract.
+    now_ms defaults to the wall clock (the adapters call this at launch).
+    """
+    cap = resolve_cap(knobs, env, test_budget_sec)
+    if cap is None:
+        return None, None
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
+    return cap, deadline_from_cap(cap, now_ms)
 
 
 def deadline_env_from(
@@ -556,16 +844,13 @@ def deadline_env_from(
 
     env defaults to os.environ; now_ms defaults to the wall clock (the
     adapters call this at launch time). Empty when no timeout knob is
-    set — the harness's own caps are invisible to the adapter, so fa
-    stays blind to wall-clock budgets exactly as before gh-1556.
+    set AND no external cap is known — fa never sees a fabricated clock
+    (gh-1576: a known FA_EXTERNAL_CAP_SEC arms the deadline through the
+    same min() even without adapter knobs; a rejected one never does).
     """
-    knobs = TimeoutKnobs.from_env(env)
-    if knobs is None:
+    cap = resolve_cap(TimeoutKnobs.from_env(env), env, test_budget_sec)
+    if cap is None:
         return {}
     if now_ms is None:
         now_ms = int(time.time() * 1000)
-    return {
-        "FA_DEADLINE_EPOCH_MS": str(
-            deadline_epoch_ms(knobs, now_ms, test_budget_sec)
-        )
-    }
+    return {"FA_DEADLINE_EPOCH_MS": str(deadline_from_cap(cap, now_ms))}
