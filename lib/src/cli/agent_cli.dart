@@ -311,6 +311,13 @@ part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
 
+/// gh-1603: the explicit headless marker for a run that settled WITHOUT a
+/// final answer (an unrecoverable empty completion after the nudge budget).
+/// Written to the diagnostics channel next to a non-zero exit so the bench
+/// adapter can classify "ended mid-task" instead of recording a clean
+/// completion.
+const String headlessIncompleteMarker = '__FA_INCOMPLETE';
+
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
 class AgentCli {
@@ -1924,6 +1931,9 @@ class AgentCli {
     // `state.messages` — the last completed turn's stop reason is taken
     // from the turn events as they fire, before any folding.
     StopReason? terminalStopReason;
+    // gh-1603: set inside the guarded section right after the settle (the
+    // probe must run before post-run compaction folds the transcript).
+    var endedOnEmptyCompletion = false;
     final turnSub = _agent.subscribe((event, _) {
       if (event is TurnEndEvent) {
         terminalStopReason = event.message.stopReason;

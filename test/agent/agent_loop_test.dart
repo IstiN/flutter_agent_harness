@@ -1874,7 +1874,7 @@ void main() {
         var toolRan = false;
         final stream = agentLoop(
           prompts: [UserMessage.text('do the task')],
-          context: const Context(messages: []),
+          context: Context(messages: [], tools: [_tool('noop')]),
           config: cliShapeConfig(),
           streamFunction: fake.call,
           toolExecutor: (_, _, _) async {

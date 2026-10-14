@@ -244,7 +244,7 @@ void main() {
       () {
         final turn = [
           UserMessage.text('do the task'),
-          assistant(content: [const ToolCall(id: 'c1', name: 'bash')]),
+          assistant(content: [const ToolCall(id: 'c1', name: 'bash', arguments: {})]),
           ToolResultMessage(
             toolCallId: 'c1',
             toolName: 'bash',
@@ -268,7 +268,7 @@ void main() {
       () {
         final turn = [
           UserMessage.text('do the task'),
-          assistant(content: [const ToolCall(id: 'c1', name: 'bash')]),
+          assistant(content: [const ToolCall(id: 'c1', name: 'bash', arguments: {})]),
           ToolResultMessage(
             toolCallId: 'c1',
             toolName: 'bash',
