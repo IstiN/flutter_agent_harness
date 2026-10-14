@@ -251,7 +251,24 @@ def _trial_dirs(runs_dir: Path) -> dict:
     return dirs
 
 
-_AUDIT_JUSTIFIED = ("stall", "hard-ceiling", "abs_ceiling")
+# gh-1576: `external_cap` is the decider's verdict when the external
+# harness cap binds (the harness's own declared kill), `external_kill`
+# the flush for a kill that came from outside the adapter — both name
+# their killer in the audit, so neither may read as a bench-inflicted
+# contradiction (a verdict missing here silently no-ops into a false
+# "killed while progressing" claim — the gh-1556 lesson).
+# Review round 2: `running` is the incremental checkpoint's "no verdict
+# yet" — the residue a SIGKILL leaves when the final write never lands.
+# It names NO bench kill, so a checkpoint-only audit can never be a
+# contradiction either. Keep in lockstep with post_mortem_usage.py.
+_AUDIT_JUSTIFIED = (
+    "stall",
+    "hard-ceiling",
+    "abs_ceiling",
+    "external_cap",
+    "external_kill",
+    "running",
+)
 
 
 def _trial_max_gap(trial_dir: Path):

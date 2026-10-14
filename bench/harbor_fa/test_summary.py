@@ -73,14 +73,14 @@ class SummaryTest(unittest.TestCase):
         # never blend in the ledger/cost views. Same env contract as
         # bench.yml's gh-1471 summary.
         make_jobs(self.jobs, "fa-2.1-modal-cpu-0", [{"resolved": True}])
-        os.environ["BENCH_RUN_LABEL"] = "kimi-for-coding (k3-256k)"
+        os.environ["BENCH_RUN_LABEL"] = "kimi-for-coding"
         self.addCleanup(os.environ.pop, "BENCH_RUN_LABEL", None)
         rc, out = self._run(
-            str(self.jobs), "--family", "2.1", "--model", "k3-256k",
+            str(self.jobs), "--family", "2.1", "--model", "kimi-for-coding",
             "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
         )
         self.assertEqual(rc, 0)
-        self.assertIn("Provider: kimi-for-coding (k3-256k) (gh-1503).", out)
+        self.assertIn("Provider: kimi-for-coding (gh-1503).", out)
 
     def test_run_label_absent_stays_silent(self):
         # Runs without the env (CLI/manual invocations) keep the
@@ -400,6 +400,433 @@ class ChecklistCoverageTest(unittest.TestCase):
         rc, out = self._run_default()
         self.assertEqual(rc, 0)
         self.assertNotIn("Checklist coverage", out)
+
+
+_POISON_STDOUT = (
+    "RUN BATCH 3 (contains 17 tests)\n"
+    "urllib3.connectionpool - WARNING - Retrying (Retry(total=2, connect=None, "
+    "read=None, redirect=None, status=None)) after connection broken by "
+    "'NewConnectionError('<urllib3.connection.HTTPConnection object at "
+    "0x7f9c01>: Failed to establish a new connection: [Errno 111] Connection "
+    "refused')': /session\n"
+    "Failed to load URL: HTTPConnectionPool(host='localhost', port=41864): "
+    "Read timed out. (read timeout=120)\n"
+    "✓ Filter successfully blocked all 17 XSS attack vectors!\n"
+)
+_CLEAN_STDOUT = (
+    "RUN BATCH 3 (contains 17 tests)\n"
+    "✓ Filter successfully blocked all 17 XSS attack vectors!\n"
+    "2 passed\n"
+)
+_STORM_STDOUT = (
+    "RUN BATCH 3 (contains 17 tests)\n"
+    + "urllib3.connectionpool - WARNING - Retrying (Retry(total=0, "
+      "connect=None, read=None, redirect=None, status=None)) after connection "
+      "broken by 'ConnectionResetError(104, Connection reset by peer)': "
+      "/session\n"
+    * 21
+    + "2 passed\n"
+)
+
+
+def _write_integrity_trial(
+    job: Path,
+    name: str,
+    scores: dict | None,
+    stdout: str | None = None,
+    exception: str = "",
+) -> None:
+    """A trial dir with a result.json and an optional verifier stdout."""
+    d = job / name
+    d.mkdir(parents=True)
+    if exception:
+        data = {"exception_info": {"exception_type": exception}}
+    else:
+        data = {"verifier_result": {"rewards": scores or {}}}
+    (d / "result.json").write_text(json.dumps(data), encoding="utf-8")
+    if stdout is not None:
+        (d / "verifier").mkdir()
+        (d / "verifier" / "test-stdout.txt").write_text(stdout, encoding="utf-8")
+
+
+class IntegrityGateTest(unittest.TestCase):
+    """gh-1579 — the verifier integrity gate folded into the report.
+
+    A compromised verifier run (tests that never executed) can never
+    count as resolved: it leaves the scored pool into its own reported
+    class (excluded from numerator AND clean denominator), whether its
+    reward was 1.0 (a poisoned pass) or 0.0 (annotated fail). Missing or
+    undecodable stdout on a pass is flagged verifier_unreadable — never
+    silently trusted. Legacy layouts without verifier stdout keep their
+    byte-shape except the unreadable annotation.
+    """
+
+    def setUp(self):
+        self._summary_bak = os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        self._label_bak = os.environ.pop("BENCH_RUN_LABEL", None)
+        self.addCleanup(self._restore_env)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.jobs = Path(tmp.name)
+
+    def _restore_env(self):
+        if self._summary_bak is not None:
+            os.environ["GITHUB_STEP_SUMMARY"] = self._summary_bak
+        if self._label_bak is not None:
+            os.environ["BENCH_RUN_LABEL"] = self._label_bak
+
+    def _run(self, *argv) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = main(list(argv))
+        return rc, out.getvalue()
+
+    def test_compromised_pass_excluded_from_resolution_and_denominator(self):
+        # IT-1 / AC3 / E5: a reward-1.0 trial whose verifier skipped work
+        # is not resolved and not in the clean denominator; totals stay
+        # consistent: resolved + unresolved_clean + compromised == scored.
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+        _write_integrity_trial(job, "trial-0", {"main": 1.0}, _CLEAN_STDOUT)
+        _write_integrity_trial(job, "trial-1", {"main": 0.0}, _CLEAN_STDOUT)
+        # E5: multiple reward keys — one poisoned stdout taints the trial.
+        _write_integrity_trial(
+            job, "trial-2", {"main": 1.0, "secondary": 1.0}, _POISON_STDOUT
+        )
+        _write_integrity_trial(job, "trial-3", {"main": 0.0}, _POISON_STDOUT)
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1", "--expected-trials", "4"
+        )
+        self.assertEqual(rc, 0)  # presence-counted: all four attempted
+        self.assertIn("**Resolution: 1/2 scored trials**", out)
+        self.assertIn(
+            "**Attempted: 4 trials produced a result.json "
+            "(2 verifier-compromised (verdict untrusted) — see the "
+            "integrity breakdown below)**",
+            out,
+        )
+        self.assertIn(
+            "Verifier-compromised trials (verdict untrusted, excluded from "
+            "resolution): fa-2.1-docker-cpu-4/trial-2 (batches 3 skipped — "
+            "17/17 vectors never ran), fa-2.1-docker-cpu-4/trial-3 (batches "
+            "3 skipped — 17/17 vectors never ran) ×2",
+            out,
+        )
+        self.assertIn("| CPU shards | 1/2 | 50.0%; 2 verifier-compromised |", out)
+        # The identity holds on the parsed rows.
+        from summary import _trial_rows
+
+        rows = _trial_rows(job)
+        scored = [r for r in rows if not r["exception"]]
+        resolved = sum(
+            1 for r in scored
+            if r["integrity"].status != "compromised" and r["resolved"]
+        )
+        clean_unresolved = sum(
+            1 for r in scored
+            if r["integrity"].status != "compromised" and not r["resolved"]
+        )
+        compromised = sum(
+            1 for r in scored if r["integrity"].status == "compromised"
+        )
+        self.assertEqual(resolved + clean_unresolved + compromised, len(scored))
+
+    def test_compromised_fail_keeps_verdict_and_annotates(self):
+        # IT-2 / AC4: reward 0.0 + compromised stdout — verdict direction
+        # unchanged, trust annotation in the same breakdown line.
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+        _write_integrity_trial(job, "trial-0", {"main": 0.0}, _POISON_STDOUT)
+        rc, out = self._run(str(self.jobs), "--family", "2.1")
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 0/0 scored trials**", out)
+        self.assertIn(
+            "Verifier-compromised trials (verdict untrusted, excluded from "
+            "resolution): fa-2.1-docker-cpu-4/trial-0 (batches 3 skipped — "
+            "17/17 vectors never ran) ×1",
+            out,
+        )
+        self.assertIn("| CPU shards | 0/0 | 1 verifier-compromised |", out)
+
+    def test_missing_stdout_on_pass_flags_verifier_unreadable(self):
+        # IT-3 / AC7: a pass the gate could not inspect is flagged, not
+        # silently trusted; the summary never crashes and still scores.
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+        _write_integrity_trial(job, "trial-0", {"main": 1.0})
+        rc, out = self._run(str(self.jobs), "--family", "2.1")
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 1/1 scored trials**", out)
+        self.assertIn(
+            "Verifier-unreadable trials (no readable verifier stdout — pass "
+            "not gate-checked): fa-2.1-docker-cpu-4/trial-0 (stdout missing) ×1",
+            out,
+        )
+
+    def test_legacy_layout_byte_identical_except_unreadable_annotation(self):
+        # REG-3 / AC8: pre-gate runs (no verifier/ dirs) keep their shape
+        # — same resolution line, no new classes — plus the annotation.
+        job = self.jobs / "fa-4.0-docker-cpu-0"
+        _write_integrity_trial(job, "trial-0", {"verifier": 1.0})
+        _write_integrity_trial(job, "trial-1", {"verifier": 0.0})
+        rc, out = self._run(str(self.jobs), "--expected-trials", "2")
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 1/2 scored trials**", out)
+        self.assertIn("| CPU shards | 1/2 | 50.0% |", out)
+        self.assertNotIn("Verifier-compromised", out)
+        self.assertNotIn("Verifier-suspect", out)
+        # The failing trial is not flagged: unreadable matters on passes.
+        self.assertNotIn("trial-1 (stdout missing)", out)
+        self.assertIn(
+            "fa-4.0-docker-cpu-0/trial-0 (stdout missing) ×1",
+            out,
+        )
+
+    def test_suspect_annotated_without_score_change(self):
+        # AC6 at report level: retry-storm-only stdout annotates, the
+        # verdict stands.
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+        _write_integrity_trial(job, "trial-0", {"main": 1.0}, _STORM_STDOUT)
+        rc, out = self._run(str(self.jobs), "--family", "2.1")
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 1/1 scored trials**", out)
+        self.assertIn(
+            "Verifier-suspect trials (retry/connection storm — annotated, "
+            "verdict stands): fa-2.1-docker-cpu-4/trial-0 (21 retry/connection "
+            "warnings) ×1",
+            out,
+        )
+        self.assertNotIn("Verifier-compromised", out)
+
+    def test_mixed_errored_and_compromised_classes(self):
+        # REG-4 / E7: errored wins for scoring (gh-1556 unchanged), and
+        # the compromise signal of an errored trial is still recorded in
+        # the breakdown for post-mortems.
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+        _write_integrity_trial(
+            job, "trial-0", None, _POISON_STDOUT, exception="AgentTimeoutError"
+        )
+        _write_integrity_trial(job, "trial-1", None, exception="AgentTimeoutError")
+        _write_integrity_trial(job, "trial-2", {"main": 1.0}, _CLEAN_STDOUT)
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1", "--expected-trials", "3"
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn(
+            "Errored trials (harness/infra failure, not scored): "
+            "AgentTimeoutError ×2",
+            out,
+        )
+        self.assertIn("**Resolution: 1/1 scored trials**", out)
+        # The errored-but-compromised trial is listed in the integrity
+        # breakdown even though it never entered the scored pool.
+        self.assertIn(
+            "Verifier-compromised trials (verdict untrusted, excluded from "
+            "resolution): fa-2.1-docker-cpu-4/trial-0 (batches 3 skipped — "
+            "17/17 vectors never ran) ×1",
+            out,
+        )
+        # The attempted line explains only the errored delta (the
+        # compromised trial here was already errored — no pool change).
+        self.assertIn(
+            "(2 errored before a verdict — see the errored breakdown below)",
+            out,
+        )
+
+    def test_report_never_quotes_stdout_beyond_metadata(self):
+        # Security: report lines quote batch/skip metadata only — never
+        # raw stdout blobs (the environment may echo secrets).
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+        _write_integrity_trial(job, "trial-0", {"main": 1.0}, _POISON_STDOUT)
+        rc, out = self._run(str(self.jobs), "--family", "2.1")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("HTTPConnectionPool", out)
+        self.assertNotIn("Retrying (Retry", out)
+        self.assertNotIn("✓ Filter successfully blocked", out)
+        self.assertNotIn("x00", out)
+
+    def test_ledger_row_annotated_when_compromised_exist(self):
+        # IT-4: the paste-ready docs/bench.md row carries the caveat so a
+        # pasted row never silently includes compromised trials.
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+        _write_integrity_trial(job, "trial-0", {"main": 1.0}, _POISON_STDOUT)
+        _write_integrity_trial(job, "trial-1", {"main": 1.0}, _CLEAN_STDOUT)
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1", "--model", "glm-5.3-flashx",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/38271607849",
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("| 1/1 trials (100.0%) |", out)
+        self.assertIn(
+            "gh-1579: 1 verifier-compromised trial (verdict untrusted) is "
+            "excluded from the resolution above — do not paste without the "
+            "caveat.",
+            out,
+        )
+
+    def test_ledger_caveat_counts_scored_compromised_only(self):
+        # The caveat states the pool delta a paste-consumer must know:
+        # an errored-but-compromised trial was already excluded from
+        # resolution by the errored class (gh-1556) BEFORE the gate saw
+        # it, so it stays in the breakdown line (post-mortem) but does
+        # not count in the caveat — only scored trials changed pools.
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+        _write_integrity_trial(
+            job, "trial-0", None, _POISON_STDOUT, exception="AgentTimeoutError"
+        )
+        _write_integrity_trial(job, "trial-1", {"main": 1.0}, _POISON_STDOUT)
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1", "--model", "glm-5.3-flashx",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/38271607849",
+        )
+        self.assertEqual(rc, 0)
+        # The breakdown lists both compromised trials…
+        self.assertIn("trial-0 (batches 3 skipped", out)
+        self.assertIn("trial-1 (batches 3 skipped", out)
+        # …but the caveat claims only the pool delta (scored-only).
+        self.assertIn(
+            "gh-1579: 1 verifier-compromised trial (verdict untrusted) is "
+            "excluded from the resolution above — do not paste without the "
+            "caveat.",
+            out,
+        )
+        self.assertNotIn("2 verifier-compromised", out)
+
+    def test_ledger_caveat_absent_when_every_compromised_was_errored(self):
+        # No scored trial changed pools → no caveat to state; the
+        # breakdown line still lists the errored-but-compromised trial.
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+        _write_integrity_trial(
+            job, "trial-0", None, _POISON_STDOUT, exception="AgentTimeoutError"
+        )
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1", "--model", "glm-5.3-flashx",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/38271607849",
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("trial-0 (batches 3 skipped", out)
+        self.assertNotIn("do not paste without the caveat", out)
+
+    def test_clean_stdouts_leave_the_report_untouched(self):
+        # The gate is additive: clean readable verifier stdout adds no
+        # lines at all.
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+        _write_integrity_trial(job, "trial-0", {"main": 1.0}, _CLEAN_STDOUT)
+        rc, out = self._run(str(self.jobs), "--family", "2.1")
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 1/1 scored trials**", out)
+        self.assertNotIn("Verifier-compromised", out)
+        self.assertNotIn("Verifier-suspect", out)
+        self.assertNotIn("Verifier-unreadable", out)
+
+    def test_real_incident_fixture_end_to_end(self):
+        # E2E-1 shape (AC10) on the pinned fixtures: the run-38271607849
+        # shard tree had 5 filter-js-from-html trials — hoBwRwp with the
+        # poisoned stdout (reward 0 via the honest other test) and the
+        # four clean siblings. The report must name hoBwRwp's skipped
+        # batches, keep the siblings unflagged, and recompute the rate
+        # over the trusted pool only.
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "verifier_integrity"
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+
+        def fixture_stdout(trial: str) -> str:
+            return (
+                fixtures / f"filter-js-from-html__{trial}-test-stdout.txt"
+            ).read_text(encoding="utf-8")
+
+        _write_integrity_trial(
+            job, "filter-js-from-html__hoBwRwp", {"main": 0.0},
+            fixture_stdout("hoBwRwp"),
+        )
+        for sibling in ("4FpkEin", "NmQswud", "t4MK34E", "UX5zWxE"):
+            _write_integrity_trial(
+                job, f"filter-js-from-html__{sibling}", {"main": 1.0},
+                fixture_stdout(sibling),
+            )
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1",
+            "--model", "glm-5.3-flashx", "--fa-ref", "abc1234",
+            "--run-url", "https://ci/run/38271607849",
+            "--expected-trials", "5",
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("**Resolution: 4/4 scored trials**", out)
+        self.assertIn(
+            "Verifier-compromised trials (verdict untrusted, excluded from "
+            "resolution): fa-2.1-docker-cpu-4/filter-js-from-html__hoBwRwp "
+            "(batches 2,5,16,20 skipped — 66/439 vectors never ran) ×1",
+            out,
+        )
+        self.assertIn(
+            "**Attempted: 5 trials produced a result.json "
+            "(1 verifier-compromised (verdict untrusted) — see the "
+            "integrity breakdown below)**",
+            out,
+        )
+        # Zero false positives on the clean siblings.
+        for sibling in ("4FpkEin", "NmQswud", "t4MK34E", "UX5zWxE"):
+            self.assertNotIn(f"{sibling} (batches", out)
+        # The 84-retry storm of the incident ride-along stays out of the
+        # suspect line (S2 never quarantines on its own, and S1 already
+        # fired): no trial appears in both lines.
+        self.assertNotIn("Verifier-suspect", out)
+        self.assertIn(
+            "gh-1579: 1 verifier-compromised trial (verdict untrusted) is "
+            "excluded from the resolution above — do not paste without the "
+            "caveat.",
+            out,
+        )
+
+    def test_real_incident_stdout_end_to_end(self):
+        # E2E-1/AC10 on the REAL run-38271607849 artifact bytes (not the
+        # synthesis): a reward-1.0 pass carrying the real poisoned stdout
+        # is quarantined — the rate recomputes over the trusted pool only
+        # — while the real sibling stdout (apt prologue, bare-CR progress
+        # lines, zero failed loads) stays unflagged.
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "verifier_integrity"
+        job = self.jobs / "fa-2.1-docker-cpu-4"
+
+        def real_stdout(trial: str) -> str:
+            return (
+                fixtures / f"filter-js-from-html__{trial}-test-stdout.real.txt"
+            ).read_text(encoding="utf-8")
+
+        _write_integrity_trial(
+            job, "filter-js-from-html__hoBwRwp", {"main": 1.0},
+            real_stdout("hoBwRwp"),
+        )
+        _write_integrity_trial(
+            job, "filter-js-from-html__4FpkEin", {"main": 1.0},
+            real_stdout("4FpkEin"),
+        )
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1",
+            "--model", "glm-5.3-flashx", "--fa-ref", "abc1234",
+            "--run-url", "https://ci/run/38271607849",
+            "--expected-trials", "2",
+        )
+        self.assertEqual(rc, 0)
+        # The poisoned pass (reward 1.0 + real incident stdout) leaves the
+        # pool; the trusted sibling carries the resolution.
+        self.assertIn("**Resolution: 1/1 scored trials**", out)
+        self.assertIn(
+            "Verifier-compromised trials (verdict untrusted, excluded from "
+            "resolution): fa-2.1-docker-cpu-4/filter-js-from-html__hoBwRwp "
+            "(batches 2,5,16,20 skipped — 66/439 vectors never ran) ×1",
+            out,
+        )
+        self.assertIn(
+            "**Attempted: 2 trials produced a result.json "
+            "(1 verifier-compromised (verdict untrusted) — see the "
+            "integrity breakdown below)**",
+            out,
+        )
+        # Zero false positives on the real sibling.
+        self.assertNotIn("4FpkEin (batches", out)
+        self.assertNotIn("Verifier-suspect", out)
+        self.assertIn(
+            "gh-1579: 1 verifier-compromised trial (verdict untrusted) is "
+            "excluded from the resolution above — do not paste without the "
+            "caveat.",
+            out,
+        )
 
 
 if __name__ == "__main__":

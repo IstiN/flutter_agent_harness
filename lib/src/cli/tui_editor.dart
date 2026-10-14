@@ -5,6 +5,9 @@
 // (published builds resolve hosted dart_tui, which exports neither).
 // Otherwise byte-identical to the fork source; keep in sync when
 // the fork editor changes.
+// DEVIATES from the fork: undoStack is _undoStack here (private-field
+// formal; vendored fork exposes the _UndoStep-typed field publicly) —
+// gh-1547. Keep this rename when re-syncing from the fork.
 // TuiLineEditor: readline-grade immutable line editing for the TUI composer
 // (issue #275 scope 3). Value semantics — every mutation returns a new
 // TuiLineEditor, so FaTuiModel.copyWith can carry it like any other field.

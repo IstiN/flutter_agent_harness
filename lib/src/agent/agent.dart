@@ -203,6 +203,9 @@ class Agent {
     QueueMode followUpMode = QueueMode.oneAtATime,
     this.toolExecution = ToolExecutionMode.parallel,
     this.maxEmptyRetries = 1,
+    this.emptyHiccupRetries = 3,
+    this.emptyHiccupBaseDelay = const Duration(milliseconds: 500),
+    this.emptyHiccupMaxBackoff = const Duration(milliseconds: 8000),
     this.runIdleTimeout = defaultRunIdleTimeout,
     this.onRunIdleTimeout,
     this.onRunWatchdogPaused,
@@ -265,17 +268,20 @@ class Agent {
   /// carry secrets and bloat the session file.
   final bool wireDump;
 
-  /// The FinalizeGate (gh-1412, default off): hosts set it on unattended
-  /// runs (approval mode `unattended`/autopilot, the bench mode). When on,
-  /// every run parses the `task-ledger` fenced block out of the final
-  /// assistant answer and emits [TaskLedgerEvent] for the host to persist
-  /// as the hidden `task_ledger` session record. Off = interactive
-  /// behavior is byte-identical.
+  /// The FinalizeGate (gh-1412, default off; attendance-corrected
+  /// gh-1516): hosts set it on UNATTENDED runs (headless `fa -p`/bench —
+  /// `AgentCliConfig.headlessRun`, never the approval mode). When on,
+  /// every run parses the `task-ledger` block out of the final assistant
+  /// answer (fenced or the unfenced near-miss shape), rewrites the
+  /// answer so the transcript never shows the ledger, and emits
+  /// [TaskLedgerEvent] for the host to persist as the hidden
+  /// `task_ledger` session record. Runs with no tool calls (pure Q&A)
+  /// fire nothing — no produced state, nothing to verify. Off =
+  /// interactive behavior is byte-identical.
   ///
-  /// Mutable: only the CLI host flips this today (boot approval mode
-  /// `unattended`); the builder's `AgentWiringSpec` has no knob for it in
-  /// v1 — hosts that want the gate must set the field after the stack
-  /// lands.
+  /// Mutable: only the CLI host flips this today (boot `headlessRun`);
+  /// the builder's `AgentWiringSpec` has no knob for it in v1 — hosts
+  /// that want the gate must set the field after the stack lands.
   bool finalizeGate;
 
   /// gh-1409: the skills known to the session — their `operative:` lines
@@ -375,6 +381,20 @@ class Agent {
   /// How many times a degenerate-empty assistant response is retried within
   /// the loop before the turn is accepted. Default: 1.
   final int maxEmptyRetries;
+
+  /// gh-1577: how many times an empty completion that follows PARTIAL
+  /// content is retried with exponential backoff before the run ends with
+  /// the explicit empty-exhaustion error. See
+  /// [AgentLoopConfig.emptyHiccupRetries]. Default: 3.
+  final int emptyHiccupRetries;
+
+  /// gh-1577: first backoff sleep between empty-hiccup retries. See
+  /// [AgentLoopConfig.emptyHiccupBaseDelay]. Default: 500ms.
+  final Duration emptyHiccupBaseDelay;
+
+  /// gh-1577: cap on the exponential empty-hiccup backoff. See
+  /// [AgentLoopConfig.emptyHiccupMaxBackoff]. Default: 8s.
+  final Duration emptyHiccupMaxBackoff;
 
   /// Current agent state.
   AgentState get state => _state;
@@ -633,6 +653,9 @@ class Agent {
           ? null
           : () => externalSteeringProbe!(),
       maxEmptyRetries: maxEmptyRetries,
+      emptyHiccupRetries: emptyHiccupRetries,
+      emptyHiccupBaseDelay: emptyHiccupBaseDelay,
+      emptyHiccupMaxBackoff: emptyHiccupMaxBackoff,
       wireDump: wireDump,
     );
   }

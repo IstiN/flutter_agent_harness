@@ -229,6 +229,8 @@ roles:                         # intent → ordered fallback chain
     - provider: openai         # or a map entry:
       model: gpt-4o
       apiKeyName: OPENAI_API_KEY   # optional; also baseUrl, contextWindow, maxTokens
+      connectTimeoutMs: 45000       # optional per-entry watchdog override
+      streamIdleTimeoutMs: 1800000  #   (slow local model recipe, see below)
       thinkingLevel: high       # optional: minimal|low|medium|high|xhigh|max
                                 # (xhigh/max fold to high) — reasoning request
   smol: [openrouter/openai/gpt-4o-mini]   # roles: default, smol, slow, plan, subagent, memory
@@ -238,7 +240,7 @@ modelOverrides:                # scope chains to path prefixes
       plan: [anthropic/claude-opus-4-5]
 retry:                         # chain fallback policy
   retriesPerEntry: 2           # + baseDelayMs, maxBackoffMs, maxWaitMs, keyBackoffMs
-providerTimeouts:              # strict: only these two keys
+providerTimeouts:              # GLOBAL fallback: only these two keys
   connectTimeoutMs: 180000
   streamIdleTimeoutMs: 300000
 agent:                         # strict: only contextWindowCap (issue #273)
@@ -260,6 +262,18 @@ models:                        # media slots + named custom models
       model: gpt-4o-mini
       contextWindow: 128000    # + maxTokens, input
 ```
+
+Scoped provider timeouts (issue #1554): `connectTimeoutMs`/`streamIdleTimeoutMs`
+are valid on `roles:` chain entries, `customProviders:` entries, and
+`models.custom:` entries. Per field, the first level that declares a value
+wins — **role chain entry > customProviders entry > models.custom entry >
+global `providerTimeouts:` > built-in default** (connect 180 s, idle 300 s;
+hard sanity bound 1 h). Configs without the keys behave byte-identically.
+Slow-local-model recipe: on the role entry that pins the local endpoint set
+only `streamIdleTimeoutMs` ≈ 2× the model's worst silent prefill stretch —
+the cloud providers in the same config keep the global watchdog untouched,
+and the stall line names the override (`idle window 1800s (role default
+override)`) so a wide window never reads as a hang.
 
 Media slot names (exact): `imageGeneration`, `audioTts`, `musicGeneration`,
 `videoGeneration`, `vision`, `transcription`. A slot without an override falls

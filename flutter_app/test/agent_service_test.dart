@@ -356,6 +356,9 @@ Agent _createAgent(
     systemPrompt: systemPrompt,
     streamFunction: streamFunction,
     toolRegistry: ToolRegistry(tools),
+    // gh-1577: tests assert request counts, not wall-clock — pin the
+    // hiccup backoff to zero (the knob is threaded through the Agent).
+    emptyHiccupBaseDelay: Duration.zero,
   );
 }
 
@@ -1165,20 +1168,34 @@ void main() {
 
       // Tool-only turns leave only the placeholder bubble (hidden by the chat
       // screen) plus the tool messages — no blank assistant bubble with real
-      // content. A blank answer after the tool turn is retried ONCE by the
-      // loop (degenerate-empty retry), so the transcript carries the tool
-      // call plus BOTH blank attempts, each rendered as the placeholder.
-      // The tool-call round itself records NO assistant row (issue #692 F:
-      // a row with no content and no error state is impossible).
+      // content. A blank answer after the tool turn is a bounded-retry
+      // hiccup (gh-1577), never a settleable answer: the loop spends the
+      // generic degenerate-empty budget once (maxEmptyRetries: 1) plus the
+      // hiccup budget (default 3) — 1 + 4 blank attempts, each rendered as
+      // the placeholder — and then ends the run with the LOUD exhaustion
+      // error tile instead of settling a silent success. The tool-call
+      // round itself records NO assistant row (issue #692 F: a row with no
+      // content and no error state is impossible).
       final assistantMessages = service.messages
           .where((m) => m.role == 'assistant')
           .toList();
-      expect(assistantMessages, hasLength(2));
+      expect(assistantMessages, hasLength(5));
       expect(
         assistantMessages.where((m) => m.content == emptyResponsePlaceholder),
-        hasLength(2),
+        hasLength(5),
       );
-      expect(service.messages.where((m) => m.role == 'tool'), isNotEmpty);
+      final errorTiles = service.messages
+          .where((m) => m.role == 'tool' && m.isError)
+          .toList();
+      expect(errorTiles, hasLength(1));
+      expect(
+        errorTiles.single.content,
+        contains('empty completion after partial content'),
+      );
+      expect(
+        service.messages.where((m) => m.role == 'tool' && !m.isError),
+        isNotEmpty,
+      );
     });
 
     test('secrets expand inside the shell and are redacted from transcript '

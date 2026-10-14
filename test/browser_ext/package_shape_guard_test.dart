@@ -125,6 +125,42 @@ void main() {
     });
 
     test(
+      'REG (CWS upload 2026-10-11): a //-commented root manifest FAILS — '
+      'the store parses strictly even though Chrome local load is lenient',
+      () {
+        final commented = validRootManifest.replaceFirst(
+          '{',
+          '{\n  // build-time documentation comment\n',
+        );
+        final zip = writeZip('commented.zip', {
+          ...validPackage(),
+          'manifest.json': utf8.encode(commented),
+        });
+        final res = runGuard(['check', zip.path]);
+        expect(res.exitCode, isNot(0));
+        expect('${res.stdout}${res.stderr}', contains('manifest-parse'));
+      },
+    );
+
+    test(
+      'REG (CWS upload 2026-10-11): a root manifest with "key" FAILS — '
+      'the store owns the signing key, the dev pin must be stripped',
+      () {
+        final withKey = validRootManifest.replaceFirst(
+          '"manifest_version": 3,',
+          '"manifest_version": 3,\n  "key": "MIIBIjANBgkqhkiG9w0B...",',
+        );
+        final zip = writeZip('key.zip', {
+          ...validPackage(),
+          'manifest.json': utf8.encode(withKey),
+        });
+        final res = runGuard(['check', zip.path]);
+        expect(res.exitCode, isNot(0));
+        expect('${res.stdout}${res.stderr}', contains('manifest-key'));
+      },
+    );
+
+    test(
       'nested panel/app/manifest.json fails naming BOTH manifests (AC1)',
       () {
         final zip = writeZip('two-manifests.zip', {

@@ -8,6 +8,8 @@
 
 library;
 
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/engine.dart';
 import 'package:test/test.dart';
@@ -225,6 +227,47 @@ void main() {
       expect(
         await session.buildContextMessages(),
         hasLength(state.messages.length),
+      );
+    },
+  );
+
+  test(
+    'the fold summarize path never prints to stdout (gh-1469 glass guard)',
+    () async {
+      final (session, state) = await overWindowSession();
+      final prints = <String>[];
+      await runZoned(
+        () async {
+          final compactor = StructuredCompactor(
+            session: session,
+            state: state,
+            window: 8000,
+            settings: _settings,
+            // Judge declines: straight to pass 2.
+            judge: (ledger) async => '[]',
+            summarize: (request) async =>
+                SummarizationResult.success('investigated; tests green'),
+            checkpointPrompt: 'CHECKPOINT INSTRUCTIONS',
+          );
+          await compactor.run();
+        },
+        zoneSpecification: ZoneSpecification(
+          print: (self, parent, zone, line) => prints.add(line),
+        ),
+      );
+      // gh-1469: a leftover debug print in the summarize path wrote raw
+      // text into the live TUI's PTY stream mid-run — the interleaved
+      // bytes desynced the cell-diff painter (glass no longer matches
+      // the frame model), so the already-painted status-row fold badge
+      // was clobbered on the glass and never re-emitted (diffs skip
+      // unchanged cells) until the settle full-repaint. Three of the
+      // four red runs show the print's `SUMMARIZE n=… :: assistant:
+      // Instance of …` line fused into the fold rule and status rows.
+      expect(
+        prints,
+        isEmpty,
+        reason: 'a stray print here interleaves into the live TUI glass '
+            'and corrupts mid-run chrome (gh-1469)',
       );
     },
   );

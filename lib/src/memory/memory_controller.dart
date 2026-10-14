@@ -76,6 +76,7 @@ final class MemoryController {
     this.configSource,
     this.onConfigChanged,
     this.onDegrade,
+    this.printSink,
   }) : _env = env,
        _projectRoot = projectRoot ?? env.cwd;
 
@@ -98,6 +99,33 @@ final class MemoryController {
   /// be silent: the host (app `AppLog`, CLI diagnostics) wires its log
   /// here; null keeps the historical quiet behavior.
   final void Function(String message)? onDegrade;
+
+  /// Print interceptor for the `flutter_agent_memory` package's bare
+  /// `print()` debug logs (gh-1510). The package logs with
+  /// `// ignore: avoid_print` on the calling isolate; in TUI mode stdout
+  /// IS the terminal, so those raw bytes interleave with the frame
+  /// protocol, physically clobber cells, and the cell-diff renderer then
+  /// skips repainting "unchanged" cells against the desynced grid — the
+  /// screen buffer loses characters (`memory round-tripcomplete`).
+  /// Every package-facing op runs inside a zone whose `print` delegates
+  /// here; the CLI wires its diagnostic log. Null keeps the package's
+  /// default print behavior (headless/embedders).
+  final void Function(String line)? printSink;
+
+  /// Runs [body] with `print()` redirected to [printSink]. No-op when no
+  /// sink is wired. The redirect matters in TUI mode only, but the zone
+  /// is cheap enough to keep unconditional there; with a null sink the
+  /// body runs unwrapped so embedders observe no zone side effects.
+  Future<T> _redirectPackagePrints<T>(Future<T> Function() body) {
+    final sink = printSink;
+    if (sink == null) return body();
+    return runZoned<Future<T>>(
+      body,
+      zoneSpecification: ZoneSpecification(
+        print: (self, parent, zone, line) => sink(line),
+      ),
+    );
+  }
 
   /// The config the current cached stores were built from (null =
   /// defaults). Only a RESOLVED-path difference triggers a swap.
@@ -230,6 +258,22 @@ final class MemoryController {
     List<String> tags = const [],
     double importance = 0.5,
     String scope = 'project',
+  }) => _redirectPackagePrints(
+    () => _addImpl(
+      text: text,
+      type: type,
+      tags: tags,
+      importance: importance,
+      scope: scope,
+    ),
+  );
+
+  Future<MemoryEntry> _addImpl({
+    required String text,
+    String type = 'note',
+    List<String> tags = const [],
+    double importance = 0.5,
+    String scope = 'project',
   }) async {
     await _refreshConfig();
     final store = scope == 'user' ? await userStore : await projectStore;
@@ -323,7 +367,10 @@ final class MemoryController {
   /// Deletes a memory entry by id. With no explicit [scope], scans project
   /// then user storage. Returns the scope it was deleted from, or null when
   /// the id exists in neither.
-  Future<String?> delete(String id, {String? scope}) async {
+  Future<String?> delete(String id, {String? scope}) =>
+      _redirectPackagePrints(() => _deleteImpl(id, scope: scope));
+
+  Future<String?> _deleteImpl(String id, {String? scope}) async {
     await _refreshConfig();
     final candidateScopes = <String>[
       if (scope != null)
@@ -359,7 +406,10 @@ final class MemoryController {
       _kbStores[scope] ??= KBMemoryStore(storage, source: 'fa-$scope');
 
   /// Searches both scopes (project first, then user).
-  Future<List<MemoryEntry>> search(String query, {int limit = 10}) async {
+  Future<List<MemoryEntry>> search(String query, {int limit = 10}) =>
+      _redirectPackagePrints(() => _searchImpl(query, limit: limit));
+
+  Future<List<MemoryEntry>> _searchImpl(String query, {int limit = 10}) async {
     await _refreshConfig();
     final results = <MemoryEntry>[];
     await projectStore; // ensure initialized
@@ -411,7 +461,10 @@ final class MemoryController {
   }
 
   /// Lists recent entries from both scopes (project first, then user).
-  Future<List<MemoryEntry>> list({int limit = 20}) async {
+  Future<List<MemoryEntry>> list({int limit = 20}) =>
+      _redirectPackagePrints(() => _listImpl(limit: limit));
+
+  Future<List<MemoryEntry>> _listImpl({int limit = 20}) async {
     await _refreshConfig();
     final results = <MemoryEntry>[];
     await projectStore;
@@ -480,7 +533,9 @@ final class MemoryController {
   /// scopes sequentially (smol-role cost class). Guarded: a second call
   /// while one runs is a no-op returning `false`. Consolidation needs an
   /// LLM provider — without one only level maintenance runs.
-  Future<bool> maintain() async {
+  Future<bool> maintain() => _redirectPackagePrints(_maintainImpl);
+
+  Future<bool> _maintainImpl() async {
     await _refreshConfig();
     if (_maintaining) return false;
     _maintaining = true;

@@ -970,6 +970,208 @@ void main() {
       expect(builder30.snapshotsBuilt, 1);
       expect(builder60.snapshotsBuilt, 1);
     });
+
+    test(
+      'appendAll 50k records stays within the open budget (issue #1497)',
+      () {
+        final records = bulkRecords(12500); // 50 001.
+        final builder = TrajectorySnapshotBuilder();
+        final sw = Stopwatch()..start();
+        final snapshot = builder.appendAll(records);
+        sw.stop();
+        expect(sw.elapsed, lessThan(const Duration(seconds: 5)));
+        expect(snapshot.records, hasLength(50001));
+        expect(builder.snapshotsBuilt, 1);
+      },
+    );
+
+    test(
+      'live-tail appends scale near-linearly, not quadratically (#1497)',
+      () {
+        // The per-append snapshot used to copy every ledger row, rebuild the
+        // whole recordLocations map, and re-sort + refold every request fact
+        // on EVERY append — O(n) per append, O(n²) per live session: ~1.5ms
+        // per append at 20k records, 381s for a 65k-record live tail. The
+        // snapshot now shares frozen row chunks and rebuilds only the dirty
+        // request suffix.
+        //
+        // Primary guard is the deterministic operation the quadratic
+        // wasted (the #358 approach): snapshotRowCopies counts row
+        // references copied per publish. Chunk sharing keeps it a small
+        // constant per append (bounded chunk clones + pointer copies);
+        // the pre-#1497 shape copies every row per append (~n/2 rows per
+        // append on average) and must still fail the envelope. Wall clock
+        // only bounds the absolute budget — ratios flake on shared
+        // runners (issue #358) AND carry a JIT-tier cliff on cold first
+        // runs (a cold 20k-append loop measured 60x its warmed cost),
+        // so no ratio is asserted here.
+        List<SessionRecord> script(int turns) {
+          final records = bulkRecords(turns);
+          return records.sublist(1); // drop the bootstrap user record
+        }
+
+        final large = script(5000); // 20000 records.
+        final builder = TrajectorySnapshotBuilder();
+        final sw = Stopwatch()..start();
+        for (final record in large) {
+          builder.append(record);
+        }
+        sw.stop();
+        expect(builder.snapshotsBuilt, large.length);
+        // Row-copy envelope: chunked sharing copies a bounded constant of
+        // rows per append (the ≤512-row copy-on-write clone for patched
+        // rows + the chunk-pointer list); 600/append absorbs that with
+        // slack while the quadratic shape (≈n/2 rows per append on
+        // average — 10k at this size) fails it by 3 orders of magnitude.
+        expect(
+          builder.snapshotRowCopies,
+          lessThan(large.length * 600),
+          reason:
+              'per-append snapshot publishing must share rows, not '
+              'copy them (${builder.snapshotRowCopies} row copies for '
+              '${large.length} appends)',
+        );
+        // Absolute budget (the issue's open-budget form): warmed runs do
+        // this in well under 100ms; even a cold JIT-tier cliff stays
+        // under 3s (M4 Pro). The pre-#1497 shape measured 31s for the
+        // same loop. 12s (not 8s): a loaded CI runner measured 8.82s for
+        // this same green path (~4x this box). 20s (not 12s): the same
+        // green path measured 12.35s on a loaded arm CI shard (pr-1581
+        // run 38470824770, shard 1) and redded the leg by 0.35s — a
+        // shared-runner stall, not a shape change (the row-copy
+        // envelope and snapshotsBuilt were green on that run, and the
+        // identical head passes this loop in well under the budget on
+        // an unloaded box). 20s keeps ~1.6x headroom over the worst
+        // green observation while every quadratic shape still fails:
+        // >=31s on the fastest measured box, and package:test's 30s
+        // per-test default timeout independently kills the loop before
+        // any slower box could pass it. The row-copy envelope above is
+        // the primary guard regardless — wall clock here is only the
+        // absolute trip-wire.
+        expect(sw.elapsed, lessThan(const Duration(seconds: 20)));
+      },
+    );
+
+    test(
+      'a published snapshot never observes later appends (#1497 sharing)',
+      () {
+        // The chunk-sharing / cached-request rewrite must keep snapshots
+        // immutable: rows appended, tool results patched in, and request
+        // facts finalized after a snapshot was handed out must not leak
+        // into it — including the lazily derived recordLocations map.
+        final builder = TrajectorySnapshotBuilder();
+        final records = bulkRecords(3);
+        final stale = builder.append(records[0]);
+        final firstRows = stale.records.length;
+        final firstRevision = stale.revision;
+        stale.recordLocations[stale.records.first.recordId]; // force derive
+        expect(
+          () => stale.recordLocations['x'] = 0,
+          throwsUnsupportedError,
+          reason: 'the lazy locations view stays unmodifiable',
+        );
+        for (final record in records.skip(1)) {
+          builder.append(record);
+        }
+        final tail = builder.build();
+        expect(tail.records.length, greaterThan(firstRows));
+        expect(tail.requests, isNotEmpty);
+        // The stale snapshot is untouched by the later appends.
+        expect(stale.records, hasLength(firstRows));
+        expect(stale.revision, firstRevision);
+        expect(stale.requests, isEmpty);
+        expect(
+          stale.recordLocations,
+          hasLength(firstRows),
+          reason: 'the lazily derived map freezes at first access',
+        );
+        expect(stale.recordLocations.values.toSet().toList(), [
+          for (var i = 0; i < firstRows; i++) i,
+        ], reason: 'locations stay byte-identical to the eager derivation');
+      },
+    );
+
+    test('bulk replay folds request facts created between snapshots', () {
+      // appendAll materializes no intermediate snapshots, so a summary
+      // fact is created and finalized inside one fold — the touched-fact
+      // path runs against a fact with no cached sorted position yet.
+      const detail = TrajectoryRequestDetail(
+        messageCount: 1,
+        systemPromptChars: 4,
+        systemPromptHash: 'h1',
+        toolCount: 0,
+        toolNames: [],
+        messages: [],
+      );
+      final records = <SessionRecord>[
+        _userRecord('bu1'),
+        CustomRecord(
+          id: 'bs1',
+          parentId: 'bu1',
+          timestamp: _at(0),
+          customType: 'model_request_summary',
+          data: detail.toJson(),
+        ),
+        _assistantRecord(
+          'ba1',
+          parentId: 'bu1',
+          usage: const Usage(
+            input: 10,
+            output: 5,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 15,
+            cost: UsageCost(),
+          ),
+        ),
+        // A second usage-carrying fact: with only one, cumulative and own
+        // usage are indistinguishable and a broken fold (seeded per
+        // request from null) cannot fail this test.
+        _assistantRecord(
+          'ba2',
+          parentId: 'ba1',
+          usage: const Usage(
+            input: 20,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 20,
+            cost: UsageCost(),
+          ),
+        ),
+      ];
+      final bulk = TrajectorySnapshotBuilder().appendAll(records);
+      expect(bulk.requests, hasLength(2));
+      expect(bulk.requests[0].status, TrajectoryRequestStatus.completed);
+      expect(bulk.requests[0].seq, 1);
+      expect(bulk.requests[0].usage?.totalTokens, 15);
+      expect(
+        bulk.requests[0].cumulativeUsage?.totalTokens,
+        15,
+        reason: 'the full-rebuild fold seeds cumulative usage from zero',
+      );
+      expect(bulk.requests[1].seq, 2);
+      expect(bulk.requests[1].usage?.totalTokens, 20);
+      expect(
+        bulk.requests[1].cumulativeUsage?.totalTokens,
+        35,
+        reason: 'the full-rebuild fold threads the running cumulative',
+      );
+      // Same session through per-append snapshots: identical requests.
+      final live = TrajectorySnapshotBuilder();
+      for (final record in records) {
+        live.append(record);
+      }
+      final liveSnapshot = live.build();
+      expect(liveSnapshot.requests, hasLength(2));
+      expect(liveSnapshot.requests[0].status, bulk.requests[0].status);
+      expect(liveSnapshot.requests[0].cumulativeUsage?.totalTokens, 15);
+      expect(
+        liveSnapshot.requests[1].cumulativeUsage?.totalTokens,
+        35,
+        reason: 'the suffix fold threads the same running cumulative',
+      );
+    });
   });
   test('a persisted model_request_summary carries blob pointers', () {
     const detail = TrajectoryRequestDetail(
@@ -1171,6 +1373,78 @@ void main() {
       // The blob table itself stays empty here: only dedicated blob
       // records feed it; the rows carry pointers.
       expect(snapshot.blobs.systemPrompts, isEmpty);
+    });
+  });
+
+  group('synthetic row replacement (live mirroring)', () {
+    AssistantMessage streamedAssistant(DateTime timestamp) => AssistantMessage(
+      content: const [
+        TextContent(text: 'running'),
+        ToolCall(id: 'c1', name: 'bash', arguments: {'cmd': 'ls'}),
+      ],
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      model: 'claude-test',
+      usage: const Usage(
+        input: 10,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 12,
+        cost: UsageCost(),
+      ),
+      stopReason: StopReason.stop,
+      timestamp: timestamp,
+    );
+
+    test('a synthetic row that is no longer the tail is filtered out of the '
+        'middle with a full index rebuild (non-tail discard)', () {
+      final builder = TrajectorySnapshotBuilder();
+      builder.append(_userRecord('u1'));
+      // Turn 1 step 1 streams: a synthetic assistant row plus its
+      // synthetic tool row, keyed `1\0<step 1>`.
+      builder.applyEvent(MessageEndEvent(streamedAssistant(_at(1))));
+      // A queued prompt streams into turn 2 — the turn-1 synthetic rows
+      // are no longer the tail, so the fast truncation path cannot
+      // replace them.
+      builder.applyEvent(
+        MessageEndEvent(UserMessage.text('queued', timestamp: _at(2))),
+      );
+      final midStream = builder.build();
+      expect(midStream.records, hasLength(4));
+      expect(
+        midStream.records.last,
+        isA<TrajectoryUserRecord>(),
+        reason: 'the turn-1 synthetic rows sit mid-ledger now',
+      );
+
+      // The real turn-1 assistant lands: its synthetic rows must be
+      // filtered out of the middle and the tool-row index rebuilt.
+      final snapshot = builder.append(
+        _assistantRecord(
+          'a1',
+          parentId: 'u1',
+          content: const [
+            TextContent(text: 'answer'),
+            ToolCall(id: 'c1', name: 'bash', arguments: {'cmd': 'ls'}),
+          ],
+        ),
+      );
+      expect(snapshot.records, hasLength(4));
+      final assistants = snapshot.records
+          .whereType<TrajectoryAssistantRecord>()
+          .toList();
+      expect(assistants, hasLength(1), reason: 'the streamed ghost is gone');
+      expect(assistants.single.turn, 1);
+      expect(assistants.single.step, 1);
+      final tools = snapshot.records.whereType<TrajectoryToolRecord>();
+      expect(tools, hasLength(1));
+      expect(tools.single.callId, 'c1');
+      expect(tools.single.index, 4);
+      // The queued turn-2 prompt row survives the mid-ledger filter.
+      final queued = snapshot.records[1];
+      expect(queued, isA<TrajectoryUserRecord>());
+      expect((queued as TrajectoryUserRecord).text, 'queued');
     });
   });
 }

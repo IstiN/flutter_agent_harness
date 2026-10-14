@@ -381,12 +381,41 @@ void main() {
       // also be covered by .pubignore, or the root-level dry-run packs it
       // again. Non-root-scoped filters (build, .dart_tool, coverage) are
       // gitignored already and never reach pub's file list.
+      //
+      // gh-1511: .pubignore may carry NEGATIONS the stage deliberately
+      // does not mirror (publishing FROM packages/fa_llm needs the tree
+      // visible to pub's upward ignore walk, but fa_llm is not a core
+      // path dep and must NOT ride the staged core payload). A negated
+      // child of a `/*`-scoped exclude is tolerated here ONLY when it is
+      // pinned by the explicit-allowlist test below.
       final rules = _pubIgnoreRules();
       expect(rules, isNotEmpty);
+      final negated = rules.where((r) => r.negated).map((r) => r.body).toSet();
       var checked = 0;
       for (final f in _stagingFilters()) {
         if (f.include || !f.anchored) continue;
         checked++;
+        if (f.body.endsWith('/*')) {
+          // Child-scoped exclude (vendor/*, packages/*): enumerate the
+          // REAL children on disk — probing a literal `packages/*` path
+          // would let a stray un-negated sibling slip through unnamed.
+          final root = f.body.substring(0, f.body.length - 2);
+          final dir = Directory(root);
+          if (dir.existsSync()) {
+            for (final child in dir.listSync().whereType<Directory>()) {
+              if (negated.contains(child.path)) continue;
+              expect(
+                _ignoredByPubIgnore(rules, '${child.path}/pubspec.yaml', false),
+                isTrue,
+                reason:
+                    'the stage strips /${f.body} but .pubignore does not '
+                    'exclude ${child.path} — the root-level dry-run packs '
+                    'the tree again (gh-1220)',
+              );
+            }
+            continue;
+          }
+        }
         expect(
           _ignoredByPubIgnore(rules, '${f.body}/pubspec.yaml', false),
           isTrue,
@@ -440,6 +469,84 @@ void main() {
     });
   });
 
+  // ── gh-1511 — a sub-package publish must see its own tree ────────────
+  // Pub walks ignore rules up to the git root, so the root .pubignore's
+  // /packages/* hid packages/fa_llm from its OWN publish: `dart pub
+  // publish --dry-run` in packages/fa_llm failed with "The pubspec is
+  // hidden" + "missing LICENSE", and the tag-triggered OIDC publish
+  // (publish-fa-llm.yml) would have died the same way. The
+  // !/packages/fa_llm/ negation is pubignore-ONLY — the staging rsync
+  // keeps fa_llm out of the core payload (it is not a core path dep);
+  // the anti-drift mirror test above tolerates the divergence ONLY for
+  // negations pinned by the explicit-allowlist test below.
+  group('gh-1511 — sub-package publish sees its own tree', () {
+    test('fa_llm payload carries its own required files', () {
+      for (final probe in [
+        'packages/fa_llm/pubspec.yaml',
+        'packages/fa_llm/LICENSE',
+        'packages/fa_llm/README.md',
+        'packages/fa_llm/CHANGELOG.md',
+        'packages/fa_llm/lib/fa_llm.dart',
+      ]) {
+        expect(
+          File(probe).existsSync(),
+          isTrue,
+          reason: 'fixture sanity: $probe is on disk',
+        );
+        expect(
+          _publishedByPub(probe),
+          isTrue,
+          reason:
+              'pub walks ignore rules up to the git root — /packages/* '
+              'hides packages/fa_llm from its own publish (dry-run: "The '
+              'pubspec is hidden" + "missing LICENSE", gh-1511)',
+        );
+      }
+    });
+
+    test('.pubignore negations are an explicit allowlist', () {
+      // Every negated tree ships on the pub payload; only fa_llm_mock and
+      // vendor/xterm are mirrored by a stage INCLUDE (core path
+      // dev-deps), fa_llm is pubignore-only (gh-1511). A negation
+      // outside this set is mirror drift the anti-drift test would
+      // otherwise silently tolerate.
+      final negated = _pubIgnoreRules()
+          .where((r) => r.negated)
+          .map((r) => r.body)
+          .toSet();
+      expect(
+        negated,
+        unorderedEquals([
+          'vendor/xterm',
+          'packages/fa_llm_mock',
+          'packages/fa_llm',
+        ]),
+      );
+    });
+
+    test('other packages/* trees stay out of the pub payload', () {
+      // /packages/* + !fa_llm_mock + !fa_llm must keep hiding every
+      // sibling: dap_hub and fa_ui are repo tooling, fa_llm_flutter is
+      // publish_to: none (never published from this repo, so it needs no
+      // sub-package visibility either).
+      for (final probe in [
+        'packages/dap_hub/pubspec.yaml',
+        'packages/fa_ui/pubspec.yaml',
+        'packages/fa_llm_flutter/pubspec.yaml',
+      ]) {
+        if (!File(probe).existsSync()) continue;
+        expect(
+          _publishedByPub(probe),
+          isFalse,
+          reason:
+              '$probe is not part of the pub package — only fa_llm_mock '
+              '(core path dev-dep) and fa_llm (gh-1511 sub-package '
+              'publish) may negate /packages/*',
+        );
+      }
+    });
+  });
+
   // ── gh-1522 — the tag is the version; the stage is stamped from it ───────
   // The committed pubspecs carry the FIXED 0.0.0-dev placeholder (CI guards
   // hand-bumps in the static job) and the real version is stamped into the
@@ -462,22 +569,19 @@ void main() {
       }
     });
 
-    test(
-      'stage script forwards an optional version to the stamper, after the size guard',
-      () {
-        final script = File(_stagingScript).readAsStringSync();
-        final guard = script.indexOf('size=\$(du -sm');
-        final stamp = script.indexOf('/stamp_staged_release.sh"');
-        expect(
-          stamp,
-          greaterThan(guard),
-          reason:
-              'the stamp must run on the COMPLETE staged tree (after the '
-              'rsync + size guard), never before',
-        );
-        expect(script, contains('if [ "\${2:-}" ]'));
-      },
-    );
+    test('stage script forwards an optional version to the stamper, after the size guard', () {
+      final script = File(_stagingScript).readAsStringSync();
+      final guard = script.indexOf('size=\$(du -sm');
+      final stamp = script.indexOf('/stamp_staged_release.sh"');
+      expect(
+        stamp,
+        greaterThan(guard),
+        reason:
+            'the stamp must run on the COMPLETE staged tree (after the '
+            'rsync + size guard), never before',
+      );
+      expect(script, contains('if [ "\${2:-}" ]'));
+    });
 
     test('stamper enforces the tag↔staged-version invariant before upload', () {
       final stamp = File('scripts/stamp_staged_release.sh').readAsStringSync();
@@ -500,43 +604,39 @@ void main() {
       () {
         // Mirrors the changelog_cap_guard wiring — asserted here as part of
         // the stamp contract (the stage is a publish surface).
-        final stamp = File(
-          'scripts/stamp_staged_release.sh',
-        ).readAsStringSync();
+        final stamp = File('scripts/stamp_staged_release.sh')
+            .readAsStringSync();
         expect(stamp, contains('check_changelog_size.sh'));
         expect(stamp, contains('keeping only the fresh section'));
       },
     );
 
-    test(
-      'ci.yml publish stage passes the tag version and verifies the staged stamp',
-      () {
-        final ci = File('.github/workflows/ci.yml').readAsStringSync();
-        final publish = ci.indexOf('  publish:');
-        expect(publish, greaterThan(0));
-        expect(
-          ci.contains(
-            'stage_publish_package.sh /tmp/publish-stage "\${GITHUB_REF_NAME#v}"',
-          ),
-          isTrue,
-          reason:
-              'the publish job must stamp the stage from the TAG '
-              '(v1.0.550 → 1.0.550), not ship the placeholder',
-        );
-        final stage = ci.indexOf(
-          'stage_publish_package.sh /tmp/publish-stage',
-          publish,
-        );
-        final verify = ci.indexOf('Verify staged version matches tag', stage);
-        expect(
-          verify,
-          greaterThan(stage),
-          reason:
-              'the staged-version↔tag guard must run after staging, before '
-              'the upload (gh-1522)',
-        );
-      },
-    );
+    test('ci.yml publish stage passes the tag version and verifies the staged stamp', () {
+      final ci = File('.github/workflows/ci.yml').readAsStringSync();
+      final publish = ci.indexOf('  publish:');
+      expect(publish, greaterThan(0));
+      expect(
+        ci.contains(
+          'stage_publish_package.sh /tmp/publish-stage "\${GITHUB_REF_NAME#v}"',
+        ),
+        isTrue,
+        reason:
+            'the publish job must stamp the stage from the TAG '
+            '(v1.0.550 → 1.0.550), not ship the placeholder',
+      );
+      final stage = ci.indexOf(
+        'stage_publish_package.sh /tmp/publish-stage',
+        publish,
+      );
+      final verify = ci.indexOf('Verify staged version matches tag', stage);
+      expect(
+        verify,
+        greaterThan(stage),
+        reason:
+            'the staged-version↔tag guard must run after staging, before '
+            'the upload (gh-1522)',
+      );
+    });
 
     test(
       'install_local.sh stamps version.txt from git describe, not the pubspec',
@@ -594,9 +694,8 @@ void main() {
 
     /// A fixture "repo" (CWD for the run) plus a staged tree inside it.
     _StampFixture fixture({String? repoChangelog, String? stagedChangelog}) {
-      final dir = Directory(
-        '${tmp.path}/fx-${tmp.listSync().length}',
-      )..createSync(recursive: true);
+      final dir = Directory('${tmp.path}/fx-${tmp.listSync().length}')
+        ..createSync(recursive: true);
       final repo = '${dir.path}/repo';
       final stage = '${dir.path}/stage';
       Directory(repo).createSync();
@@ -606,24 +705,20 @@ void main() {
             '# Changelog\n\nCurated window.\n\n## Unreleased\n\n'
                 '- pending bullet\n\n## 1.0.998\n\n- old entry\n',
       );
-      File('$stage/pubspec.yaml').writeAsStringSync(
-        'name: fa\nversion: 0.0.0-dev\n',
-      );
+      File('$stage/pubspec.yaml')
+          .writeAsStringSync('name: fa\nversion: 0.0.0-dev\n');
       File('$stage/CHANGELOG.md').writeAsStringSync(
         stagedChangelog ?? File('$repo/CHANGELOG.md').readAsStringSync(),
       );
       return _StampFixture(repo: repo, stage: stage);
     }
 
-    ProcessResult stamp(_StampFixture fx, String version) => Process.runSync(
-      'bash',
-      [
-        File('scripts/stamp_staged_release.sh').absolute.path,
-        fx.stage,
-        version,
-      ],
-      workingDirectory: fx.repo,
-    );
+    ProcessResult stamp(_StampFixture fx, String version) =>
+        Process.runSync('bash', [
+          File('scripts/stamp_staged_release.sh').absolute.path,
+          fx.stage,
+          version,
+        ], workingDirectory: fx.repo);
 
     test('stamps the pubspec to exactly the tag version', () {
       final fx = fixture();
@@ -635,39 +730,33 @@ void main() {
       );
     });
 
-    test(
-      'folds the curated Unreleased body under the tag section; no Unreleased header survives',
-      () {
-        final fx = fixture();
-        final r = stamp(fx, '1.0.999');
-        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-        final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
-        expect(staged, isNot(contains('## Unreleased')));
-        expect(staged, contains('## 1.0.999'));
-        expect(staged, contains('- pending bullet'));
-        // the older curated section is preserved after the fresh one
-        expect(staged, contains('## 1.0.998'));
-        expect(
-          staged.indexOf('## 1.0.999'),
-          lessThan(staged.indexOf('## 1.0.998')),
-        );
-      },
-    );
+    test('folds the curated Unreleased body under the tag section; no Unreleased header survives', () {
+      final fx = fixture();
+      final r = stamp(fx, '1.0.999');
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+      final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
+      expect(staged, isNot(contains('## Unreleased')));
+      expect(staged, contains('## 1.0.999'));
+      expect(staged, contains('- pending bullet'));
+      // the older curated section is preserved after the fresh one
+      expect(staged, contains('## 1.0.998'));
+      expect(
+        staged.indexOf('## 1.0.999'),
+        lessThan(staged.indexOf('## 1.0.998')),
+      );
+    });
 
-    test(
-      'generated section matches the repo formatting convention (blank lines, PR #1526 thread 4)',
-      () {
-        final fx = fixture();
-        final r = stamp(fx, '1.0.999');
-        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-        final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
-        // blank line after the fresh section header, and a blank line
-        // between the fresh section and the next `## ` — raw markdown must
-        // not run sections together (the repo's hand-curated convention).
-        expect(staged, contains('## 1.0.999\n\n- pending bullet'));
-        expect(staged, contains('- pending bullet\n\n## 1.0.998'));
-      },
-    );
+    test('generated section matches the repo formatting convention (blank lines, PR #1526 thread 4)', () {
+      final fx = fixture();
+      final r = stamp(fx, '1.0.999');
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+      final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
+      // blank line after the fresh section header, and a blank line
+      // between the fresh section and the next `## ` — raw markdown must
+      // not run sections together (the repo's hand-curated convention).
+      expect(staged, contains('## 1.0.999\n\n- pending bullet'));
+      expect(staged, contains('- pending bullet\n\n## 1.0.998'));
+    });
 
     test(
       'over-cap staged file trims oldest-first, keeping the fresh section',

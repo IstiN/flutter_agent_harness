@@ -10,6 +10,7 @@ import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/services/relay/relay_probe.dart';
 import 'package:fa/boot/app_boot.dart';
 import 'package:fa/boot/boot_config_codec.dart';
+import 'package:fa/boot/boot_watchdog.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -620,29 +621,46 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   /// ([bootExtensionRelay]); this wrapper owns the widget shell —
   /// navigation and `mounted`-guarded error state.
   Future<void> _bootRelay() async {
-    await bootExtensionRelay(
-      env: widget.env,
-      onHome: (manager, registry) async {
-        if (!mounted) return;
-        AppAnalytics.instance.bootstrapResult('chat');
-        final navigator = Navigator.of(context);
-        await navigator.pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => faHomeScreen(
-              context: navigator.context,
-              manager: manager,
-              registry: registry,
-              restoreAppsMode: true,
-              networkMode: widget.networkMode,
-              networkSessions: widget.networkSessions,
+    try {
+      // gh-1507: same restore-phase coverage as [_boot] — the SW relay
+      // restores the session too.
+      kBootWatchdog.beginRestore();
+      await bootExtensionRelay(
+        env: widget.env,
+        onHome: (manager, registry) async {
+          // The relay restore (attach + converge + registry seed) is done
+          // by the time onHome runs — disarm the restore phase BEFORE the
+          // home navigation: pushReplacement stays pending for as long as
+          // the user sits on home, and bootExtensionRelay awaits onHome, so
+          // the finally below cannot disarm a healthy boot until home is
+          // popped (spurious "restore not completed" breadcrumbs from 10 s
+          // after every launch). The finally stays as the failure-path net
+          // (restoreDone is idempotent): a relay boot that threw never
+          // reached here.
+          kBootWatchdog.restoreDone();
+          if (!mounted) return;
+          AppAnalytics.instance.bootstrapResult('chat');
+          final navigator = Navigator.of(context);
+          await navigator.pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => faHomeScreen(
+                context: navigator.context,
+                manager: manager,
+                registry: registry,
+                restoreAppsMode: true,
+                networkMode: widget.networkMode,
+                networkSessions: widget.networkSessions,
+              ),
             ),
-          ),
-        );
-      },
-      onError: (message) {
-        if (mounted) setState(() => _relayError = message);
-      },
-    );
+          );
+        },
+        onError: (message) {
+          if (mounted) setState(() => _relayError = message);
+        },
+      );
+    } finally {
+      kBootWatchdog.restoreDone();
+    }
   }
 
   /// Set when the extension-panel relay could not attach (SW dead/broken
@@ -652,13 +670,22 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   Future<void> _boot() async {
     final config = _config!;
     try {
+      // gh-1507: arm the watchdog's restore phase for the whole restore
+      // chain — a wedge after the first frame (the reported freeze shape)
+      // breadcrumbs instead of sitting silent.
+      kBootWatchdog.beginRestore();
+      BootSteps.begin('restore:env');
       final env = widget.env ?? await createPlatformEnv();
+      BootSteps.mark('restore:env');
+      BootSteps.begin('restore:manager');
       final manager = FlutterSessionManager(
         env: env,
         sessionsRoot: defaultSessionsRoot(env.sessionCwd),
       );
+      BootSteps.mark('restore:manager');
       // Resume the day's session (or an untouched empty one) instead of
       // stacking a fresh empty session on every cold launch.
+      BootSteps.begin('restore:session');
       await manager.createOrResumeSession(
         config: config,
         createFactory: () => AgentService.create(
@@ -676,6 +703,17 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
           taskModelsStore: widget.taskModelsStore,
         ),
       );
+      BootSteps.mark('restore:session');
+      // The restore chain is done — disarm the watchdog's restore phase
+      // HERE, not in the finally below: `await navigator.pushReplacement`
+      // stays pending for as long as the user sits on home, so a
+      // finally-disarm would keep the phase armed for the whole session —
+      // every healthy launch would breadcrumb "restore not completed"
+      // from 10 s after boot (and widget tests that end parked on home
+      // would die on the pending restore timer). The finally remains the
+      // failure-path net (restoreDone is idempotent): a restore that
+      // THREW never reached here and is disarmed on the way out.
+      kBootWatchdog.restoreDone();
       if (!mounted) return;
       AppAnalytics.instance.bootstrapResult('chat');
       // Use the Navigator's context, not the State's — after a hot restart
@@ -711,6 +749,12 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
         AppAnalytics.instance.bootstrapResult('setup_restore_failed');
         setState(() => _config = null);
       }
+    } finally {
+      // gh-1507: failure-path net for the restore phase (restoreDone is
+      // idempotent — the success path already disarmed above, before the
+      // home navigation). A restore that THREW — landing on the setup
+      // form, no wedge — is disarmed here on the way out.
+      kBootWatchdog.restoreDone();
     }
   }
 

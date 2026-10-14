@@ -924,12 +924,6 @@ final class StructuredCompactor {
         budget: budget,
       );
     }
-    // ignore: avoid_print
-    try {
-      print(
-        'SUMMARIZE n=${messages.length} :: ${messages.map((m) => '${m.role}:${m.toString().substring(0, m.toString().length > 120 ? 120 : m.toString().length)}').join(' || ')}',
-      );
-    } catch (_) {}
     final text = await _callSummarizer(prompt);
     return text;
   }

@@ -184,16 +184,6 @@ extension AgentCliRun on AgentCli {
     io.writeln(_keyStatusView.errorLine(message, _agent.state.model.baseUrl));
   }
 
-  /// Whether the assistant message produced nothing actionable: no non-empty
-  /// text content and no tool calls.
-  bool _assistantMessageIsEmpty(AssistantMessage message) {
-    final hasText = message.content.any(
-      (c) => c is TextContent && c.text.trim().isNotEmpty,
-    );
-    final hasToolCalls = message.content.any((c) => c is ToolCall);
-    return !hasText && !hasToolCalls;
-  }
-
   /// Shared handler for a detected CodeMie auth-session expiry: strips the
   /// machine marker, prints a short error, launches the browser SSO flow, and
   /// tells the user to repeat the message.

@@ -72,8 +72,9 @@ Dispatch **Bench Harbor** (`workflow_dispatch`). Inputs:
   + LLM spend. Smoke runs and 4.0 are unaffected (the historical 4.0
   default dispatch keeps its no-confirmation behaviour).
 - `provider` — `zai-glm-5.3-flash` (default; byte-identical to the
-  pre-gh-1503 wiring), `kimi-for-coding` (`k3-256k`, needs the
-  `FA_BENCH_KIMI_KEY` secret), or `custom` (needs `FA_BENCH_CUSTOM_KEY`
+  pre-gh-1503 wiring), `kimi-for-coding` (model id `kimi-for-coding` —
+  the plan's own model name, needs the `FA_BENCH_KIMI_KEY` secret), or
+  `custom` (needs `FA_BENCH_CUSTOM_KEY`
   + `provider-config`). Same contract as the legacy bench's gh-1471
   provider selection — the model is derived from the provider, so the
   old free-text `model` input is gone (gh-1503).

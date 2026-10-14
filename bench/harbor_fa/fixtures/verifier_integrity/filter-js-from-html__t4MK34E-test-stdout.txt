@@ -1,0 +1,123 @@
+============================= test session starts =============================
+platform linux -- Python 3.11.9, pytest-8.2.0, pluggy-1.5.0
+rootdir: /app
+collected 2 items
+
+Launching chromedriver on port 9515
+test_outputs.py
+RUN BATCH 1 (contains 16 tests)
+[b1] loading batch page http://localhost:8000/filter?batch=1 (timeout=120)
+v1-1: <img src=x onerror=alert(1)> -> blocked
+v1-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 2 (contains 17 tests)
+[b2] loading batch page http://localhost:8000/filter?batch=2 (timeout=120)
+v2-1: <img src=x onerror=alert(1)> -> blocked
+v2-17: <svg onload=alert(2)> -> blocked
+RUN BATCH 3 (contains 16 tests)
+[b3] loading batch page http://localhost:8000/filter?batch=3 (timeout=120)
+v3-1: <img src=x onerror=alert(1)> -> blocked
+v3-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 4 (contains 16 tests)
+[b4] loading batch page http://localhost:8000/filter?batch=4 (timeout=120)
+v4-1: <img src=x onerror=alert(1)> -> blocked
+v4-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 5 (contains 17 tests)
+[b5] loading batch page http://localhost:8000/filter?batch=5 (timeout=120)
+v5-1: <img src=x onerror=alert(1)> -> blocked
+v5-17: <svg onload=alert(2)> -> blocked
+RUN BATCH 6 (contains 16 tests)
+[b6] loading batch page http://localhost:8000/filter?batch=6 (timeout=120)
+v6-1: <img src=x onerror=alert(1)> -> blocked
+v6-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 7 (contains 16 tests)
+[b7] loading batch page http://localhost:8000/filter?batch=7 (timeout=120)
+v7-1: <img src=x onerror=alert(1)> -> blocked
+v7-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 8 (contains 16 tests)
+[b8] loading batch page http://localhost:8000/filter?batch=8 (timeout=120)
+v8-1: <img src=x onerror=alert(1)> -> blocked
+v8-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 9 (contains 16 tests)
+[b9] loading batch page http://localhost:8000/filter?batch=9 (timeout=120)
+v9-1: <img src=x onerror=alert(1)> -> blocked
+v9-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 10 (contains 16 tests)
+[b10] loading batch page http://localhost:8000/filter?batch=10 (timeout=120)
+v10-1: <img src=x onerror=alert(1)> -> blocked
+v10-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 11 (contains 16 tests)
+[b11] loading batch page http://localhost:8000/filter?batch=11 (timeout=120)
+v11-1: <img src=x onerror=alert(1)> -> blocked
+v11-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 12 (contains 16 tests)
+[b12] loading batch page http://localhost:8000/filter?batch=12 (timeout=120)
+v12-1: <img src=x onerror=alert(1)> -> blocked
+v12-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 13 (contains 16 tests)
+[b13] loading batch page http://localhost:8000/filter?batch=13 (timeout=120)
+v13-1: <img src=x onerror=alert(1)> -> blocked
+v13-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 14 (contains 16 tests)
+[b14] loading batch page http://localhost:8000/filter?batch=14 (timeout=120)
+v14-1: <img src=x onerror=alert(1)> -> blocked
+v14-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 15 (contains 16 tests)
+[b15] loading batch page http://localhost:8000/filter?batch=15 (timeout=120)
+v15-1: <img src=x onerror=alert(1)> -> blocked
+v15-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 16 (contains 16 tests)
+[b16] loading batch page http://localhost:8000/filter?batch=16 (timeout=120)
+v16-1: <img src=x onerror=alert(1)> -> blocked
+v16-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 17 (contains 15 tests)
+[b17] loading batch page http://localhost:8000/filter?batch=17 (timeout=120)
+v17-1: <img src=x onerror=alert(1)> -> blocked
+v17-15: <svg onload=alert(2)> -> blocked
+RUN BATCH 18 (contains 15 tests)
+[b18] loading batch page http://localhost:8000/filter?batch=18 (timeout=120)
+v18-1: <img src=x onerror=alert(1)> -> blocked
+v18-15: <svg onload=alert(2)> -> blocked
+RUN BATCH 19 (contains 15 tests)
+[b19] loading batch page http://localhost:8000/filter?batch=19 (timeout=120)
+v19-1: <img src=x onerror=alert(1)> -> blocked
+v19-15: <svg onload=alert(2)> -> blocked
+RUN BATCH 20 (contains 16 tests)
+[b20] loading batch page http://localhost:8000/filter?batch=20 (timeout=120)
+v20-1: <img src=x onerror=alert(1)> -> blocked
+v20-16: <svg onload=alert(2)> -> blocked
+RUN BATCH 21 (contains 15 tests)
+[b21] loading batch page http://localhost:8000/filter?batch=21 (timeout=120)
+v21-1: <img src=x onerror=alert(1)> -> blocked
+v21-15: <svg onload=alert(2)> -> blocked
+RUN BATCH 22 (contains 15 tests)
+[b22] loading batch page http://localhost:8000/filter?batch=22 (timeout=120)
+v22-1: <img src=x onerror=alert(1)> -> blocked
+v22-15: <svg onload=alert(2)> -> blocked
+RUN BATCH 23 (contains 15 tests)
+[b23] loading batch page http://localhost:8000/filter?batch=23 (timeout=120)
+v23-1: <img src=x onerror=alert(1)> -> blocked
+v23-15: <svg onload=alert(2)> -> blocked
+RUN BATCH 24 (contains 15 tests)
+[b24] loading batch page http://localhost:8000/filter?batch=24 (timeout=120)
+v24-1: <img src=x onerror=alert(1)> -> blocked
+v24-15: <svg onload=alert(2)> -> blocked
+RUN BATCH 25 (contains 15 tests)
+[b25] loading batch page http://localhost:8000/filter?batch=25 (timeout=120)
+v25-1: <img src=x onerror=alert(1)> -> blocked
+v25-15: <svg onload=alert(2)> -> blocked
+RUN BATCH 26 (contains 15 tests)
+[b26] loading batch page http://localhost:8000/filter?batch=26 (timeout=120)
+v26-1: <img src=x onerror=alert(1)> -> blocked
+v26-15: <svg onload=alert(2)> -> blocked
+RUN BATCH 27 (contains 15 tests)
+[b27] loading batch page http://localhost:8000/filter?batch=27 (timeout=120)
+v27-1: <img src=x onerror=alert(1)> -> blocked
+v27-15: <svg onload=alert(2)> -> blocked
+RUN BATCH 28 (contains 15 tests)
+[b28] loading batch page http://localhost:8000/filter?batch=28 (timeout=120)
+v28-1: <img src=x onerror=alert(1)> -> blocked
+v28-15: <svg onload=alert(2)> -> blocked
+======================================================================
+✓ Filter successfully blocked all 439 XSS attack vectors!
+======================================================================
+=========================================== 2 passed in 214.07s ===========================================

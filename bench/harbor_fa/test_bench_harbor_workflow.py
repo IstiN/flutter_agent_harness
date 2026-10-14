@@ -116,6 +116,18 @@ class BenchHarborDefaultsTest(unittest.TestCase):
         self.assertEqual(self._step_env("FA_AGENT_TIMEOUT_ABS_CEILING_SEC"), "3600")
         self.assertEqual(self._step_env("FA_PROGRESS_EXTENSION"), "1")
 
+    def test_external_cap_flows_from_the_split_matrix(self):
+        # gh-1576: the shard's external harness cap arrives from the setup
+        # split (min declared per-task agent timeout across the shard) and
+        # rides the shard step env. An absent matrix key renders an EMPTY
+        # env var — unknown, the knobs rule alone (AC5/E1); a declared cap
+        # is folded into the deadline via min() in bench/fa_agent_timeout.py.
+        self.assertIn("FA_EXTERNAL_CAP_SEC: ${{ matrix.external_cap }}", self.text)
+        # and the setup split emits the key: the split script's own unit
+        # tests (test_split_tasks.py) pin the emission logic — here we pin
+        # the workflow wiring (the expression must reference the matrix).
+        self.assertIn("external_cap", self.text.split("matrix:", 1)[-1])
+
     def test_watch_knobs_resolve_to_progress_watch_mode(self):
         # The exported values must actually arm the watch: same env
         # contract the adapter consumes (shared bench/fa_agent_timeout.py).
@@ -301,15 +313,20 @@ def _run_resolve(
 
 
 def _resolve_outputs(proc) -> dict:
-    if not proc.github_output.exists():
-        return {}
-    result = {}
-    for line in proc.github_output.read_text().splitlines():
-        if "=" in line:
-            key, _, value = line.partition("=")
-            result[key] = value
-    proc._tmp.cleanup()
-    return result
+    # try/finally: the no-output early return used to leak proc._tmp
+    # (ResourceWarning on GC) — same hygiene class as the gh-1592
+    # test_error_classifier review thread.
+    try:
+        if not proc.github_output.exists():
+            return {}
+        result = {}
+        for line in proc.github_output.read_text().splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                result[key] = value
+        return result
+    finally:
+        proc._tmp.cleanup()
 
 
 @unittest.skipUnless(
@@ -354,11 +371,11 @@ class HarborProviderResolveStepTest(unittest.TestCase):
         outputs = _resolve_outputs(proc)
         self.assertEqual(outputs["provider_type"], "kimi")
         self.assertEqual(outputs["provider_key_env"], "FA_KEY_API_KIMI_COM_BENCH")
-        self.assertEqual(outputs["bench_model"], "k3-256k")
-        self.assertEqual(outputs["run_label"], "kimi-for-coding (k3-256k)")
+        self.assertEqual(outputs["bench_model"], "kimi-for-coding")
+        self.assertEqual(outputs["run_label"], "kimi-for-coding")
         config = json.loads(outputs["provider_config"])
         self.assertEqual(config["baseUrl"], "https://api.kimi.com/coding/v1")
-        self.assertEqual(config["model"], "k3-256k")
+        self.assertEqual(config["model"], "kimi-for-coding")
         self.assertEqual(config["apiKeyEnvVar"], "FA_KEY_API_KIMI_COM_BENCH")
         # gh-1471 D4: the capability fields ride the config explicitly.
         self.assertEqual(config["contextWindow"], 200000)

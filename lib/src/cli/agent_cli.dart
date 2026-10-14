@@ -48,6 +48,7 @@ import 'key_status.dart';
 import 'provider_error_text.dart';
 import 'sigint_action.dart';
 import '../agent/agent_loop.dart';
+import '../agent/empty_completion.dart';
 import '../agent/finalize_gate.dart';
 import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
@@ -290,6 +291,7 @@ part 'agent_cli_steering.dart';
 part 'agent_cli_tools.dart';
 part 'agent_cli_io.dart';
 part 'agent_cli_hep_io.dart';
+part 'agent_cli_headless_exit.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_waiting.dart';
 part 'agent_cli_subagent_board.dart';
@@ -309,6 +311,13 @@ part 'agent_cli_input.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
+
+/// gh-1603: the explicit headless marker for a run that settled WITHOUT a
+/// final answer (an unrecoverable empty completion after the nudge budget).
+/// Written to the diagnostics channel next to a non-zero exit so the bench
+/// adapter can classify "ended mid-task" instead of recording a clean
+/// completion.
+const String headlessIncompleteMarker = '__FA_INCOMPLETE';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -409,6 +418,11 @@ class AgentCli {
       onConfigChanged: () => unawaited(_refreshMemorySection()),
       // Semantic search + consolidate() need an LLM: memory → smol → main.
       llmProvider: HarnessLlmProvider(resolve: () => _resolveMemoryLlmSlot()),
+      // gh-1510: the memory package logs via print(); in TUI mode that
+      // writes raw bytes into the CellRenderer's frame stream and desyncs
+      // the screen (visibly eaten characters). Route those lines to the
+      // diagnostic log instead.
+      printSink: (line) => _logDiagnostic('[memory] $line'),
     );
 
     // Issue #1079 slice 2: the core stack — env chain, capability-gated
@@ -624,6 +638,11 @@ class AgentCli {
         // The CLI handles empty-response retries itself with a 'continue'
         // nudge so the transcript reflects the retry explicitly.
         maxEmptyRetries: 0,
+        // gh-1577: the bounded hiccup budget rides the config so hosts and
+        // tests can tune N and pin the backoff.
+        emptyHiccupRetries: config.emptyHiccupRetries,
+        emptyHiccupBaseDelay: config.emptyHiccupBaseDelay,
+        emptyHiccupMaxBackoff: config.emptyHiccupMaxBackoff,
         // Post-mortem "who held the busy row": the run idle watchdog's fire
         // lands in fa.log with the session id.
         onRunIdleTimeout: (error) =>
@@ -651,12 +670,22 @@ class AgentCli {
     // LLM request payload while armed (`time-left: 5min`); unarmed keeps
     // the request byte-for-byte (the provider returns null).
     _agent.budgetLineProvider = _deadline.budgetLine;
-    // The FinalizeGate (gh-1412): unattended sessions (the bench / headless
-    // autopilot mode) emit the task ledger — the loop parses the final
+    // The FinalizeGate (gh-1412, attendance-corrected gh-1516): headless
+    // sessions only — `fa -p`, the bench — the run being actually
+    // UNATTENDED. The approval mode is a permission policy, never an
+    // attendance signal: an interactive TUI in autopilot has a human
+    // watching every turn and stays gate-free. The loop parses the final
     // answer's `task-ledger` block and the CLI persists it as a hidden
-    // `task_ledger` session record. Interactive sessions stay off
-    // (byte-identical, no prompt noise).
-    _agent.finalizeGate = config.approvalMode == ApprovalMode.unattended;
+    // `task_ledger` session record.
+    //
+    // gh-1516 review: `fa wire-serve` also runs unattended but
+    // DELIBERATELY stays gate-free — its wire clients drive their own
+    // supervision/verification loop, and keying `headlessRun` on for the
+    // serve would flip every other headless-only behavior with it
+    // (prompt contract, aborted-partial persistence, …). If wire runs
+    // should grow near-miss telemetry, thread a dedicated signal rather
+    // than reusing `headlessRun`.
+    _agent.finalizeGate = config.headlessRun;
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
     // sharing the messaging root arrive at turn boundaries.
@@ -752,9 +781,7 @@ class AgentCli {
     // same always-registered graceful contract as ask/request_secret —
     // the search degrades to an honest cannot-search result when no
     // session file backs the host.
-    _toolRegistry.register(
-      sessionSearchTool(search: searchSessionArchive),
-    );
+    _toolRegistry.register(sessionSearchTool(search: searchSessionArchive));
     // Pending-wait obligations (issue #1380 AC5): a successful
     // schedule_message arms a timer — the ledger learns why it exists.
     _attachObligationPendingWaits();
@@ -1905,12 +1932,19 @@ class AgentCli {
     // `state.messages` — the last completed turn's stop reason is taken
     // from the turn events as they fire, before any folding.
     StopReason? terminalStopReason;
+    // gh-1603: set inside the guarded section right after the settle (the
+    // probe must run before post-run compaction folds the transcript).
+    var endedOnEmptyCompletion = false;
     final turnSub = _agent.subscribe((event, _) {
       if (event is TurnEndEvent) {
         terminalStopReason = event.message.stopReason;
       }
     });
     _headlessMode = true;
+    // gh-1603: unattended runs get a wider empty-reply nudge budget than
+    // the REPL's one-shot (#1085 M2b) — the session may end only after
+    // `1 + headlessEmptyReplyNudges` consecutive unrecoverable empties.
+    _emptyReplyNudgesLeft = config.headlessEmptyReplyNudges;
     try {
       // The same pre-flight compaction guard as the REPL's [_runPrompt]:
       // a resumed session already over the threshold must compact BEFORE
@@ -1944,6 +1978,13 @@ class AgentCli {
         lastMessage,
         isAutoContinue: false,
       );
+      // gh-1603: captured BEFORE [_afterRun] — post-run compaction folds
+      // assistant turns out of the visible transcript (issue #413), so the
+      // last-message probe is only valid here. A run that still settles on
+      // an empty completion after the nudge budget is an UNFINISHED session
+      // (no final answer was produced); error/aborted terminals keep their
+      // own exit codes below.
+      endedOnEmptyCompletion = _settledOnEmptyCompletion();
       // Awaits any in-flight TTSR retry chain, persists the messages, and
       // auto-compacts — the same end-of-turn sequence as a REPL run. The
       // continuation paths recurse through [_runPrompt], which finalizes
@@ -1986,17 +2027,13 @@ class AgentCli {
       // pipeable prose stream (issue #774 AC3).
       await _flushUsageLedger(mirrorTokensLineToRunLog: true);
     }
-    // The exit code describes the LAST completed turn's terminal outcome
-    // (captured from the turn events above) — not the visible transcript,
-    // which post-run compaction rebuilds: the checkpoint fold drops the
-    // assistant turns entirely, and the classic trim marker lands after
-    // the error stop; both used to mask a failed run as exit 0 (issue
-    // #413).
-    return switch (terminalStopReason) {
-      StopReason.error => 1,
-      StopReason.aborted => 130,
-      _ => 0,
-    };
+    // gh-1603: the exit-code policy lives in the part-file extension — an
+    // unfinished session prints the explicit marker and exits 1; error/
+    // aborted terminals keep their own codes.
+    return _headlessExitCode(
+      endedOnEmptyCompletion: endedOnEmptyCompletion,
+      terminalStopReason: terminalStopReason,
+    );
   }
 
   /// Runs one user prompt to completion. On a CodeMie auth-session expiry,
@@ -2123,6 +2160,15 @@ class AgentCli {
   final Map<String, String> _runtimeSecrets = {};
 
   var _diagnosticLogDirEnsured = false;
+
+  /// Size cap of the shared diagnostics log (`~/.fah/logs/fa.log`): on the
+  /// first write of a process, an oversized log rotates to `fa.log.1`.
+  /// The memory package's print sink (gh-1510) appends prompt-sized debug
+  /// lines per memory op, so the append-only design now needs a bound —
+  /// without one, an active-memory session grows fa.log far faster than
+  /// the pre-existing lifecycle lines ever did.
+  @visibleForTesting
+  static const diagnosticLogMaxBytes = 4 * 1024 * 1024;
 
   String? _activeCustomName;
   Completer<String?>? _wizardPickerAnswer;

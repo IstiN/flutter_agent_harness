@@ -512,13 +512,19 @@ module PlayListingSync
     JSON.parse(res[:body]).fetch("images", [])
   end
 
-  # Google no longer auto-sends edits for review: the commit must opt out via
-  # the changesNotSentForReview query param, else the API rejects with 400
-  # INVALID_ARGUMENT. Review is triggered from the Play Console UI instead.
+  # Play's edits.commit is account-mode dependent: dev.fa1.app now AUTO-sends
+  # changes for review, so the gh-1367 opt-out param is rejected (HTTP 400
+  # "changesNotSentForReview must not be set", 2026-10-12 daily-publish) —
+  # the inverse of the manual-review world #1367/#1402 hardened for. Commit
+  # WITHOUT the param (the form that succeeds today, mirroring supply's own
+  # AAB commit in the same job) and retry once WITH the opt-out when Play
+  # reports the manual-review account instead.
   def commit_edit!(http, package_name, edit_id, auth)
-    res = http.request(:Post,
-                       "#{API_ROOT}/#{package_name}/edits/#{edit_id}:commit" \
-                       "?changesNotSentForReview=true", headers: auth)
+    url = "#{API_ROOT}/#{package_name}/edits/#{edit_id}:commit"
+    res = http.request(:Post, url, headers: auth)
+    if res[:status] == 400 && api_error_message(res[:body]).include?("changesNotSentForReview")
+      res = http.request(:Post, "#{url}?changesNotSentForReview=true", headers: auth)
+    end
     return if res[:status] == 200
 
     raise "edits.commit failed (HTTP #{res[:status]}): #{api_error_message(res[:body])}"
