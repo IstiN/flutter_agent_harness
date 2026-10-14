@@ -41,6 +41,22 @@ enum EmptyCompletionVerdict {
   abortedOrError,
 }
 
+/// The continuation nudge the loop injects as a user message when a hiccup
+/// retry already came back empty once (gh-1603): a cap-truncated reasoning
+/// model re-streamed with the identical context burns the same output budget
+/// on the same reasoning — the nudge is the signal that breaks the symmetry.
+/// Exact-text constant: the classifier recognizes the message by it to keep
+/// the turn's partial-content window open across nudged retries (the same
+/// marker-recognition pattern as the orphan drop note / stuck-call handback).
+const String emptyContinuationNudge =
+    'your last reply was empty/truncated — continue the task';
+
+/// Whether [message] is the loop-injected continuation nudge
+/// ([emptyContinuationNudge], gh-1603). Exact match — a real user message
+/// that merely resembles it still ends the turn window.
+bool isContinuationNudgeMessage(Message message) =>
+    message is UserMessage && message.content == emptyContinuationNudge;
+
 /// Whether [message]'s content is empty for run-outcome purposes:
 /// no non-whitespace text and no tool calls. Thinking content and images do
 /// not count as content (a reasoning-only turn with tool calls is NOT empty —
@@ -95,7 +111,13 @@ bool _turnCarriesPartialContent(
       sawMessage = true;
       continue;
     }
-    if (entry is UserMessage) break;
+    if (entry is UserMessage) {
+      // gh-1603: the loop's own continuation nudge rides mid-turn and must
+      // not reset the partial-content window — a nudged retry stays a
+      // hiccup. A real user message ends the window.
+      if (isContinuationNudgeMessage(entry)) continue;
+      break;
+    }
     switch (entry) {
       case AssistantMessage():
         if (!isEmptyAssistantCompletion(entry)) return true;
