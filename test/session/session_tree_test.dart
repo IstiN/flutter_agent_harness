@@ -450,4 +450,66 @@ void main() {
       },
     );
   });
+
+  group('ensureWholeLedgerResident (gh-1555 W1 read-everything surfaces)', () {
+    test(
+      'a linear session longer than the window pages to the file head in '
+      'bounded blocks — the branch then matches the full open exactly '
+      '(semantic-drift property)',
+      () async {
+        final session = await newSession();
+        for (var i = 0; i < 800; i++) {
+          await session.appendMessage(UserMessage.text('m$i'));
+        }
+        final meta = await session.getMetadata();
+
+        final windowed = await repo.open(meta, windowed: true);
+        // The tail window alone does not cover 800 records.
+        expect((await windowed.getBranch()).length, lessThan(800));
+
+        await windowed.ensureWholeLedgerResident();
+        final branch = await windowed.getBranch();
+        expect(branch, hasLength(800));
+        expect(branch.last.id, await windowed.getLeafId());
+
+        final full = await repo.open(meta);
+        final fullBranch = await full.getBranch();
+        expect(
+          branch.map((r) => r.id).toList(),
+          fullBranch.map((r) => r.id).toList(),
+          reason: 'paged windowed reads must not drift from the full open',
+        );
+      },
+    );
+
+    test(
+      'a session below the window is already resident — a trivial true, '
+      'branch identical to the full open (no regression for the common '
+      'small session, gh-1555 AC7)',
+      () async {
+        final session = await newSession();
+        await session.appendMessage(UserMessage.text('one'));
+        await session.appendMessage(assistant('two'));
+        final meta = await session.getMetadata();
+
+        final windowed = await repo.open(meta, windowed: true);
+        await windowed.ensureWholeLedgerResident();
+        final branch = await windowed.getBranch();
+        final fullBranch = await (await repo.open(meta)).getBranch();
+        expect(
+          branch.map((r) => r.id).toList(),
+          fullBranch.map((r) => r.id).toList(),
+        );
+      },
+    );
+
+    test('a full (non-windowed) storage is a no-op reporting true', () async {
+      final session = await newSession();
+      await session.appendMessage(UserMessage.text('one'));
+      final meta = await session.getMetadata();
+      final reopened = await repo.open(meta);
+      await reopened.ensureWholeLedgerResident();
+      expect((await reopened.getBranch()).length, 1);
+    });
+  });
 }
