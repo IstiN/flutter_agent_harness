@@ -1930,6 +1930,10 @@ class AgentCli {
       }
     });
     _headlessMode = true;
+    // gh-1603: unattended runs get a wider empty-reply nudge budget than
+    // the REPL's one-shot (#1085 M2b) — the session may end only after
+    // `1 + headlessEmptyReplyNudges` consecutive unrecoverable empties.
+    _emptyReplyNudgesLeft = config.headlessEmptyReplyNudges;
     try {
       // The same pre-flight compaction guard as the REPL's [_runPrompt]:
       // a resumed session already over the threshold must compact BEFORE
@@ -1963,6 +1967,17 @@ class AgentCli {
         lastMessage,
         isAutoContinue: false,
       );
+      // gh-1603: captured BEFORE [_afterRun] — post-run compaction folds
+      // assistant turns out of the visible transcript (issue #413), so the
+      // last-message probe is only valid here. A run that still settles on
+      // an empty completion after the nudge budget is an UNFINISHED session
+      // (no final answer was produced); error/aborted terminals keep their
+      // own exit codes below.
+      final settledMessage = _agent.state.messages.lastOrNull;
+      endedOnEmptyCompletion = settledMessage is AssistantMessage &&
+          settledMessage.stopReason != StopReason.error &&
+          settledMessage.stopReason != StopReason.aborted &&
+          isEmptyAssistantCompletion(settledMessage);
       // Awaits any in-flight TTSR retry chain, persists the messages, and
       // auto-compacts — the same end-of-turn sequence as a REPL run. The
       // continuation paths recurse through [_runPrompt], which finalizes
@@ -2004,6 +2019,19 @@ class AgentCli {
       // the token reporter greps the captured run log. Stdout stays the
       // pipeable prose stream (issue #774 AC3).
       await _flushUsageLedger(mirrorTokensLineToRunLog: true);
+    }
+    // gh-1603: an unfinished session must stay distinguishable from a clean
+    // completion — the bench adapter reads the exit code and this marker
+    // off the captured run log. The session ended on an empty completion
+    // after the headless nudge budget: no final answer, no ledger — a
+    // failure, never exit 0.
+    if (endedOnEmptyCompletion) {
+      io.writeln(
+        '$headlessIncompleteMarker the run ended on an empty model '
+        'response — no final answer was produced; the task did not '
+        'complete',
+      );
+      return 1;
     }
     // The exit code describes the LAST completed turn's terminal outcome
     // (captured from the turn events above) — not the visible transcript,
