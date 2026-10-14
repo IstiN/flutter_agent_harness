@@ -13,6 +13,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_agent_harness/src/compaction/structured/judge.dart'
+    show hideProtectTailEntries;
 import 'package:test/test.dart';
 import 'pty_harness.dart';
 
@@ -26,10 +28,40 @@ void main() {
   final foldBadge = RegExp(r'\[auto-compacted( ×\d+)? · continuing\]');
 
   test('a mid-run fold badges the status row until the turn settles', () async {
+    // The scenario's margins, pinned to the production constants they lean
+    // on — the /4 char estimator (token_estimation.dart), the protected
+    // live-edge tail (hideProtectTailEntries, judge.dart) and the
+    // shouldCompact trigger (window − window ~/ 4, compaction.dart). If any
+    // constant moves, this fails HERE with the arithmetic spelled out
+    // instead of going red on the nightly with zero gate-time signal.
+    const scenarioWindow = 16384;
+    // 40-char lines + newline, /4 (the estimator's chars-per-token basis).
+    final perReadTokens = (60 * 41 / 4).ceil();
+    const e1FixedOverheadTokens = 5500; // system + E1 turn + summary + tail
+    final e1Floor =
+        hideProtectTailEntries * perReadTokens + e1FixedOverheadTokens;
+    final shouldCompactTrigger = scenarioWindow - scenarioWindow ~/ 4;
+    expect(
+      30 * perReadTokens,
+      greaterThan(scenarioWindow),
+      reason:
+          'the reads turn must still overflow the window — the fold '
+          'premise (30 × $perReadTokens = ${30 * perReadTokens} vs '
+          '$scenarioWindow)',
+    );
+    expect(
+      e1Floor,
+      lessThan(shouldCompactTrigger - 1500),
+      reason:
+          'the E1 floor ($e1Floor) must clear the shouldCompact trigger '
+          '($shouldCompactTrigger) with margin, not just the guard line — '
+          'a floor inside the trigger..window dead band re-enters the '
+          'compaction chain every run',
+    );
     final mock = _FoldingMock();
     await mock.start();
     final tempHome = _tempHomeForMock(mock.port);
-    // Twenty-four lean reads in one scripted turn (~22k estimated tokens of
+    // Thirty lean reads in one scripted turn (~18.5k estimated tokens of
     // tool results) blow the 16384-token capped window at the second request
     // — the guard refuses, the compaction folds the older results, the
     // retry continues the turn. The reads stay LEAN on purpose: the fold's
@@ -38,14 +70,16 @@ void main() {
     // the overflow line (gh-1469/#1495) and the E1 follow-up flipped into a
     // relief chain on estimator jitter — a chain the judge's 300s attempt
     // budget can legally stretch past any fixed wait on a loaded nightly
-    // runner. 24 × 90-line reads overflow the same way while leaving the
-    // E1 request ~3.4k tokens of headroom (measured 12.9k vs the 16384
-    // guard line), so E1 can never enter relief at all.
+    // runner. Two lines must clear, not one: the over-window guard at the
+    // full window AND the shouldCompact pre-flight trigger at
+    // window − window ~/ 4 = 12288 — E1's request sits under BOTH with
+    // margin (floor ≈ 8 × 615 + 5.5k ≈ 10.4k), so E1 can never enter the
+    // compaction chain at all.
     final workspace = Directory('/tmp').createTempSync('fabadge');
-    for (var i = 1; i <= 24; i++) {
+    for (var i = 1; i <= 30; i++) {
       File(
         '${workspace.path}/big$i.txt',
-      ).writeAsStringSync(List.filled(90, 'x' * 40).join('\n'));
+      ).writeAsStringSync(List.filled(60, 'x' * 40).join('\n'));
     }
     final harness = await FaCliHarness.spawn(
       workingDirectory: workspace.path,
@@ -90,8 +124,9 @@ void main() {
     );
 
     // E1: a fresh run starts badge-free — no fold, no badge. The lean-read
-    // shape above leaves E1 ~3.4k tokens under the guard line, so E1 never
-    // enters relief; the 90 s budget (gh-1469) is headroom for a loaded
+    // shape above leaves E1's floor under the shouldCompact trigger (the
+    // static guard at the top pins the margin), so E1 never enters the
+    // compaction chain; the 90 s budget (gh-1469) is headroom for a loaded
     // runner, not for a relief chain.
     harness.sendText('say hi');
     harness.sendEnter();
@@ -208,7 +243,7 @@ final class _FoldingMock {
     ],
   };
 
-  /// One assistant turn with 24 parallel `read` tool calls (see the
+  /// One assistant turn with 30 parallel `read` tool calls (see the
   /// scenario comment in the test body: many lean reads overflow the
   /// window while keeping the protected-tail floor small).
   Map<String, Object> _readsTurnChunk() => {
@@ -220,7 +255,7 @@ final class _FoldingMock {
         'delta': {
           'role': 'assistant',
           'tool_calls': [
-            for (var i = 1; i <= 24; i++)
+            for (var i = 1; i <= 30; i++)
               {
                 'index': i - 1,
                 'id': 'call_$i',
