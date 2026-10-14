@@ -25,6 +25,7 @@ integration tests need `pip install harbor`, as in the bench workflow).
 """
 import asyncio
 import base64
+import dataclasses
 import importlib.util
 import json
 import os
@@ -84,10 +85,25 @@ def _install_harbor_stubs():
     installed.base = installed_base
 
     class BaseInstalledAgent:
+        # gh-1592: FaAgent's ERROR_PATTERNS override filters this table;
+        # the stub stays minimal (empty — the anchored-pattern semantics
+        # are pinned against the real package in test_error_classifier.py).
+        ERROR_PATTERNS = []
+
         def __init__(self, **kwargs):
             self._version = None
 
+    @dataclasses.dataclass
+    class ErrorPattern:
+        pattern: str
+        exception: type
+
+    class ApiRateLimitError(RuntimeError):
+        pass
+
     installed_base.BaseInstalledAgent = BaseInstalledAgent
+    installed_base.ErrorPattern = ErrorPattern
+    installed_base.ApiRateLimitError = ApiRateLimitError
     environments = module("harbor.environments")
     harbor.environments = environments
     environments.__path__ = []
