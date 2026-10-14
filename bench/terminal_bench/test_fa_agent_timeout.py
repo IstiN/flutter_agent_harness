@@ -1628,6 +1628,22 @@ class ExternalCapDeadlineTest(unittest.TestCase):
             {"FA_DEADLINE_EPOCH_MS": str(self.NOW_MS + 1_680_000)},
         )
 
+    def test_harbor_900s_task_cap_deadline_is_start_plus_780s(self):
+        # gh-1601 AC1 pinned shape: harbor declares 900s (make-doom-for-mips
+        # / password-recovery) under the shipped 3600s abs ceiling — the
+        # exported FA_DEADLINE_EPOCH_MS MUST be start + 900 - 120 (wrap-up
+        # margin) = 780s, so fa paces for 13 min, never for the knob
+        # ceiling's 58 min (the incident: fa.txt opened "I have 57
+        # minutes." and harbor killed the agent phase at 900s).
+        cap, deadline = fa_agent_timeout.resolve_deadline(
+            TimeoutKnobs.from_env(self.watch_env(**{EXTERNAL_CAP_NAME: "900"})),
+            self.watch_env(**{EXTERNAL_CAP_NAME: "900"}),
+            now_ms=self.NOW_MS,
+        )
+        self.assertEqual(cap.effective_cap_sec, 900.0)
+        self.assertEqual(cap.winning_cap_source, "external")
+        self.assertEqual(deadline, self.NOW_MS + 780_000)
+
     def test_larger_external_cap_changes_nothing(self):
         # E4/REG-2: 7200s external over a 3600s ceiling is byte-identical
         # to the no-cap run.
