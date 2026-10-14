@@ -14,20 +14,6 @@
   "action": {
     "default_icon": "icons/icon-32.png"
   },
-  // Issue #137 — maximum viable permission set: the generic chrome.*
-  // bridge (browser_api) exposes every declared namespace to the agent,
-  // so permissions without access are pure waste. Tier 3 exclusions
-  // (documented here + permission_matrix.dart):
-  //   enterprise.*            — device-admin, managed contexts only
-  //   platformKeys            — ChromeOS-only
-  //   fileSystemProvider      — ChromeOS-only
-  //   wallpaper               — ChromeOS-only
-  //   gcm / instanceID        — legacy push transport, no agent surface
-  //   devtools                — opens interactive windows, not automation
-  //   passwords               — chrome exposes no such API at all
-  // `commands`/`omnibox` are manifest KEYS (below), not permissions.
-  // `management` is declared but bridge-default-DENIED (self-preservation:
-  // an injected page must not disable the agent's own extension).
   "permissions": [
     "alarms",
     "bookmarks",
@@ -107,11 +93,6 @@
       "all_frames": false
     },
     {
-      // Issue #470: the embedded fa pane (fa1.dev inside the Outlook tab)
-      // bridges its provider HTTP to the SW through this relay — page JS has
-      // no chrome.* and CORS-blocked fetches. all_frames: the pane is a
-      // cross-origin iframe; top-frame-only injection never sees it. Inert
-      // everywhere else (it only answers __faEmbed-pane messages).
       "matches": ["<all_urls>"],
       "js": ["content/embed_relay.js"],
       "run_at": "document_start",
