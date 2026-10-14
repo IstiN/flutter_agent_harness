@@ -47,12 +47,11 @@ String streamLivenessLine(int elapsedSeconds) =>
 /// disarms the moment the watch clears. Transport-free.
 final class ReasoningLivenessTracker {
   ReasoningLivenessTracker({
-    required void Function(int elapsedSeconds) onRemind,
+    required this._onRemind,
     int Function()? livenessSeconds,
     int Function()? tickSeconds,
     DateTime Function()? clock,
-  }) : _onRemind = onRemind,
-       _livenessSeconds = livenessSeconds ?? (() => defaultToolLivenessSeconds),
+  }) : _livenessSeconds = livenessSeconds ?? (() => defaultToolLivenessSeconds),
        _tickSeconds = tickSeconds ?? (() => defaultToolLivenessTickSeconds),
        _clock = clock ?? DateTime.now;
 
@@ -159,12 +158,11 @@ final class ReasoningLivenessTracker {
 ///   tracker. Transport-free; the host wires the print sink.
 final class StreamLivenessHeartbeat {
   StreamLivenessHeartbeat({
-    required void Function(int elapsedSeconds) onRemind,
+    required this._onRemind,
     int Function()? livenessSeconds,
     int Function()? tickSeconds,
     DateTime Function()? clock,
-  }) : _onRemind = onRemind,
-       _livenessSeconds = livenessSeconds ?? (() => defaultToolLivenessSeconds),
+  }) : _livenessSeconds = livenessSeconds ?? (() => defaultToolLivenessSeconds),
        _tickSeconds = tickSeconds ?? (() => defaultToolLivenessTickSeconds),
        _clock = clock ?? DateTime.now;
 
