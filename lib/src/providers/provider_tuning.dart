@@ -30,6 +30,7 @@ library;
 import '../exceptions.dart';
 import 'provider_common.dart'
     show
+        ProviderTimeoutsOverride,
         effectiveProviderConnectTimeout,
         effectiveProviderStreamIdleTimeout,
         providerConnectTimeout,
@@ -104,6 +105,8 @@ final class ResolvedProviderTimeouts {
     required this.connectSource,
     required this.streamIdleSource,
     required this.sourceName,
+    this.connectSourceName,
+    this.streamIdleSourceName,
   });
 
   /// The effective connect/first-headers watchdog for the request.
@@ -119,17 +122,28 @@ final class ResolvedProviderTimeouts {
   /// The winning registry entry's name (null for global/default sources).
   final String? sourceName;
 
+  /// Per-field winning entry names (issue #1554): the precedence chain
+  /// resolves each field independently, so the connect and idle legs may
+  /// come from DIFFERENT entries (a customProviders entry tuning only the
+  /// connect leg over a `models:` entry tuning only the idle leg). Null
+  /// falls back to [sourceName].
+  final String? connectSourceName;
+  final String? streamIdleSourceName;
+
   /// The rendered source labels (`default` / `global` / `provider:<name>`),
-  /// pre-applied with [sourceName] — what the log lines print.
-  String get connectSourceLabel => connectSource.label(sourceName);
-  String get streamIdleSourceLabel => streamIdleSource.label(sourceName);
+  /// pre-applied with the per-field winning name — what the log lines
+  /// print.
+  String get connectSourceLabel =>
+      connectSource.label(connectSourceName ?? sourceName);
+  String get streamIdleSourceLabel =>
+      streamIdleSource.label(streamIdleSourceName ?? sourceName);
 
   /// One log line: `connect 180s (default), idle 1.5s (provider:glm-relay)`.
   String describe() =>
       'connect ${_humanize(connect)} '
-      '(${connectSource.label(sourceName)}), '
+      '(${connectSource.label(connectSourceName ?? sourceName)}), '
       'idle ${_humanize(streamIdle)} '
-      '(${streamIdleSource.label(sourceName)})';
+      '(${streamIdleSource.label(streamIdleSourceName ?? sourceName)})';
 }
 
 String _humanize(Duration d) {
@@ -235,19 +249,29 @@ final class ProviderTuningRegistry {
   /// last-registration-wins: boot seeds the queue pass after the config
   /// pass, so a queue entry's own tuning beats a same-endpoint
   /// customProviders entry instead of the reverse.
-  ProviderTuningEntry? forUrl(Uri url) {
-    ProviderTuningEntry? best;
-    var bestPathLength = -1;
-    for (final entry in _entries) {
-      if (!_matchesBaseUrl(url, entry.baseUrl)) continue;
-      final length = _baseDepth(entry.baseUrl);
-      // `>=` — a later equal-depth match replaces the earlier one.
-      if (length >= bestPathLength) {
-        best = entry;
-        bestPathLength = length;
-      }
-    }
-    return best;
+  ProviderTuningEntry? forUrl(Uri url) => matchesForUrl(url).firstOrNull;
+
+  /// Every entry matching [url], in priority order (issue #1554): the
+  /// LONGEST base path first; among equal depths the LAST registration
+  /// first — the boot seeder registers low surfaces before high ones
+  /// (`models:` custom < customProviders < role entries < queue), which
+  /// makes registration order the precedence order. The per-field
+  /// resolution walks this list and takes the first entry that declares
+  /// each field, so an entry overriding only the idle leg never shadows
+  /// a lower surface's connect leg.
+  List<ProviderTuningEntry> matchesForUrl(Uri url) {
+    // (depth, registration index, entry); ordered depth desc, then
+    // registration desc — see the doc above.
+    final matches = <(int, int, ProviderTuningEntry)>[
+      for (var i = 0; i < _entries.length; i++)
+        if (_matchesBaseUrl(url, _entries[i].baseUrl))
+          (_baseDepth(_entries[i].baseUrl), i, _entries[i]),
+    ];
+    matches.sort((a, b) {
+      final byDepth = b.$1.compareTo(a.$1);
+      return byDepth != 0 ? byDepth : b.$2.compareTo(a.$2);
+    });
+    return [for (final m in matches) m.$3];
   }
 
   /// The entry registered under an exact name (the AC1 startup log and the
@@ -309,41 +333,76 @@ final ProviderTuningRegistry providerTuningRegistry = ProviderTuningRegistry();
 
 /// Resolves the effective watchdog pair for one request.
 ///
-/// Order (one, documented — issue #1398 AC1): **provider entry > the
-/// global `providerTimeouts` override > the built-in defaults**, per
-/// FIELD: an entry declaring only `streamIdleTimeoutMs` leaves the
-/// connect leg at the global/default value.
+/// Order (one, documented — issue #1398 AC1, extended by issue #1554): the
+/// matching registry entries walk in priority order (explicit [name]
+/// first, then [matchesForUrl]: longest base path first, later
+/// registration first — boot seeds `models:` custom < customProviders <
+/// role entries < queue), then the global `providerTimeouts` override,
+/// then the built-in defaults. PER FIELD: the first level that DECLARES a
+/// field wins it, and a level overriding only `streamIdleTimeoutMs`
+/// leaves the connect leg falling through to the lower levels.
 ResolvedProviderTimeouts resolveProviderTimeouts({Uri? url, String? name}) {
-  ProviderTuningEntry? entry;
-  if (name != null) entry = providerTuningRegistry.forName(name);
-  entry ??= url == null ? null : providerTuningRegistry.forUrl(url);
-  final global = providerTimeoutsOverride;
+  final chain = <ProviderTuningEntry>[
+    if (name != null) ?providerTuningRegistry.forName(name),
+    if (url != null) ...providerTuningRegistry.matchesForUrl(url),
+  ];
+  Duration field(
+    Duration? Function(ProviderTuningEntry) pick,
+    Duration? Function(ProviderTimeoutsOverride) globalPick,
+    Duration fallback,
+  ) {
+    for (final entry in chain) {
+      final value = pick(entry);
+      if (value != null) return value;
+    }
+    final global = providerTimeoutsOverride;
+    if (global == null) return fallback;
+    return globalPick(global) ?? fallback;
+  }
+
+  ({ProviderTimeoutSource source, String? name}) source(
+    Duration? Function(ProviderTuningEntry) pick,
+    Duration? Function(ProviderTimeoutsOverride) globalPick,
+  ) {
+    for (final entry in chain) {
+      if (pick(entry) != null) {
+        return (source: ProviderTimeoutSource.providerEntry, name: entry.name);
+      }
+    }
+    return providerTimeoutsOverride != null &&
+            globalPick(providerTimeoutsOverride!) != null
+        ? (source: ProviderTimeoutSource.globalOverride, name: null)
+        : (source: ProviderTimeoutSource.builtIn, name: null);
+  }
+
+  final connectResolved = source((e) => e.connect, (g) => g.connect);
+  final idleResolved = source((e) => e.streamIdle, (g) => g.streamIdle);
   return ResolvedProviderTimeouts(
-    connect: entry?.connect ?? global?.connect ?? providerConnectTimeout,
-    streamIdle:
-        entry?.streamIdle ?? global?.streamIdle ?? providerStreamIdleTimeout,
-    connectSource: entry?.connect != null
-        ? ProviderTimeoutSource.providerEntry
-        : global?.connect != null
-        ? ProviderTimeoutSource.globalOverride
-        : ProviderTimeoutSource.builtIn,
-    streamIdleSource: entry?.streamIdle != null
-        ? ProviderTimeoutSource.providerEntry
-        : global?.streamIdle != null
-        ? ProviderTimeoutSource.globalOverride
-        : ProviderTimeoutSource.builtIn,
-    sourceName: entry?.name,
+    connect: field((e) => e.connect, (g) => g.connect, providerConnectTimeout),
+    streamIdle: field(
+      (e) => e.streamIdle,
+      (g) => g.streamIdle,
+      providerStreamIdleTimeout,
+    ),
+    connectSource: connectResolved.source,
+    streamIdleSource: idleResolved.source,
+    sourceName: connectResolved.name ?? idleResolved.name,
+    connectSourceName: connectResolved.name,
+    streamIdleSourceName: idleResolved.name,
   );
 }
 
 /// The effective connect watchdog for one request URL (the
-/// `sendWatchedProviderRequest` seam): the per-provider entry wins over
-/// the global effective value, which already folds the section + env.
+/// `sendWatchedProviderRequest` seam): the per-provider precedence chain
+/// wins over the global effective value, which already folds the section
+/// + env.
 Duration providerConnectTimeoutForUrl(Uri url) {
   if (providerTuningRegistry.isEmpty) return effectiveProviderConnectTimeout;
-  final entry = providerTuningRegistry.forUrl(url);
-  if (entry == null) return effectiveProviderConnectTimeout;
-  return entry.connect ?? effectiveProviderConnectTimeout;
+  for (final entry in providerTuningRegistry.matchesForUrl(url)) {
+    final value = entry.connect;
+    if (value != null) return value;
+  }
+  return effectiveProviderConnectTimeout;
 }
 
 /// The effective stream-idle watchdog for one request URL (the
@@ -351,9 +410,11 @@ Duration providerConnectTimeoutForUrl(Uri url) {
 /// [providerConnectTimeoutForUrl], for the idle leg.
 Duration providerStreamIdleTimeoutForUrl(Uri url) {
   if (providerTuningRegistry.isEmpty) return effectiveProviderStreamIdleTimeout;
-  final entry = providerTuningRegistry.forUrl(url);
-  if (entry == null) return effectiveProviderStreamIdleTimeout;
-  return entry.streamIdle ?? effectiveProviderStreamIdleTimeout;
+  for (final entry in providerTuningRegistry.matchesForUrl(url)) {
+    final value = entry.streamIdle;
+    if (value != null) return value;
+  }
+  return effectiveProviderStreamIdleTimeout;
 }
 
 /// The startup/boot notice line for one resolved pair:

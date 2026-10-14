@@ -233,6 +233,64 @@ void main() {
       expect(model.authHeader, 'x-api-key');
     });
 
+    test('1554/AC1 — chain entry timeout fields ride the built model, '
+        'labeled with the role; per-field absence stays null', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'default': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'local-slow',
+                baseUrl: 'http://127.0.0.1:8080/v1',
+                streamIdleTimeout: const Duration(seconds: 1800),
+              ),
+            ],
+            'smol': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'cloud-fast',
+                connectTimeout: const Duration(seconds: 30),
+                streamIdleTimeout: const Duration(seconds: 60),
+              ),
+            ],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'k'},
+        streamFactory: _neverStream,
+      );
+      final defaultModel = resolver.chainFor('default')!.single.model;
+      // The scoped window rides the model for the streams of THIS role…
+      expect(defaultModel.streamIdleTimeout, const Duration(seconds: 1800));
+      expect(defaultModel.timeoutScopeLabel, 'role default override');
+      // …per FIELD: an entry overriding only the idle leg leaves the
+      // connect leg at the lower layers (null here — falls through).
+      expect(defaultModel.connectTimeout, isNull);
+      // Another role's entry carries ITS OWN windows (the same model can
+      // never be shared) — the AC1 two-roles-two-windows precondition.
+      final smolModel = resolver.chainFor('smol')!.single.model;
+      expect(smolModel.connectTimeout, const Duration(seconds: 30));
+      expect(smolModel.streamIdleTimeout, const Duration(seconds: 60));
+      expect(smolModel.timeoutScopeLabel, 'role smol override');
+    });
+
+    test('1554/AC1 — a chain entry without timeout fields builds the '
+        'byte-identical model (no label, no windows)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'default': [ModelRef(provider: 'openai', modelId: 'plain')],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'k'},
+        streamFactory: _neverStream,
+      );
+      final model = resolver.chainFor('default')!.single.model;
+      expect(model.connectTimeout, isNull);
+      expect(model.streamIdleTimeout, isNull);
+      expect(model.timeoutScopeLabel, isNull);
+    });
+
     test('path-scoped overrides pin the chain for a matching cwd', () {
       final resolver = ModelRolesResolver(
         config: config,
