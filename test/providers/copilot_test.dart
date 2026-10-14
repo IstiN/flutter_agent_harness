@@ -660,6 +660,41 @@ void main() {
       expect(error.reason, StopReason.error);
       expect(error.error.errorMessage, contains('/provider copilot'));
     });
+
+    test(
+      'no injected client: the shared keep-alive client carries the stream',
+      () async {
+        // Every other stream test injects a client, so the
+        // `client ?? sharedProviderHttpClient()` fallback line never ran
+        // (CRAP ratchet: the CC-12 wrapper at 97.1% line coverage reads
+        // 12.0035 > 12.0). The shared client is stubbed through the
+        // [providerHttpClientFactory] seam — no real network.
+        final backend = FakeCopilotBackend()
+          ..chatHandler = (_) async => sseResponse(chatSse());
+        final savedFactory = providerHttpClientFactory;
+        debugResetSharedProviderHttpClient();
+        providerHttpClientFactory = () => backend.client();
+        addTearDown(() {
+          providerHttpClientFactory = savedFactory;
+          debugResetSharedProviderHttpClient();
+        });
+
+        // PAT mode: the token manager answers from the token itself, so the
+        // only HTTP traffic in this test is the chat POST — proof it rode
+        // the shared client (the factory product).
+        final events = await streamCopilot(
+          copilotModel,
+          simpleContext(),
+          CopilotOptions(githubToken: 'github_pat_SHARED'),
+        ).toList();
+
+        expect(backend.chatCalls, 1);
+        expect(backend.exchangeCalls, 0);
+        final deltas = events.whereType<TextDeltaEvent>().toList();
+        expect(deltas.map((d) => d.delta).join(), 'Hel lo');
+        expect((events.last as DoneEvent).reason, StopReason.stop);
+      },
+    );
   });
 
   group('copilot /models dialect', () {
