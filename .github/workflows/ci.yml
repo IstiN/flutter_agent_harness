@@ -641,11 +641,13 @@ jobs:
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
       - name: dart analyze (full)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-        run: dart analyze
+        # pana score: infos dock points — keep zero
+        run: dart analyze --fatal-infos --fatal-warnings
 
       - name: dart analyze (docs-only scope)
         if: needs.changes.outputs.app != 'true' && needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true'
-        run: dart analyze lib test bin
+        # pana score: infos dock points — keep zero
+        run: dart analyze --fatal-infos --fatal-warnings lib test bin
 
       # Publish gate at PR time: publish-blocking problems (undeclared lib/
       # imports, stray PEM-like strings) used to surface only in the tag-time
