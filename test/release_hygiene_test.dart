@@ -49,8 +49,9 @@ List<CreateBlock> extractCreates(String runText) {
       l.contains('#') && !l.contains('"#') ? l.split('#').first : l;
 
   for (var i = 0; i < lines.length; i++) {
-    if (!RegExp(r'gh\s+release\s+create\b').hasMatch(stripComment(lines[i])))
+    if (!RegExp(r'gh\s+release\s+create\b').hasMatch(stripComment(lines[i]))) {
       continue;
+    }
     final cmdLines = <String>[lines[i]];
     var j = i;
     while (j < lines.length - 1 &&
@@ -112,8 +113,11 @@ List<String> draftGuardSteps(dynamic job) {
   final guards = <String>[];
   if (job is! Map || !job.containsKey('steps')) return guards;
   for (final step in (job['steps'] as YamlList)) {
-    if (step is! YamlMap || !step.containsKey('if') || !step.containsKey('run'))
+    if (step is! YamlMap ||
+        !step.containsKey('if') ||
+        !step.containsKey('run')) {
       continue;
+    }
     final cond = step['if'].toString();
     final body = step['run'].toString();
     final isAlways = cond.contains('always()') || cond.contains('failure()');
@@ -430,12 +434,8 @@ class AutoReleaseRun {
   ]);
 
   /// All tags on origin, sorted.
-  List<String> originTags() => _git([
-    '--git-dir',
-    _originGitDir,
-    'tag',
-    '--sort=v:refname',
-  ]).split('\n');
+  List<String> originTags() =>
+      _git(['--git-dir', _originGitDir, 'tag', '--sort=v:refname']).split('\n');
 
   /// Whether [tag] exists on origin.
   bool originTagExists(String tag) =>
@@ -547,8 +547,9 @@ String fixtureRepo(
     'user.name',
     't',
   ], workingDirectory: dir.path);
-  if (changelog != null)
+  if (changelog != null) {
     File('${dir.path}/CHANGELOG.md').writeAsStringSync(changelog);
+  }
   var i = 0;
   for (final group in [commitSubjects, postTagSubjects]) {
     for (final subject in group) {
@@ -770,8 +771,9 @@ GuardRun runGuard(
   )..createSync(recursive: true);
   final bin = stubGh(dir.path);
   File('${dir.path}/release-state.txt').writeAsStringSync(state);
-  if (body != null)
+  if (body != null) {
     File('${dir.path}/release-body.txt').writeAsStringSync(body);
+  }
   File('${dir.path}/log').writeAsStringSync('');
   final res = Process.runSync(
     'bash',
@@ -1739,11 +1741,7 @@ gh release create "v9.9.9" \
         );
         expect(
           auto,
-          isNot(
-            contains(
-              RegExp(r'^[^#\n]*pubspec\.lock', multiLine: true),
-            ),
-          ),
+          isNot(contains(RegExp(r'^[^#\n]*pubspec\.lock', multiLine: true))),
           reason:
               'no lockfile mutation outside comments — the gh-1299 churn '
               'class is retired',
@@ -1826,8 +1824,7 @@ gh release create "v9.9.9" \
             .map((s) => s as YamlMap)
             .firstWhere(
               (s) =>
-                  s['uses']?.toString().startsWith('actions/checkout') ??
-                  false,
+                  s['uses']?.toString().startsWith('actions/checkout') ?? false,
             );
         expect(
           checkout['with']['token']?.toString(),
@@ -2092,7 +2089,6 @@ gh release create "v9.9.9" \
         );
       },
     );
-
   });
 
   // ── gh-1172/gh-1522 — tag-only behavioral coverage ───────────────────────
@@ -2103,259 +2099,274 @@ gh release create "v9.9.9" \
   // `git push origin refs/tags/vX` genuinely executes; a git shim races the
   // tag push by pre-pushing the same tag from a second clone between the
   // script's fetch and its push (E1), and a gh stub logs the release create.
-  group('gh-1522 — tag-only release behavioral coverage (dry-run, coalesce, E1 race)', () {
-    test(
-      'AC1 — dry-run computes the tag, exits before the push; no tag on origin, no gh create, no local leftover',
-      () {
-        final r = runAutoReleaseDirect('dry-run', dryRun: true);
-        expect(r.exitCode, 0, reason: r.output);
-        expect(r.output, contains('DRY-RUN: would push tag v0.1.496'));
-        expect(
-          r.originHeadAfter,
-          r.originHeadBefore,
-          reason: 'AC1: a dry run must not move origin/main',
-        );
-        expect(
-          r.originTagExists('v0.1.496'),
-          isFalse,
-          reason: 'a dry run must never push the tag',
-        );
-        expect(r.originTags(), ['v0.1.495']);
-        expect(
-          r.ghLog(),
-          isEmpty,
-          reason: 'a dry run must never create the GitHub Release',
-        );
-        expect(
-          r.seedTagExists('v0.1.496'),
-          isFalse,
-          reason:
-              'the dry run deletes its computed local tag — no leftover '
-              'pollutes the next real run',
-        );
-      },
-    );
-
-    test(
-      'coalesce guard — a tag younger than 2h skips the run entirely (no new tag on origin)',
-      () {
-        final r = runAutoReleaseDirect('coalesce', tagAgeHours: 1);
-        expect(r.exitCode, 0, reason: r.output);
-        expect(r.output, contains('coalesced'));
-        expect(
-          r.originHeadAfter,
-          r.originHeadBefore,
-          reason: 'no release may land inside the coalesce window',
-        );
-        expect(
-          r.originTags(),
-          ['v0.1.495'],
-          reason: 'the guard must not cut v0.1.496',
-        );
-        expect(r.ghLog(), isEmpty);
-      },
-    );
-
-    test(
-      'coalesce guard measures the TAG date, not the tagged commit date — a tag cut minutes ago coalesces even when its commit sat pending for hours (PR #1526 thread 5)',
-      () {
-        // The catch-up path: commits sat on main for hours before the
-        // cron/dispatch cut the tag. The 2h window runs from the RELEASE
-        // (tag), not from the commit the tag points at — reading the
-        // commit date would let extra releases through exactly when the
-        // guard (and the pub.dev ~12/day rate limit) exists to stop them.
-        final r = runAutoReleaseDirect(
-          'coalesce-tagger-date',
-          tagAgeHours: 0,
-          commitAgeHours: 5,
-        );
-        expect(r.exitCode, 0, reason: r.output);
-        expect(r.output, contains('coalesced'));
-        expect(
-          r.originTags(),
-          ['v0.1.495'],
-          reason: 'a fresh tag must coalesce pending commits',
-        );
-        expect(r.ghLog(), isEmpty);
-      },
-    );
-
-    test(
-      'E1 race — a tag that appeared mid-run rejects the push; the run re-derives the next version and lands THAT',
-      () {
-        final r = runAutoReleaseDirect('race-retry', raceMode: 'once');
-        expect(r.exitCode, 0, reason: r.output);
-        expect(r.output, contains('Tag push raced'));
-        expect(
-          r.originTagExists('v0.1.496'),
-          isTrue,
-          reason: 'the racer pre-pushed v0.1.496 — it must exist on origin',
-        );
-        expect(
-          r.originTagExists('v0.1.497'),
-          isTrue,
-          reason:
-              'the raced run must re-derive from the freshly fetched tags '
-              'and push v0.1.497',
-        );
-        final creates = r
-            .ghLog()
-            .where((l) => l.contains('release create'))
-            .toList();
-        expect(
-          creates,
-          hasLength(1),
-          reason: 'exactly one GitHub Release is created per run',
-        );
-        expect(
-          creates.single,
-          startsWith('release create v0.1.497 '),
-          reason: 'the raced-out v0.1.496 must never get a release object '
-              '(the notes may mention it as the previous release)',
-        );
-        expect(
-          r.originHeadAfter,
-          r.originHeadBefore,
-          reason:
-              'the race burned only tags — zero commits land on main '
-              '(gh-1522)',
-        );
-      },
-    );
-
-    test(
-      'E1 exhaustion — a tag race on every attempt exits 1 after 3 tries, creating nothing',
-      () {
-        final r = runAutoReleaseDirect('race-exhaust', raceMode: 'always');
-        expect(r.exitCode, 1, reason: 'exhaustion must fail loud: ${r.output}');
-        expect(r.output, contains('failed after 3 attempts'));
-        expect(r.output, contains('Tag push raced'));
-        expect(
-          r.ghLog().where((l) => l.contains('release create')),
-          isEmpty,
-          reason: 'a raced-out run must never create a release',
-        );
-        expect(
-          r.originHeadAfter,
-          r.originHeadBefore,
-          reason: 'a raced-out run must never touch main',
-        );
-      },
-    );
-
-    test(
-      'tag sequence — releases cut consecutive tags on origin/main with zero commits on main and one create each',
-      () {
-        // gh-1522: the release IS the tag. r1 cuts v0.1.496 on origin/main
-        // without landing a single commit; after the coalesce window opens
-        // (the tagged commit backdated 3h) and new work lands, a second run
-        // cuts v0.1.497 — main history stays clean of bot commits the whole
-        // time.
-        final r1 = runAutoReleaseDirect('sequence');
-        expect(r1.exitCode, 0, reason: r1.output);
-        expect(
-          r1.originHeadAfter,
-          r1.originHeadBefore,
-          reason:
-              'gh-1522: zero commits land on main — the tag pins the '
-              'existing head',
-        );
-        expect(r1.originTagExists('v0.1.496'), isTrue);
-        expect(
-          r1.originTagTarget('v0.1.496'),
-          r1.originHeadAfter,
-          reason: 'the tag must point at origin/main as of the cut',
-        );
-        expect(
-          r1.ghLog().where((l) => l.contains('release create v0.1.496')),
-          hasLength(1),
-        );
-        expect(
-          r1.originSubjects(3).where((s) => s.startsWith('chore(release):')),
-          isEmpty,
-          reason:
-              'no chore(release) bot commit may land on main anymore '
-              '(gh-1522)',
-        );
-
-        // Open the 2h coalesce window: the guard keys on the tagged COMMIT's
-        // date (git log %ct dereferences the annotated tag), so amend the
-        // tagged commit backdated, then re-create the tag object (also
-        // backdated) and force-push both. Then queue the next pending work.
-        final backdate = {
-          'GIT_COMMITTER_DATE':
-              (DateTime.now()
-                          .subtract(const Duration(hours: 3))
-                          .millisecondsSinceEpoch ~/
-                      1000)
-                  .toString(),
-        };
-        void git(List<String> args, {Map<String, String> env = const {}}) {
-          final res = Process.runSync(
-            r1._gitBin,
-            args,
-            workingDirectory: r1._seedPath,
-            environment: env,
-            includeParentEnvironment: true,
+  group(
+    'gh-1522 — tag-only release behavioral coverage (dry-run, coalesce, E1 race)',
+    () {
+      test(
+        'AC1 — dry-run computes the tag, exits before the push; no tag on origin, no gh create, no local leftover',
+        () {
+          final r = runAutoReleaseDirect('dry-run', dryRun: true);
+          expect(r.exitCode, 0, reason: r.output);
+          expect(r.output, contains('DRY-RUN: would push tag v0.1.496'));
+          expect(
+            r.originHeadAfter,
+            r.originHeadBefore,
+            reason: 'AC1: a dry run must not move origin/main',
           );
-          expect(res.exitCode, 0, reason: 'sequence git $args: ${res.stderr}');
-        }
+          expect(
+            r.originTagExists('v0.1.496'),
+            isFalse,
+            reason: 'a dry run must never push the tag',
+          );
+          expect(r.originTags(), ['v0.1.495']);
+          expect(
+            r.ghLog(),
+            isEmpty,
+            reason: 'a dry run must never create the GitHub Release',
+          );
+          expect(
+            r.seedTagExists('v0.1.496'),
+            isFalse,
+            reason:
+                'the dry run deletes its computed local tag — no leftover '
+                'pollutes the next real run',
+          );
+        },
+      );
 
-        git(['commit', '-q', '--amend', '--no-edit'], env: backdate);
-        git(['push', '-q', '-f', 'origin', 'HEAD:main']);
-        git(['tag', '-a', '-f', 'v0.1.496', '-m', 'Release v0.1.496'], env: backdate);
-        git(['push', '-q', '-f', 'origin', 'v0.1.496']);
-        File('${r1._seedPath}/README.md').writeAsStringSync('more work\n');
-        git(['add', '-A']);
-        git(['commit', '-q', '-m', 'more pending work']);
-        git(['push', '-q', 'origin', 'HEAD:main']);
+      test(
+        'coalesce guard — a tag younger than 2h skips the run entirely (no new tag on origin)',
+        () {
+          final r = runAutoReleaseDirect('coalesce', tagAgeHours: 1);
+          expect(r.exitCode, 0, reason: r.output);
+          expect(r.output, contains('coalesced'));
+          expect(
+            r.originHeadAfter,
+            r.originHeadBefore,
+            reason: 'no release may land inside the coalesce window',
+          );
+          expect(r.originTags(), [
+            'v0.1.495',
+          ], reason: 'the guard must not cut v0.1.496');
+          expect(r.ghLog(), isEmpty);
+        },
+      );
 
-        final r2 = r1.rerun();
-        expect(r2.exitCode, 0, reason: r2.output);
-        expect(r2.originTagExists('v0.1.497'), isTrue);
-        expect(
-          r2.originTagTarget('v0.1.497'),
-          r2.originHeadAfter,
-          reason: 'v0.1.497 pins the new main head (with more pending work)',
-        );
-        final creates = r2
-            .ghLog()
-            .where((l) => l.contains('release create'))
-            .toList();
-        expect(creates, hasLength(2));
-        expect(creates[0], contains('release create v0.1.496'));
-        expect(creates[1], contains('release create v0.1.497'));
-        expect(
-          r2.originSubjects(4).where((s) => s.startsWith('chore(release):')),
-          isEmpty,
-          reason: 'main history stays clean across the whole sequence',
-        );
-      },
-    );
+      test(
+        'coalesce guard measures the TAG date, not the tagged commit date — a tag cut minutes ago coalesces even when its commit sat pending for hours (PR #1526 thread 5)',
+        () {
+          // The catch-up path: commits sat on main for hours before the
+          // cron/dispatch cut the tag. The 2h window runs from the RELEASE
+          // (tag), not from the commit the tag points at — reading the
+          // commit date would let extra releases through exactly when the
+          // guard (and the pub.dev ~12/day rate limit) exists to stop them.
+          final r = runAutoReleaseDirect(
+            'coalesce-tagger-date',
+            tagAgeHours: 0,
+            commitAgeHours: 5,
+          );
+          expect(r.exitCode, 0, reason: r.output);
+          expect(r.output, contains('coalesced'));
+          expect(r.originTags(), [
+            'v0.1.495',
+          ], reason: 'a fresh tag must coalesce pending commits');
+          expect(r.ghLog(), isEmpty);
+        },
+      );
 
-    test(
-      'suite git resolution is host-independent — no session shim decides fixture behavior',
-      () {
-        // gh-1172 round-3 suggestion: the pre-existing fixture helpers called
-        // bare `Process.runSync('git', ...)`, inheriting whatever git sat first
-        // on PATH — on shim-hostile hosts that was a broken git-push-guard copy
-        // and the AC5 notes tests failed with "No changes since the previous
-        // release." All fixture/notes git traffic now routes through the
-        // resolved real binary; pin its invariants.
-        final git = _resolveRealGit();
-        expect(File(git).existsSync(), isTrue, reason: '$git must exist');
-        expect(
-          git.endsWith('git-push-guard.sh'),
-          isFalse,
-          reason: 'the resolved git must never be an agent-session guard shim',
-        );
-        final r = Process.runSync(git, ['--version']);
-        expect(r.exitCode, 0, reason: r.stderr.toString());
-        expect(r.stdout.toString(), startsWith('git version'));
-      },
-    );
-  });
+      test(
+        'E1 race — a tag that appeared mid-run rejects the push; the run re-derives the next version and lands THAT',
+        () {
+          final r = runAutoReleaseDirect('race-retry', raceMode: 'once');
+          expect(r.exitCode, 0, reason: r.output);
+          expect(r.output, contains('Tag push raced'));
+          expect(
+            r.originTagExists('v0.1.496'),
+            isTrue,
+            reason: 'the racer pre-pushed v0.1.496 — it must exist on origin',
+          );
+          expect(
+            r.originTagExists('v0.1.497'),
+            isTrue,
+            reason:
+                'the raced run must re-derive from the freshly fetched tags '
+                'and push v0.1.497',
+          );
+          final creates = r
+              .ghLog()
+              .where((l) => l.contains('release create'))
+              .toList();
+          expect(
+            creates,
+            hasLength(1),
+            reason: 'exactly one GitHub Release is created per run',
+          );
+          expect(
+            creates.single,
+            startsWith('release create v0.1.497 '),
+            reason:
+                'the raced-out v0.1.496 must never get a release object '
+                '(the notes may mention it as the previous release)',
+          );
+          expect(
+            r.originHeadAfter,
+            r.originHeadBefore,
+            reason:
+                'the race burned only tags — zero commits land on main '
+                '(gh-1522)',
+          );
+        },
+      );
 
+      test(
+        'E1 exhaustion — a tag race on every attempt exits 1 after 3 tries, creating nothing',
+        () {
+          final r = runAutoReleaseDirect('race-exhaust', raceMode: 'always');
+          expect(
+            r.exitCode,
+            1,
+            reason: 'exhaustion must fail loud: ${r.output}',
+          );
+          expect(r.output, contains('failed after 3 attempts'));
+          expect(r.output, contains('Tag push raced'));
+          expect(
+            r.ghLog().where((l) => l.contains('release create')),
+            isEmpty,
+            reason: 'a raced-out run must never create a release',
+          );
+          expect(
+            r.originHeadAfter,
+            r.originHeadBefore,
+            reason: 'a raced-out run must never touch main',
+          );
+        },
+      );
+
+      test(
+        'tag sequence — releases cut consecutive tags on origin/main with zero commits on main and one create each',
+        () {
+          // gh-1522: the release IS the tag. r1 cuts v0.1.496 on origin/main
+          // without landing a single commit; after the coalesce window opens
+          // (the tagged commit backdated 3h) and new work lands, a second run
+          // cuts v0.1.497 — main history stays clean of bot commits the whole
+          // time.
+          final r1 = runAutoReleaseDirect('sequence');
+          expect(r1.exitCode, 0, reason: r1.output);
+          expect(
+            r1.originHeadAfter,
+            r1.originHeadBefore,
+            reason:
+                'gh-1522: zero commits land on main — the tag pins the '
+                'existing head',
+          );
+          expect(r1.originTagExists('v0.1.496'), isTrue);
+          expect(
+            r1.originTagTarget('v0.1.496'),
+            r1.originHeadAfter,
+            reason: 'the tag must point at origin/main as of the cut',
+          );
+          expect(
+            r1.ghLog().where((l) => l.contains('release create v0.1.496')),
+            hasLength(1),
+          );
+          expect(
+            r1.originSubjects(3).where((s) => s.startsWith('chore(release):')),
+            isEmpty,
+            reason:
+                'no chore(release) bot commit may land on main anymore '
+                '(gh-1522)',
+          );
+
+          // Open the 2h coalesce window: the guard keys on the tagged COMMIT's
+          // date (git log %ct dereferences the annotated tag), so amend the
+          // tagged commit backdated, then re-create the tag object (also
+          // backdated) and force-push both. Then queue the next pending work.
+          final backdate = {
+            'GIT_COMMITTER_DATE':
+                (DateTime.now()
+                            .subtract(const Duration(hours: 3))
+                            .millisecondsSinceEpoch ~/
+                        1000)
+                    .toString(),
+          };
+          void git(List<String> args, {Map<String, String> env = const {}}) {
+            final res = Process.runSync(
+              r1._gitBin,
+              args,
+              workingDirectory: r1._seedPath,
+              environment: env,
+              includeParentEnvironment: true,
+            );
+            expect(
+              res.exitCode,
+              0,
+              reason: 'sequence git $args: ${res.stderr}',
+            );
+          }
+
+          git(['commit', '-q', '--amend', '--no-edit'], env: backdate);
+          git(['push', '-q', '-f', 'origin', 'HEAD:main']);
+          git([
+            'tag',
+            '-a',
+            '-f',
+            'v0.1.496',
+            '-m',
+            'Release v0.1.496',
+          ], env: backdate);
+          git(['push', '-q', '-f', 'origin', 'v0.1.496']);
+          File('${r1._seedPath}/README.md').writeAsStringSync('more work\n');
+          git(['add', '-A']);
+          git(['commit', '-q', '-m', 'more pending work']);
+          git(['push', '-q', 'origin', 'HEAD:main']);
+
+          final r2 = r1.rerun();
+          expect(r2.exitCode, 0, reason: r2.output);
+          expect(r2.originTagExists('v0.1.497'), isTrue);
+          expect(
+            r2.originTagTarget('v0.1.497'),
+            r2.originHeadAfter,
+            reason: 'v0.1.497 pins the new main head (with more pending work)',
+          );
+          final creates = r2
+              .ghLog()
+              .where((l) => l.contains('release create'))
+              .toList();
+          expect(creates, hasLength(2));
+          expect(creates[0], contains('release create v0.1.496'));
+          expect(creates[1], contains('release create v0.1.497'));
+          expect(
+            r2.originSubjects(4).where((s) => s.startsWith('chore(release):')),
+            isEmpty,
+            reason: 'main history stays clean across the whole sequence',
+          );
+        },
+      );
+
+      test(
+        'suite git resolution is host-independent — no session shim decides fixture behavior',
+        () {
+          // gh-1172 round-3 suggestion: the pre-existing fixture helpers called
+          // bare `Process.runSync('git', ...)`, inheriting whatever git sat first
+          // on PATH — on shim-hostile hosts that was a broken git-push-guard copy
+          // and the AC5 notes tests failed with "No changes since the previous
+          // release." All fixture/notes git traffic now routes through the
+          // resolved real binary; pin its invariants.
+          final git = _resolveRealGit();
+          expect(File(git).existsSync(), isTrue, reason: '$git must exist');
+          expect(
+            git.endsWith('git-push-guard.sh'),
+            isFalse,
+            reason:
+                'the resolved git must never be an agent-session guard shim',
+          );
+          final r = Process.runSync(git, ['--version']);
+          expect(r.exitCode, 0, reason: r.stderr.toString());
+          expect(r.stdout.toString(), startsWith('git version'));
+        },
+      );
+    },
+  );
 
   // ── gh-995 — artifact action pins + PTY shard pipeline coherence ────────
   // 2026-09-27 outage: the PTY legs were the only jobs still uploading
