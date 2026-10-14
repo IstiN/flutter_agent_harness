@@ -25,19 +25,16 @@ void main() {
     },
   );
 
-  test(
-    'waitForHellos times out when no client ever says hello',
-    () async {
-      final hub = LocalHub(port: 0);
-      await hub.start();
-      addTearDown(() => hub.stop());
+  test('waitForHellos times out when no client ever says hello', () async {
+    final hub = LocalHub(port: 0);
+    await hub.start();
+    addTearDown(() => hub.stop());
 
-      await expectLater(
-        hub.waitForHellos(1, timeout: const Duration(milliseconds: 150)),
-        throwsA(isA<TimeoutException>()),
-      );
-    },
-  );
+    await expectLater(
+      hub.waitForHellos(1, timeout: const Duration(milliseconds: 150)),
+      throwsA(isA<TimeoutException>()),
+    );
+  });
 
   test('waitForHellos resolves once a real client says hello', () async {
     final hub = LocalHub(port: 0);
@@ -57,5 +54,100 @@ void main() {
     await wait;
     // Already satisfied now — the fast path again.
     await hub.waitForHellos(1);
+  });
+
+  // gh-1007: the PTY shard flaked dap_tui_menu_test's master-secret case
+  // with `waitForHellos(1, timeout: 30s)` — under runner load the dial's
+  // hello arrives in bursts past one fixed window. The ceiling poll
+  // (waitForHellosUnderLoad) re-polls in bounded chunks until a global
+  // ceiling; these tests pin all three arms without a PTY.
+  group('waitForHellosUnderLoad (gh-1007)', () {
+    test(
+      'resolves when a late hello lands past the first chunk window',
+      () async {
+        final hub = LocalHub(port: 0);
+        await hub.start();
+        addTearDown(() => hub.stop());
+
+        final identity = await HubIdentity.generate();
+        final client = HubClient(
+          config: HubConfig(url: hub.url.toString()),
+          identity: identity,
+          backoff: (int _) => const Duration(milliseconds: 5),
+        );
+        addTearDown(() => client.disconnect());
+
+        // The hello lands 400ms in — past several 100ms chunk windows. A
+        // single fixed window is exactly what flaked the CI shard; the
+        // poll must ride through the early misses and still resolve.
+        final wait = hub.waitForHellosUnderLoad(
+          1,
+          ceiling: const Duration(seconds: 5),
+          chunk: const Duration(milliseconds: 100),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        await client.connect();
+        await wait;
+      },
+    );
+
+    test('times out at the ceiling, not at the first chunk, when nobody '
+        'ever says hello', () async {
+      final hub = LocalHub(port: 0);
+      await hub.start();
+      addTearDown(() => hub.stop());
+
+      final sw = Stopwatch()..start();
+      await expectLater(
+        hub.waitForHellosUnderLoad(
+          1,
+          ceiling: const Duration(milliseconds: 300),
+          chunk: const Duration(milliseconds: 80),
+        ),
+        throwsA(isA<TimeoutException>()),
+      );
+      // The failure must arrive at the CEILING — a single fixed window
+      // is what this method exists to replace (gh-1007 shard flake).
+      expect(sw.elapsed, greaterThan(const Duration(milliseconds: 250)));
+    });
+
+    test('returns immediately when n hellos were already seen', () async {
+      final hub = LocalHub(port: 0);
+      await hub.start();
+      addTearDown(() => hub.stop());
+
+      final sw = Stopwatch()..start();
+      await hub.waitForHellosUnderLoad(0, ceiling: const Duration(minutes: 5));
+      expect(sw.elapsed, lessThan(const Duration(seconds: 1)));
+    });
+
+    // PR #1520 review: a zero/negative chunk hands waitForHellos a
+    // non-positive timeout, fires TimeoutException immediately, and the
+    // poll loop hot-spins until the ceiling (a burned CI core). The
+    // guard rejects the call outright.
+    test('asserts when chunk is zero or negative', () {
+      final hub = LocalHub(port: 0);
+      expect(
+        () => hub.waitForHellosUnderLoad(1, chunk: Duration.zero),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => hub.waitForHellosUnderLoad(1, chunk: const Duration(seconds: -1)),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('asserts when ceiling is zero or negative', () {
+      final hub = LocalHub(port: 0);
+      expect(
+        () => hub.waitForHellosUnderLoad(1, ceiling: Duration.zero),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () =>
+            hub.waitForHellosUnderLoad(1, ceiling: const Duration(seconds: -1)),
+        throwsA(isA<AssertionError>()),
+      );
+    });
   });
 }
