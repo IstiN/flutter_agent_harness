@@ -850,37 +850,63 @@ ErrorEvent _zeroByteStallTerminal(
   error: _zeroByteStallMessage(model, attemptLog, startedAt),
 );
 
+/// The per-attempt evidence line every exhaustion terminal embeds: the
+/// attempt log joined with `; ` and trailing-dot stripping, so the
+/// sentences read cleanly (the shared terminal-story shape, gh-1602
+/// review r1 thread 4).
+String _storyLog(List<String> attemptLog) => attemptLog
+    .map(
+      (line) => line.endsWith('.') ? line.substring(0, line.length - 1) : line,
+    )
+    .join('; ');
+
+/// The elapsed text every terminal story reports: whole seconds, `<1s`
+/// under the second.
+String _storyElapsed(DateTime startedAt) {
+  final elapsed = DateTime.now().difference(startedAt);
+  return elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
+}
+
+/// The shared terminal-story builder (gh-1602 review r1 thread 4): the
+/// exhaustion terminals (issue #290 AC2, gh-1308, gh-1602) differ only in
+/// their headline story — the message shell (empty content, the model's
+/// identity, zero usage, error stop) and the evidence format are one
+/// shape, so a future evidence-format change stays single-touch.
+/// [_resumedExhaustion] keeps its own shell (the snapshot's content,
+/// usage, and raw vendor verdict ride along) but shares the evidence
+/// helpers above.
+AssistantMessage _terminalStory(
+  Model model,
+  List<String> attemptLog,
+  DateTime startedAt,
+  String story,
+) => AssistantMessage(
+  content: const [],
+  api: model.api,
+  provider: model.provider,
+  model: model.id,
+  usage: Usage.zero,
+  stopReason: StopReason.error,
+  errorMessage: story,
+  timestamp: DateTime.now(),
+);
+
 /// The zero-byte stall story (see [_zeroByteStallTerminal]).
 AssistantMessage _zeroByteStallMessage(
   Model model,
   List<String> attemptLog,
   DateTime startedAt,
-) {
-  final elapsed = DateTime.now().difference(startedAt);
-  final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
-  final log = attemptLog
-      .map(
-        (line) =>
-            line.endsWith('.') ? line.substring(0, line.length - 1) : line,
-      )
-      .join('; ');
-  return AssistantMessage(
-    content: const [],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: Usage.zero,
-    stopReason: StopReason.error,
-    errorMessage:
-        'Provider zero-byte stall after ${attemptLog.length} attempt(s) '
-        'over $elapsedText — the endpoint accepted the request but never '
-        'produced output; the run-idle watchdog killed every silent '
-        'attempt ($zeroByteStallTag). Attempts: $log. The failure is '
-        'retryable: a fallback model may take over, or check the '
-        'provider status / try again later.',
-    timestamp: DateTime.now(),
-  );
-}
+) => _terminalStory(
+  model,
+  attemptLog,
+  startedAt,
+  'Provider zero-byte stall after ${attemptLog.length} attempt(s) '
+  'over ${_storyElapsed(startedAt)} — the endpoint accepted the request '
+  'but never produced output; the run-idle watchdog killed every silent '
+  'attempt ($zeroByteStallTag). Attempts: ${_storyLog(attemptLog)}. The '
+  'failure is retryable: a fallback model may take over, or check the '
+  'provider status / try again later.',
+);
 
 /// The exhaustion terminal message (issue #290 AC2): the story is the
 /// headline; the raw provider lines ride inside as per-attempt evidence.
@@ -888,30 +914,15 @@ AssistantMessage _exhausted(
   Model model,
   List<String> attemptLog,
   DateTime startedAt,
-) {
-  final elapsed = DateTime.now().difference(startedAt);
-  final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
-  final log = attemptLog
-      .map(
-        (line) =>
-            line.endsWith('.') ? line.substring(0, line.length - 1) : line,
-      )
-      .join('; ');
-  return AssistantMessage(
-    content: const [],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: Usage.zero,
-    stopReason: StopReason.error,
-    errorMessage:
-        'Provider call failed after ${attemptLog.length} attempt(s) '
-        'over $elapsedText — the endpoint kept failing. '
-        'Attempts: $log. '
-        'Check the provider status or try again later.',
-    timestamp: DateTime.now(),
-  );
-}
+) => _terminalStory(
+  model,
+  attemptLog,
+  startedAt,
+  'Provider call failed after ${attemptLog.length} attempt(s) '
+  'over ${_storyElapsed(startedAt)} — the endpoint kept failing. '
+  'Attempts: ${_storyLog(attemptLog)}. '
+  'Check the provider status or try again later.',
+);
 
 /// The gh-1602 deadline terminal: the provider is still rate limited and
 /// the armed session deadline has no retry budget left past the wrap-up
@@ -923,30 +934,16 @@ AssistantMessage _rateLimitDeadlineTerminal(
   Model model,
   List<String> attemptLog,
   DateTime startedAt,
-) {
-  final elapsed = DateTime.now().difference(startedAt);
-  final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
-  final log = attemptLog
-      .map(
-        (line) =>
-            line.endsWith('.') ? line.substring(0, line.length - 1) : line,
-      )
-      .join('; ');
-  return AssistantMessage(
-    content: const [],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: Usage.zero,
-    stopReason: StopReason.error,
-    errorMessage:
-        'Provider rate limit persisted across ${attemptLog.length} '
-        'attempt(s) over $elapsedText — the session deadline leaves no '
-        'retry budget past the wrap-up margin, so the run stops here. '
-        'Attempts: $log. Check the provider status or try again later.',
-    timestamp: DateTime.now(),
-  );
-}
+) => _terminalStory(
+  model,
+  attemptLog,
+  startedAt,
+  'Provider rate limit persisted across ${attemptLog.length} '
+  'attempt(s) over ${_storyElapsed(startedAt)} — the session deadline '
+  'leaves no retry budget past the wrap-up margin, so the run stops '
+  'here. Attempts: ${_storyLog(attemptLog)}. Check the provider status '
+  'or try again later.',
+);
 
 /// The resumed-exhaustion terminal (issue #1168 review): a transport
 /// chain that resumed from its completed prefix and STILL spent its
@@ -964,14 +961,6 @@ AssistantMessage _resumedExhaustion(
   _ResumeState resume,
   DateTime startedAt,
 ) {
-  final elapsed = DateTime.now().difference(startedAt);
-  final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
-  final log = attemptLog
-      .map(
-        (line) =>
-            line.endsWith('.') ? line.substring(0, line.length - 1) : line,
-      )
-      .join('; ');
   final resumeNote = resume.isEmpty
       ? ''
       : ' The turn resumed from ${resume.blocks.length} completed '
@@ -986,7 +975,8 @@ AssistantMessage _resumedExhaustion(
     stopReason: StopReason.error,
     errorMessage:
         '$transientExhaustionHeadline ${attemptLog.length} attempt(s) '
-        'over $elapsedText - the endpoint kept failing. Attempts: $log.'
+        'over ${_storyElapsed(startedAt)} - the endpoint kept failing. '
+        'Attempts: ${_storyLog(attemptLog)}.'
         '$resumeNote This verdict is final - no further retries.',
     rawStopReason: snapshot.rawStopReason,
     timestamp: DateTime.now(),

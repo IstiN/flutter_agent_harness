@@ -179,21 +179,36 @@ extension AgentCliRunNotices on AgentCli {
           ? ''
           : ' — retrying in ${delay.inSeconds}s '
                 '(attempt ${attempt + 1}/$maxAttempts)';
+      // Classification sees the FULL line the ladder passes (gh-1602
+      // review r1 thread 5): the ladder hands over the untruncated
+      // provider error, so rate-limit wording past the display cap still
+      // reads as rate limited and lands in the 429_retry record.
+      // Truncation is display-only ([_shortNoticeLine]).
       final rateLimited = matchesRateLimitWording(reason);
+      final line = _shortNoticeLine(reason);
       io.writeln(
         _style.dim(
           '${rateLimited ? '[net] rate limited' : '[net] connection lost'} '
-          '($reason)$retryTail',
+          '($line)$retryTail',
         ),
       );
       _logDiagnostic(
         'transient retry sid=$_logSid attempt=${attempt + 1}/$maxAttempts '
-        'reason=$reason',
+        'reason=$line',
       );
       if (rateLimited) {
-        _recordRateLimitRetry(attempt, maxAttempts, delay, reason);
+        _recordRateLimitRetry(attempt, maxAttempts, delay, line);
       }
     };
+  }
+
+  /// The display-only truncation for a notice reason: the first line,
+  /// bounded at 120 chars like the ladder's per-attempt evidence log.
+  /// Classification never sees this — the notice's reason arrives
+  /// untruncated and is classified whole (gh-1602 review r1 thread 5).
+  String _shortNoticeLine(String text) {
+    final line = text.split('\n').first;
+    return line.length <= 120 ? line : '${line.substring(0, 120)}...';
   }
 
   /// Appends the `429_retry` session record (gh-1602) for a rate-limit
@@ -213,11 +228,20 @@ extension AgentCliRunNotices on AgentCli {
           .appendCustomEntry(
             customType: rateLimitRetryRecordType,
             data: {
-              // The notice's attempt is the 1-based number of the attempt
-              // the retry is about to run ("attempt 2/4" — recorded
-              // as-is, so the record and the log face tell one story).
+              // The notice's attempt is the 1-based attempt that JUST
+              // FAILED — the count of rate-limit attempts consumed when
+              // the retry was scheduled (the notice contract). The faces
+              // render attempt + 1, the retry about to run ("attempt
+              // 2/4"); the record keeps the contract value so the
+              // transcript, fa.log and this record tell one story
+              // (gh-1602 review r1 thread 1).
               'attempt': attempt,
               'max_attempts': maxAttempts,
+              // 0 = an immediate replay — the watchdog janitor or a
+              // mid-answer resume. A cancelled wait records nothing (the
+              // notice does not fire for it), so 0 never means "a retry
+              // was scheduled and then abandoned" (gh-1602 review r1
+              // thread 6).
               'delay_ms': delay.inMilliseconds,
               'reason': reason,
               'ts': DateTime.now().toIso8601String(),
