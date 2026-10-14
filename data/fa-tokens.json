@@ -1691,6 +1691,15 @@
       "completion": 3471,
       "total": 43052,
       "model": ""
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-14T05:19:22Z",
+      "prompt": 82937,
+      "completion": 22005,
+      "total": 104942,
+      "cacheRead": 3146496,
+      "model": "glm-5.3-flash"
     }
   ],
   "pr-1517": [
