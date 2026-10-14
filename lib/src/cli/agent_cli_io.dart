@@ -165,6 +165,11 @@ extension AgentCliRunNotices on AgentCli {
   /// Transient network retry visibility (the Wi-Fi-switch case): the
   /// retry itself lives in providerStreamFunction; here it gets a voice —
   /// a dim transcript line + an fa.log entry instead of a silent 5s pause.
+  ///
+  /// gh-1602: a rate-limit-class retry (the ladder's 429 backoff) says
+  /// `rate limited` instead of `connection lost` and appends the hidden
+  /// `429_retry` record to the session JSONL — the post-mortem surface
+  /// that shows a quota blip was absorbed instead of killing the trial.
   void _wireTransientRetryNotice() {
     transientRetryNotice = (attempt, maxAttempts, delay, reason) {
       // A zero delay is not a retry schedule — it's the connect-stall
@@ -174,12 +179,54 @@ extension AgentCliRunNotices on AgentCli {
           ? ''
           : ' — retrying in ${delay.inSeconds}s '
                 '(attempt ${attempt + 1}/$maxAttempts)';
-      io.writeln(_style.dim('[net] connection lost ($reason)$retryTail'));
+      final rateLimited = matchesRateLimitWording(reason);
+      io.writeln(
+        _style.dim(
+          '${rateLimited ? '[net] rate limited' : '[net] connection lost'} '
+          '($reason)$retryTail',
+        ),
+      );
       _logDiagnostic(
         'transient retry sid=$_logSid attempt=${attempt + 1}/$maxAttempts '
         'reason=$reason',
       );
+      if (rateLimited) {
+        _recordRateLimitRetry(attempt, maxAttempts, delay, reason);
+      }
     };
+  }
+
+  /// Appends the `429_retry` session record (gh-1602) for a rate-limit
+  /// retry the ladder announced. Best-effort — a persist failure never
+  /// takes the run down (the task-ledger convention); the fa.log entry
+  /// above already carries the facts.
+  void _recordRateLimitRetry(
+    int attempt,
+    int maxAttempts,
+    Duration delay,
+    String reason,
+  ) {
+    final session = _session;
+    if (session == null) return;
+    unawaited(
+      session
+          .appendCustomEntry(
+            customType: rateLimitRetryRecordType,
+            data: {
+              'attempt': attempt + 1,
+              'max_attempts': maxAttempts,
+              'delay_ms': delay.inMilliseconds,
+              'reason': reason,
+              'ts': DateTime.now().toIso8601String(),
+            },
+          )
+          .then((_) {})
+          .catchError((Object error) {
+            _logDiagnostic(
+              '429_retry persist failed sid=$_logSid: $error',
+            );
+          }),
+    );
   }
 
   /// Image registry drop visibility (issue #171): when the per-request

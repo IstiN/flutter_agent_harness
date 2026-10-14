@@ -268,6 +268,13 @@ bool isTransientExhaustionStory(String? errorMessage) =>
 typedef TransientRetryNotice =
     void Function(int attempt, int maxAttempts, Duration delay, String reason);
 
+/// The hidden session-JSONL record type the CLI appends when the ladder
+/// announces a rate-limit retry (gh-1602): the post-mortem surface that
+/// shows a bench trial absorbed a quota blip instead of dying as
+/// `ApiRateLimitError`. Payload: `attempt` (1-based), `max_attempts`,
+/// `delay_ms`, `reason` (the truncated provider line), `ts`.
+const String rateLimitRetryRecordType = '429_retry';
+
 /// The host-visible retry hook (the CLI prints it + logs to fa.log).
 /// Null keeps retries silent. Global like `providerTimeoutsOverride`: the
 /// wrap happens deep inside [providerStreamFunction], far from any host io.
@@ -354,6 +361,7 @@ ErrorEvent _transientExhaustedTerminal(
 /// AC2): loud death with the full partial content preserved — never an
 /// infinite retry. The failure's own reason rides (issue #1168): a
 /// transport death surfaces as error, never as "aborted".
+///
 /// A TRANSPORT-class death (issue #1168 review) carries the exhaustion
 /// story instead of the raw provider wording: the roles ladder above
 /// this wrapper classifies the raw wording as retryable and would
@@ -702,7 +710,14 @@ Future<bool> _afterRateLimitFailure(
     if (allowance <= Duration.zero || wait >= allowance) {
       _pushTerminal(
         out,
-        _rateLimitDeadlineTerminal(model, state.attemptLog, state.startedAt),
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _rateLimitDeadlineTerminal(
+            model,
+            state.attemptLog,
+            state.startedAt,
+          ),
+        ),
         resume,
       );
       return false;
@@ -715,6 +730,7 @@ Future<bool> _afterRateLimitFailure(
     resume,
     cancelToken,
     wait,
+    state.rateLimitRetries,
     maxAttempts + maxRateLimitRetries,
     _shortReason(failure.error.errorMessage),
   );
@@ -839,6 +855,41 @@ AssistantMessage _exhausted(
         'over $elapsedText — the endpoint kept failing. '
         'Attempts: $log. '
         'Check the provider status or try again later.',
+    timestamp: DateTime.now(),
+  );
+}
+
+/// The gh-1602 deadline terminal: the provider is still rate limited and
+/// the armed session deadline has no retry budget left past the wrap-up
+/// margin — retrying would eat the window reserved for the final answer,
+/// so the ladder fails now and truthfully. The headline names the rate
+/// limit (every classifier above keys on it) and the raw 429 lines ride
+/// as per-attempt evidence, exactly like [_exhausted].
+AssistantMessage _rateLimitDeadlineTerminal(
+  Model model,
+  List<String> attemptLog,
+  DateTime startedAt,
+) {
+  final elapsed = DateTime.now().difference(startedAt);
+  final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
+  final log = attemptLog
+      .map(
+        (line) =>
+            line.endsWith('.') ? line.substring(0, line.length - 1) : line,
+      )
+      .join('; ');
+  return AssistantMessage(
+    content: const [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: Usage.zero,
+    stopReason: StopReason.error,
+    errorMessage:
+        'Provider rate limit persisted across ${attemptLog.length} '
+        'attempt(s) over $elapsedText — the session deadline leaves no '
+        'retry budget past the wrap-up margin, so the run stops here. '
+        'Attempts: $log. Check the provider status or try again later.',
     timestamp: DateTime.now(),
   );
 }
