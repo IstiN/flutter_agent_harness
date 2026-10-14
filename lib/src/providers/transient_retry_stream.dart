@@ -30,6 +30,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math';
 
 import '../agent/agent_loop.dart';
 import '../cancel_token.dart';
@@ -137,6 +138,82 @@ final _rateLimitGuardPatterns = [
   RegExp(r'throttl', caseSensitive: false),
 ];
 
+/// Whether [text] carries a rate-limit/quota wording (the guard set above).
+/// Public so hosts can classify retry notices the ladder announces — the
+/// CLI separates `[net] connection lost` from `[net] rate limited` lines
+/// and appends the `429_retry` session record for the rate-limit class.
+bool matchesRateLimitWording(String text) =>
+    _rateLimitGuardPatterns.any((pattern) => pattern.hasMatch(text));
+
+/// Whether [message] is a rate-limit/quota failure the ladder retries in
+/// place with backoff (gh-1602): a single transient quota blip must not
+/// kill a run that has no roles chain above this ladder to rotate or fail
+/// over. Budget/spending exhaustion stays terminal (issue #926 —
+/// `insufficient_quota` matches the wording set but is dead until the
+/// budget reset, never a backoff case); context overflow belongs to
+/// compaction; auth failures stand.
+bool isRateLimitError(AssistantMessage message) {
+  if (message.stopReason != StopReason.error) return false;
+  final text = message.errorMessage;
+  if (text == null || text.isEmpty) return false;
+  if (isContextOverflow(message)) return false;
+  if (isBudgetExhaustion(message)) return false;
+  return matchesRateLimitWording(text);
+}
+
+/// The rate-limit retry budget (gh-1602): in-place replays after a
+/// pre-commit 429 before the ladder fails the call with the exhaustion
+/// terminal. Deliberately separate from the transport budget
+/// ([maxAttempts] of [transientRetryStreamFunction]): a quota blip heals
+/// on the scale of seconds and the two classes alternate, so the classes
+/// must not eat each other's budget.
+const int maxRateLimitRetries = 3;
+
+/// The rate-limit backoff floor (gh-1602): the first retry waits at least
+/// this long — a sub-second retry against a 429 is a guaranteed second
+/// 429.
+const Duration rateLimitBackoffBase = Duration(seconds: 2);
+
+/// The rate-limit backoff ceiling (gh-1602): no single in-call retry wait
+/// exceeds this, so the ladder's whole budget stays inside a bench
+/// trial's wrap-up margin.
+const Duration rateLimitBackoffCap = Duration(seconds: 60);
+
+/// The capped exponential backoff for a rate-limit retry: `base * 2^(n-1)`
+/// (n = 1-based retry index) capped at [rateLimitBackoffCap], with up to
+/// 25% upward jitter via [jitterFraction] (0..1) so concurrent fa
+/// processes don't retry in lockstep — the same shape the roles layer's
+/// `ModelRolesRetryPolicy.backoffFor` uses.
+Duration rateLimitBackoffFor(int retry, double jitterFraction) {
+  var ms = rateLimitBackoffBase.inMilliseconds * (1 << (retry - 1).clamp(0, 20));
+  if (ms > rateLimitBackoffCap.inMilliseconds) {
+    ms = rateLimitBackoffCap.inMilliseconds;
+  }
+  final jitter = (ms * 0.25 * jitterFraction.clamp(0.0, 1.0)).round();
+  return Duration(milliseconds: ms + jitter);
+}
+
+/// The remaining wall-clock budget a rate-limit retry may spend, or null
+/// when no session deadline is armed (the ladder is then bounded only by
+/// its attempt budget). Wired by hosts from `SessionDeadline` (gh-1556) —
+/// the bench exports `FA_DEADLINE_EPOCH_MS = cap − 120s`, so bounding by
+/// this value can never eat the wrap-up window. Global like
+/// [transientRetryNotice]: the wrap happens deep inside
+/// [providerStreamFunction], far from any host io.
+Duration? Function()? transientRetryDeadlineLeft;
+
+/// The deadline rest a rate-limit retry must never eat (gh-1602): when the
+/// armed deadline has less than [transientRetryWrapUpMargin] +
+/// backoff left, the ladder stops retrying and fails with the deadline
+/// terminal — the margin stays reserved for the wrap-up answer. Mirrors
+/// the harbor adapter's 120s wrap-up margin
+/// (bench/harbor_fa/fa_agent.py). Injectable for tests.
+Duration transientRetryWrapUpMargin = const Duration(seconds: 120);
+
+/// The jitter source for [rateLimitBackoffFor]. Injectable for
+/// deterministic tests; defaults to [Random.nextDouble].
+double Function() transientRetryJitter = Random().nextDouble;
+
 /// Whether [message] is a transient failure worth replaying: socket-level
 /// drops and gateway 5xx. Rate limits stay with the roles layer (the
 /// `FallbackStreamFunction` rotation policy — a 429 may quote "please try
@@ -149,6 +226,10 @@ final _rateLimitGuardPatterns = [
 /// watchdog's zero-byte wording DOES via [connectWatchdogTag] (issue
 /// #1121: a never-started request is replayed, a silent mid-stream one
 /// is not).
+///
+/// gh-1602 boundary note: "rate limits stay with the roles layer" holds
+/// for THIS classifier (a 429 is not a transport replay), but the ladder
+/// itself now owns an in-place rate-limit class — see [isRateLimitError].
 bool isTransientNetworkError(AssistantMessage message) {
   if (message.stopReason != StopReason.error) return false;
   final text = message.errorMessage;
@@ -273,7 +354,6 @@ ErrorEvent _transientExhaustedTerminal(
 /// AC2): loud death with the full partial content preserved — never an
 /// infinite retry. The failure's own reason rides (issue #1168): a
 /// transport death surfaces as error, never as "aborted".
-///
 /// A TRANSPORT-class death (issue #1168 review) carries the exhaustion
 /// story instead of the raw provider wording: the roles ladder above
 /// this wrapper classifies the raw wording as retryable and would
@@ -410,6 +490,11 @@ final class _DriveState {
   /// standing — the terminal then carries the preserved prefix.
   var zeroByteKills = 0;
 
+  /// Rate-limit retries spent in this call (gh-1602), separate from the
+  /// transport budget — a quota blip heals on the scale of seconds and
+  /// the two classes alternate, so they must not eat each other's budget.
+  var rateLimitRetries = 0;
+
   /// The context the NEXT attempt runs with — the resume anchor after a
   /// mid-stream abort (issue #1126); the caller's token stays THE token.
   Context context;
@@ -426,7 +511,12 @@ Future<void> _drive(
 ) async {
   final state = _DriveState(context);
   final resume = _ResumeState();
-  for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+  // The loop bound is the SUM of the two pre-commit budgets (gh-1602):
+  // transport failures stop at [maxAttempts] inside their handler, the
+  // rate-limit class at [maxRateLimitRetries] inside its own — the outer
+  // bound is only the alternation safety net.
+  final attemptBound = maxAttempts + maxRateLimitRetries;
+  for (var attempt = 1; attempt <= attemptBound; attempt++) {
     if (cancelToken?.isCancelled ?? false) {
       _pushAborted(out, model, state.lastFailure, resume: resume);
       return;
@@ -442,16 +532,15 @@ Future<void> _drive(
     switch (outcome) {
       case _Forwarded():
         return;
-      case _TransientFailure(:final error):
+      case _TransientFailure():
         if (!await _afterTransientFailure(
           out,
           model,
-          error,
+          outcome,
           state,
           cancelToken,
           resume,
           delay,
-          attempt,
           maxAttempts,
         )) {
           return;
@@ -495,20 +584,22 @@ Future<void> _drive(
 /// terminal and ends the call — and otherwise runs the inter-attempt
 /// pause. Returns true when the ladder continues to the next attempt.
 ///
-/// The failure itself is stored here (`state.lastFailure = error` is the
-/// handler's first statement — this handler owns the chain state it
-/// touches, so the field and the parameter cannot diverge).
+/// The failure itself is stored here (`state.lastFailure = failure.error`
+/// is the handler's first statement — this handler owns the chain state it
+/// touches, so the field and the parameter cannot diverge). The
+/// rate-limit class (gh-1602) branches to its own policy after the shared
+/// bookkeeping.
 Future<bool> _afterTransientFailure(
   AssistantMessageEventStream out,
   Model model,
-  AssistantMessage error,
+  _TransientFailure failure,
   _DriveState state,
   CancelToken? cancelToken,
   _ResumeState resume,
   Duration delay,
-  int attempt,
   int maxAttempts,
 ) async {
+  final error = failure.error;
   state.lastFailure = error;
   // A machine-cancelled latch re-arms IN PLACE (the issue #1132
   // discipline): the run-idle watchdog fired over a request that never
@@ -536,7 +627,22 @@ Future<bool> _afterTransientFailure(
     );
     return false;
   }
-  if (attempt >= maxAttempts) {
+  // gh-1602: the rate-limit class follows its own policy — its own retry
+  // budget, capped exponential backoff honoring `Retry-After`, and the
+  // session-deadline bound. The transport budget below does not govern it
+  // (the classes alternate; they must not eat each other's budget).
+  if (failure.isRateLimit) {
+    return _afterRateLimitFailure(
+      out,
+      model,
+      failure,
+      state,
+      resume,
+      cancelToken,
+      maxAttempts,
+    );
+  }
+  if (state.attemptLog.length >= maxAttempts) {
     _pushTerminal(
       out,
       _transientExhaustedTerminal(model, state.attemptLog, state.startedAt),
@@ -551,9 +657,66 @@ Future<bool> _afterTransientFailure(
     resume,
     cancelToken,
     delay,
-    attempt,
+    state.attemptLog.length,
     maxAttempts,
     _replayReason(watchdogReplay, error),
+  );
+}
+
+/// The gh-1602 rate-limit retry handler: spends one of
+/// [maxRateLimitRetries], honors the provider's `Retry-After` verbatim
+/// (capped at [rateLimitBackoffCap]) or backs off exponentially with
+/// jitter, and never sleeps past the armed session deadline minus
+/// [transientRetryWrapUpMargin] — the wrap-up window stays reserved for
+/// the final answer. A budget or deadline bound hit fails the call with a
+/// terminal whose story embeds the raw 429 evidence, so every classifier
+/// above (the roles layer's rotation policy, the providers queue, the
+/// bench's anchored 429 classifier) still sees the rate-limit class.
+Future<bool> _afterRateLimitFailure(
+  AssistantMessageEventStream out,
+  Model model,
+  _TransientFailure failure,
+  _DriveState state,
+  _ResumeState resume,
+  CancelToken? cancelToken,
+  int maxAttempts,
+) async {
+  state.rateLimitRetries++;
+  if (state.rateLimitRetries > maxRateLimitRetries ||
+      state.attemptLog.length >= maxAttempts + maxRateLimitRetries) {
+    _pushTerminal(
+      out,
+      _transientExhaustedTerminal(model, state.attemptLog, state.startedAt),
+      resume,
+    );
+    return false;
+  }
+  var wait = failure.retryAfter ?? rateLimitBackoffFor(
+    state.rateLimitRetries,
+    transientRetryJitter(),
+  );
+  if (wait > rateLimitBackoffCap) wait = rateLimitBackoffCap;
+  final deadlineLeft = transientRetryDeadlineLeft?.call();
+  if (deadlineLeft != null) {
+    final allowance = deadlineLeft - transientRetryWrapUpMargin;
+    if (allowance <= Duration.zero || wait >= allowance) {
+      _pushTerminal(
+        out,
+        _rateLimitDeadlineTerminal(model, state.attemptLog, state.startedAt),
+        resume,
+      );
+      return false;
+    }
+  }
+  return _pauseBetweenAttempts(
+    out,
+    model,
+    failure.error,
+    resume,
+    cancelToken,
+    wait,
+    maxAttempts + maxRateLimitRetries,
+    _shortReason(failure.error.errorMessage),
   );
 }
 
@@ -765,10 +928,24 @@ final class _Forwarded extends _AttemptOutcome {
 
 /// The attempt failed transiently before any observable output.
 final class _TransientFailure extends _AttemptOutcome {
-  const _TransientFailure(this.error);
+  const _TransientFailure(
+    this.error, {
+    this.retryAfter,
+    this.isRateLimit = false,
+  });
 
   /// The terminal error message (kept for the final forward on exhaustion).
   final AssistantMessage error;
+
+  /// The provider's `Retry-After` hint, when the event carried one
+  /// (gh-1602: the rate-limit backoff honors it verbatim).
+  final Duration? retryAfter;
+
+  /// Whether the failure classed as rate-limit/quota (gh-1602): the
+  /// retry then follows the rate-limit policy — its own budget, capped
+  /// exponential backoff honoring [retryAfter], and the deadline bound —
+  /// instead of the fixed-delay transport policy.
+  final bool isRateLimit;
 }
 
 /// The attempt aborted mid-stream AFTER observable output (issue #1126):
@@ -975,9 +1152,18 @@ _AttemptOutcome? _bufferedOutcome(
       run.forward(event);
       return const _Forwarded();
     case ErrorEvent():
-      if (_replaysAttempt(event, cancelToken)) {
+      // gh-1602: a pre-commit rate-limit failure replays under its own
+      // policy — checked FIRST, because a 429 wording can also carry a
+      // transport-ish phrase ("429: rate limit exceeded, please try again
+      // later") and the rate-limit class owns the failure.
+      final rateLimited = isRateLimitError(event.error);
+      if (rateLimited || _replaysAttempt(event, cancelToken)) {
         // Not forwarded: the buffer is discarded and the call retries.
-        return _TransientFailure(event.error);
+        return _TransientFailure(
+          event.error,
+          retryAfter: event.retryAfter,
+          isRateLimit: rateLimited,
+        );
       }
       run.flushBuffer();
       run.forward(event);
