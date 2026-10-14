@@ -2653,6 +2653,15 @@
       "total": 100772,
       "cacheRead": 2008384,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-14T16:30:55Z",
+      "prompt": 106882,
+      "completion": 7694,
+      "total": 114576,
+      "cacheRead": 2139392,
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-1578": [
