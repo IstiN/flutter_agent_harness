@@ -48,6 +48,43 @@ block a release again.
   a mid-session ttsr rule toggle or mcp server edit survives the next
   persist too (the writer roster in `settings_flow_config_sync.dart` is
   now exhaustive).
+- gh-1575: macOS clipboard paste fixed for TIFF-only pasteboards + the
+  Ctrl+V text fallback. `_readMacos` probes `«class TIFF»` after PNGf/JPEG
+  miss and converts via `sips -s format png` (a Preview/browser copy used
+  to dead-end on `clipboard holds no image`; a failed conversion keeps the
+  unavailable fall-through and every scratch file is cleaned up); new
+  `readPasteboardText` (`pbpaste` / xclip+wl-paste / PowerShell
+  Get-Clipboard) behind the same injectable `ProcessRunner`/`platform:`
+  seam, and Ctrl+V with a TEXT clipboard now inserts the clipboard text
+  into the composer instead of printing the image probe's dead-end reason
+  — bracketed-paste routing, gesture pairing and silent-failure semantics
+  unchanged. Review pass: the Windows `Get-Clipboard` read pins UTF-8
+  console output and normalizes embedded `\r\n` (OEM-code-page mojibake),
+  the Linux text backends pin `text/plain;charset=utf-8` (an image-only
+  clipboard can no longer leak bytes as "text"), the library doc no longer
+  overclaims the `FA_FAKE_PASTEBOARD` seam, and `FaTuiCallbacks` moved to
+  a `fa_tui_callbacks.dart` part file keeping `fa_tui.dart` under the
+  2800-line gate.
+- gh-1555 (W1, lazy/windowed-everywhere reads): the legacy full-open call
+  sites migrate to windowed opens, so a session ledger past the gh-1073
+  2 GiB full-open backstop stays openable on every user-facing read path.
+  The TUI session picker, `/resume`, and the boot name-resolution scan
+  open windowed and resolve the display name through paged reads; the
+  subagent transcript preview opens the child windowed (tail only); the
+  `_loadSession` marathon fallback no longer degenerates to a refused
+  full open when the boundary walk exhausts its page cap (it proceeds
+  with the tail-anchored windowed session; the boot cap owns over-window
+  residue); and the headless `fa trajectory` resolver opens windowed,
+  reading the whole ledger for the cost/inspect views through the new
+  `SessionTree.ensureWholeLedgerResident` — a sequential forward scan in
+  bounded strips (`WindowedSessionStorage.loadAllOlder`), not the
+  boundary-walk's doubling strips (whose per-strip record cap measured
+  ~13x read/parse amplification over the whole file). The same change
+  block-prepends paged chunks in `_indexChunk` (one `insertAll` per
+  list), removing an O(n²) the suspended-eviction walk paid per record.
+  Trajectory export streaming (AC3a), split-and-retain rotation
+  activation (W2), and the opt-in write-side caps (W3) remain follow-up
+  work.
 
 - gh-1605: the FinalizeGate gains a "grader parity" named check. A
   produced entry point (script/CLI the verifier will run itself) is only
