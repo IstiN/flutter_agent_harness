@@ -25,10 +25,16 @@ final class PasteboardResultMsg extends Msg {
 const int _pasteboardGestureWindowMs = 500;
 
 extension FaTuiPaste on FaTuiModel {
-  /// Ctrl+V outcome: image bytes become a composer chip; failures print
+  /// Ctrl+V outcome: image bytes become a composer chip; a TEXT result
+  /// (the gh-1575 fallback) is inserted into the composer; failures print
   /// their NAMED reason (unavailable pasteboard, size cap, not an image).
   (Model, Cmd?) _handlePasteboardResult(PasteboardResultMsg msg) {
     final read = msg.read;
+    // gh-1575: the image probe missed and the text clipboard came back —
+    // paste the text the way a terminal's own paste would have.
+    if (read is PasteboardText) {
+      return (copyWith(editor: editor.insert(read.text)), null);
+    }
     if (read is! PasteboardImage) {
       if (msg.silentFailure) return (this, null);
       final reason = read is PasteboardUnavailable
@@ -81,16 +87,31 @@ extension FaTuiPaste on FaTuiModel {
   /// Ctrl+V (issue #276): read the platform pasteboard off the UI loop and
   /// attach the image as a composer chip. Without a wired reader (or in
   /// prompt mode) this is a no-op — the prompt zone owns plain pastes.
-  /// Bracketed pastes probe through [_handlePaste] with the same seam and
-  /// the same gesture pairing (issue #1067), keeping this keybinding
-  /// working identically.
+  /// gh-1575: when the image probe misses and a text reader is wired, the
+  /// probe falls through to the clipboard's TEXT and the composer inserts
+  /// it (Ctrl+V used to dead-end on `clipboard holds no image` for a text
+  /// clipboard). Bracketed pastes probe through [_handlePaste] with the
+  /// same seam and the same gesture pairing (issue #1067), keeping this
+  /// keybinding working identically.
   (Model, Cmd?)? _handlePasteImageKey(KeyMsg msg) {
     if (msg.key != 'ctrl+v') return null;
     final reader = callbacks.readClipboardImage;
     if (reader == null) {
       return (_appendServiceLine(_dim(clipboardUnavailableHint)), null);
     }
-    return _firePasteboardProbe(reader, silentFailure: false);
+    final textReader = callbacks.readClipboardText;
+    return _firePasteboardProbe(
+      textReader == null
+          ? reader
+          : () async {
+              final read = await reader();
+              if (read is PasteboardImage) return read;
+              final text = await textReader();
+              if (text is PasteboardText && text.text.isNotEmpty) return text;
+              return read; // neither reachable: the named reason prints
+            },
+      silentFailure: false,
+    );
   }
 
   /// dart_tui 2.0.0's bracketed-paste decoder maps every pasted BYTE to a
