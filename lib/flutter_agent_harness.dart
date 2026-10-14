@@ -161,6 +161,7 @@ export 'src/messaging/hub_transport.dart';
 export 'src/messaging/hub_messaging_repository.dart';
 export 'src/model.dart';
 export 'src/model_roles/model_roles.dart';
+export 'src/model_roles/provider_model_binding.dart';
 export 'src/model_roles/vision_models.dart';
 export 'src/overflow.dart';
 export 'src/power_config.dart';
