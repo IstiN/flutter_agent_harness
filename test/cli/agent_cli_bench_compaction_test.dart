@@ -88,6 +88,19 @@ final class _CompactionAwareStream {
   }
 }
 
+/// [waitForIt] with a LAZY description: the failure text is built at
+/// timeout, so it names the state that actually was reached.
+Future<void> waitUntil(
+  bool Function() condition,
+  String Function() describe,
+) async {
+  for (var i = 0; i < 5000; i++) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  fail('timed out waiting: ${describe()}');
+}
+
 void main() {
   late FakeCliIO io;
 
@@ -197,10 +210,11 @@ void main() {
 
       final run = agent.run();
       io.sendLine('go');
-      await waitForIt(
+      await waitUntil(
         () => turnRequests(stream).length >= 2,
-        reason: 'the first (over-trigger) turn compacts and the second '
-            'turn answers',
+        () => 'turns=${turnRequests(stream).length} '
+            'calls=${stream.contexts.length} '
+            'out=${io.out.toString().substring(0, io.out.length < 2000 ? io.out.length : 2000)}',
       );
       io.sendLine('/exit');
       await run;
@@ -287,9 +301,11 @@ void main() {
 
       final run = agent.run();
       io.sendLine('go');
-      await waitForIt(
+      await waitUntil(
         () => turnRequests(stream).length >= 2,
-        reason: 'both turns answer without a compaction',
+        () => 'turns=${turnRequests(stream).length} '
+            'calls=${stream.contexts.length} '
+            'out=${io.out.toString().substring(0, io.out.length < 2000 ? io.out.length : 2000)}',
       );
       io.sendLine('/exit');
       await run;
