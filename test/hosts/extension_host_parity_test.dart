@@ -132,10 +132,9 @@ Usage _usage(int totalTokens) => totalTokens == 0
 /// issues the next request).
 List<AssistantMessageEvent> _toolTurn(List<ToolCall> calls) {
   final empty = _bare();
-  final partial = _assistant('').copyWith(
-    content: calls,
-    stopReason: StopReason.toolUse,
-  );
+  final partial = _assistant(
+    '',
+  ).copyWith(content: calls, stopReason: StopReason.toolUse);
   return [
     StartEvent(partial: empty),
     for (var i = 0; i < calls.length; i++) ...[
@@ -356,14 +355,15 @@ Object? _project(SessionRecord record, Map<String, int> ordinals) =>
         :final tokensBefore,
         :final details,
         :final fromHook,
-      ) => {
-        'type': 'compaction',
-        'summary': summary,
-        'firstKept': ordinals[firstKeptEntryId],
-        'tokensBefore': tokensBefore,
-        if (details != null) 'details': details,
-        if (fromHook != null) 'fromHook': fromHook,
-      },
+      ) =>
+        {
+          'type': 'compaction',
+          'summary': summary,
+          'firstKept': ordinals[firstKeptEntryId],
+          'tokensBefore': tokensBefore,
+          'details': ?details,
+          'fromHook': ?fromHook,
+        },
       _ => {
         'type': record.type,
         'json': _remapIds(_stripVolatile(record.toJson()), ordinals),
@@ -405,8 +405,9 @@ bool _recordsEqual(List<SessionRecord> a, List<SessionRecord> b) {
 }
 
 /// Ordered kinds — the readable half of a failure message.
-List<String> _kinds(List<SessionRecord> records) =>
-    [for (final record in records) record.type];
+List<String> _kinds(List<SessionRecord> records) => [
+  for (final record in records) record.type,
+];
 
 /// Sorted relative paths under [root] — the structural store diff.
 Future<List<String>> _storeTree(MemoryExecutionEnv fs, String root) async {
@@ -506,36 +507,39 @@ void main() {
   });
 
   group('IT-5 — record-level session parity (the YoClip scenario)', () {
-    test('identical scripted sessions produce identical JSONL record '
-        'streams — kinds, order and payloads (modulo volatile identity)',
-        () async {
-      final cli = await _bootHost(
-        profile: cliProfile,
-        extensions: const [],
-        provider: _coreScript(),
-      );
-      final yoclip = await _bootHost(
-        profile: _yoclipProfile,
-        extensions: [_yoclipExtension()],
-        provider: _coreScript(),
-      );
+    test(
+      'identical scripted sessions produce identical JSONL record '
+      'streams — kinds, order and payloads (modulo volatile identity)',
+      () async {
+        final cli = await _bootHost(
+          profile: cliProfile,
+          extensions: const [],
+          provider: _coreScript(),
+        );
+        final yoclip = await _bootHost(
+          profile: _yoclipProfile,
+          extensions: [_yoclipExtension()],
+          provider: _coreScript(),
+        );
 
-      await _driveScriptedSession(cli);
-      await _driveScriptedSession(yoclip);
+        await _driveScriptedSession(cli);
+        await _driveScriptedSession(yoclip);
 
-      final cliRecords = await cli.session.getEntries();
-      final yoclipRecords = await yoclip.session.getEntries();
+        final cliRecords = await cli.session.getEntries();
+        final yoclipRecords = await yoclip.session.getEntries();
 
-      // The kinds must agree first — a readable failure beats a payload
-      // dump — then the full record-level diff must be equal.
-      expect(_kinds(yoclipRecords), _kinds(cliRecords));
-      expect(
-        _recordsEqual(cliRecords, yoclipRecords),
-        isTrue,
-        reason: 'the extension host must be record-level identical to the '
-            'CLI host on the same scripted session',
-      );
-    });
+        // The kinds must agree first — a readable failure beats a payload
+        // dump — then the full record-level diff must be equal.
+        expect(_kinds(yoclipRecords), _kinds(cliRecords));
+        expect(
+          _recordsEqual(cliRecords, yoclipRecords),
+          isTrue,
+          reason:
+              'the extension host must be record-level identical to the '
+              'CLI host on the same scripted session',
+        );
+      },
+    );
 
     test('compaction fires identically: same resolved wiring, same '
         'threshold crossing, same compaction record payload', () async {
@@ -614,13 +618,10 @@ void main() {
         }
 
         return [
-          await call(
-            'memory_add',
-            {
-              'text': 'The YoClip fleet deploy checklist lives in runbook.md',
-              'tags': ['deploy'],
-            },
-          ),
+          await call('memory_add', {
+            'text': 'The YoClip fleet deploy checklist lives in runbook.md',
+            'tags': ['deploy'],
+          }),
           await call('memory_add', {
             'text': 'Owner prefers terse changelogs',
             'scope': 'user',
@@ -671,28 +672,31 @@ void main() {
   });
 
   group('IT-5 — the parity guard can go red', () {
-    test('a one-token divergence in the core behavior fails the diff', () async {
-      final cli = await _bootHost(
-        profile: cliProfile,
-        extensions: const [],
-        provider: _coreScript(),
-      );
-      // A host whose core leg diverged (here: one altered assistant
-      // payload) must NOT pass the guard.
-      final diverged = await _bootHost(
-        profile: _yoclipProfile,
-        extensions: [_yoclipExtension()],
-        provider: _coreScript(turn2Text: 'c' * 399),
-      );
-      await _driveScriptedSession(cli);
-      await _driveScriptedSession(diverged);
-      expect(
-        _recordsEqual(
-          await cli.session.getEntries(),
-          await diverged.session.getEntries(),
-        ),
-        isFalse,
-      );
-    });
+    test(
+      'a one-token divergence in the core behavior fails the diff',
+      () async {
+        final cli = await _bootHost(
+          profile: cliProfile,
+          extensions: const [],
+          provider: _coreScript(),
+        );
+        // A host whose core leg diverged (here: one altered assistant
+        // payload) must NOT pass the guard.
+        final diverged = await _bootHost(
+          profile: _yoclipProfile,
+          extensions: [_yoclipExtension()],
+          provider: _coreScript(turn2Text: 'c' * 399),
+        );
+        await _driveScriptedSession(cli);
+        await _driveScriptedSession(diverged);
+        expect(
+          _recordsEqual(
+            await cli.session.getEntries(),
+            await diverged.session.getEntries(),
+          ),
+          isFalse,
+        );
+      },
+    );
   });
 }

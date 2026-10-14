@@ -958,15 +958,14 @@ final class _LocalShellJob implements ShellJob {
     required this.id,
     required this.command,
     required this.logPath,
-    required Process process,
+    required this._process,
     required this._logSink,
     required this._ceiling,
     required this._ownGroup,
     Duration? timeout,
     CancelToken? token,
-    JobLogRedactor? redactor,
-  }) : _process = process,
-       _redactor = redactor {
+    this._redactor,
+  }) {
     // Collect stdout/stderr into the log file. A naturally exiting process
     // closes the streams and we flush every byte; a killed/timed-out process
     // may leave the streams dangling on some platforms, so we cap the drain
@@ -1009,7 +1008,7 @@ final class _LocalShellJob implements ShellJob {
       _output.add(chunk);
     }
 
-    _stdoutSub = process.stdout
+    _stdoutSub = _process.stdout
         .transform(utf8.decoder)
         .listen(
           fanOut,
@@ -1018,7 +1017,7 @@ final class _LocalShellJob implements ShellJob {
             if (!stdoutDone.isCompleted) stdoutDone.complete();
           },
         );
-    _stderrSub = process.stderr
+    _stderrSub = _process.stderr
         .transform(utf8.decoder)
         .listen(
           fanOut,

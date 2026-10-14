@@ -68,8 +68,7 @@ final class NonRangedFileSystem implements FileSystem {
       _delegate.listDir(path);
 
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
 
   @override
   Future<Result<void, FileError>> createDir(
@@ -105,18 +104,17 @@ void main() {
       jsonEncode({
         'type': 'message',
         'id': id,
-        if (parentId != null) 'parentId': parentId,
+        'parentId': ?parentId,
         'timestamp': '2026-09-07T00:00:01.000Z',
         'message': {'role': 'user', 'content': text},
       });
 
   group('gh-1073: whole-file open (non-ranged filesystem)', () {
     test('opens header + messages and tracks the leaf', () async {
-      await fs.writeFile(path, '${[
-        headerLine(),
-        messageLine('m1'),
-        messageLine('m2', parentId: 'm1'),
-      ].join('\n')}\n');
+      await fs.writeFile(
+        path,
+        '${[headerLine(), messageLine('m1'), messageLine('m2', parentId: 'm1')].join('\n')}\n',
+      );
       final storage = await JsonlSessionStorage.open(
         NonRangedFileSystem(fs),
         path,
@@ -130,15 +128,14 @@ void main() {
       // A failed-rotation restore left part-0001 as an exact copy of the
       // primary: the open must keep the first copy of every record id
       // (the segment rewrite scrubs the duplicated lines too).
-      await fs.writeFile('$path.part-0001', '${[
-        headerLine(),
-        messageLine('e1'),
-      ].join('\n')}\n');
-      await fs.writeFile(path, '${[
-        headerLine(),
-        messageLine('e1'),
-        messageLine('e2', parentId: 'e1'),
-      ].join('\n')}\n');
+      await fs.writeFile(
+        '$path.part-0001',
+        '${[headerLine(), messageLine('e1')].join('\n')}\n',
+      );
+      await fs.writeFile(
+        path,
+        '${[headerLine(), messageLine('e1'), messageLine('e2', parentId: 'e1')].join('\n')}\n',
+      );
       final warnings = <String>[];
       final oldWarn = JsonlSessionStorage.onRotationWarning;
       JsonlSessionStorage.onRotationWarning = warnings.add;
@@ -148,10 +145,10 @@ void main() {
           path,
         );
         expect((await storage.getEntries()).map((e) => e.id), ['e1', 'e2']);
-        expect(
-          (await storage.getPathToRoot('e2')).map((e) => e.id),
-          ['e1', 'e2'],
-        );
+        expect((await storage.getPathToRoot('e2')).map((e) => e.id), [
+          'e1',
+          'e2',
+        ]);
         expect(
           warnings.where((w) => w.contains('duplicated')),
           isNotEmpty,
@@ -199,11 +196,10 @@ void main() {
       // classic whole-file read: a ranged fs with a dead readRange
       // still opens, while the default dispatch dies on it.
       final deadRange = DeadRangeFileSystem(fs);
-      await fs.writeFile(path, '${[
-        headerLine(),
-        messageLine('m1'),
-        messageLine('m2', parentId: 'm1'),
-      ].join('\n')}\n');
+      await fs.writeFile(
+        path,
+        '${[headerLine(), messageLine('m1'), messageLine('m2', parentId: 'm1')].join('\n')}\n',
+      );
 
       await expectLater(
         JsonlSessionStorage.open(deadRange, path),
@@ -279,8 +275,7 @@ final class DeadRangeFileSystem implements FileSystem, RangedReadFileSystem {
       _delegate.listDir(path);
 
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
 
   @override
   Future<Result<void, FileError>> createDir(
@@ -301,10 +296,10 @@ final class DeadRangeFileSystem implements FileSystem, RangedReadFileSystem {
     int start,
     int end,
   ) async => Err(
-        FileError(
-          FileErrorCode.notSupported,
-          'ranged reads unavailable',
-          path: path,
-        ),
-      );
+    FileError(
+      FileErrorCode.notSupported,
+      'ranged reads unavailable',
+      path: path,
+    ),
+  );
 }
