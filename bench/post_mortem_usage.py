@@ -127,11 +127,28 @@ def _fold_row(row, session_dirs):
     )
 
 
-# Kills the watch itself decided — the same audit-justified contract as
-# summary.py (issue #1392 round-3 review): their long inter-assistant
-# gaps are the legitimate byproduct of a deadline kill, not a fabricated
-# score.
-_AUDIT_JUSTIFIED = ("stall", "hard-ceiling", "abs_ceiling")
+# Kills the watch itself decided, plus the gh-1576 cap verdicts — the
+# same audit-justified contract as summary.py (issue #1392 round-3
+# review, extended by gh-1576): their long inter-assistant gaps are the
+# legitimate byproduct of a deadline kill, not a fabricated score.
+# `external_cap` is the decider's verdict when the external harness cap
+# binds (the harness's own declared kill), `external_kill` the flush for
+# a kill that came from outside the adapter — both name their killer in
+# the audit, so neither may read as a bench-inflicted contradiction (a
+# verdict missing here silently no-ops into a false violation — the
+# gh-1556 lesson).
+# Review round 2: `running` is the incremental checkpoint's "no verdict
+# yet" — the residue a SIGKILL leaves when the final write never lands.
+# It names NO bench kill, so a checkpoint-only audit can never be a
+# violation either. Keep in lockstep with terminal_bench/summary.py.
+_AUDIT_JUSTIFIED = (
+    "stall",
+    "hard-ceiling",
+    "abs_ceiling",
+    "external_cap",
+    "external_kill",
+    "running",
+)
 
 
 def _audit_justified(trial_dir):
@@ -230,8 +247,9 @@ def post_mortem(runs_dir, stall_gap_sec=None):
                     # AC8 cross-check on rows that recorded spend — same
                     # audit-justified contract as summary.py: a kill the
                     # watch itself decided (stall / hard-ceiling /
-                    # abs_ceiling) legitimately shows long gaps and is
-                    # NOT a score honesty violation.
+                    # abs_ceiling) or a gh-1576 cap verdict
+                    # (external_cap / external_kill) legitimately shows
+                    # long gaps and is NOT a score honesty violation.
                     text = _dedup_session_text(session_dirs)
                     max_gap = bench_metrics.max_session_gap(text)
                     if bench_metrics.score_honesty_violation(
