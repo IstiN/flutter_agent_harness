@@ -34,16 +34,13 @@ void main() {
   final rendered = gen.renderInstallers();
 
   test('the renderer covers every generated installer artifact', () {
-    expect(
-      rendered.keys.toSet(),
-      {
-        'site/install.sh',
-        'site/install.ps1',
-        'site/install.bat',
-        'site/setup.sh',
-        'site/setup.ps1',
-      },
-    );
+    expect(rendered.keys.toSet(), {
+      'site/install.sh',
+      'site/install.ps1',
+      'site/install.bat',
+      'site/setup.sh',
+      'site/setup.ps1',
+    });
   });
 
   for (final artifact in rendered.keys) {
@@ -52,7 +49,8 @@ void main() {
       expect(
         committed,
         rendered[artifact],
-        reason: '$artifact drifted from its sources (template + yaml + '
+        reason:
+            '$artifact drifted from its sources (template + yaml + '
             'live catalog). Regenerate and commit:\n'
             '  dart run scripts/gen_installers.dart',
       );
@@ -66,7 +64,8 @@ void main() {
         expect(
           bytes.sublist(0, 3),
           [0xEF, 0xBB, 0xBF],
-          reason: '$artifact lost its UTF-8 BOM — PS 5.1 would parse the '
+          reason:
+              '$artifact lost its UTF-8 BOM — PS 5.1 would parse the '
               'banner/glyphs through the ANSI code page',
         );
       });

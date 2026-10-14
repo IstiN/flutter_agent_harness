@@ -156,8 +156,9 @@ void main() {
     // code page, which mojibakes the UTF-8 banner/glyphs at parse time (the
     // OutputEncoding line cannot fix already-corrupted literals). Writing the
     // BOM makes PS 5.1 read the file as UTF-8.
-    final content =
-        entry.key.endsWith('.ps1') ? '\uFEFF${entry.value}' : entry.value;
+    final content = entry.key.endsWith('.ps1')
+        ? '\uFEFF${entry.value}'
+        : entry.value;
     File(entry.key).writeAsStringSync(content);
   }
   print('Generated ${rendered.keys.join(', ')} from $_configPath');
@@ -320,7 +321,8 @@ List<_WizardApprovalMode> _wizardApprovalModes() {
 // gh-1596 I1: every emitted sh fragment is POSIX sh (dash + busybox ash +
 // bash). The `ask` helper prints its result on stdout — call sites assign
 // via command substitution (`var=$(ask …)`); `ask_hidden` keeps the
-// by-name `read -rs` assignment so the API key never rides printf argv.
+// by-name `read -r` assignment (echo suppressed via stty — dash has no
+// `read -s`) so the API key never rides printf argv.
 
 String _shProviderMenu(List<_WizardProvider> providers) {
   final b = StringBuffer();

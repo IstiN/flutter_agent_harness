@@ -74,8 +74,9 @@ err() {
 # stdout and callers assign via command substitution — `var=$(ask …)` — so
 # the exit code propagates (EOF under `set -eu` aborts the wizard, exactly
 # like the old bare-call + `printf -v` shape). `ask_hidden` assigns BY NAME
-# through `read -rs "$1"`: the API key moves from the tty straight into the
-# variable and never passes through printf argv, where `ps` could catch it.
+# through `read -r "$1"` — the API key moves from the tty straight into the
+# variable (echo suppressed via stty — dash has no `read -s`) and never
+# passes through printf argv, where `ps` could catch it.
 prompt() {
   printf '\033[1m%s\033[0m ' "$1" > /dev/tty
 }
@@ -455,7 +456,12 @@ done
 # verbatim (E3: spaces, quotes, `$`, backticks, trailing slashes survive
 # byte-for-byte — no heredoc expansion to trip over).
 mkdir -p "$FAH_CONFIG_DIR"
-FAH_TMP_CONF="$FAH_CONFIG_DIR/.config.yaml.tmp"
+# mktemp, not a fixed name (gh-1596 review hardening): a predictable path
+# like `.config.yaml.tmp` is symlink-followable — a pre-planted link there
+# would redirect the write. The XXXXXX template form is supported by GNU,
+# busybox and BSD mktemp alike; mktemp creates the file 0600, so the config
+# lands owner-only (same-dir tmp keeps the mv atomic).
+FAH_TMP_CONF=$(mktemp "$FAH_CONFIG_DIR/.config.yaml.XXXXXX")
 {
   printf 'provider: %s\n' "$provider_kind"
   printf 'model: %s\n' "$model"

@@ -50,20 +50,24 @@ String _stripCommentLines(String source) => source
 
 /// bash/dash-incompatible constructs. Each entry names the construct the
 /// way a failure should read. Calibrated so the POSIX-legal subset the
-/// installers already rely on passes: `read -rs` (sanctioned by the card —
-/// dash/busybox/bash all implement it), `local` INSIDE functions (dash +
-/// busybox ash both support it; busybox is only strict about `local`
-/// outside functions), `printf '\033[..m'` (proved by the #1596 report —
-/// the crash hit the FIRST `printf -v`, lines after the colored helpers).
+/// installers already rely on passes: `read -s` is NOT in the forbidden
+/// set only because no artifact uses it (dash has no `-s` — hidden input
+/// goes through `stty -echo`, see `ask_hidden` in the wizard template),
+/// `local` INSIDE functions (dash + busybox ash both support it; busybox
+/// is only strict about `local` outside functions), `printf '\033[..m'`
+/// (proved by the #1596 report — the crash hit the FIRST `printf -v`,
+/// lines after the colored helpers).
 final _forbidden = <String, RegExp>{
   'printf -v (bash-only variable assignment)': RegExp(r'printf\s+-v\b'),
   '[[ ]] bash test': RegExp(r'\[\['),
   'read -p/-a/-n/-N (bash read flags)': RegExp(r'\bread\s+-[aApPnN]\b'),
-  r'${var,,} / ${var^^} case expansion':
-      RegExp(r'\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)'),
+  r'${var,,} / ${var^^} case expansion': RegExp(
+    r'\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)',
+  ),
   '=~ regex match (bash [[ only])': RegExp(r'=~'),
-  'the `function` keyword (bash-only spelling)':
-      RegExp(r'\bfunction\s+[A-Za-z_]'),
+  'the `function` keyword (bash-only spelling)': RegExp(
+    r'\bfunction\s+[A-Za-z_]',
+  ),
   '(( )) bash arithmetic command': RegExp(r'(?<!\$)\(\('),
   '+= append assignment (not POSIX)': RegExp(r'\+='),
   '== inside [ ] (bash test operator)': RegExp(r'\[\s+\S+\s+=='),
@@ -72,13 +76,17 @@ final _forbidden = <String, RegExp>{
   'echo -e/-n (unportable echo flags)': RegExp(r'\becho\s+-[ne]\b'),
   "\$' ANSI-C quoting (bash)": RegExp(r"\$'"),
   '\$" locale quoting (bash)': RegExp(r'\$"'),
-  'declare/typeset/local with flags (e.g. local -a)':
-      RegExp(r'\b(declare|typeset|local)\s+-'),
-  r'${var/pat/repl} substitution (bash, not POSIX)':
-      RegExp(r'\$\{[A-Za-z_][A-Za-z0-9_]*[/]'),
+  'declare/typeset/local with flags (e.g. local -a)': RegExp(
+    r'\b(declare|typeset|local)\s+-',
+  ),
+  r'${var/pat/repl} substitution (bash, not POSIX)': RegExp(
+    r'\$\{[A-Za-z_][A-Za-z0-9_]*[/]',
+  ),
   r'${var[n]} array subscript': RegExp(r'\$\{[A-Za-z_][A-Za-z0-9_]*\['),
   r'${!var} indirect expansion (bash)': RegExp(r'\$\{!'),
-  r'${var:1:2} substring (bash)': RegExp(r'\$\{[A-Za-z_][A-Za-z0-9_]*:\s*-?[0-9]'),
+  r'${var:1:2} substring (bash)': RegExp(
+    r'\$\{[A-Za-z_][A-Za-z0-9_]*:\s*-?[0-9]',
+  ),
   '|& co-process pipe (bash)': RegExp(r'\|&'),
 };
 
@@ -108,11 +116,54 @@ void main() {
         expect(
           violations,
           isEmpty,
-          reason: '$artifact carries POSIX-violating constructs — the '
+          reason:
+              '$artifact carries POSIX-violating constructs — the '
               '#1596 crash class (dash aborts at the first bashism). Fix '
               'the SOURCE (template) and regenerate, never hand-patch the '
               'artifact. Offending: ${violations.join(", ")}',
         );
+      });
+    }
+  });
+
+  group('UT-1b — temp-file hygiene (gh-1596 review hardening)', () {
+    // The bug shape: the wizard wrote its atomic temp config through a
+    // FIXED, predictable path — `FAH_TMP_CONF="$FAH_CONFIG_DIR/.config.yaml.tmp"`
+    // — so a pre-planted symlink at that path redirects the write (the
+    // `> "$FAH_TMP_CONF"` redirect follows it). Temp files must be
+    // mktemp-created with an XXXXXX template (random suffix); install.sh
+    // already does exactly this for its downloads.
+    final fixedTmpPath = RegExp(r'=\s*"[^"]*\.(tmp|temp)"');
+    final mktempTemplate = RegExp(r'mktemp\s+"[^"]*X{6}"');
+
+    for (final artifact in _shArtifacts) {
+      final source = _stripCommentLines(
+        File('$root/$artifact').readAsStringSync(),
+      );
+      test('$artifact writes temp files only through mktemp', () {
+        final violations = fixedTmpPath
+            .allMatches(source)
+            .map((m) => m.group(0)!)
+            .toList();
+        expect(
+          violations,
+          isEmpty,
+          reason:
+              '$artifact assigns a fixed predictable temp path '
+              '(${violations.join(", ")}) — symlink-followable. Create it '
+              'with `mktemp "<dir>/<name>.XXXXXX"` in the SOURCE (template) '
+              'and regenerate, never hand-patch the artifact.',
+        );
+        if (source.contains('TMP_CONF')) {
+          expect(
+            mktempTemplate.hasMatch(source),
+            isTrue,
+            reason:
+                '$artifact uses a TMP_CONF temp file — it must be '
+                'mktemp-created with a random XXXXXX suffix (GNU + busybox '
+                '+ BSD all take the template form)',
+          );
+        }
       });
     }
   });
@@ -143,7 +194,8 @@ void main() {
       expect(
         cases.map((c) => c.id).toList(),
         expectedProviders,
-        reason: 'AC6: provider menu == catalog names — openrouter first, '
+        reason:
+            'AC6: provider menu == catalog names — openrouter first, '
             'then catalog order, custom last. Stale menus ship stale '
             'providers on every fresh download (the #1596 audit finding).',
       );
@@ -158,26 +210,29 @@ void main() {
         final expectedKind = id == 'custom'
             ? 'openai-completions'
             : providerCatalog[id]!.kind;
-        expect(m.group(4), expectedKind,
-            reason: 'config `provider:` must carry the canonical adapter '
-                'kind for $id (canonicalProviderKind boundary)');
+        expect(
+          m.group(4),
+          expectedKind,
+          reason:
+              'config `provider:` must carry the canonical adapter '
+              'kind for $id (canonicalProviderKind boundary)',
+        );
       }
     });
 
     test('the approval case list equals ApprovalMode labels in order', () {
-      final expected = [
-        for (final mode in ApprovalMode.values) mode.label,
-      ];
+      final expected = [for (final mode in ApprovalMode.values) mode.label];
       final actual = RegExp(
         r'^\s{4}(\d+)\|([a-z-]+)\) approval="[a-z-]+"; break ;;',
         multiLine: true,
-      )
-          .allMatches(setup)
-          .map((m) => m.group(2)!)
-          .toList();
-      expect(actual, expected,
-          reason: 'AC6: approval menu == always-ask/write/yolo/autopilot '
-              '(kAutopilotLabel) — the fourth mode the wizard never offered');
+      ).allMatches(setup).map((m) => m.group(2)!).toList();
+      expect(
+        actual,
+        expected,
+        reason:
+            'AC6: approval menu == always-ask/write/yolo/autopilot '
+            '(kAutopilotLabel) — the fourth mode the wizard never offered',
+      );
     });
 
     test('model presets match the CLI offline presets per provider', () {
@@ -186,7 +241,8 @@ void main() {
           expect(
             setup.contains('model="$model"; break ;;'),
             isTrue,
-            reason: 'preset $model for ${entry.key} missing from the '
+            reason:
+                'preset $model for ${entry.key} missing from the '
                 'wizard — presets are generated from knownModelPresets',
           );
         }
@@ -194,7 +250,8 @@ void main() {
         expect(
           setup.contains('${entry.value.first}   (recommended)'),
           isTrue,
-          reason: '${entry.value.first} must carry the (recommended) '
+          reason:
+              '${entry.value.first} must carry the (recommended) '
               'marker — first preset wins, as in the CLI fallback list',
         );
       }
@@ -208,12 +265,16 @@ void main() {
           multiLine: true,
           dotAll: true,
         ).firstMatch(setup);
-        expect(block, isNotNull,
-            reason: 'provider $id missing from the model-selection case');
+        expect(
+          block,
+          isNotNull,
+          reason: 'provider $id missing from the model-selection case',
+        );
         expect(
           block!.group(1)!,
           contains(r'model=$(ask "Model id on that endpoint")'),
-          reason: 'no presets for $id — the wizard must ask for the model '
+          reason:
+              'no presets for $id — the wizard must ask for the model '
               'id directly instead of showing a fake numbered menu',
         );
       }
