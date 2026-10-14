@@ -14,6 +14,7 @@ import 'dart:convert';
 import '../agent/agent_loop.dart';
 import '../agent/finalize_gate.dart';
 import '../context.dart';
+import '../providers/transient_retry_stream.dart' show rateLimitRetryRecordType;
 import '../session/obligations_ledger.dart' show obligationsLedgerRecordType;
 import '../session/session_record.dart';
 import '../tools/checkpoint_tool.dart';
@@ -39,6 +40,9 @@ const hiddenCustomRecordTypes = {
   // Issue #1380 A1: engine-maintained snapshot ledger — the obligations
   // surface in model context is the rendered block, not trajectory rows.
   obligationsLedgerRecordType,
+  // gh-1602: the rate-limit retry telemetry — an audit surface for bench
+  // post-mortems (session JSONL, `fa sessions`), not a ledger row.
+  rateLimitRetryRecordType,
 };
 
 /// Walks session records and live agent events, projecting them into
