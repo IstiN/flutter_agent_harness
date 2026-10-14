@@ -290,6 +290,65 @@ void main() {
       expect(message, contains('stream idle timeout'));
     });
 
+    test('1554: a streamIdleTimeoutMs-only registry entry scopes the codex '
+        'bypass idle leg (the tuned lookup the SSE iterator uses)', () async {
+      providerTuningRegistry.clear();
+      providerTimeoutsOverride = null;
+      addTearDown(providerTuningRegistry.clear);
+      providerTuningRegistry.register(
+        name: 'codex-relay',
+        baseUrl: chatGptCodexBaseUrl,
+        streamIdle: const Duration(milliseconds: 120),
+      );
+      // One line, then silence forever: with the tuned lookup the ENTRY
+      // window (120ms) fires; the pre-fix bypass fell straight to the 300s
+      // global and this test timed out instead.
+      final controller = StreamController<List<int>>();
+      final client = http_testing.MockClient.streaming((request, body) async {
+        unawaited(
+          controller
+              .addStream(
+                Stream.value(
+                  utf8.encode(
+                    sseChunk({
+                      'type': 'response.created',
+                      'response': {'id': 'resp_1', 'model': 'gpt-5-codex'},
+                    }),
+                  ),
+                ),
+              )
+              .then((_) {}, onError: (Object _) {}),
+        );
+        return http.StreamedResponse(
+          controller.stream,
+          200,
+          headers: {'content-type': 'text/event-stream'},
+          // The tuned lookup keys on the request URL — the mock must ride
+          // it like a real http response does.
+          request: request,
+        );
+      });
+
+      final sw = Stopwatch()..start();
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList().timeout(const Duration(seconds: 10));
+      expect(
+        sw.elapsed,
+        lessThan(const Duration(seconds: 5)),
+        reason: 'the endpoint-level entry window never reached the codex '
+            'bypass — the idle leg fell through to the 300s global',
+      );
+      final message = events.whereType<ErrorEvent>().single.error.errorMessage!;
+      expect(message, contains('stream idle timeout'));
+      // The scope note names a MODEL-scoped override; an endpoint-table
+      // window keeps the bare stall text (per-leg labels).
+      expect(message, isNot(contains('idle window')));
+    }, timeout: const Timeout(Duration(seconds: 30)));
+
     test('replays learned Cloudflare cookies on a challenge retry', () async {
       final sentHeaders = <Map<String, String>>[];
       final client = queueClient(sentHeaders, [
