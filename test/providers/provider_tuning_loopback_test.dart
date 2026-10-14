@@ -174,6 +174,165 @@ void main() {
     );
   });
 
+  group('1554/AC1/IT — model-scoped (roles chain entry) watchdogs on the '
+      'wire', () {
+    test('the role entry window fires for its model only; another model in '
+        'the same session keeps the global window', () async {
+      providerTuningRegistry.clear();
+      providerTimeoutsOverride = const ProviderTimeoutsOverride(
+        streamIdle: Duration(seconds: 3),
+      );
+      addTearDown(providerTuningRegistry.clear);
+      addTearDown(() => providerTimeoutsOverride = null);
+      final silent = await _bindSilentAfterHeaders();
+      addTearDown(silent.close);
+      final base = 'http://127.0.0.1:${silent.port}/v1';
+      Future<(Duration, String)> call(Model model) async {
+        final sw = Stopwatch()..start();
+        final events = await streamOpenAICompletions(
+          model,
+          Context(
+            messages: [UserMessage.text('hi', timestamp: DateTime.utc(2026))],
+          ),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          sharedProviderHttpClient(),
+        ).toList();
+        final last = events.last;
+        expect(last, isA<ErrorEvent>());
+        return (sw.elapsed, '${(last as ErrorEvent).error.errorMessage}');
+      }
+
+      Model model({Duration? idle, String? label}) => Model(
+        id: 'm',
+        api: 'openai-completions',
+        provider: 'openai',
+        baseUrl: base,
+        contextWindow: 128000,
+        maxTokens: 16384,
+        streamIdleTimeout: idle,
+        timeoutScopeLabel: label,
+      );
+
+      // Role `slow`: the scoped 1s window fires and the stall line NAMES it.
+      final (elapsedA, messageA) = await call(
+        model(
+          idle: const Duration(seconds: 1),
+          label: 'role slow override',
+        ),
+      );
+      expect(messageA, contains('stream idle timeout'));
+      expect(messageA, contains('idle window 1s (role slow override)'));
+      expect(elapsedA, lessThan(const Duration(milliseconds: 2500)));
+
+      // Role `default` (no entry timeouts): the 3s GLOBAL window governs —
+      // the scoped window never leaks across roles.
+      final (elapsedB, messageB) = await call(model());
+      expect(
+        elapsedB,
+        greaterThan(const Duration(milliseconds: 2500)),
+        reason: 'the scoped 1s window leaked into the other role',
+      );
+      expect(messageB, contains('stream idle timeout'));
+      expect(messageB, isNot(contains('idle window')));
+    }, timeout: const Timeout(Duration(seconds: 30)));
+
+    test('model-scoped connect window kills the black hole early and the '
+        'stall line names the scope; the URL helper stays default', () async {
+      providerTuningRegistry.clear();
+      providerTimeoutsOverride = null;
+      addTearDown(providerTuningRegistry.clear);
+      final hole = await _bindBlackHole();
+      addTearDown(hole.close);
+      final sw = Stopwatch()..start();
+      await expectLater(
+        sendProviderRequest(
+          sharedProviderHttpClient(),
+          _post(Uri.parse('http://127.0.0.1:${hole.port}/v1/chat')),
+          null,
+          connectTimeout: const Duration(milliseconds: 300),
+          timeoutSource: 'role slow override',
+        ),
+        throwsA(
+          isA<TimeoutException>().having(
+            (e) => '$e',
+            'message',
+            allOf(contains('connect watchdog'), contains('role slow override')),
+          ),
+        ),
+      );
+      expect(
+        sw.elapsed,
+        lessThan(const Duration(seconds: 8)),
+        reason: 'the 180s default leaked into the scoped connect leg',
+      );
+      // No registry entry → the URL-keyed helper stays at the default; the
+      // scoped value lived on the REQUEST, not the endpoint.
+      expect(
+        providerConnectTimeoutForUrl(
+          Uri.parse('http://127.0.0.1:${hole.port}/v1/chat'),
+        ),
+        providerConnectTimeout,
+      );
+    });
+
+    test('per-leg scope labels: an idle-only override never cites its scope '
+        'on a connect-stall note; a connect-scoped model cites it there',
+        () async {
+      providerTuningRegistry.clear();
+      providerTimeoutsOverride = const ProviderTimeoutsOverride(
+        connect: Duration(milliseconds: 400),
+      );
+      addTearDown(providerTuningRegistry.clear);
+      addTearDown(() => providerTimeoutsOverride = null);
+      final hole = await _bindBlackHole();
+      addTearDown(hole.close);
+      Future<String> connectStall(Model scoped) async {
+        final events = await streamOpenAICompletions(
+          scoped,
+          Context(
+            messages: [UserMessage.text('hi', timestamp: DateTime.utc(2026))],
+          ),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          sharedProviderHttpClient(),
+        ).toList();
+        final last = events.last;
+        expect(last, isA<ErrorEvent>());
+        return '${(last as ErrorEvent).error.errorMessage}';
+      }
+
+      Model model({Duration? connect, Duration? idle, String? label}) =>
+          Model(
+            id: 'm',
+            api: 'openai-completions',
+            provider: 'openai',
+            baseUrl: 'http://127.0.0.1:${hole.port}/v1',
+            contextWindow: 128000,
+            maxTokens: 16384,
+            connectTimeout: connect,
+            streamIdleTimeout: idle,
+            timeoutScopeLabel: label,
+          );
+
+      // Idle-only override: the CONNECT leg ran the global window — its
+      // stall note must never cite the other leg's scope.
+      final idleOnly = await connectStall(
+        model(idle: const Duration(seconds: 1), label: 'role slow override'),
+      );
+      expect(idleOnly, contains('no response headers within'));
+      expect(idleOnly, isNot(contains('role slow override')));
+
+      // Connect-scoped: the connect stall cites THIS leg's scope.
+      final connectScoped = await connectStall(
+        model(
+          connect: const Duration(milliseconds: 300),
+          label: 'role slow override',
+        ),
+      );
+      expect(connectScoped, contains('no response headers within'));
+      expect(connectScoped, contains('role slow override'));
+    }, timeout: const Timeout(Duration(seconds: 60)));
+  });
+
   group('AC3/IT — dual budgets over loopback failure classes', () {
     test('connect-class kills spend connectionRetries only; the idle-class '
         'stall still draws the full stream budget', () async {
