@@ -2,23 +2,24 @@
 // CLI gates (AC2/AC3 mechanism layer).
 //
 // `FAH_COMPACT_TRIGGER_TOKENS` fires the auto-compaction at an absolute
-// context size (here 6000) where the window-minus-reserve default
-// (24576 for the 32768 window) would NOT fire. The compaction event lands
-// in the session JSONL, the summarization prompt carries the task text
-// (the mechanism that folds it into the rolling summary on real runs),
-// and the post-compaction projection still renders the obligations
-// ledger block at level 0 and keeps the latest tool result (protected
+// context size (here 24000 on a 200k window, where the default formula
+// fires only at 183184) once the run's context crosses it — mirroring a
+// bench trial that grows past the trigger mid-run. The compaction event
+// lands in the session JSONL, the summarization prompt carries the task
+// text (the mechanism that folds it into the rolling summary on real
+// runs), and the post-compaction projection still renders the
+// obligations ledger block and keeps the latest tool result (protected
 // tail). Without the env the same session does not compact at all.
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
-const _window = 32768;
-// CompactionSettings.forWindow(32768): reserve 8192 → the DEFAULT
-// trigger is 24576 estimated tokens. The bench trigger sits far below.
-final _defaultTrigger = _window - 8192;
-const _benchTriggerTokens = 6000;
+const _window = 200000;
+// CompactionSettings.forWindow(200000): reserve 16384 → the DEFAULT
+// trigger is 183184 estimated tokens. The bench trigger sits far below.
+final _defaultTrigger = _window - 16384;
+const _benchTriggerTokens = 24000;
 
 Model get _model => const Model(
   id: 'test-model',
@@ -34,13 +35,18 @@ const _ledgerText = 'always run the full test suite before pushing';
 const _toolResultMarker = 'latest seed tool result';
 const _checkpointReply = 'BENCH CHECKPOINT: the mips task stays open; '
     'folded context summarized here.';
+// ~10k estimated tokens: pushes the first turn's context past the 24k
+// bench trigger while the boot gate (seed ~16k incl. harness overhead)
+// stays under it — the compaction fires MID-RUN, the way a bench trial
+// grows past the trigger.
+final _bigAnswer = 'growth ${'y' * 40000}';
 
 /// A structured-compaction-aware fake stream: judge calls (the
 /// context-hygiene judge prompt) answer `[]` (hide nothing — the passes
 /// proceed deterministically), checkpoint calls answer the canned
-/// summary, real turns answer sequentially.
+/// summary, real turns answer from [turnAnswers] in order.
 final class _CompactionAwareStream {
-  final answers = <String>[];
+  final turnAnswers = <String>[];
   final contexts = <Context>[];
   var _answered = 0;
 
@@ -65,18 +71,13 @@ final class _CompactionAwareStream {
           _ => '',
         },
     ].join('\n');
-    // ignore: avoid_print
-    print('REQ#${contexts.length} msgs=${context.messages.length} '
-        'promptLen=${prompt.length} filler=${prompt.contains('filler')} '
-        'task=${prompt.contains(_taskMarker)} '
-        'sys=${(context.systemPrompt ?? '').substring(0, 60)}');
     final String reply;
     if (prompt.contains('context-hygiene judge')) {
       reply = '[]';
     } else if (prompt.contains('Write a checkpoint')) {
       reply = _checkpointReply;
     } else {
-      reply = answers[_answered++ % answers.length];
+      reply = turnAnswers[_answered++ % turnAnswers.length];
     }
     final stream = AssistantMessageEventStream();
     for (final event in textTurn(reply)) {
@@ -95,12 +96,14 @@ void main() {
   });
   tearDown(() => io.close());
 
-  /// Seeds a resumed session whose estimate (~6.6k tokens) sits BETWEEN
-  /// the bench trigger (6000) and the default one (24576): the task text
-  /// rides the first user message, the obligations ledger carries one
-  /// open rule, a valid tool pair (call + result) is the NEWEST records —
-  /// the protected tail at compaction time.
-  Future<MemoryExecutionEnv> seedBetweenTriggers(String name) async {
+  /// Seeds a resumed session whose transcript (~11k tokens; ~16k with the
+  /// harness's own system-prompt/tool overhead) sits UNDER the bench
+  /// trigger: the task text rides the first user message, the obligations
+  /// ledger carries one open rule, and a valid tool pair (call + result)
+  /// is the NEWEST records — the protected tail at compaction time.
+  /// The compaction must fire MID-RUN when the big first answer pushes
+  /// the context past the trigger — not at boot.
+  Future<MemoryExecutionEnv> seedUnderTrigger(String name) async {
     final env = MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
     // Suppress session-start memory maintenance (suite pattern).
     await env.writeFile('/work/.fah/memory/.last_maintenance', '');
@@ -125,7 +128,7 @@ void main() {
         },
       ],
     );
-    for (var i = 0; i < 26; i++) {
+    for (var i = 0; i < 40; i++) {
       await seed.appendMessage(UserMessage.text('filler$i ${'x' * 1000}'));
     }
     await seed.appendMessage(
@@ -174,74 +177,60 @@ void main() {
     streamFunction: stream.call,
   );
 
-  int requestTokensOf(Context context) =>
-      estimateContextTokens(context.messages).tokens +
-      estimateRequestOverheadTokens(
-        context.systemPrompt,
-        context.tools ?? const [],
+  /// The agent-turn requests (the compaction judge/checkpoint calls are
+  /// filtered out by their own system prompts).
+  Iterable<Context> turnRequests(_CompactionAwareStream stream) =>
+      stream.contexts.where(
+        (context) => (context.systemPrompt ?? '').startsWith('You are Fa'),
       );
 
   test(
-    'the bench trigger fires where the default would not; the compaction '
-    'event lands in the JSONL; obligations + latest tool result survive',
+    'the bench trigger fires mid-run where the default would not; the '
+    'compaction event lands in the JSONL; obligations + latest tool '
+    'result survive',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
-      final env = await seedBetweenTriggers('bench-trigger-target');
+      final env = await seedUnderTrigger('bench-trigger-target');
       final stream = _CompactionAwareStream()
-        ..answers.addAll(['first answer', 'second answer', 'third answer']);
+        ..turnAnswers.addAll([_bigAnswer, 'second answer']);
       final agent = cli(env, stream);
 
       final run = agent.run();
-      // Sanity at the source: the seeded projection sits between the two
-      // triggers — only the bench trigger can fire here.
-      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-      final seeded = await repo.open(
-        (await repo.list(cwd: '/work')).single,
-      );
-      final seededEstimate = estimateContextTokens(
-        await seeded.buildContextMessages(),
-      ).tokens;
-      expect(seededEstimate, greaterThan(_benchTriggerTokens));
-      expect(seededEstimate, lessThanOrEqualTo(_defaultTrigger));
-
       io.sendLine('go');
       await waitForIt(
-        () => stream.contexts.length >= 5 && !agent.isBusy,
-        reason: 'the boot compaction runs and the first turn answers',
+        () => turnRequests(stream).length >= 2,
+        reason: 'the first (over-trigger) turn compacts and the second '
+            'turn answers',
       );
       io.sendLine('/exit');
       await run;
 
+      // The compaction fired MID-RUN (after the first turn), not at boot:
+      // the first agent request rode the un-compacted seed.
+      final firstTurn = turnRequests(stream).first;
+      expect(
+        messageText(
+          firstTurn.messages.whereType<UserMessage>().last,
+        ),
+        isNot(contains('compacted into the following summary')),
+      );
       // The auto-compaction ran and was announced.
-      // ignore: avoid_print
-      print('=== TRANSCRIPT ===\n${io.out.toString()}');
       expect(io.out.toString(), contains('auto-compacted'));
 
       // AC3: the compaction event is VISIBLE in the session JSONL — the
-      // structured checkpoint record (and/or hidden ranges) landed.
-      final session = await repo.open(
-        (await repo.list(cwd: '/work')).single,
-      );
+      // structured checkpoint record landed.
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final session = await repo.open((await repo.list(cwd: '/work')).single);
       final entries = await session.getEntries();
-      for (final e in entries) {
-        // ignore: avoid_print
-        print(
-          'ENTRY type=${e.runtimeType} id=${e.id} '
-          'covers=${switch (e) {
-            final CompactCheckpointRecord c => c.coversRecordIds,
-            final HiddenRangeRecord h => h.recordIds,
-            _ => <String>[],
-          }}',
-        );
-      }
       expect(
         entries.whereType<CompactCheckpointRecord>(),
         isNotEmpty,
         reason: 'a checkpoint record must land in the session file',
       );
 
-      // The summarization prompt carried the task text — the mechanism
-      // that folds it into the rolling summary on real runs.
+      // The summarization prompt carried the conversation — the task
+      // text among it (the mechanism that folds it into the rolling
+      // summary on real runs).
       final summaryRequestHadTask = stream.contexts.any(
         (context) => context.messages.any(
           (message) =>
@@ -252,8 +241,7 @@ void main() {
       expect(summaryRequestHadTask, isTrue);
 
       // AC3: the post-compaction projection renders the obligations
-      // block at level 0 and keeps the latest tool result (protected
-      // tail).
+      // block and keeps the latest tool result (protected tail).
       final projected = await session.buildContextMessages();
       final projectedText = [
         for (final m in projected)
@@ -268,13 +256,20 @@ void main() {
       expect(projectedText, contains(_ledgerText));
       expect(projectedText, contains(_toolResultMarker));
 
-      // Every turn request stayed under the DEFAULT trigger — the bench
-      // cap bounded the whole run's context.
-      for (final context in stream.contexts) {
+      // Every agent-turn request after the trigger crossing stayed under
+      // the bench cap — the run's context was bounded for the rest of
+      // the session.
+      for (final (index, context) in turnRequests(stream).indexed) {
+        if (index == 0) continue; // the pre-trigger turn
+        final tokens = estimateRequestTokens(
+          context.messages,
+          systemPrompt: context.systemPrompt,
+          tools: context.tools ?? const <Tool>[],
+        );
         expect(
-          requestTokensOf(context),
-          lessThanOrEqualTo(_defaultTrigger),
-          reason: 'a request rode an over-default-trigger context',
+          tokens,
+          lessThanOrEqualTo(_benchTriggerTokens),
+          reason: 'turn request #$index rode an over-trigger context',
         );
       }
     },
@@ -285,16 +280,16 @@ void main() {
     'default behavior)',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
-      final env = await seedBetweenTriggers('bench-trigger-target');
+      final env = await seedUnderTrigger('bench-trigger-target');
       final stream = _CompactionAwareStream()
-        ..answers.addAll(['first answer', 'second answer']);
+        ..turnAnswers.addAll([_bigAnswer, 'second answer']);
       final agent = cli(env, stream, environment: {});
 
       final run = agent.run();
       io.sendLine('go');
       await waitForIt(
-        () => stream.contexts.isNotEmpty && !agent.isBusy,
-        reason: 'the first turn answers without a compaction',
+        () => turnRequests(stream).length >= 2,
+        reason: 'both turns answer without a compaction',
       );
       io.sendLine('/exit');
       await run;
