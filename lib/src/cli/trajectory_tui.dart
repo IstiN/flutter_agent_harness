@@ -13,7 +13,9 @@ import 'dart:convert';
 
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
+import '../session/session_storage.dart';
 import '../session/session_tree.dart';
+import '../session/windowed_session_storage.dart';
 import '../trajectory/event_projection.dart';
 import '../trajectory/formatters.dart';
 import '../trajectory/trajectory_blobs.dart';
@@ -53,46 +55,130 @@ TrajectorySnapshot? trajectorySnapshotAt(List<SessionRecord> records, int at) {
 /// session-name match (the `/session` lookup rule), else the most recent
 /// session in the store when [sessionId] is omitted. Null when nothing
 /// matches.
+///
+/// gh-1555 W1 (d5/d6): every open is WINDOWED — the resolver must survive
+/// the gh-1073 full-open refusal that makes an over-the-backstop ledger
+/// unresolvable through the old default full open (the incident's
+/// trajectory path). The returned session materializes only the header
+/// plus the newest chunk; callers that need the whole ledger (cost,
+/// inspect) page it in bounded blocks through
+/// [SessionTree.ensureWholeLedgerResident] — never a full open.
 Future<Session?> resolveTrajectorySession(
-  JsonlSessionRepo repo,
+  SessionRepo repo,
   String? sessionId,
 ) async {
   final sessions = await repo.list();
   if (sessions.isEmpty) return null;
   final wanted = sessionId?.trim();
   if (wanted == null || wanted.isEmpty) {
-    return repo.open(sessions.first);
+    return repo.open(sessions.first, windowed: true);
   }
   for (final metadata in sessions) {
-    if (metadata.id == wanted) return repo.open(metadata);
+    if (metadata.id == wanted) return repo.open(metadata, windowed: true);
+  }
+  // gh-1555 d4: name match — the bounded scan never full-opens.
+  return _openTrajectoryByName(repo, sessions, wanted);
+}
+
+/// The name-match arm of [resolveTrajectorySession] (gh-1555 d4):
+/// [JsonlSessionRepo] stores answer from the header via the quick scan;
+/// any foreign repo degrades to a bounded windowed open per session —
+/// never a full open per session on either path. Split out to keep the
+/// resolver under the CRAP ratchet (CC ≤ 12).
+Future<Session?> _openTrajectoryByName(
+  SessionRepo repo,
+  List<SessionMetadata> sessions,
+  String wanted,
+) async {
+  if (repo is! JsonlSessionRepo) {
+    for (final metadata in sessions) {
+      final session = await repo.open(metadata, windowed: true);
+      final name = await session.resolveSessionName();
+      if (name != null && name.trim() == wanted) return session;
+    }
+    return null;
   }
   for (final metadata in sessions) {
     final name = await repo.sessionNameQuick(metadata);
-    if (name != null && name.trim() == wanted) return repo.open(metadata);
+    if (name != null && name.trim() == wanted) {
+      return repo.open(metadata, windowed: true);
+    }
   }
   return null;
+}
+
+/// The verb's read contract (gh-1555 W1 rework, review IMPORTANT):
+/// `view`/`cost`/`inspect` read the whole branch, so the whole ledger is
+/// primed through the bounded chunked scan first (past the gh-1073 bound
+/// that prime refuses honestly with `tooLarge` + the repair hint);
+/// `tail` follows the resident window plus the live-tail ingest and
+/// NEVER primes — priming would re-raise the refusal for
+/// over-the-backstop sessions (gratuitous: the tailer never reads the
+/// head) and materialize an unbounded ledger into the window just to
+/// print the backfill. The tail backfill is therefore the resident
+/// window, not the whole ledger — the honest trade for a verb whose
+/// contract is "follow the tail": memory-bounded at ANY ledger size.
+Future<List<SessionRecord>> trajectoryVerbRecords(
+  Session session,
+  String verb,
+) async {
+  if (verb != 'tail') {
+    await session.ensureWholeLedgerResident();
+  }
+  return session.getBranch();
 }
 
 /// Incremental tail renderer: feed it the session's records on every poll
 /// and it renders only the suffix appended since the last call. One builder
 /// stays alive across calls, so projection costs O(new records), not O(n).
 final class TrajectoryTailer {
-  /// Creates a tailer rendering rows at [width] columns.
-  TrajectoryTailer({this.width = 80});
+  /// Creates a tailer rendering rows at [width] columns. [seenIdsCap]
+  /// bounds the dedupe set (review): a tail held open for days on a
+  /// busy session otherwise accumulates every record id ever seen.
+  TrajectoryTailer({this.width = 80, this.seenIdsCap = defaultSeenIdsCap});
 
   /// Row width in columns.
   final int width;
 
+  /// Default cap on the dedupe set: a small multiple of the windowed
+  /// residency cap. The resident window only slides FORWARD on an
+  /// append-only ledger, so an id that fell out of residency can never
+  /// legitimately re-enter the render path — the oldest insertions are
+  /// safe to evict past the cap.
+  static const int defaultSeenIdsCap =
+      4 * WindowedSessionStorage.defaultResidentRecords;
+
+  /// Upper bound on the dedupe set (see [defaultSeenIdsCap]).
+  final int seenIdsCap;
+
   final TrajectorySnapshotBuilder _builder = TrajectorySnapshotBuilder();
-  int _seen = 0;
+  final Set<String> _seenIds = {};
   int _rendered = 0;
 
   /// Renders the records appended since the previous call (nothing while
-  /// the record list has not grown).
+  /// no new record ids appear).
+  ///
+  /// gh-1555 W1 rework (review BLOCKING): the dedupe is by RECORD ID, not
+  /// by list length. The headless `fa trajectory tail` poll feeds this
+  /// from a windowed session whose resident window SLIDES (head eviction
+  /// drops the oldest records as new ones append), so the branch list can
+  /// shrink or hold flat in length while genuinely growing at the tail —
+  /// a count-based dedupe misread that as "nothing new" and went
+  /// permanently silent for any session larger than the window.
   List<String> tail(List<SessionRecord> records) {
-    if (records.length <= _seen) return const [];
-    final fresh = records.sublist(_seen);
-    _seen = records.length;
+    final fresh = <SessionRecord>[];
+    for (final record in records) {
+      if (_seenIds.add(record.id)) fresh.add(record);
+    }
+    // Bound the dedupe set (review): `_seenIds` otherwise grows for the
+    // lifetime of a tail that runs until interrupted. Evict the oldest
+    // insertions past the cap (Dart's default Set iterates insertion
+    // order); the only theoretical cost is a duplicate render if a
+    // truncation re-anchor ever pulls an evicted id back into the
+    // branch — impossible on an append-only ledger.
+    while (_seenIds.length > seenIdsCap) {
+      _seenIds.remove(_seenIds.first);
+    }
     final lines = <String>[];
     for (final record in fresh) {
       final snapshot = _builder.append(record);
