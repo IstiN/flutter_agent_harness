@@ -307,6 +307,16 @@ final class ModelRolesResolver {
         input: ref.input,
         thinkingLevel: ref.thinkingLevel,
         authHeader: ref.authHeader,
+        // Request-scoped watchdog windows (issue #1554): the chain
+        // entry's own fields are the TOP precedence layer, riding the
+        // model — the streams of this role (and only this role) watch
+        // under its windows even when another entry shares the endpoint.
+        connectTimeout: ref.connectTimeout,
+        streamIdleTimeout: ref.streamIdleTimeout,
+        timeoutScopeLabel:
+            ref.connectTimeout == null && ref.streamIdleTimeout == null
+            ? null
+            : 'role $role override',
       ),
       keyRing: ring,
       streamForKey: (apiKey) {
