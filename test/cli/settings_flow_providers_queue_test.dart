@@ -67,11 +67,13 @@ void main() {
             providerType: 'openai-completions',
             model: 'queue-a',
             apiKeyEnv: 'K_A',
+            baseUrl: 'http://127.0.0.1:1/v1',
           ),
           ProviderQueueEntry(
             providerType: 'openai-completions',
             model: 'queue-b',
             apiKeyEnv: 'K_B',
+            baseUrl: 'http://127.0.0.1:1/v1',
           ),
         ],
         notices: const [],
