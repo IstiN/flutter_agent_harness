@@ -150,7 +150,7 @@ Future<_PtyRun> _startPiped(
   String? shellEnv,
 }) {
   final script = '${_repoRoot()}/site/setup.sh';
-  final inner = shellArgs.isEmpty ? shell : '${shellArgs.join(' ')} $shell';
+  final inner = [shell, ...shellArgs].join(' ');
   final buffer = StringBuffer();
   final pty = PseudoTerminal.start(
     shell,
@@ -211,6 +211,13 @@ void main() {
       final r = Process.runSync('bash', ['-c', 'printf -v x "%s" hi']);
       expect(r.exitCode, isZero);
     });
+
+    test('dash read has no -s (why ask_hidden hides via stty)', () {
+      final r = Process.runSync('dash', ['-c', 'read -s x < /dev/null']);
+      expect(r.exitCode, isNonZero,
+          reason: 'the ticket I3 shape `read -rs` is unrunnable on dash — '
+              'the emitted wizard must hide the key with stty instead');
+    }, skip: _have('dash') ? null : 'dash not installed');
   });
 
   Future<void> runCustomWizard(

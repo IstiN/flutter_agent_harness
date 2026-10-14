@@ -34,8 +34,12 @@ fi
 FAH_CONFIG_DIR="$HOME/.fah"
 FAH_CONFIG_FILE="$FAH_CONFIG_DIR/config.yaml"
 FAH_TMP_CONF=""  # config write is atomic (tmp + mv); cleaned on any exit
+FAH_STTY_SAVED=""  # termios during hidden reads; restored on any exit
 
-trap 'rm -f "$FAH_TMP_CONF"' EXIT
+trap 'rm -f "$FAH_TMP_CONF"
+  if [ -n "$FAH_STTY_SAVED" ]; then
+    stty "$FAH_STTY_SAVED" < /dev/tty 2>/dev/null
+  fi' EXIT
 
 # ── TTY handling ─────────────────────────────────────────────────────────────
 if [ -t 0 ]; then
@@ -96,13 +100,28 @@ ask() { # ask TEXT [DEFAULT] — prints the answer on stdout
 
 ask_hidden() { # ask_hidden VAR TEXT — reads hidden input into $VAR by name
   prompt "$2"
-  # read's EOF behavior assigns the empty string to the named variable, so
-  # the failure path below never needs `eval` (and never echoes the value).
-  if ! read -rs "$1" < "$FAH_TTY" 2>/dev/tty; then
-    return 1
+  # dash's read has NO -s (probed in the IT platform facts) — hide the
+  # entry with stty on the controlling tty instead. `stty -g` snapshots
+  # the full termios for a byte-exact restore (the EXIT trap re-runs it,
+  # so even Ctrl-C mid-key re-enables echo). The value travels tty →
+  # variable BY NAME and never rides printf argv, where ps could catch it.
+  if [ -z "$FAH_STTY_SAVED" ]; then
+    FAH_STTY_SAVED=$(stty -g < /dev/tty 2>/dev/null || true)
+  fi
+  stty -echo < /dev/tty 2>/dev/null
+  local read_ok=0
+  if read -r "$1" < "$FAH_TTY" 2>/dev/tty; then
+    read_ok=1
+  fi
+  if [ -n "$FAH_STTY_SAVED" ]; then
+    stty "$FAH_STTY_SAVED" < /dev/tty 2>/dev/null
+    FAH_STTY_SAVED=""
+  else
+    stty echo < /dev/tty 2>/dev/null
   fi
   printf '\n' > /dev/tty
-  return 0
+  [ "$read_ok" -eq 1 ] && return 0
+  return 1
 }
 
 ask_yn() { # ask_yn TEXT [DEFAULT] — prints y or n on stdout
