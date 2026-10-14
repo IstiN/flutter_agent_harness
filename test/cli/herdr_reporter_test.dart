@@ -42,8 +42,10 @@ void main() {
   }
 
   /// Builds a reporter over [env] whose reports land in [sink]. The
-  /// recorder completes immediately — reports append SYNCHRONOUSLY at the
-  /// state()/release() call, so test assertions need no pumping.
+  /// recorder completes immediately — a report spawned onto a drained
+  /// chain appends SYNCHRONOUSLY at the state()/release() call; reports
+  /// from a same-tick burst are serialized behind the in-flight one, so
+  /// burst assertions drain first ([drainChain]).
   (HerdrReporter, List<List<String>>) wired(
     Map<String, String> env, {
     DateTime Function()? clock,
@@ -59,6 +61,14 @@ void main() {
       timeout: timeout,
     );
     return (reporter, sink);
+  }
+
+  /// Lets the delivery chain run down: enough event-loop turns for any
+  /// burst of immediately-completing spawns to have recorded.
+  Future<void> drainChain() async {
+    for (var i = 0; i < 5; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
   }
 
   int seqOf(List<String> argv) => int.parse(argv[argv.indexOf('--seq') + 1]);
@@ -177,36 +187,40 @@ void main() {
       expect(sink, expected);
     });
 
-    test('working and blocked reports; labels come from a closed enum', () {
-      final (reporter, sink) = wired(
-        herdrEnv(),
-        clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
-      );
-      reporter.state(HerdrPaneState.working);
-      reporter.blocked(HerdrBlockedLabel.approval);
-      reporter.blocked(HerdrBlockedLabel.ask);
-      reporter.blocked(HerdrBlockedLabel.secret);
-      reporter.blocked(HerdrBlockedLabel.hostModel);
-      expect(sink.map((argv) => argv[argv.indexOf('--state') + 1]).toList(), [
-        'working',
-        'blocked',
-        'blocked',
-        'blocked',
-        'blocked',
-      ]);
-      String? labelOf(List<String> argv) {
-        if (!argv.contains('--message')) return null;
-        return argv[argv.indexOf('--message') + 1];
-      }
+    test(
+      'working and blocked reports; labels come from a closed enum',
+      () async {
+        final (reporter, sink) = wired(
+          herdrEnv(),
+          clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
+        );
+        reporter.state(HerdrPaneState.working);
+        reporter.blocked(HerdrBlockedLabel.approval);
+        reporter.blocked(HerdrBlockedLabel.ask);
+        reporter.blocked(HerdrBlockedLabel.secret);
+        reporter.blocked(HerdrBlockedLabel.hostModel);
+        await drainChain();
+        expect(sink.map((argv) => argv[argv.indexOf('--state') + 1]).toList(), [
+          'working',
+          'blocked',
+          'blocked',
+          'blocked',
+          'blocked',
+        ]);
+        String? labelOf(List<String> argv) {
+          if (!argv.contains('--message')) return null;
+          return argv[argv.indexOf('--message') + 1];
+        }
 
-      expect(sink.map(labelOf).toList(), [
-        null,
-        'approval',
-        'ask',
-        'secret',
-        'host-model',
-      ]);
-    });
+        expect(sink.map(labelOf).toList(), [
+          null,
+          'approval',
+          'ask',
+          'secret',
+          'host-model',
+        ]);
+      },
+    );
 
     test('release report', () async {
       final (reporter, sink) = wired(
@@ -396,7 +410,7 @@ void main() {
   group('seq discipline', () {
     test(
       'a frozen clock still yields strictly increasing seq (same-ms reports)',
-      () {
+      () async {
         final (reporter, sink) = wired(
           herdrEnv(),
           clock: () => DateTime.fromMillisecondsSinceEpoch(1700000000000),
@@ -404,33 +418,38 @@ void main() {
         reporter.state(HerdrPaneState.idle);
         reporter.state(HerdrPaneState.working);
         reporter.state(HerdrPaneState.idle);
+        await drainChain();
         const expected = [1700000000000, 1700000000001, 1700000000002];
         expect(sink.map(seqOf).toList(), expected);
       },
     );
 
-    test('an advancing clock owns the seq; a rollback never decreases it', () {
-      var now = 1700000000100;
-      final (reporter, sink) = wired(
-        herdrEnv(),
-        clock: () => DateTime.fromMillisecondsSinceEpoch(now),
-      );
-      reporter.state(HerdrPaneState.idle);
-      now = 1700000000200;
-      reporter.state(HerdrPaneState.working);
-      now = 1700000000000; // clock rolled back (E2)
-      reporter.state(HerdrPaneState.idle);
-      final seqs = sink.map(seqOf).toList();
-      const expected = [1700000000100, 1700000000200, 1700000000201];
-      expect(seqs, orderedEquals(expected));
-      expect(seqs, everyElement(greaterThanOrEqualTo(seqs.first)));
-    });
+    test(
+      'an advancing clock owns the seq; a rollback never decreases it',
+      () async {
+        var now = 1700000000100;
+        final (reporter, sink) = wired(
+          herdrEnv(),
+          clock: () => DateTime.fromMillisecondsSinceEpoch(now),
+        );
+        reporter.state(HerdrPaneState.idle);
+        now = 1700000000200;
+        reporter.state(HerdrPaneState.working);
+        now = 1700000000000; // clock rolled back (E2)
+        reporter.state(HerdrPaneState.idle);
+        await drainChain();
+        final seqs = sink.map(seqOf).toList();
+        const expected = [1700000000100, 1700000000200, 1700000000201];
+        expect(seqs, orderedEquals(expected));
+        expect(seqs, everyElement(greaterThanOrEqualTo(seqs.first)));
+      },
+    );
   });
 
   group('resume metadata — once per session', () {
     test(
       'first report carrying a session id appends the resume argv; later ones do not',
-      () {
+      () async {
         final (reporter, sink) = wired(
           herdrEnv(),
           clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
@@ -438,6 +457,7 @@ void main() {
         reporter.updateSession('173000_ab12');
         reporter.state(HerdrPaneState.idle);
         reporter.state(HerdrPaneState.working);
+        await drainChain();
         expect(sink, hasLength(2));
         expect(sink[0].sublist(sink[0].indexOf('--')), [
           '--',
@@ -453,7 +473,7 @@ void main() {
 
     test(
       'a session switch re-arms the resume argv; a following state report does not repeat it',
-      () {
+      () async {
         final (reporter, sink) = wired(
           herdrEnv(),
           clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
@@ -463,6 +483,7 @@ void main() {
         reporter.sessionSwitch('b');
         reporter.state(HerdrPaneState.idle);
         reporter.sessionSwitch('a');
+        await drainChain();
         List<String>? resumeBlock(List<String> argv) {
           if (!argv.contains('--')) return null;
           return argv.sublist(argv.indexOf('--'));
@@ -516,7 +537,8 @@ void main() {
       expect(
         argv.contains('--agent-session-id'),
         isTrue,
-        reason: 'the report itself still goes out (inert on failure only '
+        reason:
+            'the report itself still goes out (inert on failure only '
             'for the tail)',
       );
     });
@@ -562,7 +584,8 @@ void main() {
         expect(
           sent,
           hasLength(1),
-          reason: 'the first (slow) report holds the chain — no later spawn '
+          reason:
+              'the first (slow) report holds the chain — no later spawn '
               'has even started',
         );
         gate.complete();
@@ -601,17 +624,20 @@ void main() {
       );
     });
 
-    test('nothing spawns after the release — the registration is gone', () async {
-      final (reporter, sink) = wired(
-        herdrEnv(),
-        clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
-      );
-      await _release(reporter);
-      reporter.state(HerdrPaneState.idle);
-      reporter.sessionSwitch('173000_ab12');
-      expect(sink, hasLength(1), reason: 'only the release report');
-      expect(sink.single.contains('release-agent'), isTrue);
-    });
+    test(
+      'nothing spawns after the release — the registration is gone',
+      () async {
+        final (reporter, sink) = wired(
+          herdrEnv(),
+          clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
+        );
+        await _release(reporter);
+        reporter.state(HerdrPaneState.idle);
+        reporter.sessionSwitch('173000_ab12');
+        expect(sink, hasLength(1), reason: 'only the release report');
+        expect(sink.single.contains('release-agent'), isTrue);
+      },
+    );
   });
 
   group('fire-and-forget contract', () {

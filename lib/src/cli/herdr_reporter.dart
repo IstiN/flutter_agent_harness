@@ -120,15 +120,19 @@ final class HerdrReporter {
   /// invariant no longer rests on the teardown call sites alone.
   bool _released = false;
 
-  /// The in-flight delivery chain: every spawn is appended onto the
-  /// previous one's completion. Seq is assigned at build time and herdr
-  /// keeps only the highest-seq report per pane, so two concurrent spawns
-  /// could land out of order and leave a stale state on the pane until
-  /// the next transition heals it — the chain makes delivery order ==
-  /// seq order while staying fire-and-forget (nothing awaits it; the
-  /// 2s timeout bounds each link, so the chain cannot stall). `_send`
-  /// never throws, so the chain cannot break.
+  /// The in-flight delivery chain tail and its depth. Seq is assigned at
+  /// build time and herdr keeps only the highest-seq report per pane, so
+  /// two concurrent spawns could land out of order and leave a stale
+  /// state on the pane until the next transition heals it. A drained
+  /// chain sends synchronously (the spawn closure observes the argv at
+  /// the call site — fire-and-forget with zero scheduling latency); a
+  /// report spawned while another is still in flight queues behind it,
+  /// so delivery order follows seq order. The 2s timeout bounds every
+  /// link, so the chain cannot stall, and `_send` never throws, so it
+  /// cannot break. Still fire-and-forget: nothing outside awaits it
+  /// (except `release`, which drains the chain on real quit).
   Future<void> _pending = Future<void>.value();
+  int _queued = 0;
 
   /// Whether the gate is satisfied and reports actually spawn. Inert
   /// reporters keep this false for the process lifetime.
@@ -276,8 +280,7 @@ final class HerdrReporter {
   Future<void> release() async {
     if (!_active || _released) return;
     _released = true;
-    _pending = _pending.then((_) => _send(releaseArgs(seq: _nextSeq())));
-    await _pending;
+    await _enqueue(releaseArgs(seq: _nextSeq()));
   }
 
   /// Wraps one prompt-sheet open: reports `blocked` with the spec's label,
@@ -351,8 +354,12 @@ final class HerdrReporter {
       // The resume tail is validated before it rides: a rule-breaking id
       // loses only the tail (herdr 0.8.2 ignores it anyway), never the
       // switch report.
-      if (resumeArgvValid(['fa', '--session', sessionId]))
-        ...['--', 'fa', '--session', sessionId],
+      if (resumeArgvValid(['fa', '--session', sessionId])) ...[
+        '--',
+        'fa',
+        '--session',
+        sessionId,
+      ],
     ];
   }
 
@@ -390,7 +397,24 @@ final class HerdrReporter {
     if (!_active) return;
     if (_runProcess == null) return;
     if (_released) return;
-    _pending = _pending.then((_) => _send(argv));
+    unawaited(_enqueue(argv));
+  }
+
+  /// Appends one report onto the delivery chain. A drained chain sends
+  /// synchronously (the spawn closure observes the argv at the call site);
+  /// a report spawned while another is still in flight queues behind it,
+  /// so delivery order follows seq order.
+  Future<void> _enqueue(List<String> argv) {
+    final wasIdle = _queued == 0;
+    _queued++;
+    if (wasIdle) {
+      _pending = _send(argv).whenComplete(() => _queued--);
+    } else {
+      _pending = _pending.then(
+        (_) => _send(argv).whenComplete(() => _queued--),
+      );
+    }
+    return _pending;
   }
 
   Future<void> _send(List<String> argv) async {

@@ -1,7 +1,7 @@
 # herdr integration
 
 [herdr](https://github.com/herdrdev/herdr) is a terminal multiplexer built
-for coding agents: it owns agent PTYs (detected server, session restore,
+for coding agents: it owns agent PTYs (detached server, session restore,
 remote machines), marks every pane `working / blocked / idle / done`, and
 exposes a CLI + socket API so agents can spawn panes and wait on each
 other. fa is a supported herdr agent through three seams — the pane-state
@@ -74,8 +74,9 @@ builders, charset + resume-argv rules, seq discipline, failure silence,
 payload byte-scan) and `test/cli/herdr_reporter_lifecycle_test.dart`
 (reports through a real `AgentCli.run` — ordering, release-once,
 session-switch, inert-gate zero-spawn, canary scan). The transport is an
-injected `Process.run` closure (`bin/fah_runapp.dart`); lib/ stays
-dart:io-free.
+injected `Process.start`-backed spawn with a kill-on-timeout window and
+drained stdio (`bin/fah_herdr_spawn.dart`, unit-pinned by
+`test/bin_herdr_spawn_drain_test.dart`); lib/ stays dart:io-free.
 
 ## 2. Pane detection — `fa.toml` (second tier)
 
