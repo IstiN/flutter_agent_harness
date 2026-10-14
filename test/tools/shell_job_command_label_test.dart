@@ -160,11 +160,10 @@ void main() {
     test('a heredoc body never re-enters the label through the tail '
         '(issue #599 RED contract)', () {
       // The bench command shape at heredoc scale: the opener, a long
-      // multi-line body, the terminator. The label keeps the flattened
-      // head and a tail cut sourced from the LAST LINE only — body
-      // lines sit in the omitted middle by construction, so a settle
-      // notice can never echo them back onto the transcript (the PTY
-      // contract: the body is never a transcript row source).
+      // multi-line body, the terminator. A multi-line command's label is
+      // HEAD-ONLY — the tail chars of a heredoc are body lines, and the
+      // #599 owner contract says the body is never a transcript row
+      // source, so a settle notice must not be able to echo them back.
       final command = [
         "cat > heredoc-target.md << 'EOF'",
         for (var i = 1; i <= 58; i++) 'heredoc body line $i padding',
@@ -173,14 +172,12 @@ void main() {
       final label = shellJobCommandLabel(command);
       expect(label, isNot(contains('heredoc body line')));
       expect(label, startsWith("cat > heredoc-target.md << 'EOF'"));
-      expect(label, endsWith('EOF'));
       final match = RegExp(r'\[…(\d+) chars…\]').firstMatch(label);
       expect(match, isNotNull);
       expect(
         int.parse(match!.group(1)!),
         command.replaceAll(RegExp(r'\s+'), ' ').trim().length -
-            "cat > heredoc-target.md << 'EOF'".length -
-            'EOF'.length,
+            "cat > heredoc-target.md << 'EOF'".length,
       );
     });
   });

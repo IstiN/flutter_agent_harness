@@ -71,22 +71,25 @@ const shellJobLabelTailChars = 120;
 /// Commands that already fit pass through untouched. Cuts never split a
 /// UTF-16 surrogate pair. Pure.
 ///
-/// Why multi-line commands get no tail (issue #599 RED contract): the
-/// heredoc body is never a transcript row source, and for a multi-line
-/// command the tail chars are body lines more often than they are the
-/// action — echoing them back through every settle notice re-floods the
-/// transcript the #599 fix drained. A one-line command's tail is the
-/// bench pipeline's action (`… ; make test`), so the single-line class
-/// keeps it.
+/// Why multi-line commands keep only the first line (issue #599 RED
+/// contract): the heredoc body is never a transcript row source, and for
+/// a multi-line command both the flattened head-crossing and the tail
+/// chars are body lines more often than they are the action — echoing
+/// them back through every settle notice re-floods the transcript the
+/// #599 fix drained. A one-line command's tail is the bench pipeline's
+/// action (`… ; make test`), so the single-line class keeps it.
 String shellJobCommandLabel(
   String command, {
   int headChars = shellJobLabelHeadChars,
   int tailChars = shellJobLabelTailChars,
 }) {
   final flat = command.replaceAll(RegExp(r'\s+'), ' ').trim();
-  final head = _codepointSafeSlice(flat, 0, headChars);
-  if (head.length == flat.length) return flat;
+  // Fits: any command whose flattened form fits the head bound passes
+  // through untouched — including short multi-line ones (pre-existing
+  // flatten-and-show behavior).
+  if (flat.length <= headChars) return flat;
   if (!command.trim().contains('\n')) {
+    final head = _codepointSafeSlice(flat, 0, headChars);
     final tail = _codepointSafeSlice(
       flat,
       max(0, flat.length - tailChars),
@@ -96,6 +99,18 @@ String shellJobCommandLabel(
     if (omitted <= 0) return flat;
     return '$head […$omitted chars…] $tail';
   }
+  // Overflows: single-line commands keep head + tail; multi-line
+  // commands (issue #599 RED contract) keep the FIRST LINE only,
+  // bounded — the first line is the command's face (a heredoc opener,
+  // a script's shebang), while everything after it is body more often
+  // than it is action. A flattened 120-char head would leak the first
+  // body lines; a first-line head cannot.
+  final firstLineEnd = command.indexOf('\n');
+  final firstLine = command
+      .substring(0, firstLineEnd < 0 ? command.length : firstLineEnd)
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  final head = _codepointSafeSlice(firstLine, 0, headChars);
   final omitted = flat.length - head.length;
   return '$head […$omitted chars…]';
 }
