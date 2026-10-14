@@ -142,15 +142,18 @@ void main() {
   late ProviderTimeoutsOverride? savedGlobal;
   late List<ProviderTuningEntry> savedEntries;
   late Future<bool> Function(Duration, CancelToken?) savedSleeper;
+  late TransientRetryNotice? savedNotice;
 
   setUp(() {
     savedGlobal = providerTimeoutsOverride;
     savedEntries = providerTuningRegistry.entries;
     savedSleeper = transientRetrySleeper;
+    savedNotice = transientRetryNotice;
     providerTimeoutsOverride = null;
     providerTuningRegistry.clear();
     // The ladder's inter-attempt pause is not under test here.
     transientRetrySleeper = (delay, token) async => true;
+    transientRetryNotice = null;
   });
 
   tearDown(() {
@@ -158,6 +161,7 @@ void main() {
     providerTuningRegistry.clear();
     providerTuningRegistry.registerAll(savedEntries);
     transientRetrySleeper = savedSleeper;
+    transientRetryNotice = savedNotice;
   });
 
   group('gh-1617 AC1 — a warming-up model survives under its configured '
@@ -369,6 +373,33 @@ void main() {
       final plainInfo = plain.runIdleWindow;
       expect(plainInfo.window, defaultRunIdleTimeout);
       expect(plainInfo.raised, isFalse);
+    });
+
+    test('the replay notice carries the governing idle window '
+        '(capability surface: replay event carries idleWindowMs)', () async {
+      final notices = <String>[];
+      transientRetryNotice = (attempt, max, delay, reason) =>
+          notices.add(reason);
+      providerTuningRegistry.register(
+        name: 'llama-local',
+        baseUrl: 'https://llama.test/v1',
+        streamIdle: const Duration(milliseconds: 150),
+      );
+      final provider = _WarmingUpProvider(const Duration(milliseconds: 240));
+      final agent = _agent(
+        model: _model(),
+        provider: provider,
+        floor: const Duration(milliseconds: 60),
+      );
+      await agent.prompt('hi');
+      await agent.waitForIdle();
+
+      expect(notices, isNotEmpty);
+      expect(
+        notices.single,
+        contains('idle window 150ms from provider:llama-local'),
+        reason: 'the replay names the window that governed the kill',
+      );
     });
   });
 }

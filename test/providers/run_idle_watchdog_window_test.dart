@@ -323,5 +323,21 @@ void main() {
         contains('global'),
       );
     });
+
+    test('sub-second windows render as milliseconds — a mis-keyed window '
+        'is recognizable verbatim (AC4 names config values)', () {
+      expect(
+        formatProviderTimeout(const Duration(milliseconds: 150)),
+        '150ms',
+      );
+      expect(
+        describeRunIdleWindow(
+          const Duration(milliseconds: 150),
+          'model override',
+        ),
+        'idle window 150ms (model override)',
+      );
+      expect(formatProviderTimeout(const Duration(minutes: 33)), '1980s');
+    });
   });
 }

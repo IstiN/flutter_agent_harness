@@ -91,27 +91,32 @@ void main() {
         reason: 'session persisted');
     io.sendLine('start');
     await waitForIt(() => cli.isBusy, reason: 'run started');
+    // Cleanup even when an assertion fails mid-test: a dangling wedged
+    // run would hang the next test's boot on the shared isolate.
+    addTearDown(() async {
+      try {
+        io.sendLine('/exit');
+        await waitForIt(() => !cli.isBusy, reason: 'run aborted on exit');
+      } on Object {
+        // The test already failed — never mask it with a teardown error.
+      }
+    });
     unawaited(run);
     return cli;
   }
 
   test('AC5: a configured window wider than the floor is named on the '
       'banner', () async {
-    final cli = await boot(
-      _model(idle: const Duration(minutes: 33)),
-    );
+    final cli = await boot(_model(idle: const Duration(minutes: 33)));
     await Future<void>.delayed(const Duration(milliseconds: 250));
     cli.checkPendingSteeringHealthForTest();
 
     final out = io.out.toString();
     expect(out, contains('agent stalled'));
-    expect(out, contains('idle window 33m'));
+    expect(out, contains('idle window 1980s'));
     expect(out, contains('model override'));
     expect(out, contains('the run keeps waiting'));
-
-    io.sendLine('/exit');
-    await waitForIt(() => !cli.isBusy, reason: 'run aborted on exit');
-  });
+  }, timeout: const Timeout(Duration(seconds: 90)));
 
   test('AC3: unset config keeps the banner byte-for-byte — no window '
       'naming', () async {
@@ -123,10 +128,7 @@ void main() {
     expect(out, contains('agent stalled'));
     expect(out, isNot(contains('idle window')));
     expect(out, isNot(contains('the run keeps waiting')));
-
-    io.sendLine('/exit');
-    await waitForIt(() => !cli.isBusy, reason: 'run aborted on exit');
-  });
+  }, timeout: const Timeout(Duration(seconds: 90)));
 
   test('AC2: a registry entry governs the banner source for its URL', () async {
     providerTuningRegistry.register(
@@ -139,10 +141,7 @@ void main() {
     cli.checkPendingSteeringHealthForTest();
 
     final out = io.out.toString();
-    expect(out, contains('idle window 20m'));
+    expect(out, contains('idle window 1200s'));
     expect(out, contains('provider:llama-local'));
-
-    io.sendLine('/exit');
-    await waitForIt(() => !cli.isBusy, reason: 'run aborted on exit');
-  });
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }

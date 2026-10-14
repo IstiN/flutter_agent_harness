@@ -340,11 +340,17 @@ String _midStreamResumeNotice(StopReason reason, int completedBlocks) =>
 /// (issue #1121 review r1): names the machine trigger when the run-idle
 /// watchdog motivated the replay — "Request was aborted" alone has meant
 /// USER intent on the [net] surface, and a forensics reader must be able
-/// to tell a watchdog replay from a provider-emitted abort.
-String _replayReason(bool watchdogReplay, AssistantMessage error) =>
-    watchdogReplay
-    ? 'run-idle watchdog replay of zero-byte request: '
-          '${_shortReason(error.errorMessage)}'
+/// to tell a watchdog replay from a provider-emitted abort. gh-1617: the
+/// replay event carries the governing idle window (`idle window Xs
+/// (source)`) so the replay log tells which patience ruled the kill.
+String _replayReason(
+  bool watchdogReplay,
+  AssistantMessage error,
+  _ZeroByteWindowStory windowStory,
+) => watchdogReplay
+    ? 'run-idle watchdog replay of zero-byte request '
+          '(idle window ${formatProviderTimeout(windowStory.window)} '
+          'from ${windowStory.source}): ${_shortReason(error.errorMessage)}'
     : _shortReason(error.errorMessage);
 
 /// Re-arms a watchdog-cancelled latch IN PLACE once the failure was
@@ -532,7 +538,10 @@ Future<bool> _afterTransientFailure(
       cancelToken?.cancelReason is RunIdleWatchdogFire
       ? (cancelToken!.cancelReason as RunIdleWatchdogFire).duration
       : null;
-  state.attemptLog.add(_replayReason(watchdogReplay, error));
+  final windowStory = _zeroByteWindowStory(model, watchdogWindow);
+  state.attemptLog.add(
+    _replayReason(watchdogReplay, error, windowStory),
+  );
   _rearmWatchdogLatch(cancelToken, watchdogReplay);
   // gh-1308: replaying into an endpoint that produced NOTHING is bounded
   // separately from the generic budget — every watchdog kill costs a full
@@ -546,8 +555,13 @@ Future<bool> _afterTransientFailure(
   // gh-1617 I2/AC4: an EXPLICITLY configured connectTimeoutMs bounds the
   // replay patience on top — a budget below the idle window buys no
   // replay at all, and the terminal names both values.
+  //
+  // gh-1617 E1: the killed attempt's request may still complete
+  // server-side — the first request IS aborted via the cancel token and
+  // its (zero-byte) partial stream dropped before the replay, but any
+  // billing dedup for the abandoned generation is the provider's job;
+  // fa never replays into a cancel that has not landed.
   state.zeroByteKills = watchdogReplay ? state.zeroByteKills + 1 : 0;
-  final windowStory = _zeroByteWindowStory(model, watchdogWindow);
   final zeroByteBudget = zeroByteAttemptBudget(
     ladderBound: maxZeroByteWatchdogAttempts,
     idleWindow: windowStory.window,
@@ -578,7 +592,7 @@ Future<bool> _afterTransientFailure(
     delay,
     attempt,
     maxAttempts,
-    _replayReason(watchdogReplay, error),
+    _replayReason(watchdogReplay, error, windowStory),
   );
 }
 
