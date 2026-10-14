@@ -22,6 +22,7 @@ final _garbage = <int>[1, 2, 3, 4, 5, 6, 7, 8];
 
 FaTuiModel build({
   Future<PasteboardRead> Function()? reader,
+  Future<PasteboardRead> Function()? textReader,
   void Function(String line, List<TuiImageAttachment> images)? onSubmit,
   List<TuiImageAttachment> attachments = const [],
   String inputText = 'hello',
@@ -38,6 +39,7 @@ FaTuiModel build({
       statusLine: () => 'test',
       prompt: 'fa> ',
       readClipboardImage: reader,
+      readClipboardText: textReader,
     ),
     isExited: () => false,
     termHeight: 12,
@@ -116,6 +118,101 @@ void main() {
     expect(cmd, isNull, reason: 'no reader: a synchronous note, no work');
     expect(model.attachments, isEmpty);
     expect(model.outputLines.join('\n'), contains('clipboard'));
+  });
+
+  // --- gh-1575: Ctrl+V with a TEXT clipboard pastes the text ---
+
+  test('ctrl+v with a TEXT clipboard and no image inserts the text', () async {
+    var model = build(
+      reader: () async =>
+          const PasteboardUnavailable('clipboard holds no image'),
+      textReader: () async => const PasteboardText('pasted words'),
+      inputText: '',
+    );
+    final (next, cmd) = model.update(
+      KeyPressMsg(
+        const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
+      ),
+    );
+    model = next as FaTuiModel;
+    final followUp = await cmd?.call();
+    model = model.update(followUp!).$1 as FaTuiModel;
+
+    expect(model.inputText, 'pasted words', reason: 'text lands in composer');
+    expect(model.attachments, isEmpty);
+    expect(model.outputLines.join('\n'), isNot(contains('no image')),
+        reason: 'no dead-end error when text was pasted instead');
+  });
+
+  test('ctrl+v with neither image nor text keeps the named reason', () async {
+    var model = build(
+      reader: () async =>
+          const PasteboardUnavailable('clipboard holds no image'),
+      textReader: () async =>
+          const PasteboardUnavailable('clipboard holds no text'),
+    );
+    final (next, cmd) = model.update(
+      KeyPressMsg(
+        const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
+      ),
+    );
+    model = next as FaTuiModel;
+    final followUp = await cmd?.call();
+    model = model.update(followUp!).$1 as FaTuiModel;
+
+    expect(model.attachments, isEmpty);
+    expect(model.inputText, 'hello', reason: 'nothing to paste');
+    expect(
+      model.outputLines.join('\n'),
+      contains('clipboard holds no image'),
+    );
+  });
+
+  test('ctrl+v prefers the image and never consults the text reader',
+      () async {
+    var textProbes = 0;
+    var model = build(
+      reader: () async => PasteboardImage(_png),
+      textReader: () async {
+        textProbes++;
+        return const PasteboardText('should not be used');
+      },
+    );
+    final (next, cmd) = model.update(
+      KeyPressMsg(
+        const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
+      ),
+    );
+    model = next as FaTuiModel;
+    final followUp = await cmd?.call();
+    model = model.update(followUp!).$1 as FaTuiModel;
+
+    expect(model.attachments, hasLength(1));
+    expect(model.inputText, 'hello', reason: 'text fallback never fired');
+    expect(textProbes, 0);
+  });
+
+  test('ctrl+v text fallback without a wired text reader keeps the reason',
+      () async {
+    var model = build(
+      reader: () async =>
+          const PasteboardUnavailable('no pasteboard on this host'),
+      inputText: '',
+    );
+    final (next, cmd) = model.update(
+      KeyPressMsg(
+        const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
+      ),
+    );
+    model = next as FaTuiModel;
+    final followUp = await cmd?.call();
+    model = model.update(followUp!).$1 as FaTuiModel;
+
+    expect(model.inputText, '');
+    expect(
+      model.outputLines.join('\n'),
+      contains('no pasteboard on this host'),
+    );
   });
 
   test('a plain submit consumes the chips and passes them to the host',
