@@ -546,9 +546,16 @@ class AgentCli {
           },
           registrySource: () async {
             final session = _session;
-            if (session == null) return const [];
+            final repo = _repo;
+            // Foreign repo implementations (test seams, alternate stores)
+            // have no raw-scan API — degrade to an empty registry rather
+            // than crash the boot cast (gh-1555 W1 tests drive exactly
+            // such a repo through the picker/resume paths).
+            if (session == null || repo is! JsonlSessionRepo) {
+              return const [];
+            }
             return subagentRegistryRows(
-              repo: _repo as JsonlSessionRepo,
+              repo: repo,
               parent: await session.getMetadata(),
             );
           },
@@ -1047,6 +1054,14 @@ class AgentCli {
   /// metadata path — the usage-ledger command guards).
   @visibleForTesting
   set sessionForTest(Session? session) => _session = session;
+
+  /// Test seam: swaps the session repo so CLI paths can be driven over a
+  /// store shape the real repo never produces — gh-1555's incident-shape
+  /// fixture refuses every FULL open (what a ledger past the gh-1073 2 GiB
+  /// backstop does) so the windowed-everywhere migration is provable
+  /// without a giant on-disk fixture.
+  @visibleForTesting
+  set repoForTest(SessionRepo repo) => _repo = repo;
 
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
