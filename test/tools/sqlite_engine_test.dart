@@ -9,6 +9,45 @@ String _text(ToolExecutionResult result) {
   return result.content.whereType<TextContent>().map((b) => b.text).join();
 }
 
+/// The dart:ffi resolver's failure for a missing bundled libsqlite3, as
+/// reported on macOS (gh-1574 ticket) — installed at `~/.local/bin/fa`, the
+/// native-assets resolver looks in `~/.local/lib/` and finds nothing.
+final _macMissingDylibError = ArgumentError(
+  "Couldn't resolve native function 'sqlite3_initialize' in "
+  "'package:sqlite3/src/ffi/libsqlite3.g.dart' : Failed to load dynamic "
+  "library '/Users/someone/.local/lib/libsqlite3.dylib' (no such file)",
+);
+
+/// The same failure on Linux (`libsqlite3.so`).
+final _linuxMissingDylibError = ArgumentError(
+  "Couldn't resolve native function 'sqlite3_initialize' in "
+  "'package:sqlite3/src/ffi/libsqlite3.g.dart' : Failed to load dynamic "
+  "library '../lib/libsqlite3.so' relative to '/usr/local/bin/fa': Failed "
+  "to load dynamic library '/usr/local/lib/libsqlite3.so': cannot open "
+  'shared object file: No such file or directory',
+);
+
+/// A do-nothing [SqliteDatabase] for engine retry tests.
+final class _StubDb implements SqliteDatabase {
+  const _StubDb();
+
+  @override
+  SqliteRows select(
+    String sql, {
+    List<Object?> parameters = const [],
+    int? maxRows,
+  }) => const SqliteRows(columns: [], rows: []);
+
+  @override
+  int parameterCount(String sql) => 0;
+
+  @override
+  void execute(String sql) {}
+
+  @override
+  void close() {}
+}
+
 void main() {
   late Directory tempDir;
   late LocalExecutionEnv env;
@@ -267,5 +306,273 @@ void main() {
         'query to page through more]',
       ),
     );
+  });
+
+  group('missing bundled library degrades cleanly (gh-1574)', () {
+    test('the fixtures mirror the real resolver paths, /lib/ included', () {
+      // The real ticket error carries the <exe_dir>/../lib component in the
+      // resolver's path (`~/.local/libsqlite3.dylib` for `~/.local/bin/fa`);
+      // a fixture transcribing it without the /lib/ segment would pin the
+      // wrong shape (gh-1574 r2 review).
+      expect(
+        _macMissingDylibError.message,
+        contains('/Users/someone/.local/lib/libsqlite3.dylib'),
+      );
+      expect(
+        _linuxMissingDylibError.message,
+        contains('/usr/local/lib/libsqlite3.so'),
+      );
+    });
+
+    test('the unavailable note shows the correct example path', () {
+      final message = sqliteUnavailableMessage('${tempDir.path}/data.db');
+      // <exe_dir>/../lib + libsqlite3.dylib for ~/.local/bin/fa is
+      // ~/.local/lib/libsqlite3.dylib — the /lib/ segment must be present.
+      expect(message, contains('~/.local/lib/libsqlite3.dylib'));
+      expect(message, isNot(contains('~/.local/libsqlite3.dylib')));
+    });
+
+    test('the ffi resolver failure shape is recognized', () {
+      expect(isSqliteDynamicLibraryLoadFailure(_macMissingDylibError), isTrue);
+      expect(
+        isSqliteDynamicLibraryLoadFailure(_linuxMissingDylibError),
+        isTrue,
+      );
+    });
+
+    test('database-level errors are not misclassified', () {
+      expect(
+        isSqliteDynamicLibraryLoadFailure(
+          ArgumentError.value('x', 'path', 'must not be empty'),
+        ),
+        isFalse,
+      );
+      expect(
+        isSqliteDynamicLibraryLoadFailure(
+          SqliteException(
+            extendedResultCode: 26,
+            message: 'file is not a database',
+          ),
+        ),
+        isFalse,
+      );
+      expect(isSqliteDynamicLibraryLoadFailure(StateError('boom')), isFalse);
+    });
+
+    test(
+      'openReadOnly maps the load failure to a clean sqlite-unavailable note',
+      () {
+        final engine = Sqlite3Engine(
+          openOverride: (path) => throw _macMissingDylibError,
+        );
+        expect(
+          () => engine.openReadOnly('${tempDir.path}/data.db'),
+          throwsA(
+            isA<StateError>()
+                .having(
+                  (e) => e.message,
+                  'message',
+                  contains('SQLite is unavailable'),
+                )
+                .having(
+                  (e) => e.message,
+                  'message mentions the repair',
+                  contains('fa update'),
+                )
+                .having(
+                  (e) => e.message,
+                  'message is not the raw ffi dump',
+                  isNot(contains("Couldn't resolve native function")),
+                ),
+          ),
+        );
+      },
+    );
+
+    test('openReadOnly rethrows non-load failures untouched', () {
+      final original = SqliteException(
+        extendedResultCode: 26,
+        message: 'file is not a database',
+      );
+      final engine = Sqlite3Engine(openOverride: (path) => throw original);
+      expect(
+        () => engine.openReadOnly('${tempDir.path}/data.db'),
+        throwsA(same(original)),
+      );
+    });
+
+    test(
+      'the read tool surfaces the clean note, not the raw ffi error',
+      () async {
+        final engine = Sqlite3Engine(
+          openOverride: (path) => throw _linuxMissingDylibError,
+        );
+        final brokenTool = readFileTool(env, sqlite: engine);
+        expect(
+          brokenTool.execute({'path': 'data.db'}, null, null),
+          throwsA(
+            isA<StateError>()
+                .having((e) => e.message, 'message', contains('unavailable'))
+                .having(
+                  (e) => e.message,
+                  'message is not the raw ffi dump',
+                  isNot(contains('libsqlite3.g.dart')),
+                ),
+          ),
+        );
+      },
+    );
+  });
+
+  group('successor-side layout repair (gh-1574 r2)', () {
+    late Directory installRoot;
+    late Directory binDir;
+
+    setUp(() {
+      // Mirrors a flat binary install: <installRoot>/bin/fa with the
+      // pre-fix installers' inert <exe_dir>/lib leftovers beside it.
+      installRoot = Directory('${tempDir.path}/local')
+        ..createSync(recursive: true);
+      binDir = Directory('${installRoot.path}/bin')..createSync();
+    });
+
+    test(
+      'moves stale <exe_dir>/libsqlite3.* into <exe_dir>/../lib and says so',
+      () {
+        final stale = Directory('${binDir.path}/lib')..createSync();
+        File('${stale.path}/libsqlite3.dylib').writeAsStringSync('dylib');
+        File('${stale.path}/libsqlite3.so').writeAsStringSync('so');
+        File('${stale.path}/unrelated.dylib').writeAsStringSync('other');
+
+        final moved = repairStaleSqliteBundleLayout(
+          executablePath: '${binDir.path}/fa',
+        );
+
+        expect(moved, isTrue);
+        // Where the native-assets resolver reads: <exe_dir>/../lib/<name>.
+        expect(
+          File('${installRoot.path}/lib/libsqlite3.dylib').readAsStringSync(),
+          'dylib',
+        );
+        expect(
+          File('${installRoot.path}/lib/libsqlite3.so').readAsStringSync(),
+          'so',
+        );
+        // Moved, not duplicated.
+        expect(File('${stale.path}/libsqlite3.dylib').existsSync(), isFalse);
+        expect(File('${stale.path}/libsqlite3.so').existsSync(), isFalse);
+        // Unrelated files in the stale directory are left alone.
+        expect(File('${stale.path}/unrelated.dylib').existsSync(), isTrue);
+      },
+    );
+
+    test('no stale <exe_dir>/lib means no repair', () {
+      final moved = repairStaleSqliteBundleLayout(
+        executablePath: '${binDir.path}/fa',
+      );
+
+      expect(moved, isFalse);
+      expect(
+        File('${installRoot.path}/lib/libsqlite3.dylib').existsSync(),
+        isFalse,
+      );
+    });
+
+    test('never clobbers a lib already present at the target', () {
+      final stale = Directory('${binDir.path}/lib')..createSync();
+      File('${stale.path}/libsqlite3.dylib').writeAsStringSync('stale');
+      final target = File('${installRoot.path}/lib/libsqlite3.dylib');
+      target.parent.createSync(recursive: true);
+      target.writeAsStringSync('fresh');
+
+      final moved = repairStaleSqliteBundleLayout(
+        executablePath: '${binDir.path}/fa',
+      );
+
+      expect(moved, isFalse);
+      expect(
+        File('${installRoot.path}/lib/libsqlite3.dylib').readAsStringSync(),
+        'fresh',
+      );
+      expect(File('${stale.path}/libsqlite3.dylib').existsSync(), isTrue);
+    });
+
+    test('a missing executable is a no-op, never a throw', () {
+      expect(
+        repairStaleSqliteBundleLayout(
+          executablePath: '${binDir.path}/definitely-missing',
+        ),
+        isFalse,
+      );
+    });
+
+    test('openReadOnly retries the load after a successful repair', () {
+      var opens = 0;
+      final engine = Sqlite3Engine(
+        openOverride: (path) {
+          opens++;
+          if (opens == 1) throw _macMissingDylibError;
+          return const _StubDb();
+        },
+        layoutRepair: () => true,
+      );
+
+      final db = engine.openReadOnly('${tempDir.path}/data.db');
+      db.close();
+      expect(opens, 2);
+    });
+
+    test('a repair that does not heal still degrades to the clean note', () {
+      final engine = Sqlite3Engine(
+        openOverride: (path) => throw _macMissingDylibError,
+        layoutRepair: () => true,
+      );
+
+      expect(
+        () => engine.openReadOnly('${tempDir.path}/data.db'),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('SQLite is unavailable'),
+          ),
+        ),
+      );
+    });
+
+    test('a no-op repair degrades without a second load attempt', () {
+      var opens = 0;
+      final engine = Sqlite3Engine(
+        openOverride: (path) {
+          opens++;
+          throw _macMissingDylibError;
+        },
+        layoutRepair: () => false,
+      );
+
+      expect(
+        () => engine.openReadOnly('${tempDir.path}/data.db'),
+        throwsA(isA<StateError>()),
+      );
+      expect(opens, 1);
+    });
+
+    test('a non-load failure on the retried load passes through untouched', () {
+      final notADatabase = SqliteException(
+        extendedResultCode: 26,
+        message: 'file is not a database',
+      );
+      final engine = Sqlite3Engine(
+        openOverride: (path) {
+          throw notADatabase;
+        },
+        layoutRepair: () => true,
+      );
+
+      expect(
+        () => engine.openReadOnly('${tempDir.path}/data.db'),
+        throwsA(same(notADatabase)),
+      );
+    });
   });
 }
