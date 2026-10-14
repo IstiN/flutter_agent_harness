@@ -255,7 +255,7 @@ Future<void> httpListen(HttpServer http, WireServeServer server, String token) {
     }
     try {
       final ws = await WebSocketTransformer.upgrade(request);
-      final send = (Map<String, dynamic> frame) =>
+      void send(Map<String, dynamic> frame) =>
           ws.add(AgentWireProtocol.frameLine(frame));
       // Text frames arrive as String, binary frames as Uint8List (a
       // List<int>) — both decode through the guarded path. (Invalid
@@ -286,10 +286,11 @@ void writeStartupLine(WireServeStartupLine line) {
 /// malformed byte or an oversized line is a loud `bad_frame`, never a
 /// silent server death.
 Future<void> serveStdio(WireServeServer server) {
-  final send = (Map<String, dynamic> frame) {
+  void send(Map<String, dynamic> frame) {
     stdout.writeln(AgentWireProtocol.frameLine(frame));
     stdout.flush();
-  };
+  }
+
   return server.attach(
     decodeNdjson(
       server,

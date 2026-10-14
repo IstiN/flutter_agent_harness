@@ -27,7 +27,7 @@ void main() {
       jsonEncode({
         'type': 'message',
         'id': id,
-        if (parentId != null) 'parentId': parentId,
+        'parentId': ?parentId,
         'timestamp': '2026-09-07T00:00:01.000Z',
         'message': {'role': 'user', 'content': text},
       });
@@ -40,7 +40,7 @@ void main() {
   }) => jsonEncode({
     'type': 'custom',
     'id': id,
-    if (parentId != null) 'parentId': parentId,
+    'parentId': ?parentId,
     'timestamp': '2026-09-07T00:00:02.000Z',
     'customType': customType,
     'data': data,
