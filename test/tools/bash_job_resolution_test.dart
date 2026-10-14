@@ -374,6 +374,11 @@ void main() {
 
   group('AC5 — stop never acts on a resolved id', () {
     test('near-miss stop returns a hint and kills nothing', () async {
+      // The minted id's random base36 tail ends in 'zz' once every ~36^2
+      // starts; the constructed near-miss is then the EXACT id and the
+      // stop rightly succeeds (red main run 38120494810, shard 3/4).
+      // Force the id so the near-miss is really a miss, deterministically.
+      env.forcedIds = ['sh-1-aaaa'];
       final entry = await registry.start('long build');
       final stale = '${entry.id.substring(0, entry.id.length - 2)}zz';
       final result = await tool.execute(_args('stop', id: stale), null, null);
