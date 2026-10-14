@@ -64,11 +64,20 @@ const shellJobLabelHeadChars = 120;
 const shellJobLabelTailChars = 120;
 
 /// The bounded model-facing command label (gh-1604 item 1): whitespace
-/// (newlines included) flattened to single spaces, then the first
-/// [headChars] and last [tailChars] characters joined by a
-/// `[…N chars…]` marker that names the TRUE omitted size. Commands that
-/// already fit pass through untouched. Cuts never split a UTF-16
-/// surrogate pair. Pure.
+/// (newlines included) flattened to single spaces, then bounded —
+/// single-line commands keep the first [headChars] and last [tailChars]
+/// characters joined by a `[…N chars…]` marker that names the TRUE
+/// omitted size; multi-line commands keep the HEAD only, no tail.
+/// Commands that already fit pass through untouched. Cuts never split a
+/// UTF-16 surrogate pair. Pure.
+///
+/// Why multi-line commands get no tail (issue #599 RED contract): the
+/// heredoc body is never a transcript row source, and for a multi-line
+/// command the tail chars are body lines more often than they are the
+/// action — echoing them back through every settle notice re-floods the
+/// transcript the #599 fix drained. A one-line command's tail is the
+/// bench pipeline's action (`… ; make test`), so the single-line class
+/// keeps it.
 String shellJobCommandLabel(
   String command, {
   int headChars = shellJobLabelHeadChars,
@@ -77,10 +86,18 @@ String shellJobCommandLabel(
   final flat = command.replaceAll(RegExp(r'\s+'), ' ').trim();
   final head = _codepointSafeSlice(flat, 0, headChars);
   if (head.length == flat.length) return flat;
-  final tail = _codepointSafeSlice(flat, flat.length - tailChars, flat.length);
-  final omitted = flat.length - head.length - tail.length;
-  if (omitted <= 0) return flat;
-  return '$head […$omitted chars…] $tail';
+  if (!command.trim().contains('\n')) {
+    final tail = _codepointSafeSlice(
+      flat,
+      max(0, flat.length - tailChars),
+      flat.length,
+    );
+    final omitted = flat.length - head.length - tail.length;
+    if (omitted <= 0) return flat;
+    return '$head […$omitted chars…] $tail';
+  }
+  final omitted = flat.length - head.length;
+  return '$head […$omitted chars…]';
 }
 
 /// The substring of [text] over `[start, end)`, nudged inward so a cut
