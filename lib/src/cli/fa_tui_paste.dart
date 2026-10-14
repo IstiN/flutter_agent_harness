@@ -11,9 +11,14 @@ part of 'fa_tui.dart';
 /// so failed probes stay quiet — only Ctrl+V and image-intent pastes
 /// (empty payload) name their failures.
 final class PasteboardResultMsg extends Msg {
-  PasteboardResultMsg(this.read, {this.silentFailure = false});
+  PasteboardResultMsg(this.read, {this.silentFailure = false, this.text});
   final PasteboardRead read;
   final bool silentFailure;
+
+  /// Ctrl+V only: clipboard TEXT found when the pasteboard held no usable
+  /// image — inserted into the composer (raw `^V` terminals send no
+  /// bracketed paste, so this is the only path the text takes).
+  final String? text;
 }
 
 /// How long a fired pasteboard probe owns the paste gesture (issue #1067):
@@ -29,6 +34,15 @@ extension FaTuiPaste on FaTuiModel {
   /// their NAMED reason (unavailable pasteboard, size cap, not an image).
   (Model, Cmd?) _handlePasteboardResult(PasteboardResultMsg msg) {
     final read = msg.read;
+    final text = msg.text;
+    if (text != null && text.isNotEmpty) {
+      // A bracketed paste that landed after the probe fired already
+      // inserted this very text (ctrl+v + Cmd+V twin events): no dupes.
+      if (_bracketedPasteAtMs >= _pasteboardProbeFiredAtMs) {
+        return (this, null);
+      }
+      return (copyWith(editor: editor.insert(text)), null);
+    }
     if (read is! PasteboardImage) {
       if (msg.silentFailure) return (this, null);
       final reason = read is PasteboardUnavailable
@@ -61,11 +75,19 @@ extension FaTuiPaste on FaTuiModel {
   (FaTuiModel, Cmd?) _firePasteboardProbe(
     Future<PasteboardRead> Function() reader, {
     required bool silentFailure,
+    Future<String?> Function()? textReader,
   }) {
     if (_pasteboardProbeInFlight()) return (this, null);
     final armed = copyWith();
     armed._pasteboardProbeFiredAtMs = nowFn().millisecondsSinceEpoch;
-    return (armed, _pasteboardProbe(reader, silentFailure: silentFailure));
+    return (
+      armed,
+      _pasteboardProbe(
+        reader,
+        silentFailure: silentFailure,
+        textReader: textReader,
+      ),
+    );
   }
 
   /// One async pasteboard probe; the outcome lands back as a
@@ -74,9 +96,15 @@ extension FaTuiPaste on FaTuiModel {
   Cmd _pasteboardProbe(
     Future<PasteboardRead> Function() reader, {
     required bool silentFailure,
-  }) =>
-      () async =>
-          PasteboardResultMsg(await reader(), silentFailure: silentFailure);
+    Future<String?> Function()? textReader,
+  }) => () async {
+    final read = await reader();
+    // Image wins; the text fallback only runs when no usable image exists.
+    final usable =
+        read is PasteboardImage && pasteImageError(read.bytes) == null;
+    final text = usable || textReader == null ? null : await textReader();
+    return PasteboardResultMsg(read, silentFailure: silentFailure, text: text);
+  };
 
   /// Ctrl+V (issue #276): read the platform pasteboard off the UI loop and
   /// attach the image as a composer chip. Without a wired reader (or in
@@ -87,10 +115,18 @@ extension FaTuiPaste on FaTuiModel {
   (Model, Cmd?)? _handlePasteImageKey(KeyMsg msg) {
     if (msg.key != 'ctrl+v') return null;
     final reader = callbacks.readClipboardImage;
-    if (reader == null) {
+    final textReader = callbacks.readClipboardText;
+    if (reader == null && textReader == null) {
       return (_appendServiceLine(_dim(clipboardUnavailableHint)), null);
     }
-    return _firePasteboardProbe(reader, silentFailure: false);
+    // One press: an image attaches as a chip; with no usable image the
+    // clipboard TEXT is inserted (a raw `^V` carries no bracketed paste).
+    return _firePasteboardProbe(
+      reader ??
+          () async => const PasteboardUnavailable(clipboardUnavailableHint),
+      silentFailure: false,
+      textReader: textReader,
+    );
   }
 
   /// dart_tui 2.0.0's bracketed-paste decoder maps every pasted BYTE to a
@@ -131,12 +167,20 @@ extension FaTuiPaste on FaTuiModel {
     // where the user clearly tried to paste something).
     final reader = callbacks.readClipboardImage;
     if (reader == null) {
-      return (copyWith(editor: editor.insert(content)), null);
+      final inserted = copyWith(editor: editor.insert(content));
+      if (content.isNotEmpty) {
+        inserted._bracketedPasteAtMs = nowFn().millisecondsSinceEpoch;
+      }
+      return (inserted, null);
     }
     final (armed, probe) = _firePasteboardProbe(
       reader,
       silentFailure: content.isNotEmpty,
     );
-    return (armed.copyWith(editor: editor.insert(content)), probe);
+    final inserted = armed.copyWith(editor: editor.insert(content));
+    if (content.isNotEmpty) {
+      inserted._bracketedPasteAtMs = nowFn().millisecondsSinceEpoch;
+    }
+    return (inserted, probe);
   }
 }

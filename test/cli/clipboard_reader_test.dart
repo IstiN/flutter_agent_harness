@@ -5,6 +5,7 @@
 /// binary pipe and the glue must not re-decode.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/cli/clipboard_reader.dart';
@@ -105,5 +106,42 @@ void main() {
       (read as PasteboardUnavailable).reason,
       contains('no pasteboard reader'),
     );
+  });
+
+  group('readPasteboardText', () {
+    test('macOS decodes pbpaste UTF-8 and normalises CRLF', () async {
+      String? exe;
+      Future<ProcessResult> runner(String e, List<String> a) async {
+        exe = '$e ${a.join(' ')}';
+        return _ok(utf8.encode('Привет\r\nмир'));
+      }
+
+      final text = await readPasteboardText(runner: runner, platform: 'macos');
+      expect(text, 'Привет\nмир');
+      expect(exe, contains('pbpaste'));
+    });
+
+    test('linux falls through to wl-paste; failures give null', () async {
+      var calls = 0;
+      Future<ProcessResult> runner(String e, List<String> a) async {
+        calls++;
+        return calls == 1
+            ? ProcessResult(1, 1, '', 'x')
+            : _ok(utf8.encode('hi'));
+      }
+
+      expect(await readPasteboardText(runner: runner, platform: 'linux'), 'hi');
+      Future<ProcessResult> boom(String e, List<String> a) =>
+          throw const ProcessException('x', []);
+      expect(await readPasteboardText(runner: boom, platform: 'linux'), isNull);
+      expect(
+        await readPasteboardText(
+          runner: (e, a) async => _ok(const []),
+          platform: 'windows',
+        ),
+        isNull,
+      );
+      expect(await readPasteboardText(platform: 'plan9'), isNull);
+    });
   });
 }

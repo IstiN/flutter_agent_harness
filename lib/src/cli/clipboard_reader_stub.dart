@@ -19,3 +19,6 @@ import 'paste_image.dart';
 /// TUI never runs there.
 Future<PasteboardRead> readPasteboardImage() async =>
     const PasteboardUnavailable('pasteboard reads need a desktop terminal');
+
+/// Always empty on web — see [readPasteboardImage].
+Future<String?> readPasteboardText() async => null;

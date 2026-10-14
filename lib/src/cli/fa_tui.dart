@@ -123,6 +123,7 @@ final class FaTuiCallbacks {
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
+    this.readClipboardText,
     this.statusSnapshot,
     this.statusLineEngine,
   });
@@ -204,6 +205,11 @@ final class FaTuiCallbacks {
   /// reader wired (prints the unavailable hint). Runs OFF the UI loop —
   /// the result comes back as a [PasteboardResultMsg].
   final Future<PasteboardRead> Function()? readClipboardImage;
+
+  /// Reads the platform pasteboard TEXT on Ctrl+V when no image is
+  /// attached: terminals that deliver a raw `^V` (no bracketed paste) would
+  /// otherwise lose the text. Null = no text fallback.
+  final Future<String?> Function()? readClipboardText;
 
   /// Agents-hub overlay actions (issue #277): [FaHubAction.enter] drills
   /// into the selected agent's transcript ([key] = row key), back returns
@@ -335,6 +341,10 @@ final class FaTuiModel extends Model {
   /// Issue #1067: when the last pasteboard probe fired — one probe per
   /// paste gesture (window in `_pasteboardGestureWindowMs`).
   int _pasteboardProbeFiredAtMs = -1;
+
+  /// When the last bracketed paste inserted its text — a Ctrl+V probe that
+  /// fired earlier must not insert the clipboard text a second time.
+  int _bracketedPasteAtMs = -1;
 
   final List<String> outputLines;
 
@@ -853,6 +863,7 @@ final class FaTuiModel extends Model {
     copy._stickyFmtWidth = _stickyFmtWidth;
     copy._promptCompleter = _promptCompleter;
     copy._pasteboardProbeFiredAtMs = _pasteboardProbeFiredAtMs;
+    copy._bracketedPasteAtMs = _bracketedPasteAtMs;
     copy._hitRegions = _hitRegions;
     copy._mouseRouter = _mouseRouter;
     copy._mouseHintShown = _mouseHintShown;

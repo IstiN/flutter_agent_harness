@@ -15,6 +15,7 @@
 ///   debugging on a headless box).
 library;
 
+import 'dart:convert' show utf8;
 import 'dart:io';
 import 'dart:typed_data' show BytesBuilder;
 
@@ -97,6 +98,7 @@ Future<PasteboardRead> readPasteboardImage({
   ProcessRunner? runner,
   Directory? tempDir,
   Map<String, String> environment = const {},
+
   /// Pins the platform branch so unit tests can exercise every
   /// platform path (macOS/Windows readers are unreachable on a Linux
   /// CI runner, which would push their CRAP through the roof).
@@ -193,4 +195,52 @@ Future<PasteboardRead> _readWindows(ProcessRunner runner, Directory tmp) async {
     }
   }
   return const PasteboardUnavailable('clipboard holds no image');
+}
+
+/// Reads the platform pasteboard's TEXT content (Ctrl+V fallback when no
+/// image is on the clipboard — terminals that send a raw `^V` instead of a
+/// bracketed paste never deliver the text themselves). Returns `null` when
+/// the pasteboard holds no text or no reader is reachable; never throws.
+/// Line endings are normalised to `\n`.
+Future<String?> readPasteboardText({
+  ProcessRunner? runner,
+  String? platform,
+}) async {
+  final run = runner ?? _runBinaryProcess;
+  try {
+    final commands = switch (_effectivePlatform(platform)) {
+      'macos' => const [
+        ('env', ['LC_ALL=en_US.UTF-8', 'pbpaste']),
+      ],
+      'linux' => const [
+        ('xclip', ['-selection', 'clipboard', '-o']),
+        ('wl-paste', ['--no-newline']),
+      ],
+      'windows' => const [
+        (
+          'powershell',
+          [
+            '-NoProfile',
+            '-Command',
+            '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;'
+                'Get-Clipboard -Raw',
+          ],
+        ),
+      ],
+      _ => const <(String, List<String>)>[],
+    };
+    for (final (executable, args) in commands) {
+      final result = await run(executable, args);
+      final out = result.stdout;
+      if (result.exitCode != 0 || out is! List<int> || out.isEmpty) continue;
+      final text = utf8
+          .decode(out, allowMalformed: true)
+          .replaceAll('\r\n', '\n')
+          .replaceAll('\r', '\n');
+      if (text.isNotEmpty) return text;
+    }
+  } on Object {
+    // Missing pbpaste/xclip/powershell: no text, never a crash.
+  }
+  return null;
 }

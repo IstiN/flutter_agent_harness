@@ -47,6 +47,7 @@ final class FaTuiCallbacks {
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
+    this.readClipboardText,
     this.statusSnapshot,
     this.statusLineEngine,
   });
@@ -78,6 +79,9 @@ final class FaTuiCallbacks {
   /// Reads the platform pasteboard image on Ctrl+V. Always null here —
   /// web builds report the pasteboard as unavailable (edge E1).
   final Future<PasteboardRead> Function()? readClipboardImage;
+
+  /// Always null here — see fa_tui.dart.
+  final Future<String?> Function()? readClipboardText;
 }
 
 /// No-op stand-in for the real TUI controller (never run on web).
@@ -127,7 +131,6 @@ final class FaTuiController {
   /// No-op on web: the boot replay anchor is a VM-TUI concern (issue #446
   /// wave-14); web never runs the controller.
   void markReplayAnchor() {}
-
 
   void sendBusy(bool busy, {String source = 'run'}) {}
 
