@@ -66,6 +66,55 @@ StreamFunction rateLimitedOnceThenCompletes() {
   };
 }
 
+/// A 429 whose rate-limit wording sits past the display truncation point
+/// (a structured JSON-ish error render does this): the face must still
+/// classify it as rate limited and the session must keep the `429_retry`
+/// record (gh-1602 review r2 — display-only truncation must not hide the
+/// class from the post-mortem surface).
+StreamFunction longLine429OnceThenCompletes() {
+  var calls = 0;
+  return (model, context, {cancelToken}) {
+    final n = ++calls;
+    final events = AssistantMessageEventStream();
+    scheduleMicrotask(() {
+      if (n == 1) {
+        // The rate-limit wording sits past the display truncation
+        // point (a structured JSON-ish error render does this).
+        events
+          ..push(StartEvent(partial: testAssistant()))
+          ..push(
+            ErrorEvent(
+              reason: StopReason.error,
+              error: testAssistant(
+                stopReason: StopReason.error,
+                errorMessage:
+                    '${'structured error payload detail; ' * 10}'
+                    '429 rate limit exceeded, back off and retry',
+              ),
+            ),
+          )
+          ..end();
+        return;
+      }
+      final tail = testAssistant(
+        content: [const TextContent(text: 'recovered')],
+      );
+      events
+        ..push(StartEvent(partial: testAssistant()))
+        ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
+        ..push(
+          TextDeltaEvent(contentIndex: 0, delta: 'recovered', partial: tail),
+        )
+        ..push(
+          TextEndEvent(contentIndex: 0, content: 'recovered', partial: tail),
+        )
+        ..push(DoneEvent(reason: StopReason.stop, message: tail))
+        ..end();
+    });
+    return events;
+  };
+}
+
 AgentCli cli(StreamFunction stream, FakeCliIO io) => AgentCli(
   config: AgentCliConfig(
     model: const Model(
@@ -156,49 +205,8 @@ void main() {
   test('headless: rate-limit wording past the 120-char display cap still '
       'faces `[net] rate limited` and records (gh-1602 review)', () async {
     final io = FakeCliIO();
-    var calls = 0;
-    final stream = (model, context, {cancelToken}) {
-      final n = ++calls;
-      final stream = AssistantMessageEventStream();
-      scheduleMicrotask(() {
-        if (n == 1) {
-          // The rate-limit wording sits past the display truncation
-          // point (a structured JSON-ish error render does this).
-          stream
-            ..push(StartEvent(partial: testAssistant()))
-            ..push(
-              ErrorEvent(
-                reason: StopReason.error,
-                error: testAssistant(
-                  stopReason: StopReason.error,
-                  errorMessage:
-                      '${'structured error payload detail; ' * 10}'
-                      '429 rate limit exceeded, back off and retry',
-                ),
-              ),
-            )
-            ..end();
-          return;
-        }
-        final tail = testAssistant(
-          content: [const TextContent(text: 'recovered')],
-        );
-        stream
-          ..push(StartEvent(partial: testAssistant()))
-          ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
-          ..push(
-            TextDeltaEvent(contentIndex: 0, delta: 'recovered', partial: tail),
-          )
-          ..push(
-            TextEndEvent(contentIndex: 0, content: 'recovered', partial: tail),
-          )
-          ..push(DoneEvent(reason: StopReason.stop, message: tail))
-          ..end();
-      });
-      return stream;
-    };
 
-    final cli0 = cli(stream, io);
+    final cli0 = cli(longLine429OnceThenCompletes(), io);
     final exitCode = await cli0.runHeadless('say hi');
 
     // The ladder retried under the rate-limit policy — the face and the
