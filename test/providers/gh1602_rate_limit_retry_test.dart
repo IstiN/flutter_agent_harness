@@ -185,9 +185,47 @@ void main() {
       expect(calls, 2);
       expect(message.stopReason, StopReason.stop);
       expect(message.content.whereType<TextContent>().single.text, 'recovered');
-      // Retry-After is honored verbatim — the backoff formula never
-      // overrides the provider's explicit instruction (AC2).
+      // Retry-After is honored verbatim up to the rateLimitBackoffCap —
+      // the backoff formula never overrides the provider's explicit
+      // instruction inside the cap (AC2).
       expect(waits, [const Duration(seconds: 30)]);
+    });
+
+    test('a Retry-After larger than the 60s cap waits the cap — verbatim '
+        'only up to rateLimitBackoffCap', () async {
+      var calls = 0;
+      final waits = <Duration>[];
+      transientRetrySleeper = (delay, token) async {
+        waits.add(delay);
+        return true;
+      };
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls == 1) {
+          return failWith(
+            '429: Rate limit reached. Try again later.',
+            retryAfter: const Duration(seconds: 90),
+          );
+        }
+        return FakeStreamFunction([
+          textTurn('recovered'),
+        ]).call(model, context, cancelToken: cancelToken);
+      });
+
+      final message = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).result;
+
+      // No unbounded sleeps: a 90s hint waits the 60s cap — the ladder's
+      // whole budget stays inside a bench trial's wrap-up margin.
+      expect(calls, 2);
+      expect(message.stopReason, StopReason.stop);
+      expect(waits, [rateLimitBackoffCap]);
     });
 
     test('no Retry-After: capped exponential backoff 2s, 4s, 8s', () async {
@@ -504,5 +542,168 @@ void main() {
         );
       },
     );
+
+    test('the notice speaks the FAILED attempt (1/4, 2/4, 3/4) — never the '
+        'upcoming one, the face renders attempt + 1', () async {
+      var calls = 0;
+      final attempts = <int>[];
+      final maxes = <int>[];
+      transientRetryNotice = (attempt, maxAttempts, delay, reason) {
+        attempts.add(attempt);
+        maxes.add(maxAttempts);
+      };
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls <= 3) {
+          return failWith('429: Rate limit reached. Try again later.');
+        }
+        return FakeStreamFunction([
+          textTurn('ok'),
+        ]).call(model, context, cancelToken: cancelToken);
+      });
+
+      final message = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).result;
+
+      // The TransientRetryNotice contract: attempt = the 1-based attempt
+      // that just failed; the faces render attempt + 1 (the retry about
+      // to run) — the transport convention. Passing the UPCOMING number
+      // double-increments the display ("attempt 3/4" on the first retry,
+      // "attempt 5/4" on the third — beyond the declared budget) and
+      // contradicts the 429_retry record.
+      expect(message.stopReason, StopReason.stop);
+      expect(attempts, [1, 2, 3]);
+      expect(maxes, List.filled(3, 1 + maxRateLimitRetries));
+    });
+
+    test('mixed chain: rate-limit retries do not erode the transport '
+        'budget — the classes do not eat each other\'s budget', () async {
+      var calls = 0;
+      var rateLimitFailures = 0;
+      var transportFailures = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        final n = ++calls;
+        if (n.isEven) {
+          transportFailures++;
+          return failWith('SocketException: Connection reset by peer');
+        }
+        rateLimitFailures++;
+        return failWith('429: Rate limit reached. Try again later.');
+      }, maxAttempts: 3);
+
+      final message = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).result;
+
+      // maxAttempts=3 transport + maxRateLimitRetries=3 rate-limit: the
+      // alternating chain 429 → drop → 429 → drop → 429 → drop must give
+      // the transport class its FULL 3 attempts — the shared attempt log
+      // may not exhaust it after 2 (the exhaustion terminal lands on the
+      // 6th call, the 3rd transport failure).
+      expect(calls, maxRateLimitRetries + 3);
+      expect(rateLimitFailures, maxRateLimitRetries);
+      expect(transportFailures, 3);
+      expect(message.stopReason, StopReason.error);
+      expect(message.errorMessage, contains('Provider call failed after 6'));
+    });
+
+    test('the notice reason carries the UNTRUNCATED provider line — the '
+        'face classifies the full text, truncation is display-only',
+        () async {
+      var calls = 0;
+      final reasons = <String>[];
+      transientRetryNotice = (attempt, maxAttempts, delay, reason) {
+        reasons.add(reason);
+      };
+      // The rate-limit wording sits past the 120-char display cap (a
+      // structured JSON-ish error render does this).
+      final longLine =
+          '${'structured error payload detail; ' * 10}'
+          '429 rate limit exceeded, back off and retry';
+      expect(longLine.length, greaterThan(120));
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls == 1) {
+          return failWith(longLine);
+        }
+        return FakeStreamFunction([
+          textTurn('ok'),
+        ]).call(model, context, cancelToken: cancelToken);
+      });
+
+      final message = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).result;
+
+      // The ladder retried under the rate-limit policy — the notice's
+      // reason must let the CLI face see the SAME class, so the
+      // `[net] rate limited` line and the 429_retry record are emitted.
+      expect(message.stopReason, StopReason.stop);
+      expect(reasons, hasLength(1));
+      expect(reasons.single, longLine);
+      expect(matchesRateLimitWording(reasons.single), isTrue);
+    });
+
+    test('a user cancel landing inside the backoff announces NOTHING — no '
+        'retry follows, so no `[net] rate limited` face for it', () async {
+      var calls = 0;
+      final notices = <String>[];
+      transientRetryNotice = (attempt, maxAttempts, delay, reason) {
+        notices.add('$reason in ${delay.inSeconds}s');
+      };
+      final source = CancelTokenSource();
+      transientRetrySleeper = (delay, token) async {
+        source.cancel();
+        return false;
+      };
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls == 1) {
+          return failWith('429: Rate limit reached. Try again later.');
+        }
+        return FakeStreamFunction([
+          textTurn('ok'),
+        ]).call(model, context, cancelToken: cancelToken);
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+        cancelToken: source.token,
+      ).toList();
+
+      // The cancel ends the ladder and the aborted terminal stands — a
+      // cancelled backoff wait must never print a rate-limit retry face
+      // (or append a 429_retry record): no retry follows it, and a
+      // `delay_ms: 0` row would count an absorption that never happened
+      // in bench post-mortems.
+      expect(calls, 1);
+      expect(notices, isEmpty);
+      final aborts = events
+          .whereType<ErrorEvent>()
+          .where((event) => event.reason == StopReason.aborted)
+          .toList();
+      expect(aborts, hasLength(1));
+    });
   });
 }
