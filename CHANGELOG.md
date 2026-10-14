@@ -13,6 +13,21 @@ block a release again.
 
 ## Unreleased
 
+- gh-1606: the `copilot` provider accepts fine-grained PATs
+  (`github_pat_…`) directly — PAT mode skips the `copilot_internal/v2/token`
+  exchange entirely (GitHub 404s every PAT exchange) and sends the raw PAT
+  as the Bearer against the configured Copilot base URL with the official
+  Copilot CLI's first-party identity headers
+  (`copilot-integration-id: copilot-developer-cli`,
+  `user-agent: copilot/<fa-version> (<os>) term/unknown`, installed by the
+  host at startup). OAuth device-flow tokens keep the exchange +
+  proactive-refresh flow unchanged; a PAT 401/403 surfaces the error
+  instead of a doomed refresh retry. Headless `COPILOT_GITHUB_TOKEN` now
+  works with a PAT. Connect flow: the paste hint explains PAT mode, the
+  dead-PAT case surfaces at the model fetch, and `/provider export` copies
+  the saved Copilot account's full token to the clipboard (account picker
+  on several entries; the token never prints to the transcript).
+
 - gh-1577: an empty assistant completion after partial content (assistant
   text, tool activity, or a truncation signal earlier in the turn) is a
   bounded-retry provider hiccup — up to `emptyHiccupRetries` (default 3)

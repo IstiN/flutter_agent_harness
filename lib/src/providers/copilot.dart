@@ -36,7 +36,9 @@ final class CopilotOptions {
     this.cacheRetention,
   });
 
-  /// The GitHub token exchanged for the short-lived Copilot API token.
+  /// The GitHub credential: an OAuth token (`gho_`/`ghu_`) is exchanged
+  /// for the short-lived Copilot API token; a fine-grained PAT
+  /// (`github_pat_…`) is the Bearer itself (PAT mode, gh-1606).
   final String githubToken;
 
   /// Overrides the per-token manager registry (tests inject a fake here).

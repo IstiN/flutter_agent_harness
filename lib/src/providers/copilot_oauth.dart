@@ -105,10 +105,11 @@ String? copilotApiBaseUrlFromToken(String token) {
 }
 
 /// Whether [token] is a GitHub fine-grained PAT (v2, `github_pat_…`).
-/// Per the official Copilot CLI docs this IS a supported Copilot
-/// credential — but only with the "Copilot Requests" permission, so the
-/// connect flow uses this to print an informational hint at paste time
-/// (the exchange itself decides).
+/// PAT mode (gh-1606): fa uses the PAT DIRECTLY as the Copilot API Bearer
+/// (no exchange, the official Copilot CLI's first-party identity headers)
+/// — it must carry the "Copilot Requests" permission and the account a
+/// Copilot seat. Also drives the paste-time hint and the connect flow's
+/// PAT branches.
 bool isFineGrainedGitHubPat(String token) => token.startsWith('github_pat_');
 
 /// Whether [token] is a GitHub classic PAT (`ghp_…`). Official Copilot
@@ -170,10 +171,11 @@ Map<String, String> copilotRequestHeaders({required String copilotToken}) =>
 /// Exchanges a GitHub token for a Copilot API token (goal:
 /// copilot-proxy-go internal/auth/github_client.go).
 ///
-/// Supported GitHub credentials (official Copilot CLI docs, 2026-09):
-/// fine-grained PATs (v2, `github_pat_…`) WITH the "Copilot Requests"
-/// permission, and OAuth tokens (`gho_`/`ghu_` from the Copilot CLI or gh
-/// apps). Classic PATs (`ghp_…`) are NOT supported by Copilot.
+/// Only OAuth tokens (`gho_`/`ghu_` from the Copilot CLI or gh apps)
+/// exchange. A fine-grained PAT (v2, `github_pat_…`) NEVER hits this
+/// function in PAT mode — the caller checks [isFineGrainedGitHubPat] and
+/// uses the raw PAT as the Copilot Bearer instead. Classic PATs
+/// (`ghp_…`) are not supported by Copilot at all.
 ///
 /// Throws [CopilotAuthException] on a non-200 — HTTP 401 means the GitHub
 /// token is dead (the caller must trigger re-auth, not a token refresh);
