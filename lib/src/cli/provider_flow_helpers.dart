@@ -26,7 +26,7 @@ extension on AgentCli {
       defaultValue: _extractDefault(question),
       secret: secret,
     );
-    final result = await tui.openPrompt(spec);
+    final result = await _openHerdrPrompt(tui, spec);
     return result is TextPromptAnswer ? result.value : null;
   }
 

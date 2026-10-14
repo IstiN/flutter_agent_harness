@@ -67,6 +67,7 @@ import 'self_manage.dart';
 import 'serve_a2a.dart';
 import 'serve_bridge.dart';
 import 'fah_boot_restore.dart';
+import 'fah_herdr_spawn.dart';
 import 'fah_wire_serve.dart';
 import 'package:flutter_agent_harness/src/cli/provider_export.dart';
 
