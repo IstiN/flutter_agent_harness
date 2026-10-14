@@ -80,12 +80,9 @@ void main() {
       expect(
         stream.calls,
         3,
-        reason: 'exactly N=3 consecutive empties — no unbounded retry storm',
-      );
-      expect(
-        stream.calls,
-        lessThan(4),
-        reason: 'the budget is spent — the 4th turn is never requested',
+        reason:
+            'exactly N=3 consecutive empties — the budget is spent, '
+            'no 4th turn and no unbounded retry storm',
       );
       expect(io.out.toString(), contains('__FA_INCOMPLETE'));
     });
