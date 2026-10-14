@@ -27,7 +27,7 @@ void main() {
       jsonEncode({
         'type': 'message',
         'id': id,
-        if (parentId != null) 'parentId': parentId,
+        'parentId': ?parentId,
         'timestamp': '2026-09-07T00:00:01.000Z',
         'message': {'role': 'user', 'content': text},
       });
@@ -40,7 +40,7 @@ void main() {
   }) => jsonEncode({
     'type': 'custom',
     'id': id,
-    if (parentId != null) 'parentId': parentId,
+    'parentId': ?parentId,
     'timestamp': '2026-09-07T00:00:02.000Z',
     'customType': customType,
     'data': data,
@@ -52,24 +52,31 @@ void main() {
       await writeSession([
         header(),
         message('m1'),
-        custom('c1', customType: 'model_request_summary', data: {'x': 'p' * 1000}),
-        custom('c2', customType: 'model_request_summary', data: {'y': 'p' * 1000}),
+        custom(
+          'c1',
+          customType: 'model_request_summary',
+          data: {'x': 'p' * 1000},
+        ),
+        custom(
+          'c2',
+          customType: 'model_request_summary',
+          data: {'y': 'p' * 1000},
+        ),
         custom('j1', customType: 'shell_job_registry', data: {'gen': 1}),
         custom('j2', customType: 'shell_job_registry', data: {'gen': 2}),
         custom('j3', customType: 'shell_job_registry', data: {'gen': 3}),
         custom('s1', customType: 'subagent_registry', data: {'gen': 1}),
         custom('s2', customType: 'subagent_registry', data: {'gen': 2}),
-        custom(
-          'cm1',
-          customType: 'custom_message',
-          data: null,
-        ),
+        custom('cm1', customType: 'custom_message', data: null),
         message('m2', parentId: 'm1'),
       ]);
       final report = await repairSessionLedgers(fs, path);
       expect(report.droppedByType['model_request_summary'], 2);
-      expect(report.droppedByType['shell_job_registry'], 2,
-          reason: 'superseded snapshots drop, the latest is kept');
+      expect(
+        report.droppedByType['shell_job_registry'],
+        2,
+        reason: 'superseded snapshots drop, the latest is kept',
+      );
       expect(report.keptLatestByType['shell_job_registry'], 1);
       expect(report.keptLatestByType['subagent_registry'], 1);
       final healed = (await fs.readTextFile(path)).getOrThrow();
@@ -114,7 +121,8 @@ void main() {
       expect(
         report.recordsKept,
         10,
-        reason: 'every contiguous message survives — span merging must not '
+        reason:
+            'every contiguous message survives — span merging must not '
             'shrink the count',
       );
     });
@@ -175,7 +183,7 @@ void main() {
       await fs.writeFile(
         '$path.part-0001',
         '${header()}\n'
-        '${custom('c2', customType: 'model_request_summary')}\n',
+            '${custom('c2', customType: 'model_request_summary')}\n',
       );
       final report = await repairSessionLedgers(fs, path, dryRun: true);
       expect(report.untouchedSegments, 1);
@@ -186,8 +194,7 @@ void main() {
       );
       // The part itself is untouched by the real pass too.
       await repairSessionLedgers(fs, path);
-      final part =
-          (await fs.readTextFile('$path.part-0001')).getOrThrow();
+      final part = (await fs.readTextFile('$path.part-0001')).getOrThrow();
       expect(part, contains('model_request_summary'));
     });
 
@@ -248,10 +255,7 @@ void main() {
     });
 
     test('an unknown custom type is kept (conservative by default)', () async {
-      await writeSession([
-        header(),
-        custom('u1', customType: 'plugin_widget'),
-      ]);
+      await writeSession([header(), custom('u1', customType: 'plugin_widget')]);
       await repairSessionLedgers(fs, path);
       final healed = (await fs.readTextFile(path)).getOrThrow();
       expect(healed, contains('plugin_widget'));

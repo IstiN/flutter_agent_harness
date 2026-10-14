@@ -132,15 +132,13 @@ final class ToolLivenessCall {
 /// disarms the moment the last call ends. Transport-free.
 final class ToolLivenessTracker {
   ToolLivenessTracker({
-    required void Function(ToolLivenessCall call) onRemind,
-    required void Function(ToolLivenessCall call) onEscalate,
+    required this._onRemind,
+    required this._onEscalate,
     int Function()? livenessSeconds,
     int Function()? tickSeconds,
     int Function()? escalateSeconds,
     DateTime Function()? clock,
-  }) : _onRemind = onRemind,
-       _onEscalate = onEscalate,
-       _livenessSeconds = livenessSeconds ?? (() => defaultToolLivenessSeconds),
+  }) : _livenessSeconds = livenessSeconds ?? (() => defaultToolLivenessSeconds),
        _tickSeconds = tickSeconds ?? (() => defaultToolLivenessTickSeconds),
        _escalateSeconds = escalateSeconds ?? (() => defaultToolEscalateSeconds),
        _clock = clock ?? DateTime.now;
