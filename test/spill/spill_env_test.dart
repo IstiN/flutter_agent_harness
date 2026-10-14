@@ -49,12 +49,13 @@ void main() {
         resolveRunSpillsConfig(section, {spillThresholdEnvVar: 'big'}),
         same(section),
       );
-      expect(resolveRunSpillsConfig(null, {spillThresholdEnvVar: 'big'}),
-          isNull);
+      expect(
+        resolveRunSpillsConfig(null, {spillThresholdEnvVar: 'big'}),
+        isNull,
+      );
     });
 
-    test('the full end-to-end preview shape still holds under the env cap',
-        () {
+    test('the full end-to-end preview shape still holds under the env cap', () {
       final config = resolveRunSpillsConfig(null, {
         spillThresholdEnvVar: '1000',
       })!;

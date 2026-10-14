@@ -33,7 +33,8 @@ Model get _model => const Model(
 const _taskMarker = 'build the mips interpreter';
 const _ledgerText = 'always run the full test suite before pushing';
 const _toolResultMarker = 'latest seed tool result';
-const _checkpointReply = 'BENCH CHECKPOINT: the mips task stays open; '
+const _checkpointReply =
+    'BENCH CHECKPOINT: the mips task stays open; '
     'folded context summarized here.';
 // ~10k estimated tokens: pushes the first turn's context past the 24k
 // bench trigger while the boot gate (seed ~16k incl. harness overhead)
@@ -211,22 +212,37 @@ void main() {
       final run = agent.run();
       io.sendLine('go');
       await waitUntil(
-        () => turnRequests(stream).length >= 2,
-        () => 'turns=${turnRequests(stream).length} '
+        () => turnRequests(stream).isNotEmpty && !agent.isBusy,
+        () =>
+            'turn 1: turns=${turnRequests(stream).length} '
+            'calls=${stream.contexts.length}',
+      );
+      io.sendLine('go');
+      await waitUntil(
+        () => turnRequests(stream).length >= 2 && !agent.isBusy,
+        () =>
+            'turn 2: turns=${turnRequests(stream).length} '
             'calls=${stream.contexts.length} '
-            'out=${io.out.toString().substring(0, io.out.length < 2000 ? io.out.length : 2000)}',
+            'out=${io.out.toString().substring(io.out.length > 2000 ? io.out.length - 2000 : 0)}',
       );
       io.sendLine('/exit');
       await run;
 
       // The compaction fired MID-RUN (after the first turn), not at boot:
-      // the first agent request rode the un-compacted seed.
+      // the first agent request rode the un-compacted seed — under the
+      // DEFAULT trigger (only the bench knob could have fired here).
       final firstTurn = turnRequests(stream).first;
       expect(
-        messageText(
-          firstTurn.messages.whereType<UserMessage>().last,
-        ),
+        messageText(firstTurn.messages.whereType<UserMessage>().last),
         isNot(contains('compacted into the following summary')),
+      );
+      expect(
+        estimateRequestTokens(
+          firstTurn.messages,
+          systemPrompt: firstTurn.systemPrompt,
+          tools: firstTurn.tools ?? const <Tool>[],
+        ),
+        lessThanOrEqualTo(_defaultTrigger),
       );
       // The auto-compaction ran and was announced.
       expect(io.out.toString(), contains('auto-compacted'));
@@ -302,10 +318,18 @@ void main() {
       final run = agent.run();
       io.sendLine('go');
       await waitUntil(
-        () => turnRequests(stream).length >= 2,
-        () => 'turns=${turnRequests(stream).length} '
+        () => turnRequests(stream).isNotEmpty && !agent.isBusy,
+        () =>
+            'turn 1: turns=${turnRequests(stream).length} '
+            'calls=${stream.contexts.length}',
+      );
+      io.sendLine('go');
+      await waitUntil(
+        () => turnRequests(stream).length >= 2 && !agent.isBusy,
+        () =>
+            'turn 2: turns=${turnRequests(stream).length} '
             'calls=${stream.contexts.length} '
-            'out=${io.out.toString().substring(0, io.out.length < 2000 ? io.out.length : 2000)}',
+            'out=${io.out.toString().substring(io.out.length > 2000 ? io.out.length - 2000 : 0)}',
       );
       io.sendLine('/exit');
       await run;

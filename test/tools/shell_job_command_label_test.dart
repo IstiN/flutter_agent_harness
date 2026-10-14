@@ -13,9 +13,8 @@ import 'package:test/test.dart';
 /// A controllable fake background job over the in-memory fs (the
 /// shell_jobs_test.dart pattern).
 final class _FakeShellJob implements ShellJob {
-  _FakeShellJob(this.id, this.command, this.logPath, this._env);
+  _FakeShellJob(this.id, this.command, this.logPath);
 
-  final MemoryExecutionEnv _env;
   final _output = StreamController<String>.broadcast();
   final _settled = Completer<void>();
   int? _exitCode;
@@ -73,7 +72,7 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
     required String logPath,
     ShellExecOptions? options,
   }) async {
-    final job = _FakeShellJob(id, command, logPath, _delegate);
+    final job = _FakeShellJob(id, command, logPath);
     jobs.add(job);
     return Ok(job);
   }
@@ -92,8 +91,7 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
   Future<Result<void, FileError>> appendFile(String path, String content) =>
       _delegate.appendFile(path, content);
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
   @override
   Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
       _delegate.listDir(path);
@@ -171,23 +169,25 @@ void main() {
       tool = bashJobTool(registry);
     });
 
-    test('status lines carry id, state, exit code and the bounded label',
-        () async {
-      final entry = await registry.start(_longPipeline(2000, 2));
-      env.jobs.single.complete(0);
-      // Settle bookkeeping runs on the registry listener.
-      await Future<void>.delayed(Duration.zero);
-      await Future<void>.delayed(Duration.zero);
-      final result = await tool.execute(_statusArgs(), null, null);
-      final text = _textOf(result);
-      expect(text, contains('${entry.id}: exited(0)'));
-      expect(text, contains('…'));
-      // Every status line stays bounded — a 2000-char command can never
-      // render in full again.
-      for (final line in text.split('\n')) {
-        expect(line.length, lessThan(400), reason: line);
-      }
-    });
+    test(
+      'status lines carry id, state, exit code and the bounded label',
+      () async {
+        final entry = await registry.start(_longPipeline(2000, 2));
+        env.jobs.single.complete(0);
+        // Settle bookkeeping runs on the registry listener.
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+        final result = await tool.execute(_statusArgs(), null, null);
+        final text = _textOf(result);
+        expect(text, contains('${entry.id}: exited(0)'));
+        expect(text, contains('…'));
+        // Every status line stays bounded — a 2000-char command can never
+        // render in full again.
+        for (final line in text.split('\n')) {
+          expect(line.length, lessThan(400), reason: line);
+        }
+      },
+    );
 
     test('a running job renders the bounded label too', () async {
       await registry.start(_longPipeline(2000, 3));
@@ -224,8 +224,7 @@ void main() {
       ];
       final statusResult = await tool.execute(_statusArgs(), null, null);
       final statusText = _textOf(statusResult);
-      final newBytes =
-          notices.join().length + statusText.length;
+      final newBytes = notices.join().length + statusText.length;
 
       // OLD (pre-gh-1604): the accreting shape from the bench evidence —
       // the full registry re-rendered per turn (60 cards with COMPLETE

@@ -2126,7 +2126,8 @@ class AgentCli {
   /// (the CLI carries no fixed request overhead).
   CompactionSettings get _effectiveCompactionSettings {
     final override = config.compactionSettings;
-    final base = override ??
+    final base =
+        override ??
         resolveCompactionHostWiring(
           mainModel: _agent.state.model,
           contextWindowCap: config.contextWindowCap,

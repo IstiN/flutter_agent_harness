@@ -16,29 +16,31 @@ void main() {
   group('benchCompactionTriggerTokens', () {
     test('unset env → null (byte-identical legacy behavior)', () {
       expect(benchCompactionTriggerTokens({}), isNull);
-      expect(benchCompactionTriggerTokens({
-        'FAH_COMPACT_TRIGGER_TOKENS': '',
-      }), isNull);
-      expect(benchCompactionTriggerTokens({
-        'FAH_COMPACT_TRIGGER_TOKENS': '   ',
-      }), isNull);
+      expect(
+        benchCompactionTriggerTokens({'FAH_COMPACT_TRIGGER_TOKENS': ''}),
+        isNull,
+      );
+      expect(
+        benchCompactionTriggerTokens({'FAH_COMPACT_TRIGGER_TOKENS': '   '}),
+        isNull,
+      );
     });
 
     test('a positive integer parses', () {
-      expect(benchCompactionTriggerTokens({
-        'FAH_COMPACT_TRIGGER_TOKENS': '80000',
-      }), 80000);
-      expect(benchCompactionTriggerTokens({
-        'FAH_COMPACT_TRIGGER_TOKENS': ' 6000 ',
-      }), 6000);
+      expect(
+        benchCompactionTriggerTokens({'FAH_COMPACT_TRIGGER_TOKENS': '80000'}),
+        80000,
+      );
+      expect(
+        benchCompactionTriggerTokens({'FAH_COMPACT_TRIGGER_TOKENS': ' 6000 '}),
+        6000,
+      );
     });
 
     test('junk, zero and negative values are ignored (null)', () {
       for (final value in ['abc', '0', '-5', '8.000', '80 000']) {
         expect(
-          benchCompactionTriggerTokens({
-            'FAH_COMPACT_TRIGGER_TOKENS': value,
-          }),
+          benchCompactionTriggerTokens({'FAH_COMPACT_TRIGGER_TOKENS': value}),
           isNull,
           reason: value,
         );

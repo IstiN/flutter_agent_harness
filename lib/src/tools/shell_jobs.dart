@@ -133,7 +133,8 @@ String newShellJobId(int n) {
 
 /// One registered background shell job.
 final class ShellJobEntry {
-  ShellJobEntry._(this.job, {this.cwd, this.timeout}) : startedAt = DateTime.now();
+  ShellJobEntry._(this.job, {this.cwd, this.timeout})
+    : startedAt = DateTime.now();
 
   /// The backend handle.
   final ShellJob job;
