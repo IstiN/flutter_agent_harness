@@ -213,7 +213,10 @@ extension AgentCliRunNotices on AgentCli {
           .appendCustomEntry(
             customType: rateLimitRetryRecordType,
             data: {
-              'attempt': attempt + 1,
+              // The notice's attempt is the 1-based attempt that just
+              // failed (the TransientRetryNotice contract) — recorded
+              // as-is, never re-incremented.
+              'attempt': attempt,
               'max_attempts': maxAttempts,
               'delay_ms': delay.inMilliseconds,
               'reason': reason,
