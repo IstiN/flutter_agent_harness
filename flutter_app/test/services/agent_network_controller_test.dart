@@ -116,6 +116,60 @@ void main() {
     expect((await file.peek('offline-peer')).single.text, 'carried by files');
   });
 
+  test('hub DM lands in the PREFIXED main mailbox the app actually drains '
+      '(<sessionId>/main), and follows a session switch', () async {
+    final env = MemoryExecutionEnv(cwd: '/app-sandbox');
+    final fabric = SwappableMessagingRepository(fileLayer(env));
+    var prefix = 'sess-a';
+    final controller = AgentNetworkController(
+      env: env,
+      fileLayer: fileLayer(env),
+      fileFabric: fabric,
+      transport: const IoHubTransport(),
+      loadIdentity: (_) async => null,
+      // What AgentService passes: manager.mailboxOf('main').
+      mainMailbox: () => '$prefix/main',
+    );
+    addTearDown(controller.dispose);
+    await controller.start();
+    await controller.store.setConnection(url: url.toString());
+    await controller.setEnabled(true);
+    await waitUntil(() => controller.state == HubLinkState.connected);
+
+    final peerRepo = HubMessagingRepository(
+      url: url,
+      transport: const IoHubTransport(),
+      name: 'cli-peer',
+      backoff: testBackoff,
+    );
+    await peerRepo.start();
+    addTearDown(peerRepo.dispose);
+    await waitUntil(() => peerRepo.isConnected);
+    await waitUntil(
+      () async =>
+          (await peerRepo.directory()).any((e) => e.id == controller.agentId),
+    );
+    Future<void> dm(String id, String text) => peerRepo.send(
+      AgentMessage(
+        id: id,
+        fromId: peerRepo.agentId!,
+        toId: controller.agentId!,
+        text: text,
+        sentAt: '2026-01-01T00:00:01Z',
+      ),
+    );
+
+    await dm('p1', 'to a');
+    await waitUntil(() async => (await fabric.peek('sess-a/main')).isNotEmpty);
+    expect((await fabric.drain('sess-a/main')).single.text, 'to a');
+
+    // Session switch: the prefix changes, the hub inbox follows it.
+    prefix = 'sess-b';
+    await dm('p2', 'to b');
+    await waitUntil(() async => (await fabric.peek('sess-b/main')).isNotEmpty);
+    expect((await fabric.drain('sess-b/main')).single.text, 'to b');
+  });
+
   test('disabled store stays off the hub; boot is fully usable (E4)', () async {
     final env = MemoryExecutionEnv(cwd: '/app-sandbox');
     final fabric = SwappableMessagingRepository(fileLayer(env));

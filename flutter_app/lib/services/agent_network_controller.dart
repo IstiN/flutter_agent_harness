@@ -36,7 +36,9 @@ class AgentNetworkController extends ChangeNotifier {
     HubTransport? transport,
     Future<HubIdentity?> Function(String? path)? loadIdentity,
     Future<AgentNetworkProvision?> Function()? provision,
+    String? Function()? mainMailbox,
   }) : _provision = provision,
+       _mainMailbox = mainMailbox,
        _transport = transport ?? platformHubTransport,
        _loadIdentity = loadIdentity ?? loadOrCreateIdentity {
     _store = AgentNetworkStore.inMemory();
@@ -46,6 +48,13 @@ class AgentNetworkController extends ChangeNotifier {
   final FileMessagingRepository _fileLayer;
   final SwappableMessagingRepository _fileFabric;
   final Future<AgentNetworkProvision?> Function()? _provision;
+
+  /// The fabric address of the main agent's inbox — what the app actually
+  /// drains (`<sessionId>/main`, i.e. `manager.mailboxOf('main')`, follows
+  /// session switches because it is resolved per call). Hub mail merges
+  /// into exactly this mailbox; a bare `'main'` never matches it, so hub
+  /// DMs would sit unseen. Null keeps the bare-`main` test default.
+  final String? Function()? _mainMailbox;
   final HubTransport? _transport;
   final Future<HubIdentity?> Function(String? path)? _loadIdentity;
 
@@ -181,7 +190,7 @@ class AgentNetworkController extends ChangeNotifier {
       primary: hub,
       fallback: _fileLayer,
     );
-    composite.primaryMailbox = () => 'main';
+    composite.primaryMailbox = _mainMailbox ?? () => 'main';
     _fileFabric.swap(composite);
   }
 

@@ -780,6 +780,8 @@ class AgentService extends ChangeNotifier
       env: env,
       fileLayer: wired.fileLayer!,
       fileFabric: wired.fileFabric!,
+      // Hub mail merges into the mailbox the app really drains.
+      mainMailbox: () => _subagentManager?.mailboxOf('main'),
     );
     _agentNetwork = network;
     unawaited(network.start());
