@@ -5,6 +5,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:fa/apps/app_storage.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/manifest_i18n.dart';
 import 'package:fa/services/app_log.dart';
@@ -328,8 +329,14 @@ class JsAppInfo {
       json['descriptionI18n'],
     );
     final name = nameText.resolve(null);
+    // gh-1614 I1: the STORAGE DIR NAME is the namespace identity. A
+    // manifest declaring a divergent or hostile id (`{"id": "../evil"}`,
+    // or an id that simply does not match the folder) must not steer the
+    // tile's reads to another root — that divergence is exactly the
+    // listed-but-unreadable defect. The declared id stays display-only
+    // metadata; the resolver keys on the directory.
     return JsAppInfo(
-      id: (json['id'] ?? fallbackId).toString(),
+      id: fallbackId,
       name: name.isEmpty ? fallbackId : name,
       description: descriptionText.resolve(null),
       nameText: nameText,
@@ -390,6 +397,28 @@ class JsAppInfo {
     error: error,
   );
 
+  /// Copy flagged with a launch-blocking error (see [error]) — every other
+  /// field, localized display values included, carries over. The listing
+  /// uses this for the gh-1614 missing-files state: the tile renders the
+  /// explicit broken-app affordance and taps surface the message instead
+  /// of launching into a `StateError`.
+  JsAppInfo withError(String message) => JsAppInfo(
+    id: id,
+    name: name,
+    description: description,
+    icon: icon,
+    declaredPermissions: declaredPermissions,
+    nameText: nameText,
+    descriptionText: descriptionText,
+    version: version,
+    chrome: chrome,
+    tileWidget: tileWidget,
+    bundled: bundled,
+    platforms: platforms,
+    dirOverride: dirOverride,
+    error: error ?? message,
+  );
+
   final String icon;
   final String version;
   final AppPermissions declaredPermissions;
@@ -435,11 +464,16 @@ class JsAppInfo {
   /// a silently stale or missing app (issue #866). Null for healthy apps.
   final String? error;
 
-  /// Env-relative path of the app directory (`apps/<id>`, or the session
-  /// folder override for dynamic-message widgets — see [dirOverride]).
-  String get dir => dirOverride ?? 'apps/$id';
-  String get widgetPath => '$dir/widget.js';
-  String get manifestPath => '$dir/manifest.json';
+  /// Env-relative path of the app directory (`apps/<id>` resolved through
+  /// the shared [AppStorage] namespace — gh-1614 I1 — or the session
+  /// folder override for dynamic-message widgets, see [dirOverride]).
+  ///
+  /// Throws [ArgumentError] for an id that cannot live in the namespace
+  /// (gh-1614 AC4 read-side rejection) — such an app can never be listed
+  /// ([AppsStore.listApps] filters the directory first).
+  String get dir => dirOverride ?? AppStorage.appDir(id);
+  String get widgetPath => '$dir/${AppStorage.defaultEntry}';
+  String get manifestPath => '$dir/${AppStorage.manifestFile}';
 
   /// Env-relative path of the live-tile entry file (see [tileWidget]).
   String get tileWidgetPath =>
@@ -596,7 +630,7 @@ class AppsStore {
   Future<List<JsAppInfo>> listApps() async {
     final apps = <JsAppInfo>[];
     final seen = <String>{};
-    final listing = await _env.listDir('apps');
+    final listing = await _env.listDir(AppStorage.root);
     final entries = listing.valueOrNull;
     if (entries == null) {
       // A failed listing is NOT an empty workspace (issue #866 review):
@@ -614,15 +648,35 @@ class AppsStore {
       if (entry.kind != FileKind.directory) continue;
       final id = entry.name;
       if (id.startsWith('.')) continue;
+      // gh-1614 AC4 (list side): a directory whose name cannot live in
+      // the shared namespace is never listed — it could never boot through
+      // the resolver anyway. Logged so the leftover stays discoverable.
+      if (!AppStorage.isValidId(id)) {
+        AppLog.i(
+          'apps',
+          'skipping non-conforming app dir "$id" — ids must match '
+              '${AppStorage.idPattern.pattern}',
+        );
+        continue;
+      }
       seen.add(id);
       final raw = (await _env.readTextFile(
-        'apps/$id/manifest.json',
+        AppStorage.manifestPath(id),
       )).valueOrNull;
       if (raw == null) continue; // half-created folder — healer's domain
       final hash = _digest(raw);
-      final cached = _parsedApps[id];
+      // gh-1614 I2 (listed ⇒ bootable): probe the exact file the boot path
+      // checks (WidgetManifest.fromStorage's exists probe through the same
+      // resolver). A missing entry renders the explicit missing-files state
+      // naming the root, instead of a tile that dies with a raw StateError
+      // on tap.
+      final missingEntry =
+          ((await _env.exists(AppStorage.entryPath(id))).valueOrNull ?? false)
+          ? null
+          : _missingEntryMessage(id);      final cached = _parsedApps[id];
       if (cached != null &&
           _manifestHashes[id] == hash &&
+          missingEntry == null &&
           await _i18nRefsUnchanged(cached, id)) {
         // Unchanged manifest (and i18n ref files) — zero rescans (AC3):
         // the cached model (i18n contents included) is still the truth.
@@ -657,9 +711,13 @@ class AppsStore {
               : 'manifest.json is invalid: $e',
         );
       }
+      // Cache the HEALTHY parse; the missing-files state attaches to the
+      // listed copy only, so a later scan (entry restored) heals the tile
+      // without a re-parse.
       _manifestHashes[id] = hash;
       _parsedApps[id] = app;
-      if (app.supportsPlatform(platform)) apps.add(app);
+      final listed = missingEntry == null ? app : app.withError(missingEntry);
+      if (listed.supportsPlatform(platform)) apps.add(listed);
     }
     // Directories that vanished since the last scan: forget their cached
     // parses and prune the stale `.installed.json` records (issue #866 —
@@ -703,6 +761,13 @@ class AppsStore {
     final contents = <String, String>{};
     final digests = <String, String>{};
     for (final path in paths) {
+      // gh-1614 AC4: a ref path arriving from user storage cannot point
+      // outside the app namespace — a non-conforming ref is skipped like a
+      // missing one (resolution falls through to the next locale).
+      if (!AppStorage.isValidRelativePath(path)) {
+        AppLog.i('apps', 'i18n ref ${app.dir}/$path refused — skipped');
+        continue;
+      }
       final content = (await _env.readTextFile('${app.dir}/$path')).valueOrNull;
       if (content != null) {
         contents[path] = content;
@@ -905,6 +970,17 @@ class AppsStore {
   static String _digest(String content) =>
       sha256.convert(utf8.encode(content)).toString();
 
+  /// The gh-1614 missing-files state text (I3): names the storage root and
+  /// the exact missing path, and says what to do about it — the tile shows
+  /// this instead of launching into a `StateError`.
+  static String _missingEntryMessage(
+    String id, {
+    String entry = AppStorage.defaultEntry,
+  }) => 'stored files missing under ${AppStorage.root}/$id/ — the app '
+      'cannot start: ${AppStorage.entryPath(id, entry)} is missing or '
+      'unreadable. Reinstall the app from the widgets catalog, or ask Fa '
+      'to recreate it.';
+
   // ── Widget-catalog lifecycle (install / update / remove) ────────────────
 
   /// Env-relative record of catalog-installed widgets:
@@ -942,7 +1018,10 @@ class AppsStore {
     );
     for (final file in files.entries) {
       if (file.key == 'storage.json') continue; // user data, not ours
-      final path = 'apps/$id/${file.key}';
+      // gh-1614 I1: archive names resolve through the shared namespace
+      // helper — a hostile entry name cannot write outside the app dir
+      // (ArgumentError = install failure, never a misplaced write).
+      final path = AppStorage.appFile(id, file.key);
       final bytes = file.value;
       final digest = sha256.convert(bytes).toString();
       final recorded = hashes[file.key];
@@ -1000,7 +1079,9 @@ class AppsStore {
     };
     for (final ref in refs) {
       if (files.containsKey(ref)) continue;
-      final onDisk = (await _env.exists('apps/$id/$ref')).valueOrNull ?? false;
+      final onDisk =
+          (await _env.exists(AppStorage.appFile(id, ref))).valueOrNull ??
+          false;
       if (!onDisk) {
         throw StateError(
           'install of $id rejected: manifest i18n ref "$ref" is missing '

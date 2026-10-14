@@ -596,10 +596,20 @@ class JsAppEngine {
     required String dir,
     required String entryFile,
   }) async {
+    // gh-1614 AC4: a dir that does not name a safe location (traversal,
+    // absolute, hostile segments) is rejected before any read — the read
+    // clamp below would answer every path as missing anyway, so fail the
+    // boot with the cause named instead.
+    if (!AppStorage.isSafeDir(dir)) {
+      throw ArgumentError(
+        'app dir "$dir" is not a safe storage location — every segment '
+        'must be a plain name (no "..", no absolute paths)',
+      );
+    }
     final reader = _AppWidgetFileReader(env, dir: dir, entryFile: entryFile);
     final manifest = await WidgetManifest.fromStorage(dir, reader: reader);
     if (manifest == null) {
-      throw StateError('app entry not found: $dir/$entryFile');
+      throw StateError(await _bootFailure(env, dir, entryFile));
     }
     // A manifest `files` list makes readJs concatenate the full-app bundle
     // and never read the (redirected) entry path — for a live-tile entry
@@ -622,9 +632,32 @@ class JsAppEngine {
           );
     final js = await effective.readJs(reader: reader);
     if (js == null) {
-      throw StateError('app entry not found: $dir/$entryFile');
+      throw StateError(await _bootFailure(env, dir, entryFile));
     }
     return js;
+  }
+
+  /// The honest gh-1614 boot failure (I3): names the storage root and the
+  /// exact missing paths — the entry-assembly equivalent of the listing's
+  /// missing-files state, so a boot that races a deletion (or a torn
+  /// web-snapshot restore) reports WHAT is absent under WHICH root instead
+  /// of a bare "app entry not found".
+  static Future<String> _bootFailure(
+    ExecutionEnv env,
+    String dir,
+    String entryFile,
+  ) async {
+    final manifestPath = '$dir/${AppStorage.manifestFile}';
+    final entryPath = '$dir/$entryFile';
+    final missing = <String>[
+      if ((await env.exists(manifestPath)).valueOrNull != true) manifestPath,
+      if ((await env.exists(entryPath)).valueOrNull != true) entryPath,
+    ];
+    final why = missing.isEmpty
+        ? 'the entry exists but could not be read (storage read failed)'
+        : 'missing: ${missing.join(', ')}';
+    return 'app entry not found: $entryPath — storage root $dir/ is not a '
+        'bootable app ($why)';
   }
 
   /// Test seam over the [WidgetFileReader] the entry assembler runs over
@@ -2485,11 +2518,15 @@ Object.defineProperty(jsr, 'onBack', {
 
 /// [WidgetFileReader] over the app's [ExecutionEnv] behind
 /// [JsAppEngine._assembleEntryJs]: every assembler path is env-relative
-/// under the app dir. The manifest namespace always names the entry
-/// `widget.js` ([WidgetManifest.mainJsPath]) while the engine may boot a
-/// different entry ([JsAppEngine.entryFile] — a live-tile entry), so that
-/// one path is redirected to the real entry file; every other path
-/// (manifest.json, a `files` entry, a relative import target) maps 1:1.
+/// under the app dir, lexically normalized and CLAMPED to it (gh-1614
+/// AC4) — a path arriving from user storage (`jsr.include('../…')`, a
+/// manifest `files` entry, a relative import) cannot resolve outside the
+/// app namespace; refused paths answer as ordinary missing files, never
+/// with the escaped content. The manifest namespace always names the
+/// entry `widget.js` ([WidgetManifest.mainJsPath]) while the engine may
+/// boot a different entry ([JsAppEngine.entryFile] — a live-tile entry),
+/// so that one path is redirected to the real entry file; every other
+/// in-namespace path maps 1:1.
 class _AppWidgetFileReader implements WidgetFileReader {
   _AppWidgetFileReader(this._env, {required this.dir, required this.entryFile});
 
@@ -2501,14 +2538,51 @@ class _AppWidgetFileReader implements WidgetFileReader {
   /// The entry file inside [dir] the engine boots.
   final String entryFile;
 
-  String _map(String path) =>
-      path == '$dir/widget.js' ? '$dir/$entryFile' : path;
+  /// Normalizes [path] (both separators, `.`/`..` resolved lexically) and
+  /// returns it only when it still resolves inside [dir]; null otherwise.
+  String? _clamp(String path) {
+    final out = <String>[];
+    for (final segment in path.replaceAll('\\', '/').split('/')) {
+      if (segment.isEmpty || segment == '.') continue;
+      if (segment == '..') {
+        if (out.isEmpty) return null; // escapes above the env root
+        out.removeLast();
+        continue;
+      }
+      out.add(segment);
+    }
+    final normalized = out.join('/');
+    final prefix = '$dir/';
+    if (normalized == dir || normalized.startsWith(prefix)) return normalized;
+    return null;
+  }
+
+  /// The clamped path with the manifest-entry redirect applied, or null
+  /// when [path] must be refused.
+  String? _map(String path) {
+    final normalized = _clamp(path);
+    if (normalized == null) {
+      AppLog.i('apps', 'refused path outside $dir: $path');
+      return null;
+    }
+    final entryAlias = '$dir/${AppStorage.defaultEntry}';
+    if (normalized == entryAlias && entryFile != AppStorage.defaultEntry) {
+      return '$dir/$entryFile';
+    }
+    return normalized;
+  }
 
   @override
-  Future<String?> readString(String path) async =>
-      (await _env.readTextFile(_map(path))).valueOrNull;
+  Future<String?> readString(String path) async {
+    final mapped = _map(path);
+    if (mapped == null) return null;
+    return (await _env.readTextFile(mapped)).valueOrNull;
+  }
 
   @override
-  Future<bool> exists(String path) async =>
-      (await _env.exists(_map(path))).valueOrNull ?? false;
+  Future<bool> exists(String path) async {
+    final mapped = _map(path);
+    if (mapped == null) return false;
+    return (await _env.exists(mapped)).valueOrNull ?? false;
+  }
 }
