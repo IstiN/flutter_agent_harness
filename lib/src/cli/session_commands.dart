@@ -199,8 +199,11 @@ extension on AgentCli {
     }
     final latest = sessions.first;
     final current = await _session?.getMetadata();
-    final session = await _repo.open(latest);
-    final label = await session.getSessionName() ?? latest.id;
+    // gh-1555 W1 (d3): only the name is read before the switch — open
+    // windowed so an over-the-backstop ledger still /resumes (the full
+    // open refuses); resolveSessionName pages back for a far name record.
+    final session = await _repo.open(latest, windowed: true);
+    final label = await session.resolveSessionName() ?? latest.id;
     if (current?.path == latest.path) {
       io.writeln("already on the latest session '$label'");
       return;
@@ -495,11 +498,13 @@ extension on AgentCli {
     }
     final repo = _repo;
     if (repo is! JsonlSessionRepo) {
-      // Foreign repo implementation: no batch API - open per session.
+      // Foreign repo implementation: no batch API — bounded windowed
+      // scan per session (gh-1555 d4: never a full open per session, so
+      // MANY over-the-backstop sessions scan in bounded memory).
       final matches = <SessionMetadata>[];
       for (final metadata in sessions) {
-        final session = await _repo.open(metadata);
-        final sessionName = await session.getSessionName();
+        final session = await _repo.open(metadata, windowed: true);
+        final sessionName = await session.resolveSessionName();
         if (sessionName != null && sessionName.trim() == wanted) {
           matches.add(metadata);
         }
@@ -588,7 +593,7 @@ extension on AgentCli {
     // compaction degenerate to the full load, so behavior is unchanged
     // for them. Context stays byte-identical: the compaction transform
     // drops everything before the boundary anyway.
-    var session = await _repo.open(metadata, windowed: true);
+    final session = await _repo.open(metadata, windowed: true);
     stage('open');
     // A marathon WITHOUT compaction pages past the windowed residency
     // cache — the leaf slides out and the branch would read empty (a
@@ -616,8 +621,21 @@ extension on AgentCli {
       systemPrompt: _agent.state.systemPrompt,
       tools: _agent.state.tools,
     );
-    if (!await session.ensureCompactionBoundaryResident(tokenBudget: budget)) {
-      session = await _repo.open(metadata);
+    final boundaryResident = await session.ensureCompactionBoundaryResident(
+      tokenBudget: budget,
+    );
+    if (!boundaryResident) {
+      // gh-1555 W1 (d2): the walk exhausted maxPages without reaching a
+      // boundary or the file head — a degenerate giant. The OLD fallback
+      // re-opened FULL, which refuses outright past the gh-1073 backstop
+      // (the incident's broken rescue): the marathon then could not
+      // resume at all. Proceed with the tail-anchored windowed session
+      // instead: the resident tail is a valid budget-truncated resume,
+      // and the boot cap below owns the over-window residue.
+      _logDiagnostic(
+        'boot_stage boundary-walk exhausted maxPages; proceeding with '
+        'the tail window sid=${metadata.id}',
+      );
     }
     stage('walk');
     final context = await session.buildContext();
