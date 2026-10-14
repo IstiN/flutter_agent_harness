@@ -16,7 +16,6 @@
 /// knows the pair group it belongs to — groups hide atomically (D6).
 library;
 
-import '../compaction.dart' show isSyntheticUserText;
 import '../token_estimation.dart' show estimateTokens;
 import '../../context.dart';
 import '../../types.dart';
