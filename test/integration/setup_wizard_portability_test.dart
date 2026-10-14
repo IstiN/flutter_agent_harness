@@ -69,15 +69,17 @@ String _clean(String s) => s.replaceAll(_ansi, '');
 class _Fixture {
   _Fixture() {
     home = Directory.systemTemp.createTempSync('fa_setup_wizard_');
+    exitFile = '${home.path}/exit_code';
     final shim = Directory('${home.path}/bin')..createSync();
-    File('${shim.path}/fa')
+    final stub = File('${shim.path}/fa')
       ..writeAsStringSync('#!/bin/sh\necho fa-fixture-1596\n');
-    Process.runSync('chmod', ['+x', '${shim.path}/fa']);
+    Process.runSync('chmod', ['+x', stub.path]);
     path = '${shim.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}';
   }
 
   late final Directory home;
   late final String path;
+  late final String exitFile;
 
   File get config => File('${home.path}/.fah/config.yaml');
 
@@ -109,9 +111,10 @@ class _Answers {
 }
 
 class _PtyRun {
-  _PtyRun._(this.pty, this.buffer);
+  _PtyRun._(this.pty, this.buffer, this.exitFile);
   final PseudoTerminal pty;
   final StringBuffer buffer;
+  final String exitFile;
   var done = false;
 
   /// Waits until [text] (ANSI-stripped) appears in the captured output.
@@ -126,10 +129,27 @@ class _PtyRun {
     }
   }
 
+  /// The wizard's exit status, delivered out-of-band by the run wrapper —
+  /// pty2's own `exitCode` races the Dart VM's child reaper (ECHILD → -1).
+  Future<int> awaitExit() async {
+    final deadline = DateTime.now().add(const Duration(seconds: 60));
+    while (true) {
+      final f = File(exitFile);
+      if (f.existsSync()) {
+        final text = f.readAsStringSync().trim();
+        if (text.isNotEmpty) return int.parse(text);
+      }
+      if (DateTime.now().isAfter(deadline)) {
+        fail('wizard never exited; captured:\n${_clean(buffer.toString())}');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    }
+  }
+
   void send(String s) => pty.write(s);
 
   /// Feeds every answer after its prompt shows up; the hidden key gets a
-  /// settle delay so echo-off (read -s) is already in effect.
+  /// settle delay so echo-off (stty -echo) is already in effect.
   Future<void> feed(_Answers answers) async {
     for (final (prompt, answer) in answers.items) {
       await waitPrompt(prompt);
@@ -141,33 +161,54 @@ class _PtyRun {
   }
 }
 
+Future<_PtyRun> _spawn(
+  String executable,
+  List<String> arguments, {
+  required _Fixture fixture,
+  String shellEnv = '',
+}) {
+  final buffer = StringBuffer();
+  final pty = PseudoTerminal.start(
+    executable,
+    arguments,
+    workingDirectory: _repoRoot(),
+    environment: {
+      'HOME': fixture.home.path,
+      'PATH': fixture.path,
+      'SHELL': shellEnv,
+    },
+    // Canonical mode: ICRNL rewrites the fed \r to \n (line reads), and
+    // the tty line discipline behaves like a real terminal (issue #77).
+    raw: false,
+  );
+  final run = _PtyRun._(pty, buffer, fixture.exitFile);
+  pty.out.listen(buffer.write, onDone: () => run.done = true);
+  return Future.value(run);
+}
+
 /// A piped `cat setup.sh | <shell>` run on a pty (the AC2 curl|sh shape:
 /// the shell's stdin is the pipe, answers ride /dev/tty).
 Future<_PtyRun> _startPiped(
   String shell, {
   required _Fixture fixture,
   List<String> shellArgs = const [],
-  String? shellEnv,
+  String shellEnv = '',
 }) {
   final script = '${_repoRoot()}/site/setup.sh';
   final inner = [shell, ...shellArgs].join(' ');
-  final buffer = StringBuffer();
-  final pty = PseudoTerminal.start(
+  return _spawn(
     shell,
-    [...shellArgs, '-c', 'cat "$script" | $inner'],
-    workingDirectory: _repoRoot(),
-    environment: {
-      'HOME': fixture.home.path,
-      'PATH': fixture.path,
-      if (shellEnv != null) 'SHELL': shellEnv,
-    },
-    // Canonical mode: ICRNL rewrites the fed \r to \n (line reads), and
-    // the tty line discipline behaves like a real terminal (issue #77).
-    raw: false,
+    [
+      ...shellArgs,
+      '-c',
+      'cat "\$1" | $inner; echo \$? > "\$2"',
+      'wizard',
+      script,
+      fixture.exitFile,
+    ],
+    fixture: fixture,
+    shellEnv: shellEnv,
   );
-  final run = _PtyRun._(pty, buffer);
-  pty.out.listen(buffer.write, onDone: () => run.done = true);
-  return Future.value(run);
 }
 
 /// A direct `<shell> site/setup.sh` run on a pty (the AC5 shape: stdin IS
@@ -177,21 +218,18 @@ Future<_PtyRun> _startDirect({
   String shellEnv = '',
 }) {
   final script = '${_repoRoot()}/site/setup.sh';
-  final buffer = StringBuffer();
-  final pty = PseudoTerminal.start(
+  return _spawn(
     'bash',
-    [script],
-    workingDirectory: _repoRoot(),
-    environment: {
-      'HOME': fixture.home.path,
-      'PATH': fixture.path,
-      'SHELL': shellEnv,
-    },
-    raw: false,
+    [
+      '-c',
+      'bash "\$1"; echo \$? > "\$2"',
+      'wizard',
+      script,
+      fixture.exitFile,
+    ],
+    fixture: fixture,
+    shellEnv: shellEnv,
   );
-  final run = _PtyRun._(pty, buffer);
-  pty.out.listen(buffer.write, onDone: () => run.done = true);
-  return Future.value(run);
 }
 
 void main() {
@@ -202,9 +240,16 @@ void main() {
           reason: 'dash must not accept the bash builtin form');
     }, skip: _have('dash') ? null : 'dash not installed');
 
-    test('busybox ash rejects printf -v', () {
-      final r = Process.runSync('busybox', ['ash', '-c', 'printf -v x "%s" hi']);
-      expect(r.exitCode, isNonZero);
+    test('busybox ash: printf -v silently corrupts (no assignment)', () {
+      // This busybox build doesn't abort on `printf -v` — the flag rides
+      // into the FORMAT and the variable stays empty. Either way the
+      // bashism cannot survive: the assignment provably never happens.
+      final r = Process.runSync(
+        'busybox',
+        ['ash', '-c', 'printf -v x "%s" hi; [ "\$x" = hi ]'],
+      );
+      expect(r.exitCode, isNonZero,
+          reason: 'printf -v must not assign under busybox ash');
     }, skip: _have('busybox') ? null : 'busybox not installed');
 
     test('bash accepts printf -v (why macOS sh never crashed)', () {
@@ -242,8 +287,7 @@ void main() {
           );
     await run.feed(_Answers.custom(persistKey: persistKey));
 
-    final exitCode =
-        await run.pty.exitCode.timeout(const Duration(seconds: 60));
+    final exitCode = await run.awaitExit();
     expect(exitCode, 0, reason: '$label: wizard exited non-zero; output:\n'
         '${_clean(run.buffer.toString())}');
 
@@ -313,8 +357,7 @@ void main() {
       addTearDown(fixture.dispose);
       final run = await _startDirect(fixture: fixture);
       await run.feed(_Answers.custom(persistKey: false));
-      final exitCode =
-          await run.pty.exitCode.timeout(const Duration(seconds: 60));
+      final exitCode = await run.awaitExit();
       expect(exitCode, 0);
       final out = _clean(run.buffer.toString());
       // I3: prompt texts identical to the piped runs.
@@ -361,8 +404,7 @@ void main() {
       fixture.seedConfig('provider: keep-me\n');
       final run = await _startPiped('dash', fixture: fixture, shellEnv: '');
       await run.feed(_Answers([('Reconfigure?', 'n')]));
-      final exitCode =
-          await run.pty.exitCode.timeout(const Duration(seconds: 60));
+      final exitCode = await run.awaitExit();
       expect(exitCode, 0);
       expect(
         _clean(run.buffer.toString()),
@@ -378,11 +420,22 @@ void main() {
       final run = await _startPiped('dash', fixture: fixture, shellEnv: '');
       await run.waitPrompt('Pick a provider');
       run.send('\x03');
-      final exitCode =
-          await run.pty.exitCode.timeout(const Duration(seconds: 30));
-      expect(exitCode, isNot(0));
+      // The SIGINT takes down the whole pipeline — including the wrapper
+      // that would write the exit-status file — so the observable fact is
+      // process death (pty closed), not a status code (pty2's exitCode
+      // also races the VM's child reaper).
+      final deadline = DateTime.now().add(const Duration(seconds: 30));
+      while (!run.done) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('wizard survived Ctrl-C; captured:\n'
+              '${_clean(run.buffer.toString())}');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
       expect(Directory('${fixture.home.path}/.fah').existsSync(), isFalse,
           reason: 'an interrupted wizard must leave no config dir behind');
+      expect(File(fixture.exitFile).existsSync(), isFalse,
+          reason: 'the interrupt killed the pipeline before completion');
     }, skip: _have('dash') ? null : 'dash not installed');
 
     test('E4 — HOME unset: clear error, non-zero exit', () {
