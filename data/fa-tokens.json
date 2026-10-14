@@ -2310,6 +2310,15 @@
       "completion": 0,
       "total": 116530,
       "model": "kimi-for-coding"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-14T17:07:54Z",
+      "prompt": 145510,
+      "completion": 6464,
+      "total": 151974,
+      "cacheRead": 2483008,
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-1556": [
