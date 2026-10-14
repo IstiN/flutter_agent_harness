@@ -594,13 +594,22 @@ jobs:
             # below our own decision point. Pin the harness cap above the
             # abs ceiling so the adapter's verdict, not tb's flat
             # wait_for, decides every kill.
-            args+=(--global-agent-timeout-sec \
-              "$(( ${FA_AGENT_TIMEOUT_ABS_CEILING_SEC:-3600} + 180 ))")
+            # gh-1576 parity: the same number is the EXTERNAL harness cap
+            # (E4) — today it sits above the adapter ceiling, so min()
+            # picks the knobs and this export is a no-op by construction;
+            # if the ceiling is ever raised past it, the deadline follows
+            # the harness kill instead of lying in its audit.
+            tb_external_cap="$(( ${FA_AGENT_TIMEOUT_ABS_CEILING_SEC:-3600} + 180 ))"
+            export FA_EXTERNAL_CAP_SEC="$tb_external_cap"
+            args+=(--global-agent-timeout-sec "$tb_external_cap")
           elif [ -n "$ladder_base" ]; then
             # Flat ladder only: outer harness cap above the ladder ceiling
             # (4x base + slack) so the ladder decides, never the flat
-            # harness wait_for.
-            args+=(--global-agent-timeout-sec "$((ladder_base * 4 + 180))")
+            # harness wait_for. gh-1576: exported as the external cap too
+            # (same parity argument as the watch branch above).
+            tb_external_cap="$((ladder_base * 4 + 180))"
+            export FA_EXTERNAL_CAP_SEC="$tb_external_cap"
+            args+=(--global-agent-timeout-sec "$tb_external_cap")
           fi
           # Pinned --run-id: one tb-runs/shard-N/ dir per shard, so the merge
           # job's downloads cannot collide on tb's timestamped default.
