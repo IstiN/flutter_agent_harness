@@ -25,6 +25,21 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 
+import '../support/nwbgy7a_fixture.dart';
+
+/// The task prompt IT-1 (and IT-2) replay: the requirements its
+/// scripted ledger quotes verbatim.
+const _fixtureTaskPrompt =
+    'Fixture task: create script.py, make it executable, run it.';
+
+/// The task prompt IT-3 replays: the requirements its scripted ledger
+/// quotes verbatim. The gate contract calls a requirement/ledger
+/// mismatch a protocol violation, so the replay's task text matches
+/// what the ledger claims was asked for.
+const _parityTaskPrompt =
+    "Fixture task: create mean.sh that prints each station's mean "
+    'temperature from stations.csv, and verify the output.';
+
 void main() {
   late Directory tempDir;
   late LocalExecutionEnv env;
@@ -48,11 +63,14 @@ void main() {
   /// `headlessRun: true`) is the unattended attendance the FinalizeGate
   /// keys on (gh-1516) — IT-1 exercises the full contract there; IT-2 pins
   /// the interactive REPL (any approval mode, autopilot included) staying
-  /// gate-free.
+  /// gate-free. [prompt] is the task text the FinalizeGate ledger must
+  /// quote verbatim — IT-3 overrides it so its task text matches its
+  /// mean.sh ledger (a requirement/ledger mismatch is a gate violation).
   Future<List<String>> runScripted(
     ApprovalMode approvalMode,
     List<_Turn> script, {
     bool headless = false,
+    String prompt = _fixtureTaskPrompt,
   }) async {
     final sessionRoot = '${tempDir.path}/fah-sessions';
     mock.script = script;
@@ -75,9 +93,7 @@ void main() {
       io: _HeadlessIo(),
     );
     if (headless) {
-      final code = await cli.runHeadless(
-        'Fixture task: create script.py, make it executable, run it.',
-      );
+      final code = await cli.runHeadless(prompt);
       expect(code, 0);
     } else {
       final run = cli.run();
@@ -86,9 +102,7 @@ void main() {
       // advances the mock's cursor).
       unawaited(
         Future<void>.delayed(const Duration(milliseconds: 300)).then((_) {
-          _HeadlessIo.last?.sendLine(
-            'Fixture task: create script.py, make it executable, run it.',
-          );
+          _HeadlessIo.last?.sendLine(prompt);
         }),
       );
       final deadline = DateTime.now().add(const Duration(seconds: 60));
@@ -230,6 +244,101 @@ void main() {
     },
     timeout: const Timeout(Duration(minutes: 2)),
   );
+
+  test('IT-3: the grader-parity check catches a cwd-dependent entry point '
+      'before finalize (gh-1605)', () async {
+    // The modernize-scientific-stack__nwbgy7a replay: a produced entry
+    // point whose output depends on the CWD (it resolves its dataset
+    // relatively). The scripted agent runs it in-session — the output
+    // looks right — then re-runs it the way the verifier will (neutral
+    // cwd) and watches Station 102 collapse to the stale fallback
+    // value. The divergence must land in the persisted ledger as a
+    // `fail` item BEFORE the run finalizes — not as a pass. The task
+    // prompt names the same requirements the scripted ledger quotes
+    // (_parityTaskPrompt) — a requirement/ledger mismatch is exactly
+    // what the gate contract forbids.
+    final appDir = '${tempDir.path}/app';
+    final lines = await runScripted(ApprovalMode.unattended, [
+      // Turn 1: build the fixture — dataset + stale bundled fallback +
+      // the entry point that resolves the dataset via the CWD. The
+      // fixture is the shared nwbgy7a evidence shape
+      // (test/support/nwbgy7a_fixture.dart) — the REG scenarios in
+      // test/agent/finalize_gate_grader_parity_test.dart write the very
+      // same files from Dart.
+      _Turn.toolCalls([
+        (
+          id: 'call_1',
+          name: 'bash',
+          arguments: 'mkdir -p app && cd app && ${nwbgy7aProduceCommand()}',
+        ),
+      ]),
+      // Turn 2: the in-session verification — looks right (30.3).
+      const _Turn.toolCalls([
+        (id: 'call_2', name: 'bash', arguments: 'cd app && bash mean.sh'),
+      ]),
+      // Turn 3: the grader-parity re-run — neutral cwd, fresh
+      // subprocess: the relative dataset resolves to the stale table.
+      _Turn.toolCalls([
+        (id: 'call_3', name: 'bash', arguments: 'cd / && bash $appDir/mean.sh'),
+      ]),
+      // Turn 4: the final answer — the parity item reads `fail`, the
+      // run does NOT claim the entry point verified.
+      const _Turn.text(
+        'Ran the parity check: divergence detected.\n'
+        '```task-ledger\n'
+        '- requirement: create mean.sh that prints each station\'s mean '
+        'temperature from stations.csv\n'
+        '  command: cd app && bash mean.sh\n'
+        '  expected: Station 102 mean temperature: 30.3 C\n'
+        '  actual: Station 102 mean temperature: 30.3 C\n'
+        '  status: pass\n'
+        '- requirement: '
+        'grader parity: mean.sh output matches under a fresh cwd + '
+        'clean env\n'
+        '  command: cd / && bash <app>/mean.sh\n'
+        '  expected: Station 102 mean temperature: 30.3 C\n'
+        '  actual: Station 102 mean temperature: 15.5 C\n'
+        '  status: fail\n'
+        '```\n',
+      ),
+    ], headless: true, prompt: _parityTaskPrompt);
+    final records = recordsOf(lines);
+    final transcript = const JsonEncoder.withIndent(' ').convert(records);
+
+    // Both invocations actually executed — the in-session run and the
+    // neutral-cwd parity re-run (the divergence is witnessed, not
+    // narrated).
+    expect(transcript, contains('cd app && bash mean.sh'));
+    expect(transcript, contains('cd / && bash '));
+    expect(transcript, contains('30.3'));
+    expect(transcript, contains('15.5'));
+    expect(
+      transcript.contains("prints each station's mean temperature "
+          'from stations.csv'),
+      isTrue,
+      reason: "the ledger quotes IT-3's task requirement verbatim",
+    );
+
+    // The persisted ledger carries the divergence as a `fail` item.
+    final ledgerRecords = records
+        .where(
+          (record) =>
+              record['type'] == 'custom' &&
+              record['customType'] == 'task_ledger',
+        )
+        .toList();
+    expect(ledgerRecords, hasLength(1));
+    final items = (ledgerRecords.single['data'] as Map)['items'] as List;
+    expect(
+      [for (final item in items) (item as Map)['status']],
+      ['pass', 'fail'],
+    );
+    expect(
+      transcript.contains('Station 102 mean temperature: 15.5 C'),
+      isTrue,
+      reason: 'the ledger records the diverged parity output as actual',
+    );
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }
 
 /// One scripted assistant turn: tool calls or a final text answer.
