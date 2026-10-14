@@ -67,8 +67,9 @@ final class _CompactionAwareStream {
     ].join('\n');
     // ignore: avoid_print
     print('REQ#${contexts.length} msgs=${context.messages.length} '
-        'sys=${(context.systemPrompt ?? '').substring(0, 60)} '
-        'prompt=${prompt.substring(0, prompt.length < 300 ? prompt.length : 300)}');
+        'promptLen=${prompt.length} filler=${prompt.contains('filler')} '
+        'task=${prompt.contains(_taskMarker)} '
+        'sys=${(context.systemPrompt ?? '').substring(0, 60)}');
     final String reply;
     if (prompt.contains('context-hygiene judge')) {
       reply = '[]';
@@ -212,6 +213,8 @@ void main() {
       await run;
 
       // The auto-compaction ran and was announced.
+      // ignore: avoid_print
+      print('=== TRANSCRIPT ===\n${io.out.toString()}');
       expect(io.out.toString(), contains('auto-compacted'));
 
       // AC3: the compaction event is VISIBLE in the session JSONL — the
@@ -220,6 +223,17 @@ void main() {
         (await repo.list(cwd: '/work')).single,
       );
       final entries = await session.getEntries();
+      for (final e in entries) {
+        // ignore: avoid_print
+        print(
+          'ENTRY type=${e.runtimeType} id=${e.id} '
+          'covers=${switch (e) {
+            final CompactCheckpointRecord c => c.coversRecordIds,
+            final HiddenRangeRecord h => h.recordIds,
+            _ => <String>[],
+          }}',
+        );
+      }
       expect(
         entries.whereType<CompactCheckpointRecord>(),
         isNotEmpty,
