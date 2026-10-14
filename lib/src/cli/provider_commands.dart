@@ -2421,7 +2421,7 @@ extension on AgentCli {
       name: name,
       keys: keys,
       onSecretStored: config.onSecretStored,
-      prompt: tui.openPrompt,
+      prompt: (spec) => _openHerdrPrompt(tui, spec),
       onResult: io.writeln,
       onSaved: _applySavedKeyToActiveProvider,
     );
