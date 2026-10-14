@@ -82,32 +82,34 @@ void main() {
       }
     });
 
-    test('isSafeDir accepts the dynamic-widget dir shapes, rejects escapes',
-        () {
-      // Session-scoped overrides derive from cwd-encoded session paths and
-      // may carry spaces or dots — safe under the lexical clamp.
-      expect(
-        AppStorage.isSafeDir(
-          'sessions/--Users-My Projects-x--/2026_t1.jsonl/.widgets/s-1/w',
-        ),
-        isTrue,
-      );
-      expect(AppStorage.isSafeDir('apps/2048'), isTrue);
-      for (final hostile in [
-        '',
-        '..',
-        'apps/../evil',
-        '/abs',
-        'a/./b',
-        'a//b',
-      ]) {
+    test(
+      'isSafeDir accepts the dynamic-widget dir shapes, rejects escapes',
+      () {
+        // Session-scoped overrides derive from cwd-encoded session paths and
+        // may carry spaces or dots — safe under the lexical clamp.
         expect(
-          AppStorage.isSafeDir(hostile),
-          isFalse,
-          reason: 'isSafeDir("$hostile") must be false',
+          AppStorage.isSafeDir(
+            'sessions/--Users-My Projects-x--/2026_t1.jsonl/.widgets/s-1/w',
+          ),
+          isTrue,
         );
-      }
-    });
+        expect(AppStorage.isSafeDir('apps/2048'), isTrue);
+        for (final hostile in [
+          '',
+          '..',
+          'apps/../evil',
+          '/abs',
+          'a/./b',
+          'a//b',
+        ]) {
+          expect(
+            AppStorage.isSafeDir(hostile),
+            isFalse,
+            reason: 'isSafeDir("$hostile") must be false',
+          );
+        }
+      },
+    );
   });
 
   group('AppStorage path resolution (gh-1614 I1)', () {
