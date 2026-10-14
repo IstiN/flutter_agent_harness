@@ -19,6 +19,7 @@ import 'dart:convert';
 import '../exceptions.dart';
 import '../model_roles/capability_resolver.dart';
 import '../model_roles/provider_catalog.dart';
+import '../model_roles/provider_model_binding.dart';
 import '../providers/thinking.dart';
 
 /// One resolved `FA_PROVIDER_*` preconfig: the catalog spec the type maps
@@ -36,6 +37,7 @@ final class EnvProviderPreconfig {
     this.thinkingLevel,
     this.contextWindow,
     this.maxTokens,
+    required this.binding,
   });
 
   /// The catalog spec [parseEnvProviderPreconfig] resolved the type
@@ -86,12 +88,19 @@ final class EnvProviderPreconfig {
   /// Declared max output tokens (gh-1471 D4), or null when undeclared —
   /// the ceiling table/spec layers stand, exactly as before.
   final int? maxTokens;
+
+  /// The validated provider+model identity this declaration resolves to
+  /// (gh-1570 AC2): the wire⇄endpoint and model⇄endpoint checks ran at
+  /// parse time — a binding that fails validation never reaches the boot
+  /// (I2) — and the wire override is carried for every report to echo.
+  final ProviderModelBinding binding;
 }
 
 /// The supported `FA_PROVIDER_CONFIG` keys, in error-message order.
 const _supportedConfigKeys = [
   'baseUrl',
   'model',
+  'wire',
   'apiKeyEnvVar',
   'contextWindow',
   'maxTokens',
@@ -209,6 +218,20 @@ EnvProviderPreconfig? parseEnvProviderPreconfig({
     thinkingLevel: config.thinkingLevel,
     contextWindow: config.contextWindow,
     maxTokens: config.maxTokens,
+    // The validated identity (gh-1570 AC2): wire⇄endpoint and
+    // model⇄endpoint checks run HERE — a declaration that pairs the
+    // anthropic wire with an OpenAI endpoint dies at parse time naming
+    // model, endpoint and wire kind, never at the first request (the
+    // bench job 114848402110 incident class). The `wire:` key is the
+    // only escape hatch and rides the binding into every report.
+    binding: ProviderModelBinding.resolve(
+      providerKind: spec.kind,
+      modelId: config.values['model']!,
+      baseUrl: config.values['baseUrl'],
+      keyEnvRef: keyVar,
+      wire: config.wire,
+      provenance: BindingProvenance.env,
+    ),
   );
 }
 
@@ -262,6 +285,7 @@ String _decodeBase64(String name, String encoded) {
   Map<String, String> values,
   List<String>? input,
   String? thinkingLevel,
+  String? wire,
   int? contextWindow,
   int? maxTokens,
 })
@@ -289,6 +313,7 @@ _parseConfig(String raw) {
     values: parsed.values,
     input: parsed.input,
     thinkingLevel: parsed.thinkingLevel,
+    wire: parsed.wire,
     contextWindow: parsed.contextWindow,
     maxTokens: parsed.maxTokens,
   );
@@ -300,6 +325,7 @@ final class _ParsedConfig {
   final Map<String, String> values = {};
   List<String>? input;
   String? thinkingLevel;
+  String? wire;
   int? contextWindow;
   int? maxTokens;
 }
@@ -320,6 +346,8 @@ void _takeConfigEntry(String key, Object? value, _ParsedConfig into) {
       into.input = _parseInputList(value);
     case 'thinkingLevel':
       into.thinkingLevel = _parseThinkingLevel(value);
+    case 'wire':
+      into.wire = _parseWire(value);
     case 'contextWindow' || 'maxTokens':
       final parsed = _parseCapabilityInt(key, value);
       if (parsed != null) {
@@ -407,6 +435,19 @@ String? _parseThinkingLevel(Object? value) {
         'FA_PROVIDER_CONFIG "thinkingLevel" must be one of '
         '${configThinkingLevels.join(', ')}, got: $value',
       ));
+}
+
+/// The `wire:` override (gh-1570 AC2): a non-string is a named config
+/// error; a blank string is ABSENT (the binding validates the kind
+/// itself — an empty override must never silence a dialect check).
+String? _parseWire(Object? value) {
+  if (value is! String) {
+    throw ConfigException(
+      'FA_PROVIDER_CONFIG key "wire" must be a string, got: $value',
+    );
+  }
+  if (value.trim().isEmpty) return null;
+  return value;
 }
 
 /// The first name among [base], `[base]-2`, `[base]-3`, ... not in

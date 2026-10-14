@@ -116,6 +116,18 @@ class BenchHarborDefaultsTest(unittest.TestCase):
         self.assertEqual(self._step_env("FA_AGENT_TIMEOUT_ABS_CEILING_SEC"), "3600")
         self.assertEqual(self._step_env("FA_PROGRESS_EXTENSION"), "1")
 
+    def test_external_cap_flows_from_the_split_matrix(self):
+        # gh-1576: the shard's external harness cap arrives from the setup
+        # split (min declared per-task agent timeout across the shard) and
+        # rides the shard step env. An absent matrix key renders an EMPTY
+        # env var — unknown, the knobs rule alone (AC5/E1); a declared cap
+        # is folded into the deadline via min() in bench/fa_agent_timeout.py.
+        self.assertIn("FA_EXTERNAL_CAP_SEC: ${{ matrix.external_cap }}", self.text)
+        # and the setup split emits the key: the split script's own unit
+        # tests (test_split_tasks.py) pin the emission logic — here we pin
+        # the workflow wiring (the expression must reference the matrix).
+        self.assertIn("external_cap", self.text.split("matrix:", 1)[-1])
+
     def test_watch_knobs_resolve_to_progress_watch_mode(self):
         # The exported values must actually arm the watch: same env
         # contract the adapter consumes (shared bench/fa_agent_timeout.py).
@@ -301,15 +313,20 @@ def _run_resolve(
 
 
 def _resolve_outputs(proc) -> dict:
-    if not proc.github_output.exists():
-        return {}
-    result = {}
-    for line in proc.github_output.read_text().splitlines():
-        if "=" in line:
-            key, _, value = line.partition("=")
-            result[key] = value
-    proc._tmp.cleanup()
-    return result
+    # try/finally: the no-output early return used to leak proc._tmp
+    # (ResourceWarning on GC) — same hygiene class as the gh-1592
+    # test_error_classifier review thread.
+    try:
+        if not proc.github_output.exists():
+            return {}
+        result = {}
+        for line in proc.github_output.read_text().splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                result[key] = value
+        return result
+    finally:
+        proc._tmp.cleanup()
 
 
 @unittest.skipUnless(

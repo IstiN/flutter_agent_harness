@@ -233,6 +233,64 @@ void main() {
       expect(model.authHeader, 'x-api-key');
     });
 
+    test('1554/AC1 — chain entry timeout fields ride the built model, '
+        'labeled with the role; per-field absence stays null', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'default': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'local-slow',
+                baseUrl: 'http://127.0.0.1:8080/v1',
+                streamIdleTimeout: const Duration(seconds: 1800),
+              ),
+            ],
+            'smol': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'cloud-fast',
+                connectTimeout: const Duration(seconds: 30),
+                streamIdleTimeout: const Duration(seconds: 60),
+              ),
+            ],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'k'},
+        streamFactory: _neverStream,
+      );
+      final defaultModel = resolver.chainFor('default')!.single.model;
+      // The scoped window rides the model for the streams of THIS role…
+      expect(defaultModel.streamIdleTimeout, const Duration(seconds: 1800));
+      expect(defaultModel.timeoutScopeLabel, 'role default override');
+      // …per FIELD: an entry overriding only the idle leg leaves the
+      // connect leg at the lower layers (null here — falls through).
+      expect(defaultModel.connectTimeout, isNull);
+      // Another role's entry carries ITS OWN windows (the same model can
+      // never be shared) — the AC1 two-roles-two-windows precondition.
+      final smolModel = resolver.chainFor('smol')!.single.model;
+      expect(smolModel.connectTimeout, const Duration(seconds: 30));
+      expect(smolModel.streamIdleTimeout, const Duration(seconds: 60));
+      expect(smolModel.timeoutScopeLabel, 'role smol override');
+    });
+
+    test('1554/AC1 — a chain entry without timeout fields builds the '
+        'byte-identical model (no label, no windows)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'default': [ModelRef(provider: 'openai', modelId: 'plain')],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'k'},
+        streamFactory: _neverStream,
+      );
+      final model = resolver.chainFor('default')!.single.model;
+      expect(model.connectTimeout, isNull);
+      expect(model.streamIdleTimeout, isNull);
+      expect(model.timeoutScopeLabel, isNull);
+    });
+
     test('path-scoped overrides pin the chain for a matching cwd', () {
       final resolver = ModelRolesResolver(
         config: config,
@@ -378,9 +436,9 @@ void main() {
       );
     });
 
-    test('a KNOWN provider missing its key stays a plain ConfigException '
-        '(gh-760 review: current-version misconfiguration hard-fails, '
-        'the boot does NOT degrade it)', () {
+    test('a KNOWN provider missing its key throws the DEGRADE subtype '
+        '(gh-1570 incident: a recoverable missing key must never '
+        'hard-exit the binary)', () {
       final resolver = ModelRolesResolver(
         config: ModelRolesConfig(
           roles: const {
@@ -398,10 +456,15 @@ void main() {
       } on UnknownProviderRoleException {
         fail(
           'missing keys on a KNOWN provider is not version skew — '
-          'it must stay a plain ConfigException',
+          'it must not classify as UnknownProviderRoleException',
         );
-      } on ConfigException {
-        // Expected: the pre-#760 loud failure the boot maps to _fail.
+      } on UnusableRoleChainException catch (error) {
+        // gh-1570 review (incident 2026-10-12): the aggregate
+        // no-usable-entry outcome is RECOVERABLE — set the key, reboot.
+        // The degradable subtype is what the boot boundary catches and
+        // degrades on (naming the skipped entries), never _fail.
+        expect(error.message, contains('missing API key'));
+        expect(error.message, contains('claude-smol'));
       }
     });
 
@@ -427,9 +490,46 @@ void main() {
           'the skip reason embedding a user-controlled model id must '
           'not classify a known provider as version skew',
         );
-      } on ConfigException {
-        // Expected.
+      } on UnusableRoleChainException {
+        // Expected: the degradable no-usable-entry shape (gh-1570) — the
+        // user-controlled id must still not classify as version skew.
       }
+    });
+
+    test('a key stored under the PREVIOUS release slot name still resolves '
+        'after the record-scoped derivation moves (gh-1570 incident REG)', () {
+      // The incident: fa 1.0.556 → 1.0.564 moved the record-scoped slot
+      // derivation, so the pinned slot FA_KEY_API_KIMI_COM_KIMI_IRA went
+      // empty while the key sat on the host-scoped slot
+      // FA_KEY_API_KIMI_COM — and the boot called the key missing. A slot
+      // name is a cross-version contract: an empty pin falls back to the
+      // endpoint's own slot family (canonical first), and the boot
+      // migrates the stranded value onto the canonical slot.
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(
+                provider: 'kimi',
+                modelId: 'kimi-for-coding',
+                baseUrl: 'https://api.kimi.com/coding/v1',
+                apiKeyName: 'FA_KEY_API_KIMI_COM_KIMI_IRA',
+              ),
+            ],
+          },
+        ),
+        secrets: const {
+          // Only the PRE-update (host-scoped) slot holds the key.
+          'FA_KEY_API_KIMI_COM': 'legacy-kimi-key',
+        },
+        streamFactory: _neverStream,
+      );
+      final entries = resolver.chainFor('default');
+      expect(entries, isNotNull);
+      expect(entries, hasLength(1));
+      expect(entries!.single.keyRing.baseName, 'FA_KEY_API_KIMI_COM');
+      expect(entries.single.keyRing.currentCredential.value, 'legacy-kimi-key');
+      expect(resolver.skippedEntries['default'], isEmpty);
     });
 
     test('a roles entry naming an adapter KIND resolves (gh-760 review)', () {
@@ -701,11 +801,61 @@ void main() {
             secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
             streamFactory: _neverStream,
           );
-          // No key env var declared → bin/fah.dart skips the pin: the
-          // roles default survives untouched.
+          // No key env var declared AND no keyless pin → bin/fah.dart
+          // skips the pin: the roles default survives untouched.
           expect(resolver.resolveRole('default')!.model.provider, 'anthropic');
         },
       );
+
+      test('a keyless pin resolves with NO credential — localhost preconfig '
+          'beats saved roles (gh-1570 AC8/UT-8)', () {
+        // The exact sequence bin/fah.dart performs for a KEYLESS
+        // FA_PROVIDER_* declaration (no apiKeyEnvVar — a localhost
+        // bench endpoint): pin the default role to a keyless single-entry
+        // chain. The saved roles config must NOT win — the bench
+        // measures the preconfigured provider.
+        final resolver = ModelRolesResolver(
+          config: ModelRolesConfig(
+            roles: const {
+              'default': [
+                ModelRef(provider: 'anthropic', modelId: 'claude-old'),
+              ],
+            },
+          ),
+          secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
+          streamFactory: _neverStream,
+        );
+        resolver.setDefaultChain([
+          const ModelRef(
+            provider: 'anthropic',
+            modelId: 'claude-sonnet-4-5',
+            baseUrl: 'http://localhost:8080/v1',
+            keyless: true,
+          ),
+        ]);
+
+        for (final role in ['default', 'slow', 'plan']) {
+          final resolved = resolver.resolveRole(role);
+          expect(resolved, isNotNull, reason: role);
+          expect(resolved!.model.provider, 'anthropic', reason: role);
+          expect(resolved.model.baseUrl, 'http://localhost:8080/v1');
+        }
+        // The keyless entry carries the EMPTY credential — the wrapper
+        // hands the ring's current credential to the stream factory per
+        // attempt (byte-parity with the non-roles keyless boot), never
+        // the saved roles provider's key.
+        final entries = resolver.chainFor('default')!;
+        expect(entries, hasLength(1));
+        expect(
+          entries.single.keyRing.currentCredential.value,
+          '',
+          reason: 'keyless = empty key to the stream factory',
+        );
+        final streamFn = entries.single.streamForKey(
+          entries.single.keyRing.currentCredential.value,
+        );
+        expect(streamFn, isNotNull);
+      });
 
       test(
         'the preconfig input modalities reach the pinned chain model (#638)',

@@ -215,6 +215,90 @@ class PostMortemUsageTest(unittest.TestCase):
         finally:
             run.cleanup()
 
+    def test_external_cap_kill_is_a_justified_audit_outcome(self):
+        # gh-1576: when the external harness cap binds, the decider's
+        # verdict is `external_cap` — the harness's own declared kill.
+        # The AC8 scan must honor the same audit contract as summary.py:
+        # a cap-bound kill on a steadily progressing session is exactly
+        # the incident this card fixes, never a bench-inflicted
+        # contradiction. A verdict missing here silently no-ops into a
+        # false "killed while progressing" violation (the gh-1556
+        # lesson).
+        spent = dict(KILLED_ROW, total_input_tokens=400, total_output_tokens=50)
+        run = _Run([spent])
+        trial_dir = run.shard / "train-fasttext" / "train-fasttext-1"
+        (trial_dir / "fa-agent-timeout.json").write_text(
+            json.dumps({"outcome": "external_cap"})
+        )
+        try:
+            run.add_session(
+                "train-fasttext",
+                "train-fasttext-1",
+                [
+                    _assistant_record("r1", "2026-01-01T00:00:10Z", 1000, 200),
+                    # 50s gap: SUB-threshold — the productive-at-the-cap
+                    # shape the ticket exists for; the audit NAMES the
+                    # killer, so the scan must not fire.
+                    _assistant_record("r2", "2026-01-01T00:01:00Z", 1200, 300),
+                ],
+            )
+            report = pmu.post_mortem(run.root)
+            self.assertEqual(report["honesty_violations"], [])
+        finally:
+            run.cleanup()
+
+    def test_external_kill_flush_is_a_justified_audit_outcome(self):
+        # gh-1576 I2: an unsupervised external kill (harbor's wait_for /
+        # SIGTERM) still lands an audit naming outcome `external_kill` —
+        # the classification is the harness's, so the AC8 scan can never
+        # read it as a bench-inflicted contradiction.
+        spent = dict(KILLED_ROW, total_input_tokens=400, total_output_tokens=50)
+        run = _Run([spent])
+        trial_dir = run.shard / "train-fasttext" / "train-fasttext-1"
+        (trial_dir / "fa-agent-timeout.json").write_text(
+            json.dumps({"outcome": "external_kill",
+                        "external_kill": {"signal": "SIGTERM"}})
+        )
+        try:
+            run.add_session(
+                "train-fasttext",
+                "train-fasttext-1",
+                [
+                    _assistant_record("r1", "2026-01-01T00:00:10Z", 1000, 200),
+                    _assistant_record("r2", "2026-01-01T00:01:00Z", 1200, 300),
+                ],
+            )
+            report = pmu.post_mortem(run.root)
+            self.assertEqual(report["honesty_violations"], [])
+        finally:
+            run.cleanup()
+
+    def test_running_checkpoint_residue_is_no_honesty_violation(self):
+        # gh-1576 E3 (review round 2): a SIGKILLed trial's last audit is
+        # the incremental "running" checkpoint — "no verdict yet". It
+        # names no bench kill, so the AC8 scan must not fire on it (the
+        # gh-1556 lesson, one outcome short: the twin set lives in
+        # summary.py — change both together).
+        spent = dict(KILLED_ROW, total_input_tokens=400, total_output_tokens=50)
+        run = _Run([spent])
+        trial_dir = run.shard / "train-fasttext" / "train-fasttext-1"
+        (trial_dir / "fa-agent-timeout.json").write_text(
+            json.dumps({"outcome": "running", "checkpoint": True})
+        )
+        try:
+            run.add_session(
+                "train-fasttext",
+                "train-fasttext-1",
+                [
+                    _assistant_record("r1", "2026-01-01T00:00:10Z", 1000, 200),
+                    _assistant_record("r2", "2026-01-01T00:01:00Z", 1200, 300),
+                ],
+            )
+            report = pmu.post_mortem(run.root)
+            self.assertEqual(report["honesty_violations"], [])
+        finally:
+            run.cleanup()
+
     def test_unaudited_or_unjustified_subthreshold_still_violates(self):
         # The control (summary.py parity): an agent_timeout row whose
         # session shows only SUB-threshold gaps is the round-2

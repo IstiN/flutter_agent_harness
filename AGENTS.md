@@ -2067,7 +2067,20 @@ ladder — the extension-on branch ALWAYS exports the abs-ceiling knob
 (`FA_AGENT_TIMEOUT_ABS_CEILING_SEC`, default 3600), because
 `TimeoutKnobs.watch_active` keys on a watch knob, not on the extension
 flag (round-3 review: a dispatched run that sets only the extension is
-a dispatched run that never watches). Every trial dir carries
+a dispatched run that never watches). The harness cap around the
+adapter (tb `--global-agent-timeout-sec`, harbor's per-task
+`[agent] timeout_sec`) is an EXTERNAL cap, not a knob (gh-1576): both
+workflows export it as `FA_EXTERNAL_CAP_SEC` (a harbor shard gets the
+min of its tasks' declared timeouts via `bench/harbor_fa/split_tasks.py`)
+and the shared `bench/fa_agent_timeout.py` folds it into the deadline
+via min() — fa's clock can never outlive the harness kill. When the cap
+binds, the audit's `cap_resolution` block records the winning source and
+both inputs; the adapter's own kill at the cap is outcome `external_cap`,
+and an unsupervised external kill (harbor's wait_for / SIGTERM) flushes
+outcome `external_kill` (an absent export = unknown: the knobs rule
+alone).
+
+Every trial dir carries
 `bench_metrics.json` (per-request wall/first-byte, ConnTrace socket
 events, watchdog fires) and, on a stall, `hang-*.json` — replay one
 from any machine with `scripts/replay_hang.sh <file> [url]`.

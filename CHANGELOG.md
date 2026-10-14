@@ -13,7 +13,6 @@ block a release again.
 
 ## Unreleased
 
-<<<<<<< HEAD
 - gh-1555 (W1, lazy/windowed-everywhere reads): the legacy full-open call
   sites migrate to windowed opens, so a session ledger past the gh-1073
   2 GiB full-open backstop stays openable on every user-facing read path.
@@ -34,7 +33,35 @@ block a release again.
   Trajectory export streaming (AC3a), split-and-retain rotation
   activation (W2), and the opt-in write-side caps (W3) remain follow-up
   work.
-=======
+
+- gh-1603: unattended runs can no longer end as a clean success on empty
+  model responses. Loop: from the second empty-hiccup retry on, the request
+  carries a continuation nudge user message ("your last reply was
+  empty/truncated — continue the task"; exact-text constant
+  `emptyContinuationNudge`, emitted with MessageStart/End so the transcript
+  stays truthful) — a cap-truncated reasoning model re-streamed verbatim
+  repeats the empty outcome, the nudge breaks the symmetry; the classifier
+  treats that exact message as transparent, so the turn's partial-content
+  window (gh-1577) survives a nudged retry. Headless: the empty-reply nudge
+  budget rises to `AgentCliConfig.headlessEmptyReplyNudges` (default 2 — the
+  session ends only after 3 consecutive unrecoverable empties; interactive
+  keeps the #1085 M2b one-nudge semantics), and a run that still settles
+  empty prints the explicit `__FA_INCOMPLETE` marker and exits 1 — a
+  distinguishable failure for the bench adapter, never a silent exit 0.
+
+- gh-1577: an empty assistant completion after partial content (assistant
+  text, tool activity, or a truncation signal earlier in the turn) is a
+  bounded-retry provider hiccup — up to `emptyHiccupRetries` (default 3)
+  re-streams with exponential backoff (`emptyHiccupBaseDelay`,
+  `emptyHiccupMaxBackoff`, both threaded through the `Agent` facade,
+  `AgentWiringSpec`, and the CLI config), and exhaustion ends the run with
+  a loud `StopReason.error` (headless exit 1, interactive error + prompt)
+  instead of the silent exit-0 settle that killed the gh-1577 trials.
+  Clean empties keep the #1085 M2b one-nudge semantics. The abort always
+  wins: a cancel racing the final retry settles `StopReason.aborted` for
+  any empty shape (the exit-contract race is pinned by tests), and the
+  backoff sleep is cancellation-aware.
+
 - gh-1556: bench pipeline stops bleeding score + fa deadline awareness.
   Bench: the harbor ladder kill uses the `[f]a` bracket trick and is
   wrapped so a kill failure can never replace the `TimeoutError` (the
@@ -55,7 +82,6 @@ block a release again.
   armed, and one-shot system notices steer wrap-up at ~50%, T-3min
   (drain background jobs), and T-30s; absent deadline = byte-for-byte
   today's behavior.
->>>>>>> origin/main
 
 - gh-1522: tag-sourced versions — the git tag is the single source of
   truth. The release-bot file bumps are retired: cutting a release = a
