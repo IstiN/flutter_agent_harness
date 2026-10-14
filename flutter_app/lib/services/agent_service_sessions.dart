@@ -289,6 +289,11 @@ extension AgentServiceSessions on AgentService {
     }
     _session = session;
     _setMailboxPrefix(metadata.id);
+    // A RESUMED session (boot resume / session switch) never passes through
+    // [initialize], so without this the inbox watcher + fabric heartbeat
+    // never ran for it: hub/agent mail sat unread in the inbox and no turn
+    // woke. Idempotent (the timer is `??=`).
+    if (_subagentManager != null) _startInboxWatcher();
     // Follow external appends (a running fa CLI on the same session).
     _startSessionWatch();
     // The ledger re-projects the active branch (records carry richer

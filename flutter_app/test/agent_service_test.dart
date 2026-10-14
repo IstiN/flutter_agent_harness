@@ -1466,6 +1466,81 @@ void main() {
       },
     );
 
+    test('mail wakes a RESUMED session (loadSession without initialize) — '
+        'boot resume must start the inbox watcher', () async {
+      AgentService.enableInboxWatcher = true;
+      addTearDown(() => AgentService.enableInboxWatcher = false);
+      final env = MemoryExecutionEnv(cwd: '/');
+      final contexts = <Context>[];
+      AssistantMessageEventStream recording(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        contexts.add(
+          Context(
+            systemPrompt: context.systemPrompt,
+            messages: List.of(context.messages),
+            tools: context.tools,
+          ),
+        );
+        final stream = AssistantMessageEventStream();
+        final message = AssistantMessage(
+          content: [TextContent(text: 'ok')],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: message));
+        stream.end();
+        return stream;
+      }
+
+      AgentConfig config() => AgentConfig(
+        providerKind: 'openai-completions',
+        modelId: 'test-model',
+        baseUrl: 'https://example.test',
+        apiKey: '[REDACTED:Sensitive Value]',
+      );
+      // Persist a session first.
+      final first = await AgentService.create(
+        config: config(),
+        env: env,
+        streamFunction: recording,
+      );
+      await first.initialize();
+      await first.sendText('seed');
+      await first.waitForIdle();
+      final meta = (await first.listSessions()).single;
+      first.dispose();
+      contexts.clear();
+
+      // Boot resume: a fresh service goes straight to loadSession.
+      final resumed = await AgentService.create(
+        config: config(),
+        env: env,
+        streamFunction: recording,
+      );
+      addTearDown(resumed.dispose);
+      await resumed.loadSession(meta);
+
+      await resumed.subagentManager!.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'peer',
+          text: 'wake up, resumed',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      for (var i = 0; i < 600 && contexts.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(contexts, isNotEmpty, reason: 'no wake on a resumed session');
+    });
+
     test('gh-1180 review T3: a refused wake on the app host is receipted '
         '(wake_attempted + wake_refused, once per episode) — not a silent, '
         'unreceipted drop', () async {
