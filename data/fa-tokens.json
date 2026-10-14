@@ -3241,5 +3241,16 @@
       "cacheRead": 30518784,
       "model": "glm-5.3-flash"
     }
+  ],
+  "issue-1604": [
+    {
+      "leg": "dev",
+      "at": "2026-10-14T14:50:52Z",
+      "prompt": 596948,
+      "completion": 133332,
+      "total": 730280,
+      "cacheRead": 54657088,
+      "model": "glm-5.3-flash"
+    }
   ]
 }
