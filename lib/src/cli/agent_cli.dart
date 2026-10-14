@@ -679,6 +679,14 @@ class AgentCli {
     // LLM request payload while armed (`time-left: 5min`); unarmed keeps
     // the request byte-for-byte (the provider returns null).
     _agent.budgetLineProvider = _deadline.budgetLine;
+    // gh-1602: the provider ladder's rate-limit retries are bounded by
+    // the SAME one session deadline — a retry sleep never crosses the
+    // deadline minus its wrap-up margin, so a quota blip cannot eat the
+    // window reserved for the wrap-up answer. Unarmed keeps the ladder
+    // bounded only by its attempt budget.
+    transientRetryDeadlineLeft = () => _deadline.isArmed
+        ? Duration(milliseconds: _deadline.remainingMs)
+        : null;
     // The FinalizeGate (gh-1412, attendance-corrected gh-1516): headless
     // sessions only — `fa -p`, the bench — the run being actually
     // UNATTENDED. The approval mode is a permission policy, never an
