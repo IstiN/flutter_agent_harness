@@ -19,3 +19,8 @@ import 'paste_image.dart';
 /// TUI never runs there.
 Future<PasteboardRead> readPasteboardImage() async =>
     const PasteboardUnavailable('pasteboard reads need a desktop terminal');
+
+/// Always unavailable on web — mirrors `clipboard_reader.dart`'s text read
+/// (gh-1575): Ctrl+V's text fallback simply never fires on web.
+Future<PasteboardRead> readPasteboardText() async =>
+    const PasteboardUnavailable('pasteboard reads need a desktop terminal');
