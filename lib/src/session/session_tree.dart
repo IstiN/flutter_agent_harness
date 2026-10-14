@@ -240,6 +240,22 @@ final class Session {
     );
   }
 
+  /// Brings the whole file into residency for the read-everything
+  /// surfaces (the headless trajectory cost/inspect views, gh-1555 W1)
+  /// on a windowed open: a sequential forward scan in bounded chunks, so
+  /// a ledger past the gh-1073 full-open backstop still resolves — the
+  /// read is chunked, never one materialized whole-file string. A no-op
+  /// for full storages. Past [maxWholeLedgerBytes] the same `tooLarge`
+  /// refusal the full open throws fires BEFORE the scan (the honest-
+  /// degradation pre-check in `WindowedSessionStorage.loadAllOlder`).
+  Future<void> ensureWholeLedgerResident({
+    int maxWholeLedgerBytes = defaultMaxFullOpenBytes,
+  }) async {
+    final storage = _storage;
+    if (storage is! WindowedSessionStorage) return;
+    await storage.loadAllOlder(maxWholeLedgerBytes: maxWholeLedgerBytes);
+  }
+
   Future<String> _append(
     SessionRecord Function(String id, String? parentId) build,
   ) async {
