@@ -1019,8 +1019,9 @@ class AppsStore {
           'path (no "..", no absolute form). Fix the manifest '
           '"widget"."entry" or reinstall the app.';
     }
-    if (!((await _env.exists(AppStorage.entryPath(id, tileEntry)))
-        .valueOrNull ??
+    if (!((await _env.exists(
+          AppStorage.entryPath(id, tileEntry),
+        )).valueOrNull ??
         false)) {
       return _missingEntryMessage(id, entry: tileEntry);
     }

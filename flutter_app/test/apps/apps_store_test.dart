@@ -878,7 +878,7 @@ iOS row <!-- fa-platforms: ios -->
           files: {
             'manifest.json': utf8.encode(
               '{"id":"i18n-app",'
-                  '"nameI18n":{"pt-BR":{"file":"i18n/pt-BR (final).json"}}}',
+              '"nameI18n":{"pt-BR":{"file":"i18n/pt-BR (final).json"}}}',
             ),
             'widget.js': utf8.encode('// app'),
           },
@@ -909,7 +909,7 @@ iOS row <!-- fa-platforms: ios -->
           files: {
             'manifest.json': utf8.encode(
               '{"id":"i18n-app",'
-                  '"nameI18n":{"pt-BR":{"file":"i18n/pt-BR.json"}}}',
+              '"nameI18n":{"pt-BR":{"file":"i18n/pt-BR.json"}}}',
             ),
             'widget.js': utf8.encode('// app'),
           },
