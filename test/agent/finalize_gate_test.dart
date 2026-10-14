@@ -364,6 +364,20 @@ void main() {
       expect(contract, contains('request_secret'));
     });
 
+    test('gh-1605: documents the grader-parity named check', () {
+      // The verifier runs produced entry points itself — a fresh
+      // subprocess from a different working directory with a clean env —
+      // so an in-session pass proves nothing about what the grader sees.
+      // The checklist must pin the parity re-run and its outcome:
+      // divergence is a `fail` ledger item, never a silent pass.
+      expect(contract, contains('Grader parity'));
+      expect(contract, contains('different working directory'));
+      expect(contract, contains('clean env'));
+      expect(contract, contains('fresh subprocess'));
+      expect(contract, contains('relative paths'));
+      expect(contract, contains('divergence'));
+    });
+
     test('mandates command-verified state, never memory', () {
       expect(contract, contains('real command'));
     });
