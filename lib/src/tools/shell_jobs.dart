@@ -53,6 +53,106 @@ String? jobLogDirOverride(Map<String, String> env) {
   return (value == null || value.isEmpty) ? null : value;
 }
 
+/// How many leading characters of a job's command the model-facing
+/// surfaces keep (gh-1604 item 1): the bench evidence showed multi-KB
+/// single-line commands riding every registry card and settle notice.
+const shellJobLabelHeadChars = 120;
+
+/// How many trailing characters of a job's command the model-facing
+/// surfaces keep (gh-1604 item 1) — the tail names the actual action of a
+/// long pipeline (`... ; make test`), which a head-only cut loses.
+const shellJobLabelTailChars = 120;
+
+/// The bounded model-facing command label (gh-1604 item 1): whitespace
+/// (newlines included) flattened to single spaces, then bounded —
+/// single-line commands keep the first [headChars] and last [tailChars]
+/// characters joined by a `[…N chars…]` marker that names the TRUE
+/// omitted size; multi-line commands keep the HEAD only, no tail.
+/// Commands that already fit pass through untouched. Cuts never split a
+/// UTF-16 surrogate pair. Pure.
+///
+/// Why multi-line commands keep only the first line (issue #599 RED
+/// contract): the heredoc body is never a transcript row source, and for
+/// a multi-line command both the flattened head-crossing and the tail
+/// chars are body lines more often than they are the action — echoing
+/// them back through every settle notice re-floods the transcript the
+/// #599 fix drained. A one-line command's tail is the bench pipeline's
+/// action (`… ; make test`), so the single-line class keeps it.
+String shellJobCommandLabel(
+  String command, {
+  int headChars = shellJobLabelHeadChars,
+  int tailChars = shellJobLabelTailChars,
+}) {
+  final flat = command.replaceAll(RegExp(r'\s+'), ' ').trim();
+  // Fits: any command whose flattened form fits the head bound passes
+  // through untouched — including short multi-line ones (pre-existing
+  // flatten-and-show behavior).
+  if (flat.length <= headChars) return flat;
+  if (!command.trim().contains('\n')) {
+    final head = _codepointSafeSlice(flat, 0, headChars);
+    final tail = _codepointSafeSlice(
+      flat,
+      max(0, flat.length - tailChars),
+      flat.length,
+    );
+    final omitted = flat.length - head.length - tail.length;
+    if (omitted <= 0) return flat;
+    return '$head […$omitted chars…] $tail';
+  }
+  // Overflows: single-line commands keep head + tail; multi-line
+  // commands (issue #599 RED contract) keep the FIRST LINE only,
+  // bounded — the first line is the command's face (a heredoc opener,
+  // a script's shebang), while everything after it is body more often
+  // than it is action. A flattened 120-char head would leak the first
+  // body lines; a first-line head cannot. The first line comes from the
+  // TRIMMED command: a leading newline must not blank the face
+  // (gh-1604 rework).
+  final trimmed = command.trim();
+  final firstLineEnd = trimmed.indexOf('\n');
+  final firstLine =
+      (firstLineEnd < 0 ? trimmed : trimmed.substring(0, firstLineEnd))
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+  final head = _codepointSafeSlice(firstLine, 0, headChars);
+  final omitted = flat.length - head.length;
+  return '$head […$omitted chars…]';
+}
+
+/// The substring of [text] over `[start, end)`, nudged inward so a cut
+/// never separates a surrogate pair (the spill previews' rule).
+String _codepointSafeSlice(String text, int start, int end) {
+  var s = start.clamp(0, text.length);
+  var e = end.clamp(s, text.length);
+  if (s > 0 && s < text.length) {
+    if (text.codeUnitAt(s) >= 0xDC00 && text.codeUnitAt(s) <= 0xDFFF) s++;
+  }
+  if (e > s && e < text.length) {
+    final unit = text.codeUnitAt(e - 1);
+    if (unit >= 0xD800 && unit <= 0xDBFF) e--;
+  }
+  if (e <= s) return '';
+  return text.substring(s, e);
+}
+
+/// The model-facing settle notice for [job] — the text the host steers
+/// into the conversation (mid-run) or runs as a fresh turn (idle) when a
+/// background shell job exits. The command rides the bounded
+/// [shellJobCommandLabel], never the full body (gh-1604: a multi-KB
+/// command must not enter the transcript through every settle).
+String shellJobSettleNoticeText(ShellJobEntry job) {
+  return '<system-notice>\n'
+      'Background shell job ${job.id} finished with exit code '
+      '${job.exitCode}.\n'
+      // Issue #599: the preview, never the multi-line body — this
+      // notice is echoed into the transcript verbatim, and the full
+      // command lives in the job log (right below).
+      'Command: ${shellJobCommandLabel(job.command)}\n'
+      'Log: ${job.logPath}\n'
+      'Check the result with bash_job (action: output) or by reading the '
+      'log file, and act on it when the result was awaited.\n'
+      '</system-notice>';
+}
+
 /// Globally-unique background job id: several fa processes share one
 /// workspace, so per-process counters alone (`sh-1`, `sh-2`) would make
 /// them append to the SAME `.fah/bash_jobs/<id>.log` and interleave each
@@ -68,7 +168,8 @@ String newShellJobId(int n) {
 
 /// One registered background shell job.
 final class ShellJobEntry {
-  ShellJobEntry._(this.job, {this.cwd, this.timeout}) : startedAt = DateTime.now();
+  ShellJobEntry._(this.job, {this.cwd, this.timeout})
+    : startedAt = DateTime.now();
 
   /// The backend handle.
   final ShellJob job;
