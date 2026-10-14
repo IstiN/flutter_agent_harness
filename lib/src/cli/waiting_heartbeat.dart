@@ -242,9 +242,8 @@ final class JobsConfig {
 /// (E2: a waiter resolved, another remains) restarts the full period.
 /// Transport-free — the host supplies [onBeat].
 final class WaitingHeartbeat {
-  WaitingHeartbeat({required void Function() onBeat, int Function()? minutes})
-    : _onBeat = onBeat,
-      _minutes = minutes ?? (() => defaultWaitHeartbeatMinutes);
+  WaitingHeartbeat({required this._onBeat, int Function()? minutes})
+    : _minutes = minutes ?? (() => defaultWaitHeartbeatMinutes);
 
   final void Function() _onBeat;
   final int Function() _minutes;
