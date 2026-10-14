@@ -189,6 +189,7 @@ tb() {
   echo "FA_AGENT_TIMEOUT_SEC=${FA_AGENT_TIMEOUT_SEC-__unset__}"
   echo "FA_PROGRESS_EXTENSION=${FA_PROGRESS_EXTENSION-__unset__}"
   echo "FA_AGENT_TIMEOUT_ABS_CEILING_SEC=${FA_AGENT_TIMEOUT_ABS_CEILING_SEC-__unset__}"
+  echo "FA_EXTERNAL_CAP_SEC=${FA_EXTERNAL_CAP_SEC-__unset__}"
 }
 """
 
@@ -257,11 +258,14 @@ class BenchWorkflowShardStepTest(unittest.TestCase):
     def test_reg1_both_inputs_absent_keep_stock_delegation(self):
         # Issue #1122 REG-1: absent inputs leave both env vars unset and no
         # harness cap is passed — the adapter delegates to the stock flat
-        # cap. Must stay byte-for-byte.
+        # cap. Must stay byte-for-byte. gh-1576: the external-cap export
+        # rides the same branches — absent inputs must leave it unset too
+        # (E4 parity export, never an unconditional cap).
         proc = _run_shard()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(_env_value(proc.stdout, "FA_AGENT_TIMEOUT_SEC"), "__unset__")
         self.assertEqual(_env_value(proc.stdout, "FA_PROGRESS_EXTENSION"), "__unset__")
+        self.assertEqual(_env_value(proc.stdout, "FA_EXTERNAL_CAP_SEC"), "__unset__")
         self.assertIsNone(_flag_value(_tb_args(proc.stdout), "--global-agent-timeout-sec"))
 
     def test_explicit_timeout_pins_harness_cap_above_ladder(self):
@@ -271,6 +275,10 @@ class BenchWorkflowShardStepTest(unittest.TestCase):
         self.assertEqual(_env_value(proc.stdout, "FA_PROGRESS_EXTENSION"), "__unset__")
         args = _tb_args(proc.stdout)
         self.assertEqual(_flag_value(args, "--global-agent-timeout-sec"), "1380")  # 300*4+180
+        # gh-1576 E4: the same number is exported as the external cap —
+        # the adapter's min() can never pick a deadline past the harness
+        # kill, and the two numbers cannot drift apart.
+        self.assertEqual(_env_value(proc.stdout, "FA_EXTERNAL_CAP_SEC"), "1380")
 
     def test_leading_zero_timeout_is_base10_not_octal(self):
         # '010' must mean 10 (the $((10#...)) guard), not octal 8.
@@ -932,6 +940,10 @@ class AbsCeilingHarnessCapTest(unittest.TestCase):
             "3780",  # 3600 abs ceiling + 180 slack
         )
         self.assertEqual(_env_value(proc.stdout, "FA_PROGRESS_EXTENSION"), "1")
+        # gh-1576 E4: the watch branch exports the same number as the
+        # external cap (no-op today — it sits above the adapter ceiling —
+        # but the parity must hold if the ceiling is ever raised).
+        self.assertEqual(_env_value(proc.stdout, "FA_EXTERNAL_CAP_SEC"), "3780")
 
     def test_extension_on_exports_the_watch_knob(self):
         # Round-3 review blocker: FA_PROGRESS_EXTENSION alone leaves the
