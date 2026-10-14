@@ -13,6 +13,20 @@ block a release again.
 
 ## Unreleased
 
+- gh-1596: the first-run wizard (`site/setup.sh`) no longer crashes or
+  corrupts input under `curl | sh` on dash (Ubuntu sh) or busybox ash
+  (Alpine): `scripts/gen_installers.dart` now renders the provider/mode/
+  approval menus from the live provider catalog into plain POSIX sh — the
+  bashisms that killed dash (`printf -v`, `read -p`) and silently corrupted
+  busybox ash are gone; the hidden API-key prompt uses `stty -echo` + a
+  by-name `read` (dash has no `read -s`) and the key never rides printf
+  argv; EOF/Ctrl-C mid-wizard aborts non-zero with no half-written
+  `~/.fah`, and non-TTY runs print guidance and exit 1. The wizard's temp
+  config is `mktemp`-created (no predictable, symlink-followable fixed
+  path). A new path-triggered `installer-portability` CI leg proves the
+  script under dash + busybox ash (ubuntu) and bash (macOS) on every
+  `site/**` or generator change.
+
 - gh-1555 (W1, lazy/windowed-everywhere reads): the legacy full-open call
   sites migrate to windowed opens, so a session ledger past the gh-1073
   2 GiB full-open backstop stays openable on every user-facing read path.

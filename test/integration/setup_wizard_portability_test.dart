@@ -99,15 +99,15 @@ class _Answers {
   final List<(String, String)> items;
   _Answers(this.items);
   static _Answers custom({bool persistKey = false}) => _Answers([
-        ('Pick a provider', 'custom'),
-        ('Custom base URL', _endpoint),
-        ('Model id on that endpoint', _model),
-        ('Does this endpoint require an API key', 'y'),
-        ('Paste your API key', _key),
-        ('Pick a mode', '1'),
-        ('Pick an approval mode', 'yolo'),
-        if (persistKey) ('Add OPENAI_API_KEY to', 'y'),
-      ]);
+    ('Pick a provider', 'custom'),
+    ('Custom base URL', _endpoint),
+    ('Model id on that endpoint', _model),
+    ('Does this endpoint require an API key', 'y'),
+    ('Paste your API key', _key),
+    ('Pick a mode', '1'),
+    ('Pick an approval mode', 'yolo'),
+    if (persistKey) ('Add OPENAI_API_KEY to', 'y'),
+  ]);
 }
 
 class _PtyRun {
@@ -122,8 +122,10 @@ class _PtyRun {
     final deadline = DateTime.now().add(const Duration(seconds: 30));
     while (!_clean(buffer.toString()).contains(text)) {
       if (DateTime.now().isAfter(deadline)) {
-        fail('timed out waiting for "$text"; captured so far:\n'
-            '${_clean(buffer.toString())}');
+        fail(
+          'timed out waiting for "$text"; captured so far:\n'
+          '${_clean(buffer.toString())}',
+        );
       }
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
@@ -220,13 +222,7 @@ Future<_PtyRun> _startDirect({
   final script = '${_repoRoot()}/site/setup.sh';
   return _spawn(
     'bash',
-    [
-      '-c',
-      'bash "\$1"; echo \$? > "\$2"',
-      'wizard',
-      script,
-      fixture.exitFile,
-    ],
+    ['-c', 'bash "\$1"; echo \$? > "\$2"', 'wizard', script, fixture.exitFile],
     fixture: fixture,
     shellEnv: shellEnv,
   );
@@ -236,20 +232,27 @@ void main() {
   group('platform facts (pinned, gh-1596)', () {
     test('dash rejects printf -v (the #1596 crash)', () {
       final r = Process.runSync('dash', ['-c', 'printf -v x "%s" hi']);
-      expect(r.exitCode, isNonZero,
-          reason: 'dash must not accept the bash builtin form');
+      expect(
+        r.exitCode,
+        isNonZero,
+        reason: 'dash must not accept the bash builtin form',
+      );
     }, skip: _have('dash') ? null : 'dash not installed');
 
     test('busybox ash: printf -v silently corrupts (no assignment)', () {
       // This busybox build doesn't abort on `printf -v` — the flag rides
       // into the FORMAT and the variable stays empty. Either way the
       // bashism cannot survive: the assignment provably never happens.
-      final r = Process.runSync(
-        'busybox',
-        ['ash', '-c', 'printf -v x "%s" hi; [ "\$x" = hi ]'],
+      final r = Process.runSync('busybox', [
+        'ash',
+        '-c',
+        'printf -v x "%s" hi; [ "\$x" = hi ]',
+      ]);
+      expect(
+        r.exitCode,
+        isNonZero,
+        reason: 'printf -v must not assign under busybox ash',
       );
-      expect(r.exitCode, isNonZero,
-          reason: 'printf -v must not assign under busybox ash');
     }, skip: _have('busybox') ? null : 'busybox not installed');
 
     test('bash accepts printf -v (why macOS sh never crashed)', () {
@@ -259,9 +262,13 @@ void main() {
 
     test('dash read has no -s (why ask_hidden hides via stty)', () {
       final r = Process.runSync('dash', ['-c', 'read -s x < /dev/null']);
-      expect(r.exitCode, isNonZero,
-          reason: 'the ticket I3 shape `read -rs` is unrunnable on dash — '
-              'the emitted wizard must hide the key with stty instead');
+      expect(
+        r.exitCode,
+        isNonZero,
+        reason:
+            'the ticket I3 shape `read -rs` is unrunnable on dash — '
+            'the emitted wizard must hide the key with stty instead',
+      );
     }, skip: _have('dash') ? null : 'dash not installed');
   });
 
@@ -288,8 +295,13 @@ void main() {
     await run.feed(_Answers.custom(persistKey: persistKey));
 
     final exitCode = await run.awaitExit();
-    expect(exitCode, 0, reason: '$label: wizard exited non-zero; output:\n'
-        '${_clean(run.buffer.toString())}');
+    expect(
+      exitCode,
+      0,
+      reason:
+          '$label: wizard exited non-zero; output:\n'
+          '${_clean(run.buffer.toString())}',
+    );
 
     // The wizard completed through the whole flow.
     final out = _clean(run.buffer.toString());
@@ -308,26 +320,37 @@ void main() {
     expect(configText, contains('model: $_model'));
 
     // AC3: the key never appears in the transcript...
-    expect(out.contains(_key), isFalse,
-        reason: 'the hidden API key leaked into the captured transcript');
+    expect(
+      out.contains(_key),
+      isFalse,
+      reason: 'the hidden API key leaked into the captured transcript',
+    );
     // ...and lands in exactly ONE produced file, exactly once. config.yaml
     // stays key-free by design (secrets never ride the yaml, #288 E1) —
     // the key's home is the env-var rc file.
     final rcFile = File('${fixture.home.path}/.bashrc');
     if (persistKey) {
-      expect(rcFile.readAsStringSync().split(_key).length - 1, 1,
-          reason: 'persist-yes: the key must appear exactly once (the rc)');
+      expect(
+        rcFile.readAsStringSync().split(_key).length - 1,
+        1,
+        reason: 'persist-yes: the key must appear exactly once (the rc)',
+      );
     } else {
       expect(rcFile.existsSync(), isFalse);
     }
-    expect(configText.contains(_key), isFalse,
-        reason: 'config.yaml must stay key-free (#288 E1)');
+    expect(
+      configText.contains(_key),
+      isFalse,
+      reason: 'config.yaml must stay key-free (#288 E1)',
+    );
     // Nothing else under HOME carries the key.
-    for (final f
-        in fixture.home.listSync(recursive: true).whereType<File>()) {
+    for (final f in fixture.home.listSync(recursive: true).whereType<File>()) {
       if (f.path.endsWith('.bashrc')) continue;
-      expect(f.readAsStringSync().contains(_key), isFalse,
-          reason: '${f.path} unexpectedly carries the API key');
+      expect(
+        f.readAsStringSync().contains(_key),
+        isFalse,
+        reason: '${f.path} unexpectedly carries the API key',
+      );
     }
   }
 
@@ -345,8 +368,7 @@ void main() {
       );
     }, skip: _have('busybox') ? null : 'busybox not installed');
 
-    test('bash — full custom flow, key persisted exactly once (AC3)',
-        () async {
+    test('bash — full custom flow, key persisted exactly once (AC3)', () async {
       await runCustomWizard('bash', shell: 'bash', persistKey: true);
     });
   });
@@ -382,18 +404,21 @@ void main() {
       final r = Process.runSync(
         'dash',
         ['-c', 'cat "$script" | dash'],
-        environment: {
-          'HOME': fixture.home.path,
-          'PATH': fixture.path,
-        },
+        environment: {'HOME': fixture.home.path, 'PATH': fixture.path},
       );
-      expect(r.exitCode, isNonZero,
-          reason: 'a non-interactive run must not read as success (AC4)');
+      expect(
+        r.exitCode,
+        isNonZero,
+        reason: 'a non-interactive run must not read as success (AC4)',
+      );
       final out = '${r.stdout}${r.stderr}';
       expect(out, contains('Non-interactive environment detected.'));
       expect(out, contains('To finish setup, set an API key and run'));
-      expect(Directory('${fixture.home.path}/.fah').existsSync(), isFalse,
-          reason: 'the guard must fire before any config write');
+      expect(
+        Directory('${fixture.home.path}/.fah').existsSync(),
+        isFalse,
+        reason: 'the guard must fire before any config write',
+      );
     }, skip: _have('dash') ? null : 'dash not installed');
   });
 
@@ -406,12 +431,12 @@ void main() {
       await run.feed(_Answers([('Reconfigure?', 'n')]));
       final exitCode = await run.awaitExit();
       expect(exitCode, 0);
+      expect(_clean(run.buffer.toString()), contains('Kept existing config.'));
       expect(
-        _clean(run.buffer.toString()),
-        contains('Kept existing config.'),
+        fixture.config.readAsStringSync(),
+        'provider: keep-me\n',
+        reason: 'answering no must leave the config untouched',
       );
-      expect(fixture.config.readAsStringSync(), 'provider: keep-me\n',
-          reason: 'answering no must leave the config untouched');
     }, skip: _have('dash') ? null : 'dash not installed');
 
     test('E1 — Ctrl-C mid-wizard leaves no .fah behind', () async {
@@ -427,15 +452,23 @@ void main() {
       final deadline = DateTime.now().add(const Duration(seconds: 30));
       while (!run.done) {
         if (DateTime.now().isAfter(deadline)) {
-          fail('wizard survived Ctrl-C; captured:\n'
-              '${_clean(run.buffer.toString())}');
+          fail(
+            'wizard survived Ctrl-C; captured:\n'
+            '${_clean(run.buffer.toString())}',
+          );
         }
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
-      expect(Directory('${fixture.home.path}/.fah').existsSync(), isFalse,
-          reason: 'an interrupted wizard must leave no config dir behind');
-      expect(File(fixture.exitFile).existsSync(), isFalse,
-          reason: 'the interrupt killed the pipeline before completion');
+      expect(
+        Directory('${fixture.home.path}/.fah').existsSync(),
+        isFalse,
+        reason: 'an interrupted wizard must leave no config dir behind',
+      );
+      expect(
+        File(fixture.exitFile).existsSync(),
+        isFalse,
+        reason: 'the interrupt killed the pipeline before completion',
+      );
     }, skip: _have('dash') ? null : 'dash not installed');
 
     test('E3 — EOF mid-wizard aborts non-zero, no config written', () async {
@@ -451,10 +484,16 @@ void main() {
       await run.waitPrompt('Custom base URL');
       run.send('\x04');
       final code = await run.awaitExit();
-      expect(code, isNonZero,
-          reason: 'an EOF wizard run must not read as a completed setup');
-      expect(Directory('${fixture.home.path}/.fah').existsSync(), isFalse,
-          reason: 'no config may be written once input died mid-wizard');
+      expect(
+        code,
+        isNonZero,
+        reason: 'an EOF wizard run must not read as a completed setup',
+      );
+      expect(
+        Directory('${fixture.home.path}/.fah').existsSync(),
+        isFalse,
+        reason: 'no config may be written once input died mid-wizard',
+      );
     }, skip: _have('dash') ? null : 'dash not installed');
 
     test('E4 — HOME unset: clear error, non-zero exit', () {
@@ -464,16 +503,14 @@ void main() {
       final r = Process.runSync(
         'dash',
         ['-c', 'cat "$script" | dash'],
-        environment: {
-          'HOME': '',
-          'PATH': fixture.path,
-        },
+        environment: {'HOME': '', 'PATH': fixture.path},
       );
       expect(r.exitCode, isNonZero);
       expect(
         '${r.stdout}${r.stderr}',
         contains(r'$HOME is not set'),
-        reason: 'the failure must name the problem, not a bare '
+        reason:
+            'the failure must name the problem, not a bare '
             '"parameter not set" from deep inside the script',
       );
       expect(Directory('${fixture.home.path}/.fah').existsSync(), isFalse);

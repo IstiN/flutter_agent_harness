@@ -572,10 +572,7 @@ void main() {
         // mid-line. Anchor to the command position the gh-1476 bug
         // actually shipped (validation CI red on 342423d0).
         final inlineBad = RegExp(r'run: *dart test/site/');
-        final blockBad = RegExp(
-          r'^ *dart test/site/',
-          multiLine: true,
-        );
+        final blockBad = RegExp(r'^ *dart test/site/', multiLine: true);
         final legitMultiTarget =
             'run: dart test test/site/setup_test.dart '
             'test/site/installer_test.dart';
@@ -596,7 +593,8 @@ void main() {
           expect(
             anchor.hasMatch(legitMultiTarget),
             isFalse,
-            reason: 'a valid multi-target `dart test` invocation must stay '
+            reason:
+                'a valid multi-target `dart test` invocation must stay '
                 'green — the forbidden chars form across the argument '
                 'boundary, not in command position',
           );
@@ -604,14 +602,16 @@ void main() {
         expect(
           step,
           isNot(contains(inlineBad)),
-          reason: '`dart test/site/` in inline command position is not a '
+          reason:
+              '`dart test/site/` in inline command position is not a '
               'test invocation — dart treats it as a command name and '
               'exits 64',
         );
         expect(
           step,
           isNot(contains(blockBad)),
-          reason: '`dart test/site/` on a block-scalar line is not a test '
+          reason:
+              '`dart test/site/` on a block-scalar line is not a test '
               'invocation — dart treats it as a command name and exits 64',
         );
       },

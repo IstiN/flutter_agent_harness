@@ -1404,7 +1404,6 @@ extension on AgentCli {
 /// with the installer generator, which renders the wizard's model menus
 /// from the same source).
 
-
 /// Formats a token count as a compact preset label (`4K`, `16K`, `1M`).
 String formatTokenPreset(int tokens) {
   if (tokens >= 1048576 && tokens % 1048576 == 0) {
