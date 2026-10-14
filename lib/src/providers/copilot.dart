@@ -91,6 +91,9 @@ Future<void> _runCopilotStream(
       options.tokenManager ??
       CopilotTokenManager.forGithubToken(options.githubToken, client: client);
   var retried = false;
+  // PAT mode (gh-1606): the raw PAT is the credential — a 401/403 has no
+  // refresh path, so the wrapper must not burn a doomed retry on it.
+  final patMode = isFineGrainedGitHubPat(options.githubToken);
   try {
     while (true) {
       final String token;
@@ -144,7 +147,7 @@ Future<void> _runCopilotStream(
       final authRejected = statuses.any(
         (status) => status == 401 || status == 403,
       );
-      if (authRejected && !retried) {
+      if (authRejected && !retried && !patMode) {
         retried = true;
         manager.invalidate();
         continue;
@@ -167,7 +170,9 @@ OpenAICompletionsOptions _completionsOptions(
   return OpenAICompletionsOptions(
     apiKey: copilotToken,
     headers: {
-      ...copilotApiHeaders(copilotToken: copilotToken),
+      // An exchanged token keeps the vscode-chat identity; a raw
+      // fine-grained PAT (PAT mode) presents the Copilot CLI identity.
+      ...copilotRequestHeaders(copilotToken: copilotToken),
       // agent iff the model's own turn continues (assistant/toolResult is
       // the last message); user for a fresh user turn.
       'x-initiator': copilotInitiatorFor(context.messages),

@@ -119,6 +119,26 @@ final class PasteboardUnavailable extends PasteboardRead {
   final String reason;
 }
 
+/// The outcome of a pasteboard WRITE (`/provider export`, gh-1606): the
+/// text landed, or a named failure reason. Pure data — the IO glue in
+/// `clipboard_writer.dart` produces it, the REPL consumes it (both behind
+/// the same web-safe import).
+sealed class PasteboardWriteResult {
+  const PasteboardWriteResult();
+}
+
+/// The text is on the clipboard.
+final class PasteboardWriteOk extends PasteboardWriteResult {
+  const PasteboardWriteOk();
+}
+
+/// The clipboard refused or no writer exists — carries the failure reason
+/// for the transcript (the copied text itself never surfaces).
+final class PasteboardWriteUnavailable extends PasteboardWriteResult {
+  const PasteboardWriteUnavailable(this.reason);
+  final String reason;
+}
+
 /// The clean note for a terminal with no reachable pasteboard (edge E1):
 /// names what happened and the file-path fallback.
 const clipboardUnavailableHint =

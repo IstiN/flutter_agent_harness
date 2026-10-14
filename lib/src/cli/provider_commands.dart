@@ -594,7 +594,8 @@ extension on AgentCli {
   }
 
   /// Dispatches the subcommand forms of `/provider` (custom, openrouter
-  /// oauth, chatgpt oauth, copilot connect, codemie sso, dial setup).
+  /// oauth, chatgpt oauth, copilot connect, codemie sso, dial setup,
+  /// export).
   /// Returns true when one handled it.
   bool _dispatchProviderSubcommand(List<String> args) {
     if (_startAiinArg(args)) return true;
@@ -605,8 +606,99 @@ extension on AgentCli {
     if (_startCodeMieArg(args)) return true;
     if (_startDialSetupArg(args)) return true;
     if (_startKimiArg(args)) return true;
+    if (_startProviderExportArg(args)) return true;
     return false;
   }
+
+  /// The `/provider export` branch (gh-1606): copies the saved Copilot
+  /// account's full token to the clipboard — no transcript output, no
+  /// flags, no reveal ceremony. Returns true when the command targeted
+  /// the export.
+  bool _startProviderExportArg(List<String> args) {
+    if (args.first != 'export') return false;
+    if (args.length > 1) {
+      io.writeln('usage: /provider export');
+      return true;
+    }
+    unawaited(_handleProviderExportCommand());
+    return true;
+  }
+
+  /// Runs the export with the shared flow gate (the picker needs the REPL
+  /// answering lines, like the connect flow).
+  Future<void> _handleProviderExportCommand() async {
+    if (_providerFlowActive) return;
+    _providerFlowActive = true;
+    try {
+      await _runProviderExportCommand();
+    } finally {
+      _providerFlowActive = false;
+      _promptLineBuffer.clear();
+    }
+  }
+
+  Future<void> _runProviderExportCommand() async {
+    final registry = config.customProviders;
+    final accounts = [
+      for (final entry in registry?.entries ?? const <CustomProviderEntry>[])
+        if (entry.apiType == 'copilot') entry,
+    ];
+    if (accounts.isEmpty) {
+      io.writeln(
+        'no saved Copilot account — connect one with /provider copilot',
+      );
+      return;
+    }
+    final entry = accounts.length == 1
+        ? accounts.single
+        : await _pickExportCopilotAccount(accounts);
+    if (entry == null) {
+      io.writeln('Copilot export cancelled');
+      return;
+    }
+    final keyName = entry.keyName;
+    final token =
+        keyName == null ? null : config.secureKeys?.read(keyName);
+    if (token == null || token.isEmpty) {
+      io.writeln(
+        'no stored token for ${entry.name} — reconnect with '
+        '/provider copilot',
+      );
+      return;
+    }
+    final failure = await _copyToClipboard(token);
+    if (failure == null) {
+      io.writeln('token copied to clipboard');
+    } else {
+      io.writeln('could not copy the token to the clipboard: $failure');
+    }
+  }
+
+  /// The multi-account picker of the export flow (the connect flow's
+  /// account list minus the "add another account" row). Null = cancelled.
+  Future<CustomProviderEntry?> _pickExportCopilotAccount(
+    List<CustomProviderEntry> accounts,
+  ) async {
+    final choice = await _pickOption('Copilot account', [
+      for (final entry in accounts)
+        (entry.name, entry.name, '${entry.baseUrl} · ${entry.modelId}'),
+    ]);
+    if (choice == null) return null;
+    return config.customProviders?.find(choice);
+  }
+
+  /// Copies [text] to the host clipboard. Resolves to null on success, the
+  /// named failure reason otherwise (the text itself never surfaces).
+  Future<String?> _copyToClipboard(String text) async {
+    final injected = config.clipboardWrite;
+    if (injected != null) return injected(text);
+    final result = await writeClipboardText(text);
+    return switch (result) {
+      PasteboardWriteOk() => null,
+      PasteboardWriteUnavailable(:final reason) => reason,
+    };
+  }
+
 
   /// The `/provider dial setup [baseUrl]` branch: the guided DIAL flow (the
   /// same one the `+ Add provider → DIAL` preset opens). Returns true when
@@ -749,14 +841,19 @@ extension on AgentCli {
           );
           continue;
         }
-        // Fine-grained PATs work only with the "Copilot Requests"
-        // permission — hint now so an exchange 404 is self-explanatory.
+        // Fine-grained PAT: fa uses it DIRECTLY against the Copilot API
+        // (PAT mode, gh-1606 — same as the official Copilot CLI; the
+        // token exchange is never called). It still needs the "Copilot
+        // Requests" permission, and the device flow stays the
+        // recommended default.
         if (isFineGrainedGitHubPat(token)) {
           io.writeln(
-            'fine-grained PAT detected: it must carry the "Copilot '
-            'Requests" permission (github.com/settings/'
-            'personal-access-tokens → edit → Permissions), or the token '
-            'exchange will fail with 404.',
+            'fine-grained PAT detected: fa uses it directly against the '
+            'Copilot API (no token exchange — same as the official '
+            'Copilot CLI). It must carry the "Copilot Requests" '
+            'permission (github.com/settings/personal-access-tokens → '
+            'edit → Permissions); the GitHub device flow stays the '
+            'recommended default.',
           );
         }
         return token;
@@ -842,15 +939,20 @@ extension on AgentCli {
     // swallows errors into an empty list, which would drop the user into
     // manual model entry with no hint why (fine-grained PAT, no Copilot
     // plan on the account, dead network — live finding 2026-09). One
-    // cheap GET; the model fetch exchanges again.
-    try {
-      await fetchCopilotApiToken(
-        githubToken: githubToken,
-        client: config.modelsHttpClient,
-      );
-    } on CopilotAuthException catch (error) {
-      io.writeln('warning: ${error.message}');
-      io.writeln('continuing — pick or type the model id manually');
+    // cheap GET; the model fetch exchanges again. A fine-grained PAT
+    // skips this entirely (PAT mode): GitHub 404s every PAT exchange,
+    // and the /models fetch below validates it against the Copilot API
+    // directly.
+    if (!isFineGrainedGitHubPat(githubToken)) {
+      try {
+        await fetchCopilotApiToken(
+          githubToken: githubToken,
+          client: config.modelsHttpClient,
+        );
+      } on CopilotAuthException catch (error) {
+        io.writeln('warning: ${error.message}');
+        io.writeln('continuing — pick or type the model id manually');
+      }
     }
     // No provider carries a default model — the id comes from the live
     // /models list (user picks) or a manual entry.
