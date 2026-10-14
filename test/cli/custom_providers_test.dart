@@ -241,6 +241,25 @@ void main() {
       );
     });
 
+    test('keySlotCandidates: the cross-version slot family of one '
+        'endpoint (gh-1570 incident REG)', () {
+      // A record-scoped slot sits next to the host-scoped shape the same
+      // endpoint wrote before the record rule — the 1.0.556 → 1.0.564
+      // lockout pair. Canonical first.
+      expect(
+        CustomProviderRegistry.keySlotCandidates(
+          'https://api.kimi.com',
+          providerName: 'kimi-ira',
+        ),
+        ['FA_KEY_API_KIMI_COM_KIMI_IRA', 'FA_KEY_API_KIMI_COM'],
+      );
+      // Without a record name the canonical IS the host-scoped slot —
+      // a single candidate, no duplicates.
+      expect(CustomProviderRegistry.keySlotCandidates('https://api.kimi.com'), [
+        'FA_KEY_API_KIMI_COM',
+      ]);
+    });
+
     test('copilotEntryKeyName scopes to the entry name', () {
       expect(
         CustomProviderRegistry.copilotEntryKeyName('copilot-octocat'),
