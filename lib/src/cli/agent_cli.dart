@@ -157,6 +157,8 @@ import '../providers/provider_common.dart'
         stripAuthExpiredMarker,
         textOnlyImageDropNotice;
 import '../providers/transient_retry_stream.dart';
+import '../providers/provider_tuning.dart'
+    show describeRunIdleWindow, stallNoticeThreshold;
 import '../prompts/prompt_overrides.dart';
 import '../providers/aiin_auth.dart';
 import '../providers/quota.dart';

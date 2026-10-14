@@ -174,11 +174,18 @@ extension AgentCliSteering on AgentCli {
 
   /// Whether the busy run's event heartbeat is silent past
   /// [AgentCliConfig.steeringStaleAfter] — the wedged-consumer
-  /// look (issue #437 E4).
+  /// look (issue #437 E4). gh-1617 open question 1: the notice fires at
+  /// `min(ceiling, window)` — the early "still waiting" UX feedback
+  /// keeps its 2m ceiling under a wide configured window, and a tight
+  /// window pulls the notice earlier.
   bool _runLooksWedged() {
     final last = _lastAgentEventAt;
     if (last == null) return false;
-    return DateTime.now().difference(last) > config.steeringStaleAfter;
+    final threshold = stallNoticeThreshold(
+      noticeCeiling: config.steeringStaleAfter,
+      window: _agent.runIdleWindow.window,
+    );
+    return DateTime.now().difference(last) > threshold;
   }
 
   /// Persists an accepted mid-run steer: the attributed text as a
@@ -336,6 +343,14 @@ extension AgentCliSteering on AgentCli {
         ? 0
         : DateTime.now().difference(last).inSeconds;
     final minutes = seconds < 60 ? 1 : seconds ~/ 60;
+    // gh-1617 AC5: a configured window wider than the floor governs the
+    // run — the banner names it and its source so a wide patience never
+    // reads as a hang. Unset config appends nothing (byte-for-byte, AC3).
+    final window = _agent.runIdleWindow;
+    final windowNote = window.raised
+        ? ' (${describeRunIdleWindow(window.window, window.source)} — '
+              'the run keeps waiting)'
+        : '';
     // Issue #488 AC1a: when the caller knows the queue size (a fresh
     // wedged steer), the banner names the count instead of the single
     // "your message" copy. When no messages are queued, it is an
@@ -345,10 +360,10 @@ extension AgentCliSteering on AgentCli {
       final saved = queued == 1
           ? '1 steering message saved to the session'
           : '$queued steering messages saved to the session';
-      return '⚠ agent stalled — no response for ${minutes}m. '
+      return '⚠ agent stalled — no response for ${minutes}m$windowNote. '
           '$saved: /restart delivers it into a fresh run, esc aborts';
     }
-    return 'info: agent stalled — no response for ${minutes}m. '
+    return 'info: agent stalled — no response for ${minutes}m$windowNote. '
         '/restart starts a fresh run, esc aborts';
   }
 

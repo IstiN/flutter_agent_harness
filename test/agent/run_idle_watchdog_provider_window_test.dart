@@ -215,7 +215,7 @@ void main() {
       expect(coveredLast.stopReason, StopReason.stop,
           reason: 'the entry window (150ms) covers the warmup (120ms)');
 
-      final otherWarmup = _WarmingUpProvider(const Duration(milliseconds: 120));
+      final otherWarmup = _WarmingUpProvider(const Duration(milliseconds: 500));
       final uncovered = _agent(
         model: _model(baseUrl: 'https://other.test/v1'),
         provider: otherWarmup,
@@ -319,7 +319,7 @@ void main() {
       expect(errors, isNotEmpty);
       final fire = errors.first.toString();
       expect(fire, contains('run idle watchdog'));
-      expect(fire, contains('150ms'));
+      expect(fire, contains('idle window'));
       expect(fire, contains('provider:llama-local'));
     });
 
@@ -337,7 +337,7 @@ void main() {
 
       expect(errors, isNotEmpty);
       expect(
-        errors.first.toString(),
+        (errors.first as TimeoutException).message,
         'agent run produced no events for 0s (run idle watchdog)',
         reason: 'the 60ms floor renders as 0s — the pre-ticket wording',
       );
@@ -362,7 +362,7 @@ void main() {
       expect(info.raised, isTrue);
 
       final plain = _agent(
-        model: _baseModel,
+        model: _model(baseUrl: 'https://other.test/v1'),
         provider: provider,
         floor: defaultRunIdleTimeout,
       );

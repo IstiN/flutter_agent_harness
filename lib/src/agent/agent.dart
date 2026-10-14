@@ -835,8 +835,6 @@ class Agent {
     );
     onRunIdleTimeout?.call(error);
     run.source.cancel(error);
-    onRunIdleTimeout?.call(error);
-    run.source.cancel(error);
     // gh-1308: the transient-retry ladder replays the watchdog-cancelled
     // request (the machine-cancel resume class) — the replayed silent
     // attempt must be bounded by the SAME interval, or it lives to the

@@ -38,6 +38,13 @@ import '../event_stream.dart';
 import '../model.dart';
 import '../overflow.dart' show isContextOverflow;
 import '../types.dart';
+import 'provider_common.dart' show providerStreamIdleTimeout;
+import 'provider_tuning.dart'
+    show
+        explicitConnectForModel,
+        explicitStreamIdleForModel,
+        formatProviderTimeout,
+        zeroByteAttemptBudget;
 
 /// Patterns classifying a provider error as a transient network failure:
 /// the wordings `dart:io` sockets and the http client produce when the
@@ -517,6 +524,14 @@ Future<bool> _afterTransientFailure(
   // cancel never reaches this branch — `_resumableAbort` stands it before
   // the outcome exists.
   final watchdogReplay = cancelToken?.cancelReason is RunIdleWatchdogFire;
+  // gh-1617: the fire's OWN duration is the watchdog interval that
+  // governed this kill (the agent arms the timer with the derived
+  // window) — the replay-budget math and the terminal story read it
+  // BEFORE the latch re-arms (the reset wipes the reason).
+  final watchdogWindow =
+      cancelToken?.cancelReason is RunIdleWatchdogFire
+      ? (cancelToken!.cancelReason as RunIdleWatchdogFire).duration
+      : null;
   state.attemptLog.add(_replayReason(watchdogReplay, error));
   _rearmWatchdogLatch(cancelToken, watchdogReplay);
   // gh-1308: replaying into an endpoint that produced NOTHING is bounded
@@ -527,11 +542,21 @@ Future<bool> _afterTransientFailure(
   // Past the bound the call fails fast and truthfully: a retryable
   // provider error the roles ladder can fail over on, never a caller
   // timeout.
+  //
+  // gh-1617 I2/AC4: an EXPLICITLY configured connectTimeoutMs bounds the
+  // replay patience on top — a budget below the idle window buys no
+  // replay at all, and the terminal names both values.
   state.zeroByteKills = watchdogReplay ? state.zeroByteKills + 1 : 0;
-  if (state.zeroByteKills >= maxZeroByteWatchdogAttempts) {
+  final windowStory = _zeroByteWindowStory(model, watchdogWindow);
+  final zeroByteBudget = zeroByteAttemptBudget(
+    ladderBound: maxZeroByteWatchdogAttempts,
+    idleWindow: windowStory.window,
+    connectBudget: windowStory.connectBudget?.$1,
+  );
+  if (state.zeroByteKills >= zeroByteBudget) {
     _pushTerminal(
       out,
-      _zeroByteStallTerminal(model, state.attemptLog, state.startedAt),
+      _zeroByteStallTerminal(model, state.attemptLog, state.startedAt, windowStory),
       resume,
     );
     return false;
@@ -612,16 +637,59 @@ ErrorEvent _zeroByteStallTerminal(
   Model model,
   List<String> attemptLog,
   DateTime startedAt,
+  _ZeroByteWindowStory windowStory,
 ) => ErrorEvent(
   reason: StopReason.error,
-  error: _zeroByteStallMessage(model, attemptLog, startedAt),
+  error: _zeroByteStallMessage(model, attemptLog, startedAt, windowStory),
 );
+
+/// Where the zero-byte attempts' patience came from (gh-1617 AC4/AC5):
+/// the governing idle window + its precedence source, and the explicit
+/// connect budget when one clipped the replay.
+final class _ZeroByteWindowStory {
+  const _ZeroByteWindowStory({
+    required this.window,
+    required this.source,
+    this.connectBudget,
+  });
+
+  /// The idle window the watchdog kills ran under: the fire's own
+  /// duration (the interval the agent armed — the derived window),
+  /// else the model's explicit window, else the provider default.
+  final Duration window;
+
+  /// The rendered precedence source (`role <role> override` /
+  /// `provider:<name>` / `global` / `default`).
+  final String source;
+
+  /// The explicitly configured connect budget, when one is (AC4).
+  final (Duration, String)? connectBudget;
+}
+
+/// Resolves the window story for a zero-byte verdict (gh-1617): the
+/// watchdog interval that actually killed the attempts wins ([fireWindow]
+/// — the fire carries the agent's derived window), falling back to the
+/// gh-1554 precedence and then the provider default for direct-ladder
+/// callers whose cancel reason carries no duration.
+_ZeroByteWindowStory _zeroByteWindowStory(
+  Model model,
+  Duration? fireWindow,
+) {
+  final explicit = explicitStreamIdleForModel(model);
+  final window = fireWindow ?? explicit?.$1 ?? providerStreamIdleTimeout;
+  return _ZeroByteWindowStory(
+    window: window,
+    source: explicit?.$2 ?? 'default',
+    connectBudget: explicitConnectForModel(model),
+  );
+}
 
 /// The zero-byte stall story (see [_zeroByteStallTerminal]).
 AssistantMessage _zeroByteStallMessage(
   Model model,
   List<String> attemptLog,
   DateTime startedAt,
+  _ZeroByteWindowStory windowStory,
 ) {
   final elapsed = DateTime.now().difference(startedAt);
   final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
@@ -631,6 +699,22 @@ AssistantMessage _zeroByteStallMessage(
             line.endsWith('.') ? line.substring(0, line.length - 1) : line,
       )
       .join('; ');
+  // gh-1617 AC5: the terminal names the effective window and its
+  // precedence source, and suggests raising streamIdleTimeoutMs for a
+  // genuinely warming-up model.
+  var windowNote =
+      'Idle window ${formatProviderTimeout(windowStory.window)} '
+      '(${windowStory.source}).';
+  // gh-1617 AC4: a connect budget below the window stopped the replay —
+  // both values are named so the config conflict is readable at a glance.
+  final connect = windowStory.connectBudget;
+  if (connect != null && connect.$1 < windowStory.window) {
+    windowNote =
+        'Idle window ${formatProviderTimeout(windowStory.window)} '
+        '(${windowStory.source}); the configured connectTimeoutMs '
+        '${formatProviderTimeout(connect.$1)} (${connect.$2}) stopped the '
+        'replay budget at ${attemptLog.length} attempt(s).';
+  }
   return AssistantMessage(
     content: const [],
     api: model.api,
@@ -642,7 +726,9 @@ AssistantMessage _zeroByteStallMessage(
         'Provider zero-byte stall after ${attemptLog.length} attempt(s) '
         'over $elapsedText — the endpoint accepted the request but never '
         'produced output; the run-idle watchdog killed every silent '
-        'attempt ($zeroByteStallTag). Attempts: $log. The failure is '
+        'attempt ($zeroByteStallTag). Attempts: $log. $windowNote To wait '
+        'longer on a warming-up model, raise '
+        'providerTimeouts.streamIdleTimeoutMs. The failure is '
         'retryable: a fallback model may take over, or check the '
         'provider status / try again later.',
     timestamp: DateTime.now(),

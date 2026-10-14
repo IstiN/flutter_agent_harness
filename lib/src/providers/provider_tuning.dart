@@ -511,7 +511,17 @@ Duration stallNoticeThreshold({
 /// (gh-1617 AC5): `idle window 2000s (provider:llama-local)` — a wide
 /// configured window must never read as a hang.
 String describeRunIdleWindow(Duration window, String source) =>
-    'idle window ${_humanize(window)} ($source)';
+    'idle window ${formatProviderTimeout(window)} ($source)';
+
+/// The stall-surface duration renderer: sub-second windows render as
+/// `<N>ms` — a mis-keyed 150ms window must be recognizable verbatim in
+/// the terminal and notice lines (gh-1617 AC4 names config values);
+/// everything else goes through the tenths-of-a-second humanizer.
+String formatProviderTimeout(Duration d) {
+  final ms = d.inMilliseconds;
+  if (ms > 0 && ms < 1000) return '${ms}ms';
+  return _humanize(d);
+}
 
 /// The startup/boot notice line for one resolved pair:
 /// `provider tuning glm-relay: connect 180s (default), idle 1.5s
