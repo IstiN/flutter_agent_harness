@@ -13,6 +13,27 @@ block a release again.
 
 ## Unreleased
 
+- gh-1555 (W1, lazy/windowed-everywhere reads): the legacy full-open call
+  sites migrate to windowed opens, so a session ledger past the gh-1073
+  2 GiB full-open backstop stays openable on every user-facing read path.
+  The TUI session picker, `/resume`, and the boot name-resolution scan
+  open windowed and resolve the display name through paged reads; the
+  subagent transcript preview opens the child windowed (tail only); the
+  `_loadSession` marathon fallback no longer degenerates to a refused
+  full open when the boundary walk exhausts its page cap (it proceeds
+  with the tail-anchored windowed session; the boot cap owns over-window
+  residue); and the headless `fa trajectory` resolver opens windowed,
+  reading the whole ledger for the cost/inspect views through the new
+  `SessionTree.ensureWholeLedgerResident` — a sequential forward scan in
+  bounded strips (`WindowedSessionStorage.loadAllOlder`), not the
+  boundary-walk's doubling strips (whose per-strip record cap measured
+  ~13x read/parse amplification over the whole file). The same change
+  block-prepends paged chunks in `_indexChunk` (one `insertAll` per
+  list), removing an O(n²) the suspended-eviction walk paid per record.
+  Trajectory export streaming (AC3a), split-and-retain rotation
+  activation (W2), and the opt-in write-side caps (W3) remain follow-up
+  work.
+
 - gh-1605: the FinalizeGate gains a "grader parity" named check. A
   produced entry point (script/CLI the verifier will run itself) is only
   verified when it survives the grader's own invocation: the checklist
