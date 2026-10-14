@@ -230,6 +230,101 @@ void main() {
     },
     timeout: const Timeout(Duration(minutes: 2)),
   );
+
+  test('IT-3: the grader-parity check catches a cwd-dependent entry point '
+      'before finalize (gh-1605)', () async {
+    // The modernize-scientific-stack__nwbgy7a replay: a produced entry
+    // point whose output depends on the CWD (it resolves its dataset
+    // relatively). The scripted agent runs it in-session — the output
+    // looks right — then re-runs it the way the verifier will (neutral
+    // cwd) and watches Station 102 collapse to the stale fallback
+    // value. The divergence must land in the persisted ledger as a
+    // `fail` item BEFORE the run finalizes — not as a pass.
+    final appDir = '${tempDir.path}/app';
+    final lines = await runScripted(ApprovalMode.unattended, [
+      // Turn 1: build the fixture — dataset + stale bundled fallback +
+      // the entry point that resolves the dataset via the CWD.
+      _Turn.toolCalls([
+        (
+          id: 'call_1',
+          name: 'bash',
+          arguments:
+              'mkdir -p app && cd app && '
+              "printf 'station,temp\\n101,-15.5\\n102,30.3\\n' > stations.csv && "
+              "printf 'station,temp\\n101,-15.5\\n102,15.5\\n' > stations.csv.stale && "
+              r"""cat > mean.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f stations.csv ]]; then
+  data=stations.csv
+else
+  data="$(dirname "$0")/stations.csv.stale"
+fi
+awk -F, 'NR > 1 { sum[$1] += $2; n[$1]++ }
+  END { for (s in sum) printf "Station %s mean temperature: %.1f C\n", s, sum[s]/n[s] }' "$data" | sort
+EOF""",
+        ),
+      ]),
+      // Turn 2: the in-session verification — looks right (30.3).
+      const _Turn.toolCalls([
+        (id: 'call_2', name: 'bash', arguments: 'cd app && bash mean.sh'),
+      ]),
+      // Turn 3: the grader-parity re-run — neutral cwd, fresh
+      // subprocess: the relative dataset resolves to the stale table.
+      _Turn.toolCalls([
+        (id: 'call_3', name: 'bash', arguments: 'cd / && bash $appDir/mean.sh'),
+      ]),
+      // Turn 4: the final answer — the parity item reads `fail`, the
+      // run does NOT claim the entry point verified.
+      const _Turn.text(
+        'Ran the parity check: divergence detected.\n'
+        '```task-ledger\n'
+        '- requirement: mean.sh prints both station means\n'
+        '  command: cd app && bash mean.sh\n'
+        '  expected: Station 102 mean temperature: 30.3 C\n'
+        '  actual: Station 102 mean temperature: 30.3 C\n'
+        '  status: pass\n'
+        '- requirement: '
+        'grader parity: mean.sh output matches under a fresh cwd + '
+        'clean env\n'
+        '  command: cd / && bash <app>/mean.sh\n'
+        '  expected: Station 102 mean temperature: 30.3 C\n'
+        '  actual: Station 102 mean temperature: 15.5 C\n'
+        '  status: fail\n'
+        '```\n',
+      ),
+    ], headless: true);
+    final records = recordsOf(lines);
+    final transcript = const JsonEncoder.withIndent(' ').convert(records);
+
+    // Both invocations actually executed — the in-session run and the
+    // neutral-cwd parity re-run (the divergence is witnessed, not
+    // narrated).
+    expect(transcript, contains('cd app && bash mean.sh'));
+    expect(transcript, contains('cd / && bash '));
+    expect(transcript, contains('30.3'));
+    expect(transcript, contains('15.5'));
+
+    // The persisted ledger carries the divergence as a `fail` item.
+    final ledgerRecords = records
+        .where(
+          (record) =>
+              record['type'] == 'custom' &&
+              record['customType'] == 'task_ledger',
+        )
+        .toList();
+    expect(ledgerRecords, hasLength(1));
+    final items = (ledgerRecords.single['data'] as Map)['items'] as List;
+    expect(
+      [for (final item in items) (item as Map)['status']],
+      ['pass', 'fail'],
+    );
+    expect(
+      transcript.contains('Station 102 mean temperature: 15.5 C'),
+      isTrue,
+      reason: 'the ledger records the diverged parity output as actual',
+    );
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }
 
 /// One scripted assistant turn: tool calls or a final text answer.

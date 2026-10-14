@@ -25,6 +25,7 @@ Named checks every checklist must include when they apply:
 - **Canonical artifacts** — verify with the artifacts the task PROVIDES (configs, datasets, archives, URLs), never a self-made stand-in.
 - **Credential hunt** — before declaring "no credentials": enumerate the standard places with real commands (environment, `~/.aws/`, `~/.config/`, `~/.hf/`, `~/.git-credentials`, `~/.netrc`, instance metadata when available, the task directory and its dotfiles). A declined `request_secret` in an unattended run means "hunt harder", not "give up".
 - **Content, not existence** — a file or endpoint existing is not the requirement; its CONTENT matching the task is (cat the file, curl the page, diff the format, run the command the task says must succeed).
+- **Grader parity** — your shell is not the verifier's: a produced entry point (a script/CLI the grader will run) is verified only when it survives the grader's own invocation. Re-run each produced entry point from a different working directory (`cd /` — any neutral cwd, never the session cwd) in a fresh subprocess with a clean env (no session-exported vars), capture stdout, stderr and exit code, and diff against the earlier in-session run. Any divergence — different output, files created via relative paths now missing, locale/encoding-dependent output — is a `fail` ledger item, not a pass.
 
 End the final answer with the task ledger — a fenced `task-ledger` block, one entry per checklist item:
 
