@@ -619,8 +619,7 @@ void main() {
     });
 
     test('the notice reason carries the UNTRUNCATED provider line — the '
-        'face classifies the full text, truncation is display-only',
-        () async {
+        'face classifies the full text, truncation is display-only', () async {
       var calls = 0;
       final reasons = <String>[];
       transientRetryNotice = (attempt, maxAttempts, delay, reason) {
