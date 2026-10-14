@@ -32,7 +32,16 @@ Future<int> _runTrajectoryCommand(
   // storage-read+parse, ledger-projection, and render durations to stderr.
   final timing = _envTruthy('FA_TIMING');
   final parseSw = Stopwatch()..start();
-  final records = await session.getBranch();
+  // gh-1555 W1 (d6): view --at/cost/inspect read the WHOLE branch, but
+  // the resolver opened windowed (the only way past the gh-1073
+  // full-open backstop). Page the rest in bounded doubling blocks —
+  // chunked reads, never the refused materialized whole-file string.
+  // The walk is storage read+parse, so it rides the parse phase.
+  // `tail` is excluded (trajectoryVerbRecords): it follows the resident
+  // window + live-tail ingest and never needs the head — priming would
+  // re-raise the gh-1073 refusal for over-the-backstop sessions and
+  // un-boundedly materialize the ledger just to print the backfill.
+  final records = await trajectoryVerbRecords(session, command.verb);
   parseSw.stop();
   final buildSw = Stopwatch()..start();
   final baseSnapshot = trajectorySnapshotOf(records);
@@ -81,25 +90,9 @@ Future<int> _runTrajectoryCommand(
       );
       break;
     case 'tail':
-      io.writeln('trajectory: following records — Ctrl+C to stop');
-      final tailer = TrajectoryTailer(width: io.columns);
-      final metadata = await session.getMetadata();
-      for (final line in tailer.tail(records)) {
-        io.write('$line\n');
-      }
-      while (true) {
-        await Future<void>.delayed(trajectoryPollInterval);
-        final List<SessionRecord> fresh;
-        try {
-          fresh = await (await repo.open(metadata)).getBranch();
-        } on Object catch (error) {
-          io.writeln('trajectory: tail failed: $error');
-          return 1;
-        }
-        for (final line in tailer.tail(fresh)) {
-          io.write('$line\n');
-        }
-      }
+      // Never returns: follows until interrupted, so the render-stop and
+      // timing print below are unreachable on this path (as before).
+      return _runTrajectoryTail(io, session, records);
   }
   renderSw.stop();
   if (timing) {
@@ -120,6 +113,52 @@ int _printTrajectory(CliIO io, List<String> lines) {
     io.write('$line\n');
   }
   return 0;
+}
+
+/// The `fa trajectory tail` follower, split out of
+/// [_runTrajectoryCommand] to keep the command dispatcher under the
+/// CRAP ratchet (CC ≤ 12). Prints the resident-window backfill
+/// [records] first, then polls until interrupted.
+///
+/// gh-1555 W1 rework (review BLOCKING): the poll reads the ORIGINAL
+/// [session] and the windowed live-tail ingest picks up the appended
+/// suffix on every poll. Re-opening a fresh windowed session each poll
+/// returned only the ~200-record resident window, so the tailer never
+/// saw the appended records land and went permanently silent for any
+/// session larger than the window. The tailer dedupes by record id, so
+/// the window's head eviction (records sliding out of residency) cannot
+/// re-silence it either.
+///
+/// Review IMPORTANT (same rework round): `tail` never primes the whole
+/// ledger (see [trajectoryVerbRecords]) — this follower is memory-
+/// bounded by the resident window at ANY ledger size.
+Future<int> _runTrajectoryTail(
+  CliIO io,
+  Session session,
+  List<SessionRecord> records,
+) async {
+  io.writeln('trajectory: following records — Ctrl+C to stop');
+  final tailer = TrajectoryTailer(width: io.columns);
+  for (final line in tailer.tail(records)) {
+    io.write('$line\n');
+  }
+  while (true) {
+    await Future<void>.delayed(trajectoryPollInterval);
+    final List<SessionRecord> fresh;
+    try {
+      final storage = session.getStorage();
+      if (storage is WindowedSessionStorage) {
+        await storage.ingestAppended();
+      }
+      fresh = await session.getBranch();
+    } on Object catch (error) {
+      io.writeln('trajectory: tail failed: $error');
+      return 1;
+    }
+    for (final line in tailer.tail(fresh)) {
+      io.write('$line\n');
+    }
+  }
 }
 
 /// `fa serve --a2a` — mounts the fully-configured agent as an A2A endpoint
