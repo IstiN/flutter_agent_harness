@@ -237,6 +237,80 @@ void main() {
     });
   });
 
+  group('continuation nudge transparency (gh-1603)', () {
+    test('UT-N1: the loop-injected nudge does not reset the partial-content '
+        'window — a nudged retry stays a hiccup', () {
+      final turn = [
+        UserMessage.text('do the task'),
+        assistant(
+          content: [const ToolCall(id: 'c1', name: 'bash', arguments: {})],
+        ),
+        ToolResultMessage(
+          toolCallId: 'c1',
+          toolName: 'bash',
+          content: [TextContent(text: 'ok')],
+          isError: false,
+          timestamp: DateTime.utc(2026),
+        ),
+        assistant(),
+        UserMessage.text(emptyContinuationNudge),
+        assistant(),
+      ];
+      expect(
+        classifyEmptyCompletion(turn, turn.last as AssistantMessage),
+        EmptyCompletionVerdict.emptyAfterPartial,
+      );
+    });
+
+    test('UT-N2: a real user message still ends the window — cleanEmpty', () {
+      final turn = [
+        UserMessage.text('do the task'),
+        assistant(
+          content: [const ToolCall(id: 'c1', name: 'bash', arguments: {})],
+        ),
+        ToolResultMessage(
+          toolCallId: 'c1',
+          toolName: 'bash',
+          content: [TextContent(text: 'ok')],
+          isError: false,
+          timestamp: DateTime.utc(2026),
+        ),
+        UserMessage.text('actually, just say hi'),
+        assistant(),
+      ];
+      expect(
+        classifyEmptyCompletion(turn, turn.last as AssistantMessage),
+        EmptyCompletionVerdict.cleanEmpty,
+      );
+    });
+
+    test('UT-N3: the nudge marker recognizes only the exact message', () {
+      expect(
+        isContinuationNudgeMessage(UserMessage.text(emptyContinuationNudge)),
+        isTrue,
+      );
+      expect(isContinuationNudgeMessage(UserMessage.text('continue')), isFalse);
+      expect(
+        isContinuationNudgeMessage(
+          UserMessage.text('$emptyContinuationNudge!'),
+        ),
+        isFalse,
+      );
+      expect(
+        isContinuationNudgeMessage(
+          assistant(content: [TextContent(text: emptyContinuationNudge)]),
+        ),
+        isFalse,
+      );
+    });
+
+    test('UT-N4: the nudge text carries the truncation + continuation ask', () {
+      expect(emptyContinuationNudge, contains('empty'));
+      expect(emptyContinuationNudge, contains('truncated'));
+      expect(emptyContinuationNudge, contains('continue the task'));
+    });
+  });
+
   group('emptyHiccupExhaustedError', () {
     test('names the retry count, the attempt count, and the stop reason', () {
       final message = emptyHiccupExhaustedError(
