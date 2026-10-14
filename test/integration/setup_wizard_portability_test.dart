@@ -438,6 +438,25 @@ void main() {
           reason: 'the interrupt killed the pipeline before completion');
     }, skip: _have('dash') ? null : 'dash not installed');
 
+    test('E3 — EOF mid-wizard aborts non-zero, no config written', () async {
+      final fixture = _Fixture();
+      addTearDown(fixture.dispose);
+      final run = await _startPiped('dash', fixture: fixture, shellEnv: '');
+      // One real answer, then ^D on an empty line at the NEXT prompt: the
+      // read inside `ask` fails, the `var=$(ask …)` assignment fails, and
+      // `set -eu` must take the whole wizard down — never silently proceed
+      // on defaults and write a half-configured ~/.fah.
+      await run.waitPrompt('Pick a provider');
+      run.send('custom\r');
+      await run.waitPrompt('Custom base URL');
+      run.send('\x04');
+      final code = await run.awaitExit();
+      expect(code, isNonZero,
+          reason: 'an EOF wizard run must not read as a completed setup');
+      expect(Directory('${fixture.home.path}/.fah').existsSync(), isFalse,
+          reason: 'no config may be written once input died mid-wizard');
+    }, skip: _have('dash') ? null : 'dash not installed');
+
     test('E4 — HOME unset: clear error, non-zero exit', () {
       final fixture = _Fixture();
       addTearDown(fixture.dispose);
