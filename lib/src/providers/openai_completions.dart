@@ -292,11 +292,19 @@ final class _OpenAICompletionsSession {
   }
 
   Future<void> _consumeSse(http.StreamedResponse response) async {
+    // Issue #1554: the model's request-scoped idle window sits BELOW the
+    // explicit options override and ABOVE the per-provider table.
+    final scopedIdle = options?.idleTimeout ?? model.streamIdleTimeout;
     final iterator = createSseIterator(
       response,
       cancelToken,
       // Null falls through to the effective (config-overridable) default.
-      idleTimeout: options?.idleTimeout,
+      idleTimeout: scopedIdle,
+      // The scope label cites THE LEG THAT RAN (issue #1554 review round 1):
+      // an explicit options override or an unscoped model keeps bare text.
+      timeoutSource: options?.idleTimeout == null && scopedIdle != null
+          ? model.timeoutScopeLabel
+          : null,
     );
 
     var dataChunks = 0;
