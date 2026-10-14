@@ -580,67 +580,69 @@ void main() {
   });
 
   group('PAT connect (no exchange)', () {
-    test('a pasted fine-grained PAT connects without touching the exchange',
-        () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final store = FakeSecureKeyStore();
-      final cache = SecureKeyCache(store);
-      await cache.probe();
-      final registry = CustomProviderRegistry([]);
-      // The exchange host is NEVER hit in PAT mode — any request there
-      // fails the test.
-      final patOnlyClient = http_testing.MockClient((request) async {
-        if (request.url.host == 'api.github.com') {
-          fail('PAT mode must never call api.github.com');
-        }
-        if (request.url.path.endsWith('/models')) {
-          return http.Response(
-            '{"data":[{"id":"gpt-4.1","model_picker_enabled":true,'
-            '"capabilities":{"supports":{"tool_calls":true},"limits":'
-            '{"max_context_window_tokens":128000,"max_output_tokens":'
-            '16384}}}]}',
-            200,
-          );
-        }
-        return http.Response('not found', 404);
-      });
-      final cli = cliFor(
-        modelsHttpClient: patOnlyClient,
-        fake.call,
-        envVarValue: (_) => null,
-        secureKeys: cache,
-        customProviders: registry,
-        copilotUserFn: (_) async => 'hubot',
-      );
-      final run = cli.run();
+    test(
+      'a pasted fine-grained PAT connects without touching the exchange',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final registry = CustomProviderRegistry([]);
+        // The exchange host is NEVER hit in PAT mode — any request there
+        // fails the test.
+        final patOnlyClient = http_testing.MockClient((request) async {
+          if (request.url.host == 'api.github.com') {
+            fail('PAT mode must never call api.github.com');
+          }
+          if (request.url.path.endsWith('/models')) {
+            return http.Response(
+              '{"data":[{"id":"gpt-4.1","model_picker_enabled":true,'
+              '"capabilities":{"supports":{"tool_calls":true},"limits":'
+              '{"max_context_window_tokens":128000,"max_output_tokens":'
+              '16384}}}]}',
+              200,
+            );
+          }
+          return http.Response('not found', 404);
+        });
+        final cli = cliFor(
+          modelsHttpClient: patOnlyClient,
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          copilotUserFn: (_) async => 'hubot',
+        );
+        final run = cli.run();
 
-      io.sendLine('/provider copilot');
-      await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
-      io.sendLine('2'); // paste an existing token
-      await waitForIt(() => io.out.toString().contains('GitHub token: '));
-      io.sendLine('github_pat_HEADLESS_PAT');
-      await waitForIt(
-        () => io.out.toString().contains('provider name [copilot-hubot]'),
-      );
-      io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('Copilot plan'));
-      io.sendLine('2'); // business
-      await waitForIt(() => io.out.toString().contains('Copilot model'));
-      io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to copilot'),
-      );
-      io.sendLine('/exit');
-      await run;
+        io.sendLine('/provider copilot');
+        await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+        io.sendLine('2'); // paste an existing token
+        await waitForIt(() => io.out.toString().contains('GitHub token: '));
+        io.sendLine('github_pat_HEADLESS_PAT');
+        await waitForIt(
+          () => io.out.toString().contains('provider name [copilot-hubot]'),
+        );
+        io.sendLine('');
+        await waitForIt(() => io.out.toString().contains('Copilot plan'));
+        io.sendLine('2'); // business
+        await waitForIt(() => io.out.toString().contains('Copilot model'));
+        io.sendLine('1');
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to copilot'),
+        );
+        io.sendLine('/exit');
+        await run;
 
-      final output = io.out.toString();
-      // The PAT hint no longer forecasts an exchange 404.
-      expect(output, contains('directly against the'));
-      expect(output, isNot(contains('will fail with 404')));
-      final entry = registry.find('copilot-hubot')!;
-      expect(entry.baseUrl, 'https://api.business.githubcopilot.com');
-      expect(store.map[entry.keyName!], 'github_pat_HEADLESS_PAT');
-    });
+        final output = io.out.toString();
+        // The PAT hint no longer forecasts an exchange 404.
+        expect(output, contains('directly against the'));
+        expect(output, isNot(contains('will fail with 404')));
+        final entry = registry.find('copilot-hubot')!;
+        expect(entry.baseUrl, 'https://api.business.githubcopilot.com');
+        expect(store.map[entry.keyName!], 'github_pat_HEADLESS_PAT');
+      },
+    );
   });
 
   group('/provider export', () {
@@ -788,44 +790,46 @@ void main() {
       expect(io.out.toString(), contains('no stored token for copilot-b'));
     });
 
-    test('a failed clipboard write names the reason, never the token',
-        () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final store = FakeSecureKeyStore()
-        ..map['FA_KEY_COPILOT_COPILOT_B'] = 'tok-secret';
-      final cache = SecureKeyCache(store);
-      await cache.preload(const ['FA_KEY_COPILOT_COPILOT_B']);
-      final registry = CustomProviderRegistry([
-        CustomProviderEntry(
-          name: 'copilot-b',
-          apiType: 'copilot',
-          baseUrl: 'https://api.business.githubcopilot.com',
-          modelId: 'gpt-4.1',
-          keyName: 'FA_KEY_COPILOT_COPILOT_B',
-        ),
-      ]);
-      final cli = cliFor(
-        modelsHttpClient: _copilotModelsMockClient,
-        fake.call,
-        envVarValue: (_) => null,
-        secureKeys: cache,
-        customProviders: registry,
-        clipboardWrite: (_) async => 'xclip unavailable',
-      );
-      final run = cli.run();
+    test(
+      'a failed clipboard write names the reason, never the token',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore()
+          ..map['FA_KEY_COPILOT_COPILOT_B'] = 'tok-secret';
+        final cache = SecureKeyCache(store);
+        await cache.preload(const ['FA_KEY_COPILOT_COPILOT_B']);
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'copilot-b',
+            apiType: 'copilot',
+            baseUrl: 'https://api.business.githubcopilot.com',
+            modelId: 'gpt-4.1',
+            keyName: 'FA_KEY_COPILOT_COPILOT_B',
+          ),
+        ]);
+        final cli = cliFor(
+          modelsHttpClient: _copilotModelsMockClient,
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          clipboardWrite: (_) async => 'xclip unavailable',
+        );
+        final run = cli.run();
 
-      io.sendLine('/provider export');
-      await waitForIt(
-        () => io.out.toString().contains('could not copy the token'),
-      );
-      io.sendLine('/exit');
-      await run;
+        io.sendLine('/provider export');
+        await waitForIt(
+          () => io.out.toString().contains('could not copy the token'),
+        );
+        io.sendLine('/exit');
+        await run;
 
-      final output = io.out.toString();
-      expect(output, contains('could not copy the token to the clipboard'));
-      expect(output, contains('xclip unavailable'));
-      expect(output, isNot(contains('tok-secret')));
-    });
+        final output = io.out.toString();
+        expect(output, contains('could not copy the token to the clipboard'));
+        expect(output, contains('xclip unavailable'));
+        expect(output, isNot(contains('tok-secret')));
+      },
+    );
 
     test('/provider export rejects extra args', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);

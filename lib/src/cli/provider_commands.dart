@@ -610,7 +610,6 @@ extension on AgentCli {
     return false;
   }
 
-
   /// The `/provider dial setup [baseUrl]` branch: the guided DIAL flow (the
   /// same one the `+ Add provider → DIAL` preset opens). Returns true when
   /// the command targeted the flow.

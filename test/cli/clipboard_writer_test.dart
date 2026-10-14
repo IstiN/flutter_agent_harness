@@ -68,25 +68,19 @@ void main() {
       expect(runner.calls.single.$3, 'gho_TOKEN');
     });
 
-    test(
-      'linux: a missing xclip falls through to wl-copy',
-      () async {
-        final runner = _RecordingRunner(0, throwOn: 0);
+    test('linux: a missing xclip falls through to wl-copy', () async {
+      final runner = _RecordingRunner(0, throwOn: 0);
 
-        final result = await writeClipboardText(
-          'gho_TOKEN',
-          runner: runner.call,
-          platform: 'linux',
-        );
+      final result = await writeClipboardText(
+        'gho_TOKEN',
+        runner: runner.call,
+        platform: 'linux',
+      );
 
-        expect(result, isA<PasteboardWriteOk>());
-        expect(
-          runner.calls.map((c) => c.$1),
-          ['xclip', 'wl-copy'],
-        );
-        expect(runner.calls.last.$3, 'gho_TOKEN');
-      },
-    );
+      expect(result, isA<PasteboardWriteOk>());
+      expect(runner.calls.map((c) => c.$1), ['xclip', 'wl-copy']);
+      expect(runner.calls.last.$3, 'gho_TOKEN');
+    });
 
     test('windows: pipes the text into clip', () async {
       final runner = _RecordingRunner(0);
@@ -120,18 +114,20 @@ void main() {
       expect(runner.calls, hasLength(2));
     });
 
-    test('an unknown platform is unavailable without running anything',
-        () async {
-      final runner = _RecordingRunner(0);
+    test(
+      'an unknown platform is unavailable without running anything',
+      () async {
+        final runner = _RecordingRunner(0);
 
-      final result = await writeClipboardText(
-        'tok',
-        runner: runner.call,
-        platform: 'templeos',
-      );
+        final result = await writeClipboardText(
+          'tok',
+          runner: runner.call,
+          platform: 'templeos',
+        );
 
-      expect(result, isA<PasteboardWriteUnavailable>());
-      expect(runner.calls, isEmpty);
-    });
+        expect(result, isA<PasteboardWriteUnavailable>());
+        expect(runner.calls, isEmpty);
+      },
+    );
   });
 }

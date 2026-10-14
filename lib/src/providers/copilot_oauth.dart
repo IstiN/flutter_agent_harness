@@ -140,10 +140,7 @@ String _copilotCliOs = 'unknown';
 /// (`copilot/<version> (<os>) term/unknown`). Hosts call this once at
 /// startup — `Platform.operatingSystem` is dart:io, and this library
 /// stays pure Dart.
-void installCopilotCliIdentity({
-  required String version,
-  required String os,
-}) {
+void installCopilotCliIdentity({required String version, required String os}) {
   _copilotCliVersion = version;
   _copilotCliOs = os;
 }

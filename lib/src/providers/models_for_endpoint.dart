@@ -345,9 +345,8 @@ final class _CopilotDialect extends ModelListDialect {
         // Same proxy-ep derivation as the chat path: the token names the
         // tenant's API host; the configured tier host is only the
         // fallback.
-        effectiveBase =
-            (copilotApiBaseUrlFromToken(apiToken.token) ?? baseUrl)
-                .replaceAll(RegExp(r'/+$'), '');
+        effectiveBase = (copilotApiBaseUrlFromToken(apiToken.token) ?? baseUrl)
+            .replaceAll(RegExp(r'/+$'), '');
         headers = copilotApiHeaders(copilotToken: apiToken.token);
       }
       final uri = Uri.parse('$effectiveBase/models');

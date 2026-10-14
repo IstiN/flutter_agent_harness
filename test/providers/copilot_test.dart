@@ -832,47 +832,38 @@ void main() {
   });
 
   group('PAT mode (fine-grained github_pat_…)', () {
-    test(
-      'streams chat completions with the raw PAT and the developer-cli '
-      'identity — no token exchange',
-      () async {
-        installCopilotCliIdentity(version: '1.2.3', os: 'linux');
-        final backend = FakeCopilotBackend()
-          ..chatHandler = (_) async => sseResponse(chatSse());
+    test('streams chat completions with the raw PAT and the developer-cli '
+        'identity — no token exchange', () async {
+      installCopilotCliIdentity(version: '1.2.3', os: 'linux');
+      final backend = FakeCopilotBackend()
+        ..chatHandler = (_) async => sseResponse(chatSse());
 
-        final events = await streamCopilot(
-          copilotModel,
-          simpleContext(),
-          CopilotOptions(githubToken: 'github_pat_PATMODE1'),
-          backend.client(),
-        ).toList();
+      final events = await streamCopilot(
+        copilotModel,
+        simpleContext(),
+        CopilotOptions(githubToken: 'github_pat_PATMODE1'),
+        backend.client(),
+      ).toList();
 
-        // The exchange is never called: the PAT is the bearer itself and
-        // the request goes straight to the configured base URL (a PAT has
-        // no proxy-ep to learn a tenant host from).
-        expect(backend.exchangeCalls, 0);
-        expect(backend.chatCalls, 1);
-        final request = backend.chatRequests.single;
-        expect(
-          request.url,
-          Uri.parse('https://api.githubcopilot.com/chat/completions'),
-        );
-        expect(hdr(request, 'authorization'), 'Bearer github_pat_PATMODE1');
-        expect(
-          hdr(request, 'copilot-integration-id'),
-          'copilot-developer-cli',
-        );
-        expect(
-          hdr(request, 'user-agent'),
-          'copilot/1.2.3 (linux) term/unknown',
-        );
-        expect(hdr(request, 'x-request-id'), isNotEmpty);
-        expect(hdr(request, 'x-initiator'), 'user');
-        final deltas = events.whereType<TextDeltaEvent>().toList();
-        expect(deltas.map((d) => d.delta).join(), 'Hel lo');
-        expect(events.last, isA<DoneEvent>());
-      },
-    );
+      // The exchange is never called: the PAT is the bearer itself and
+      // the request goes straight to the configured base URL (a PAT has
+      // no proxy-ep to learn a tenant host from).
+      expect(backend.exchangeCalls, 0);
+      expect(backend.chatCalls, 1);
+      final request = backend.chatRequests.single;
+      expect(
+        request.url,
+        Uri.parse('https://api.githubcopilot.com/chat/completions'),
+      );
+      expect(hdr(request, 'authorization'), 'Bearer github_pat_PATMODE1');
+      expect(hdr(request, 'copilot-integration-id'), 'copilot-developer-cli');
+      expect(hdr(request, 'user-agent'), 'copilot/1.2.3 (linux) term/unknown');
+      expect(hdr(request, 'x-request-id'), isNotEmpty);
+      expect(hdr(request, 'x-initiator'), 'user');
+      final deltas = events.whereType<TextDeltaEvent>().toList();
+      expect(deltas.map((d) => d.delta).join(), 'Hel lo');
+      expect(events.last, isA<DoneEvent>());
+    });
 
     test('an exchanged OAuth token keeps the vscode-chat identity', () async {
       final backend = FakeCopilotBackend()
@@ -914,8 +905,7 @@ void main() {
       },
     );
 
-    test('the token manager answers PATs directly, never exchanging',
-        () async {
+    test('the token manager answers PATs directly, never exchanging', () async {
       final backend = FakeCopilotBackend()
         ..chatHandler = (_) async => sseResponse('');
       final manager = CopilotTokenManager(
@@ -928,60 +918,54 @@ void main() {
       expect(backend.exchangeCalls, 0);
     });
 
-    test(
-      'the /models dialect uses the PAT directly against the configured '
-      'base URL',
-      () async {
-        http.BaseRequest? modelsRequest;
-        final client = http_testing.MockClient((request) async {
-          if (request.url.host == 'api.github.com') {
-            throw StateError('PAT mode must never call the token exchange');
-          }
-          modelsRequest = request;
-          return http.Response(
-            jsonEncode({
-              'data': [
-                {
-                  'id': 'gpt-4.1',
-                  'model_picker_enabled': true,
-                  'capabilities': {
-                    'limits': {
-                      'max_context_window_tokens': 1000000,
-                      'max_output_tokens': 32768,
-                    },
+    test('the /models dialect uses the PAT directly against the configured '
+        'base URL', () async {
+      http.BaseRequest? modelsRequest;
+      final client = http_testing.MockClient((request) async {
+        if (request.url.host == 'api.github.com') {
+          throw StateError('PAT mode must never call the token exchange');
+        }
+        modelsRequest = request;
+        return http.Response(
+          jsonEncode({
+            'data': [
+              {
+                'id': 'gpt-4.1',
+                'model_picker_enabled': true,
+                'capabilities': {
+                  'limits': {
+                    'max_context_window_tokens': 1000000,
+                    'max_output_tokens': 32768,
                   },
                 },
-              ],
-            }),
-            200,
-          );
-        });
+              },
+            ],
+          }),
+          200,
+        );
+      });
 
-        final (ids, windows, caps) = await fetchModelsForEndpoint(
-          'https://api.business.githubcopilot.com',
-          apiKey: 'github_pat_MODELS1',
-          provider: 'copilot',
-          client: client,
-        );
+      final (ids, windows, caps) = await fetchModelsForEndpoint(
+        'https://api.business.githubcopilot.com',
+        apiKey: 'github_pat_MODELS1',
+        provider: 'copilot',
+        client: client,
+      );
 
-        expect(ids, ['gpt-4.1']);
-        expect(windows['gpt-4.1'], 1000000);
-        expect(caps['gpt-4.1'], 32768);
-        expect(
-          modelsRequest!.url,
-          Uri.parse('https://api.business.githubcopilot.com/models'),
-        );
-        expect(
-          hdr(modelsRequest!, 'authorization'),
-          'Bearer github_pat_MODELS1',
-        );
-        expect(
-          hdr(modelsRequest!, 'copilot-integration-id'),
-          'copilot-developer-cli',
-        );
-        expect(hdr(modelsRequest!, 'user-agent'), contains('copilot/'));
-      },
-    );
+      expect(ids, ['gpt-4.1']);
+      expect(windows['gpt-4.1'], 1000000);
+      expect(caps['gpt-4.1'], 32768);
+      expect(
+        modelsRequest!.url,
+        Uri.parse('https://api.business.githubcopilot.com/models'),
+      );
+      expect(hdr(modelsRequest!, 'authorization'), 'Bearer github_pat_MODELS1');
+      expect(
+        hdr(modelsRequest!, 'copilot-integration-id'),
+        'copilot-developer-cli',
+      );
+      expect(hdr(modelsRequest!, 'user-agent'), contains('copilot/'));
+    });
 
     test('copilotPatApiHeaders carries the first-party CLI identity', () {
       installCopilotCliIdentity(version: '9.9.9', os: 'macos');
@@ -1001,24 +985,26 @@ void main() {
       expect(oauth['copilot-integration-id'], 'vscode-chat');
     });
 
-    test('a PAT 404 on the exchange names the fa PAT mode and the CLI',
-        () async {
-      final client = http_testing.MockClient(
-        (_) async =>
-            http.Response('{"message":"Not Found","status":"404"}', 404),
-      );
+    test(
+      'a PAT 404 on the exchange names the fa PAT mode and the CLI',
+      () async {
+        final client = http_testing.MockClient(
+          (_) async =>
+              http.Response('{"message":"Not Found","status":"404"}', 404),
+        );
 
-      await expectLater(
-        fetchCopilotApiToken(githubToken: 'github_pat_OLD', client: client),
-        throwsA(
-          isA<CopilotAuthException>().having(
-            (e) => e.message,
-            'message',
-            allOf(contains('404'), contains('fine-grained PAT')),
+        await expectLater(
+          fetchCopilotApiToken(githubToken: 'github_pat_OLD', client: client),
+          throwsA(
+            isA<CopilotAuthException>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains('404'), contains('fine-grained PAT')),
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   });
 
   group('token-derived tenant host (proxy-ep)', () {
