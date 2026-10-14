@@ -185,7 +185,8 @@ const Duration rateLimitBackoffCap = Duration(seconds: 60);
 /// processes don't retry in lockstep — the same shape the roles layer's
 /// `ModelRolesRetryPolicy.backoffFor` uses.
 Duration rateLimitBackoffFor(int retry, double jitterFraction) {
-  var ms = rateLimitBackoffBase.inMilliseconds * (1 << (retry - 1).clamp(0, 20));
+  var ms =
+      rateLimitBackoffBase.inMilliseconds * (1 << (retry - 1).clamp(0, 20));
   if (ms > rateLimitBackoffCap.inMilliseconds) {
     ms = rateLimitBackoffCap.inMilliseconds;
   }
@@ -271,8 +272,10 @@ typedef TransientRetryNotice =
 /// The hidden session-JSONL record type the CLI appends when the ladder
 /// announces a rate-limit retry (gh-1602): the post-mortem surface that
 /// shows a bench trial absorbed a quota blip instead of dying as
-/// `ApiRateLimitError`. Payload: `attempt` (1-based), `max_attempts`,
-/// `delay_ms`, `reason` (the truncated provider line), `ts`.
+/// `ApiRateLimitError`. Payload: `attempt` (1-based number of the attempt
+/// the retry is about to run — the notice's "attempt 2/4" first number),
+/// `max_attempts` (the rate-limit budget total), `delay_ms`, `reason`
+/// (the truncated provider line), `ts`.
 const String rateLimitRetryRecordType = '429_retry';
 
 /// The host-visible retry hook (the CLI prints it + logs to fa.log).
@@ -699,10 +702,9 @@ Future<bool> _afterRateLimitFailure(
     );
     return false;
   }
-  var wait = failure.retryAfter ?? rateLimitBackoffFor(
-    state.rateLimitRetries,
-    transientRetryJitter(),
-  );
+  var wait =
+      failure.retryAfter ??
+      rateLimitBackoffFor(state.rateLimitRetries, transientRetryJitter());
   if (wait > rateLimitBackoffCap) wait = rateLimitBackoffCap;
   final deadlineLeft = transientRetryDeadlineLeft?.call();
   if (deadlineLeft != null) {
@@ -730,8 +732,11 @@ Future<bool> _afterRateLimitFailure(
     resume,
     cancelToken,
     wait,
-    state.rateLimitRetries,
-    maxAttempts + maxRateLimitRetries,
+    // The notice speaks the rate-limit budget only: the 1-based attempt
+    // about to run out of 1 + maxRateLimitRetries — never the summed
+    // alternation bound (a "2/6" line would conflate two policies).
+    state.rateLimitRetries + 1,
+    1 + maxRateLimitRetries,
     _shortReason(failure.error.errorMessage),
   );
 }

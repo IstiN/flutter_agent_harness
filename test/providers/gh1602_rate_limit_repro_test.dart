@@ -74,11 +74,9 @@ void main() {
         // structured 429 decode renders this line, the run exits 1.
         return failWith('429: Rate limit reached. Try again later.');
       }
-      return FakeStreamFunction([textTurn('recovered')]).call(
-        model,
-        context,
-        cancelToken: cancelToken,
-      );
+      return FakeStreamFunction([
+        textTurn('recovered'),
+      ]).call(model, context, cancelToken: cancelToken);
     });
 
     final message = await wrapped(

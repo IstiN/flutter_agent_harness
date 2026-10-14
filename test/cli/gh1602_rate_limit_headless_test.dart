@@ -118,8 +118,7 @@ void main() {
   });
 
   test('headless: the rate-limit retry is visible as a `[net] rate '
-      'limited` notice and the session keeps a `429_retry` record',
-      () async {
+      'limited` notice and the session keeps a `429_retry` record', () async {
     final io = FakeCliIO();
 
     final cli0 = cli(rateLimitedOnceThenCompletes(), io);
@@ -145,7 +144,10 @@ void main() {
     ];
     expect(retries, hasLength(1));
     final data = retries.single.data as Map;
-    expect(data['attempt'], 1);
+    // "attempt 2/4": the retry about to run is the 2nd of the
+    // 1 + maxRateLimitRetries rate-limit budget.
+    expect(data['attempt'], 2);
+    expect(data['max_attempts'], 1 + maxRateLimitRetries);
     expect(data['reason'], contains('429'));
   });
 }

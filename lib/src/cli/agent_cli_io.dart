@@ -213,9 +213,9 @@ extension AgentCliRunNotices on AgentCli {
           .appendCustomEntry(
             customType: rateLimitRetryRecordType,
             data: {
-              // The notice's attempt is the 1-based attempt that just
-              // failed (the TransientRetryNotice contract) — recorded
-              // as-is, never re-incremented.
+              // The notice's attempt is the 1-based number of the attempt
+              // the retry is about to run ("attempt 2/4" — recorded
+              // as-is, so the record and the log face tell one story).
               'attempt': attempt,
               'max_attempts': maxAttempts,
               'delay_ms': delay.inMilliseconds,
@@ -225,9 +225,7 @@ extension AgentCliRunNotices on AgentCli {
           )
           .then((_) {})
           .catchError((Object error) {
-            _logDiagnostic(
-              '429_retry persist failed sid=$_logSid: $error',
-            );
+            _logDiagnostic('429_retry persist failed sid=$_logSid: $error');
           }),
     );
   }

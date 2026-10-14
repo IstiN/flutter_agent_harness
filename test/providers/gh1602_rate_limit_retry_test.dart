@@ -16,10 +16,7 @@ import 'package:test/test.dart';
 
 import '../cli/agent_cli_test_support.dart';
 
-AssistantMessageEventStream failWith(
-  String text, {
-  Duration? retryAfter,
-}) {
+AssistantMessageEventStream failWith(String text, {Duration? retryAfter}) {
   final stream = AssistantMessageEventStream();
   scheduleMicrotask(() {
     stream.push(
@@ -88,23 +85,31 @@ void main() {
         isTrue,
       );
       expect(isRateLimitError(errorMsg('429 too many requests')), isTrue);
-      expect(isRateLimitError(errorMsg('Provider is throttling requests')),
-          isTrue);
+      expect(
+        isRateLimitError(errorMsg('Provider is throttling requests')),
+        isTrue,
+      );
     });
 
-    test('budget/spending exhaustion is terminal, never a retry (issue #926)',
-        () {
-      // `insufficient_quota` matches the rate-limit wording set but the
-      // budget net must win — retrying a dead budget only burns requests.
-      expect(
-        isRateLimitError(
-          errorMsg('Error: 429 insufficient_quota: you have run out of quota'),
-        ),
-        isFalse,
-      );
-      expect(isBudgetExhaustion(errorMsg('Error: 429 insufficient_quota')),
-          isTrue);
-    });
+    test(
+      'budget/spending exhaustion is terminal, never a retry (issue #926)',
+      () {
+        // `insufficient_quota` matches the rate-limit wording set but the
+        // budget net must win — retrying a dead budget only burns requests.
+        expect(
+          isRateLimitError(
+            errorMsg(
+              'Error: 429 insufficient_quota: you have run out of quota',
+            ),
+          ),
+          isFalse,
+        );
+        expect(
+          isBudgetExhaustion(errorMsg('Error: 429 insufficient_quota')),
+          isTrue,
+        );
+      },
+    );
 
     test('non-error messages never classify', () {
       expect(
@@ -126,23 +131,25 @@ void main() {
   });
 
   group('rateLimitBackoffFor', () {
-    test('exponential from the 2s floor, capped at 60s, jitter upward only',
-        () {
-      expect(rateLimitBackoffFor(1, 0.0).inMilliseconds, 2000);
-      expect(rateLimitBackoffFor(2, 0.0).inMilliseconds, 4000);
-      expect(rateLimitBackoffFor(3, 0.0).inMilliseconds, 8000);
-      // Way past the cap: clamped at the cap.
-      expect(
-        rateLimitBackoffFor(12, 0.0).inMilliseconds,
-        rateLimitBackoffCap.inMilliseconds,
-      );
-      // Full jitter adds up to 25%, never undercuts the base.
-      expect(
-        rateLimitBackoffFor(1, 1.0).inMilliseconds,
-        greaterThanOrEqualTo(rateLimitBackoffBase.inMilliseconds),
-      );
-      expect(rateLimitBackoffFor(1, 1.0).inMilliseconds, 2500);
-    });
+    test(
+      'exponential from the 2s floor, capped at 60s, jitter upward only',
+      () {
+        expect(rateLimitBackoffFor(1, 0.0).inMilliseconds, 2000);
+        expect(rateLimitBackoffFor(2, 0.0).inMilliseconds, 4000);
+        expect(rateLimitBackoffFor(3, 0.0).inMilliseconds, 8000);
+        // Way past the cap: clamped at the cap.
+        expect(
+          rateLimitBackoffFor(12, 0.0).inMilliseconds,
+          rateLimitBackoffCap.inMilliseconds,
+        );
+        // Full jitter adds up to 25%, never undercuts the base.
+        expect(
+          rateLimitBackoffFor(1, 1.0).inMilliseconds,
+          greaterThanOrEqualTo(rateLimitBackoffBase.inMilliseconds),
+        );
+        expect(rateLimitBackoffFor(1, 1.0).inMilliseconds, 2500);
+      },
+    );
   });
 
   group('the ladder rate-limit policy', () {
@@ -153,12 +160,17 @@ void main() {
         waits.add(delay);
         return true;
       };
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
         calls++;
         if (calls == 1) {
-          return failWith('429: Rate limit reached. Try again later.',
-              retryAfter: const Duration(seconds: 30));
+          return failWith(
+            '429: Rate limit reached. Try again later.',
+            retryAfter: const Duration(seconds: 30),
+          );
         }
         return FakeStreamFunction([
           textTurn('recovered'),
@@ -185,8 +197,11 @@ void main() {
         waits.add(delay);
         return true;
       };
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
         calls++;
         if (calls <= 3) {
           return failWith('429: Rate limit reached. Try again later.');
@@ -213,8 +228,11 @@ void main() {
     test('persistent 429: the budget exhausts into a rate-limit-shaped '
         'terminal the roles layer still classifies', () async {
       var calls = 0;
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
         calls++;
         return failWith('429: Rate limit reached. Try again later.');
       });
@@ -237,206 +255,254 @@ void main() {
       expect(isRateLimitOrQuota(message), isTrue);
     });
 
-    test('the deadline bound: no retry past the wrap-up margin (AC2)',
-        () async {
-      var calls = 0;
-      transientRetryDeadlineLeft = () => const Duration(seconds: 90);
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        calls++;
-        return failWith('429: Rate limit reached. Try again later.');
-      });
-
-      final message = await wrapped(
-        testModel,
-        const Context(messages: []),
-      ).result;
-
-      // 90s left − 120s wrap-up margin ≤ 0: the margin is reserved, the
-      // ladder must not even start retrying.
-      expect(calls, 1);
-      expect(message.stopReason, StopReason.error);
-      expect(message.errorMessage, contains('rate limit'));
-      expect(message.errorMessage, contains('deadline'));
-      // The terminal keeps the raw evidence for the classifiers above.
-      expect(message.errorMessage, contains('429: Rate limit reached'));
-    });
-
-    test('the deadline bound: a retry that fits the allowance still runs',
-        () async {
-      var calls = 0;
-      final waits = <Duration>[];
-      transientRetrySleeper = (delay, token) async {
-        waits.add(delay);
-        return true;
-      };
-      transientRetryDeadlineLeft = () => const Duration(seconds: 200);
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        calls++;
-        if (calls == 1) {
-          return failWith('429: Rate limit reached. Try again later.',
-              retryAfter: const Duration(seconds: 60));
-        }
-        return FakeStreamFunction([
-          textTurn('recovered'),
-        ]).call(model, context, cancelToken: cancelToken);
-      });
-
-      final message = await wrapped(
-        testModel,
-        const Context(messages: []),
-      ).result;
-
-      // 200s − 120s margin = 80s allowance; the 60s Retry-After fits.
-      expect(calls, 2);
-      expect(message.stopReason, StopReason.stop);
-      expect(waits, [const Duration(seconds: 60)]);
-    });
-
-    test('a Retry-After larger than the allowance stops the ladder (AC2)',
-        () async {
-      var calls = 0;
-      final waits = <Duration>[];
-      transientRetrySleeper = (delay, token) async {
-        waits.add(delay);
-        return true;
-      };
-      transientRetryDeadlineLeft = () => const Duration(seconds: 150);
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        calls++;
-        return failWith('429: Rate limit reached. Try again later.',
-            retryAfter: const Duration(seconds: 90));
-      });
-
-      final message = await wrapped(
-        testModel,
-        const Context(messages: []),
-      ).result;
-
-      // 150s − 120s = 30s allowance; sleeping 90s would cross the
-      // wrap-up margin — the ladder stops instead of a doomed wait.
-      expect(calls, 1);
-      expect(waits, isEmpty);
-      expect(message.stopReason, StopReason.error);
-      expect(message.errorMessage, contains('deadline'));
-    });
-
-    test('no deadline armed: the attempt budget governs, no clock bound',
-        () async {
-      var calls = 0;
-      transientRetryDeadlineLeft = null;
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        calls++;
-        if (calls <= 2) {
+    test(
+      'the deadline bound: no retry past the wrap-up margin (AC2)',
+      () async {
+        var calls = 0;
+        transientRetryDeadlineLeft = () => const Duration(seconds: 90);
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
           return failWith('429: Rate limit reached. Try again later.');
-        }
-        return FakeStreamFunction([
-          textTurn('recovered'),
-        ]).call(model, context, cancelToken: cancelToken);
-      });
-
-      final message = await wrapped(
-        testModel,
-        const Context(messages: []),
-      ).result;
-
-      expect(calls, 3);
-      expect(message.stopReason, StopReason.stop);
-    });
-
-    test('auth failure stays fatal — no rate-limit retry (AC: 401 fatal)',
-        () async {
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        calls++;
-        return failWith('401 unauthorized: invalid API key');
-      });
-
-      final message = await wrapped(
-        testModel,
-        const Context(messages: []),
-      ).result;
-
-      expect(calls, 1);
-      expect(message.stopReason, StopReason.error);
-      expect(message.errorMessage, '401 unauthorized: invalid API key');
-    });
-
-    test('insufficient_quota stays terminal — never a backoff loop (#926)',
-        () async {
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        calls++;
-        return failWith(
-          'Error: 429 insufficient_quota: you have run out of quota',
-        );
-      });
-
-      final message = await wrapped(
-        testModel,
-        const Context(messages: []),
-      ).result;
-
-      expect(calls, 1);
-      expect(message.stopReason, StopReason.error);
-      expect(message.errorMessage, contains('insufficient_quota'));
-    });
-
-    test('a mid-answer 429 still stands — no replay over streamed deltas',
-        () async {
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        calls++;
-        final stream = AssistantMessageEventStream();
-        scheduleMicrotask(() {
-          final empty = testAssistant();
-          final part = testAssistant(
-            content: [const TextContent(text: 'partial answer')],
-          );
-          stream
-            ..push(StartEvent(partial: empty))
-            ..push(TextStartEvent(contentIndex: 0, partial: empty))
-            ..push(
-              TextDeltaEvent(contentIndex: 0, delta: 'partial answer',
-                  partial: part),
-            )
-            ..push(
-              TextEndEvent(contentIndex: 0, content: 'partial answer',
-                  partial: part),
-            )
-            ..push(
-              ErrorEvent(
-                reason: StopReason.error,
-                error: testAssistant(
-                  content: [const TextContent(text: 'partial answer')],
-                  stopReason: StopReason.error,
-                  errorMessage: '429: Rate limit reached. Try again later.',
-                ),
-              ),
-            )
-            ..end();
         });
-        return stream;
-      });
 
-      final message = await wrapped(
-        testModel,
-        const Context(messages: []),
-      ).result;
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
 
-      // A replay would duplicate the transcript — the #290 stand-rule
-      // owns post-commit failures, rate limits included (gh-1602 keeps
-      // it: only PRE-commit 429s are replayed; the error passes through
-      // verbatim like every other non-retryable mid-answer class).
-      expect(calls, 1);
-      expect(message.stopReason, StopReason.error);
-      expect(message.errorMessage, '429: Rate limit reached. Try again later.');
-    });
+        // 90s left − 120s wrap-up margin ≤ 0: the margin is reserved, the
+        // ladder must not even start retrying.
+        expect(calls, 1);
+        expect(message.stopReason, StopReason.error);
+        expect(message.errorMessage, contains('rate limit'));
+        expect(message.errorMessage, contains('deadline'));
+        // The terminal keeps the raw evidence for the classifiers above.
+        expect(message.errorMessage, contains('429: Rate limit reached'));
+      },
+    );
+
+    test(
+      'the deadline bound: a retry that fits the allowance still runs',
+      () async {
+        var calls = 0;
+        final waits = <Duration>[];
+        transientRetrySleeper = (delay, token) async {
+          waits.add(delay);
+          return true;
+        };
+        transientRetryDeadlineLeft = () => const Duration(seconds: 200);
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          if (calls == 1) {
+            return failWith(
+              '429: Rate limit reached. Try again later.',
+              retryAfter: const Duration(seconds: 60),
+            );
+          }
+          return FakeStreamFunction([
+            textTurn('recovered'),
+          ]).call(model, context, cancelToken: cancelToken);
+        });
+
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
+
+        // 200s − 120s margin = 80s allowance; the 60s Retry-After fits.
+        expect(calls, 2);
+        expect(message.stopReason, StopReason.stop);
+        expect(waits, [const Duration(seconds: 60)]);
+      },
+    );
+
+    test(
+      'a Retry-After larger than the allowance stops the ladder (AC2)',
+      () async {
+        var calls = 0;
+        final waits = <Duration>[];
+        transientRetrySleeper = (delay, token) async {
+          waits.add(delay);
+          return true;
+        };
+        transientRetryDeadlineLeft = () => const Duration(seconds: 150);
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          return failWith(
+            '429: Rate limit reached. Try again later.',
+            retryAfter: const Duration(seconds: 90),
+          );
+        });
+
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
+
+        // 150s − 120s = 30s allowance; sleeping 90s would cross the
+        // wrap-up margin — the ladder stops instead of a doomed wait.
+        expect(calls, 1);
+        expect(waits, isEmpty);
+        expect(message.stopReason, StopReason.error);
+        expect(message.errorMessage, contains('deadline'));
+      },
+    );
+
+    test(
+      'no deadline armed: the attempt budget governs, no clock bound',
+      () async {
+        var calls = 0;
+        transientRetryDeadlineLeft = null;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          if (calls <= 2) {
+            return failWith('429: Rate limit reached. Try again later.');
+          }
+          return FakeStreamFunction([
+            textTurn('recovered'),
+          ]).call(model, context, cancelToken: cancelToken);
+        });
+
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
+
+        expect(calls, 3);
+        expect(message.stopReason, StopReason.stop);
+      },
+    );
+
+    test(
+      'auth failure stays fatal — no rate-limit retry (AC: 401 fatal)',
+      () async {
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          return failWith('401 unauthorized: invalid API key');
+        });
+
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
+
+        expect(calls, 1);
+        expect(message.stopReason, StopReason.error);
+        expect(message.errorMessage, '401 unauthorized: invalid API key');
+      },
+    );
+
+    test(
+      'insufficient_quota stays terminal — never a backoff loop (#926)',
+      () async {
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          return failWith(
+            'Error: 429 insufficient_quota: you have run out of quota',
+          );
+        });
+
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
+
+        expect(calls, 1);
+        expect(message.stopReason, StopReason.error);
+        expect(message.errorMessage, contains('insufficient_quota'));
+      },
+    );
+
+    test(
+      'a mid-answer 429 still stands — no replay over streamed deltas',
+      () async {
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            final empty = testAssistant();
+            final part = testAssistant(
+              content: [const TextContent(text: 'partial answer')],
+            );
+            stream
+              ..push(StartEvent(partial: empty))
+              ..push(TextStartEvent(contentIndex: 0, partial: empty))
+              ..push(
+                TextDeltaEvent(
+                  contentIndex: 0,
+                  delta: 'partial answer',
+                  partial: part,
+                ),
+              )
+              ..push(
+                TextEndEvent(
+                  contentIndex: 0,
+                  content: 'partial answer',
+                  partial: part,
+                ),
+              )
+              ..push(
+                ErrorEvent(
+                  reason: StopReason.error,
+                  error: testAssistant(
+                    content: [const TextContent(text: 'partial answer')],
+                    stopReason: StopReason.error,
+                    errorMessage: '429: Rate limit reached. Try again later.',
+                  ),
+                ),
+              )
+              ..end();
+          });
+          return stream;
+        });
+
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
+
+        // A replay would duplicate the transcript — the #290 stand-rule
+        // owns post-commit failures, rate limits included (gh-1602 keeps
+        // it: only PRE-commit 429s are replayed; the error passes through
+        // verbatim like every other non-retryable mid-answer class).
+        expect(calls, 1);
+        expect(message.stopReason, StopReason.error);
+        expect(
+          message.errorMessage,
+          '429: Rate limit reached. Try again later.',
+        );
+      },
+    );
   });
 }
