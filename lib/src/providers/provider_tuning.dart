@@ -28,6 +28,7 @@
 library;
 
 import '../exceptions.dart';
+import '../model.dart';
 import 'provider_common.dart'
     show
         ProviderTimeoutsOverride,
@@ -396,8 +397,7 @@ ResolvedProviderTimeouts resolveProviderTimeouts({Uri? url, String? name}) {
 /// `sendWatchedProviderRequest` seam): the per-provider precedence chain
 /// wins over the global effective value, which already folds the section
 /// + env.
-Duration providerConnectTimeoutForUrl(Uri url) {
-  if (providerTuningRegistry.isEmpty) return effectiveProviderConnectTimeout;
+Duration providerConnectTimeoutForUrl(Uri url) {  if (providerTuningRegistry.isEmpty) return effectiveProviderConnectTimeout;
   for (final entry in providerTuningRegistry.matchesForUrl(url)) {
     final value = entry.connect;
     if (value != null) return value;
@@ -416,6 +416,102 @@ Duration providerStreamIdleTimeoutForUrl(Uri url) {
   }
   return effectiveProviderStreamIdleTimeout;
 }
+
+// ── Run-idle watchdog window (gh-1617) ────────────────────────────────────
+
+/// The EXPLICIT stream-idle patience configured for [model], or null —
+/// the gh-1617 I1 lookup the run-idle watchdog reads on every arm.
+///
+/// Precedence is gh-1554's, top-down: the model's request-scoped window
+/// (a roles-chain entry's `streamIdleTimeoutMs`) over the per-URL
+/// resolution (the tuning registry: queue > role entry > customProviders
+/// > `models:` custom) over the global `providerTimeouts:` section. The
+/// BUILT-IN default is deliberately NOT a result: with nothing configured
+/// the run-idle watchdog keeps its own floor byte-for-byte (AC3) — the
+/// 5-minute provider-level default must never reach past it.
+///
+/// Returns `(window, source)` where `source` is the rendered precedence
+/// label (`role <role> override` / `provider:<name>` / `global`) the
+/// stall surfaces name (AC5).
+(Duration, String)? explicitStreamIdleForModel(Model model) {
+  final scoped = model.streamIdleTimeout;
+  if (scoped != null) {
+    return (scoped, model.timeoutScopeLabel ?? 'model override');
+  }
+  final url = Uri.tryParse(model.baseUrl);
+  final resolved = resolveProviderTimeouts(url: url);
+  if (resolved.streamIdleSource == ProviderTimeoutSource.builtIn) return null;
+  return (resolved.streamIdle, resolved.streamIdleSourceLabel);
+}
+
+/// The EXPLICITLY configured connect timeout for [model], or null — the
+/// gh-1617 I2/AC4 replay-budget bound. Same precedence as
+/// [explicitStreamIdleForModel]. The 180 s built-in default is never a
+/// budget: it would bind every run (it sits below most idle windows),
+/// and only a user-declared `connectTimeoutMs` may clamp the zero-byte
+/// replay patience (AC3).
+(Duration, String)? explicitConnectForModel(Model model) {
+  final scoped = model.connectTimeout;
+  if (scoped != null) {
+    return (scoped, model.timeoutScopeLabel ?? 'model override');
+  }
+  final url = Uri.tryParse(model.baseUrl);
+  final resolved = resolveProviderTimeouts(url: url);
+  if (resolved.connectSource == ProviderTimeoutSource.builtIn) return null;
+  return (resolved.connect, resolved.connectSourceLabel);
+}
+
+/// The run-idle watchdog window for a run streaming a model whose
+/// explicit stream-idle patience is [explicitIdle] (gh-1617 I1):
+/// `max(floor, explicitIdle)` — a warming-up model gets exactly the
+/// patience its config declares, and nothing configured keeps the floor
+/// byte-for-byte (AC3). Never LOWERED by a tight idle override: the
+/// watchdog stays at least as patient as it was by default.
+Duration runIdleWatchdogWindow({
+  required Duration floor,
+  required Duration? explicitIdle,
+}) {
+  final idle = explicitIdle;
+  return idle != null && idle > floor ? idle : floor;
+}
+
+/// The zero-byte replay attempt budget under a connect budget
+/// (gh-1617 I2/AC4): how many consecutive watchdog-killed zero-byte
+/// attempts the transient ladder may spend before the terminal fires.
+///
+/// - No configured budget → [ladderBound] (2): today's bound, unchanged
+///   (AC3).
+/// - A configured budget buys `1 + budget ~/ window` attempts, clamped
+///   into `[1, ladderBound]`: a budget at or above the window keeps the
+///   full bound (AC1's replay survives its own budget), a budget BELOW
+///   the window buys no replay at all — the ladder stops at the connect
+///   budget and the terminal names both values (AC4). The clamp keeps
+///   the bound an anti-infinite-loop guarantee in both directions (I2).
+int zeroByteAttemptBudget({
+  required int ladderBound,
+  required Duration idleWindow,
+  required Duration? connectBudget,
+}) {
+  final budget = connectBudget;
+  if (budget == null || idleWindow <= Duration.zero) return ladderBound;
+  final affordable = 1 + budget.inMilliseconds ~/ idleWindow.inMilliseconds;
+  return affordable.clamp(1, ladderBound);
+}
+
+/// The stall NOTICE threshold for a run-idle window (gh-1617 open
+/// question 1, sketched default): the early "still waiting" UX feedback
+/// keeps its short ceiling (`min(ceiling, window)`) — the kill moves to
+/// the window, the notice never waits longer than the user is used to.
+Duration stallNoticeThreshold({
+  required Duration noticeCeiling,
+  required Duration window,
+}) => window < noticeCeiling ? window : noticeCeiling;
+
+/// The rendered window + source fragment the stall surfaces carry
+/// (gh-1617 AC5): `idle window 2000s (provider:llama-local)` — a wide
+/// configured window must never read as a hang.
+String describeRunIdleWindow(Duration window, String source) =>
+    'idle window ${_humanize(window)} ($source)';
 
 /// The startup/boot notice line for one resolved pair:
 /// `provider tuning glm-relay: connect 180s (default), idle 1.5s

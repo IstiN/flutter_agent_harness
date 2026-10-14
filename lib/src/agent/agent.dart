@@ -27,6 +27,7 @@ import '../context.dart';
 import '../model.dart';
 import '../skills/skills.dart' show Skill;
 import '../types.dart';
+import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
 import 'misuse_breaker.dart';
 import 'stuck_tool.dart';
@@ -240,6 +241,10 @@ class Agent {
   final _steeringArrived = StreamController<void>.broadcast(sync: true);
   _ActiveRun? _activeRun;
   Timer? _runWatchdogTimer;
+
+  /// The window the armed timer currently waits out — the derived
+  /// [runIdleWindow].window at arm time (gh-1617); the fire reports it.
+  Duration _armedRunIdleWindow = defaultRunIdleTimeout;
 
   /// Backstop for wedged runs: when no [AgentEvent] arrives for this long
   /// outside tool execution (a stalled provider connection whose socket
@@ -767,7 +772,41 @@ class Agent {
   void _armRunWatchdog() {
     if (runIdleTimeout == Duration.zero) return;
     _runWatchdogTimer?.cancel();
-    _runWatchdogTimer = Timer(runIdleTimeout, _onRunWatchdogFired);
+    // gh-1617 I1: the window re-derives on EVERY arm, so a mid-run roles
+    // failover re-windows the watchdog around the model actually being
+    // streamed (AC2 — the entry override wins for its entry only), and a
+    // boot re-seed of the tuning table applies from the next arm (E3: no
+    // live re-arm of an already-armed timer). Nothing configured keeps
+    // [runIdleTimeout] byte-for-byte (AC3).
+    final window = runIdleWindow.window;
+    _armedRunIdleWindow = window;
+    _runWatchdogTimer = Timer(window, _onRunWatchdogFired);
+  }
+
+  /// The run-idle watchdog window for the CURRENT model and where it
+  /// came from (gh-1617 I1/AC5): [runIdleTimeout] (the backstop floor)
+  /// raised to cover the model's explicitly configured stream-idle
+  /// patience — a warming-up model gets exactly the patience its
+  /// `providerTimeouts.streamIdleTimeoutMs` declares. `source` names the
+  /// precedence layer (`role <role> override` / `provider:<name>` /
+  /// `global`), `raised` is true when a config governs (window > floor).
+  /// Hosts render this on the stall surfaces so a wide configured window
+  /// never reads as a hang.
+  ({
+    Duration window,
+    String source,
+    bool raised,
+  }) get runIdleWindow {
+    final explicit = explicitStreamIdleForModel(_state.model);
+    final window = runIdleWatchdogWindow(
+      floor: runIdleTimeout,
+      explicitIdle: explicit?.$1,
+    );
+    return (
+      window: window,
+      source: explicit?.$2 ?? 'default',
+      raised: window > runIdleTimeout,
+    );
   }
 
   void _disarmRunWatchdog() {
@@ -779,11 +818,23 @@ class Agent {
     _runWatchdogTimer = null;
     final run = _activeRun;
     if (run == null) return;
+    // gh-1617 AC5: the fire names the window it actually waited out and
+    // — when a configured window governs (raised) — its precedence
+    // source, so a wide patience never reads as a hang in the post-
+    // mortem. Nothing configured keeps the pre-ticket wording
+    // byte-for-byte (AC3).
+    final window = _armedRunIdleWindow;
+    final info = runIdleWindow;
+    final naming = info.raised
+        ? ', ${describeRunIdleWindow(window, info.source)}'
+        : '';
     final error = RunIdleWatchdogFire(
       'agent run produced no events for '
-      '${runIdleTimeout.inSeconds}s (run idle watchdog)',
-      runIdleTimeout,
+      '${window.inSeconds}s (run idle watchdog$naming)',
+      window,
     );
+    onRunIdleTimeout?.call(error);
+    run.source.cancel(error);
     onRunIdleTimeout?.call(error);
     run.source.cancel(error);
     // gh-1308: the transient-retry ladder replays the watchdog-cancelled
