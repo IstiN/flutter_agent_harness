@@ -34,7 +34,7 @@ void main() {
     ),
     io: io,
     environment: environment,
-    streamFunction: FakeStreamFunction([textTurn('ok')]),
+    streamFunction: FakeStreamFunction([textTurn('ok')]).call,
   );
 
   test('env retuning an existing section announces old → new', () {

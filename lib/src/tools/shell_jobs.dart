@@ -109,11 +109,10 @@ String shellJobCommandLabel(
   // (gh-1604 rework).
   final trimmed = command.trim();
   final firstLineEnd = trimmed.indexOf('\n');
-  final firstLine = (firstLineEnd < 0
-          ? trimmed
-          : trimmed.substring(0, firstLineEnd))
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
+  final firstLine =
+      (firstLineEnd < 0 ? trimmed : trimmed.substring(0, firstLineEnd))
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
   final head = _codepointSafeSlice(firstLine, 0, headChars);
   final omitted = flat.length - head.length;
   return '$head […$omitted chars…]';

@@ -344,76 +344,75 @@ void main() {
     },
   );
 
-  group(
-    'bench trigger vs an explicit compactionSettings override '
-    '(gh-1604 rework)',
-    () {
-      // Construction-only CLI: the precedence is a pure getter over the
-      // config + env, no run needed.
-      AgentCli agent({
-        CompactionSettings? compactionSettings,
-        Map<String, String> environment = const {
-          'FAH_COMPACT_TRIGGER_TOKENS': '$_benchTriggerTokens',
-        },
-      }) => AgentCli(
-        config: AgentCliConfig(
-          model: _model,
-          apiKey: '[REDACTED:Sensitive Value]',
-          env: MemoryExecutionEnv(cwd: '/work', shell: FakeShell()),
-          sessionRoot: '/sessions',
-          sessionName: 'bench-trigger-target',
-          providerKind: 'openai-completions',
-          skillsAccess: SkillsAccess.granted,
-          compactionSettings: compactionSettings,
-        ),
-        io: io,
-        environment: environment,
-        streamFunction: FakeStreamFunction([textTurn('ok')]),
+  group('bench trigger vs an explicit compactionSettings override '
+      '(gh-1604 rework)', () {
+    // Construction-only CLI: the precedence is a pure getter over the
+    // config + env, no run needed.
+    AgentCli agent({
+      CompactionSettings? compactionSettings,
+      Map<String, String> environment = const {
+        'FAH_COMPACT_TRIGGER_TOKENS': '$_benchTriggerTokens',
+      },
+    }) => AgentCli(
+      config: AgentCliConfig(
+        model: _model,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: MemoryExecutionEnv(cwd: '/work', shell: FakeShell()),
+        sessionRoot: '/sessions',
+        sessionName: 'bench-trigger-target',
+        providerKind: 'openai-completions',
+        skillsAccess: SkillsAccess.granted,
+        compactionSettings: compactionSettings,
+      ),
+      io: io,
+      environment: environment,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+
+    test('an explicit config pin wins over the env knob — the knob '
+        'retunes the DEFAULTS, it never rewrites a pinned section', () {
+      const pin = CompactionSettings(
+        enabled: true,
+        reserveTokens: 500,
+        keepRecentTokens: 600,
       );
+      final settings = agent(
+        compactionSettings: pin,
+      ).effectiveCompactionSettingsForTest;
+      expect(settings.reserveTokens, 500);
+      expect(settings.keepRecentTokens, 600);
+    });
 
-      test('an explicit config pin wins over the env knob — the knob '
-          'retunes the DEFAULTS, it never rewrites a pinned section', () {
-        const pin = CompactionSettings(
-          enabled: true,
-          reserveTokens: 500,
-          keepRecentTokens: 600,
-        );
-        final settings =
-            agent(compactionSettings: pin).effectiveCompactionSettingsForTest;
-        expect(settings.reserveTokens, 500);
-        expect(settings.keepRecentTokens, 600);
-      });
+    test('an explicit enabled:false pin stays disabled — the env knob '
+        'cannot re-enable compaction', () {
+      const pin = CompactionSettings(
+        enabled: false,
+        reserveTokens: 16384,
+        keepRecentTokens: 200,
+      );
+      final settings = agent(
+        compactionSettings: pin,
+      ).effectiveCompactionSettingsForTest;
+      expect(settings.enabled, isFalse);
+      expect(settings.reserveTokens, 16384);
+      expect(settings.keepRecentTokens, 200);
+    });
 
-      test('an explicit enabled:false pin stays disabled — the env knob '
-          'cannot re-enable compaction', () {
-        const pin = CompactionSettings(
-          enabled: false,
-          reserveTokens: 16384,
-          keepRecentTokens: 200,
-        );
-        final settings =
-            agent(compactionSettings: pin).effectiveCompactionSettingsForTest;
-        expect(settings.enabled, isFalse);
-        expect(settings.reserveTokens, 16384);
-        expect(settings.keepRecentTokens, 200);
-      });
+    test('without a pin the env knob applies (regression anchor)', () {
+      final settings = agent().effectiveCompactionSettingsForTest;
+      expect(shouldCompact(_benchTriggerTokens, _window, settings), isFalse);
+      expect(shouldCompact(_benchTriggerTokens + 1, _window, settings), isTrue);
+    });
 
-      test('without a pin the env knob applies (regression anchor)', () {
-        final settings = agent().effectiveCompactionSettingsForTest;
-        expect(shouldCompact(_benchTriggerTokens, _window, settings), isFalse);
-        expect(
-          shouldCompact(_benchTriggerTokens + 1, _window, settings),
-          isTrue,
-        );
-      });
-
-      test('without a pin and without the env the defaults apply '
-          '(byte-identical legacy)', () {
-        final settings = agent(
-          environment: {},
-        ).effectiveCompactionSettingsForTest;
-        expect(settings, equals(CompactionSettings.forWindow(_window)));
-      });
-    },
-  );
+    test('without a pin and without the env the defaults apply '
+        '(byte-identical legacy)', () {
+      final settings = agent(
+        environment: {},
+      ).effectiveCompactionSettingsForTest;
+      final defaults = CompactionSettings.forWindow(_window);
+      expect(settings.enabled, defaults.enabled);
+      expect(settings.reserveTokens, defaults.reserveTokens);
+      expect(settings.keepRecentTokens, defaults.keepRecentTokens);
+    });
+  });
 }

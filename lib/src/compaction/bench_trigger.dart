@@ -59,10 +59,11 @@ CompactionSettings withCompactionTriggerTokens(
   final clamped = triggerTokens.clamp(1, window);
   final defaultTrigger = window - base.reserveTokens;
   if (clamped >= defaultTrigger) return base;
-  // max(1, …): a trigger of 1 makes `clamped ~/ 2` 0, and `int.clamp`
+  // max<int>(…): a trigger of 1 makes `clamped ~/ 2` 0, and `int.clamp`
   // throws when the lower limit exceeds the upper — a parse-valid env
-  // value must degrade, never kill the run (gh-1604 rework).
-  final keep = base.keepRecentTokens.clamp(1, max(1, clamped ~/ 2));
+  // value must degrade, never kill the run (gh-1604 rework). The explicit
+  // type argument keeps the static type int under clamp's `num` context.
+  final keep = base.keepRecentTokens.clamp(1, max<int>(1, clamped ~/ 2));
   return CompactionSettings(
     enabled: true,
     reserveTokens: window - clamped,
