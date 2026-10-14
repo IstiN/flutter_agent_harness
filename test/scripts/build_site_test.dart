@@ -562,11 +562,57 @@ void main() {
           contains('dart test test/site/'),
           reason: 'site guards must run via the dart test runner',
         );
+        // The forbidden shape is `dart test/site/` IN COMMAND POSITION
+        // (after `run: ` or at a block-scalar line start). A blunt
+        // substring scan also fires on a LEGIT multi-target run where the
+        // chars form ACROSS the argument boundary — gh-1596's
+        // installer-portability leg:
+        // `run: dart test test/site/a_test.dart test/site/b_test.dart`
+        // contains "...a_test.dart test/site/..." → "dart test/site/"
+        // mid-line. Anchor to the command position the gh-1476 bug
+        // actually shipped (validation CI red on 342423d0).
+        final inlineBad = RegExp(r'run: *dart test/site/');
+        final blockBad = RegExp(
+          r'^ *dart test/site/',
+          multiLine: true,
+        );
+        final legitMultiTarget =
+            'run: dart test test/site/setup_test.dart '
+            'test/site/installer_test.dart';
+        // Guard stays honest (#1100 pattern): each bug shape is caught by
+        // its own anchor, and neither anchor fires on a legit multi-target
+        // line.
+        expect(
+          inlineBad.hasMatch('run: dart test/site/'),
+          isTrue,
+          reason: 'the inline `run: dart test/site/` shape must be caught',
+        );
+        expect(
+          blockBad.hasMatch('\n  dart test/site/\n'),
+          isTrue,
+          reason: 'the block-scalar `dart test/site/` shape must be caught',
+        );
+        for (final anchor in [inlineBad, blockBad]) {
+          expect(
+            anchor.hasMatch(legitMultiTarget),
+            isFalse,
+            reason: 'a valid multi-target `dart test` invocation must stay '
+                'green — the forbidden chars form across the argument '
+                'boundary, not in command position',
+          );
+        }
         expect(
           step,
-          isNot(contains('dart test/site/')),
-          reason: '`dart test/site/` is not a test invocation — dart '
-              'treats it as a command name and exits 64',
+          isNot(contains(inlineBad)),
+          reason: '`dart test/site/` in inline command position is not a '
+              'test invocation — dart treats it as a command name and '
+              'exits 64',
+        );
+        expect(
+          step,
+          isNot(contains(blockBad)),
+          reason: '`dart test/site/` on a block-scalar line is not a test '
+              'invocation — dart treats it as a command name and exits 64',
         );
       },
     );

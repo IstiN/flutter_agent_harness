@@ -1047,19 +1047,22 @@ void main() {
           reason: 'the export is explicit and precedes the aggregate fails',
         );
         // The exclusion list inside the gate step: the full platform case
-        // pattern, verbatim.
+        // pattern, verbatim. installer-portability rides the SAME class
+        // (gh-1596 REG-1/REG-2: a red dash/busybox/bash leg blocks the
+        // MERGE via the aggregate, never the pure-Dart publish).
         expect(
           ci,
           contains(
             'build-web|build-android|build-ios|build-macos|fa-aot-build|'
             'installer-verify|install-pin-gate|cube-kernel-live|'
             'cli-visual-settings|pty-integration-linux|pty-coverage-gate|'
-            'pty-visual|flutter-app-lock-smoke)',
+            'pty-visual|flutter-app-lock-smoke|installer-portability)',
           ),
           reason: 'every platform/native/PTY leg must be publish-exempt — '
               'flutter-app-lock-smoke included (#1267 N2: a red lockfile '
               'smoke release build blocks the merge via the aggregate, '
-              'never the publish)',
+              'never the publish), and gh-1596 adds installer-portability '
+              'to the same publish-exempt class',
         );
       },
     );
