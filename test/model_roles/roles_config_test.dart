@@ -94,6 +94,53 @@ maxTokens: 4096
       );
     });
 
+    test('parses and round-trips keyless (gh-1570 AC8)', () {
+      final ref = ModelRef.fromYaml(
+        _yaml(
+          'provider: openai-completions\nmodel: qwen3\n'
+          'baseUrl: http://localhost:8080/v1\n'
+          'keyless: true\n',
+        ),
+      );
+      expect(ref.keyless, isTrue);
+      expect(ref.toYaml(), contains('keyless: true'));
+      expect(
+        ModelRef.fromYaml(_yaml(ref.toYaml())).keyless,
+        isTrue,
+        reason: 'round-trip',
+      );
+      // Absent stays false — no keyless on a credentialed entry.
+      expect(
+        ModelRef.fromYaml(_yaml('provider: openai\nmodel: gpt-4o\n')).keyless,
+        isFalse,
+      );
+      // A non-bool is a named config error.
+      expect(
+        () => ModelRef.fromYaml(
+          _yaml('provider: openai\nmodel: gpt-4o\nkeyless: yes-please\n'),
+        ),
+        throwsA(isA<ConfigException>()),
+      );
+      // keyless + apiKeyName on one entry is a named config error — the
+      // key name would be silently ignored (gh-1570 review).
+      expect(
+        () => ModelRef.fromYaml(
+          _yaml(
+            'provider: openai-completions\nmodel: qwen3\n'
+            'baseUrl: http://localhost:8080/v1\n'
+            'keyless: true\napiKeyName: MY_KEY\n',
+          ),
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('keyless'), contains('apiKeyName')),
+          ),
+        ),
+      );
+    });
+
     test('authHeader round-trips yaml-special tokens losslessly '
         '(issue #964 review)', () {
       const token = '#gateway-key';

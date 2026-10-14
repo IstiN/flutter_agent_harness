@@ -611,7 +611,11 @@ void main() {
   group('buildProviderQueueChain', () {
     test('builds models with kind→catalog mapping (openai-completions)', () {
       final chain = buildProviderQueueChain([
-        _entry('openai-completions', 'm-1'), // default baseUrl → openrouter
+        _entry(
+          'openai-completions',
+          'm-1',
+          baseUrl: 'https://openrouter.ai/api/v1',
+        ),
         _entry('openai-completions', 'm-2', baseUrl: 'https://g.test/v1'),
         _entry('anthropic', 'm-3', apiKeyEnv: 'K2_API_KEY'),
       ], secrets: _secrets());
@@ -619,6 +623,41 @@ void main() {
       expect(chain[1].model.provider, 'openai');
       expect(chain[1].model.baseUrl, 'https://g.test/v1');
       expect(chain[2].model.provider, 'anthropic');
+    });
+
+    test('an openai-completions entry WITHOUT baseUrl is rejected — no '
+        'silent openrouter ride (gh-1570 M5/AC6)', () {
+      // The legacy rule resolved the name-less kind to openrouter and sent
+      // the entry's OPENAI_API_KEY to openrouter.ai. Identity-less means
+      // rejected now.
+      expect(
+        () => buildProviderQueueChain([
+          _entry('openai-completions', 'm-1', apiKeyEnv: 'K1_API_KEY'),
+        ], secrets: _secrets()),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('m-1'), contains('baseUrl')),
+          ),
+        ),
+      );
+    });
+
+    test('a queue entry whose model names another dialect is rejected '
+        '(gh-1570 AC6 binding validation)', () {
+      expect(
+        () => buildProviderQueueChain([
+          _entry('anthropic', 'zai/glm-5.3-flashx', apiKeyEnv: 'K1_API_KEY'),
+        ], secrets: _secrets()),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('zai/glm-5.3-flashx'), contains('anthropic')),
+          ),
+        ),
+      );
     });
 
     test('keyless env skips with a reason; all-keyless throws', () {
