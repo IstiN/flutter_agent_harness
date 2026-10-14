@@ -97,7 +97,11 @@ if $PROGRAM_NAME == __FILE__
         images = images.map { |img| { sha256: nil } } if @hide_shas_until_list_no && @list_reads[key] <= @hide_shas_until_list_no
         { status: 200, body: { images: images }.to_json }
       when method == :Post && url.include?(":commit")
-        return @commit_error if @commit_error
+        # One-shot: consumed by the first commit so a retry (gh-1560
+        # adaptive commit) sees Play's real post-400 behaviour.
+        err = @commit_error
+        @commit_error = nil
+        return err if err
         @committed << url
         { status: 200, body: { id: "edit1" }.to_json }
       when method == :Delete && url.end_with?("/edits/edit1")
@@ -442,15 +446,33 @@ if $PROGRAM_NAME == __FILE__
     ok("all committed goldens uploaded (en-US 5, ru-RU 2)")
 
     raise "FAIL: commit missing" unless http.committed.size == 1
-    # Play began rejecting auto-review commits (HTTP 400 INVALID_ARGUMENT,
-    # run 37576738205 job 112650057915): the commit URL must carry the opt-out.
-    unless http.committed.first.end_with?(":commit?changesNotSentForReview=true")
-      raise "FAIL: commit must set changesNotSentForReview=true, got: #{http.committed.first}"
+    # gh-1560 (run 38208639088 job 114679862575): dev.fa1.app auto-sends
+    # changes for review — Play REJECTS the opt-out (HTTP 400 "must not be
+    # set"), so the commit URL must NOT carry the param.
+    unless http.committed.first.end_with?(":commit")
+      raise "FAIL: commit must not set changesNotSentForReview, got: #{http.committed.first}"
     end
     commit_index = http.calls.index { |m, u| m == :Post && u.include?(":commit") }
     last_upload_index = http.calls.rindex { |m, u| m == :Post && u.include?("uploadType=media") }
     raise "FAIL: commit must come after every upload" unless commit_index > last_upload_index
     ok("single commit strictly after the last upload")
+  end
+
+  # ── gh-1560: manual-review accounts retry the commit WITH the opt-out ──
+  # The happy path commits bare (auto-send account, 2026-10-12). A 400 that
+  # blames changesNotSentForReview means the account reviews manually — the
+  # gh-1367 world — so the commit is retried once with the opt-out.
+  begin
+    http = FakePlayHttp.new
+    http.commit_error = { status: 400, body: { error: { status: "INVALID_ARGUMENT",
+      message: "Changes cannot be sent for review automatically. " \
+               "The query parameter changesNotSentForReview must be set." } }.to_json }
+    PlayListingSync.commit_edit!(http, "dev.fa1.app", "edit1", {})
+    raise "FAIL: the opt-out retry must commit, got #{http.committed.inspect}" unless
+      http.committed.first&.end_with?(":commit?changesNotSentForReview=true")
+    commits = http.calls.count { |m, u| m == :Post && u.include?(":commit") }
+    raise "FAIL: expected bare commit + one retry, got #{commits}" unless commits == 2
+    ok("gh-1560: a 'changesNotSentForReview must be set' 400 retries the commit with the opt-out")
   end
 
   # ── upload sha mismatch aborts BEFORE commit ────────────────────────────
