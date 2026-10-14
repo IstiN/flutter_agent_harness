@@ -17,6 +17,13 @@
 ///   maps it to non-zero and the interactive mode prints it and returns to
 ///   the prompt — instead of the silent exit-0 settle that killed the
 ///   gh-1577 trials mid-task.
+///
+/// gh-1603: the first re-stream replays the plain request; from the second
+/// on, the request carries the [emptyContinuationNudge] user message — a
+/// cap-truncated reasoning model re-streamed verbatim repeats the empty
+/// outcome, the nudge is the new signal that breaks the symmetry. The
+/// classifier treats the exact nudge message as transparent, so the turn's
+/// partial-content window survives a nudged retry.
 part of 'agent_loop.dart';
 
 /// See the library doc above.

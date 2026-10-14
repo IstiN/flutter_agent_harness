@@ -56,8 +56,11 @@ void main() {
       expect(exitCode, 0, reason: 'the run recovered — a real finish');
       expect(stream.calls, 3, reason: '2 empties + the recovered answer');
       expect(hasContinueNudge(stream.contexts[1]), isTrue);
-      expect(hasContinueNudge(stream.contexts[2]), isTrue,
-        reason: 'the nudge budget in headless is wider than one');
+      expect(
+        hasContinueNudge(stream.contexts[2]),
+        isTrue,
+        reason: 'the nudge budget in headless is wider than one',
+      );
       expect(io.out.toString(), isNot(contains('__FA_INCOMPLETE')));
     });
 
@@ -74,10 +77,16 @@ void main() {
       final exitCode = await cli.runHeadless('do the task');
 
       expect(exitCode, 1, reason: 'an unfinished session is a failure');
-      expect(stream.calls, 3,
-        reason: 'exactly N=3 consecutive empties — no unbounded retry storm');
-      expect(stream.calls, lessThan(4),
-        reason: 'the budget is spent — the 4th turn is never requested');
+      expect(
+        stream.calls,
+        3,
+        reason: 'exactly N=3 consecutive empties — no unbounded retry storm',
+      );
+      expect(
+        stream.calls,
+        lessThan(4),
+        reason: 'the budget is spent — the 4th turn is never requested',
+      );
       expect(io.out.toString(), contains('__FA_INCOMPLETE'));
     });
   });
@@ -102,12 +111,14 @@ void main() {
 
       expect(exitCode, 1);
       expect(io.out.toString(), contains('empty completion after partial'));
-      expect(io.out.toString(), isNot(contains('__FA_INCOMPLETE')),
-        reason: 'the exhaustion error marker is the distinct verdict');
+      expect(
+        io.out.toString(),
+        isNot(contains('__FA_INCOMPLETE')),
+        reason: 'the exhaustion error marker is the distinct verdict',
+      );
     });
 
-    test('a healthy first answer never triggers the incomplete path',
-        () async {
+    test('a healthy first answer never triggers the incomplete path', () async {
       final stream = FakeStreamFunction([textTurn('all done')]);
       final cli = cliFor(stream);
 

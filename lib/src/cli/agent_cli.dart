@@ -1984,7 +1984,8 @@ class AgentCli {
       // (no final answer was produced); error/aborted terminals keep their
       // own exit codes below.
       final settledMessage = _agent.state.messages.lastOrNull;
-      endedOnEmptyCompletion = settledMessage is AssistantMessage &&
+      endedOnEmptyCompletion =
+          settledMessage is AssistantMessage &&
           settledMessage.stopReason != StopReason.error &&
           settledMessage.stopReason != StopReason.aborted &&
           isEmptyAssistantCompletion(settledMessage);
