@@ -144,10 +144,82 @@ void main() {
     ];
     expect(retries, hasLength(1));
     final data = retries.single.data as Map;
-    // "attempt 2/4": the retry about to run is the 2nd of the
-    // 1 + maxRateLimitRetries rate-limit budget.
-    expect(data['attempt'], 2);
+    // The record keeps the notice contract value: the 1-based attempt
+    // that JUST FAILED (here the first one). The faces render
+    // attempt + 1 — the retry about to run, "attempt 2/4" — so the
+    // transcript, fa.log and this record tell one story.
+    expect(data['attempt'], 1);
     expect(data['max_attempts'], 1 + maxRateLimitRetries);
     expect(data['reason'], contains('429'));
+  });
+
+  test('headless: rate-limit wording past the 120-char display cap still '
+      'faces `[net] rate limited` and records (gh-1602 review)', () async {
+    final io = FakeCliIO();
+    var calls = 0;
+    final stream = (model, context, {cancelToken}) {
+      final n = ++calls;
+      final stream = AssistantMessageEventStream();
+      scheduleMicrotask(() {
+        if (n == 1) {
+          // The rate-limit wording sits past the display truncation
+          // point (a structured JSON-ish error render does this).
+          stream
+            ..push(StartEvent(partial: testAssistant()))
+            ..push(
+              ErrorEvent(
+                reason: StopReason.error,
+                error: testAssistant(
+                  stopReason: StopReason.error,
+                  errorMessage:
+                      '${'structured error payload detail; ' * 10}'
+                      '429 rate limit exceeded, back off and retry',
+                ),
+              ),
+            )
+            ..end();
+          return;
+        }
+        final tail = testAssistant(
+          content: [const TextContent(text: 'recovered')],
+        );
+        stream
+          ..push(StartEvent(partial: testAssistant()))
+          ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
+          ..push(
+            TextDeltaEvent(contentIndex: 0, delta: 'recovered', partial: tail),
+          )
+          ..push(
+            TextEndEvent(contentIndex: 0, content: 'recovered', partial: tail),
+          )
+          ..push(DoneEvent(reason: StopReason.stop, message: tail))
+          ..end();
+      });
+      return stream;
+    };
+
+    final cli0 = cli(stream, io);
+    final exitCode = await cli0.runHeadless('say hi');
+
+    // The ladder retried under the rate-limit policy — the face and the
+    // record must say the same, else run-7 forensics lose the blip.
+    expect(exitCode, 0);
+    expect(io.out.toString(), contains('[net] rate limited'));
+    expect(io.out.toString(), isNot(contains('connection lost')));
+    // The transcript line keeps the bounded first line — truncation is
+    // display-only.
+    expect(io.out.toString(), contains('(structured error payload detail; '));
+
+    final env = cli0.config.env;
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final sessions = await repo.list(cwd: '/work');
+    final session = await repo.open(sessions.first);
+    final retries = [
+      for (final record in await session.getEntries())
+        if (record is CustomRecord &&
+            record.customType == rateLimitRetryRecordType)
+          record,
+    ];
+    expect(retries, hasLength(1));
   });
 }

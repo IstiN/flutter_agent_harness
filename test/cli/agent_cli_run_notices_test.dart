@@ -52,6 +52,41 @@ void main() {
     expect(io.out.toString(), contains('retrying in 5s (attempt 2/3)'));
   });
 
+  test('the rate-limit face classifies the FULL notice reason — wording '
+      'past the 120-char display cap still reads as rate limited (gh-1602)',
+      () {
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+    );
+    cli.wireRunNoticesForTesting();
+
+    // A structured JSON-ish provider render that places the rate-limit
+    // wording past the display truncation point — the ladder retries it
+    // under the rate-limit policy, so the face must say so.
+    final longReason =
+        '${'structured error payload detail; ' * 10}'
+        '429 rate limit exceeded, back off and retry';
+    transientRetryNotice?.call(
+      1,
+      1 + maxRateLimitRetries,
+      const Duration(seconds: 2),
+      longReason,
+    );
+
+    expect(io.out.toString(), contains('[net] rate limited'));
+    expect(io.out.toString(), isNot(contains('connection lost')));
+    // Truncation stays display-only: the transcript line keeps the
+    // bounded first line of the reason.
+    expect(io.out.toString(), contains('(structured error payload detail; '));
+  });
+
   test('the image drop notice prints a dim transcript line', () {
     final cli = AgentCli(
       config: AgentCliConfig(
