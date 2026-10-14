@@ -15,6 +15,7 @@ import '../providers/quota.dart';
 // gh-1308: the zero-byte stall tag — the transient ladder's wedged-endpoint
 // verdict, classified as an immediate queue advance.
 import '../providers/transient_retry_stream.dart' show zeroByteStallTag;
+import 'provider_model_binding.dart';
 import 'roles_config.dart';
 import '../types.dart';
 import '../exceptions.dart';
@@ -162,23 +163,6 @@ final _timeoutPatterns = [
   RegExp(r'zero-byte stall'),
 ];
 
-/// Maps a queue adapter kind to the catalog provider NAME the model
-/// builder keys off — derived from the catalog ([resolveCliProviderSpec],
-/// issue #772 AC3), never a hand-maintained map: a catalog addition flows
-/// through with no edit here. `openai-completions` keeps the historical
-/// CLI rule: a custom baseUrl reports provider `openai`, the default
-/// reports `openrouter`.
-String queueKindCatalogName(String kind, String? baseUrl) {
-  final spec = resolveCliProviderSpec(kind, baseUrl: baseUrl);
-  if (spec == null) {
-    throw ConfigException(
-      'unknown provider kind "$kind" — supported: '
-      '${providerQueueKinds.join(', ')}',
-    );
-  }
-  return spec.name;
-}
-
 /// Builds the [ChainEntry] list for a resolved queue: one model per entry
 /// (catalog defaults + the entry's overrides), a single key stack per
 /// entry from its `apiKeyEnv` (the `_2`/`_3` stack convention rides along
@@ -204,15 +188,31 @@ List<ChainEntry> buildProviderQueueChain(
         'the queue blob; name the env var holding the key',
       );
     }
+    // gh-1570 (AC6/M5): every queue entry resolves through the binding —
+    // model id shape, wire⇄endpoint dialect, and the endpoint-shared
+    // kind's identity all validate BEFORE the key check. A name-less
+    // `openai-completions` entry has no identity (openai/openrouter/
+    // kimi/codemie share the wire) and is rejected — even keyless —
+    // instead of silently riding openrouter.ai once a key shows up.
+    final ProviderModelBinding binding;
+    try {
+      binding = ProviderModelBinding.resolve(
+        providerKind: entry.providerType,
+        modelId: entry.model,
+        baseUrl: entry.baseUrl,
+        keyEnvRef: keyEnv,
+        provenance: BindingProvenance.queue,
+      );
+    } on ConfigException catch (error) {
+      throw ConfigException('queue entry ${entry.label}: ${error.message}');
+    }
     final stack = collectKeyStack(secrets, keyEnv);
     if (stack.isEmpty) {
       skipped_.add('${entry.label} (missing API key: set $keyEnv)');
       continue;
     }
     final ring = ApiKeyRing(baseName: keyEnv, credentials: stack);
-    final spec = catalogProvider(
-      queueKindCatalogName(entry.providerType, entry.baseUrl),
-    )!;
+    final spec = catalogProvider(binding.catalogRecord)!;
     final inner = factory(spec.kind, stack.first.value);
     chain.add(
       ChainEntry(
