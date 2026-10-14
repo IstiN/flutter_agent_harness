@@ -73,12 +73,17 @@ final class AppStorage {
   /// Whether [dir] is a safe directory prefix for app reads: non-empty,
   /// relative, and free of traversal segments. [appDir] results pass by
   /// construction; session-scoped dir overrides (dynamic-message widgets
-  /// under `.widgets/…`) pass when every segment is a plain name.
+  /// under `.widgets/…`) pass too — their slugs derive from cwd-encoded
+  /// session paths and may carry arbitrary non-separator characters, which
+  /// the reader's lexical clamp handles: only a `..` segment, an empty
+  /// segment or a leading separator could escape, and those are rejected
+  /// here.
   static bool isSafeDir(String dir) {
     if (dir.isEmpty) return false;
+    if (dir.startsWith('/') || dir.startsWith('\\')) return false;
     for (final segment in dir.split('/')) {
       if (segment == '.' || segment == '..') return false;
-      if (!_segmentPattern.hasMatch(segment)) return false;
+      if (segment.isEmpty) return false;
     }
     return true;
   }
