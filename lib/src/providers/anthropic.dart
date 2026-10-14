@@ -290,7 +290,18 @@ final class _AnthropicStreamSession {
       options?.onResponse,
     );
 
-    final iterator = createSseIterator(response, cancelToken);
+    // Issue #1554: the model's request-scoped watchdog windows (a roles
+    // chain entry's timeouts) ride the stream — null falls through to the
+    // per-provider table, then the global effective value.
+    final iterator = createSseIterator(
+      response,
+      cancelToken,
+      idleTimeout: model.streamIdleTimeout,
+      // The scope label cites THE LEG THAT RAN (issue #1554 review round 1).
+      timeoutSource: model.streamIdleTimeout == null
+          ? null
+          : model.timeoutScopeLabel,
+    );
 
     // Ported from pi's `iterateAnthropicEvents`: only the message events
     // are parsed, an `error` event aborts, and a stream that started but

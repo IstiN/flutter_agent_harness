@@ -115,11 +115,12 @@ module PlayUploadPreflight
       skip_upload_images: true,
       skip_upload_screenshots: true,
       skip_upload_changelogs: true,
-      # gh-1330/gh-1367: Google no longer auto-sends committed edits for
-      # review — supply's listing-texts commit must opt out explicitly,
-      # same as PlayListingSync.commit_edit! does for the images edit.
-      # Review is triggered from the Play Console UI instead.
-      changes_not_sent_for_review: true
+      # gh-1560: dev.fa1.app auto-sends committed changes for review, so the
+      # gh-1330/gh-1367 opt-out flag is now REJECTED with HTTP 400 — supply
+      # commits without it (matching PlayListingSync.commit_edit!), and its
+      # rescue_changes_not_sent_for_review (on by default) still retries
+      # with the flag on manual-review accounts.
+      changes_not_sent_for_review: false
     }
   end
 end

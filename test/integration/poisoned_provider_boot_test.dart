@@ -180,6 +180,49 @@ roles:
       expect(result.stdout, contains('fallback reply'));
     });
 
+    test('gh-1570: a roles chain whose KNOWN provider is key-missing '
+        'degrades to the legacy model instead of exiting', () async {
+      // gh-1570 review (incident 2026-10-12): a missing key is a
+      // RECOVERABLE condition — `/key set` repairs it — so the boot must
+      // degrade with the named skip reasons and complete the turn on the
+      // fallback provider. The old shape hard-exited the binary
+      // (`invalid model roles config: ... missing API key ...`), locking
+      // the user out of the tool needed to run the repair.
+      writeConfig('''
+provider: openai-completions
+model: mock-model
+baseUrl: ${server.baseUrl}
+mode: code
+approvalMode: yolo
+roles:
+  default:
+    - provider: kimi
+      model: kimi-for-coding
+''');
+
+      // Blank-pins read as unset at every consumer, so the kimi chain
+      // entry finds no key anywhere (the helper's OPENAI_API_KEY=mock
+      // pin must not leak onto kimi's env-name chain).
+      final result = await runFa(
+        'say something',
+        extraEnv: const {'KIMI_API_KEY': '', 'OPENAI_API_KEY': ''},
+      );
+
+      expect(result.exitCode, 0, reason: result.output);
+      expect(
+        result.stderr,
+        contains('model roles config is unusable'),
+        reason: result.output,
+      );
+      // The skipped entries are NAMED: the provider/model label and the
+      // key the resolver wanted.
+      expect(result.stderr, contains('missing API key'));
+      expect(result.stderr, contains('set KIMI_API_KEY'));
+      expect(result.stderr, isNot(contains('invalid model roles config')));
+      // The turn completed on the FALLBACK provider (the mock endpoint).
+      expect(result.stdout, contains('fallback reply'));
+    });
+
     test('BLOCKING regression: a persisted catalog NAME (provider: openai) '
         'boots and completes a turn on its adapter kind', () async {
       // gh-760 review blocker: the raw saved NAME reaching

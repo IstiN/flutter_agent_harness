@@ -65,6 +65,7 @@ import '../trajectory/event_projection.dart' show textPayloadOf;
 import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
+import 'empty_completion.dart';
 import 'finalize_gate.dart';
 import 'image_registry.dart';
 import 'misuse_breaker.dart';
@@ -72,6 +73,8 @@ import 'stuck_tool.dart';
 import 'tool_pairing.dart';
 
 part 'agent_loop_stuck_supervision.dart';
+part 'agent_loop_empty_completion.dart';
+part 'agent_loop_finalize_gate.dart';
 
 /// Marker embedded in the over-window guard's error message (see
 /// [_streamAssistantResponse]): hosts match it to recognize "the loop
@@ -415,6 +418,9 @@ final class AgentLoopConfig {
     this.steeringNotifications,
     this.hasPendingSteering,
     this.maxEmptyRetries = 1,
+    this.emptyHiccupRetries = 3,
+    this.emptyHiccupBaseDelay = const Duration(milliseconds: 500),
+    this.emptyHiccupMaxBackoff = const Duration(milliseconds: 8000),
     this.maxSteeringTurns = 20,
     this.contextWindowCap,
     this.wireDump = false,
@@ -476,6 +482,24 @@ final class AgentLoopConfig {
   /// (one automatic retry — a blank answer never ends a run on the first
   /// try).
   final int maxEmptyRetries;
+
+  /// gh-1577: how many times an empty completion that follows PARTIAL
+  /// content (assistant text, tool activity, or a truncation signal — see
+  /// [classifyEmptyCompletion]'s `emptyAfterPartial` verdict) is retried
+  /// with exponential backoff before the run ends with an explicit
+  /// empty-exhaustion error instead of settling a silent success. Default:
+  /// 3. `0` still converts an empty-after-partial into the exhaustion error
+  /// after the [maxEmptyRetries] budget — the never-settle-empty contract
+  /// is not switchable off.
+  final int emptyHiccupRetries;
+
+  /// gh-1577: first backoff sleep between empty-hiccup retries (the
+  /// model-roles `retry.baseDelayMs` shape).
+  final Duration emptyHiccupBaseDelay;
+
+  /// gh-1577: cap on the exponential empty-hiccup backoff (the model-roles
+  /// `retry.maxBackoffMs` shape).
+  final Duration emptyHiccupMaxBackoff;
 
   /// How many steering batches may extend ONE run (mid-run user input or
   /// external mail). Without a cap, a self-sustaining agent chatter loop
@@ -557,6 +581,9 @@ final class AgentLoopConfig {
       steeringNotifications: steeringNotifications,
       hasPendingSteering: hasPendingSteering,
       maxEmptyRetries: maxEmptyRetries,
+      emptyHiccupRetries: emptyHiccupRetries,
+      emptyHiccupBaseDelay: emptyHiccupBaseDelay,
+      emptyHiccupMaxBackoff: emptyHiccupMaxBackoff,
       maxSteeringTurns: maxSteeringTurns,
       contextWindowCap: contextWindowCap,
       wireDump: wireDump,
@@ -1064,6 +1091,26 @@ Future<List<Message>> _runAgentLoop({
     tools: context.tools,
   );
   var currentConfig = config;
+  // The FinalizeGate (gh-1516 review): hosts persist
+  // (`_persistIncremental`) and render (`_onAssistantMessageEnd`) the
+  // message a MessageEndEvent carries — both happen DURING the run, long
+  // before any end-of-run rewrite could reach them. The strip therefore
+  // happens at this choke point: the interceptor rewrites every
+  // gate-mode assistant MessageEndEvent to the ledger-free message and
+  // stashes what it stripped; [_emitFinalizeGateFold] consumes the stash
+  // when the run ends (including the error/aborted early return —
+  // [_terminalRunMessages]). The gate key is read per event from the
+  // loop's live config so the interceptor and the fold always agree on
+  // the same value; within a run it is constant — nothing in the loop
+  // mutates `finalizeGate` mid-run.
+  final strippedLedgers = <_StrippedLedger>[];
+  if (config.finalizeGate) {
+    emit = _finalizeGateStrippingSink(
+      emit,
+      strippedLedgers,
+      () => currentConfig.finalizeGate,
+    );
+  }
   // Issue #862: breaker counters are per run (per user turn) — a fresh
   // prompt starts from zero consecutive failures.
   config.toolMisuseBreaker?.beginRun();
@@ -1122,7 +1169,14 @@ Future<List<Message>> _runAgentLoop({
       );
       newMessages.add(message);
 
-      final terminal = await _terminalRunMessages(message, newMessages, emit);
+      final terminal = await _terminalRunMessages(
+        message,
+        newMessages,
+        currentContext.messages,
+        strippedLedgers,
+        currentConfig.finalizeGate,
+        emit,
+      );
       if (terminal != null) return terminal;
 
       final toolPhase = await _runToolCallPhase(
@@ -1174,38 +1228,19 @@ Future<List<Message>> _runAgentLoop({
     break;
   }
 
-  // The FinalizeGate (gh-1412): unattended runs parse the task ledger out
-  // of the FINAL assistant message so hosts persist the hidden
-  // `task_ledger` record. No ledger in the answer (or the gate off) is
-  // not an error — legacy answers replay unchanged.
+  // The FinalizeGate (gh-1412, gh-1516): unattended runs fold the task
+  // ledger out of the FINAL assistant message — see [_emitFinalizeGateFold].
   if (currentConfig.finalizeGate) {
-    final ledger = _finalTaskLedger(newMessages);
-    if (ledger != null) await emit(TaskLedgerEvent(ledger));
+    await _emitFinalizeGateFold(
+      newMessages,
+      currentContext.messages,
+      strippedLedgers,
+      emit,
+    );
   }
 
   await emit(AgentEndEvent(List.unmodifiable(newMessages)));
   return newMessages;
-}
-
-/// Parses the FinalizeGate ledger from the run's last assistant message
-/// (gh-1412). The run must END on that message — a ledger quoted in an
-/// earlier turn's text never satisfies the gate, and a run that stopped on
-/// tool calls (terminate batch, abort) has no terminal answer to gate on:
-/// the last self-check it quoted predates tool activity that may have
-/// changed the produced state.
-TaskLedger? _finalTaskLedger(List<Message> messages) {
-  for (final message in messages.reversed) {
-    // The run's final message decides: anything after the last assistant
-    // message (tool results) means the run never ended on an answer.
-    if (message is! AssistantMessage) return null;
-    for (final block in message.content.reversed) {
-      if (block is! TextContent) continue;
-      final ledger = parseTaskLedger(block.text);
-      if (ledger != null) return ledger;
-    }
-    return null;
-  }
-  return null;
 }
 
 /// Emits the run-start sequence: `agent_start`, the first `turn_start`, and
@@ -1228,14 +1263,29 @@ Future<void> _emitTurnStart(bool firstTurn, AgentEventSink emit) async {
 /// Ends the run when the assistant [message] failed or was aborted, emitting
 /// the closing `turn_end`/`agent_end` and returning the run's messages.
 /// Returns `null` for a healthy message so the turn continues.
+///
+/// The FinalizeGate fold runs on this path too (gh-1516 review): the
+/// `MessageEndEvent` interceptor already stripped the ledger out of the
+/// PERSISTED answer during the run, so without the fold an error/aborted
+/// run would discard the hidden `task_ledger` record — the self-check of
+/// precisely the near-miss case the gate exists to capture — and ship the
+/// unstripped original in `AgentEndEvent`, disagreeing with the session
+/// JSONL. An aborted run still ends on an assistant answer, so gh-1412's
+/// "run must end on the answer" rule is satisfied.
 Future<List<Message>?> _terminalRunMessages(
   AssistantMessage message,
   List<Message> newMessages,
+  List<Message> contextMessages,
+  List<_StrippedLedger> stash,
+  bool finalizeGate,
   AgentEventSink emit,
 ) async {
   if (message.stopReason != StopReason.error &&
       message.stopReason != StopReason.aborted) {
     return null;
+  }
+  if (finalizeGate) {
+    await _emitFinalizeGateFold(newMessages, contextMessages, stash, emit);
   }
   await emit(TurnEndEvent(message: message, toolResults: const []));
   await emit(AgentEndEvent(List.unmodifiable(newMessages)));
@@ -1368,21 +1418,10 @@ Future<List<Message>> _steeringMessages(AgentLoopConfig config) async {
   return await config.getSteeringMessages?.call() ?? const <Message>[];
 }
 
-/// A completion is degenerate-empty when the model stopped normally
-/// (`stop`) but produced no tool calls and no non-whitespace text — a
-/// known provider failure mode under load (the answer is simply blank).
-bool _isDegenerateEmpty(AssistantMessage message) {
-  if (message.stopReason != StopReason.stop) return false;
-  for (final block in message.content) {
-    if (block is ToolCall) return false;
-    if (block is TextContent && block.text.trim().isNotEmpty) return false;
-  }
-  return true;
-}
-
 /// Retries a degenerate-empty completion with the same context (bounded by
 /// `config.maxEmptyRetries`; a blank answer never ends a run on the first
 /// try). The retried messages stay in the transcript (truthful record) and
+/// the gh-1577 hiccup policy lives in `agent_loop_empty_completion.dart`.
 Future<(AssistantMessage, Context)> _retryDegenerateEmpty(
   AssistantMessage message,
   Context context,
@@ -1390,24 +1429,14 @@ Future<(AssistantMessage, Context)> _retryDegenerateEmpty(
   AgentEventSink emit,
   StreamFunction streamFunction,
   CancelToken? cancelToken,
-) async {
-  var retries = 0;
-  var current = message;
-  var out = context;
-  while (_isDegenerateEmpty(current) &&
-      retries < config.maxEmptyRetries &&
-      !(cancelToken?.isCancelled ?? false)) {
-    retries++;
-    (current, out) = await _streamAssistantResponse(
-      context,
-      config,
-      emit,
-      streamFunction,
-      cancelToken,
-    );
-  }
-  return (current, out);
-}
+) => retryEmptyCompletion(
+  message,
+  context,
+  config,
+  emit,
+  streamFunction,
+  cancelToken,
+);
 
 /// Streams one assistant response from the provider, emitting message
 /// lifecycle events and keeping the partial message in [context.messages]
@@ -2616,7 +2645,8 @@ ToolExecutionResult _errorToolResult(Object message, {String? toolName}) {
     return ToolExecutionResult(
       content: [
         TextContent(
-          text: 'Tool error ($name): run was aborted — tool not started'
+          text:
+              'Tool error ($name): run was aborted — tool not started'
               '${reason == null ? '' : ' (cancel reason: $reason)'}',
         ),
       ],

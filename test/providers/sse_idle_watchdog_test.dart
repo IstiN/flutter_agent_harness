@@ -218,4 +218,17 @@ void main() {
       },
     );
   });
+
+  group('1554 — scoped stall-note window rendering', () {
+    test('sub-second windows render milliseconds, never a bare 0s', () {
+      expect(providerWindowLabel(const Duration(milliseconds: 400)), '400ms');
+      expect(providerWindowLabel(const Duration(milliseconds: 999)), '999ms');
+    });
+
+    test('second-and-above windows keep the bare-seconds shape', () {
+      expect(providerWindowLabel(const Duration(seconds: 1)), '1s');
+      expect(providerWindowLabel(const Duration(milliseconds: 1500)), '1s');
+      expect(providerWindowLabel(const Duration(seconds: 1800)), '1800s');
+    });
+  });
 }

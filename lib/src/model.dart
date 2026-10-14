@@ -112,6 +112,9 @@ final class Model {
     this.compat,
     this.authHeader,
     this.capabilityNotes = const [],
+    this.connectTimeout,
+    this.streamIdleTimeout,
+    this.timeoutScopeLabel,
   });
 
   /// The model id sent to the provider (e.g. `gpt-4o-mini`,
@@ -176,6 +179,24 @@ final class Model {
   /// (REG-1); the status surfaces render them (`/model-edit`, the boot
   /// notice) — the wire never reads them.
   final List<String> capabilityNotes;
+
+  /// Request-scoped connect/first-headers watchdog override
+  /// (`connectTimeoutMs` on a roles chain entry, issue #1554). The top
+  /// layer of the per-field precedence — role chain entry >
+  /// custom-provider entry > `models:` entry > global `providerTimeouts:`
+  /// > built-in default. Null keeps the endpoint/global layers.
+  final Duration? connectTimeout;
+
+  /// Request-scoped stream-idle watchdog override (`streamIdleTimeoutMs`
+  /// on a roles chain entry, issue #1554). Same precedence as
+  /// [connectTimeout], per field.
+  final Duration? streamIdleTimeout;
+
+  /// Where [connectTimeout]/[streamIdleTimeout] came from, rendered into
+  /// the stall lines when a scoped override is in effect
+  /// (`idle window 1800s (role smol override)`) so a wide window never
+  /// looks like a hang. Null when the model carries no scoped windows.
+  final String? timeoutScopeLabel;
 }
 
 /// The effective context window: the owner override ([cap],

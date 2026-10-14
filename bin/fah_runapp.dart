@@ -306,8 +306,9 @@ Future<void> _runApp(List<String> args) async {
         // which only runs when the abandoned fetch itself settles.
         final probe = http.Client();
         try {
-          final latest = await fetchLatestTag(client: probe)
-              .timeout(const Duration(seconds: 3), onTimeout: () => null);
+          final latest = await fetchLatestTag(
+            client: probe,
+          ).timeout(const Duration(seconds: 3), onTimeout: () => null);
           if (latest != null &&
               compareVersions(latest, packageVersion) > 0 &&
               !autoUpdateTuiOwnsScreen) {
@@ -600,6 +601,37 @@ Future<void> _runApp(List<String> args) async {
     stderr.writeln(line);
   }
 
+  // gh-1570 incident REG: a key-slot derivation change must never strand
+  // stored keys. Copy legacy cross-spelling slots onto the canonical slot
+  // (non-destructive, keychain in scope) BEFORE any resolution runs, and
+  // surface the per-move notices on stderr (never stdout — the headless
+  // events channel rule).
+  for (final line in await migrateLegacyKeySlots([
+    for (final entry in saved.customProviders)
+      (
+        baseUrl: entry.baseUrl,
+        providerName: entry.name,
+        pinnedKeyName: entry.keyName,
+      ),
+    if (saved.modelRoles case final roles?)
+      for (final chain in [
+        ...roles.roles.values,
+        for (final override in roles.pathOverrides) ...override.roles.values,
+      ])
+        for (final ref in chain)
+          if (ref.baseUrl != null)
+            (
+              baseUrl: ref.baseUrl!,
+              providerName: null,
+              // An explicitly pinned ref migrates onto ITS slot (the pin
+              // is the contract surface); unpinned refs onto the
+              // endpoint's canonical slot.
+              pinnedKeyName: ref.apiKeyName,
+            ),
+  ], keyCache)) {
+    stderr.writeln(line);
+  }
+
   // gh-1000 (E2): when the boot-pinned key slot exists in BOTH the
   // environment and the store with different values, note the provenance
   // order (the env value wins). Detection + wording are the shared
@@ -671,34 +703,39 @@ Future<void> _runApp(List<String> args) async {
     // `/provider <name>` switch takes in roles mode. Roles the config
     // pins explicitly keep their chains; unpinned roles inherit the
     // default, so every resolution (default/smol/slow/plan) lands on the
-    // env provider. A keyless declaration cannot form a chain entry
-    // (chains require a key) — roles keep owning selection there, and
-    // the boot note says so.
-    if (faPreconfig case final preconfig? when preconfig.apiKeyEnvVar != null) {
-      rolesResolver.addSecret(preconfig.apiKeyEnvVar!, preconfig.apiKey);
+    // env provider. A keyless declaration pins TOO (gh-1570 AC8/M8): a
+    // localhost bench endpoint needs no key, and the bench must measure
+    // the PRECONFIGURED provider — saved roles never outrank the env.
+    if (faPreconfig case final preconfig?) {
+      final keyVar = preconfig.apiKeyEnvVar;
+      if (keyVar != null) rolesResolver.addSecret(keyVar, preconfig.apiKey);
       rolesResolver.setDefaultChain([
         ModelRef(
           provider: preconfig.spec.name,
           modelId: preconfig.modelId,
           baseUrl: preconfig.baseUrl,
-          apiKeyName: preconfig.apiKeyEnvVar,
+          apiKeyName: keyVar,
           input: preconfig.input,
           thinkingLevel: preconfig.thinkingLevel,
+          keyless: keyVar == null,
         ),
       ]);
     }
     try {
       defaultRoleResolved = rolesResolver.resolveRole(defaultModelRole) != null;
-    } on UnknownProviderRoleException catch (error) {
+    } on UnusableRoleChainException catch (error) {
       // gh-760: degrade, never brick. The chain names providers NO version
-      // knows (a config written by a newer app/CLI version) — warn on
-      // stderr with the reasons and fall back to the legacy single-model
-      // path. Unknown-provider entries were already skipped with named
-      // reasons by the resolver; the throw only fires when no usable
-      // entry remains. The drop is whole-resolver BY DESIGN (gh-760
-      // review): the per-turn main-model path re-enters chainFor, so a
-      // half-alive resolver would move the failure to mid-session; the
-      // aux roles ride guarded best-effort paths either way.
+      // knows (a config written by a newer app/CLI version) — gh-1570
+      // (incident 2026-10-12) extended the SAME degrade to every
+      // no-usable-entry shape: a chain of KNOWN providers merely missing
+      // keys is RECOVERABLE (a `/key set` repairs it), and hard-exiting
+      // the binary locks the user out of the repair tool itself. Warn on
+      // stderr with the reasons (the skipped entries are named) and fall
+      // back to the legacy single-model path. The drop is whole-resolver
+      // BY DESIGN (gh-760 review): the per-turn main-model path re-enters
+      // chainFor, so a half-alive resolver would move the failure to
+      // mid-session; the aux roles ride guarded best-effort paths either
+      // way.
       stderr.writeln(
         'warning: model roles config is unusable (${error.message}) — '
         'falling back to the configured single provider/model',
@@ -706,9 +743,10 @@ Future<void> _runApp(List<String> args) async {
       rolesResolver = null;
       defaultRoleResolved = false;
     } on ConfigException catch (error) {
-      // A CURRENT-version misconfiguration (e.g. every entry of a KNOWN
-      // provider missing its key) keeps the pre-#760 contract: a loud
-      // boot failure — never a silently-ignored roles config.
+      // Any other ConfigException from the resolver is a CURRENT-version
+      // misconfiguration that cannot be recovered in-session — keep the
+      // loud boot failure. (The no-usable-entry shapes are all
+      // UnusableRoleChainException now and degrade above.)
       _fail('invalid model roles config: ${error.message}');
     }
   }
@@ -891,9 +929,9 @@ Future<void> _runApp(List<String> args) async {
 
   // The FA_PROVIDER_* notice: names the declaration (type, resolved name,
   // key ref — or its keyless absence) — never the key value. The pinned
-  // declaration is the session default for every model role; only a
-  // keyless declaration under an active roles: section (which cannot pin
-  // a chain) stays fallback-only, and the note says so.
+  // declaration is the session default for every model role; a keyless
+  // declaration pins too (gh-1570 AC8 — the pin carries the empty key),
+  // and the note below says when roles: still outranks it.
   if (faPreconfig case final preconfig?) {
     io.writeln(
       'note: provider ${preconfig.name} (${preconfig.spec.name}) '
@@ -901,6 +939,10 @@ Future<void> _runApp(List<String> args) async {
       '${preconfig.apiKeyEnvVar ?? 'none (keyless endpoint)'}'
       '${preconfig.thinkingLevel == null ? '' : '; thinkingLevel: ${preconfig.thinkingLevel}'}',
     );
+    // gh-1570 (AC2/E6): the validated binding identity, echoed once —
+    // the `wire:` override in particular must never be invisible (a
+    // silenced dialect check is asserted, not forgotten).
+    io.writeln('note: binding — ${preconfig.binding.echo()}');
     // A declared level on an adapter that is not wired to the
     // config-carried level is carried but never sent — say so once
     // instead of silently ignoring it (issue #734 E1). gh-1426 wired the
@@ -920,9 +962,10 @@ Future<void> _runApp(List<String> args) async {
     if (defaultRoleResolved) {
       io.writeln(
         preconfig.apiKeyEnvVar == null
-            ? 'note: FA_PROVIDER_* preconfig applies to the fallback model '
-                  'only (roles: section is active; a keyless declaration '
-                  'cannot pin a roles chain)'
+            ? 'note: FA_PROVIDER_* keyless preconfig is the session default '
+                  '— all model roles resolve to it unless roles: pins a '
+                  'chain (gh-1570: the bench measures the preconfigured '
+                  'provider)'
             : 'note: FA_PROVIDER_* preconfig is the session default — all '
                   'model roles resolve to it unless roles: pins a chain',
       );

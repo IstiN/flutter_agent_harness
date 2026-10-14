@@ -9,7 +9,7 @@ import 'dart:io';
 
 import '../model_roles/provider_catalog.dart';
 import '../secrets/secure_key_store.dart';
-import 'custom_providers.dart';
+import 'custom_providers.dart' show CustomProviderRegistry, sameEndpoint;
 
 /// The env names that can hold [provider]'s API key: the catalog spec's
 /// names ([providerCatalog]; copilot → COPILOT_GITHUB_TOKEN,
@@ -62,8 +62,15 @@ String? optionalProviderApiKey(
   final pinned = _pinnedKeyValue(pinnedKeyName, environment, keys);
   if (pinned != null) return pinned;
   final spec = _keySpec(provider);
+  // Trailing-slash-normalized (the shared sameEndpoint rule, gh-1570
+  // L10): a default endpoint saved/spelled with one trailing slash must
+  // not classify as CUSTOM — the catalog env names would never be probed
+  // and the boot would go keyless (401).
   final customEndpoint =
-      spec != null && baseUrl != null && baseUrl != spec.defaultBaseUrl;
+      spec != null &&
+      baseUrl != null &&
+      baseUrl.isNotEmpty &&
+      !sameEndpoint(baseUrl, spec.defaultBaseUrl);
   if (!customEndpoint) {
     final envKey = _firstEnvValue(apiKeyEnvNames(provider), environment);
     if (envKey != null) return envKey;
@@ -130,4 +137,58 @@ String? _firstStoredValue(List<String> names, SecureKeyCache keys) {
     if (stored != null && stored.isNotEmpty) return stored;
   }
   return null;
+}
+
+/// One known (endpoint, record) pair the boot migration considers: a
+/// saved custom registry entry or a roles chain ref's endpoint.
+typedef KeySlotMigrationSource = ({
+  String baseUrl,
+  String? providerName,
+  String? pinnedKeyName,
+});
+
+/// Boot-time migration of key slots stranded by a derivation change
+/// (gh-1570 incident: fa 1.0.556 → 1.0.564 moved a roles entry's endpoint
+/// spelling, and the key stored under the old slot stopped resolving).
+/// For each known endpoint, when the canonical slot is EMPTY and a legacy
+/// cross-spelling slot holds a value, the value is COPIED onto the
+/// canonical slot — non-destructive (the legacy slot stays, so a
+/// rollback keeps working) — and a notice line is returned for the boot
+/// to print. Keychain explicitly in scope: [keys].save writes through to
+/// the OS store; an unavailable or failing store degrades to a notice
+/// (resolution still falls back to the legacy slot), never a boot
+/// failure. A canonical slot that already holds a value is never touched.
+Future<List<String>> migrateLegacyKeySlots(
+  Iterable<KeySlotMigrationSource> migrations,
+  SecureKeyCache keys,
+) async {
+  final notices = <String>[];
+  if (!keys.available) return notices;
+  for (final (:baseUrl, providerName: name, pinnedKeyName: pinned)
+      in migrations) {
+    final canonical =
+        pinned ??
+        CustomProviderRegistry.keyNameFor(baseUrl, providerName: name);
+    if (keys.read(canonical) != null) continue;
+    for (final legacy in CustomProviderRegistry.keySlotCandidates(
+      baseUrl,
+      providerName: name,
+    )) {
+      if (legacy == canonical) continue;
+      final value = keys.read(legacy);
+      if (value == null) continue;
+      final copied = await keys.save(canonical, value);
+      notices.add(
+        copied
+            ? 'migrated the API key for "$baseUrl" from legacy key slot '
+                  '"$legacy" to "$canonical" (the legacy slot is kept)'
+            : 'could not migrate the API key for "$baseUrl" from "$legacy" '
+                  'to "$canonical" '
+                  '(${keys.lastSaveError ?? 'secure store refused the write'}) '
+                  '— resolution still falls back to the legacy slot',
+      );
+      break; // one stranded source per canonical slot
+    }
+  }
+  return notices;
 }

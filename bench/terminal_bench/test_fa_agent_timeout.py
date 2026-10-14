@@ -17,6 +17,7 @@ import threading
 import time
 import types
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
@@ -49,9 +50,18 @@ KNOB_NAMES = (
     "FA_AGENT_CEILING_MULTIPLIER",
 )
 
+# gh-1576: the external harness cap rides its own env var; every clean-env
+# helper must strip it so a host-exported cap cannot leak into a test that
+# means to pin the no-cap byte-identity.
+EXTERNAL_CAP_NAME = "FA_EXTERNAL_CAP_SEC"
+
 
 def clean_env(**overrides):
-    env = {name: value for name, value in os.environ.items() if name not in KNOB_NAMES}
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in KNOB_NAMES + (EXTERNAL_CAP_NAME,)
+    }
     env.update(overrides)
     return env
 
@@ -664,7 +674,10 @@ class HarborParityTest(unittest.TestCase):
 
     @staticmethod
     def _audit_payload(audit_sink):
-        encoded = audit_sink[0].split("printf %s ")[1].split(" |")[0]
+        # gh-1576: the poll loop checkpoints the audit incrementally, so
+        # the sink holds partial "running" rows first — the TERMINAL
+        # record is the last write.
+        encoded = audit_sink[-1].split("printf %s ")[1].split(" |")[0]
         return json.loads(base64.b64decode(encoded))
 
     def test_natural_completion_with_extensions(self):
@@ -770,6 +783,277 @@ class HarborParityTest(unittest.TestCase):
         self.assertIn("fa --session-root", calls[0])
 
 
+@unittest.skipUnless(TB_AVAILABLE, "terminal_bench not installed")
+class TerminalBenchExternalCapTest(unittest.TestCase):
+    """IT-4 (gh-1576): the same cap contract through the tb adapter.
+
+    The tb harness cap (its --global-agent-timeout-sec / dataset caps) is
+    normally the LARGER clock (bench.yml pins it above the adapter's own
+    ceiling), so the external cap must be inert there (E4) — but when a
+    harness ever caps BELOW the knobs (the harbor incident shape), the
+    launch line, the audit, and the decider must all follow the smaller
+    truth. Parity surface: identical audit schema to the harbor adapter.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        root = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location(
+            "legacy_fa_agent_extcap", root / "terminal_bench" / "fa_agent.py"
+        )
+        self.legacy_fa = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.legacy_fa)
+
+    def _agent(self):
+        tarball = Path(self.tmpdir.name) / "fa-bundle.tar.gz"
+        tarball.write_bytes(b"")
+        with mock.patch.dict(os.environ, {"FA_BUNDLE_TARBALL": str(tarball)}):
+            return self.legacy_fa.FaAgent()
+
+    def _run_supervised(self, env_overrides, stock, logging_dir):
+        agent = self._agent()
+        session = FakeTmuxSession()
+        env = clean_env_all(
+            FA_PROGRESS_EXTENSION="1",
+            FA_STALL_GAP_SEC="360",
+            FA_AGENT_TIMEOUT_ABS_CEILING_SEC="3600",
+            FA_PROVIDER_CONFIG="{}",
+            **env_overrides,
+        )
+        with mock.patch.dict(os.environ, env), mock.patch.object(
+            self.legacy_fa, "_POLL_SEC", 0.05
+        ), mock.patch.object(
+            self.legacy_fa.AbstractInstalledAgent, "perform_task",
+            side_effect=stock,
+        ):
+            started = time.monotonic()
+            agent.perform_task("instr", session, logging_dir)
+        return agent, time.monotonic() - started
+
+    def test_it4_launch_line_carries_the_external_cap_deadline(self):
+        # AC1 parity: the launch line's FA_DEADLINE_EPOCH_MS projects the
+        # 1800s external cap - 120s margin, not the 3600s knob ceiling.
+        logging_dir = Path(self.tmpdir.name)
+        agent, _ = self._run_supervised(
+            {fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+            lambda **kwargs: "stock-result",
+            logging_dir,
+        )
+        commands = agent._run_agent_commands("instr")
+        self.assertEqual(len(commands), 1)
+        self.assertIn("FA_DEADLINE_EPOCH_MS=", commands[0].command)
+        exported = int(
+            commands[0].command.split("FA_DEADLINE_EPOCH_MS=")[1].split(";")[0]
+        )
+        now_ms = int(time.time() * 1000)
+        # 1680s ± the (sub-second) trial runtime.
+        self.assertGreaterEqual(exported, now_ms + 1_679_000 - 5_000)
+        self.assertLessEqual(exported, now_ms + 1_681_000)
+
+    def test_it4_audit_names_the_winning_source(self):
+        logging_dir = Path(self.tmpdir.name)
+        self._run_supervised(
+            {fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+            lambda **kwargs: "stock-result",
+            logging_dir,
+        )
+        audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
+        self.assertEqual(audit["outcome"], "completed")
+        resolved = audit["cap_resolution"]
+        self.assertEqual(resolved["winning_cap_source"], "external")
+        self.assertEqual(resolved["external_cap_sec"], 1800.0)
+        self.assertEqual(resolved["external_cap_status"], "known")
+        self.assertEqual(resolved["knob_cap_sec"], 3600.0)
+        self.assertEqual(resolved["effective_cap_sec"], 1800.0)
+
+    def test_it4_larger_external_cap_is_inert(self):
+        # E4 parity: bench.yml's shape — the tb harness cap sits ABOVE the
+        # adapter ceiling, so nothing may change (byte-identical deadline).
+        logging_dir = Path(self.tmpdir.name)
+        agent, _ = self._run_supervised(
+            {fa_agent_timeout.EXTERNAL_CAP_ENV: "86400"},
+            lambda **kwargs: "stock-result",
+            logging_dir,
+        )
+        audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
+        self.assertEqual(audit["cap_resolution"]["winning_cap_source"], "knobs")
+        self.assertEqual(audit["cap_resolution"]["effective_cap_sec"], 3600.0)
+
+    def test_it4_checkpoints_written_per_progress_sample(self):
+        # IT-3/E3 tb parity: the audit is checkpointed incrementally on
+        # the poll loop (partial "running" rows), the terminal row is not
+        # a checkpoint. The writes are observed at the writer seam — the
+        # file itself only survives with its last write.
+        logging_dir = Path(self.tmpdir.name)
+        writes = []
+        original = self.legacy_fa.FaAgent._write_audit
+
+        def recording(logging_dir, knobs, ladder, outcome, *args, **kwargs):
+            original(logging_dir, knobs, ladder, outcome, *args, **kwargs)
+            writes.append((outcome, kwargs.get("checkpoint", False)))
+
+        def stock(**kwargs):
+            for _ in range(6):
+                time.sleep(0.05)
+            return "stock-result"
+
+        agent = self._agent()
+        session = FakeTmuxSession()
+        env = clean_env_all(
+            FA_PROGRESS_EXTENSION="1",
+            FA_STALL_GAP_SEC="360",
+            FA_AGENT_TIMEOUT_ABS_CEILING_SEC="3600",
+            FA_PROVIDER_CONFIG="{}",
+            **{fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+        )
+        with mock.patch.dict(os.environ, env), mock.patch.object(
+            self.legacy_fa, "_POLL_SEC", 0.05
+        ), mock.patch.object(
+            self.legacy_fa.AbstractInstalledAgent, "perform_task",
+            side_effect=stock,
+        ), mock.patch.object(
+            self.legacy_fa.FaAgent, "_write_audit", staticmethod(recording)
+        ):
+            agent.perform_task("instr", session, logging_dir)
+        self.assertGreaterEqual(len(writes), 2, writes)
+        running = [w for w in writes if w == ("running", True)]
+        self.assertGreaterEqual(len(running), 1)
+        self.assertEqual(writes[-1][0], "completed")
+        self.assertFalse(writes[-1][1])
+
+    def test_audit_schema_matches_the_harbor_surface(self):
+        # IT-4 semantic-drift property: both adapters render the audit via
+        # the SAME shared writer — the cap_resolution block and the
+        # checkpoint/external_kill extras must be the identical schema.
+        logging_dir = Path(self.tmpdir.name)
+        self._run_supervised(
+            {fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+            lambda **kwargs: "stock-result",
+            logging_dir,
+        )
+        tb_audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
+        env = clean_env_all(
+            FA_PROGRESS_EXTENSION="1",
+            FA_AGENT_TIMEOUT_ABS_CEILING_SEC="3600",
+            **{fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+        )
+        knobs = TimeoutKnobs.from_env(env)
+        cap = fa_agent_timeout.resolve_cap(knobs, env)
+        harbor_shaped = audit_dict(
+            knobs, fa_agent_timeout.ProgressWatch(knobs), "completed",
+            cap=cap, deadline_epoch_ms=42,
+        )
+        self.assertEqual(
+            set(tb_audit["cap_resolution"]),
+            set(harbor_shaped["cap_resolution"]),
+        )
+        self.assertEqual(
+            set(tb_audit) - {"deadline_sec", "extensions",
+                             "last_progress_sec", "last_output_bytes"},
+            set(harbor_shaped) - {"deadline_sec", "extensions",
+                                  "last_progress_sec", "last_output_bytes"},
+        )
+
+    def test_external_cap_only_stock_run_exports_and_audits(self):
+        # No adapter knobs, external cap known: the stock single-exec path
+        # still arms fa's clock (I1) and lands the audit (I2).
+        logging_dir = Path(self.tmpdir.name)
+        agent = self._agent()
+        session = FakeTmuxSession()
+        sentinel = types.SimpleNamespace(
+            failure_mode=self.legacy_fa.FailureMode.NONE
+        )
+        env = clean_env_all(
+            FA_PROVIDER_CONFIG="{}",
+            **{fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+        )
+        with mock.patch.dict(os.environ, env), mock.patch.object(
+            self.legacy_fa.AbstractInstalledAgent, "perform_task",
+            side_effect=lambda *a, **k: sentinel,
+        ) as stock:
+            agent.perform_task("instr", session, logging_dir)
+        stock.assert_called_once()
+        commands = agent._run_agent_commands("instr")
+        self.assertIn("FA_DEADLINE_EPOCH_MS=", commands[0].command)
+        audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
+        self.assertEqual(audit["outcome"], "completed")
+        self.assertEqual(audit["policy"], "external-cap")
+        self.assertNotIn("knobs", audit)
+        self.assertEqual(audit["cap_resolution"]["winning_cap_source"], "external")
+
+    def test_harness_timeout_stock_run_audits_external_kill(self):
+        # Review round 2: knobs=None means the adapter never supervises —
+        # an agent_timeout classification is the HARNESS's own kill (it
+        # came from outside the adapter), so the audit must say the
+        # recognized verdict `external_kill`. The raw failure-mode string
+        # is absent from both honesty-justified sets (summary.py /
+        # post_mortem_usage.py) and reads as a false "killed while
+        # progressing" contradiction (the gh-1556 lesson).
+        logging_dir = Path(self.tmpdir.name)
+        agent = self._agent()
+        session = FakeTmuxSession()
+        sentinel = types.SimpleNamespace(
+            failure_mode=self.legacy_fa.FailureMode.AGENT_TIMEOUT
+        )
+        env = clean_env_all(
+            FA_PROVIDER_CONFIG="{}",
+            **{fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+        )
+        with mock.patch.dict(os.environ, env), mock.patch.object(
+            self.legacy_fa.AbstractInstalledAgent, "perform_task",
+            side_effect=lambda *a, **k: sentinel,
+        ):
+            agent.perform_task("instr", session, logging_dir)
+        audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
+        self.assertEqual(audit["outcome"], "external_kill")
+        self.assertEqual(audit["policy"], "external-cap")
+
+    def test_other_failure_modes_stay_raw_in_the_stock_audit(self):
+        # Only the harness-timeout class maps to a recognized verdict;
+        # every other failure mode stays raw — the harness's own
+        # classification IS the truthful outcome (those rows never pass
+        # the agent_timeout honesty filter).
+        logging_dir = Path(self.tmpdir.name)
+        agent = self._agent()
+        session = FakeTmuxSession()
+        sentinel = types.SimpleNamespace(
+            failure_mode=self.legacy_fa.FailureMode.UNKNOWN_AGENT_ERROR
+        )
+        env = clean_env_all(
+            FA_PROVIDER_CONFIG="{}",
+            **{fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+        )
+        with mock.patch.dict(os.environ, env), mock.patch.object(
+            self.legacy_fa.AbstractInstalledAgent, "perform_task",
+            side_effect=lambda *a, **k: sentinel,
+        ):
+            agent.perform_task("instr", session, logging_dir)
+        audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
+        self.assertEqual(
+            audit["outcome"], str(self.legacy_fa.FailureMode.UNKNOWN_AGENT_ERROR.value)
+        )
+
+    def test_no_cap_no_knobs_stock_run_stays_byte_identical(self):
+        # AC5/REG-2: no cap, no knobs — no export, no audit.
+        logging_dir = Path(self.tmpdir.name)
+        agent = self._agent()
+        session = FakeTmuxSession()
+        sentinel = types.SimpleNamespace(
+            failure_mode=self.legacy_fa.FailureMode.NONE
+        )
+        with mock.patch.dict(
+            os.environ, clean_env_all(FA_PROVIDER_CONFIG="{}")
+        ), mock.patch.object(
+            self.legacy_fa.AbstractInstalledAgent, "perform_task",
+            side_effect=lambda *a, **k: sentinel,
+        ):
+            agent.perform_task("instr", session, logging_dir)
+        commands = agent._run_agent_commands("instr")
+        self.assertNotIn("FA_DEADLINE_EPOCH_MS", commands[0].command)
+        self.assertFalse((logging_dir / "fa-agent-timeout.json").exists())
+
+
 NEW_KNOB_NAMES = (
     "FA_STALL_GAP_SEC",
     "FA_AGENT_TIMEOUT_ABS_CEILING_SEC",
@@ -846,7 +1130,7 @@ def clean_env_all(**overrides):
     env = {
         name: value
         for name, value in os.environ.items()
-        if name not in KNOB_NAMES + NEW_KNOB_NAMES
+        if name not in KNOB_NAMES + NEW_KNOB_NAMES + (EXTERNAL_CAP_NAME,)
     }
     env.update(overrides)
     return env
@@ -1175,6 +1459,528 @@ class DeadlineEnvTest(unittest.TestCase):
         ladder = ProgressLadder(knobs)
         record = audit_dict(knobs, ladder, "stall")
         self.assertNotIn("deadline_epoch_ms", record)
+
+
+class ExternalCapParsingTest(unittest.TestCase):
+    """UT-1/UT-3 (gh-1576): FA_EXTERNAL_CAP_SEC parsing — degrade, never crash.
+
+    The cap is harness metadata injected by the workflow; a malformed value
+    must fall back to knobs-only with a warning (AC8), never raise inside a
+    running trial the way the knob knobs' fail-loud contract does.
+    """
+
+    def test_absent_or_blank_cap_is_unknown(self):
+        # AC5/E1: no cap exported (the workflow leaves the env var empty
+        # when a shard's tasks declare no timeout) => unknown, not a zero.
+        self.assertEqual(fa_agent_timeout.external_cap_from_env(clean_env_all()), (None, "unknown"))
+        self.assertEqual(
+            fa_agent_timeout.external_cap_from_env(clean_env_all(**{EXTERNAL_CAP_NAME: "  "})),
+            (None, "unknown"),
+        )
+
+    def test_integer_and_float_caps_are_known(self):
+        self.assertEqual(
+            fa_agent_timeout.external_cap_from_env(clean_env_all(**{EXTERNAL_CAP_NAME: "1800"})),
+            (1800.0, "known"),
+        )
+        self.assertEqual(
+            fa_agent_timeout.external_cap_from_env(clean_env_all(**{EXTERNAL_CAP_NAME: "1800.5"})),
+            (1800.5, "known"),
+        )
+
+    def test_malformed_caps_are_rejected_with_a_warning(self):
+        # AC8: non-numeric, <= 0, non-finite and absurdly large values are
+        # all rejected — knobs-only fallback, warning logged, no exception.
+        for bad in ("soon", "0", "-5", "inf", "nan", "-inf", "1e999", "1e13"):
+            with self.subTest(bad=bad):
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    parsed = fa_agent_timeout.external_cap_from_env(
+                        clean_env_all(**{EXTERNAL_CAP_NAME: bad})
+                    )
+                self.assertEqual(parsed, (None, "rejected"))
+                self.assertTrue(
+                    any(issubclass(w.category, UserWarning) for w in caught),
+                    f"{bad!r} rejection must warn",
+                )
+                joined = " ".join(str(w.message) for w in caught)
+                self.assertIn("FA_EXTERNAL_CAP_SEC", joined)
+
+    def test_rejection_is_silent_when_quiet_flag_set(self):
+        # The resolve path warns once; callers that already log (the
+        # adapters) pass quiet=True to avoid double-printing per trial.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            parsed = fa_agent_timeout.external_cap_from_env(
+                clean_env_all(**{EXTERNAL_CAP_NAME: "soon"}), quiet=True
+            )
+        self.assertEqual(parsed, (None, "rejected"))
+        self.assertEqual(caught, [])
+
+
+class CapResolutionTest(unittest.TestCase):
+    """UT-1 (gh-1576): the min() composition — the heart of the card.
+
+    effective_cap = min(external cap, knob cap); the winning source is
+    recorded; a larger external cap can never widen the budget (I1/E4);
+    equal caps tie-break to external (E5 — the harness is the stricter
+    truth); malformed caps degrade to knobs-only (AC8).
+    """
+
+    @staticmethod
+    def watch_env(**overrides):
+        return clean_env_all(
+            FA_PROGRESS_EXTENSION="1", FA_AGENT_TIMEOUT_ABS_CEILING_SEC="3600", **overrides
+        )
+
+    def test_external_smaller_than_knobs_wins(self):
+        # AC1: the incident shape — harbor declares 1800s, the shipped knob
+        # ceiling is 3600s; the effective cap MUST be 1800 (source external).
+        env = self.watch_env(**{EXTERNAL_CAP_NAME: "1800"})
+        cap = fa_agent_timeout.resolve_cap(TimeoutKnobs.from_env(env), env)
+        self.assertEqual(cap.external_cap_sec, 1800.0)
+        self.assertEqual(cap.external_cap_status, "known")
+        self.assertEqual(cap.knob_cap_sec, 3600.0)
+        self.assertEqual(cap.effective_cap_sec, 1800.0)
+        self.assertEqual(cap.winning_cap_source, "external")
+
+    def test_knobs_smaller_than_external_win(self):
+        # AC6/E4: a bigger external cap never widens the budget.
+        env = self.watch_env(**{EXTERNAL_CAP_NAME: "7200"})
+        cap = fa_agent_timeout.resolve_cap(TimeoutKnobs.from_env(env), env)
+        self.assertEqual(cap.effective_cap_sec, 3600.0)
+        self.assertEqual(cap.winning_cap_source, "knobs")
+
+    def test_equal_caps_tie_break_to_external(self):
+        # E5: deterministic tie-break — the harness is the stricter truth.
+        env = self.watch_env(**{EXTERNAL_CAP_NAME: "3600"})
+        cap = fa_agent_timeout.resolve_cap(TimeoutKnobs.from_env(env), env)
+        self.assertEqual(cap.effective_cap_sec, 3600.0)
+        self.assertEqual(cap.winning_cap_source, "external")
+
+    def test_no_knobs_with_known_external_resolves_external(self):
+        # No adapter knobs but the harness cap is known: the effective cap
+        # is the external truth alone (fa still learns the real budget).
+        cap = fa_agent_timeout.resolve_cap(None, clean_env_all(**{EXTERNAL_CAP_NAME: "1800"}))
+        self.assertIsNotNone(cap)
+        self.assertIsNone(cap.knob_cap_sec)
+        self.assertEqual(cap.effective_cap_sec, 1800.0)
+        self.assertEqual(cap.winning_cap_source, "external")
+
+    def test_no_external_cap_knobs_rule_alone(self):
+        # AC5: knobs-only run — byte-identical resolution, status unknown.
+        env = self.watch_env()
+        cap = fa_agent_timeout.resolve_cap(TimeoutKnobs.from_env(env), env)
+        self.assertEqual(cap.external_cap_sec, None)
+        self.assertEqual(cap.external_cap_status, "unknown")
+        self.assertEqual(cap.effective_cap_sec, 3600.0)
+        self.assertEqual(cap.winning_cap_source, "knobs")
+
+    def test_rejected_cap_degrades_to_knobs_only(self):
+        # AC8: malformed cap — knobs-only fallback, status recorded.
+        bad_env = self.watch_env(**{EXTERNAL_CAP_NAME: "soon"})
+        cap = fa_agent_timeout.resolve_cap(
+            TimeoutKnobs.from_env(bad_env), bad_env, quiet=True
+        )
+        self.assertEqual(cap.external_cap_status, "rejected")
+        self.assertIsNone(cap.external_cap_sec)
+        self.assertEqual(cap.effective_cap_sec, 3600.0)
+        self.assertEqual(cap.winning_cap_source, "knobs")
+
+    def test_rejected_cap_with_no_knobs_is_feature_off(self):
+        # A rejected cap must not invent a clock where none existed.
+        self.assertIsNone(
+            fa_agent_timeout.resolve_cap(None, clean_env_all(**{EXTERNAL_CAP_NAME: "soon"}), quiet=True)
+        )
+
+    def test_flat_knob_cap_composes_with_external(self):
+        # Legacy flat ladder (no watch): the knob cap is the base cap.
+        env = clean_env_all(FA_AGENT_TIMEOUT_SEC="600", **{EXTERNAL_CAP_NAME: "1800"})
+        cap = fa_agent_timeout.resolve_cap(TimeoutKnobs.from_env(env), env)
+        self.assertEqual(cap.knob_cap_sec, 600.0)
+        self.assertEqual(cap.effective_cap_sec, 600.0)
+        self.assertEqual(cap.winning_cap_source, "knobs")
+
+    def test_resolve_warns_once_on_rejection(self):
+        bad_env = self.watch_env(**{EXTERNAL_CAP_NAME: "soon"})
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            fa_agent_timeout.resolve_cap(TimeoutKnobs.from_env(bad_env), bad_env)
+        self.assertTrue(any("FA_EXTERNAL_CAP_SEC" in str(w.message) for w in caught))
+
+
+class ExternalCapDeadlineTest(unittest.TestCase):
+    """UT-1/IT-1 (gh-1576): the exported deadline derives from the min cap."""
+
+    NOW_MS = 1_700_000_000_000
+
+    @staticmethod
+    def watch_env(**overrides):
+        return clean_env_all(
+            FA_PROGRESS_EXTENSION="1", FA_AGENT_TIMEOUT_ABS_CEILING_SEC="3600", **overrides
+        )
+
+    def test_external_cap_1800_caps_the_deadline_at_30_min(self):
+        # AC1: first-request time-left projection <= 30 min under a 1800s
+        # cap: 1800 - 120 (wrap-up margin) = 1680s.
+        self.assertEqual(
+            fa_agent_timeout.deadline_env_from(self.watch_env(**{EXTERNAL_CAP_NAME: "1800"}), self.NOW_MS),
+            {"FA_DEADLINE_EPOCH_MS": str(self.NOW_MS + 1_680_000)},
+        )
+
+    def test_larger_external_cap_changes_nothing(self):
+        # E4/REG-2: 7200s external over a 3600s ceiling is byte-identical
+        # to the no-cap run.
+        legacy = fa_agent_timeout.deadline_env_from(self.watch_env(), self.NOW_MS)
+        bigger = fa_agent_timeout.deadline_env_from(
+            self.watch_env(**{EXTERNAL_CAP_NAME: "7200"}), self.NOW_MS
+        )
+        self.assertEqual(legacy, bigger)
+
+    def test_no_external_cap_byte_identical_to_legacy(self):
+        # AC5/REG-2: without the env var the exported deadline is exactly
+        # the pre-gh-1576 value.
+        self.assertEqual(
+            fa_agent_timeout.deadline_env_from(self.watch_env(), self.NOW_MS),
+            {"FA_DEADLINE_EPOCH_MS": str(self.NOW_MS + 3_480_000)},
+        )
+
+    def test_external_cap_arms_the_deadline_without_knobs(self):
+        # No adapter knobs, external 1800 known: fa still learns the true
+        # budget (the harness kill is real even when we do not supervise).
+        self.assertEqual(
+            fa_agent_timeout.deadline_env_from(
+                clean_env_all(**{EXTERNAL_CAP_NAME: "1800"}), self.NOW_MS
+            ),
+            {"FA_DEADLINE_EPOCH_MS": str(self.NOW_MS + 1_680_000)},
+        )
+
+    def test_rejected_cap_never_arms_a_clock(self):
+        # AC8: no knobs + rejected cap => no export (never a made-up clock).
+        self.assertEqual(
+            fa_agent_timeout.deadline_env_from(
+                clean_env_all(**{EXTERNAL_CAP_NAME: "soon"}), self.NOW_MS
+            ),
+            {},
+        )
+
+    def test_tiny_external_cap_clamps_to_the_cap_itself(self):
+        # E7: a cap below the min-remaining window must never project a
+        # deadline PAST the kill (the old clamp floor could): 10s cap =>
+        # deadline == start + cap (zero margin), recorded as clamped.
+        env = self.watch_env(**{EXTERNAL_CAP_NAME: "10"})
+        cap, deadline = fa_agent_timeout.resolve_deadline(
+            TimeoutKnobs.from_env(env), env, now_ms=self.NOW_MS
+        )
+        self.assertEqual(deadline, self.NOW_MS + 10_000)
+        self.assertTrue(cap.deadline_clamped)
+
+    def test_wrap_up_margin_grace_still_clamps(self):
+        # E7 pinned shape: 60s cap — 120s margin would go negative; the
+        # clamp lands on the 30s min-remaining window (inside the cap).
+        env = self.watch_env(**{EXTERNAL_CAP_NAME: "60"})
+        cap, deadline = fa_agent_timeout.resolve_deadline(
+            TimeoutKnobs.from_env(env), env, now_ms=self.NOW_MS
+        )
+        self.assertEqual(deadline, self.NOW_MS + 30_000)
+        self.assertTrue(cap.deadline_clamped)
+
+    def test_no_clamp_on_a_healthy_cap(self):
+        env = self.watch_env(**{EXTERNAL_CAP_NAME: "1800"})
+        cap, _ = fa_agent_timeout.resolve_deadline(
+            TimeoutKnobs.from_env(env), env, now_ms=self.NOW_MS
+        )
+        self.assertFalse(cap.deadline_clamped)
+
+    def test_resolve_deadline_returns_none_when_fully_off(self):
+        self.assertEqual(
+            fa_agent_timeout.resolve_deadline(None, clean_env_all(), now_ms=self.NOW_MS),
+            (None, None),
+        )
+
+
+class CappedDeciderTest(unittest.TestCase):
+    """UT-1 (gh-1576): the kill decisions cap at the external truth.
+
+    The external cap never widens a deadline (E4); when it binds (a
+    smaller harness cap than the knob ceiling) the verdict names it —
+    the audit's outcome must say which clock killed the trial.
+    """
+
+    @staticmethod
+    def watch(knobs, external=None):
+        return fa_agent_timeout.ProgressWatch(knobs, external_cap_sec=external)
+
+    @staticmethod
+    def watch_knobs(**overrides):
+        env = clean_env_all(
+            FA_PROGRESS_EXTENSION="1", FA_AGENT_TIMEOUT_ABS_CEILING_SEC="3600", **overrides
+        )
+        return TimeoutKnobs.from_env(env)
+
+    def test_progressing_trial_dies_at_external_cap(self):
+        # The incident shape: healthy progress, 1800s dataset cap under a
+        # 3600s knob ceiling — the trial dies at 1800s, named.
+        watch = self.watch(self.watch_knobs(), external=1800.0)
+        for t in range(0, 1740, 60):
+            self.assertIsNone(watch.evaluate(float(t), t * 1000), f"died at {t}s")
+        self.assertEqual(watch.evaluate(1800.0, 1800 * 1000), "external_cap")
+
+    def test_external_cap_below_ceiling_never_widens(self):
+        # E4: external above the ceiling is inert — legacy verdict.
+        watch = self.watch(self.watch_knobs(), external=7200.0)
+        for t in range(0, 3600, 60):
+            self.assertIsNone(watch.evaluate(float(t), t * 1000))
+        self.assertEqual(watch.evaluate(3660.0, 3660 * 1000), "abs_ceiling")
+
+    def test_equal_external_and_ceiling_ties_to_external(self):
+        # E5: equal caps — the harness is the stricter truth.
+        watch = self.watch(self.watch_knobs(), external=3600.0)
+        for t in range(0, 3540, 60):
+            self.assertIsNone(watch.evaluate(float(t), t * 1000))
+        self.assertEqual(watch.evaluate(3600.0, 3600 * 1000), "external_cap")
+
+    def test_stall_deadline_is_capped_by_external(self):
+        # A stalled trial whose ladder deadline lands past the external
+        # cap dies at the cap, named; one that stalls BEFORE the cap keeps
+        # the legacy "stall" verdict (the knob clock was the binding one).
+        watch = self.watch(self.watch_knobs(), external=300.0)
+        self.assertIsNone(watch.evaluate(0.0, 10))
+        self.assertEqual(watch.evaluate(300.0, 10), "external_cap")
+        # Ladder verdict under the cap: an explicit 240s gap and progress
+        # at 50s stalls at 290s (max(290, 50 + 120) = 290) — before the
+        # 300s external cap, so the honest verdict is still "stall".
+        watch2 = self.watch(
+            self.watch_knobs(FA_STALL_GAP_SEC="240", idle_window=120.0),
+            external=300.0,
+        )
+        self.assertIsNone(watch2.evaluate(0.0, 10))
+        self.assertIsNone(watch2.evaluate(50.0, 10))
+        self.assertEqual(watch2.evaluate(290.0, 10), "stall")
+
+    def test_extension_off_flat_base_still_capped(self):
+        # Extension off: flat base cap — the external cap only ever
+        # shrinks it, never grows it.
+        env = clean_env_all(
+            FA_STALL_GAP_SEC="240",
+            FA_AGENT_TIMEOUT_ABS_CEILING_SEC="3600",
+            FA_PROGRESS_EXTENSION="0",
+        )
+        knobs = TimeoutKnobs.from_env(env)
+        self.assertEqual(fa_agent_timeout.ProgressWatch(knobs).kill_at, knobs.base_sec)
+        watch = fa_agent_timeout.ProgressWatch(knobs, external_cap_sec=120.0)
+        self.assertEqual(watch.kill_at, 120.0)
+        self.assertEqual(watch.evaluate(120.0, 10**9), "external_cap")
+
+    def test_ladder_dies_at_external_cap(self):
+        # Legacy ladder + smaller external cap: the flat base (3600s)
+        # can never outlive a 1800s harness guillotine.
+        env = clean_env_all(FA_AGENT_TIMEOUT_SEC="3600")
+        ladder = fa_agent_timeout.ProgressLadder(
+            TimeoutKnobs.from_env(env), external_cap_sec=1800.0
+        )
+        self.assertEqual(ladder.kill_at, 1800.0)
+        self.assertIsNone(ladder.evaluate(1799.0, 0))
+        self.assertEqual(ladder.evaluate(1800.0, 0), "external_cap")
+
+    def test_ladder_knob_smaller_than_external_keeps_stall_verdict(self):
+        # AC6: knob cap binds => byte-identical legacy verdict.
+        env = clean_env_all(FA_AGENT_TIMEOUT_SEC="360")
+        ladder = fa_agent_timeout.ProgressLadder(
+            TimeoutKnobs.from_env(env), external_cap_sec=1800.0
+        )
+        self.assertEqual(ladder.evaluate(360.0, 0), "stall")
+
+    def test_no_external_cap_deciders_are_byte_identical(self):
+        # REG-2: default construction (no external) is today's behavior.
+        watch = self.watch(self.watch_knobs())
+        self.assertEqual(watch.external_cap_sec, None)
+        for t in range(0, 3600, 60):
+            self.assertIsNone(watch.evaluate(float(t), t * 1000))
+        self.assertEqual(watch.evaluate(3660.0, 3660 * 1000), "abs_ceiling")
+
+
+class CapAuditTest(unittest.TestCase):
+    """UT-2 (gh-1576): the audit names the winning source and both inputs,
+    and leaks no unrelated env values (byte-scan)."""
+
+    @staticmethod
+    def watch_env(**overrides):
+        return clean_env_all(
+            FA_PROGRESS_EXTENSION="1", FA_AGENT_TIMEOUT_ABS_CEILING_SEC="3600", **overrides
+        )
+
+    def test_audit_names_winning_source_and_both_inputs(self):
+        # AC2: external won — the record says so, with both input values.
+        env = self.watch_env(**{EXTERNAL_CAP_NAME: "1800"})
+        cap = fa_agent_timeout.resolve_cap(TimeoutKnobs.from_env(env), env, quiet=True)
+        watch = fa_agent_timeout.ProgressWatch(TimeoutKnobs.from_env(env))
+        record = audit_dict(
+            TimeoutKnobs.from_env(env), watch, "external_cap", cap=cap, deadline_epoch_ms=42
+        )
+        resolved = record["cap_resolution"]
+        self.assertEqual(resolved["winning_cap_source"], "external")
+        self.assertEqual(resolved["external_cap_sec"], 1800.0)
+        self.assertEqual(resolved["external_cap_status"], "known")
+        self.assertEqual(resolved["knob_cap_sec"], 3600.0)
+        self.assertEqual(resolved["effective_cap_sec"], 1800.0)
+        self.assertEqual(resolved["deadline_epoch_ms"], 42)
+        self.assertFalse(resolved["deadline_clamped"])
+
+    def test_audit_records_unknown_and_rejected_statuses(self):
+        # AC5/E1: knobs-only run says external unknown; AC8: a rejected
+        # cap is recorded, not silently dropped.
+        env = self.watch_env()
+        knobs = TimeoutKnobs.from_env(env)
+        record = audit_dict(
+            knobs, fa_agent_timeout.ProgressWatch(knobs), "completed", cap=fa_agent_timeout.resolve_cap(knobs, env)
+        )
+        self.assertEqual(record["cap_resolution"]["external_cap_status"], "unknown")
+        self.assertNotIn("external_cap_sec", record["cap_resolution"])
+
+        bad_env = self.watch_env(**{EXTERNAL_CAP_NAME: "soon"})
+        bad_knobs = TimeoutKnobs.from_env(bad_env)
+        bad_record = audit_dict(
+            bad_knobs,
+            fa_agent_timeout.ProgressWatch(bad_knobs),
+            "completed",
+            cap=fa_agent_timeout.resolve_cap(bad_knobs, bad_env, quiet=True),
+        )
+        self.assertEqual(bad_record["cap_resolution"]["external_cap_status"], "rejected")
+
+    def test_audit_clamp_recorded_for_tiny_cap(self):
+        # E7: the clamp is written down, not discovered by archaeology.
+        env = self.watch_env(**{EXTERNAL_CAP_NAME: "60"})
+        knobs = TimeoutKnobs.from_env(env)
+        cap = fa_agent_timeout.resolve_cap(knobs, env, quiet=True)
+        record = audit_dict(knobs, fa_agent_timeout.ProgressWatch(knobs), "completed", cap=cap)
+        self.assertTrue(record["cap_resolution"]["deadline_clamped"])
+
+    def test_audit_without_cap_keeps_legacy_shape(self):
+        # REG-2: a no-cap audit is byte-identical — no cap_resolution key.
+        knobs = TimeoutKnobs(base_sec=120.0)
+        record = audit_dict(knobs, ProgressLadder(knobs), "stall")
+        self.assertNotIn("cap_resolution", record)
+
+    def test_audit_leaks_no_unrelated_env_values(self):
+        # Byte-scan: the cap values are integers; no other env value (and
+        # no other FA_* env NAME) may cross into the audit JSON, and the
+        # cap_resolution block stays a fixed closed shape.
+        env = self.watch_env(**{EXTERNAL_CAP_NAME: "1800"})
+        env["FA_PROVIDER_CONFIG"] = '{"secret":"s3cr3t"}'
+        cap = fa_agent_timeout.resolve_cap(TimeoutKnobs.from_env(env), env, quiet=True)
+        watch = fa_agent_timeout.ProgressWatch(TimeoutKnobs.from_env(env))
+        record = audit_dict(
+            TimeoutKnobs.from_env(env), watch, "external_cap", cap=cap, deadline_epoch_ms=7
+        )
+        payload = json.dumps(record)
+        self.assertNotIn("s3cr3t", payload)
+        self.assertNotIn("FA_PROVIDER_CONFIG", payload)
+        for name in env:
+            if name.startswith("FA_") and name != EXTERNAL_CAP_NAME:
+                self.assertNotIn(name, payload)
+        self.assertEqual(
+            set(record["cap_resolution"]),
+            {
+                "external_cap_status",
+                "effective_cap_sec",
+                "winning_cap_source",
+                "deadline_clamped",
+                "external_cap_sec",
+                "knob_cap_sec",
+                "deadline_epoch_ms",
+            },
+        )
+
+
+class ExternalCapStaticRegTest(unittest.TestCase):
+    """REG-1 (gh-1576, merge-blocking): the deadline can never exceed a
+    known external cap — by construction, not by review.
+
+    Static contract over the three sources: the shared module's deadline
+    entry points must route through the external-cap min(), and neither
+    adapter may compute FA_DEADLINE_EPOCH_MS from the knobs directly.
+    """
+
+    ROOT = Path(__file__).resolve().parents[2]
+    MODULE = ROOT / "bench" / "fa_agent_timeout.py"
+    ADAPTERS = (
+        ROOT / "bench" / "harbor_fa" / "fa_agent.py",
+        ROOT / "bench" / "terminal_bench" / "fa_agent.py",
+    )
+
+    @staticmethod
+    def _function_body(source: str, name: str) -> str:
+        """The source between `def <name>` and the next top-level def."""
+        start = source.index(f"def {name}(")
+        nxt = source.find("\ndef ", start + 1)
+        return source[start : nxt if nxt != -1 else len(source)]
+
+    def test_module_deadline_entry_points_route_through_the_min(self):
+        source = self.MODULE.read_text(encoding="utf-8")
+        env_from = self._function_body(source, "deadline_env_from")
+        self.assertIn(
+            "resolve_cap(",
+            env_from,
+            "deadline_env_from must resolve the cap through the external-cap min()",
+        )
+        epoch = self._function_body(source, "deadline_epoch_ms")
+        self.assertIn(
+            "external_cap_sec",
+            epoch,
+            "deadline_epoch_ms must accept and apply the external cap",
+        )
+        self.assertIn(
+            "min(",
+            epoch,
+            "deadline_epoch_ms must compose the caps with min()",
+        )
+        resolve = self._function_body(source, "resolve_cap")
+        self.assertIn(
+            "min(",
+            resolve,
+            "resolve_cap must compose the caps with min()",
+        )
+
+    def test_adapters_never_compute_the_deadline_from_knobs(self):
+        # Any line that touches the FA_DEADLINE_EPOCH_MS env name must be
+        # a transport of an already-resolved stash value (dict key, env
+        # assignment of the stash, launch-line export) — never arithmetic
+        # over knobs/caps. The regexes below are the actual kill paths a
+        # regression would take.
+        danger = re.compile(
+            r"FA_DEADLINE_EPOCH_MS.*"
+            r"(effective_cap_sec\(|watch_abs_ceiling|ceiling_sec|base_sec"
+            r"|stall_gap|deadline_from_cap|time\.time\(\)\s*\*|\bmonotonic\("
+            r"|\bnow\s*\+|\+\s*\w*cap\w*\s*\*\s*1000)"
+        )
+        for path in self.ADAPTERS:
+            with self.subTest(adapter=path.name):
+                for lineno, line in enumerate(
+                    path.read_text(encoding="utf-8").splitlines(), 1
+                ):
+                    stripped = line.strip()
+                    if stripped.startswith("#"):
+                        continue
+                    self.assertFalse(
+                        danger.search(line),
+                        f"{path.name}:{lineno} computes FA_DEADLINE_EPOCH_MS "
+                        f"outside the shared min(): {stripped!r}",
+                    )
+
+    def test_adapters_source_the_deadline_from_the_shared_module(self):
+        # Positive pin: each adapter's only deadline source is the shared
+        # helper (which applies the min()).
+        harbor = (self.ROOT / "bench" / "harbor_fa" / "fa_agent.py").read_text(encoding="utf-8")
+        self.assertTrue(
+            "_timeout.deadline_epoch_ms(" in harbor or "_timeout.resolve_deadline(" in harbor,
+            "harbor adapter must source its deadline from bench/fa_agent_timeout",
+        )
+        tb = (self.ROOT / "bench" / "terminal_bench" / "fa_agent.py").read_text(encoding="utf-8")
+        self.assertTrue(
+            "_timeout.deadline_env_from(" in tb or "_timeout.resolve_deadline(" in tb,
+            "tb adapter must source its deadline from bench/fa_agent_timeout",
+        )
 
 
 if __name__ == "__main__":

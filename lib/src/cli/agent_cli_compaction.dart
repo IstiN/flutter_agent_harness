@@ -928,11 +928,16 @@ extension OverWindowContinuation on AgentCli {
   /// auto-continues skip that reset on purpose), so the nudged run itself
   /// cannot re-nudge: empty → nudge → empty settles instead of looping
   /// forever.
+  ///
+  /// gh-1577: the verdict comes from the shared empty-completion
+  /// classifier. Only a CLEAN empty is nudgeable — an empty that follows
+  /// partial content is the loop's bounded-retry hiccup (the loop either
+  /// recovers it or converts exhaustion into a run error before it reaches
+  /// here), and aborted/errored streams keep their own terminal paths.
   bool _shouldContinueAfterEmptyReply(Message? lastMessage) {
     if (_emptyReplyNudgesLeft <= 0) return false;
-    return lastMessage is AssistantMessage &&
-        lastMessage.stopReason != StopReason.error &&
-        lastMessage.stopReason != StopReason.aborted &&
-        _assistantMessageIsEmpty(lastMessage);
+    if (lastMessage is! AssistantMessage) return false;
+    return classifyEmptyCompletion(_agent.state.messages, lastMessage) ==
+        EmptyCompletionVerdict.cleanEmpty;
   }
 }
