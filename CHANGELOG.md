@@ -31,6 +31,23 @@ block a release again.
   a `fa_tui_callbacks.dart` part file keeping `fa_tui.dart` under the
   2800-line gate.
 
+- gh-1605: the FinalizeGate gains a "grader parity" named check. A
+  produced entry point (script/CLI the verifier will run itself) is only
+  verified when it survives the grader's own invocation: the checklist
+  must re-run each produced entry point from a different working
+  directory in a fresh subprocess with a clean env, capture stdout/
+  stderr/exit code, and diff against the earlier in-session run — any
+  divergence (different output, relative-path artifacts, locale/
+  encoding-dependent output) is a `fail` ledger item, never a pass.
+  Closes the modernize-scientific-stack__nwbgy7a near-miss (every
+  in-session checklist item passed, the verifier's clean-cwd subprocess
+  collapsed Station 102 to Station 101's mean, reward 0.0). REG coverage:
+  the parity procedure catches cwd- and env-dependent entry points and
+  does not false-positive cwd-independent ones
+  (`test/agent/finalize_gate_grader_parity_test.dart`), and an IT replays
+  the evidence shape end-to-end — divergence detected and persisted as a
+  `fail` ledger item before finalize.
+
 - gh-1603: unattended runs can no longer end as a clean success on empty
   model responses. Loop: from the second empty-hiccup retry on, the request
   carries a continuation nudge user message ("your last reply was
