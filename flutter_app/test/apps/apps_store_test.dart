@@ -836,6 +836,98 @@ iOS row <!-- fa-platforms: ios -->
       );
     });
   });
+
+  // gh-1614 rework — the install side resolves every archive name through
+  // the shared AppStorage namespace: a hostile entry name fails the
+  // install before any write, and a manifest i18n ref that cannot resolve
+  // inside the namespace fails with the SAME honest i18n message shape as
+  // a dangling one (not the raw resolver ArgumentError).
+  group('AppsStore catalog install namespace guard (gh-1614 rework)', () {
+    test('installWidget rejects a hostile archive entry name before any '
+        'write', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      await expectLater(
+        store.installWidget(
+          id: 'evil-app',
+          version: '1.0.0',
+          files: {
+            'manifest.json': utf8.encode('{"id":"evil-app"}'),
+            '../evil.js': utf8.encode('// namespace escape'),
+          },
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+      // Nothing escaped the namespace…
+      expect((await env.exists('evil.js')).valueOrNull, isFalse);
+      // …and the failed install recorded nothing.
+      expect(await store.isCatalogInstalled('evil-app'), isFalse);
+    });
+
+    test('installWidget rejects a manifest i18n ref that cannot resolve '
+        'in the namespace with the honest i18n message', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      // The ref carries a space: the read side skips such refs like
+      // missing files, so the install-time failure must name the ref and
+      // the namespace rule — not the raw resolver ArgumentError.
+      await expectLater(
+        store.installWidget(
+          id: 'i18n-app',
+          version: '1.0.0',
+          files: {
+            'manifest.json': utf8.encode(
+              '{"id":"i18n-app",'
+                  '"nameI18n":{"pt-BR":{"file":"i18n/pt-BR (final).json"}}}',
+            ),
+            'widget.js': utf8.encode('// app'),
+          },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf([
+              contains('install of i18n-app rejected'),
+              contains('i18n/pt-BR (final).json'),
+              contains('not a valid in-namespace path'),
+            ]),
+          ),
+        ),
+      );
+      expect(await store.isCatalogInstalled('i18n-app'), isFalse);
+    });
+
+    test('installWidget still fails a DANGLING valid ref with the missing '
+        'message (the all-or-nothing contract is unchanged)', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      await expectLater(
+        store.installWidget(
+          id: 'i18n-app',
+          version: '1.0.0',
+          files: {
+            'manifest.json': utf8.encode(
+              '{"id":"i18n-app",'
+                  '"nameI18n":{"pt-BR":{"file":"i18n/pt-BR.json"}}}',
+            ),
+            'widget.js': utf8.encode('// app'),
+          },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf([
+              contains('install of i18n-app rejected'),
+              contains('i18n/pt-BR.json'),
+              contains('missing from the widget package'),
+            ]),
+          ),
+        ),
+      );
+    });
+  });
 }
 
 /// [ExecutionEnv] whose `apps/` listing can be made to fail — the issue

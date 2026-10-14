@@ -377,47 +377,46 @@ class JsAppInfo {
   String displayDescription(String? locale) =>
       (descriptionText ?? LocalizedText.parse(description)).resolve(locale);
 
-  /// Copy with ref file contents (ref path → text) attached, so
-  /// [displayName]/[displayDescription] can resolve `{"file": ...}`
-  /// entries synchronously at display time.
-  JsAppInfo withI18nContents(Map<String, String> contents) => JsAppInfo(
+  /// Field-preserving copy — the ONE hand-written field list (gh-1614
+  /// review): flag setters compose over this instead of duplicating the
+  /// 14 fields, so a future [JsAppInfo] field cannot be silently dropped
+  /// by a missed hand-maintained copy.
+  JsAppInfo copyWith({
+    LocalizedText? nameText,
+    LocalizedText? descriptionText,
+    String? error,
+  }) => JsAppInfo(
     id: id,
     name: name,
     description: description,
     icon: icon,
     declaredPermissions: declaredPermissions,
-    nameText: nameText?.withContents(contents),
-    descriptionText: descriptionText?.withContents(contents),
+    nameText: nameText ?? this.nameText,
+    descriptionText: descriptionText ?? this.descriptionText,
     version: version,
     chrome: chrome,
     tileWidget: tileWidget,
     bundled: bundled,
     platforms: platforms,
     dirOverride: dirOverride,
-    error: error,
+    error: error ?? this.error,
+  );
+
+  /// Copy with ref file contents (ref path → text) attached, so
+  /// [displayName]/[displayDescription] can resolve `{"file": ...}`
+  /// entries synchronously at display time.
+  JsAppInfo withI18nContents(Map<String, String> contents) => copyWith(
+    nameText: nameText?.withContents(contents),
+    descriptionText: descriptionText?.withContents(contents),
   );
 
   /// Copy flagged with a launch-blocking error (see [error]) — every other
   /// field, localized display values included, carries over. The listing
   /// uses this for the gh-1614 missing-files state: the tile renders the
   /// explicit broken-app affordance and taps surface the message instead
-  /// of launching into a `StateError`.
-  JsAppInfo withError(String message) => JsAppInfo(
-    id: id,
-    name: name,
-    description: description,
-    icon: icon,
-    declaredPermissions: declaredPermissions,
-    nameText: nameText,
-    descriptionText: descriptionText,
-    version: version,
-    chrome: chrome,
-    tileWidget: tileWidget,
-    bundled: bundled,
-    platforms: platforms,
-    dirOverride: dirOverride,
-    error: error ?? message,
-  );
+  /// of launching into a `StateError`. The FIRST error wins (an already
+  /// flagged tile keeps its flag).
+  JsAppInfo withError(String message) => copyWith(error: error ?? message);
 
   final String icon;
   final String version;
@@ -666,24 +665,33 @@ class AppsStore {
       )).valueOrNull;
       if (raw == null) continue; // half-created folder — healer's domain
       final hash = _digest(raw);
-      // gh-1614 I2 (listed ⇒ bootable): probe the exact file the boot path
-      // checks (WidgetManifest.fromStorage's exists probe through the same
-      // resolver). A missing entry renders the explicit missing-files state
-      // naming the root, instead of a tile that dies with a raw StateError
-      // on tap.
-      final missingEntry =
-          ((await _env.exists(AppStorage.entryPath(id))).valueOrNull ?? false)
-          ? null
-          : _missingEntryMessage(id);
+      // gh-1614 I2 (listed ⇒ bootable): probe the exact files the boot
+      // paths check (WidgetManifest.fromStorage's exists probe through the
+      // same resolver; the tile surface through AppTileHost's
+      // tileWidgetPath read). A missing entry renders the explicit
+      // missing-files state naming the root, instead of a tile that dies
+      // with a raw StateError on tap.
+      final missingEntry = await _missingBootEntry(id);
       final cached = _parsedApps[id];
       if (cached != null &&
           _manifestHashes[id] == hash &&
           missingEntry == null &&
           await _i18nRefsUnchanged(cached, id)) {
-        // Unchanged manifest (and i18n ref files) — zero rescans (AC3):
-        // the cached model (i18n contents included) is still the truth.
-        if (cached.supportsPlatform(platform)) apps.add(cached);
-        continue;
+        // The cached model carries the tile declaration: probe the tile
+        // entry too (gh-1614 I2 — every listed launch surface is
+        // bootability-checked, the cache-hit path included).
+        final tileMissing = await _missingBootEntry(
+          id,
+          tileEntry: cached.tileWidget?.entry,
+        );
+        if (tileMissing == null) {
+          // Unchanged manifest (and i18n ref files) — zero rescans (AC3):
+          // the cached model (i18n contents included) is still the truth.
+          if (cached.supportsPlatform(platform)) apps.add(cached);
+          continue;
+        }
+        // Torn tile entry: fall through to the fresh parse below, which
+        // re-flags the listed copy (the healthy parse stays cached).
       }
       JsAppInfo app;
       try {
@@ -718,7 +726,14 @@ class AppsStore {
       // without a re-parse.
       _manifestHashes[id] = hash;
       _parsedApps[id] = app;
-      final listed = missingEntry == null ? app : app.withError(missingEntry);
+      // The tile declaration only exists once the manifest parsed — probe
+      // the tile surface against the parsed model (gh-1614 I2). A parse
+      // failure already carries its own error; the tile probe is skipped.
+      final tileMissing = app.tileWidget == null
+          ? null
+          : await _missingBootEntry(id, tileEntry: app.tileWidget!.entry);
+      final listedError = missingEntry ?? tileMissing;
+      final listed = listedError == null ? app : app.withError(listedError);
       if (listed.supportsPlatform(platform)) apps.add(listed);
     }
     // Directories that vanished since the last scan: forget their cached
@@ -984,6 +999,34 @@ class AppsStore {
       'unreadable. Reinstall the app from the widgets catalog, or ask Fa '
       'to recreate it.';
 
+  /// Bootability probe for EVERY launch surface of `apps/<id>/` (gh-1614
+  /// I2): the full-app entry ([AppStorage.entryPath]) and — when the
+  /// manifest declares a live-tile widget — the tile entry
+  /// ([JsAppInfo.tileWidgetPath], the exact path `AppTileHost` boots).
+  /// Returns null when every surface resolves; otherwise the missing-files
+  /// message naming the first missing path.
+  Future<String?> _missingBootEntry(String id, {String? tileEntry}) async {
+    if (!((await _env.exists(AppStorage.entryPath(id))).valueOrNull ?? false)) {
+      return _missingEntryMessage(id);
+    }
+    if (tileEntry == null) return null;
+    // A manifest can declare an entry that cannot resolve in the
+    // namespace (`../x`, absolute): that tile can never boot, so flag it
+    // instead of letting the resolver ArgumentError crash the listing.
+    if (!AppStorage.isValidRelativePath(tileEntry)) {
+      return '${AppStorage.root}/$id/ cannot start: the manifest declares a '
+          'live-tile entry "$tileEntry" that is not a valid in-namespace '
+          'path (no "..", no absolute form). Fix the manifest '
+          '"widget"."entry" or reinstall the app.';
+    }
+    if (!((await _env.exists(AppStorage.entryPath(id, tileEntry)))
+        .valueOrNull ??
+        false)) {
+      return _missingEntryMessage(id, entry: tileEntry);
+    }
+    return null;
+  }
+
   // ── Widget-catalog lifecycle (install / update / remove) ────────────────
 
   /// Env-relative record of catalog-installed widgets:
@@ -1082,6 +1125,17 @@ class AppsStore {
     };
     for (final ref in refs) {
       if (files.containsKey(ref)) continue;
+      // gh-1614 rework (review): a ref that cannot resolve inside the app
+      // namespace fails the install with the SAME honest i18n message
+      // shape as a dangling one — not the raw resolver ArgumentError. The
+      // read side skips such refs like missing files, so the install-time
+      // rejection must say WHY, naming the ref.
+      if (!AppStorage.isValidRelativePath(ref)) {
+        throw StateError(
+          'install of $id rejected: manifest i18n ref "$ref" is not a '
+          'valid in-namespace path',
+        );
+      }
       final onDisk =
           (await _env.exists(AppStorage.appFile(id, ref))).valueOrNull ?? false;
       if (!onDisk) {

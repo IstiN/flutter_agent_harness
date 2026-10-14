@@ -43,6 +43,96 @@ void main() {
       expect(app.error, contains('apps/2048/widget.js'));
     });
 
+    test('a torn live-tile app (entry present, tile entry lost) lists the '
+        'missing-files state naming the tile path', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/clock/manifest.json',
+        jsonEncode({
+          'id': 'clock',
+          'name': 'Clock',
+          'widget': {'entry': 'widget_tile.js', 'size': '2x2'},
+        }),
+      );
+      await env.writeFile('apps/clock/widget.js', 'jsr.render(null);');
+      // The tile entry is the file AppTileHost boots (apps/clock/
+      // widget_tile.js) — a torn snapshot may lose exactly that file while
+      // widget.js survives. The listing must flag it: listed ⇒ bootable
+      // covers EVERY launch surface, not only the full-app one.
+      final apps = await (await storeWith(env)).listApps();
+
+      expect(apps, hasLength(1));
+      final app = apps.single;
+      expect(
+        app.tileWidget,
+        isNotNull,
+        reason: 'precondition: the manifest declares a live tile',
+      );
+      expect(app.error, isNotNull);
+      expect(app.error, contains('apps/clock/'), reason: 'names the root');
+      expect(app.error, contains('apps/clock/widget_tile.js'));
+    });
+
+    test('a live-tile app with both entries present lists clean', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/clock/manifest.json',
+        jsonEncode({
+          'id': 'clock',
+          'name': 'Clock',
+          'widget': {'entry': 'widget_tile.js', 'size': '2x2'},
+        }),
+      );
+      await env.writeFile('apps/clock/widget.js', 'jsr.render(null);');
+      await env.writeFile('apps/clock/widget_tile.js', 'jsr.render(null);');
+      final apps = await (await storeWith(env)).listApps();
+
+      expect(apps, hasLength(1));
+      expect(apps.single.error, isNull);
+    });
+
+    test('the tile entry vanishing after a clean scan flags the tile on '
+        'the next scan (cache-hit path)', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/clock/manifest.json',
+        jsonEncode({
+          'id': 'clock',
+          'name': 'Clock',
+          'widget': {'entry': 'widget_tile.js', 'size': '2x2'},
+        }),
+      );
+      await env.writeFile('apps/clock/widget.js', 'jsr.render(null);');
+      await env.writeFile('apps/clock/widget_tile.js', 'jsr.render(null);');
+      final store = await storeWith(env);
+      expect((await store.listApps()).single.error, isNull);
+
+      // Lost AFTER the clean scan — the next scan hits the manifest-hash
+      // cache gate and must still surface the missing-files state.
+      await env.remove('apps/clock/widget_tile.js');
+      final apps = await store.listApps();
+      expect(apps.single.error, contains('apps/clock/widget_tile.js'));
+    });
+
+    test('a live-tile entry name that cannot resolve in the namespace '
+        'flags the tile instead of crashing the listing', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/clock/manifest.json',
+        jsonEncode({
+          'id': 'clock',
+          'name': 'Clock',
+          'widget': {'entry': '../evil.js'},
+        }),
+      );
+      await env.writeFile('apps/clock/widget.js', 'jsr.render(null);');
+      final apps = await (await storeWith(env)).listApps();
+
+      expect(apps, hasLength(1));
+      expect(apps.single.error, isNotNull);
+      expect(apps.single.error, contains('apps/clock/'));
+    });
+
     test('a fully stored app lists clean — present and startable', () async {
       final env = MemoryExecutionEnv();
       await env.writeFile(
@@ -176,6 +266,29 @@ void main() {
 
       final apps = await (await storeWith(env)).listApps();
       expect(apps.map((a) => a.id), ['ok']);
+    });
+
+    test('a legacy id the strict pattern rejects still lists once its '
+        'files exist (the escape floor is by design)', () async {
+      // 'Party-Time' fails AppStorage.idPattern (uppercase) but passes
+      // isResolvableId — the escape floor exists exactly so legacy user
+      // stores keep listing (gh-1614). With manifest + entry present it
+      // must list CLEAN: AC4 rejects the escape shapes, never legacy names.
+      final env = _HostileListEnv(MemoryExecutionEnv());
+      await env.inner.writeFile(
+        'apps/Party-Time/manifest.json',
+        jsonEncode({'id': 'Party-Time', 'name': 'Party Time'}),
+      );
+      await env.inner.writeFile(
+        'apps/Party-Time/widget.js',
+        'jsr.render(null);',
+      );
+
+      final apps = await (await storeWith(env)).listApps();
+      expect(AppStorage.isValidId('Party-Time'), isFalse);
+      expect(AppStorage.isResolvableId('Party-Time'), isTrue);
+      expect(apps.map((a) => a.id), ['Party-Time']);
+      expect(apps.single.error, isNull);
     });
 
     test('an app id that cannot live in the namespace fails assembly '
@@ -343,8 +456,11 @@ void main() {
 
 /// [ExecutionEnv] whose `apps/` listing carries hostile directory names —
 /// the crafted-state shape for the gh-1614 AC4 list-side rejection (a
-/// divergent legacy root, or storage arriving from another host). Delegates
-/// to an in-memory env; unexpected calls fail loudly.
+/// divergent legacy root, or storage arriving from another host). The
+/// escape-shaped names (`../evil`, `/abs`) the id gate must reject;
+/// `Party-Time` is a LEGACY name the gate must keep (it is excluded from
+/// the hostile listing only by its missing files, per its own test).
+/// Delegates to an in-memory env; unexpected calls fail loudly.
 class _HostileListEnv implements ExecutionEnv {
   _HostileListEnv(this.inner);
 
@@ -354,6 +470,9 @@ class _HostileListEnv implements ExecutionEnv {
   Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
     final result = await inner.listDir(path);
     if (result.isErr) return result;
+    final innerNames = {
+      for (final info in result.valueOrNull ?? const <FileInfo>[]) info.name,
+    };
     const hostile = [
       FileInfo(
         name: '../evil',
@@ -377,7 +496,13 @@ class _HostileListEnv implements ExecutionEnv {
         mtimeMs: 0,
       ),
     ];
-    return Ok([...result.valueOrNull ?? const <FileInfo>[], ...hostile]);
+    // A name the inner env already lists is NOT injected twice — the
+    // injection simulates storage arriving from another host, and a real
+    // host listing never duplicates a directory.
+    return Ok([
+      ...result.valueOrNull ?? const <FileInfo>[],
+      ...hostile.where((info) => !innerNames.contains(info.name)),
+    ]);
   }
 
   @override
