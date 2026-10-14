@@ -247,10 +247,21 @@ class FaAgent(AbstractInstalledAgent):
         )
         knobs = _timeout.TimeoutKnobs.from_env()
         if knobs is None:
-            # gh-1556 AC7: no adapter cap -> no deadline export (the
-            # deadline_env stash is also cleared so a re-used agent object
-            # can never leak a stale clock into a stock run).
-            self._deadline_env = {}
+            # gh-1556 AC7: no adapter cap => no supervision (the stock
+            # single exec; the harness's own kill still bounds the trial,
+            # and a known external cap still arms fa's clock above).
+            # gh-1576 cap resolution (I1): the supervised path resolves
+            # inside _perform_task_with_deadline; this stock path resolves
+            # ONCE here. With no cap input at all it is {} (byte-identical:
+            # no export, fa never invents a clock).
+            cap, deadline_ms = _timeout.resolve_deadline(knobs)
+            self._cap = cap
+            self._deadline_epoch_ms = deadline_ms
+            self._deadline_env = (
+                {"FA_DEADLINE_EPOCH_MS": str(deadline_ms)}
+                if deadline_ms is not None
+                else {}
+            )
             result = super().perform_task(instruction, session, logging_dir)
             # Issue #1123, corrected by gh-1209: fold fa's real session
             # usage into the result for ANY outcome where the agent process
@@ -263,7 +274,38 @@ class FaAgent(AbstractInstalledAgent):
             # folding a ran-but-empty trial is always safe.
             if result.failure_mode in _NEVER_STARTED_MODES:
                 return result
-            return self._fold_session_usage(session, result, logging_dir)
+            result = self._fold_session_usage(session, result, logging_dir)
+            # gh-1576 (I2): with an external cap known, even this
+            # unsupervised termination lands the audit — the failure mode
+            # the harness recorded IS the outcome class.
+            if cap is not None:
+                # knobs=None: the adapter never supervises — an
+                # agent_timeout classification is the HARNESS's own kill
+                # (it came from outside the adapter), so the audit says
+                # the recognized verdict `external_kill`. A raw
+                # failure-mode string is absent from both
+                # honesty-justified sets (terminal_bench/summary.py +
+                # post_mortem_usage.py — change both together) and reads
+                # as a false contradiction (review round 2, the gh-1556
+                # lesson). Other failure modes stay raw: the harness's
+                # classification IS the truthful outcome.
+                self._write_audit(
+                    logging_dir,
+                    None,
+                    None,
+                    (
+                        "completed"
+                        if result.failure_mode in (None, FailureMode.NONE)
+                        else (
+                            "external_kill"
+                            if result.failure_mode == FailureMode.AGENT_TIMEOUT
+                            else str(result.failure_mode.value)
+                        )
+                    ),
+                    deadline_epoch_ms=deadline_ms,
+                    cap=cap,
+                )
+            return result
         # test_budget_sec stays 0: the agent phase does not consume the
         # verifier's budget — tb enforces the test phase separately, so
         # the abs ceiling is flat.
@@ -291,16 +333,37 @@ class FaAgent(AbstractInstalledAgent):
         stall verdict captures the StallSentinel hang payload BEFORE the
         kill lands.
         """
+        # gh-1556 AC7 + gh-1576: fa's wrap-up deadline (the effective cap
+        # — min of the external harness cap and the adapter knobs — minus
+        # the wrap-up margin) is resolved once per trial, BEFORE the
+        # decider (which clamps its kill deadline to the external cap);
+        # it rides the launch line (see _run_agent_commands) and the env
+        # export, and the audit records this exact value plus the cap
+        # resolution. No cap input at all => {} (feature off — fa never
+        # invents a clock).
+        cap, deadline_ms = _timeout.resolve_deadline(
+            knobs, test_budget_sec=test_budget_sec
+        )
+        self._cap = cap
+        self._deadline_epoch_ms = deadline_ms
+        self._deadline_env = (
+            {"FA_DEADLINE_EPOCH_MS": str(deadline_ms)}
+            if deadline_ms is not None
+            else {}
+        )
         if knobs.progress_watch:
-            decider = _timeout.ProgressWatch(knobs, test_budget_sec=test_budget_sec)
+            decider = _timeout.ProgressWatch(
+                knobs,
+                test_budget_sec=test_budget_sec,
+                external_cap_sec=(
+                    cap.external_cap_sec if cap is not None else None
+                ),
+            )
         else:
-            decider = _timeout.ProgressLadder(knobs)
-        # gh-1556 AC7: fa's wrap-up deadline (effective cap minus the
-        # wrap-up margin) is computed once per trial and rides the launch
-        # line (see _run_agent_commands) and the env export; the audit
-        # records this exact value. No knobs => {} (feature off — the
-        # harness's own caps are invisible to the adapter).
-        self._deadline_env = _timeout.deadline_env_from()
+            decider = _timeout.ProgressLadder(
+                knobs,
+                external_cap_sec=cap.external_cap_sec if cap is not None else None,
+            )
         base_perform = super().perform_task
         box = {}
 
@@ -345,12 +408,35 @@ class FaAgent(AbstractInstalledAgent):
             live.feed(text)
             conn_events.extend(_bench_metrics.parse_conn_events(text))
 
+        checkpoint_state = None
         while worker.is_alive():
             remaining = decider.kill_at - (time.monotonic() - start)
             time.sleep(min(_POLL_SEC, max(remaining, 0.05)))
             elapsed = time.monotonic() - start
             _feed_complete_lines()
             outcome = decider.evaluate(elapsed, self._progress_bytes(session))
+            # gh-1576 (I2/E3): incremental audit checkpoint — a partial
+            # marker per changed sample, host-side and cheap, so even a
+            # SIGKILLed harness leaves the last progress state on disk.
+            state = (
+                decider.last_bytes,
+                round(decider.kill_at, 3),
+                len(decider.events),
+            )
+            if logging_dir is not None and state != checkpoint_state:
+                checkpoint_state = state
+                try:
+                    self._write_audit(
+                        logging_dir,
+                        knobs,
+                        decider,
+                        "running",
+                        deadline_epoch_ms=deadline_ms,
+                        cap=cap,
+                        checkpoint=True,
+                    )
+                except OSError:
+                    pass  # a lost checkpoint must never fail the trial
             if outcome:
                 if outcome == "stall":
                     # StallSentinel: capture the in-flight payload + socket
@@ -389,11 +475,8 @@ class FaAgent(AbstractInstalledAgent):
                 # Audit the true outcome class (issue #1122): a stock-body
                 # crash must not be recorded as a completed run.
                 outcome or ("crashed" if crashed else "completed"),
-                deadline_epoch_ms=(
-                    int(self._deadline_env["FA_DEADLINE_EPOCH_MS"])
-                    if self._deadline_env
-                    else None
-                ),
+                deadline_epoch_ms=deadline_ms,
+                cap=cap,
             )
         # Our decider's verdict outranks a late worker error: once we decided
         # the run is a stall/ceiling timeout, the harness must see exactly
@@ -675,19 +758,25 @@ class FaAgent(AbstractInstalledAgent):
         )
 
     @staticmethod
-    def _write_audit(logging_dir, knobs, ladder, outcome, deadline_epoch_ms=None) -> None:
+    def _write_audit(
+        logging_dir, knobs, ladder, outcome, deadline_epoch_ms=None,
+        cap=None, checkpoint=False,
+    ) -> None:
         # AC4 (issue #1122): extension decisions land in the trial artifact.
         # gh-1556 AC7: the fa-visible deadline is audited next to the knobs
-        # it derives from.
+        # it derives from. gh-1576: cap carries the cap-resolution block
+        # (winning source + both inputs); checkpoint rows are partial
+        # markers (outcome "running") written on the poll loop.
+        if logging_dir is None:
+            return
         path = Path(logging_dir) / "fa-agent-timeout.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                _timeout.audit_dict(
-                    knobs, ladder, outcome, deadline_epoch_ms=deadline_epoch_ms
-                )
-            )
+        record = _timeout.audit_dict(
+            knobs, ladder, outcome, deadline_epoch_ms=deadline_epoch_ms, cap=cap
         )
+        if checkpoint:
+            record["checkpoint"] = True
+        path.write_text(json.dumps(record))
 
     @staticmethod
     def _fold_session_usage(session, result, logging_dir=None):
@@ -744,11 +833,12 @@ class FaAgent(AbstractInstalledAgent):
         # install-time setup-env.sh sourcing and the launch; the grep
         # capture doubles as AC1's runtime proof (folded into agent-logs
         # as fa-conn-env.txt at trial end).
-        # gh-1556 AC7: fa's wrap-up deadline rides the same launch line
-        # (the adapter's effective kill cap minus the wrap-up margin,
-        # stashed on self by _perform_task_with_deadline). No knobs => no
-        # deadline export: tb's harness caps are invisible here, and fa
-        # never invents a clock.
+        # gh-1556 AC7 + gh-1576: fa's wrap-up deadline rides the same
+        # launch line — the EFFECTIVE cap (min of the external harness cap
+        # and the adapter knobs) minus the wrap-up margin, resolved once
+        # per trial and stashed on self (both the supervised and the stock
+        # path). No cap input at all => no export: fa never invents a
+        # clock, and it never sees one later than a known external kill.
         deadline = getattr(self, "_deadline_env", {})
         deadline_export = (
             f"export FA_DEADLINE_EPOCH_MS={deadline['FA_DEADLINE_EPOCH_MS']}; "

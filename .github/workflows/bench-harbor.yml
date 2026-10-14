@@ -521,6 +521,19 @@ jobs:
           FA_PROGRESS_EXTENSION: '1'
           FA_STALL_GAP_SEC: '360'
           FA_AGENT_TIMEOUT_ABS_CEILING_SEC: '3600'
+          # gh-1576: the shard's external harness cap — the MIN of the
+          # dataset-declared per-task agent timeouts (task.toml
+          # `[agent] timeout_sec`, resolved pre-launch by split_tasks.py).
+          # A shard where no task declares one emits NO key, which renders
+          # as an empty env var = unknown: the knobs rule alone,
+          # byte-identical (AC5, no invented clock — E1). When present,
+          # bench/fa_agent_timeout.py folds it in via min() so fa's
+          # deadline can never outlive harbor's per-task kill (I1) — the
+          # adapter decides the kill at the cap and the audit names it
+          # (outcome `external_cap`); a kill that still comes from
+          # outside (harbor's wait_for / SIGTERM) flushes outcome
+          # `external_kill` (I2).
+          FA_EXTERNAL_CAP_SEC: ${{ matrix.external_cap }}
           # shard task names: dataset dir names, no whitespace — safe to word-split.
           SHARD_TASKS: ${{ matrix.tasks }}
         run: |
