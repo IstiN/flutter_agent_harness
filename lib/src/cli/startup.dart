@@ -17,6 +17,7 @@ import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
 import '../model_roles/provider_catalog.dart';
+import '../model_roles/provider_model_binding.dart';
 import '../model_roles/providers_queue.dart';
 import '../model_roles/roles_config.dart';
 import '../secrets/secrets_store.dart';
@@ -238,18 +239,30 @@ resolveEffectiveCliArgs(
     faPreconfig: faPreconfig,
     restoredKind: restoredKind,
   );
+  final explicitOverride = parsed.providerExplicit || faPreconfig != null;
   final reports = _savedRestoreReports(
     savedRaw: restore.raw,
     savedSpec: restore.spec,
     endpointConflict: restore.endpointConflict,
-    explicitOverride: parsed.providerExplicit || faPreconfig != null,
+    explicitOverride: explicitOverride,
   );
+  // gh-1570 (L9/E2): an endpoint-conflict DEGRADE must not inherit the
+  // stale pair — the saved kind was refused over its baseUrl. "Stale" is
+  // the binding's verdict, not the URL's spelling: the pair rides the
+  // degraded boot only when it still resolves through the one validating
+  // constructor (E2 "rebuilds a valid binding") — the gh-760
+  // mock-endpoint partial write keeps serving, the codex-over-openrouter
+  // default spelling keeps working, and a pair the degraded kind cannot
+  // bind (a claude id pinned over api.openai.com) is dropped.
+  final degraded = restore.endpointConflict && !explicitOverride;
+  final degradedDefault = resolveCliProviderSpec(provider)?.defaultBaseUrl;
+  final keepSavedPair = !degraded || _degradedPairResolves(provider, saved);
   final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
   final effective = CliArgs(
-    model: modelId,
+    model: keepSavedPair ? modelId : (parsed.model ?? faPreconfig?.modelId),
     provider: provider,
-    baseUrl: baseUrl,
+    baseUrl: keepSavedPair ? baseUrl : (parsed.baseUrl ?? faPreconfig?.baseUrl),
     visionModel: parsed.visionModel,
     visionBaseUrl: parsed.visionBaseUrl,
     transcribeModel: parsed.transcribeModel,
@@ -262,6 +275,24 @@ resolveEffectiveCliArgs(
     cwd: parsed.cwd,
     sessionRoot: parsed.sessionRoot,
     session: parsed.session,
+  );
+  // gh-1570 (AC3/H2): an explicit `--model`/`--base-url` over a restored
+  // or preconfigured binding is a PARTIAL override — the effective
+  // binding (flag slot winning, everything else from the current source)
+  // is revalidated through the one constructor and a mismatch is a
+  // boot-time rejection naming both sides, never a silent cross-provider
+  // ride (`--model gpt-5` over a saved/active anthropic binding dies
+  // here, before any network call). An ACTIVE FA_PROVIDER_* preconfig is
+  // a binding too (AC3/H2 review): its kind survives and the flag wins
+  // its slot, so the same joint check applies.
+  _revalidatePartialOverride(
+    parsed,
+    faPreconfig,
+    saved,
+    provider: provider,
+    baseUrl: baseUrl,
+    keepSavedPair: keepSavedPair,
+    degradedDefault: degradedDefault,
   );
   return (
     args: effective,
@@ -289,6 +320,60 @@ resolveEffectiveCliArgs(
       spec.endpointLocked &&
       saved.baseUrl != spec.defaultBaseUrl;
   return (raw: raw, spec: spec, endpointConflict: endpointConflict);
+}
+
+/// Whether the saved model+baseUrl pair still forms a VALID binding under
+/// the [degradedKind] the boot fell back to (gh-1570 L9/E2): the degrade
+/// refuses the SAVED KIND, not every endpoint it was pointed at — a pair
+/// the one validating constructor accepts (a custom endpoint the degraded
+/// kind can serve, gh-760's mock-endpoint partial write; the openrouter
+/// default spelling) keeps riding the boot, and a pair it rejects (a
+/// foreign-dialect model id on a family-exclusive canonical endpoint) is
+/// the L9 poison the caller drops. A blank half is no binding at all.
+bool _degradedPairResolves(String degradedKind, CliConfig saved) {
+  if (saved.modelId.trim().isEmpty || saved.baseUrl.trim().isEmpty) {
+    return false;
+  }
+  try {
+    ProviderModelBinding.resolve(
+      providerKind: degradedKind,
+      modelId: saved.modelId,
+      baseUrl: saved.baseUrl,
+      provenance: BindingProvenance.restore,
+    );
+    return true;
+  } on ConfigException {
+    return false;
+  }
+}
+
+/// The AC3/H2 partial-override gate (gh-1570): an explicit `--model` or
+/// `--base-url` over a restored or preconfigured binding revalidates the
+/// EFFECTIVE binding (flag slot winning, the rest from the current
+/// source) through the one validating constructor — a dialect mismatch
+/// dies here naming both sides, before any network call. A blank
+/// effective model is no binding to revalidate (`--base-url` over a
+/// model-less saved config fails later at the model gate, unchanged).
+void _revalidatePartialOverride(
+  CliArgs parsed,
+  EnvProviderPreconfig? faPreconfig,
+  CliConfig saved, {
+  required String provider,
+  required String baseUrl,
+  required bool keepSavedPair,
+  required String? degradedDefault,
+}) {
+  if (parsed.providerExplicit) return;
+  if (parsed.model == null && parsed.baseUrl == null) return;
+  final effectiveModelId =
+      parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
+  if (effectiveModelId.trim().isEmpty) return;
+  ProviderModelBinding.resolve(
+    providerKind: provider,
+    modelId: effectiveModelId,
+    baseUrl: keepSavedPair ? baseUrl : (parsed.baseUrl ?? degradedDefault),
+    provenance: BindingProvenance.flag,
+  );
 }
 
 /// The boot provider: an explicit `--provider` flag or an `FA_PROVIDER_*`
@@ -373,8 +458,17 @@ Set<String> roleKeyNames(ModelRolesConfig rolesConfig) {
   return {
     for (final ref in refs) ...[
       if (ref.apiKeyName != null) ref.apiKeyName!,
+      // gh-1570 incident REG: the resolver's fallbacks probe the whole
+      // cross-version slot family, so the snapshot must carry it — the
+      // endpoint-scoped candidates of every custom-endpoint ref (the
+      // unpinned leg, mirroring ModelRolesResolver
+      // ._endpointScopedKeyNames exactly) plus, for an explicitly pinned
+      // ref, the pin's own endpoint family (the empty-pin fallback set —
+      // the 1.0.556 → 1.0.564 lockout shape).
       if (_refNeedsEndpointSlot(ref))
-        CustomProviderRegistry.keyNameFor(ref.baseUrl!),
+        ...CustomProviderRegistry.keySlotCandidates(ref.baseUrl!),
+      if (ref.apiKeyName != null && ref.baseUrl != null)
+        ...CustomProviderRegistry.keySlotCandidates(ref.baseUrl!),
     ],
   };
 }
@@ -678,14 +772,26 @@ String startupApiKey(
 }) {
   // A base URL other than the catalog default (--base-url or config
   // baseUrl) means a user-configured endpoint: local servers need no key.
+  // Trailing-slash-normalized (the shared sameEndpoint rule, gh-1570
+  // L10) — a default endpoint spelled with one trailing slash must not
+  // read as custom and silently boot keyless.
   final customEndpoint =
       provider == 'openai-completions' &&
-      baseUrl != providerCatalog['openrouter']!.defaultBaseUrl;
+      baseUrl != null &&
+      baseUrl.isNotEmpty &&
+      !sameEndpoint(baseUrl, providerCatalog['openrouter']!.defaultBaseUrl);
   // Saved custom entries for this endpoint carry name-scoped keys
   // (multi-account); they resolve right after the host-scoped slot.
+  // Endpoint comparison is normalized (gh-1570 S4) — a saved entry and
+  // the boot URL disagreeing on one trailing slash must not hide the
+  // entry's key.
   final entryKeyNames = [
     for (final entry in customProviders)
-      if (entry.baseUrl == baseUrl && entry.keyName != null) entry.keyName!,
+      if (baseUrl != null &&
+          baseUrl.isNotEmpty &&
+          sameEndpoint(entry.baseUrl, baseUrl) &&
+          entry.keyName != null)
+        entry.keyName!,
   ];
   final key = defaultRoleResolved || customEndpoint || interactive
       ? (optionalProviderApiKey(

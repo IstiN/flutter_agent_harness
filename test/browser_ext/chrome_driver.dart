@@ -463,6 +463,23 @@ final class HeadlessChrome {
     // A worker idled out mid-test kills this session; revive re-wakes and
     // reattaches once (see CdpSession.evaluate).
     session.revive = attachServiceWorker;
+    // The /json/list entry appears the moment the worker starts, but the
+    // fresh global does not carry the extension bindings yet — an
+    // evaluate landing inside that window dies with
+    // "ReferenceError: chrome is not defined" (the very first storage
+    // call of ac_bridge_e2e_test under CI load, run 38513191558).
+    // Gate on the bindings being installed, bounded; on timeout the
+    // caller's expression runs anyway and surfaces the honest error.
+    try {
+      await pollUntil(
+        () => session.evaluate('typeof chrome'),
+        (v) => v == 'object',
+        description: 'extension bindings (chrome) to appear in the worker',
+        timeout: const Duration(seconds: 10),
+      );
+    } on TimeoutException {
+      // fall through — the caller's evaluate reports the honest failure.
+    }
     return session;
   }
 

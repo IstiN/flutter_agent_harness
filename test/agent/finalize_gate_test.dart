@@ -108,6 +108,191 @@ void main() {
     });
   });
 
+  group('gh-1516: tolerant strip — near-miss ledger shapes', () {
+    // The shape models actually emit when they miss the fence: an unfenced
+    // `task-ledger` heading followed by plain bullet entries. The parser
+    // must catch it (persist the record) and the stripper must remove it
+    // (the transcript never shows the ledger, either way).
+    const unfencedLedger = '''
+## task-ledger
+- requirement: create script.py in the workspace root
+  command: test -f script.py
+  expected: exit 0
+  actual: exit 0
+  status: pass
+- requirement: script.py is executable
+  command: test -x script.py
+  expected: exit 0
+  actual: exit 1
+  status: fixed
+''';
+
+    test('parses the unfenced heading + bullet shape', () {
+      final ledger = parseTaskLedger('Answer text.\n$unfencedLedger\nDone.');
+      expect(ledger, isNotNull);
+      expect(ledger!.items, hasLength(2));
+      expect(
+        ledger.items[0].requirement,
+        'create script.py in the workspace root',
+      );
+      expect(ledger.items[0].status, TaskLedgerItemStatus.pass);
+      expect(ledger.items[1].status, TaskLedgerItemStatus.fixed);
+    });
+
+    test('accepts a bold heading variant (**task-ledger**)', () {
+      final ledger = parseTaskLedger(
+        '**task-ledger**\n'
+        '- requirement: only item\n'
+        '  command: true\n'
+        '  status: pass\n',
+      );
+      expect(ledger!.items.single.requirement, 'only item');
+    });
+
+    test('gh-1516 review: a model DOCUMENTING the ledger format is not '
+        'stripped — the unfenced shape needs real verification evidence', () {
+      // A "what does the task-ledger look like?" answer quotes the shape
+      // verbatim: a bare heading + one `- requirement:` bullet with the
+      // status placeholder. Without verification evidence (a second entry
+      // or a real status/command field) that prose must not classify as
+      // a ledger — the strip is silent and user-facing.
+      const documenting =
+          'The contract asks for a checklist like this:\n'
+          '\n'
+          '## task-ledger\n'
+          '- requirement: <verbatim requirement quote>\n'
+          '  status: pass|fixed|fail\n'
+          '\n'
+          'Each entry quotes the requirement verbatim.';
+      expect(parseTaskLedger(documenting), isNull);
+      expect(stripTaskLedger(documenting), documenting);
+    });
+
+    test('gh-1516 review: a single-entry near-miss with a real command '
+        'still parses (verification evidence present)', () {
+      final ledger = parseTaskLedger(
+        'Answer.\n'
+        '\n'
+        'task-ledger\n'
+        '- requirement: create script.py\n'
+        '  command: test -f script.py\n'
+        '  status: pass\n',
+      );
+      expect(ledger!.items.single.requirement, 'create script.py');
+      expect(
+        stripTaskLedger(
+          'Answer.\n'
+          '\n'
+          'task-ledger\n'
+          '- requirement: create script.py\n'
+          '  command: test -f script.py\n'
+          '  status: pass\n',
+        ).trimRight(),
+        'Answer.',
+      );
+    });
+
+    test(
+      'a task-ledger heading without requirement bullets is not a ledger',
+      () {
+        expect(
+          parseTaskLedger('## task-ledger\n- some unrelated note\n'),
+          isNull,
+        );
+        // …and must not be mistaken for one in prose either.
+        expect(
+          parseTaskLedger('the task-ledger record is persisted hidden'),
+          isNull,
+        );
+      },
+    );
+
+    test('the fenced block still wins when both shapes appear', () {
+      final ledger = parseTaskLedger(
+        '$unfencedLedger\n```task-ledger\n- requirement: fenced item\n  status: pass\n```\n',
+      );
+      expect(ledger!.items.single.requirement, 'fenced item');
+    });
+
+    test('stripTaskLedger removes the fenced block and its blank line', () {
+      final stripped = stripTaskLedger('Answer.\n\n$ledgerBlock\n');
+      expect(stripped, isNot(contains('task-ledger')));
+      expect(stripped, isNot(contains('test -f script.py')));
+      expect(stripped, contains('Answer.'));
+      expect(stripped.trimRight(), 'Answer.');
+    });
+
+    test('stripTaskLedger removes the unfenced heading + bullets', () {
+      final stripped = stripTaskLedger('Answer text.\n\n$unfencedLedger\n');
+      expect(stripped, isNot(contains('task-ledger')));
+      expect(stripped, isNot(contains('test -x script.py')));
+      expect(stripped.trimRight(), 'Answer text.');
+    });
+
+    test('stripTaskLedger leaves plain answers byte-identical', () {
+      const plain = 'just a plain final answer\nwith two lines';
+      expect(stripTaskLedger(plain), plain);
+    });
+
+    test('gh-1516 review: strip collapses ONLY the seam blanks — the rest '
+        'of the answer stays byte-identical', () {
+      // Intentional multi-blank formatting away from the ledger must
+      // survive the strip (the pre-review whole-text collapse rewrote
+      // every blank run and trimmed the answer's edges).
+      const withDoubleBlanks =
+          'Section A\n'
+          '\n'
+          '\n'
+          'Section B\n'
+          '\n'
+          '## task-ledger\n'
+          '- requirement: item\n'
+          '  command: true\n'
+          '  status: pass\n';
+      final stripped = stripTaskLedger(withDoubleBlanks);
+      expect(stripped, isNot(contains('task-ledger')));
+      expect(
+        stripped,
+        'Section A\n\n\nSection B\n',
+        reason:
+            'mid-answer seam keeps one blank; the double blank after '
+            'Section A is untouched',
+      );
+    });
+
+    test('gh-1516 review: a ledger at the very start drops the leading '
+        'blank edge it vacated', () {
+      const leading =
+          '## task-ledger\n'
+          '- requirement: item\n'
+          '  command: true\n'
+          '  status: pass\n'
+          '\n'
+          'Answer text.\n';
+      final stripped = stripTaskLedger(leading);
+      expect(stripped, 'Answer text.\n');
+    });
+
+    test('resolveTaskLedger pairs the parsed ledger with the stripped text '
+        'in one shot (single-scan entry point)', () {
+      final resolution = resolveTaskLedger('Answer.\n$ledgerBlock\n');
+      expect(resolution, isNotNull);
+      expect(resolution!.ledger.items, hasLength(2));
+      expect(resolution.strippedText, isNot(contains('task-ledger')));
+      expect(resolution.strippedText.trimRight(), 'Answer.');
+      // Consistent with the dedicated single-purpose delegates.
+      final parsed = parseTaskLedger('Answer.\n$ledgerBlock\n');
+      expect(
+        parsed!.items.map((item) => item.requirement).toList(),
+        resolution.ledger.items.map((item) => item.requirement).toList(),
+      );
+      expect(
+        stripTaskLedger('Answer.\n$ledgerBlock\n'),
+        resolution.strippedText,
+      );
+    });
+  });
+
   group('TaskLedger model', () {
     test('verifiedCount/failedCount/allVerified (2+ item case)', () {
       final ledger = parseTaskLedger(

@@ -118,6 +118,55 @@ void main() {
     });
   });
 
+  group('gh-1577 empty-hiccup knobs (AgentWiringSpec → Agent)', () {
+    test('the three hiccup knobs thread through the wiring spec to the '
+        'agent, next to maxEmptyRetries', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: fullServices(MemoryExecutionEnv(cwd: '/w')),
+      );
+      final stack = wired.buildAgentStack(
+        spec: AgentWiringSpec(
+          model: _model,
+          systemPrompt: 's',
+          emptyHiccupRetries: 5,
+          emptyHiccupBaseDelay: Duration(milliseconds: 10),
+          emptyHiccupMaxBackoff: Duration(milliseconds: 200),
+        ),
+        streamFunction: _fakeStream,
+      );
+      expect(stack.agent.emptyHiccupRetries, 5);
+      expect(
+        stack.agent.emptyHiccupBaseDelay,
+        const Duration(milliseconds: 10),
+      );
+      expect(
+        stack.agent.emptyHiccupMaxBackoff,
+        const Duration(milliseconds: 200),
+      );
+    });
+
+    test('defaults keep the loop defaults (3 / 500ms / 8s)', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: fullServices(MemoryExecutionEnv(cwd: '/w')),
+      );
+      final stack = wired.buildAgentStack(
+        spec: AgentWiringSpec(model: _model, systemPrompt: 's'),
+        streamFunction: _fakeStream,
+      );
+      expect(stack.agent.emptyHiccupRetries, 3);
+      expect(
+        stack.agent.emptyHiccupBaseDelay,
+        const Duration(milliseconds: 500),
+      );
+      expect(
+        stack.agent.emptyHiccupMaxBackoff,
+        const Duration(milliseconds: 8000),
+      );
+    });
+  });
+
   group('run-narrowing (AC7 — hiding, off means absent everywhere)', () {
     test('a2a-only fabric shape (no sessionRoot, no hub) wires clean — '
         'no repository composes, the plan keeps a2a (regression: the '
@@ -130,10 +179,7 @@ void main() {
       expect(wired.extensions, isEmpty);
       final fabricPlan = wired.plan.planFor(HostCapability.messagingFabric);
       expect(fabricPlan, isA<WiredCapability>());
-      expect(
-        (fabricPlan as WiredCapability).transports,
-        {'a2a'},
-      );
+      expect((fabricPlan as WiredCapability).transports, {'a2a'});
     });
 
     test('absent web search config hides the family from tools AND tokens', () {

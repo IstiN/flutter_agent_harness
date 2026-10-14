@@ -7,7 +7,13 @@
 // becomes the next user step, its reply follows — with NO aborted error
 // anywhere on the event stream.
 import http from 'node:http';
-import { expect, FaHarness, skipWithoutChrome, test } from './helpers';
+import {
+  appBundlePresent,
+  expect,
+  FaHarness,
+  skipWithoutChrome,
+  test,
+} from './helpers';
 
 /** One slow OpenAI chat-completions SSE response: 8 deltas, 250ms apart. */
 async function startSlowSseServer(): Promise<{
@@ -267,6 +273,15 @@ test.describe('steering edge semantics (#314)', () => {
 
   test('E2E-steer-indicator: the panel shows a neutral pending marker the '
       + 'moment a steer is queued, cleared when the message lands', async ({ fa }) => {
+        // This test drives the legacy fallback composer (#prompt,
+        // #sendPrompt, .bubble.steer). With an app bundle the panel
+        // redirects to the Flutter app and those selectors never render
+        // (gh-1521) — same convention as panel-focus/paste. The app
+        // branch's steer indicator is covered by the relay unit tests.
+        test.skip(
+          appBundlePresent,
+          'legacy composer only — the app build redirects the panel to app/',
+        );
         const { server, url } = await startSlowSseServer();
         try {
           await bootWith(fa, url);

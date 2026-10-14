@@ -543,8 +543,10 @@ http.Request _reissue(http.Request previous, Uri target, int statusCode) {
 Future<http.StreamedResponse> sendProviderRequest(
   http.Client httpClient,
   http.Request request,
-  CancelToken? cancelToken,
-) async {
+  CancelToken? cancelToken, {
+  Duration? connectTimeout,
+  String? timeoutSource,
+}) async {
   request.followRedirects = false;
   var current = request;
   for (var redirects = 0; ; redirects++) {
@@ -552,6 +554,8 @@ Future<http.StreamedResponse> sendProviderRequest(
       httpClient,
       current,
       cancelToken,
+      connectTimeout: connectTimeout,
+      timeoutSource: timeoutSource,
     );
     final location = response.headers['location'];
     final target = _redirectTarget(current.url, response.statusCode, location);
@@ -584,8 +588,10 @@ Future<http.StreamedResponse> sendProviderRequest(
 Future<http.StreamedResponse> sendWatchedProviderRequest(
   http.Client httpClient,
   http.Request request,
-  CancelToken? cancelToken,
-) async {
+  CancelToken? cancelToken, {
+  Duration? connectTimeout,
+  String? timeoutSource,
+}) async {
   for (var attempt = 0; ; attempt++) {
     // A sent `http.Request` is finalized by the client and cannot be sent
     // again — every attempt after the first rides a fresh clone (the
@@ -599,6 +605,8 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
         attemptRequest,
         cancelToken,
         attempt,
+        connectTimeout: connectTimeout,
+        timeoutSource: timeoutSource,
       );
     } on TimeoutException {
       // The connect watchdog fired (issue #1121). `httpClient.send`
@@ -642,17 +650,23 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
 }
 
 /// One connect-watched send attempt: no retry. [attempt] (0-based) only
-/// labels the orphan janitor's notice.
+/// labels the orphan janitor's notice. [connectTimeout]/[timeoutSource]
+/// carry the request-scoped override (issue #1554); null resolves the
+/// per-provider table by URL, then the global effective value.
 Future<http.StreamedResponse> _sendWatchedOnce(
   http.Client httpClient,
   http.Request request,
   CancelToken? cancelToken,
-  int attempt,
-) async {
+  int attempt, {
+  Duration? connectTimeout,
+  String? timeoutSource,
+}) async {
   // Issue #1398: the per-provider connect watchdog — a tuning-table read
   // by request URL, falling through to the global effective value. One
   // additive value read; the watchdog mechanics below are untouched.
-  final connectTimeout = providerConnectTimeoutForUrl(request.url);
+  // Issue #1554: an explicit request-scoped override wins over both.
+  final effectiveConnect =
+      connectTimeout ?? providerConnectTimeoutForUrl(request.url);
   // Re-pin the runtime type parameter BEFORE the watchdog: IOClient.send's
   // future is reified as package:http's internal IOStreamedResponse, and
   // `.timeout` runtime-checks its value-returning onTimeout closure against
@@ -671,8 +685,10 @@ Future<http.StreamedResponse> _sendWatchedOnce(
   http.StreamedResponse watchdogTimedOut() {
     // gh-1395 (AC2/AC3, E1): name the connect stall and capture the
     // never-started request's payload — distinct watchdog, distinct trace
-    // line, distinct policy entry.
-    providerConnectStallFired(request, effectiveProviderConnectTimeout);
+    // line, distinct policy entry. The trace carries the EFFECTIVE budget
+    // (the scoped override or the resolved table value), not the raw
+    // global default.
+    providerConnectStallFired(request, effectiveConnect);
     // The attempt is ABANDONED, not aborted: package:http cannot cancel a
     // pending send, and a slow-but-alive endpoint (reasoning model over
     // the first-byte budget) may still answer. Attach a janitor so the
@@ -687,7 +703,7 @@ Future<http.StreamedResponse> _sendWatchedOnce(
     // bounds the abandoned-attempt multiplication at
     // providerConnectRetries + 1 per stalled turn.
     connTrace.connectWatchdogFired(
-      timeoutSec: effectiveProviderConnectTimeout.inMicroseconds / 1e6,
+      timeoutSec: effectiveConnect.inMicroseconds / 1e6,
       attempt: attempt,
     );
     unawaited(
@@ -704,9 +720,13 @@ Future<http.StreamedResponse> _sendWatchedOnce(
             .cancel();
       }, onError: (Object _) {}),
     );
+    // Issue #1554: a request-scoped override names itself on the stall
+    // line so a widened (or narrowed) connect window never reads as the
+    // default misbehaving.
+    final scopedNote = timeoutSource == null ? '' : ' ($timeoutSource)';
     throw TimeoutException(
       'provider stream request to ${redactProviderUrl(request.url)} timed out: '
-      'no response headers within ${connectTimeout.inSeconds}s '
+      'no response headers within ${effectiveConnect.inSeconds}s$scopedNote '
       // The classifier consumes [connectWatchdogTag] (transient_retry_
       // stream.dart): one constant keeps the wording and the retry
       // classification pinned together (issue #1121, review r1).
@@ -715,14 +735,17 @@ Future<http.StreamedResponse> _sendWatchedOnce(
   }
 
   if (cancelToken == null) {
-    return responseFuture.timeout(connectTimeout, onTimeout: watchdogTimedOut);
+    return responseFuture.timeout(
+      effectiveConnect,
+      onTimeout: watchdogTimedOut,
+    );
   }
   return Future.any([
     responseFuture,
     cancelToken.onCancel.then<http.StreamedResponse>(
       (_) => throw const AbortedError(),
     ),
-  ]).timeout(connectTimeout, onTimeout: watchdogTimedOut);
+  ]).timeout(effectiveConnect, onTimeout: watchdogTimedOut);
 }
 
 /// The terminal-hop validations: non-200 statuses and the 200 answers
@@ -793,6 +816,14 @@ String redactProviderUrl(Uri url) {
   final port = url.hasPort ? ':${url.port}' : '';
   return '${url.scheme}://${url.host}$port${url.path}';
 }
+
+/// Renders a watchdog window for stall notes: whole seconds at or above
+/// 1s, milliseconds below — a scoped 400ms window must never read as
+/// `idle window 0s` (issue #1554 review round 2).
+String providerWindowLabel(Duration window) =>
+    window.inMilliseconds < 1000
+        ? '${window.inMilliseconds}ms'
+        : '${window.inSeconds}s';
 
 /// Connect/first-headers watchdog for provider calls: an endpoint that
 /// never answers the request would otherwise hang the turn forever. Three
@@ -1048,6 +1079,7 @@ StreamIterator<ServerSentEvent> createSseIterator(
   http.StreamedResponse response,
   CancelToken? cancelToken, {
   Duration? idleTimeout,
+  String? timeoutSource,
 }) {
   // Issue #1398: an explicit override wins, then the per-provider entry
   // (registry table lookup by request URL), then the global effective
@@ -1090,6 +1122,10 @@ StreamIterator<ServerSentEvent> createSseIterator(
     // the idle stall (trace line) and dump the outbound payload
     // (StallSentinel).
     onStall: () => providerIdleStallFired(response, effectiveIdleTimeout),
+    // Issue #1554: a request-scoped override names itself on the stall
+    // line (`idle window 1800s (role smol override)`) so a wide window
+    // never reads as a hang.
+    timeoutSource: timeoutSource,
   );
   if (cancelToken != null) {
     // cancel() is already quiet — no extra swallow needed here.
@@ -1122,10 +1158,15 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
     this._idleTimeout, {
     this.onAbandon,
     this.onStall,
+    this.timeoutSource,
   });
 
   final StreamIterator<ServerSentEvent> _inner;
   final Duration _idleTimeout;
+
+  /// The request-scoped override's name (issue #1554); null keeps the
+  /// bare `(stream idle timeout)` stall text.
+  final String? timeoutSource;
 
   /// Called before any cancel so the byte sink starts swallowing late
   /// transport errors (issue #921).
@@ -1175,10 +1216,14 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
       // dying pipeline and may itself fail (issue #921).
       onAbandon?.call();
       unawaited(_quietCancel(_inner.cancel()));
+      final scopedNote = timeoutSource == null
+          ? ''
+          : ' — idle window ${providerWindowLabel(_idleTimeout)} '
+              '($timeoutSource)';
       completer.completeError(
         TimeoutException(
           'no events from the endpoint for '
-          '${_idleTimeout.inSeconds}s (stream idle timeout)',
+          '${_idleTimeout.inSeconds}s (stream idle timeout$scopedNote)',
           _idleTimeout,
         ),
       );
@@ -1542,7 +1587,21 @@ Future<http.StreamedResponse> startProviderResponse(
   FutureOr<void> Function(int statusCode, Map<String, String> headers, Model)?
   onResponse,
 ) async {
-  final response = await sendProviderRequest(httpClient, request, cancelToken);
+  // Issue #1554: the model's request-scoped watchdog windows (a roles
+  // chain entry's `connectTimeoutMs`/`streamIdleTimeoutMs`) ride the send
+  // — the top precedence layer, above the URL-keyed tuning table. The
+  // scope label cites THE LEG THAT RAN (review round 1): an idle-only
+  // override never names its scope on a connect-stall note, and vice
+  // versa — a leg that ran the global default keeps the bare text.
+  final response = await sendProviderRequest(
+    httpClient,
+    request,
+    cancelToken,
+    connectTimeout: state.model.connectTimeout,
+    timeoutSource: state.model.connectTimeout == null
+        ? null
+        : state.model.timeoutScopeLabel,
+  );
   await onResponse?.call(response.statusCode, response.headers, state.model);
   eventStream.push(StartEvent(partial: state.snapshot()));
   return response;

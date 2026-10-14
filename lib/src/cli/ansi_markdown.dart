@@ -1049,6 +1049,8 @@ final class _WalkResult {
     this.pendingEnd,
     this.trailing,
     this.fenceAfter,
+    this.tableBefore,
+    this.pendingStartAt,
   );
 
   final List<List<String>> outsPerLine;
@@ -1061,6 +1063,75 @@ final class _WalkResult {
   /// line from+i) — lets the commit edge remember the state just BEFORE
   /// the boundary line so a one-line rollback can restore it.
   final List<bool> fenceAfter;
+
+  /// Whether the pending-table buffer was NON-EMPTY just BEFORE each
+  /// consumed line (index i = state before src line from+i). A `true` at
+  /// the commit boundary means the boundary line CLOSED a streamed table:
+  /// its committed outputs embed the flushed grid, which the grown-tail
+  /// rollback can only reproduce by re-seeding the walk with the buffered
+  /// rows (gh-1573).
+  final List<bool> tableBefore;
+
+  /// Absolute src index where the pending span currently walked began, per
+  /// consumed line (-1 when no table was pending before that line). Only
+  /// meaningful where [tableBefore] is true; -1-seeded walks derive it
+  /// from the seed length so a re-latched boundary keeps the TRUE span
+  /// start across rollback cycles.
+  final List<int> pendingStartAt;
+}
+
+/// Per-step walk state shared by the incremental [_walk] and the full
+/// [_rebuild] pass — the pending-table boundary-latch bookkeeping
+/// (gh-1573) lives in exactly ONE place: a drift between the two loops
+/// would silently desynchronize the commit boundary between the
+/// incremental and rebuild paths.
+final class _TableWalkState {
+  _TableWalkState();
+
+  /// Formatted outputs per consumed source line.
+  final List<List<String>> outsPerLine = [];
+
+  /// Fence state after each consumed line (see [_WalkResult.fenceAfter]).
+  final List<bool> fenceAfter = [];
+
+  /// Whether the pending-table buffer was NON-EMPTY just BEFORE each
+  /// consumed line (see [_WalkResult.tableBefore]).
+  final List<bool> tableBefore = [];
+
+  /// Absolute src index where the pending span began, per consumed line
+  /// (see [_WalkResult.pendingStartAt]).
+  final List<int> pendingStartAt = [];
+
+  /// Absolute src index where the in-flight pending span began (-1 when
+  /// none is open). A seeded walk starts inside (or at the head of) an
+  /// already-open span: the seed occupies src[from-seed.length..from).
+  int pendingStart = -1;
+
+  /// Step whose completion last left no pending table (-1 = none yet).
+  int lastClean = -1;
+
+  /// Fence state after [lastClean].
+  bool fenceAtClean = false;
+}
+
+/// Consumes one source [line] at absolute src index [i] into [state]
+/// through [fmt] — the per-step bookkeeping both walk loops share:
+/// latch the span start, snapshot the pre-line state, consume, then
+/// update the clean-step / span tracking from the post-line state.
+void _tableWalkStep(AnsiMarkdown fmt, String line, int i, _TableWalkState s) {
+  if (fmt.hasPendingTable && s.pendingStart < 0) s.pendingStart = i;
+  s.tableBefore.add(fmt.hasPendingTable);
+  s.pendingStartAt.add(s.pendingStart);
+  s.outsPerLine.add(fmt.consumeLine(line));
+  s.fenceAfter.add(fmt.inFence);
+  if (fmt.hasPendingTable) {
+    // This step may have OPENED the span (buffered its first row).
+    if (s.pendingStart < 0) s.pendingStart = i;
+  } else {
+    s.pendingStart = -1;
+    s.lastClean = s.outsPerLine.length - 1;
+    s.fenceAtClean = fmt.inFence;
+  }
 }
 
 final class TranscriptMarkdown {
@@ -1108,6 +1179,22 @@ final class TranscriptMarkdown {
   /// Fence state just BEFORE the boundary source line — the restore point
   /// used by the grown-tail rollback (streaming without newlines).
   var _fenceBeforeBoundaryLine = false;
+
+  /// Whether the boundary source line CLOSED a pending table when it was
+  /// consumed (gh-1573): its committed outputs embed the flushed grid, so
+  /// the grown-tail rollback must re-seed the resumed walk with the
+  /// buffered rows (from [_boundaryPendingFrom]) or the grid vanishes
+  /// from the view. False when the boundary line is table-free.
+  var _boundaryClosedPendingTable = false;
+
+  /// Absolute src index of the first row of the pending span the boundary
+  /// line closed (-1 when [_boundaryClosedPendingTable] is false).
+  var _boundaryPendingFrom = -1;
+
+  /// Pending-table rows the next [_walk] must resume with (armed by a
+  /// seeded grown-tail rollback, consumed by that walk; survives the
+  /// ~10 Hz tail throttle so the unchanged src re-offer keeps it).
+  List<String>? _pendingSeedTable;
 
   /// Start index into [_formatted] per SOURCE line (sentinel = current
   /// length) — lets the rollback drop exactly one source line's formatted
@@ -1246,6 +1333,8 @@ final class TranscriptMarkdown {
     if (!_tailIsFaithfulGrowth(src, boundary)) {
       return false; // replaced, not grown — keep the documented safe path
     }
+    final (rollbackOk, seed) = _rollbackTableSeed(src);
+    if (!rollbackOk) return false;
     final edge = _through - 1;
     final fmtKept = _srcFmtStarts[edge];
     final rowKept = _srcRowStarts[edge];
@@ -1262,7 +1351,35 @@ final class TranscriptMarkdown {
     _through = edge;
     _boundaryLast = edge > 0 ? src[edge - 1] : null;
     _savedFence = _fenceBeforeBoundaryLine;
+    // The re-walk re-latches the boundary state from its own commit (the
+    // seeded walk's boundary step closes the restored span again); until
+    // then the conservative defaults hold for the new boundary line.
+    _boundaryClosedPendingTable = false;
+    _boundaryPendingFrom = -1;
+    _pendingSeedTable = seed;
     return true;
+  }
+
+  /// The pending-table half of the gh-1573 grown-tail rollback: the
+  /// boundary line CLOSED a streamed table, so its committed outputs
+  /// embed the flushed grid. A rollback that re-walks the line with an
+  /// empty parser buffer would re-emit only the bare line — the whole
+  /// grid drops out of the view. Returns the rows to restore (the
+  /// contiguous table-row source lines right before the boundary) so the
+  /// resumed walk re-flushes the identical grid. The chunk-split shape
+  /// stays on the rebuild path: a chunk prefix can re-classify as a fresh
+  /// table row (`| … |`), which would render the split differently than
+  /// the committed whole line did.
+  ///
+  /// Returns `(false, _)` when the rollback must be REFUSED (the caller
+  /// falls back to the full rebuild) and `(true, seed)` otherwise — seed
+  /// is null when the boundary line is table-free.
+  (bool, List<String>?) _rollbackTableSeed(List<String> src) {
+    if (!_boundaryClosedPendingTable) return (true, null);
+    if (src.length != _through) return (false, null);
+    final from = _boundaryPendingFrom;
+    if (from < 0 || from >= _through - 1) return (false, null);
+    return (true, List<String>.of(src.sublist(from, _through - 1)));
   }
 
   /// True when the boundary line was hard-split into the chunk lines
@@ -1293,27 +1410,29 @@ final class TranscriptMarkdown {
   }
 
   /// Consume-walk over src[from..) seeded with the frozen boundary state.
+  /// A seeded walk (gh-1573 rollback of a table-closing boundary) resumes
+  /// with the pending-table rows restored, so the boundary line re-flushes
+  /// the exact grid it committed with.
   _WalkResult _walk(List<String> src, {required int from}) {
-    _fmt.restoreState(inFence: _savedFence, table: const []);
-    final outsPerLine = <List<String>>[];
-    final fenceAfter = <bool>[];
-    var lastClean = -1; // step whose completion left no pending table
-    var fenceAtClean = false;
+    final seed = _pendingSeedTable;
+    _fmt.restoreState(inFence: _savedFence, table: seed ?? const []);
+    _pendingSeedTable = null;
+    final s = _TableWalkState()
+      // The seed occupies src[from-seed.length..from), so a seeded walk
+      // starts inside (or at the head of) an already-open span.
+      ..pendingStart = seed == null || seed.isEmpty ? -1 : from - seed.length;
     for (var i = from; i < src.length; i++) {
-      outsPerLine.add(_fmt.consumeLine(src[i]));
-      fenceAfter.add(_fmt.inFence);
-      if (!_fmt.hasPendingTable) {
-        lastClean = outsPerLine.length - 1;
-        fenceAtClean = _fmt.inFence;
-      }
+      _tableWalkStep(_fmt, src[i], i, s);
     }
     return _WalkResult(
-      outsPerLine,
-      lastClean,
-      fenceAtClean,
+      s.outsPerLine,
+      s.lastClean,
+      s.fenceAtClean,
       _fmt.hasPendingTable,
       _fmt.flushTrailing(),
-      fenceAfter,
+      s.fenceAfter,
+      s.tableBefore,
+      s.pendingStartAt,
     );
   }
 
@@ -1351,6 +1470,14 @@ final class TranscriptMarkdown {
     if (from == 0) _boundaryFirst ??= src.first;
     _boundaryLast = src[_through - 1];
     _fenceBeforeBoundaryLine = upto >= 2 ? r.fenceAfter[upto - 2] : _savedFence;
+    // gh-1573: remember whether the boundary line consumed a non-empty
+    // pending table (it closed a streamed span — its outputs embed the
+    // flushed grid) and where that span began, so the grown-tail rollback
+    // can re-seed the walk instead of dropping the grid.
+    _boundaryClosedPendingTable = r.tableBefore[upto - 1];
+    _boundaryPendingFrom = _boundaryClosedPendingTable
+        ? r.pendingStartAt[upto - 1]
+        : -1;
     _savedFence = r.fenceAtClean;
   }
 
@@ -1394,18 +1521,11 @@ final class TranscriptMarkdown {
   void _rebuild(List<String> src) {
     debugFullRebuilds++;
     debugLinesFormatted += src.length;
+    _pendingSeedTable = null; // a refused rollback's seed never survives
     final fmt = AnsiMarkdown(width: width);
-    final outs = <List<String>>[];
-    final fenceAfter = <bool>[];
-    var lastClean = -1;
-    var fenceAtClean = false;
-    for (final line in src) {
-      outs.add(fmt.consumeLine(line));
-      fenceAfter.add(fmt.inFence);
-      if (!fmt.hasPendingTable) {
-        lastClean = outs.length - 1;
-        fenceAtClean = fmt.inFence;
-      }
+    final s = _TableWalkState();
+    for (var i = 0; i < src.length; i++) {
+      _tableWalkStep(fmt, src[i], i, s);
     }
     final hadPending = fmt.hasPendingTable;
     final trailing = fmt.flushTrailing();
@@ -1424,18 +1544,21 @@ final class TranscriptMarkdown {
     _boundaryLast = src.isEmpty ? null : src.last;
     _savedFence = false;
     final r = _WalkResult(
-      outs,
-      lastClean,
-      fenceAtClean,
+      s.outsPerLine,
+      s.lastClean,
+      s.fenceAtClean,
       hadPending,
       trailing,
-      fenceAfter,
+      s.fenceAfter,
+      s.tableBefore,
+      s.pendingStartAt,
     );
     _commitTo(r, src, from: 0);
-    _savedFence = fenceAtClean; // even without a durable edge yet
+    _savedFence = s.fenceAtClean; // even without a durable edge yet
     _expose(r, src);
   }
 }
+
 /// How [MarkdownSurface.render] emits assistant markdown.
 enum MarkdownSurfaceMode {
   /// ANSI-rendered: an interactive terminal with color.
@@ -1507,10 +1630,9 @@ final class MarkdownSurface {
   String render(String text) => switch (mode) {
     MarkdownSurfaceMode.raw => text,
     MarkdownSurfaceMode.ansi => _renderWhole(text),
-    MarkdownSurfaceMode.plain => _renderWhole(text).replaceAll(
-      _ansiEscapeRe,
-      '',
-    ),
+    MarkdownSurfaceMode.plain => _renderWhole(
+      text,
+    ).replaceAll(_ansiEscapeRe, ''),
   };
 
   String _renderWhole(String text) {
@@ -1519,9 +1641,9 @@ final class MarkdownSurface {
     // the HOST pins once (bin/fah.dart resolves the surface; AgentCli's
     // constructor pins the controller from surface.profile) — render()
     // only formats.
-    return AnsiMarkdown(width: width)
-        .formatAll(resolveSetextHeadings(text.split('\n')))
-        .join('\n');
+    return AnsiMarkdown(
+      width: width,
+    ).formatAll(resolveSetextHeadings(text.split('\n'))).join('\n');
   }
 }
 
@@ -1552,8 +1674,7 @@ MarkdownSurface resolveMarkdownSurface({
   return MarkdownSurface.resolving(
     tty: ansiSupported,
     color: profile != null,
-    format:
-        !noFormatFlag && !isTruthyEnvValue(environment['FA_NO_FORMAT']),
+    format: !noFormatFlag && !isTruthyEnvValue(environment['FA_NO_FORMAT']),
     width: width,
     profile: profile,
   );
