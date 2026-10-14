@@ -123,6 +123,35 @@ abstract interface class SqliteEngine {
   SqliteDatabase openReadOnly(String path);
 }
 
+/// Opens a SQLite database (the engine's seam for injecting a fake opener —
+/// e.g. to simulate native-assets library-load failures in tests).
+typedef SqliteOpen = SqliteDatabase Function(String path);
+
+/// Whether [error] is dart:ffi's native-assets failure to LOAD the bundled
+/// `libsqlite3` dynamic library (gh-1574) rather than a database-level
+/// error. An AOT binary built with `dart build cli` resolves its bundled
+/// libraries at `<exe_dir>/../lib/<name>`; when the library is missing the
+/// first `sqlite3_*` symbol call throws an `ArgumentError` carrying the
+/// resolver's message ("Couldn't resolve native function … Failed to load
+/// dynamic library …").
+bool isSqliteDynamicLibraryLoadFailure(Object error) {
+  if (error is! ArgumentError) return false;
+  final message = '${error.message}';
+  return message.contains('Failed to load dynamic library') ||
+      message.contains("Couldn't resolve native function");
+}
+
+/// The clean tool-facing note for a failed bundled-library load at [path]
+/// (gh-1574): names the repair instead of dumping the raw FFI resolver
+/// error, mirroring the no-engine note's tone.
+String sqliteUnavailableMessage(String path) {
+  return '[SQLite is unavailable: the bundled libsqlite3 dynamic library '
+      'could not be loaded. Installed binaries look for it in '
+      '<exe_dir>/../lib — e.g. ~/.local/lib/libsqlite3.dylib for '
+      '~/.local/bin/fa. Reinstall fa (site/install.sh or install_local.sh) '
+      'or run `fa update` to repair the layout; $path was not opened.]';
+}
+
 // ---------------------------------------------------------------------------
 // Path candidates (omp's parseSqlitePathCandidates)
 // ---------------------------------------------------------------------------
