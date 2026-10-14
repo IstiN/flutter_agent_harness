@@ -19,12 +19,15 @@ import 'package:fa/apps/catalog_auto_update.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/session_chat_sheet.dart';
+import 'package:fa/apps/unpacked_load_flow.dart';
+import 'package:fa/apps/unpacked_loader.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/folder_picker.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/session_names_store.dart';
@@ -318,6 +321,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// App ids installed from the widget catalog (see [_reloadApps]) — the
   /// tile menu hides "Publish…" for them.
   Set<String> _catalogInstalled = const {};
+
+  /// The folder picker for "Load unpacked" (gh-1616) — null on hosts
+  /// that cannot pick folders, which hides the entry instead of showing
+  /// a button that errors.
+  FolderPicker? get _unpackedPicker => createFolderPicker();
 
   /// Reconciles the persisted layout with the discovered apps (new apps
   /// append, deleted apps vanish, empty folders dissolve).
@@ -1110,6 +1118,25 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                   selected: _tab == tab,
                   onTap: () => setState(() => _tab = tab),
                 ),
+              // gh-1616: Chrome-parity "Load unpacked" — a local
+              // apps/<id>/ folder loads, validates and persists like a
+              // catalog install. Hidden on hosts with no folder picker.
+              if (_unpackedPicker != null) ...[
+                const Spacer(),
+                _LauncherTabButton(
+                  label: context.l10n.launcherLoadUnpacked,
+                  selected: false,
+                  onTap: () => unawaited(
+                    loadUnpackedWidget(
+                      context,
+                      manager: widget.manager,
+                      appsStore: _appsStore,
+                      picker: _unpackedPicker,
+                    ),
+                  ),
+                  icon: Icons.folder_open,
+                ),
+              ],
             ],
           ),
         ),
@@ -1552,7 +1579,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           onTap: () => _onTileTap(key),
           onSecondaryTapUp: (details) =>
               unawaited(_showTileMenu(key, details.globalPosition)),
-          child: _maybeSeedErrorBadge(colors, key, _tileIcon(colors, key)),
+          child: _maybeUnpackedBadge(
+            colors,
+            key,
+            _maybeSeedErrorBadge(colors, key, _tileIcon(colors, key)),
+          ),
         ),
         SizedBox(
           height: LauncherGridSpec.labelHeight,
@@ -1624,6 +1655,44 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// The corner badge on a tile whose demo seed failed (missing/corrupt
   /// asset) or whose manifest no longer parses (an agent edit, issue
   /// #866): the app stays on the grid — flagged, never fatal.
+  /// gh-1616 I3: a small corner badge on tiles loaded from a local folder
+  /// ("unpacked" provenance), so the grid shows the install source at a
+  /// glance. Composes with the seed-error badge (both can show at once).
+  Widget _maybeUnpackedBadge(FahColors colors, String key, Widget tile) {
+    if (!key.startsWith('app:')) return tile;
+    final app = _appsById[key.substring(4)];
+    if (app == null || app.installSource != UnpackedWidgetLoader.origin) {
+      return tile;
+    }
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        tile,
+        Positioned(
+          top: -3,
+          right: -3,
+          child: Tooltip(
+            message: context.l10n.unpackedSourceBadgeTooltip,
+            child: Container(
+              width: 14,
+              height: 14,
+              decoration: BoxDecoration(
+                color: colors.indigo,
+                shape: BoxShape.circle,
+                border: Border.all(color: colors.bg, width: 2),
+              ),
+              child: const Icon(
+                Icons.folder_open,
+                size: 8,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _maybeSeedErrorBadge(FahColors colors, String key, Widget tile) {
     if (!key.startsWith('app:')) return tile;
     final id = key.substring(4);
@@ -1888,11 +1957,16 @@ class _LauncherTabButton extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.icon,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onTap;
+
+  /// Optional leading icon (the "Load unpacked" action renders as a
+  /// folder chip in the same tab row).
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -1909,13 +1983,22 @@ class _LauncherTabButton extends StatelessWidget {
             color: selected ? colors.panelAlt : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Text(
-            label,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: selected ? colors.text : colors.dim,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-              fontSize: 12,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 14, color: colors.dim),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: selected ? colors.text : colors.dim,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  fontSize: 12,
+                ),
+              ),
+            ],
           ),
         ),
       ),

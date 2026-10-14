@@ -727,6 +727,63 @@ class AppLocalizationsRu extends AppLocalizations {
   String get launcherTabWidgets => 'Виджеты';
 
   @override
+  String get launcherLoadUnpacked => 'Загрузить папку';
+
+  @override
+  String get unpackedLoadTitle => 'Загрузить распакованный виджет';
+
+  @override
+  String unpackedLoadIdLine(Object id) {
+    return 'id: $id';
+  }
+
+  @override
+  String get unpackedLoadNetworkNote =>
+      'Виджет объявляет доступ к сети — он может выполнять запросы из сети (jsr.fetchJson).';
+
+  @override
+  String unpackedLoadCommandsNote(Object commands) {
+    return 'Команды оболочки, которые он может запускать (jsr.exec): $commands';
+  }
+
+  @override
+  String unpackedLoadReplaceNote(Object source, Object version) {
+    return 'Виджет с таким id уже установлен (источник: $source, v$version). Замена перезапишет его код; данные (storage.json) сохранятся.';
+  }
+
+  @override
+  String get unpackedLoadConfirm => 'Загрузить';
+
+  @override
+  String get unpackedLoadReplaceConfirm => 'Заменить';
+
+  @override
+  String get unpackedLoadErrorTitle => 'Виджет не загружен';
+
+  @override
+  String unpackedLoadDone(Object name) {
+    return '$name загружен из папки';
+  }
+
+  @override
+  String unpackedLoadFailed(Object error) {
+    return 'Не удалось загрузить: $error';
+  }
+
+  @override
+  String get unpackedSourceChip => 'распакован';
+
+  @override
+  String get unpackedSourceBadgeTooltip =>
+      'Загружен из локальной папки (распакованный)';
+
+  @override
+  String get unpackedSourceCatalog => 'каталог';
+
+  @override
+  String get unpackedSourceUnpacked => 'локальная папка';
+
+  @override
   String get settingsResetApps => 'Сбросить приложения';
 
   @override

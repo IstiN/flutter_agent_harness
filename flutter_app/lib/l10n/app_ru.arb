@@ -229,6 +229,57 @@
   "@launcherSearchHint": {},
   "launcherTabWidgets": "Виджеты",
   "@launcherTabWidgets": {},
+  "launcherLoadUnpacked": "Загрузить папку",
+  "@launcherLoadUnpacked": {},
+  "unpackedLoadTitle": "Загрузить распакованный виджет",
+  "@unpackedLoadTitle": {},
+  "unpackedLoadIdLine": "id: {id}",
+  "@unpackedLoadIdLine": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "unpackedLoadNetworkNote": "Виджет объявляет доступ к сети — он может выполнять запросы из сети (jsr.fetchJson).",
+  "@unpackedLoadNetworkNote": {},
+  "unpackedLoadCommandsNote": "Команды оболочки, которые он может запускать (jsr.exec): {commands}",
+  "@unpackedLoadCommandsNote": {
+    "placeholders": {
+      "commands": {}
+    }
+  },
+  "unpackedLoadReplaceNote": "Виджет с таким id уже установлен (источник: {source}, v{version}). Замена перезапишет его код; данные (storage.json) сохранятся.",
+  "@unpackedLoadReplaceNote": {
+    "placeholders": {
+      "source": {},
+      "version": {}
+    }
+  },
+  "unpackedLoadConfirm": "Загрузить",
+  "@unpackedLoadConfirm": {},
+  "unpackedLoadReplaceConfirm": "Заменить",
+  "@unpackedLoadReplaceConfirm": {},
+  "unpackedLoadErrorTitle": "Виджет не загружен",
+  "@unpackedLoadErrorTitle": {},
+  "unpackedLoadDone": "{name} загружен из папки",
+  "@unpackedLoadDone": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "unpackedLoadFailed": "Не удалось загрузить: {error}",
+  "@unpackedLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "unpackedSourceChip": "распакован",
+  "@unpackedSourceChip": {},
+  "unpackedSourceBadgeTooltip": "Загружен из локальной папки (распакованный)",
+  "@unpackedSourceBadgeTooltip": {},
+  "unpackedSourceCatalog": "каталог",
+  "@unpackedSourceCatalog": {},
+  "unpackedSourceUnpacked": "локальная папка",
+  "@unpackedSourceUnpacked": {},
   "settingsResetApps": "Сбросить приложения",
   "@settingsResetApps": {},
   "settingsResetAppsHint": "Вернуть приложения-виджеты к изначальному состоянию",
