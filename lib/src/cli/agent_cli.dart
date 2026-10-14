@@ -102,6 +102,7 @@ import '../approval/approval.dart';
 import '../wire/wire_serve.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
+import '../compaction/bench_trigger.dart';
 import '../compaction/compaction.dart';
 import '../compaction/host_wiring.dart';
 import '../compaction/structured/continuation_notice.dart';
@@ -2125,11 +2126,20 @@ class AgentCli {
   /// (the CLI carries no fixed request overhead).
   CompactionSettings get _effectiveCompactionSettings {
     final override = config.compactionSettings;
-    if (override != null) return override;
-    return resolveCompactionHostWiring(
-      mainModel: _agent.state.model,
-      contextWindowCap: config.contextWindowCap,
-    ).settings;
+    final base = override ??
+        resolveCompactionHostWiring(
+          mainModel: _agent.state.model,
+          contextWindowCap: config.contextWindowCap,
+        ).settings;
+    // gh-1604: the bench trigger applies LAST — it is an explicit
+    // bench-run knob (`FAH_COMPACT_TRIGGER_TOKENS`) and must win over
+    // both the defaults and a host default override. Unset env =
+    // byte-identical base.
+    return resolveBenchCompactionSettings(
+      base,
+      window: _effectiveContextWindow,
+      env: environment,
+    );
   }
 
   /// Whether a guided flow is between prompts.

@@ -90,16 +90,22 @@ void main() {
       expect(settings.keepRecentTokens, base.keepRecentTokens);
     });
 
-    test('out-of-range triggers clamp into the window', () {
-      // Above the window: clamped to just under it — compaction would
-      // fire essentially at the window, never past it.
+    test('out-of-range triggers never RAISE the threshold', () {
+      // At/above the window the knob clamps into the no-op guard: a bench
+      // trigger can only lower the firing point, never raise it past the
+      // settings' own default.
       final high = withCompactionTriggerTokens(
         base,
         window: window,
         triggerTokens: window * 2,
       );
-      expect(shouldCompact(window - 1, window, high), isFalse);
-      expect(shouldCompact(window, window, high), isTrue);
+      expect(high.reserveTokens, base.reserveTokens);
+      expect(high.keepRecentTokens, base.keepRecentTokens);
+      expect(shouldCompact(window - base.reserveTokens, window, high), isFalse);
+      expect(
+        shouldCompact(window - base.reserveTokens + 1, window, high),
+        isTrue,
+      );
     });
   });
 
