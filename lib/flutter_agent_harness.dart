@@ -124,6 +124,7 @@ export 'src/compaction/host_wiring.dart';
 export 'src/compaction/compaction.dart';
 export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';
+export 'src/compaction/bench_trigger.dart';
 export 'src/context.dart';
 export 'src/cube/cube.dart';
 export 'src/env/execution_env.dart';
