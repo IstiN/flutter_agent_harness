@@ -742,7 +742,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String unpackedLoadReplaceNote(Object source, Object version) {
-    return 'A widget with this id already exists (installed from $source, v$version). Replacing overwrites its code; the saved data (storage.json) is kept.';
+    return 'A widget with this id already exists ($source, v$version). Replacing overwrites its code; the saved data (storage.json) is kept.';
   }
 
   @override
@@ -772,10 +772,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Loaded from a local folder (unpacked)';
 
   @override
-  String get unpackedSourceCatalog => 'the catalog';
+  String get unpackedSourceCatalog => 'installed from the catalog';
 
   @override
-  String get unpackedSourceUnpacked => 'a local folder';
+  String get unpackedSourceUnpacked => 'loaded from a local folder';
+
+  @override
+  String get unpackedSourceAgent => 'created by the agent';
 
   @override
   String get settingsResetApps => 'Reset apps';

@@ -85,7 +85,8 @@ Future<void> loadUnpackedWidget(
       allowedCommands: inspection.allowedCommands,
       existingSource: existingApp == null
           ? null
-          : (existingApp.installSource ?? UnpackedWidgetLoader.agentCreatedSource),
+          : (existingApp.installSource ??
+                UnpackedWidgetLoader.agentCreatedSource),
       existingVersion: existingApp?.version,
     ),
   );

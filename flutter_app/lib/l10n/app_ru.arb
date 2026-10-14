@@ -247,7 +247,7 @@
       "commands": {}
     }
   },
-  "unpackedLoadReplaceNote": "Виджет с таким id уже установлен (источник: {source}, v{version}). Замена перезапишет его код; данные (storage.json) сохранятся.",
+  "unpackedLoadReplaceNote": "Виджет с таким id уже существует ({source}, v{version}). Замена перезапишет его код; данные (storage.json) сохранятся.",
   "@unpackedLoadReplaceNote": {
     "placeholders": {
       "source": {},
@@ -276,10 +276,12 @@
   "@unpackedSourceChip": {},
   "unpackedSourceBadgeTooltip": "Загружен из локальной папки (распакованный)",
   "@unpackedSourceBadgeTooltip": {},
-  "unpackedSourceCatalog": "каталог",
+  "unpackedSourceCatalog": "установлен из каталога",
   "@unpackedSourceCatalog": {},
-  "unpackedSourceUnpacked": "локальная папка",
+  "unpackedSourceUnpacked": "загружен из локальной папки",
   "@unpackedSourceUnpacked": {},
+  "unpackedSourceAgent": "создан агентом",
+  "@unpackedSourceAgent": {},
   "settingsResetApps": "Сбросить приложения",
   "@settingsResetApps": {},
   "settingsResetAppsHint": "Вернуть приложения-виджеты к изначальному состоянию",

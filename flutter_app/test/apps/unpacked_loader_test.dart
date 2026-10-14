@@ -102,9 +102,16 @@ void main() {
 
           await loader.install(inspection);
 
+          final listed = [
+            for (final e
+                in (await env.listDir('apps')).valueOrNull ??
+                    const <FileInfo>[])
+              e.name,
+          ];
+          expect(listed, containsAll(['.installed.json', 'fa-agents']));
           expect(
-            (await env.listDir('apps')).valueOrNull ?? const <String>[],
-            ['fa-agents'],
+            listed,
+            everyElement(isNot(contains(' '))),
             reason: 'no space-padded sibling folder may be created',
           );
           expect(

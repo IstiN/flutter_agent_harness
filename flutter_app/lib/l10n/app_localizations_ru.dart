@@ -748,7 +748,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String unpackedLoadReplaceNote(Object source, Object version) {
-    return 'Виджет с таким id уже установлен (источник: $source, v$version). Замена перезапишет его код; данные (storage.json) сохранятся.';
+    return 'Виджет с таким id уже существует ($source, v$version). Замена перезапишет его код; данные (storage.json) сохранятся.';
   }
 
   @override
@@ -778,10 +778,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'Загружен из локальной папки (распакованный)';
 
   @override
-  String get unpackedSourceCatalog => 'каталог';
+  String get unpackedSourceCatalog => 'установлен из каталога';
 
   @override
-  String get unpackedSourceUnpacked => 'локальная папка';
+  String get unpackedSourceUnpacked => 'загружен из локальной папки';
+
+  @override
+  String get unpackedSourceAgent => 'создан агентом';
 
   @override
   String get settingsResetApps => 'Сбросить приложения';

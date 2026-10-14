@@ -249,7 +249,7 @@
       "commands": {}
     }
   },
-  "unpackedLoadReplaceNote": "A widget with this id already exists (installed from {source}, v{version}). Replacing overwrites its code; the saved data (storage.json) is kept.",
+  "unpackedLoadReplaceNote": "A widget with this id already exists ({source}, v{version}). Replacing overwrites its code; the saved data (storage.json) is kept.",
   "@unpackedLoadReplaceNote": {
     "placeholders": {
       "source": {},
@@ -278,10 +278,12 @@
   "@unpackedSourceChip": {},
   "unpackedSourceBadgeTooltip": "Loaded from a local folder (unpacked)",
   "@unpackedSourceBadgeTooltip": {},
-  "unpackedSourceCatalog": "the catalog",
+  "unpackedSourceCatalog": "installed from the catalog",
   "@unpackedSourceCatalog": {},
-  "unpackedSourceUnpacked": "a local folder",
+  "unpackedSourceUnpacked": "loaded from a local folder",
   "@unpackedSourceUnpacked": {},
+  "unpackedSourceAgent": "created by the agent",
+  "@unpackedSourceAgent": {},
   "settingsResetApps": "Reset apps",
   "@settingsResetApps": {},
   "settingsResetAppsHint": "Restore the widget apps to their initial state",

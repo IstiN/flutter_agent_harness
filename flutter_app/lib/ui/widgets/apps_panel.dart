@@ -485,7 +485,7 @@ class _AppsPanelState extends State<AppsPanel> {
                   appsStore: _appsStore,
                 ),
                 icon: const Icon(Icons.folder_open, size: 18),
-                label: const Text('Load unpacked'),
+                label: Text(context.l10n.launcherLoadUnpacked),
               ),
           ],
         ),

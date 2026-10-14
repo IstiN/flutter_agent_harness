@@ -1331,7 +1331,7 @@ abstract class AppLocalizations {
   /// No description provided for @unpackedLoadReplaceNote.
   ///
   /// In en, this message translates to:
-  /// **'A widget with this id already exists (installed from {source}, v{version}). Replacing overwrites its code; the saved data (storage.json) is kept.'**
+  /// **'A widget with this id already exists ({source}, v{version}). Replacing overwrites its code; the saved data (storage.json) is kept.'**
   String unpackedLoadReplaceNote(Object source, Object version);
 
   /// No description provided for @unpackedLoadConfirm.
@@ -1379,14 +1379,20 @@ abstract class AppLocalizations {
   /// No description provided for @unpackedSourceCatalog.
   ///
   /// In en, this message translates to:
-  /// **'the catalog'**
+  /// **'installed from the catalog'**
   String get unpackedSourceCatalog;
 
   /// No description provided for @unpackedSourceUnpacked.
   ///
   /// In en, this message translates to:
-  /// **'a local folder'**
+  /// **'loaded from a local folder'**
   String get unpackedSourceUnpacked;
+
+  /// No description provided for @unpackedSourceAgent.
+  ///
+  /// In en, this message translates to:
+  /// **'created by the agent'**
+  String get unpackedSourceAgent;
 
   /// No description provided for @settingsResetApps.
   ///
