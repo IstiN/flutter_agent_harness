@@ -92,12 +92,9 @@ void main() {
 
   /// A fixed-clock deadline so the REPL assertions never race the wall
   /// clock (the real clock is covered by the module + headless suites).
-  final _fixedNow = DateTime.utc(2026, 1, 1);
+  final fixedNow = DateTime.utc(2026, 1, 1);
 
-  AgentCli cliFor(
-    _InstantStream stream, {
-    SessionDeadline? deadline,
-  }) {
+  AgentCli cliFor(_InstantStream stream, {SessionDeadline? deadline}) {
     return AgentCli(
       config: AgentCliConfig(
         model: testModel,
@@ -105,7 +102,7 @@ void main() {
         env: env,
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
-        deadline: deadline ?? SessionDeadline(clock: () => _fixedNow),
+        deadline: deadline ?? SessionDeadline(clock: () => fixedNow),
       ),
       io: io,
       streamFunction: stream.call,
@@ -148,8 +145,7 @@ void main() {
       expect(cli.deadlineForTest.isArmed, isFalse);
     });
 
-    test('an invalid value is a clear error and keeps the old clock',
-        () async {
+    test('an invalid value is a clear error and keeps the old clock', () async {
       final stream = _InstantStream(const []);
       final cli = cliFor(stream);
       final run = cli.run();
@@ -173,7 +169,7 @@ void main() {
     });
 
     test('a later /timer overrides an env-seeded clock', () async {
-      final envDeadline = SessionDeadline(clock: () => _fixedNow);
+      final envDeadline = SessionDeadline(clock: () => fixedNow);
       envDeadline.setFromSpec('2h');
       final stream = _InstantStream(const []);
       final cli = cliFor(stream, deadline: envDeadline);
@@ -195,7 +191,7 @@ void main() {
 
   group('bash env projection (FA_DEADLINE_EPOCH_MS)', () {
     test('armed: the live value rides the session env vars', () async {
-      final now = _fixedNow;
+      final now = fixedNow;
       final deadline = SessionDeadline(clock: () => now);
       final stream = _InstantStream(const []);
       final cli = cliFor(stream, deadline: deadline);

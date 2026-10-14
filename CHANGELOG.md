@@ -48,6 +48,39 @@ block a release again.
   a mid-session ttsr rule toggle or mcp server edit survives the next
   persist too (the writer roster in `settings_flow_config_sync.dart` is
   now exhaustive).
+
+- gh-1605: the FinalizeGate gains a "grader parity" named check. A
+  produced entry point (script/CLI the verifier will run itself) is only
+  verified when it survives the grader's own invocation: the checklist
+  must re-run each produced entry point from a different working
+  directory in a fresh subprocess with a clean env, capture stdout/
+  stderr/exit code, and diff against the earlier in-session run — any
+  divergence (different output, relative-path artifacts, locale/
+  encoding-dependent output) is a `fail` ledger item, never a pass.
+  Closes the modernize-scientific-stack__nwbgy7a near-miss (every
+  in-session checklist item passed, the verifier's clean-cwd subprocess
+  collapsed Station 102 to Station 101's mean, reward 0.0). REG coverage:
+  the parity procedure catches cwd- and env-dependent entry points and
+  does not false-positive cwd-independent ones
+  (`test/agent/finalize_gate_grader_parity_test.dart`), and an IT replays
+  the evidence shape end-to-end — divergence detected and persisted as a
+  `fail` ledger item before finalize.
+
+- gh-1603: unattended runs can no longer end as a clean success on empty
+  model responses. Loop: from the second empty-hiccup retry on, the request
+  carries a continuation nudge user message ("your last reply was
+  empty/truncated — continue the task"; exact-text constant
+  `emptyContinuationNudge`, emitted with MessageStart/End so the transcript
+  stays truthful) — a cap-truncated reasoning model re-streamed verbatim
+  repeats the empty outcome, the nudge breaks the symmetry; the classifier
+  treats that exact message as transparent, so the turn's partial-content
+  window (gh-1577) survives a nudged retry. Headless: the empty-reply nudge
+  budget rises to `AgentCliConfig.headlessEmptyReplyNudges` (default 2 — the
+  session ends only after 3 consecutive unrecoverable empties; interactive
+  keeps the #1085 M2b one-nudge semantics), and a run that still settles
+  empty prints the explicit `__FA_INCOMPLETE` marker and exits 1 — a
+  distinguishable failure for the bench adapter, never a silent exit 0.
+
 - gh-1577: an empty assistant completion after partial content (assistant
   text, tool activity, or a truncation signal earlier in the turn) is a
   bounded-retry provider hiccup — up to `emptyHiccupRetries` (default 3)

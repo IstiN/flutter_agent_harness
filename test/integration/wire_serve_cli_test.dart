@@ -231,12 +231,13 @@ void main() {
       final done = Completer<void>();
       final served = cli.runWireServe(
         serve: (server) {
-          final send = (Map<String, dynamic> frame) {
+          void send(Map<String, dynamic> frame) {
             outLines.add(AgentWireProtocol.frameLine(frame));
             if (frame['kind'] == 'agent_settled') {
               done.complete();
             }
-          };
+          }
+
           return server
               .attach(decodeNdjson(server, incoming.stream, send), send)
               .whenComplete(() {
@@ -290,7 +291,7 @@ void main() {
       final settled = Completer<void>();
       final served = cli.runWireServe(
         serve: (server) {
-          final send = (Map<String, dynamic> frame) {
+          void send(Map<String, dynamic> frame) {
             outFrames.add(frame);
             if (frame['kind'] == 'error' && !gotError.isCompleted) {
               gotError.complete();
@@ -298,7 +299,8 @@ void main() {
             if (frame['kind'] == 'agent_settled' && !settled.isCompleted) {
               settled.complete();
             }
-          };
+          }
+
           return server.attach(
             decodeNdjson(server, incoming.stream, send),
             send,
@@ -378,7 +380,7 @@ void main() {
       final settled = Completer<void>();
       final served = cli.runWireServe(
         serve: (server) {
-          final send = (Map<String, dynamic> frame) {
+          void send(Map<String, dynamic> frame) {
             outFrames.add(frame);
             if (frame['kind'] == 'error' && !gotError.isCompleted) {
               gotError.complete();
@@ -386,7 +388,8 @@ void main() {
             if (frame['kind'] == 'agent_settled' && !settled.isCompleted) {
               settled.complete();
             }
-          };
+          }
+
           // The REAL stdio byte path: raw bytes -> byteLines -> guarded
           // decode (review #1113 r3, #1).
           return server
@@ -432,11 +435,12 @@ void main() {
     final settled = Completer<void>();
     final served1 = cli1.runWireServe(
       serve: (server) {
-        final send = (Map<String, dynamic> frame) {
+        void send(Map<String, dynamic> frame) {
           if (frame['kind'] == 'agent_settled' && !settled.isCompleted) {
             settled.complete();
           }
-        };
+        }
+
         return server.attach(decodeNdjson(server, incoming.stream, send), send);
       },
     );
@@ -465,11 +469,12 @@ void main() {
     final resumeSettled = Completer<void>();
     final served2 = cli2.runWireServe(
       serve: (server) {
-        final send = (Map<String, dynamic> frame) {
+        void send(Map<String, dynamic> frame) {
           if (frame['kind'] == 'agent_settled' && !resumeSettled.isCompleted) {
             resumeSettled.complete();
           }
-        };
+        }
+
         return server
             .attach(decodeNdjson(server, resumeIncoming.stream, send), send)
             .whenComplete(() {
