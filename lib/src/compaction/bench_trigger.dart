@@ -13,6 +13,8 @@
 /// `Platform.environment`, tests pass their own), no dart:io.
 library;
 
+import 'dart:math';
+
 import 'compaction.dart';
 
 /// The env var a bench/unattended run sets to bound the context: the
@@ -42,9 +44,10 @@ int? benchCompactionTriggerTokens(Map<String, String> env) {
 /// - the kept recent region never exceeds half the trigger — a pass
 ///   always frees tokens, never reshuffles the same budget;
 /// - a trigger at/above the settings' own default threshold is a no-op
-///   (the bench knob can only LOWER the trigger, never raise it);
-/// - a trigger at/above the window clamps to `window` (fire at the
-///   window, never past it).
+///   (the bench knob can only LOWER the trigger, never raise it). A
+///   trigger at/above the window clamps to `window`, which always
+///   satisfies this guard — it is the same no-op, never a "fire at the
+///   window" outcome.
 ///
 /// Pure; returns [base] unchanged when the trigger changes nothing.
 CompactionSettings withCompactionTriggerTokens(
@@ -56,7 +59,10 @@ CompactionSettings withCompactionTriggerTokens(
   final clamped = triggerTokens.clamp(1, window);
   final defaultTrigger = window - base.reserveTokens;
   if (clamped >= defaultTrigger) return base;
-  final keep = base.keepRecentTokens.clamp(1, clamped ~/ 2);
+  // max(1, …): a trigger of 1 makes `clamped ~/ 2` 0, and `int.clamp`
+  // throws when the lower limit exceeds the upper — a parse-valid env
+  // value must degrade, never kill the run (gh-1604 rework).
+  final keep = base.keepRecentTokens.clamp(1, max(1, clamped ~/ 2));
   return CompactionSettings(
     enabled: true,
     reserveTokens: window - clamped,

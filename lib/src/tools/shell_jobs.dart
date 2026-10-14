@@ -104,10 +104,14 @@ String shellJobCommandLabel(
   // bounded — the first line is the command's face (a heredoc opener,
   // a script's shebang), while everything after it is body more often
   // than it is action. A flattened 120-char head would leak the first
-  // body lines; a first-line head cannot.
-  final firstLineEnd = command.indexOf('\n');
-  final firstLine = command
-      .substring(0, firstLineEnd < 0 ? command.length : firstLineEnd)
+  // body lines; a first-line head cannot. The first line comes from the
+  // TRIMMED command: a leading newline must not blank the face
+  // (gh-1604 rework).
+  final trimmed = command.trim();
+  final firstLineEnd = trimmed.indexOf('\n');
+  final firstLine = (firstLineEnd < 0
+          ? trimmed
+          : trimmed.substring(0, firstLineEnd))
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
   final head = _codepointSafeSlice(firstLine, 0, headChars);

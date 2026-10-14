@@ -2143,23 +2143,29 @@ class AgentCli {
   /// [effectiveContextWindow] under the owner cap, no overhead subtracted
   /// (the CLI carries no fixed request overhead).
   CompactionSettings get _effectiveCompactionSettings {
+    // An explicit `compactionSettings` config pin beats the bench env
+    // (gh-1604): `FAH_COMPACT_TRIGGER_TOKENS` retunes the DEFAULTS for a
+    // bench run — it must never silently rewrite a user-pinned section,
+    // including `enabled: false` (the knob cannot re-enable compaction
+    // the user switched off). Unset env = byte-identical base.
     final override = config.compactionSettings;
-    final base =
-        override ??
-        resolveCompactionHostWiring(
-          mainModel: _agent.state.model,
-          contextWindowCap: config.contextWindowCap,
-        ).settings;
-    // gh-1604: the bench trigger applies LAST — it is an explicit
-    // bench-run knob (`FAH_COMPACT_TRIGGER_TOKENS`) and must win over
-    // both the defaults and a host default override. Unset env =
-    // byte-identical base.
+    if (override != null) return override;
     return resolveBenchCompactionSettings(
-      base,
+      resolveCompactionHostWiring(
+        mainModel: _agent.state.model,
+        contextWindowCap: config.contextWindowCap,
+      ).settings,
       window: _effectiveContextWindow,
       env: environment,
     );
   }
+
+  /// Test seam (gh-1604 rework): the compaction settings the live gates
+  /// use — the explicit config pin when present, else the host defaults
+  /// with the bench env knob composed.
+  @visibleForTesting
+  CompactionSettings get effectiveCompactionSettingsForTest =>
+      _effectiveCompactionSettings;
 
   /// Whether a guided flow is between prompts.
   var _providerFlowActive = false;

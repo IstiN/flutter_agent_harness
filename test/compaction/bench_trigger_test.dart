@@ -80,6 +80,28 @@ void main() {
       expect(shouldCompact(6000, window, settings), isFalse);
       expect(shouldCompact(6001, window, settings), isTrue);
     });
+    test('a trigger of 1 clamps the keep to 1 instead of throwing '
+        '(gh-1604 rework: clamp(1, 0) ArgumentError)', () {
+      // `FAH_COMPACT_TRIGGER_TOKENS=1` is parse-valid (any positive
+      // integer), and `clamped ~/ 2 == 0` made `int.clamp` throw an
+      // ArgumentError — outside every compaction gate's try/catch, so
+      // the whole bench run/boot died instead of degrading the way junk
+      // env does.
+      final settings = withCompactionTriggerTokens(
+        base,
+        window: window,
+        triggerTokens: 1,
+      );
+      expect(settings.enabled, isTrue);
+      expect(settings.keepRecentTokens, 1);
+      expect(
+        settings.keepRecentTokens,
+        lessThanOrEqualTo(settings.reserveTokens),
+      );
+      // The trigger stays the firing point.
+      expect(shouldCompact(1, window, settings), isFalse);
+      expect(shouldCompact(2, window, settings), isTrue);
+    });
 
     test('a trigger at/above the default threshold is a no-op', () {
       final defaultTrigger = window - base.reserveTokens;
@@ -128,6 +150,20 @@ void main() {
       );
       expect(shouldCompact(64000, 200000, settings), isFalse);
       expect(shouldCompact(64001, 200000, settings), isTrue);
+    });
+    test('env trigger 1 resolves without throwing (gh-1604 rework)', () {
+      // Every spelling that parses to 1 rides the same guarded clamp.
+      const window = 200000;
+      final base = CompactionSettings.forWindow(window);
+      for (final value in ['1', '+1', ' 1 ']) {
+        final settings = resolveBenchCompactionSettings(
+          base,
+          window: window,
+          env: {'FAH_COMPACT_TRIGGER_TOKENS': value},
+        );
+        expect(settings.enabled, isTrue, reason: value);
+        expect(settings.keepRecentTokens, 1, reason: value);
+      }
     });
   });
 }

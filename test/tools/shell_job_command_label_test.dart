@@ -157,6 +157,18 @@ void main() {
       );
     });
 
+    test('a multi-line command with an empty first line keeps a command '
+        'face (gh-1604 rework)', () {
+      // The first line is taken from the TRIMMED command: a leading
+      // newline must not degenerate the label to " […N chars…]" —
+      // leading space, no command face.
+      final command = '\ncat data.bin\n${'payload' * 40}';
+      final label = shellJobCommandLabel(command);
+      expect(label, startsWith('cat data.bin'));
+      expect(label, isNot(startsWith(' ')));
+      expect(label, isNot(contains('\n')));
+    });
+
     test('a heredoc body never re-enters the label through the tail '
         '(issue #599 RED contract)', () {
       // The bench command shape at heredoc scale: the opener, a long

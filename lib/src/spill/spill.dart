@@ -34,6 +34,12 @@ const spillsMinPreviewChars = 200;
 /// cap for ONE run without any config file (gh-1604 item 4): a positive
 /// integer is the spill threshold in chars; `0` explicitly disables.
 /// Unset or junk leaves the configured section untouched.
+///
+/// The threshold gates WHEN a result spills; the model-visible preview
+/// stays bounded by the head+tail excerpt bounds (defaults:
+/// 2000 + 2000). Thresholds below that floor change when spilling
+/// fires, not the preview's worst-case size — a spilled body that fits
+/// the bounds renders in full.
 const spillThresholdEnvVar = 'FAH_SPILL_THRESHOLD';
 
 /// Resolves the run's spills config from the yaml [section] (null when
@@ -43,7 +49,9 @@ const spillThresholdEnvVar = 'FAH_SPILL_THRESHOLD';
 /// - section absent + env unset → null — the hook is never attached, the
 ///   byte-identical legacy shape (issue #678 AC1);
 /// - env set to a positive int → enabled with THAT threshold (env wins
-///   over the configured threshold; preview bounds stay the defaults);
+///   over the configured threshold; preview bounds stay the defaults).
+///   The section's [SpillsConfig.notes] survive the composition — the
+///   tolerant-parse diagnostics a bench run debugging its config needs;
 /// - env `0` → explicitly disabled for this run;
 /// - env junk → ignored (the section applies untouched; junk never
 ///   breaks a boot).
@@ -60,6 +68,7 @@ SpillsConfig? resolveRunSpillsConfig(
     threshold: value,
     headChars: base.headChars,
     tailChars: base.tailChars,
+    notes: base.notes,
   );
 }
 

@@ -43,6 +43,22 @@ void main() {
       expect(config!.isActive, isFalse);
     });
 
+    test('the env override keeps the section tolerant-parse notes '
+        '(gh-1604 rework)', () {
+      // The notes are the boot diagnostics (clamped bounds, unknown
+      // keys) — an env retune must not silently drop them on exactly
+      // the bench runs where config is being debugged.
+      const section = SpillsConfig(
+        threshold: 8192,
+        notes: ['spills.headChars: 10 below minimum 200, clamped'],
+      );
+      final config = resolveRunSpillsConfig(section, {
+        spillThresholdEnvVar: '2048',
+      });
+      expect(config!.threshold, 2048);
+      expect(config.notes, section.notes);
+    });
+
     test('junk env is ignored — the config applies untouched', () {
       final section = const SpillsConfig(threshold: 8192);
       expect(
