@@ -174,9 +174,7 @@ void main() {
       // recovers. The bench (fa -p) must SEE the retry.
       var calls = 0;
       final ctxSizes = <int>[];
-      final base = FakeStreamFunction([
-        textTurn('unused'),
-      ]).call;
+      final base = FakeStreamFunction([textTurn('unused')]).call;
       // The retry ladder wraps the catalog fn in production; an injected
       // test fn composes it the same way — attempt 1 dies inside the
       // ladder with a transient wording, attempt 2 recovers.
@@ -215,10 +213,12 @@ void main() {
           calls++;
           ctxSizes.add(context.messages.length);
           // ignore: avoid_print
-          print('CALL ' + calls.toString() + ' msgs=' + context.messages.length.toString());
+          print('CALL $calls msgs=${context.messages.length}');
           if (calls >= 3) {
             // ignore: avoid_print
-            print('CALL' + calls.toString() + ' TRIGGER:\n' + StackTrace.current.toString().split('\n').take(14).join('\n'));
+            print(
+              'CALL$calls TRIGGER:\n${StackTrace.current.toString().split('\n').take(14).join('\n')}',
+            );
           }
           if (calls == 1) {
             final stream = AssistantMessageEventStream();
