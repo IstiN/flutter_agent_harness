@@ -31,7 +31,10 @@ import 'package:test/test.dart';
 /// [uniqueKind] says whether the kind maps back to exactly this entry
 /// (true for every `name != kind` provider the issue targets — chatgpt
 /// being the first — and false inside a shared-kind family).
-void expectBothIdentifiersResolve(ProviderSpec spec, {required bool uniqueKind}) {
+void expectBothIdentifiersResolve(
+  ProviderSpec spec, {
+  required bool uniqueKind,
+}) {
   // The seam: both identifiers resolve (unique kinds → the SAME entry).
   final byName = resolveCliProviderSpec(spec.name);
   expect(byName, same(spec), reason: '${spec.name}: name-form seam');
@@ -72,7 +75,11 @@ void expectBothIdentifiersResolve(ProviderSpec spec, {required bool uniqueKind})
   // env names describe the catalog default endpoint; a shared-kind entry
   // off its default endpoint resolves endpoint-scoped store keys, never
   // env names) — only a unique kind answers identically through both.
-  expect(apiKeyEnvNames(spec.name), spec.apiKeyEnvNames, reason: 'name: key names');
+  expect(
+    apiKeyEnvNames(spec.name),
+    spec.apiKeyEnvNames,
+    reason: 'name: key names',
+  );
   if (uniqueKind) {
     expect(
       apiKeyEnvNames(spec.kind),
@@ -94,9 +101,11 @@ void expectBothIdentifiersResolve(ProviderSpec spec, {required bool uniqueKind})
     reason: '${spec.kind}: canonicalization is idempotent',
   );
 
-  // The queue runtime: kind → catalog name, catalog-derived (AC3).
+  // The queue/binding seam: kind → catalog spec name, catalog-derived
+  // (AC3) — the one derivation `ProviderModelBinding.catalogRecord` uses
+  // for every queue entry (gh-1570 retired the parallel legacy rule).
   expect(
-    queueKindCatalogName(spec.kind, spec.defaultBaseUrl),
+    resolveCliProviderSpec(spec.kind, baseUrl: spec.defaultBaseUrl)!.name,
     uniqueKind ? spec.name : 'openai',
     reason: '${spec.kind}: queue runtime catalog name',
   );
@@ -119,46 +128,58 @@ void main() {
       }
     });
 
-    test('shared-kind entries keep adapter identity under both identifiers',
-        () {
-      final shared = providerCatalog.values
-          .where((spec) => ownersOfKind[spec.kind]!.length > 1)
-          .toList();
-      expect(shared, isNotEmpty);
-      for (final spec in shared) {
-        expectBothIdentifiersResolve(spec, uniqueKind: false);
-      }
-    });
+    test(
+      'shared-kind entries keep adapter identity under both identifiers',
+      () {
+        final shared = providerCatalog.values
+            .where((spec) => ownersOfKind[spec.kind]!.length > 1)
+            .toList();
+        expect(shared, isNotEmpty);
+        for (final spec in shared) {
+          expectBothIdentifiersResolve(spec, uniqueKind: false);
+        }
+      },
+    );
 
-    test('a synthetic two-identifier spec satisfies the spec-keyed surfaces',
-        () {
-      // The const catalog cannot host a test entry (tree-shaking by
-      // design) — the harness helper must still generalize to a future
-      // name != kind provider. The string-keyed surfaces are covered by
-      // the derivation assertions below.
-      const synthetic = ProviderSpec(
-        name: 'synthetic',
-        kind: 'synthetic-adapter',
-        api: 'openai-completions',
-        defaultBaseUrl: 'https://synthetic.example/v1',
-        apiKeyEnvNames: ['SYNTHETIC_API_KEY'],
-        contextWindow: 128000,
-        maxTokens: 16384,
-      );
-      expect(canonicalProviderKind(synthetic.name), synthetic.name,
-          reason: 'unresolvable ids are never rewritten (E2)');
-      expect(canonicalProviderKind(synthetic.kind), synthetic.kind);
-      expect(
-        resolveCliProviderSpec(synthetic.name),
-        isNull,
-        reason: 'no hand-maintained fallbacks outside the catalog',
-      );
-      expect(
-        () => queueKindCatalogName(synthetic.kind, synthetic.defaultBaseUrl),
-        throwsA(isA<ConfigException>()),
-        reason: 'no band-aid identity map survives (AC3)',
-      );
-    });
+    test(
+      'a synthetic two-identifier spec satisfies the spec-keyed surfaces',
+      () {
+        // The const catalog cannot host a test entry (tree-shaking by
+        // design) — the harness helper must still generalize to a future
+        // name != kind provider. The string-keyed surfaces are covered by
+        // the derivation assertions below.
+        const synthetic = ProviderSpec(
+          name: 'synthetic',
+          kind: 'synthetic-adapter',
+          api: 'openai-completions',
+          defaultBaseUrl: 'https://synthetic.example/v1',
+          apiKeyEnvNames: ['SYNTHETIC_API_KEY'],
+          contextWindow: 128000,
+          maxTokens: 16384,
+        );
+        expect(
+          canonicalProviderKind(synthetic.name),
+          synthetic.name,
+          reason: 'unresolvable ids are never rewritten (E2)',
+        );
+        expect(canonicalProviderKind(synthetic.kind), synthetic.kind);
+        expect(
+          resolveCliProviderSpec(synthetic.name),
+          isNull,
+          reason: 'no hand-maintained fallbacks outside the catalog',
+        );
+        expect(
+          resolveCliProviderSpec(
+            synthetic.kind,
+            baseUrl: synthetic.defaultBaseUrl,
+          ),
+          isNull,
+          reason:
+              'no band-aid identity map survives (AC3) — an unknown kind '
+              'is rejected by the binding, never guessed',
+        );
+      },
+    );
 
     test('case variants resolve identically through the seam (review)', () {
       // Names AND kinds lowercase-normalize uniformly — including the
@@ -167,12 +188,18 @@ void main() {
         resolveCliProviderSpec('OPENAI-COMPLETIONS'),
         same(providerCatalog['openrouter']),
       );
-      expect(resolveCliProviderSpec('OPENROUTER'),
-          same(providerCatalog['openrouter']));
-      expect(resolveCliProviderSpec('Anthropic'),
-          same(providerCatalog['anthropic']));
-      expect(resolveCliProviderSpec('ChatGPT-Codex'),
-          same(providerCatalog['chatgpt']));
+      expect(
+        resolveCliProviderSpec('OPENROUTER'),
+        same(providerCatalog['openrouter']),
+      );
+      expect(
+        resolveCliProviderSpec('Anthropic'),
+        same(providerCatalog['anthropic']),
+      );
+      expect(
+        resolveCliProviderSpec('ChatGPT-Codex'),
+        same(providerCatalog['chatgpt']),
+      );
     });
 
     test('the closed kind sets derive from the catalog', () {
