@@ -242,9 +242,16 @@ extension AgentCliLifecycle on AgentCli {
       // and spin the round cap).
       await Future.wait(waits);
     } else {
+      final now = _waitingClock();
       await Future.any([
         Future.wait(waits),
-        _waitingSleep(liveness.wakeIn(shellActive, _waitingClock(), deadline)),
+        _waitingSleep(
+          headlessDrainRoundSleep(
+            wake: liveness.wakeIn(shellActive, now, deadline),
+            steerDue: _headlessSteerDue(shellActive, liveness),
+            remainingCeiling: deadline.difference(now),
+          ),
+        ),
       ]);
     }
     await Future<void>.delayed(Duration.zero);
@@ -278,6 +285,29 @@ extension AgentCliLifecycle on AgentCli {
         ),
       );
     }
+  }
+
+  /// Whether any active shell job has an unconsumed quiet-threshold
+  /// crossing (gh-1459 ask #4) — the same crossing check
+  /// [_steerHeadlessLiveness] applies after the wake. An instant drain
+  /// wake is legitimate exactly when such a crossing waits to be
+  /// consumed; with nothing to consume it is scheduler pathology (see
+  /// [headlessDrainRoundSleep]).
+  bool _headlessSteerDue(
+    List<ShellJobEntry> active,
+    _HeadlessDrainLiveness liveness,
+  ) {
+    if (liveness.quietMs <= 0) return false;
+    for (final job in active) {
+      if (!job.isRunning || !job.notifyOnSettle) continue;
+      final elapsed = _waitingClock().difference(job.startedAt);
+      final elapsedMs = elapsed.isNegative ? 0 : elapsed.inMilliseconds;
+      if (elapsedMs ~/ liveness.quietMs >
+          (liveness.consumedBucket[job.id] ?? 0)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Steers the due interim liveness notices of the active shell jobs
