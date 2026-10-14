@@ -30,7 +30,7 @@ import 'uuid.dart';
 const int defaultMaxFullOpenBytes = 2 << 30;
 
 /// Human-readable byte count for the backstop error (GiB/MB granularity).
-String _formatBytes(int bytes) {
+String formatSessionBytes(int bytes) {
   if (bytes >= (1 << 30)) {
     return '${(bytes / (1 << 30)).toStringAsFixed(1)} GiB';
   }
@@ -640,8 +640,8 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     );
     if (stat.size > maxFullOpenBytes) {
       throw SessionException(
-        'Refusing to open session $filePath: ${_formatBytes(stat.size)} '
-        'exceeds the ${_formatBytes(maxFullOpenBytes)} full-open bound. '
+        'Refusing to open session $filePath: ${formatSessionBytes(stat.size)} '
+        'exceeds the ${formatSessionBytes(maxFullOpenBytes)} full-open bound. '
         'Resume it windowed (`fa --session ${filePath.split('/').last}`) or '
         'shrink the ledger with `fa session repair` — the full open would '
         'exhaust the heap (gh-1073).',
@@ -750,8 +750,8 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       if (fileSize > maxFullOpenBytes) {
         throw SessionException(
           'Refusing to open session $segmentPath: '
-          '${_formatBytes(fileSize)} exceeds the '
-          '${_formatBytes(maxFullOpenBytes)} full-open bound. Resume it '
+          '${formatSessionBytes(fileSize)} exceeds the '
+          '${formatSessionBytes(maxFullOpenBytes)} full-open bound. Resume it '
           'windowed (`fa --session ${filePath.split('/').last}`) or shrink '
           'the ledger with `fa session repair` — the full open would '
           'exhaust the heap (gh-1073).',
