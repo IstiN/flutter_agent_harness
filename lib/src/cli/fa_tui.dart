@@ -7,10 +7,6 @@ import 'dart:io'
 // The composer's editor types come from the vendored tui_editor.dart
 // (issue #613): hosted dart_tui exports none, so this file compiles
 // against BOTH resolutions.
-// The vendored dart_tui exports no Style surface (issue #613) — same
-// direct-src import tui_theme.dart uses.
-// ignore: implementation_imports
-import 'package:dart_tui/src/bubbles/style.dart' show Style;
 import 'package:dart_tui/dart_tui.dart' hide stripAnsi;
 import 'package:meta/meta.dart';
 

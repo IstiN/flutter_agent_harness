@@ -194,8 +194,8 @@ MappedImport mapForeignSession(ForeignParseResult parse, String harness) {
               display: display,
               details: {
                 'customType': customType,
-                if (attribution != null) 'attribution': attribution,
-                if (details != null) 'details': details,
+                'attribution': ?attribution,
+                'details': ?details,
               },
             ),
           ),
@@ -266,7 +266,10 @@ PlannedRecord? _mapMessage(
     default:
       // bashExecution / pythonExecution / fileMention / hookMessage and
       // any future role: faithful-as-data, no execution semantics.
-      return PlannedCustom('$prefix.${_safeType(record.role)}', record.rawMessage);
+      return PlannedCustom(
+        '$prefix.${_safeType(record.role)}',
+        record.rawMessage,
+      );
   }
 }
 
@@ -316,13 +319,28 @@ AssistantMessage _assistantMessage(
       ):
         toolCallIds.add(id);
         blocks.add(
-          ToolCall(id: id, name: name, arguments: arguments, partialArguments: partialArguments),
+          ToolCall(
+            id: id,
+            name: name,
+            arguments: arguments,
+            partialArguments: partialArguments,
+          ),
         );
-      case ForeignImage(:final base64Data, :final mimeType, :final missingReason):
+      case ForeignImage(
+        :final base64Data,
+        :final mimeType,
+        :final missingReason,
+      ):
         if (base64Data != null) {
-          blocks.add(ImageContent(data: base64Data, mimeType: mimeType ?? 'image/png'));
+          blocks.add(
+            ImageContent(data: base64Data, mimeType: mimeType ?? 'image/png'),
+          );
         } else {
-          blocks.add(TextContent(text: '[image skipped: ${missingReason ?? 'unavailable'}]'));
+          blocks.add(
+            TextContent(
+              text: '[image skipped: ${missingReason ?? 'unavailable'}]',
+            ),
+          );
         }
       case ForeignUnknownBlock():
         dropField('content-block');
@@ -350,11 +368,21 @@ List<ContentBlock> _faBlocks(List<ForeignContent> contents) {
     switch (content) {
       case ForeignText(:final text):
         blocks.add(TextContent(text: text));
-      case ForeignImage(:final base64Data, :final mimeType, :final missingReason):
+      case ForeignImage(
+        :final base64Data,
+        :final mimeType,
+        :final missingReason,
+      ):
         if (base64Data != null) {
-          blocks.add(ImageContent(data: base64Data, mimeType: mimeType ?? 'image/png'));
+          blocks.add(
+            ImageContent(data: base64Data, mimeType: mimeType ?? 'image/png'),
+          );
         } else {
-          blocks.add(TextContent(text: '[image skipped: ${missingReason ?? 'unavailable'}]'));
+          blocks.add(
+            TextContent(
+              text: '[image skipped: ${missingReason ?? 'unavailable'}]',
+            ),
+          );
         }
       case ForeignThinking(:final thinking):
         blocks.add(TextContent(text: thinking));
