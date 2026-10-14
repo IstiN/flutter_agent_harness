@@ -1331,6 +1331,19 @@ Future<void> _runApp(List<String> args) async {
           if (value != null && value.isNotEmpty) return value;
           return keyCache.read(name);
         },
+        // herdr pane self-report (issue #1481): the gate reads the pane env
+        // herdr exports to every pane process; each report spawns the pane's
+        // herdr binary fire-and-forget (reporter-side short timeout, silent
+        // on failure). Outside herdr the reporter is inert.
+        herdrEnvLookup: (name) => Platform.environment[name],
+        // Kill-on-timeout with drained stdio (bin/fah_herdr_spawn.dart,
+        // unit-pinned by test/bin_herdr_spawn_drain_test.dart): the
+        // reporter abandons a slow report (2s, silent), but the subprocess
+        // must not linger — it is killed inside the kill window so a
+        // wedged herdr can't leak one process per state transition, and
+        // its stdout/stderr are drained so a chatty herdr can't block on
+        // a full pipe until that window.
+        herdrSpawn: spawnHerdrReport,
         // `/key` manages the platform secure store; `/provider ... <token>`
         // persists the token there.
         secureKeys: keyCache,

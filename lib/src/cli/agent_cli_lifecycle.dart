@@ -97,6 +97,9 @@ extension AgentCliLifecycle on AgentCli {
     // Lease bookkeeping: release OUR lease (graceful exit, #428); a
     // viewer never touches the owner's lease.
     await _releaseSessionLease();
+    // herdr pane registration (issue #1481): released exactly once, real
+    // quit only — awaited so process exit cannot cut the report.
+    await _herdrRelease();
     // A session nobody wrote to leaves no file behind (never a viewer's
     // call — the owner's file is not ours to delete).
     if (_viewer == null) await deleteSessionIfEmpty();
