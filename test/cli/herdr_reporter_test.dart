@@ -494,6 +494,126 @@ void main() {
     });
   });
 
+  group('resume-argv guard wired into the builders', () {
+    // Charset-valid, so `updateSession` adopts it — but it breaks herdr's
+    // ≤8 KiB resume-argv rule. The builders must consult the validator
+    // before appending the `-- …` tail (defense in depth made real).
+    final overlongId = 'a' * 9000;
+
+    test('reportStateArgs drops the resume tail for a rule-breaking id', () {
+      final (reporter, _) = wired(herdrEnv());
+      final argv = reporter.reportStateArgs(
+        state: HerdrPaneState.idle,
+        seq: 1,
+        sessionId: overlongId,
+        includeResumeArgv: true,
+      );
+      expect(
+        argv.contains('--'),
+        isFalse,
+        reason: 'a rule-breaking resume argv is never appended',
+      );
+      expect(
+        argv.contains('--agent-session-id'),
+        isTrue,
+        reason: 'the report itself still goes out (inert on failure only '
+            'for the tail)',
+      );
+    });
+
+    test('sessionSwitchArgs drops the resume tail for a rule-breaking id', () {
+      final (reporter, _) = wired(herdrEnv());
+      final argv = reporter.sessionSwitchArgs(sessionId: overlongId, seq: 1);
+      expect(argv.contains('--'), isFalse);
+      expect(argv.contains('--agent-session-id'), isTrue);
+    });
+
+    test('the live state() path never emits a rule-breaking tail', () {
+      final (reporter, sink) = wired(
+        herdrEnv(),
+        clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
+      );
+      reporter.updateSession(overlongId);
+      reporter.state(HerdrPaneState.idle);
+      expect(sink, hasLength(1));
+      expect(sink.single.contains('--'), isFalse);
+      expect(sink.single.contains('--agent-session-id'), isTrue);
+    });
+  });
+
+  group('serialized delivery — spawn order follows seq order', () {
+    test(
+      'a slow report holds the chain; later reports neither overtake nor run concurrently',
+      () async {
+        final gate = Completer<void>();
+        final sent = <List<String>>[];
+        final reporter = HerdrReporter(
+          envLookup: (name) => herdrEnv()[name],
+          runProcess: (argv) {
+            sent.add(argv);
+            return gate.future;
+          },
+          clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
+        );
+        reporter.state(HerdrPaneState.idle);
+        reporter.state(HerdrPaneState.working);
+        reporter.sessionSwitch('173000_ab12');
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          sent,
+          hasLength(1),
+          reason: 'the first (slow) report holds the chain — no later spawn '
+              'has even started',
+        );
+        gate.complete();
+        await _release(reporter); // release drains the chain behind the reports
+        expect(sent.map((argv) => argv[argv.indexOf('pane') + 1]).toList(), [
+          'report-agent',
+          'report-agent',
+          'report-agent-session',
+          'release-agent',
+        ]);
+        final seqs = sent
+            .map((argv) => int.parse(argv[argv.indexOf('--seq') + 1]))
+            .toList();
+        for (var i = 1; i < seqs.length; i++) {
+          expect(
+            seqs[i],
+            greaterThan(seqs[i - 1]),
+            reason: 'delivery order == seq order',
+          );
+        }
+      },
+    );
+  });
+
+  group('release once-guard', () {
+    test('a second release() spawns no second release-agent', () async {
+      final (reporter, sink) = wired(
+        herdrEnv(),
+        clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
+      );
+      await _release(reporter);
+      await _release(reporter);
+      expect(
+        sink.where((argv) => argv.contains('release-agent')),
+        hasLength(1),
+      );
+    });
+
+    test('nothing spawns after the release — the registration is gone', () async {
+      final (reporter, sink) = wired(
+        herdrEnv(),
+        clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
+      );
+      await _release(reporter);
+      reporter.state(HerdrPaneState.idle);
+      reporter.sessionSwitch('173000_ab12');
+      expect(sink, hasLength(1), reason: 'only the release report');
+      expect(sink.single.contains('release-agent'), isTrue);
+    });
+  });
+
   group('fire-and-forget contract', () {
     test(
       'inert reporter: every hook is a no-op and the builders produce no bytes',

@@ -7,9 +7,10 @@
 ///
 /// Pure Dart by construction (no `dart:io`): the env gate arrives as an
 /// injectable lookup, the transport as an injectable spawn closure the
-/// executable backs with `Process.run`. Outside a herdr pane the reporter
-/// is constructed inert and stays inert for the process lifetime — zero
-/// subprocesses, zero log lines, zero user-visible anything.
+/// executable backs with `Process.start` (kill-on-timeout, drained stdio).
+/// Outside a herdr pane the reporter is constructed inert and stays inert
+/// for the process lifetime — zero subprocesses, zero log lines, zero
+/// user-visible anything.
 ///
 /// Transport contract (herdr 0.8.2+ CLI): every report is ONE
 /// fire-and-forget subprocess of `$HERDR_BIN_PATH pane …` with a short
@@ -114,6 +115,21 @@ final class HerdrReporter {
 
   int _lastSeq = 0;
 
+  /// Whether the release report was already sent — `release()` is
+  /// once-only by construction, so the "exactly once, on real quit only"
+  /// invariant no longer rests on the teardown call sites alone.
+  bool _released = false;
+
+  /// The in-flight delivery chain: every spawn is appended onto the
+  /// previous one's completion. Seq is assigned at build time and herdr
+  /// keeps only the highest-seq report per pane, so two concurrent spawns
+  /// could land out of order and leave a stale state on the pane until
+  /// the next transition heals it — the chain makes delivery order ==
+  /// seq order while staying fire-and-forget (nothing awaits it; the
+  /// 2s timeout bounds each link, so the chain cannot stall). `_send`
+  /// never throws, so the chain cannot break.
+  Future<void> _pending = Future<void>.value();
+
   /// Whether the gate is satisfied and reports actually spawn. Inert
   /// reporters keep this false for the process lifetime.
   bool get active => _active;
@@ -156,8 +172,11 @@ final class HerdrReporter {
   /// `argv`; older herdr silently ignores it): first word a plain command
   /// name on PATH (no path separators), no apostrophes, no control
   /// characters anywhere, ≤64 args, ≤8 KiB total. fa's own argv is the
-  /// static `fa --session <id>` and always passes — the check exists as
-  /// defense in depth so a future change cannot ship a rule-breaking argv.
+  /// static `fa --session <id>` and always passes; the argv builders
+  /// consult this check before appending the resume tail, so a rule-
+  /// breaking id loses only the tail (the report itself still goes out —
+  /// inert on failure, matching the gate philosophy) and a rule-breaking
+  /// resume argv cannot ship.
   static bool resumeArgvValid(List<String> argv) =>
       argv.isNotEmpty &&
       argv.length <= _resumeArgvMaxArgs &&
@@ -210,7 +229,10 @@ final class HerdrReporter {
   void state(HerdrPaneState state, {HerdrBlockedLabel? label}) {
     if (!_active) return;
     final sid = _sessionId;
-    final resume = sid != null && _resumeSentFor != sid;
+    final resume =
+        sid != null &&
+        _resumeSentFor != sid &&
+        resumeArgvValid(['fa', '--session', sid]);
     final argv = reportStateArgs(
       state: state,
       label: label,
@@ -245,13 +267,17 @@ final class HerdrReporter {
   }
 
   /// Releases the pane registration (herdr clears name/state/resume
-  /// immediately). Sent exactly once, on real quit only — the REPL teardown
-  /// awaits this so the report cannot be cut by process exit; a crash
-  /// skips it and herdr's shell-prompt safety net clears the registration
-  /// on its own.
+  /// immediately). Sent exactly once, on real quit only — the once-guard
+  /// makes that hold even against a future second teardown path — and it
+  /// drains the delivery chain first, so an in-flight state report can
+  /// neither overtake nor be cut by the process exit (the REPL teardown
+  /// awaits this). A crash skips it and herdr's shell-prompt safety net
+  /// clears the registration on its own.
   Future<void> release() async {
-    if (!_active) return;
-    await _send(releaseArgs(seq: _nextSeq()));
+    if (!_active || _released) return;
+    _released = true;
+    _pending = _pending.then((_) => _send(releaseArgs(seq: _nextSeq())));
+    await _pending;
   }
 
   /// Wraps one prompt-sheet open: reports `blocked` with the spec's label,
@@ -279,7 +305,10 @@ final class HerdrReporter {
     bool includeResumeArgv = false,
   }) {
     if (!_active) return const [];
-    final resume = includeResumeArgv && sessionId != null;
+    final resume =
+        includeResumeArgv &&
+        sessionId != null &&
+        resumeArgvValid(['fa', '--session', sessionId]);
     return [
       _bin,
       'pane',
@@ -319,10 +348,11 @@ final class HerdrReporter {
       sessionId,
       '--seq',
       '$seq',
-      '--',
-      'fa',
-      '--session',
-      sessionId,
+      // The resume tail is validated before it rides: a rule-breaking id
+      // loses only the tail (herdr 0.8.2 ignores it anyway), never the
+      // switch report.
+      if (resumeArgvValid(['fa', '--session', sessionId]))
+        ...['--', 'fa', '--session', sessionId],
     ];
   }
 
@@ -359,7 +389,8 @@ final class HerdrReporter {
   void _spawn(List<String> argv) {
     if (!_active) return;
     if (_runProcess == null) return;
-    unawaited(_send(argv));
+    if (_released) return;
+    _pending = _pending.then((_) => _send(argv));
   }
 
   Future<void> _send(List<String> argv) async {
