@@ -55,14 +55,108 @@ dataset-cap or ladder timeouts (errored before a verdict) can never redden
 the job; the errored class gets its own breakdown line instead, and exit 1
 is reserved for genuinely lost trials. Unresolved trials are the
 scoreboard, not an infra failure — reported without failing the step.
+
+gh-1578: the errored class splits by OWNER. A verifier hang executing
+agent-authored code (harbor's VerifierTimeoutError, defensively any
+*Verifier*Timeout* class) is reported under its own agent-attributed
+class — «Verifier timeouts (agent code hung the verifier — counts against
+the agent)» — never inside the harness/infra bucket, with each hang's
+wall-clock named per-trial so the 30-minute burn is visible. The guard is
+reporting-only by design: the pinned harbor (.bench-venv) exposes no
+post-trial hook mapping the timeout onto a reward-0 verdict, so no reward
+is fabricated (the score stays 0/error) and the real fix — task tests
+must timeout agent code, plus a harbor verifier-timeout → reward-0
+mapping — is escalated upstream (gh-1578 AC5).
 """
 import argparse
 import glob
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# gh-1578: a verifier hang while executing agent-authored code is the
+# AGENT's zero, not an infra failure. Harbor raises VerifierTimeoutError
+# (and, defensively, any future *Verifier*Timeout* class) when the
+# in-container verifier test — running agent-written code — exceeds the
+# outer trial timeout. Those trials keep harbor's error shape (no reward
+# exists), but this summary attributes them to the agent side in their
+# own reported class, never the harness/infra bucket, and names the
+# wall-clock each hang burned. Reporting-only by design: the pinned
+# harbor (.bench-venv) exposes no post-trial hook mapping the timeout
+# onto a reward-0 verdict, so nothing is rewritten — the score stays
+# 0/error and the real fix (task tests must timeout agent code; harbor
+# mapping verifier timeouts onto reward 0) is escalated upstream
+# (gh-1578 AC5).
+_VERIFIER_TIMEOUT_LINE = (
+    "Verifier timeouts (verifier_timeout — agent code hung the verifier,"
+    " counts against the agent)"
+)
+_VERIFIER_TIMEOUT_FOOTER = (
+    "(score stays 0/error — no reward is fabricated; the real fix is"
+    " upstream: task tests must timeout agent code + a harbor"
+    " verifier-timeout → reward-0 mapping — gh-1578)"
+)
+_HANG_SECS_RE = re.compile(
+    r"timed out after\s*([0-9]+(?:\.[0-9]+)?)\s*seconds?", re.IGNORECASE
+)
+
+
+def _is_verifier_timeout(exception: str) -> bool:
+    """True for the agent-attributed verifier-hang class: harbor's
+    VerifierTimeoutError plus, defensively, any *Verifier*Timeout* class.
+
+    Keys on the exception TYPE, never on timing — a verifier that crashed
+    before running agent code (docker failure, missing image, a
+    Verifier*Error without a timeout) keeps the infra class (gh-1578 E1).
+    """
+    name = exception.lower()
+    return "verifier" in name and "timeout" in name
+
+
+def _parse_iso_ts(value) -> "datetime | None":
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # E5 hardening (rework thread): harbor versions/sources may mix naive
+    # and aware stamps; the delta in _hang_seconds must never raise
+    # TypeError on the subtraction. Naive is read as UTC — harbor stamps
+    # UTC clocks with or without the offset suffix.
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
+def _hang_seconds(data: dict) -> "float | None":
+    """gh-1578 AC6: the wall-clock a verifier hang burned — from the
+    exception message («timed out after N seconds») when parseable, else
+    the started_at/finished_at delta (whole-trial wall-clock — agent
+    time included — only an upper bound on the verifier hang). None when
+    neither survives."""
+    info = data.get("exception_info")
+    message = info.get("exception_message") if isinstance(info, dict) else None
+    match = _HANG_SECS_RE.search(str(message or ""))
+    if match:
+        return float(match.group(1))
+    started = _parse_iso_ts(data.get("started_at"))
+    finished = _parse_iso_ts(data.get("finished_at"))
+    if started and finished:
+        delta = (finished - started).total_seconds()
+        if delta > 0:
+            return delta
+    return None
+
+
+def _format_hang_secs(secs: float) -> str:
+    text = f"~{secs:.0f}s"
+    if secs >= 120:
+        text += f" (~{secs / 60:.1f} min)"
+    return text
 
 
 def _ledger_records(trial_dir: Path) -> list:
@@ -150,15 +244,46 @@ def _trial_rows(job_dir: Path) -> list[dict]:
 
     rows = []
     for path in sorted(glob.glob(str(job_dir / "*" / "result.json"))):
-        data = json.loads(Path(path).read_text())
-        rewards = (data.get("verifier_result") or {}).get("rewards") or {}
-        scores = [float(v) for v in rewards.values()]
+        try:
+            data = json.loads(Path(path).read_text())
+        except (OSError, ValueError):
+            # gh-1578 E5: an unreadable result.json is NOT a trial — it
+            # never enters any reported class and stays unattempted, so
+            # the lost-shard guard below keeps its teeth.
+            continue
+        if not isinstance(data, dict):
+            continue
+        verdict = data.get("verifier_result")
+        # E5 (rework thread): the same tolerant-read contract as
+        # exception_info below — a truthy non-dict rewards degrades to
+        # no rewards, never an AttributeError on .values().
+        raw_rewards = verdict.get("rewards") if isinstance(verdict, dict) else None
+        rewards = raw_rewards if isinstance(raw_rewards, dict) else {}
+        # E5 (rework thread): a rewards value that is not numeric (a
+        # label, null) is skipped, never a ValueError/TypeError killing
+        # the render — the numeric values still score.
+        scores = []
+        for value in rewards.values():
+            try:
+                scores.append(float(value))
+            except (TypeError, ValueError):
+                pass
         resolved = bool(scores) and all(v >= 1.0 for v in scores)
-        exception = (data.get("exception_info") or {}).get("exception_type") or ""
+        # Tolerate malformed/missing exception_info (E5): no dict, no
+        # class — never an AttributeError, never verifier_timeout.
+        info = data.get("exception_info")
+        if not isinstance(info, dict):
+            info = {}
+        exception = str(info.get("exception_type") or "")
+        verifier_timeout = _is_verifier_timeout(exception)
         # Issue #1123: token/cost accounting folded in by fa_agent.py at
         # populate_context_post_run time; absent (old runs) → zeros + n/a.
-        agent = data.get("agent_result") or {}
-        metadata = agent.get("metadata") or {}
+        agent = data.get("agent_result")
+        if not isinstance(agent, dict):
+            agent = {}
+        metadata = agent.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
         trial_dir = Path(path).parent
         # gh-1579 integrity gate: read + classify the verifier's stdout
         # BEFORE the verdict is trusted (pure classifier; IO here).
@@ -178,6 +303,9 @@ def _trial_rows(job_dir: Path) -> list[dict]:
         rows.append({
             "resolved": resolved,
             "exception": exception,
+            "verifier_timeout": verifier_timeout,
+            # gh-1578 AC6: the hang's wall-clock, for verifier timeouts only.
+            "hang_secs": _hang_seconds(data) if verifier_timeout else None,
             "tokens_in": agent.get("n_input_tokens") or 0,
             "tokens_out": agent.get("n_output_tokens") or 0,
             "cost": agent.get("cost_usd"),
@@ -339,11 +467,47 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
             if " unmet" in cell:
                 lines.append(f"- {trial}: {cell}")
 
+    # gh-1578: the errored class splits by OWNER. Verifier timeouts (the
+    # in-container verifier hung executing agent-authored code) are the
+    # agent's zero and get their own agent-attributed line — never the
+    # harness/infra bucket — with each hang's wall-clock named per-trial.
+    # Every other exception keeps the legacy infra breakdown unchanged.
+    # The two lines together always reconcile to the total errored count
+    # (sum of per-class counts == attempted − scored) — the invariant the
+    # property test pins. Exit-code semantics untouched (gh-1556): no
+    # errored class reddens the job by itself.
+    verifier_hangs = [
+        r for rows in splits.values() for r in rows if r.get("verifier_timeout")
+    ]
     exceptions: dict[str, int] = {}
     for rows in splits.values():
         for r in rows:
-            if r["exception"]:
+            # Tolerant key access (gh-1579 _status precedent): hand-built
+            # rows predating the gh-1578 keys count as legacy, no KeyError.
+            if r["exception"] and not r.get("verifier_timeout"):
                 exceptions[r["exception"]] = exceptions.get(r["exception"], 0) + 1
+    if verifier_hangs:
+        per_class: dict[str, int] = {}
+        for r in verifier_hangs:
+            per_class[r["exception"]] = per_class.get(r["exception"], 0) + 1
+        header = _VERIFIER_TIMEOUT_LINE + ": " + ", ".join(
+            f"{k} ×{v}" for k, v in sorted(per_class.items())
+        )
+        burned = sum(
+            r.get("hang_secs") for r in verifier_hangs if r.get("hang_secs") is not None
+        )
+        if burned:
+            header += f" — ~{burned:.0f}s verifier wall-clock burned"
+        lines.append("")
+        lines.append(header)
+        for r in sorted(verifier_hangs, key=lambda r: r["trial"]):
+            detail = (
+                _format_hang_secs(r.get("hang_secs"))
+                if r.get("hang_secs") is not None
+                else "duration unknown"
+            )
+            lines.append(f"- {r['trial']}: {r['exception']}, {detail}")
+        lines.append(_VERIFIER_TIMEOUT_FOOTER)
     if exceptions:
         lines.append("")
         lines.append(

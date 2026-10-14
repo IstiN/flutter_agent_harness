@@ -1035,10 +1035,20 @@ void main() {
         // this in well under 100ms; even a cold JIT-tier cliff stays
         // under 3s (M4 Pro). The pre-#1497 shape measured 31s for the
         // same loop. 12s (not 8s): a loaded CI runner measured 8.82s for
-        // this same green path (~4x this box) — the quadratic shape still
-        // fails at >=31s, and the row-copy envelope above is the primary
-        // guard regardless.
-        expect(sw.elapsed, lessThan(const Duration(seconds: 12)));
+        // this same green path (~4x this box). 20s (not 12s): the same
+        // green path measured 12.35s on a loaded arm CI shard (pr-1581
+        // run 38470824770, shard 1) and redded the leg by 0.35s — a
+        // shared-runner stall, not a shape change (the row-copy
+        // envelope and snapshotsBuilt were green on that run, and the
+        // identical head passes this loop in well under the budget on
+        // an unloaded box). 20s keeps ~1.6x headroom over the worst
+        // green observation while every quadratic shape still fails:
+        // >=31s on the fastest measured box, and package:test's 30s
+        // per-test default timeout independently kills the loop before
+        // any slower box could pass it. The row-copy envelope above is
+        // the primary guard regardless — wall clock here is only the
+        // absolute trip-wire.
+        expect(sw.elapsed, lessThan(const Duration(seconds: 20)));
       },
     );
 
