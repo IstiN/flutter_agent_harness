@@ -1,6 +1,8 @@
 @TestOn('vm')
 @Tags(['integration'])
-@Timeout(Duration(minutes: 6)) // never clip a wait: budgets sum to ~310 s (gh-1469)
+@Timeout(
+  Duration(minutes: 6),
+) // never clip a wait: budgets sum to ~310 s (gh-1469)
 /// Issue #438 AC3 — the over-window badge: a mid-run auto-compaction that
 /// frees the window shows «[auto-compacted · continuing]» in the TUI
 /// status row while the run continues, and it clears when the turn
@@ -27,15 +29,23 @@ void main() {
     final mock = _FoldingMock();
     await mock.start();
     final tempHome = _tempHomeForMock(mock.port);
-    // Eight fat reads in one scripted turn (~21k estimated tokens of tool
-    // results) blow the 16384-token capped window at the second request —
-    // the guard refuses, the compaction folds the older results, the
-    // retry continues the turn.
+    // Twenty-four lean reads in one scripted turn (~22k estimated tokens of
+    // tool results) blow the 16384-token capped window at the second request
+    // — the guard refuses, the compaction folds the older results, the
+    // retry continues the turn. The reads stay LEAN on purpose: the fold's
+    // post-compaction floor is the protected live-edge tail (the last 8
+    // ledger records), so with 8 fat reads that floor rode within ~1k of
+    // the overflow line (gh-1469/#1495) and the E1 follow-up flipped into a
+    // relief chain on estimator jitter — a chain the judge's 300s attempt
+    // budget can legally stretch past any fixed wait on a loaded nightly
+    // runner. 24 × 90-line reads overflow the same way while leaving the
+    // E1 request ~3.4k tokens of headroom (measured 12.9k vs the 16384
+    // guard line), so E1 can never enter relief at all.
     final workspace = Directory('/tmp').createTempSync('fabadge');
-    for (var i = 1; i <= 8; i++) {
+    for (var i = 1; i <= 24; i++) {
       File(
         '${workspace.path}/big$i.txt',
-      ).writeAsStringSync(List.filled(300, 'x' * 40).join('\n'));
+      ).writeAsStringSync(List.filled(90, 'x' * 40).join('\n'));
     }
     final harness = await FaCliHarness.spawn(
       workingDirectory: workspace.path,
@@ -61,9 +71,10 @@ void main() {
     await harness.waitForText(foldBadge, timeout: const Duration(seconds: 30));
 
     // Settled: the badge clears from the status row (the receipt stays).
-    // 90 s (gh-1469): a re-fold riding the red run's razor-thin overflow
-    // margin stretches the turn by a full relief chain (judge +
-    // summarizer + rebuilt request) — the red run outlived 30 s.
+    // 90 s (gh-1469): the turn's tail can ride a bounded relief chain
+    // (judge + summarizer + rebuilt request) whose wall-clock budget is
+    // minutes by design (issue #541) — a loaded runner legitimately
+    // outlives a tighter wait.
     await harness.waitForText(
       'done: recovered',
       timeout: const Duration(seconds: 90),
@@ -78,9 +89,10 @@ void main() {
       reason: 'the badge must clear when the turn settles',
     );
 
-    // E1: a fresh run starts badge-free — no fold, no badge. 90 s (same
-    // gh-1469 relief-chain face: an E1 re-fold on a loaded runner ground
-    // past the 30 s budget with the guard still mid-relief).
+    // E1: a fresh run starts badge-free — no fold, no badge. The lean-read
+    // shape above leaves E1 ~3.4k tokens under the guard line, so E1 never
+    // enters relief; the 90 s budget (gh-1469) is headroom for a loaded
+    // runner, not for a relief chain.
     harness.sendText('say hi');
     harness.sendEnter();
     await harness.waitForText('hi!', timeout: const Duration(seconds: 90));
@@ -196,7 +208,9 @@ final class _FoldingMock {
     ],
   };
 
-  /// One assistant turn with eight parallel `read` tool calls.
+  /// One assistant turn with 24 parallel `read` tool calls (see the
+  /// scenario comment in the test body: many lean reads overflow the
+  /// window while keeping the protected-tail floor small).
   Map<String, Object> _readsTurnChunk() => {
     'id': 'chatcmpl-x',
     'object': 'chat.completion.chunk',
@@ -206,7 +220,7 @@ final class _FoldingMock {
         'delta': {
           'role': 'assistant',
           'tool_calls': [
-            for (var i = 1; i <= 8; i++)
+            for (var i = 1; i <= 24; i++)
               {
                 'index': i - 1,
                 'id': 'call_$i',
