@@ -1809,6 +1809,100 @@ void main() {
       },
     );
 
+    test('gh-1603: the first hiccup retry stays plain; the second and third '
+        'carry the continuation nudge — and the recovery lands', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('c1', 'noop')]),
+        emptyTurn,
+        emptyTurn,
+        emptyTurn,
+        _textTurn('recovered after the nudge'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('do the task')],
+        context: const Context(messages: []),
+        config: cliShapeConfig(),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('done'),
+      );
+
+      await stream.toList();
+      // req0 tool turn, req1 post-tool empty, req2/3/4 = the 3 hiccup
+      // retries, last one answered.
+      expect(fake.calls, 5);
+      bool hasNudge(Context c) => c.messages.any(
+        (m) => m is UserMessage && m.content == emptyContinuationNudge,
+      );
+      expect(
+        hasNudge(fake.contexts[2]),
+        isFalse,
+        reason: 'the first retry re-streams the plain request',
+      );
+      expect(
+        hasNudge(fake.contexts[3]),
+        isTrue,
+        reason: 'still empty → the continuation nudge rides retry 2',
+      );
+      expect(
+        hasNudge(fake.contexts[4]),
+        isTrue,
+        reason: 'still empty → the continuation nudge rides retry 3',
+      );
+      expect(
+        (await stream.result).last as AssistantMessage,
+        _text('recovered after the nudge'),
+      );
+    });
+
+    test('gh-1603 AC2: a thinking-only output-truncated first response (the '
+        'HT6UsCc shape) reaches a tool call on the next turn', () async {
+      final thinkingTruncatedTurn = [
+        DoneEvent(
+          reason: StopReason.length,
+          message: _assistant(
+            content: [
+              const ThinkingContent(thinking: 'deriving the algorithm…'),
+            ],
+            stopReason: StopReason.length,
+          ),
+        ),
+      ];
+      final fake = _FakeStreamFunction([
+        thinkingTruncatedTurn,
+        _toolTurn([_call('c1', 'noop')]),
+        _textTurn('task complete'),
+      ]);
+      var toolRan = false;
+      final stream = agentLoop(
+        prompts: [UserMessage.text('do the task')],
+        context: Context(messages: [], tools: [_tool('noop')]),
+        config: cliShapeConfig(),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async {
+          toolRan = true;
+          return ToolExecutionResult.text('done');
+        },
+      );
+
+      await stream.toList();
+      // req0 thinking-truncated empty, req1 the plain first retry (the
+      // message itself carries the length signal → no nudge yet), req2 the
+      // post-tool-result stream.
+      expect(fake.calls, 3);
+      expect(
+        fake.contexts[1].messages.any(
+          (m) => m is UserMessage && m.content == emptyContinuationNudge,
+        ),
+        isFalse,
+        reason: 'the first retry is a plain re-stream',
+      );
+      expect(toolRan, isTrue, reason: 'the next turn reached a tool call');
+      expect(
+        (await stream.result).last as AssistantMessage,
+        _text('task complete'),
+      );
+    });
+
     test('UT: emptyHiccupRetries: 0 is not an escape hatch — the exhaustion '
         'error fires after the maxEmptyRetries budget', () async {
       final fake = _FakeStreamFunction([
