@@ -7,6 +7,8 @@ import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import '../support/nwbgy7a_fixture.dart';
+
 /// gh-1605 REG/eval: the mechanics behind the FinalizeGate "grader
 /// parity" named check. The TB-2.1 verifier runs produced entry points
 /// itself — typically `subprocess.run([sys.executable, script])` from a
@@ -38,14 +40,28 @@ void main() {
   );
 
   /// The grader-parity re-run: a fresh subprocess from a NEUTRAL cwd
-  /// (never the session cwd) with the session exports stripped — the
-  /// invocation shape the verifier uses.
-  Future<ProcessResult> graderParityRun(String script) => Process.run(
+  /// (never the session cwd) with the session exports stripped from the
+  /// session environment — the invocation shape the verifier uses. Takes
+  /// the same [sessionExports] the in-session run merged in, so the
+  /// strip is provably exercised for every member of [_sessionExports].
+  Future<ProcessResult> graderParityRun(
+    String script, {
+    Map<String, String> sessionExports = const {},
+  }) => Process.run(
     '/bin/bash',
     [script],
     workingDirectory: '/',
+    // includeParentEnvironment: false is what makes the strip REAL: with
+    // the default `true`, every key absent from the map is re-inherited
+    // from this process — and the runner's own env carries a live
+    // FAH_SESSION_ID, so a "stripped" var would silently leak back in
+    // (the exact hole this REG pins).
+    includeParentEnvironment: false,
     environment: {
-      for (final entry in Platform.environment.entries)
+      for (final entry in {
+        ...Platform.environment,
+        ...sessionExports,
+      }.entries)
         if (!_sessionExports.contains(entry.key)) entry.key: entry.value,
     },
   );
@@ -88,25 +104,12 @@ void main() {
     () async {
       // The evidence bug shape: the entry point resolves its dataset via
       // the CWD — from the app directory the fixed stations.csv, from
-      // anywhere else a stale bundled table.
-      File(
-        '$appDir/stations.csv',
-      ).writeAsStringSync('station,temp\n101,-15.5\n102,30.3\n');
-      File(
-        '$appDir/stations.csv.stale',
-      ).writeAsStringSync('station,temp\n101,-15.5\n102,15.5\n');
+      // anywhere else a stale bundled table. The fixture is the shared
+      // nwbgy7a evidence shape (test/support/nwbgy7a_fixture.dart) —
+      // the IT-3 replay in test/integration/fa_finalize_gate_test.dart
+      // produces the very same files via bash.
+      writeNwbgy7aFixture(appDir);
       final script = '$appDir/mean.sh';
-      File(script).writeAsStringSync('''
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ -f stations.csv ]]; then
-  data=stations.csv
-else
-  data="\$(dirname "\$0")/stations.csv.stale"
-fi
-awk -F, 'NR > 1 { sum[\$1] += \$2; n[\$1]++ }
-  END { for (s in sum) printf "Station %s mean temperature: %.1f C\\n", s, sum[s]/n[s] }' "\$data" | sort
-''');
 
       final inSession = await inSessionRun(script);
       final parity = await graderParityRun(script);
@@ -140,19 +143,35 @@ awk -F, 'NR > 1 { sum[\$1] += \$2; n[\$1]++ }
     () async {
       final script = '$appDir/unit.sh';
       File(script).writeAsStringSync(
-        '#!/usr/bin/env bash\necho "unit: \${TEMP_UNIT:-C}"\n',
+        '#!/usr/bin/env bash\n'
+        'echo "unit: \${TEMP_UNIT:-C}"\n'
+        'echo "session: \${FAH_SESSION_ID:-none}"\n',
       );
+
+      // BOTH session exports the parity run must strip: the unit symbol
+      // and the harness's own session id. The parity re-run is handed
+      // the same exports so the strip from a session env that provably
+      // carries them is exercised — not assumed.
+      // and the harness's own session id. The parity re-run is handed
+      // the same exports so the strip from a session env that provably
+      // carries them is exercised — not assumed.
+      const sessionExports = {'TEMP_UNIT': 'F', 'FAH_SESSION_ID': 'sess-42'};
 
       final inSession = await inSessionRun(
         script,
-        sessionExports: const {'TEMP_UNIT': 'F'},
+        sessionExports: sessionExports,
       );
-      final parity = await graderParityRun(script);
+      final parity = await graderParityRun(
+        script,
+        sessionExports: sessionExports,
+      );
 
-      // The session export leaks into the in-session output; the grader's
-      // clean env does not carry it.
+      // The session exports leak into the in-session output; the grader's
+      // clean env carries neither — both fall back to their defaults.
       expect('${inSession.stdout}', contains('unit: F'));
+      expect('${inSession.stdout}', contains('session: sess-42'));
       expect('${parity.stdout}', contains('unit: C'));
+      expect('${parity.stdout}', contains('session: none'));
 
       final item = parityItem(inSession: inSession, parity: parity);
       expect(item.status, TaskLedgerItemStatus.fail);
@@ -188,5 +207,7 @@ awk -F, 'NR > 1 { sum[\$1] += \$2; n[\$1]++ }
 
 /// The session-exported variable names the scenarios above "export" —
 /// the parity re-run strips them (a grader never sees the session's
-/// environment).
+/// environment). Both members are exercised: the session-env REG exports
+/// each of them in its in-session run and asserts the parity run sees
+/// only the defaults.
 const _sessionExports = {'FAH_SESSION_ID', 'TEMP_UNIT'};

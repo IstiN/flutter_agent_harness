@@ -30,6 +30,21 @@ block a release again.
   the evidence shape end-to-end — divergence detected and persisted as a
   `fail` ledger item before finalize.
 
+- gh-1603: unattended runs can no longer end as a clean success on empty
+  model responses. Loop: from the second empty-hiccup retry on, the request
+  carries a continuation nudge user message ("your last reply was
+  empty/truncated — continue the task"; exact-text constant
+  `emptyContinuationNudge`, emitted with MessageStart/End so the transcript
+  stays truthful) — a cap-truncated reasoning model re-streamed verbatim
+  repeats the empty outcome, the nudge breaks the symmetry; the classifier
+  treats that exact message as transparent, so the turn's partial-content
+  window (gh-1577) survives a nudged retry. Headless: the empty-reply nudge
+  budget rises to `AgentCliConfig.headlessEmptyReplyNudges` (default 2 — the
+  session ends only after 3 consecutive unrecoverable empties; interactive
+  keeps the #1085 M2b one-nudge semantics), and a run that still settles
+  empty prints the explicit `__FA_INCOMPLETE` marker and exits 1 — a
+  distinguishable failure for the bench adapter, never a silent exit 0.
+
 - gh-1577: an empty assistant completion after partial content (assistant
   text, tool activity, or a truncation signal earlier in the turn) is a
   bounded-retry provider hiccup — up to `emptyHiccupRetries` (default 3)
