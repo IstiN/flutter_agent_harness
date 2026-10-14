@@ -291,6 +291,7 @@ part 'agent_cli_steering.dart';
 part 'agent_cli_tools.dart';
 part 'agent_cli_io.dart';
 part 'agent_cli_hep_io.dart';
+part 'agent_cli_headless_exit.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_waiting.dart';
 part 'agent_cli_subagent_board.dart';
@@ -1983,12 +1984,7 @@ class AgentCli {
       // an empty completion after the nudge budget is an UNFINISHED session
       // (no final answer was produced); error/aborted terminals keep their
       // own exit codes below.
-      final settledMessage = _agent.state.messages.lastOrNull;
-      endedOnEmptyCompletion =
-          settledMessage is AssistantMessage &&
-          settledMessage.stopReason != StopReason.error &&
-          settledMessage.stopReason != StopReason.aborted &&
-          isEmptyAssistantCompletion(settledMessage);
+      endedOnEmptyCompletion = _settledOnEmptyCompletion();
       // Awaits any in-flight TTSR retry chain, persists the messages, and
       // auto-compacts — the same end-of-turn sequence as a REPL run. The
       // continuation paths recurse through [_runPrompt], which finalizes
@@ -2031,30 +2027,13 @@ class AgentCli {
       // pipeable prose stream (issue #774 AC3).
       await _flushUsageLedger(mirrorTokensLineToRunLog: true);
     }
-    // gh-1603: an unfinished session must stay distinguishable from a clean
-    // completion — the bench adapter reads the exit code and this marker
-    // off the captured run log. The session ended on an empty completion
-    // after the headless nudge budget: no final answer, no ledger — a
-    // failure, never exit 0.
-    if (endedOnEmptyCompletion) {
-      io.writeln(
-        '$headlessIncompleteMarker the run ended on an empty model '
-        'response — no final answer was produced; the task did not '
-        'complete',
-      );
-      return 1;
-    }
-    // The exit code describes the LAST completed turn's terminal outcome
-    // (captured from the turn events above) — not the visible transcript,
-    // which post-run compaction rebuilds: the checkpoint fold drops the
-    // assistant turns entirely, and the classic trim marker lands after
-    // the error stop; both used to mask a failed run as exit 0 (issue
-    // #413).
-    return switch (terminalStopReason) {
-      StopReason.error => 1,
-      StopReason.aborted => 130,
-      _ => 0,
-    };
+    // gh-1603: the exit-code policy lives in the part-file extension — an
+    // unfinished session prints the explicit marker and exits 1; error/
+    // aborted terminals keep their own codes.
+    return _headlessExitCode(
+      endedOnEmptyCompletion: endedOnEmptyCompletion,
+      terminalStopReason: terminalStopReason,
+    );
   }
 
   /// Runs one user prompt to completion. On a CodeMie auth-session expiry,
