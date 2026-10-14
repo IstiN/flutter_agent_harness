@@ -15,6 +15,7 @@ import '../session/uuid.dart';
 import '../types.dart';
 import 'chatgpt_oauth.dart';
 import 'codex_transport.dart';
+import 'provider_tuning.dart' show providerStreamIdleTimeoutForUrl;
 import 'stall_sentinel.dart' show providerIdleStallFired;
 import 'provider_common.dart';
 
@@ -297,7 +298,22 @@ final class _ChatGptCodexSession {
   /// abort during a silent stretch must not wait for the next line or the
   /// idle watchdog.
   Future<void> _consumeSseLines(http.StreamedResponse response) async {
-    final idle = effectiveProviderStreamIdleTimeout;
+    // Issue #1554, review round 1: the model's request-scoped idle window
+    // wins; WITHOUT a model override the same URL-keyed tuning table
+    // createSseIterator consults applies (a streamIdleTimeoutMs-only
+    // registry entry must scope the codex bypass too, not just the shared
+    // iterator path).
+    final tunedIdle = response.request?.url == null
+        ? effectiveProviderStreamIdleTimeout
+        : providerStreamIdleTimeoutForUrl(response.request!.url);
+    final idle = model.streamIdleTimeout ?? tunedIdle;
+    // The stall line names the override of THE LEG THAT RAN — an idle-only
+    // model scope is named here; a model without a scoped idle leg keeps
+    // the bare stall text (per-leg labels, review round 1).
+    final scopedNote = model.streamIdleTimeout == null
+        ? ''
+        : ' — idle window ${providerWindowLabel(idle)} '
+            '(${model.timeoutScopeLabel})';
     final lines = StreamIterator<String>(
       response.stream.transform(utf8.decoder).transform(const LineSplitter()),
     );
@@ -321,7 +337,7 @@ final class _ChatGptCodexSession {
           providerIdleStallFired(response, idle);
           throw TimeoutException(
             'chatgpt-codex ${redactProviderUrl(_endpoint)} stalled: no SSE '
-            'bytes for ${idle.inSeconds}s (stream idle timeout)',
+            'bytes for ${idle.inSeconds}s (stream idle timeout$scopedNote)',
           );
         },
       )) {
@@ -376,6 +392,14 @@ final class _ChatGptCodexSession {
       client,
       request,
       cancelToken,
+      // Issue #1554: the model's request-scoped watchdog windows ride the
+      // send — null falls through to the per-provider table, then global.
+      // The scope label cites THE LEG THAT RAN: a model without a scoped
+      // connect leg keeps the bare stall text (review round 1).
+      connectTimeout: model.connectTimeout,
+      timeoutSource: model.connectTimeout == null
+          ? null
+          : model.timeoutScopeLabel,
     );
     // Cloudflare sets its cookies even on error responses — store always.
     _cookies.store(uri, response.headers);
