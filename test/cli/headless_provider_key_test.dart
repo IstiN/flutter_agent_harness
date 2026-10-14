@@ -122,10 +122,9 @@ void main() {
     const kimiUrl = 'https://api.kimi.com/coding/v1';
 
     test('the pinned entry slot beats the host-scoped slot', () async {
-      final store =
-          FakeSecureKeyStore()
-            ..map['FA_KEY_API_KIMI_COM'] = 'host-scoped-wrong-account'
-            ..map['FA_KEY_API_KIMI_COM_KIMI_ME'] = 'kimi-me-key';
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_API_KIMI_COM'] = 'host-scoped-wrong-account'
+        ..map['FA_KEY_API_KIMI_COM_KIMI_ME'] = 'kimi-me-key';
       final keys = SecureKeyCache(store);
       await keys.preload(store.map.keys.toList());
 
@@ -172,6 +171,130 @@ void main() {
       );
 
       expect(key, 'host-scoped');
+    });
+  });
+
+  group('endpoint normalization (gh-1570 L10/S4/E1)', () {
+    test('a trailing-slash spelling of the DEFAULT endpoint still resolves '
+        'the catalog env names', () async {
+      final store = FakeSecureKeyStore()..map['OPENROUTER_API_KEY'] = 'stored';
+      final keys = SecureKeyCache(store);
+      await keys.preload(const ['OPENROUTER_API_KEY']);
+
+      final key = optionalProviderApiKey(
+        'openai-completions',
+        keys,
+        baseUrl: 'https://openrouter.ai/api/v1/',
+        env: const {},
+      );
+
+      // Raw string comparison would classify the trailing-slash URL as a
+      // CUSTOM endpoint and never probe the catalog names — keyless boot.
+      expect(key, 'stored');
+    });
+
+    test('a trailing-slash default endpoint is not "custom" in '
+        'startupApiKey — a missing required key still fails loud', () {
+      expect(
+        () => startupApiKey(
+          'openai-completions',
+          SecureKeyCache(FakeSecureKeyStore()),
+          baseUrl: 'https://openrouter.ai/api/v1/',
+          customProviders: const [],
+          defaultRoleResolved: false,
+          interactive: false,
+          env: const {},
+        ),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+  });
+
+  group('boot-time legacy slot migration (gh-1570 incident REG)', () {
+    test('a key stranded under the previous release slot is COPIED onto '
+        'the canonical slot, non-destructively, with a notice', () async {
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_API_KIMI_COM'] = 'legacy-kimi-key';
+      final keys = SecureKeyCache(store);
+      await keys.preload(const [
+        'FA_KEY_API_KIMI_COM_KIMI_IRA',
+        'FA_KEY_API_KIMI_COM',
+      ]);
+
+      final notices = await migrateLegacyKeySlots(const [
+        (
+          baseUrl: 'https://api.kimi.com',
+          providerName: 'kimi-ira',
+          pinnedKeyName: null,
+        ),
+      ], keys);
+
+      // The canonical slot now resolves; the legacy slot is KEPT (a
+      // rollback keeps working); the notice names both slots.
+      expect(store.map['FA_KEY_API_KIMI_COM_KIMI_IRA'], 'legacy-kimi-key');
+      expect(store.map['FA_KEY_API_KIMI_COM'], 'legacy-kimi-key');
+      expect(notices, hasLength(1));
+      expect(notices.single, contains('FA_KEY_API_KIMI_COM_KIMI_IRA'));
+      expect(notices.single, contains('FA_KEY_API_KIMI_COM'));
+      expect(notices.single, contains('migrated'));
+    });
+
+    test(
+      'a canonical slot that already holds a value is never touched',
+      () async {
+        final store = FakeSecureKeyStore()
+          ..map['FA_KEY_API_KIMI_COM'] = 'legacy-kimi-key'
+          ..map['FA_KEY_API_KIMI_COM_KIMI_IRA'] = 'current-key';
+        final keys = SecureKeyCache(store);
+        await keys.preload(const ['FA_KEY_API_KIMI_COM_KIMI_IRA']);
+
+        final notices = await migrateLegacyKeySlots(const [
+          (
+            baseUrl: 'https://api.kimi.com',
+            providerName: 'kimi-ira',
+            pinnedKeyName: null,
+          ),
+        ], keys);
+
+        expect(notices, isEmpty);
+        expect(store.map['FA_KEY_API_KIMI_COM_KIMI_IRA'], 'current-key');
+      },
+    );
+
+    test('an unavailable store stays quiet — never a boot failure', () async {
+      final keys = SecureKeyCache(FakeSecureKeyStore(available: false));
+      await keys.preload(const []);
+
+      final notices = await migrateLegacyKeySlots(const [
+        (
+          baseUrl: 'https://api.kimi.com',
+          providerName: 'kimi-ira',
+          pinnedKeyName: null,
+        ),
+      ], keys);
+
+      expect(notices, isEmpty);
+    });
+
+    test('a failing keychain write degrades to the fallback notice — '
+        'resolution still probes the legacy slot', () async {
+      final store = FakeSecureKeyStore()
+        ..failWrites = true
+        ..map['FA_KEY_API_KIMI_COM'] = 'legacy-kimi-key';
+      final keys = SecureKeyCache(store);
+      await keys.preload(const ['FA_KEY_API_KIMI_COM']);
+
+      final notices = await migrateLegacyKeySlots(const [
+        (
+          baseUrl: 'https://api.kimi.com',
+          providerName: 'kimi-ira',
+          pinnedKeyName: null,
+        ),
+      ], keys);
+
+      expect(notices, hasLength(1));
+      expect(notices.single, contains('could not migrate'));
+      expect(notices.single, contains('falls back to the legacy slot'));
     });
   });
 }
