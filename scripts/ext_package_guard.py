@@ -151,19 +151,37 @@ def cmd_check(zip_path: str) -> int:
         # --- root manifest shape: MV3 parse + icons exist ---------------
         if "manifest.json" in names:
             raw = z.read("manifest.json").decode("utf-8")
-            # The manifest carries // comments (Chrome's parser is lenient,
-            # strict JSON validators are not) — same strip as the build
-            # script's pre-zip validation.
-            commented = re.sub(r"^\s*//.*$", "", raw, flags=re.M)
+            # STRICT parse, no comment stripping: the Chrome Web Store
+            # uploader rejects // comments ("manifest.json:17:2: missing
+            # value", owner report 2026-10-11) even though Chrome's local
+            # loader tolerates them. The build script ships a stripped
+            # manifest in the zip; the // commenting stays allowed only in
+            # the SOURCE file. A zip whose manifest needs stripping to
+            # parse is exactly the failure this guard exists to kill.
             try:
-                manifest = json.loads(commented)
+                manifest = json.loads(raw)
             except json.JSONDecodeError as e:
                 error(
                     "manifest-parse",
-                    f"{zip_path}: root manifest.json does not parse: {e}",
+                    f"{zip_path}: root manifest.json is not STRICT JSON "
+                    f"(CWS rejects // comments — the build must package a "
+                    f"stripped manifest): {e}",
                 )
+                failures += 1
                 manifest = None
             if isinstance(manifest, dict):
+                if "key" in manifest:
+                    # CWS upload rule (owner report 2026-10-11: "key field
+                    # is not allowed in manifest"): the store owns the
+                    # signing key; the source manifest's dev "key" pins the
+                    # local id only and must be stripped at packaging.
+                    error(
+                        "manifest-key",
+                        f"{zip_path}: root manifest.json carries \"key\" — "
+                        "CWS rejects it on upload (the store owns the key; "
+                        "the build must strip the dev pin)",
+                    )
+                    failures += 1
                 if manifest.get("manifest_version") != 3:
                     error(
                         "manifest-mv3",
