@@ -30,6 +30,48 @@ import '../types.dart';
 /// never degenerate into a single unreadable line (issue #678 AC11).
 const spillsMinPreviewChars = 200;
 
+/// The env var a bench/unattended run sets to enable/tune the tool-output
+/// cap for ONE run without any config file (gh-1604 item 4): a positive
+/// integer is the spill threshold in chars; `0` explicitly disables.
+/// Unset or junk leaves the configured section untouched.
+///
+/// The threshold gates WHEN a result spills; the model-visible preview
+/// stays bounded by the head+tail excerpt bounds (defaults:
+/// 2000 + 2000). Thresholds below that floor change when spilling
+/// fires, not the preview's worst-case size — a spilled body that fits
+/// the bounds renders in full.
+const spillThresholdEnvVar = 'FAH_SPILL_THRESHOLD';
+
+/// Resolves the run's spills config from the yaml [section] (null when
+/// the config files carry no `spills:`) plus the [env] knob
+/// ([spillThresholdEnvVar]). Pure:
+///
+/// - section absent + env unset → null — the hook is never attached, the
+///   byte-identical legacy shape (issue #678 AC1);
+/// - env set to a positive int → enabled with THAT threshold (env wins
+///   over the configured threshold; preview bounds stay the defaults).
+///   The section's [SpillsConfig.notes] survive the composition — the
+///   tolerant-parse diagnostics a bench run debugging its config needs;
+/// - env `0` → explicitly disabled for this run;
+/// - env junk → ignored (the section applies untouched; junk never
+///   breaks a boot).
+SpillsConfig? resolveRunSpillsConfig(
+  SpillsConfig? section,
+  Map<String, String> env,
+) {
+  final value = int.tryParse(env[spillThresholdEnvVar]?.trim() ?? '');
+  if (value == null) return section;
+  if (value <= 0) return const SpillsConfig(enabled: false);
+  final base = section ?? const SpillsConfig();
+  return SpillsConfig(
+    enabled: true,
+    threshold: value,
+    headChars: base.headChars,
+    tailChars: base.tailChars,
+    notes: base.notes,
+  );
+}
+
 /// The `spills:` config section (issue #678).
 ///
 /// Tolerant parse: unknown keys and mistyped values produce [notes] and
@@ -208,6 +250,19 @@ String buildPreview(
   required String spillPath,
   required SpillsConfig config,
 }) {
+  // A body the preview bounds already cover renders ONCE — the naive
+  // head+tail concat would duplicate it with a negative omitted count
+  // (gh-1604: a bench threshold below head+tail bounds must not double
+  // the body into the "bounded" preview).
+  if (body.length <= config.headChars + config.tailChars) {
+    final lines = '\n'.allMatches(body).length + 1;
+    return '[spilled: ${body.length} chars, $lines lines '
+        '(threshold ${config.threshold} chars)]\n'
+        '[spill file: $spillPath]\n'
+        '\n'
+        '$body\n'
+        '$spillReadHint';
+  }
   final head = _headExcerpt(body, config.headChars);
   final tail = _tailExcerpt(body, config.tailChars);
   final omitted = body.length - head.length - tail.length;

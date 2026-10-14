@@ -102,6 +102,7 @@ import '../approval/approval.dart';
 import '../wire/wire_serve.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
+import '../compaction/bench_trigger.dart';
 import '../compaction/compaction.dart';
 import '../compaction/host_wiring.dart';
 import '../compaction/structured/continuation_notice.dart';
@@ -2159,13 +2160,29 @@ class AgentCli {
   /// [effectiveContextWindow] under the owner cap, no overhead subtracted
   /// (the CLI carries no fixed request overhead).
   CompactionSettings get _effectiveCompactionSettings {
+    // An explicit `compactionSettings` config pin beats the bench env
+    // (gh-1604): `FAH_COMPACT_TRIGGER_TOKENS` retunes the DEFAULTS for a
+    // bench run — it must never silently rewrite a user-pinned section,
+    // including `enabled: false` (the knob cannot re-enable compaction
+    // the user switched off). Unset env = byte-identical base.
     final override = config.compactionSettings;
     if (override != null) return override;
-    return resolveCompactionHostWiring(
-      mainModel: _agent.state.model,
-      contextWindowCap: config.contextWindowCap,
-    ).settings;
+    return resolveBenchCompactionSettings(
+      resolveCompactionHostWiring(
+        mainModel: _agent.state.model,
+        contextWindowCap: config.contextWindowCap,
+      ).settings,
+      window: _effectiveContextWindow,
+      env: environment,
+    );
   }
+
+  /// Test seam (gh-1604 rework): the compaction settings the live gates
+  /// use — the explicit config pin when present, else the host defaults
+  /// with the bench env knob composed.
+  @visibleForTesting
+  CompactionSettings get effectiveCompactionSettingsForTest =>
+      _effectiveCompactionSettings;
 
   /// Whether a guided flow is between prompts.
   var _providerFlowActive = false;
