@@ -311,11 +311,22 @@ extension AgentCliAgentExt on AgentCli {
       );
       final exists = await config.env.fileInfo(sessionId);
       if (exists.valueOrNull == null) return null;
-      return await _repo.open(metadata);
+      // gh-1555 W1 (d7): the preview renders only the transcript TAIL —
+      // open windowed so a child ledger past the gh-1073 full-open
+      // backstop still previews (the full open refuses outright).
+      return await _repo.open(metadata, windowed: true);
     } on Object {
       return null;
     }
   }
+
+  /// Test seam over [_readChildMessages] (gh-1555): drives the subagent
+  /// transcript preview without booting the agents panel.
+  @visibleForTesting
+  Future<List<String>> readChildMessagesForTest(
+    String sessionId, {
+    int tail = 8,
+  }) => _readChildMessages(sessionId, tail: tail);
 
   String _previewMessageLine(Message message) {
     final Object raw = switch (message) {
