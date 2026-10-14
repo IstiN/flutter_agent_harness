@@ -118,6 +118,9 @@ final class AgentCliConfig {
     this.emptyHiccupRetries = 3,
     this.emptyHiccupBaseDelay = const Duration(milliseconds: 500),
     this.emptyHiccupMaxBackoff = const Duration(milliseconds: 8000),
+    // gh-1603: the headless empty-reply nudge budget (see
+    // [headlessEmptyReplyNudges]).
+    this.headlessEmptyReplyNudges = 2,
     this.headlessRun = false,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
@@ -227,6 +230,14 @@ final class AgentCliConfig {
 
   /// gh-1577: cap on the exponential empty-hiccup backoff.
   final Duration emptyHiccupMaxBackoff;
+
+  /// gh-1603: the empty-reply `continue` nudge budget for HEADLESS runs.
+  /// Interactive keeps the issue #1085 M2b one-nudge semantics (a user is
+  /// present to re-ask); an unattended run retries the blank longer — the
+  /// session may end only after `1 + headlessEmptyReplyNudges` consecutive
+  /// unrecoverable empties, and then the exit is the explicit
+  /// `__FA_INCOMPLETE` failure (never a clean 0).
+  final int headlessEmptyReplyNudges;
 
   /// Whether this process drives a headless run (`fah run "<prompt>"` and
   /// friends) as opposed to an interactive REPL/TUI session. Set by the
