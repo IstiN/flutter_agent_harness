@@ -310,6 +310,7 @@ class JsAppInfo {
     this.platforms,
     this.dirOverride,
     this.error,
+    this.installSource,
   });
 
   factory JsAppInfo.fromManifest(
@@ -388,7 +389,37 @@ class JsAppInfo {
     platforms: platforms,
     dirOverride: dirOverride,
     error: error,
+    installSource: installSource,
   );
+
+  /// Copy with the install source (`catalog` | `unpacked` — from
+  /// `apps/.installed.json`) attached; null for apps with no record
+  /// (agent-created). The launcher and the catalog sheet surface it
+  /// (gh-1616 invariant I3).
+  JsAppInfo withInstallSource(String? source) => installSource == source
+      ? this
+      : JsAppInfo(
+          id: id,
+          name: name,
+          description: description,
+          icon: icon,
+          declaredPermissions: declaredPermissions,
+          nameText: nameText,
+          descriptionText: descriptionText,
+          version: version,
+          chrome: chrome,
+          tileWidget: tileWidget,
+          bundled: bundled,
+          platforms: platforms,
+          dirOverride: dirOverride,
+          error: error,
+          installSource: source,
+        );
+
+  /// Where this app was installed from: `catalog` (the fa_widgets
+  /// gallery), `unpacked` (a local folder load, gh-1616), or null when
+  /// there is no install record (agent-created apps).
+  final String? installSource;
 
   final String icon;
   final String version;
@@ -603,9 +634,11 @@ class AppsStore {
       // serving the last-known models keeps the panel truthful through a
       // transient IO error, and the install-record prune below must never
       // run on an empty `seen` — that would wipe `.installed.json`.
+      final sources = await installSources();
       final cachedApps =
           _parsedApps.values
               .where((app) => app.supportsPlatform(platform))
+              .map((app) => app.withInstallSource(sources[app.id]))
               .toList()
             ..sort((a, b) => a.name.compareTo(b.name));
       return cachedApps;
@@ -678,8 +711,14 @@ class AppsStore {
       }
       if (pruned) await _writeInstalled(installed);
     }
-    apps.sort((a, b) => a.name.compareTo(b.name));
-    return apps;
+    // Provenance (gh-1616 I3): attached AFTER the cache gate — a
+    // re-install flips the recorded origin without touching the manifest,
+    // and the badge must follow the record, not the cached parse.
+    final sources = await installSources();
+    final withSource = [
+      for (final app in apps) app.withInstallSource(sources[app.id]),
+    ]..sort((a, b) => a.name.compareTo(b.name));
+    return withSource;
   }
 
   /// Reads the `{"file": ...}` i18n ref files declared by [app]'s manifest
@@ -919,6 +958,12 @@ class AppsStore {
   /// clobbered. `storage.json` is user data and is always skipped. The new
   /// version is recorded even when individual files were protected.
   ///
+  /// [origin] records the install source in `.installed.json`
+  /// (`catalog` — the default — or `unpacked` for gh-1616's local-folder
+  /// loader). The unpacked loader reuses this exact write path so boot,
+  /// updates and the Apps grid need zero special cases (invariant I1);
+  /// only the recorded provenance differs.
+  ///
   /// When the manifest localizes name/description via `{"file": ...}`
   /// refs, every referenced file must exist — in the archive itself or
   /// (for updates) already on disk — otherwise the install fails BEFORE
@@ -928,14 +973,15 @@ class AppsStore {
     required String id,
     required String version,
     required Map<String, Uint8List> files,
+    String origin = 'catalog',
   }) async {
     await _validateI18nRefs(id, files);
     final meta = await _readInstalled();
     final entry = meta.putIfAbsent(
       id,
-      () => {'origin': 'catalog', 'version': version},
+      () => {'origin': origin, 'version': version},
     )..['version'] = version;
-    entry['origin'] = 'catalog';
+    entry['origin'] = origin;
     entry['installedAt'] = DateTime.now().toUtc().toIso8601String();
     final hashes = Map<String, String>.from(
       (entry['files'] as Map?)?.cast<String, String>() ?? const {},
@@ -1099,11 +1145,23 @@ class AppsStore {
   }
 
   /// Whether [appId] was installed from the widget catalog (recorded in
-  /// `apps/.installed.json`). Publish flows exclude catalog downloads and
-  /// bundled demos — only user/agent-created widgets may be published
-  /// (catalog widgets are already published BY the catalog).
+  /// `apps/.installed.json` with origin `catalog`). Unpacked installs
+  /// (origin `unpacked`, gh-1616) are user-owned local code: the publish
+  /// eligibility gate and the catalog auto-update treat them exactly like
+  /// agent-created apps.
   Future<bool> isCatalogInstalled(String appId) async =>
-      (await _readInstalled()).containsKey(appId);
+      (await _readInstalled())[appId]?['origin'] == 'catalog';
+
+  /// The recorded install source per app id (`catalog` | `unpacked`) —
+  /// ids absent from the map have no record (agent-created apps).
+  Future<Map<String, String>> installSources() async {
+    final meta = await _readInstalled();
+    return {
+      for (final entry in meta.entries)
+        if (entry.value['origin'] is String)
+          entry.key: entry.value['origin'] as String,
+    };
+  }
 
   /// Ids of every directory under `apps/` — including broken
   /// half-installed ones that [listApps] skips (no manifest). The
