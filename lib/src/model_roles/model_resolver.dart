@@ -216,31 +216,21 @@ final class ModelRolesResolver {
     // old name-only + kind-loop pair applied, now in the one seam.
     var spec = resolveCliProviderSpec(ref.provider, honorBuildFilter: true);
     if (spec == null) {
-      // Issue #1552: the catalog missed — a hand-written config may name a
-      // `customProviders:` entry (`provider: aiai`). Resolve through the
-      // entry: its apiType's catalog spec, with the entry's baseUrl and
-      // keyName as defaults where the ref omits them (explicit ref fields
-      // always win). The reserved-name rule (isReservedCustomProviderName)
-      // bars registry entries from catalog names, so this leg only ever
-      // answers what the catalog missed — the two namespaces never shadow.
-      final entry = _findCustomProvider(ref.provider);
-      if (entry != null) {
-        spec = resolveCliProviderSpec(entry.apiType, honorBuildFilter: true);
-        if (spec != null) {
-          ref = _throughCustomEntry(ref, entry);
-        } else {
-          // The registry entry IS known (the name matched) — only its
-          // adapter dialect is not (a saved entry written by a newer CLI
-          // against a dialect this version predates). Say so: "unknown
-          // provider" would send the user hunting an entry spelling that
-          // is fine. Same gh-760 skip+degrade contract as the
-          // unknown-in-both case below (version skew, recoverable).
-          skipped.add(
-            '${ref.label} (unknown adapter dialect: ${entry.apiType})',
-          );
-          onUnknownProvider();
-          return null;
-        }
+      // Issue #1552: the catalog missed — a hand-written config may name
+      // a `customProviders:` entry (`provider: aiai`). The registry leg
+      // (_registryLeg) resolves through the entry: its apiType's catalog
+      // spec, with the entry's baseUrl/keyName as defaults where the ref
+      // omits them (explicit ref fields always win). The reserved-name
+      // rule (isReservedCustomProviderName) bars registry entries from
+      // catalog names, so this leg only ever answers what the catalog
+      // missed — the two namespaces never shadow.
+      final viaRegistry = _registryLeg(
+        ref,
+        skipped,
+        onUnknownProvider: onUnknownProvider,
+      );
+      if (viaRegistry != null) {
+        (ref, spec) = viaRegistry;
       }
     }
     if (spec == null) {
@@ -388,6 +378,37 @@ final class ModelRolesResolver {
     final current = ring.credentialByValue(currentValue);
     final next = ring.rotate(current?.name ?? ring.currentCredential.name);
     return next != null;
+  }
+
+  /// The registry LEG of chain-name resolution (issue #1552): the catalog
+  /// missed [ref]'s provider, so try the saved `customProviders:` entries.
+  /// A matched entry resolves through its apiType's catalog spec (same
+  /// honorBuildFilter rule as every user-facing roles surface), with the
+  /// entry's `baseUrl`/`keyName` as defaults where the ref omits them
+  /// (explicit ref fields always win). Returns the defaulted ref paired
+  /// with its spec, or null when this leg has no answer:
+  /// - no entry matches → the caller reports the generic unknown-provider
+  ///   skip (a name known to NEITHER namespace — gh-760);
+  /// - the matched entry's apiType is unknown to this version (a saved
+  ///   entry written by a newer CLI) → reported HERE as an unknown
+  ///   adapter dialect — the registry entry IS known, only its dialect
+  ///   isn't, so "unknown provider" would send the user hunting an entry
+  ///   spelling that is fine.
+  /// Both null paths keep the gh-760 skip+degrade contract (version skew,
+  /// recoverable), classified via [onUnknownProvider] where the entry
+  /// itself was recognized.
+  (ModelRef, ProviderSpec)? _registryLeg(
+    ModelRef ref,
+    List<String> skipped, {
+    required void Function() onUnknownProvider,
+  }) {
+    final entry = _findCustomProvider(ref.provider);
+    if (entry == null) return null;
+    final spec = resolveCliProviderSpec(entry.apiType, honorBuildFilter: true);
+    if (spec != null) return (_throughCustomEntry(ref, entry), spec);
+    skipped.add('${ref.label} (unknown adapter dialect: ${entry.apiType})');
+    onUnknownProvider();
+    return null;
   }
 
   /// The saved custom entry named by a chain ref (case-insensitive), or
