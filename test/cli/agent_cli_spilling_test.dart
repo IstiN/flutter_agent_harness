@@ -304,8 +304,7 @@ void main() {
     // produced the same prompt — the CI shard 2/4 failure this guard
     // pins. The normalizer must flatten the count like it flattens the
     // stamp text, while everything else stays compared.
-    const stampMicros =
-        'skills index scanned at 2026-10-15T21:50:31.123456Z';
+    const stampMicros = 'skills index scanned at 2026-10-15T21:50:31.123456Z';
     const stampMillis = 'skills index scanned at 2026-10-15T21:50:31.123Z';
     String session(String stamp, int chars) =>
         '{"type":"session","version":3,"id":"UUID","timestamp":"T",'
