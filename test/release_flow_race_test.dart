@@ -361,7 +361,7 @@ VerifyRun runVerify(
   if (pubdevSwitchAfterReads != null) {
     File(
       '${dir.path}/pubdev-switch-after',
-    ).writeAsStringSync('${pubdevSwitchAfterReads}');
+    ).writeAsStringSync('$pubdevSwitchAfterReads');
   }
   if (lsremoteFailFirst) {
     File('${dir.path}/lsremote-fail-first').writeAsStringSync('');
@@ -370,12 +370,12 @@ VerifyRun runVerify(
   if (curlFailAfterReads != null) {
     File(
       '${dir.path}/curl-fail-after',
-    ).writeAsStringSync('${curlFailAfterReads}');
+    ).writeAsStringSync('$curlFailAfterReads');
   }
   if (ghListFailOnRead != null) {
     File(
       '${dir.path}/gh-list-fail-on',
-    ).writeAsStringSync('${ghListFailOnRead}');
+    ).writeAsStringSync('$ghListFailOnRead');
   }
 
   // The run-view fixture mirrors EVERY listed run's status: a queued/
@@ -432,7 +432,7 @@ VerifyRun runVerify(
       // Test seams — production defaults live in the script.
       'PUBDEV_READ_SLEEP_SECS': '0',
       'PUBDEV_POLL_SLEEP_SECS': '0',
-      if (rearmPushTo != null) 'RELEASE_APP_PUSH_URL': rearmPushTo!,
+      if (rearmPushTo != null) 'RELEASE_APP_PUSH_URL': rearmPushTo,
       ...extraEnv,
     },
   );
