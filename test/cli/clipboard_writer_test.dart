@@ -6,6 +6,7 @@
 // gh-1606). Every platform path funnels through an injected
 // [ClipboardWriteRunner] — the tests script the pasteboard instead of
 // touching a real one. The credential text must ride STDIN, never argv.
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/cli/clipboard_writer.dart';
@@ -157,5 +158,57 @@ void main() {
         expect(runner.calls.single.$3, 'gho_TOKEN');
       },
     );
+
+    test(
+      'a wedged writer times out into the named unavailable (gh-1606 '
+      'review: an unbounded writer holds the /provider flow gate shut)',
+      () async {
+        // A pasteboard binary that never exits (a shadowed pbcopy script,
+        // xclip on a dead $DISPLAY): the write must degrade to the named
+        // timeout result instead of hanging the export flow forever.
+        Future<ProcessResult> hang(
+          String executable,
+          List<String> args,
+          String stdinText,
+        ) => Completer<ProcessResult>().future;
+
+        final result = await writeClipboardText(
+          'tok',
+          runner: hang,
+          platform: 'macos',
+          processTimeout: const Duration(milliseconds: 50),
+        );
+
+        expect(result, isA<PasteboardWriteUnavailable>());
+        expect(
+          (result as PasteboardWriteUnavailable).reason,
+          'clipboard writer timed out',
+        );
+      },
+    );
+
+    test('a timed-out path falls through to the next one (the wedge does not '
+        'block the fallback writer)', () async {
+      final calls = <String>[];
+      Future<ProcessResult> hangFirst(
+        String executable,
+        List<String> args,
+        String stdinText,
+      ) async {
+        calls.add(executable);
+        if (calls.length == 1) return Completer<ProcessResult>().future;
+        return ProcessResult(1, 0, null, null);
+      }
+
+      final result = await writeClipboardText(
+        'gho_TOKEN',
+        runner: hangFirst,
+        platform: 'linux',
+        processTimeout: const Duration(milliseconds: 50),
+      );
+
+      expect(result, isA<PasteboardWriteOk>());
+      expect(calls, ['xclip', 'wl-copy']);
+    });
   });
 }

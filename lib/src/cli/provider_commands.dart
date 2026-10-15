@@ -869,10 +869,13 @@ extension on AgentCli {
     final ids = await _fetchProviderModelIds(spec.name, baseUrl, githubToken);
     if (isFineGrainedGitHubPat(githubToken) && ids.isEmpty) {
       // PAT mode validates against the Copilot API HERE (no exchange):
-      // an empty answer means the PAT was rejected or grants nothing —
-      // name the likely causes instead of a silent manual-entry drop.
+      // an empty answer is the dialect's collapse of EVERY failure
+      // (rejected PAT, no granted models, transport error) — soften the
+      // causes so a flaky network doesn't read as a token problem
+      // (gh-1606 review).
       io.writeln(
-        'note: the Copilot API returned no models for this PAT — check '
+        'note: the Copilot API returned no models for this PAT — it was '
+        'rejected, granted nothing, or the request itself failed; check '
         'the "Copilot Requests" permission '
         '(github.com/settings/personal-access-tokens → edit → '
         'Permissions) and the account\'s Copilot seat',
@@ -2444,7 +2447,7 @@ extension on AgentCli {
       name: name,
       keys: keys,
       onSecretStored: config.onSecretStored,
-      prompt: tui.openPrompt,
+      prompt: (spec) => _openHerdrPrompt(tui, spec),
       onResult: io.writeln,
       onSaved: _applySavedKeyToActiveProvider,
     );

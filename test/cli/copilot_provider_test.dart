@@ -484,6 +484,68 @@ void main() {
         final output = io.out.toString();
         expect(output, contains('returned no models'));
         expect(output, contains('Copilot Requests'));
+        // Softened causes (gh-1606 review): the note must not read as
+        // token-hunting when the failure could be a transport error.
+        expect(output, contains('or the request itself failed'));
+        expect(registry.find('copilot-hubot')!.modelId, 'gpt-4.1');
+      },
+    );
+
+    test(
+      'a dead OAuth exchange is reported before manual model entry',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        // OAuth-shaped token (gho_…): the connect flow pre-validates it
+        // through the token exchange (PAT mode skips that entirely — the
+        // sibling test above). A dead exchange (404) must surface the
+        // warning + the manual-entry hint instead of a silent drop.
+        final deadExchange = http_testing.MockClient((request) async {
+          if (request.url.host == 'api.github.com') {
+            return http.Response('{"message":"Not Found","status":"404"}', 404);
+          }
+          if (request.url.path.endsWith('/models')) {
+            return http.Response('{"data":[]}', 200);
+          }
+          return http.Response('not found', 404);
+        });
+        final registry = CustomProviderRegistry([]);
+        final cli = cliFor(
+          modelsHttpClient: deadExchange,
+          fake.call,
+          envVarValue: (_) => null,
+          customProviders: registry,
+          copilotUserFn: (_) async => 'hubot',
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider copilot');
+        await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+        io.sendLine('2'); // paste an existing token
+        await waitForIt(() => io.out.toString().contains('GitHub token: '));
+        io.sendLine('gho_DEAD_EXCHANGE_TOKEN');
+        await waitForIt(
+          () => io.out.toString().contains('provider name [copilot-hubot]'),
+        );
+        io.sendLine('');
+        await waitForIt(() => io.out.toString().contains('Copilot plan'));
+        io.sendLine('1'); // individual
+        // The exchange 404 is surfaced with the manual-entry hint before
+        // the model step, not swallowed into a silent manual-entry drop.
+        await waitForIt(() => io.out.toString().contains('token exchange'));
+        await waitForIt(
+          () => io.out.toString().contains('continuing — pick or type'),
+        );
+        await waitForIt(() => io.out.toString().contains('model id: '));
+        io.sendLine('gpt-4.1');
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to copilot'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(output, contains('warning: Copilot token exchange failed'));
+        expect(output, contains('continuing — pick or type the model id'));
         expect(registry.find('copilot-hubot')!.modelId, 'gpt-4.1');
       },
     );
