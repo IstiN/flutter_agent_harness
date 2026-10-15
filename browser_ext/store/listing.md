@@ -19,6 +19,9 @@ dashboard (2026-10).
   Console to link)
 - Homepage URL: `https://fa1.dev`
 - Support URL: `https://github.com/IstiN/flutter_agent_harness/issues`
+- Privacy policy URL: `https://fa1.dev/privacy.html` (gh-1630 Purple
+  Nickel: the field must point at the live, rendering policy — all nine
+  mandatory sections, EN + RU)
 - Mature content: **No**
 - Promo video: none (optional)
 

@@ -165,7 +165,6 @@ approval gate.
 | Sessions (2) | `sessions_recent` `sessions_restore` | read / write |
 | History (1) | `history_search` | read |
 | Bookmarks (4) | `bookmarks_list` `bookmarks_add` `bookmarks_update` `bookmarks_remove` | list read; rest write |
-| Downloads (3) | `downloads_start` `downloads_search` `downloads_cancel` | search read; rest write |
 | Cookies (3) | `cookies_get` `cookies_set` `cookies_remove` | get read; rest write |
 | Injection & CDP (4) | `inject_js` `inject_css` `cdp_eval` `page_screenshot` | see below |
 | App & navigation (2) | `app_screenshot` `nav_wait` | read |
@@ -178,7 +177,9 @@ approval gate.
   document (`offscreen.html` + `offscreen/interpreters.js`), with the
   runtimes **vendored into the bundle** (`vendor/interpreters/`,
   downloaded by `scripts/vendor_interpreters.sh` at build time — the
-  same versions the web app sandbox loads from a CDN). The SW side is
+  same versions the web app sandbox loads from a CDN; gh-1630 moves the
+  fetcher to `scripts/fetch_vendor_assets.sh` + `vendor.lock.json` with
+  SHA-256 pins). The SW side is
   `browser_ext/dart/src/run_script_tool.dart` (pure Dart, VM-tested);
   the chrome hops are the typed `OffscreenApi` facade plus one
   `chrome.runtime.sendMessage` bridge in `chrome_api_js.dart`. The
@@ -226,12 +227,13 @@ Safety kernel (`bridge_tools.dart`):
   only exact `chrome.<ns>.<method>` paths, no events (`on*`), no
   prototype tricks (`__proto__`/`constructor`/`prototype`). The raw
   `faAgentV2.bridgeCall` seam rides the same static kernel.
-- **Exfil gate on navigation/download methods**:
-  `tabs.create/update`, `windows.create/update` and
-  `downloads.download` ride the SAME visited-origins ExfilGate as the
-  curated open/download tools — a URL to an origin the user never
-  visited asks once (allow seeds the visited set); a deny returns
-  `approval_required` as data.
+- **Exfil gate on navigation methods**:
+  `tabs.create/update` and `windows.create/update` ride the SAME
+  visited-origins ExfilGate as the curated tabs_open tool — a URL to an
+  origin the user never visited asks once (allow seeds the visited
+  set); a deny returns `approval_required` as data. (`downloads.*`
+  left the bridge surface with the permission — gh-1630; the gate's
+  `download` kind stays as the re-add seam.)
 - **Per-root risk map**: read/write roots (`tabs`, `windows`,
   `bookmarks`, `history`, `idle`, `system`, …) ride their tier;
   exec roots (`scripting`, `debugger`, `cookies`, `browsingData`,
@@ -308,8 +310,9 @@ two-way checker (`checkMatrix`) turns every drift into a typed
 
 | Tier | Rows | Treatment |
 |---|---|---|
-| **Core** | 45 — the 29 curated-tool roots (incl. `runtime`, which needs no permission) + 14 bridge-only roots (`search`, `readingList`, `tabCapture`, `browsingData`, `tts`, `declarativeNetRequest`, `privacy`, `proxy`, `management`, `clipboard`, `contentSettings`, `fontSettings`, `nativeMessaging`, `webRequest`) + `browser_api` + `browser_api_catalog` themselves | Registered and exposed; an unpacked manifest must carry the permission |
-| **Second tier** | 4 (`topSites`, `pageCapture`, `desktopCapture`, `userScripts`) | Implemented but registered-hidden — a Settings gate turns them on; permissions ride `optional_permissions` |
+| **Core** | 41 — the 27 curated-tool roots (incl. `runtime`, which needs no permission) + 12 bridge-only roots (`search`, `readingList`, `tabCapture`, `browsingData`, `tts`, `declarativeNetRequest`, `privacy`, `proxy`, `management`, `clipboard`, `nativeMessaging`, `webRequest`) + `browser_api` + `browser_api_catalog` themselves | Registered and exposed; an unpacked manifest must carry the permission |
+| **Second tier** | 3 (`topSites`, `pageCapture`, `userScripts`) | Implemented but registered-hidden — a Settings gate turns them on; permissions ride `optional_permissions` |
+| **Excluded (gh-1630)** | `downloads`, `identity`, `contentSettings`, `fontSettings`, `desktopCapture` | CWS Purple Potassium: requested-but-unused is a hard rejection — removed with the tools/rows that backed them; re-add only WITH shipping code |
 | **Excluded** | 12 (`gcm`, `instanceID`, `devtools`, `fileBrowserHandler`, `printing`, `printingMetrics`, `fileSystemProvider`, `platformKeys`, `wallpaper`, `enterprise.deviceAttributes`, `enterprise.networkingAttributes`, `passwords`) | Absent from manifest AND registry; the table row records the rationale so absence is auditable |
 
 Issue #137 moved `browsingData`/`tts`/`declarativeNetRequest`/`privacy`/
