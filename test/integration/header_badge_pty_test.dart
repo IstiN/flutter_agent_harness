@@ -1,6 +1,8 @@
 @TestOn('vm')
 @Tags(['integration'])
-@Timeout(Duration(minutes: 6)) // never clip a wait: budgets sum to ~310 s (gh-1469)
+@Timeout(
+  Duration(minutes: 6),
+) // never clip a wait: budgets sum to ~310 s (gh-1469)
 /// Issue #438 AC3 — the over-window badge: a mid-run auto-compaction that
 /// frees the window shows «[auto-compacted · continuing]» in the TUI
 /// status row while the run continues, and it clears when the turn
@@ -11,8 +13,38 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_agent_harness/src/compaction/structured/judge.dart'
+    show hideProtectTailEntries;
 import 'package:test/test.dart';
 import 'pty_harness.dart';
+
+/// The scenario window (the `contextWindowCap` the test config pins). The
+/// cap is LIFTED to 32768 deliberately: at 16384 the PTY stack's ~7.4k
+/// request overhead (measured — see [e1FixedOverheadTokens]) is nearly
+/// half the window and every scenario shape lands inside the
+/// trigger..window dead band, where the E1 follow-up re-enters the
+/// compaction chain deterministically (two CI reproductions). At 32768
+/// the reserve scales with the window and both compaction lines clear
+/// with margins an estimator cannot jitter across.
+const scenarioWindow = 32768;
+
+/// The lean-read count: enough reads to overflow [scenarioWindow] (the
+/// fold premise) while keeping the post-fold protected-tail floor small.
+/// Single edit point shared by the guard, the workspace setup and the
+/// mock's scripted reads turn.
+const scenarioReadCount = 40;
+
+/// Per-read estimated tokens: 40-char lines + newline over the
+/// estimator's chars-per-token basis (token_estimation.dart).
+final scenarioPerReadTokens = (90 * 41 / 4).ceil();
+
+/// Fixed per-request overhead MEASURED on the PTY stack (linux hosted
+/// runner, the reviewer's reproduction of head 7cb3bd2a4): E1 request
+/// basis 12342 tokens with the 30 × 60 shape whose protected tail was
+/// 8 × 615 → overhead = 12342 − 8 × 615 = 7422 (system + E1 turn +
+/// summary + record projections). Re-measure whenever the scenario shape
+/// or the chrome changes — never guess this number.
+const e1FixedOverheadTokens = 7422;
 
 void main() {
   // The fold badge carries an optional multiplicity suffix: a slow CI
@@ -24,18 +56,60 @@ void main() {
   final foldBadge = RegExp(r'\[auto-compacted( ×\d+)? · continuing\]');
 
   test('a mid-run fold badges the status row until the turn settles', () async {
+    // The scenario's margins, pinned to the production constants they lean
+    // on — the /4 char estimator (token_estimation.dart), the protected
+    // live-edge tail (hideProtectTailEntries, judge.dart), the
+    // shouldCompact trigger (window − reserve, compaction.dart:452,488)
+    // and the contextWindowCap floor semantics (cli_config.dart). If any
+    // constant moves, this fails HERE with the arithmetic spelled out
+    // instead of going red on the nightly with zero gate-time signal.
+    final e1Floor =
+        hideProtectTailEntries * scenarioPerReadTokens + e1FixedOverheadTokens;
+    // CompactionSettings.forWindow: reserve = min(16384, max(1024,
+    // window ~/ 4)), degenerate-clamped only below 16384 — at this window
+    // the plain quarter wins.
+    final shouldCompactTrigger =
+        scenarioWindow - (scenarioWindow ~/ 4).clamp(1024, 16384);
+    expect(
+      scenarioReadCount * scenarioPerReadTokens,
+      greaterThan(scenarioWindow),
+      reason:
+          'the reads turn must still overflow the window — the fold '
+          'premise ($scenarioReadCount × $scenarioPerReadTokens = '
+          '${scenarioReadCount * scenarioPerReadTokens} vs $scenarioWindow)',
+    );
+    expect(
+      e1Floor,
+      lessThan(shouldCompactTrigger - 5000),
+      reason:
+          'the E1 floor ($e1Floor) must clear the shouldCompact trigger '
+          '($shouldCompactTrigger) with wide margin, not just the guard '
+          'line — a floor inside the trigger..window dead band re-enters '
+          'the compaction chain every run',
+    );
     final mock = _FoldingMock();
     await mock.start();
     final tempHome = _tempHomeForMock(mock.port);
-    // Eight fat reads in one scripted turn (~21k estimated tokens of tool
-    // results) blow the 16384-token capped window at the second request —
-    // the guard refuses, the compaction folds the older results, the
-    // retry continues the turn.
+    // Forty lean reads in one scripted turn (~36.9k estimated tokens of
+    // tool results) blow the 32768-token capped window at the second
+    // request — the guard refuses, the compaction folds the older results,
+    // the retry continues the turn. The window is LIFTED (not the reads
+    // shrunken) so the compaction edges scale away from the fixed
+    // overhead: at 16384 the PTY stack's ~7.4k request overhead (measured,
+    // see the guard above) is nearly half the window, and every scenario
+    // shape lands inside the trigger..window dead band where the E1
+    // follow-up re-enters the compaction chain deterministically (two CI
+    // reproductions: 13.0k, then 12.3k basis, both over the 12288
+    // trigger). At 32768 the reserve doubles with the window
+    // (trigger = 24576), the floor (~7k tail + 7.4k overhead ≈ 14.4k)
+    // clears it by ~10k, and the reads still overflow by ~4k — no edge
+    // left to jitter across, and the E1 badge-free run never enters the
+    // compaction chain at all.
     final workspace = Directory('/tmp').createTempSync('fabadge');
-    for (var i = 1; i <= 8; i++) {
+    for (var i = 1; i <= scenarioReadCount; i++) {
       File(
         '${workspace.path}/big$i.txt',
-      ).writeAsStringSync(List.filled(300, 'x' * 40).join('\n'));
+      ).writeAsStringSync(List.filled(90, 'x' * 40).join('\n'));
     }
     final harness = await FaCliHarness.spawn(
       workingDirectory: workspace.path,
@@ -61,9 +135,10 @@ void main() {
     await harness.waitForText(foldBadge, timeout: const Duration(seconds: 30));
 
     // Settled: the badge clears from the status row (the receipt stays).
-    // 90 s (gh-1469): a re-fold riding the red run's razor-thin overflow
-    // margin stretches the turn by a full relief chain (judge +
-    // summarizer + rebuilt request) — the red run outlived 30 s.
+    // 90 s (gh-1469): the turn's tail can ride a bounded relief chain
+    // (judge + summarizer + rebuilt request) whose wall-clock budget is
+    // minutes by design (issue #541) — a loaded runner legitimately
+    // outlives a tighter wait.
     await harness.waitForText(
       'done: recovered',
       timeout: const Duration(seconds: 90),
@@ -78,9 +153,11 @@ void main() {
       reason: 'the badge must clear when the turn settles',
     );
 
-    // E1: a fresh run starts badge-free — no fold, no badge. 90 s (same
-    // gh-1469 relief-chain face: an E1 re-fold on a loaded runner ground
-    // past the 30 s budget with the guard still mid-relief).
+    // E1: a fresh run starts badge-free — no fold, no badge. The lean-read
+    // shape above leaves E1's floor under the shouldCompact trigger (the
+    // static guard at the top pins the margin), so E1 never enters the
+    // compaction chain; the 90 s budget (gh-1469) is headroom for a loaded
+    // runner, not for a relief chain.
     harness.sendText('say hi');
     harness.sendEnter();
     await harness.waitForText('hi!', timeout: const Duration(seconds: 90));
@@ -112,7 +189,7 @@ allowedTools: [read]
 tui:
   classic: true
 agent:
-  contextWindowCap: 16384
+  contextWindowCap: 32768
 ''');
   return tempHome;
 }
@@ -196,7 +273,11 @@ final class _FoldingMock {
     ],
   };
 
-  /// One assistant turn with eight parallel `read` tool calls.
+  /// One assistant turn with `scenarioReadCount` parallel `read` tool
+  /// calls (see the scenario comment in the test body: enough lean reads
+  /// to overflow the window while keeping the protected-tail floor
+  /// small). Kept in lockstep with the guard's constant — the file-local
+  /// [scenarioReadCount] const is the single edit point.
   Map<String, Object> _readsTurnChunk() => {
     'id': 'chatcmpl-x',
     'object': 'chat.completion.chunk',
@@ -206,7 +287,7 @@ final class _FoldingMock {
         'delta': {
           'role': 'assistant',
           'tool_calls': [
-            for (var i = 1; i <= 8; i++)
+            for (var i = 1; i <= scenarioReadCount; i++)
               {
                 'index': i - 1,
                 'id': 'call_$i',
