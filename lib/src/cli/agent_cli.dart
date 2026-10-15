@@ -1406,6 +1406,16 @@ class AgentCli {
         onFlushDue: () => unawaited(_persistJobBoard()),
       );
 
+  /// gh-1622: the live ids of the last PERSISTED `shell_job_registry`
+  /// snapshot. A live-set GROWTH (a background job started) bypasses the
+  /// persist window in `_persistJobBoard` — a crash inside the window
+  /// skips both the trailing flush and the shutdown flush, and the file
+  /// must never trail the board's live set or the resume-lost count
+  /// undercounts (observed: "1 background task lost" for 5 live jobs).
+  /// Null until the first append; reset next to the deduper in
+  /// `_rehydrateJobBoard`.
+  Set<String>? _jobBoardPersistedLiveIds;
+
   /// gh-1590 (review IMPORTANT): bounds WHEN `obligations_ledger`
   /// snapshots may append — the per-message ingest coalesces inside the
   /// persist window behind the trailing flush (a classifying message

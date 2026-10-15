@@ -17,6 +17,13 @@ library;
 /// (frozen): the record count no longer depends on all 8 mutations
 /// landing inside one real 30 s window — a CI stall cannot open a
 /// second window and flake the count.
+///
+/// gh-1622 carves ONE mutation class out of the window: a job START is
+/// crash-critical. A hard kill inside the window skips the trailing
+/// flush and the shutdown flush alike, so an unpersisted start would
+/// silently vanish from the resume-lost count (the nightly PTY restart
+/// test saw "1 background task lost" for 5 live jobs). Starts append
+/// immediately; terminal churn keeps coalescing.
 
 import 'dart:async';
 import 'dart:convert';
@@ -230,13 +237,18 @@ void main() {
         isNotEmpty,
         reason: 'the board state persisted at least once',
       );
-      // gh-1590 acceptance: 2k state changes (k starts + k settles) leave
-      // a SMALL CONSTANT of records — one snapshot plus the finalize
-      // flush — instead of one record per change.
+      // gh-1590 acceptance: state changes leave a small constant of
+      // records instead of one per change. gh-1622 carves out one
+      // exception: a job START bypasses the window (a crash inside it
+      // must never strand a started job off the record), so k starts
+      // append k snapshots; the settles still coalesce into the
+      // run-finalize flush.
       expect(
         payloads.length,
-        lessThanOrEqualTo(2),
-        reason: 'mutations inside the persist window coalesce',
+        lessThanOrEqualTo(jobCount + 1),
+        reason:
+            'starts are crash-critical appends; terminal churn '
+            'coalesces behind the finalize flush',
       );
       // The FINAL state reached the file: every job terminal — a resume
       // rehydrates through the LAST record and must never show running.
@@ -249,6 +261,73 @@ void main() {
           reason: 'the flush lands the final board state',
         );
       }
+    },
+  );
+  test(
+    'a job start reaches the file inside the persist window: a crash '
+    'cannot strand started jobs off the record (gh-1622)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // Mirrors the PTY restart repro (scenario B): 5 live jobs, then a
+      // hard kill — no settle, no finalize flush. The resume reads only
+      // the LAST `shell_job_registry` snapshot; before the fix the
+      // persist window coalesced starts 2..k away and that snapshot
+      // carried only job 1 ("1 background task lost" for 5 live jobs).
+      const jobCount = 5;
+      final io = FakeCliIO();
+      final shell = _ThrottleShell();
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final stream = _JobSpawnerStream(jobCount: jobCount);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          approvalMode: ApprovalMode.yolo,
+        ),
+        io: io,
+        streamFunction: stream.call,
+        ledgerClock: () => DateTime(2026, 10, 15, 12),
+      );
+      final run = cli.runHeadless('spawn the background jobs');
+      await _waitFor(
+        () => shell.jobs.length == jobCount,
+        reason: 'all $jobCount jobs register',
+      );
+      // The crash moment: the file must already carry every started job
+      // as running — the fix appends each start instead of waiting for a
+      // flush a SIGKILL would skip. (Pre-fix this stalls at 1.)
+      var last = const <dynamic>[];
+      for (var i = 0; i < 4000; i++) {
+        final files = await _sessionFiles(env, '/sessions');
+        if (files.length == 1) {
+          final payloads = await shellJobRegistryRecords(env, files.single);
+          if (payloads.isNotEmpty) last = payloads.last;
+          if (last.length == jobCount) break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(
+        last,
+        hasLength(jobCount),
+        reason:
+            'every started job is in the last snapshot before any '
+            'flush — a crash here resumes with the full lost count',
+      );
+      for (final card in last) {
+        expect(
+          (card as Map)['state'],
+          'running',
+          reason: 'the jobs were live at the crash moment',
+        );
+      }
+      // Clean teardown only — the pins above were taken before this.
+      for (final job in shell.jobs) {
+        job.finish(0);
+      }
+      final code = await run;
+      expect(code, 0, reason: 'the run completes with the settled jobs');
     },
   );
   test(
