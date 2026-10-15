@@ -84,7 +84,7 @@ const _systemPrompt =
     'You can act on the web through two tool families: the browser_* page '
     'ops (navigate, read_dom, click, type, screenshot, …) and the v2 power '
     'surface (tabs_open/tabs_close, windows_*, groups_*, history_search, '
-    'bookmarks_*, downloads_*, cookies_*, inject_js, cdp_eval, …). Scripting '
+    'bookmarks_*, cookies_*, inject_js, cdp_eval, …). Scripting '
     'and debugging tools refuse restricted pages (chrome://, extension '
     'pages, the Web Store) — tab management still works there. Keep small '
     'notes under / through the read/write/edit/ls file tools. There is no '

@@ -11,7 +11,7 @@
 //    mode — an injected page must not reach the extension's own
 //    machinery or its secret-bearing config;
 //  * navigation/download-capable methods ride the SAME ExfilGate as
-//    the curated tabs_open/downloads_start (visited-origins ask);
+//    the curated tabs_open (visited-origins ask);
 //  * per-root risk map (bridgeRiskTier) drives a dynamic exec-tier ask
 //    AND write-classified calls map write→exec for approval purposes
 //    (owner, review r2: a phished model must never get a SILENT
@@ -194,7 +194,7 @@ typedef BridgeRiskAsk = Future<bool> Function(String path, ApprovalTier tier);
 /// One-time notice hook — the host uses it for the yolo-mode banner.
 typedef BridgeFirstCall = void Function(String path);
 /// The exfil ask: the SAME host surface the curated tabs_open /
-/// downloads_start ride (wired to the approval prompt + visited-set
+/// tabs_open ride (wired to the approval prompt + visited-set
 /// seeding). Returns whether the outbound call may proceed.
 typedef BridgeExfilAsk = Future<bool> Function(
   OutboundKind kind,
@@ -219,7 +219,7 @@ const Map<String, (OutboundKind, List<int>)> bridgeOutboundMethods = {
 ///
 /// [visitedOrigins] wires the exfil gate for the navigation/download
 /// bridge methods — the SAME set + ask the curated tabs_open /
-/// downloads_start ride. Null (gate unwired) keeps calls ungated, the
+/// equivalent would. Null (gate unwired) keeps calls ungated, the
 /// host's choice.
 Future<void> registerBridgeTools(
   ToolRegistry registry,
@@ -391,7 +391,7 @@ Future<void> registerBridgeTools(
         }
 
         // Exfil gate: navigation/download-capable methods ride the SAME
-        // visited-origins gate as the curated tabs_open/downloads_start
+        // visited-origins gate as the curated tabs_open
         // (a prompt-injected page must not exfil through a fresh
         // chrome.tabs.create({url}) the curated tools would have gated).
         try {

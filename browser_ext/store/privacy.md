@@ -10,6 +10,13 @@ the agent drives Chrome through a generic chrome.* bridge
 nothing leaves the machine except user-instructed requests to the
 user's OWN configured model provider.
 
+## gh-1630 note (removed permissions)
+
+`contentSettings`, `downloads`, `fontSettings`, `identity`, and
+`desktopCapture` were REMOVED from the manifest (CWS review: requested-
+but-unused permissions). The extension neither requests nor calls them;
+the disclosures below cover only the retained set.
+
 ## Single purpose description (already filled)
 
 `fa — your agent in this browser: the full fa app in the side panel, page powers for the agent.`
@@ -41,11 +48,6 @@ only.
 when the user asks ("copy the answer", "put the extracted table on my
 clipboard").
 
-**contentSettings** — On user request the agent inspects and adjusts
-per-site content settings (e.g. enabling JavaScript or notifications for
-a site the user is automating) so user-instructed workflows run
-correctly.
-
 **contextMenus** — Adds fa's right-click entries ("Ask fa about this
 selection/page/link") so the user can invoke the agent in context. One
 of the primary user entry points into the extension.
@@ -67,25 +69,11 @@ rules for a workflow (e.g. block trackers on a page being tested,
 simulate offline, strip a header that breaks an automation the user
 asked for). Rules are scoped to the user's task.
 
-**downloads** — The agent saves and manages files when the user asks
-("download all PDFs linked here", "save this generated report"). Also
-used to export fa's own artifacts (chat exports, screenshots) at the
-user's request.
-
-**fontSettings** — Read-only inspection of font settings when the user
-asks the agent to diagnose rendering/readability issues of a page. Not
-used to change anything without an explicit user instruction.
-
 **history** — On the user's instruction the agent searches and reads
 browsing history ("find that article I read yesterday", "reopen the
 tabs from this morning"). History is processed locally; it is only
 transmitted when the user explicitly asks the agent to summarize or
 share it with the user's own model provider.
-
-**identity** — Supports optional sign-in flows the user initiates (e.g.
-account-backed features) via Chrome's identity plumbing. fa itself
-works fully keyless/local; no identity data is collected by the
-developer.
 
 **idle** — Lets the agent detect user idleness so long-running
 user-started automations pause/resume politely (don't type into a page
@@ -189,11 +177,6 @@ user's task involves.
 Used for inspection/coordination, not modification; no request data
 leaves the device except inside user-instructed summaries to the user's
 own provider.
-
-**desktopCapture** — On explicit user request only: share/record the
-screen or a window when the user asks the agent to look at something
-outside the browser ("help me with this dialog in another app").
-Requires Chrome's own picker consent every time.
 
 **pageCapture** — Saves a page as MHTML when the user asks ("archive
 this page", "save a snapshot before you change it"). Snapshots are

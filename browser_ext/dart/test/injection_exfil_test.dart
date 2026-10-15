@@ -234,22 +234,9 @@ void main() {
       },
     );
 
-    test(
-      'downloads_start cross-origin requires approval; visited passes',
-      () async {
-        final (reg, chrome) = _reg(visited: {'https://a.example'});
-        await expectLater(
-          _run(reg, 'downloads_start', {
-            'url': 'https://cdn.other.example/f.bin',
-          }),
-          throwsA(_err('approval_required')),
-        );
-        final out = await _run(reg, 'downloads_start', {
-          'url': 'https://a.example/f.bin',
-        });
-        expect(out, contains('started download'));
-      },
-    );
+    // downloads_start coverage went with the tool (gh-1630): the
+    // `download` OutboundKind stays in the gate as the seam the real
+    // feature re-registers through (gh-1630 F2 second tier).
 
     test('cross-origin ASKS the host when wired — allow proceeds', () async {
       // Regression: the gate used to throw approval_required WITHOUT ever

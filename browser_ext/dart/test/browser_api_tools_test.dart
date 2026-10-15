@@ -50,9 +50,6 @@ const _expectedNames = [
   'bookmarks_add',
   'bookmarks_update',
   'bookmarks_remove',
-  'downloads_start',
-  'downloads_search',
-  'downloads_cancel',
   'cookies_get',
   'cookies_set',
   'cookies_remove',
@@ -100,9 +97,6 @@ const _minArgs = <String, Map<String, Object?>>{
   'bookmarks_add': {'title': 't', 'url': 'https://x.example/'},
   'bookmarks_update': {'id': '1'},
   'bookmarks_remove': {'id': '1'},
-  'downloads_start': {'url': 'https://x.example/f.bin'},
-  'downloads_search': {},
-  'downloads_cancel': {'id': 1},
   'cookies_get': {'url': 'https://x.example/', 'name': 'c'},
   'cookies_set': {'url': 'https://x.example/', 'name': 'c', 'value': 'v'},
   'cookies_remove': {'url': 'https://x.example/', 'name': 'c'},
@@ -213,10 +207,10 @@ void main() {
 
   // -------------------------------------------------------------------------
   group('specs table (UT-T4)', () {
-    test('38 tools (34 core + 4 Settings-gated) with exact names', () {
+    test('35 tools (31 core + 4 Settings-gated) with exact names', () {
       final specs = browserApiToolSpecs();
       expect(specs.map((s) => s.name), unorderedEquals(_expectedNames));
-      expect(specs.map((s) => s.name).toSet().length, 38);
+      expect(specs.map((s) => s.name).toSet().length, 35);
     });
 
     test('exactly four second-tier specs, all others core', () {
@@ -230,7 +224,7 @@ void main() {
         browserApiToolSpecs()
             .where((s) => s.visibility == BrowserToolVisibility.core)
             .length,
-        34,
+        31,
       );
     });
 
@@ -241,7 +235,6 @@ void main() {
         'sessions_recent',
         'history_search',
         'bookmarks_list',
-        'downloads_search',
         'cookies_get',
         'nav_wait',
         'app_screenshot',
@@ -288,7 +281,7 @@ void main() {
           full.names.toSet(),
           browserApiToolSpecs().map((s) => s.name).toSet(),
         );
-        expect(full.length, 38);
+        expect(full.length, 35);
         final specs = {for (final s in browserApiToolSpecs()) s.name: s};
         for (final tool in full.agentTools) {
           expect(tool.tier, specs[tool.name]!.tier, reason: tool.name);
@@ -317,7 +310,7 @@ void main() {
         gated.names.toSet(),
         browserApiToolSpecs().map((s) => s.name).toSet(),
       );
-      expect(gated.length, 38);
+      expect(gated.length, 35);
     });
 
     test('enabled + NOT granted → hidden (capability floor)', () async {
@@ -327,7 +320,7 @@ void main() {
         enabledSecondTier: secondTierToolNames(),
       );
       expect(gated.names, everyElement(isNot(isIn(secondTierToolNames()))));
-      expect(gated.length, 34);
+      expect(gated.length, 31);
     });
 
     test(
@@ -335,7 +328,7 @@ void main() {
       () async {
         final gated = await _reg(chrome); // nothing enabled
         expect(gated.names, everyElement(isNot(isIn(secondTierToolNames()))));
-        expect(gated.length, 34);
+        expect(gated.length, 31);
       },
     );
 
@@ -357,7 +350,7 @@ void main() {
       await chrome.revokePermissions(['search']);
       await syncSecondTierTools(reg, surface, secondTierToolNames());
       expect(reg.names, everyElement(isNot(isIn(secondTierToolNames()))));
-      expect(reg.length, 34); // core unaffected
+      expect(reg.length, 31); // core unaffected
     });
 
     test('sync is idempotent: double-apply does not duplicate', () async {
@@ -369,9 +362,9 @@ void main() {
         enabledSecondTier: {'top_sites'},
       );
       await syncSecondTierTools(reg, surface, {'top_sites'});
-      expect(reg.length, 35);
+      expect(reg.length, 32);
       await syncSecondTierTools(reg, surface, {'top_sites'});
-      expect(reg.length, 35);
+      expect(reg.length, 32);
     });
 
     test('dynamically granting an optional permission surfaces its tool '
@@ -704,29 +697,9 @@ void main() {
       expect(tree[0].children, isEmpty);
     });
 
-    test('downloads_start', () async {
-      final out = await _run(reg, 'downloads_start', {
-        'url': 'https://x.example/f.bin',
-      });
-      expect(out, contains('started download'));
-      expect(await chrome.downloads.search(query: 'f.bin'), hasLength(1));
-    });
-
-    test('downloads_search', () async {
-      await chrome.downloads.download(url: 'https://x.example/f.bin');
-      final out = await _run(reg, 'downloads_search', {'query': 'x.example'});
-      final list = jsonDecode(out) as List<Object?>;
-      expect(list, hasLength(1));
-    });
-
-    test('downloads_cancel', () async {
-      final id = await chrome.downloads.download(
-        url: 'https://x.example/f.bin',
-      );
-      await _run(reg, 'downloads_cancel', {'id': id});
-      final items = await chrome.downloads.search();
-      expect(items.single.state, 'interrupted');
-    });
+    // downloads_* tools: removed with the `downloads` permission (gh-1630).
+    // The FakeChrome.downloads facade stays — it is the seam the real
+    // feature (gh-1630 F2 second tier) re-registers through.
 
     test('cookies_get', () async {
       await chrome.cookies.set(

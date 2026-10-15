@@ -743,8 +743,10 @@ void main() {
     });
 
     test('curated specs untouched: browserApiToolSpecs identical set', () {
-      // The curated family must still carry exactly its 39 specs.
-      expect(browserApiToolSpecs().length, 38);
+      // The curated family must still carry exactly its 35 specs (the
+      // gh-1630 permission removal took the three downloads_* specs with
+      // it; the count pin catches accidental spec drift).
+      expect(browserApiToolSpecs().length, 35);
     });
 
     test('both tools are read-tier static (the risk ask is dynamic)',

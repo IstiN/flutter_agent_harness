@@ -195,13 +195,45 @@ void main() {
     test('manifest permission no tool claims → dead_permission', () {
       final tabsRow = manifestEntries().firstWhere((e) => e.tool == 'tabs');
       final violations = checkMatrix(
-        manifestPermissions: {'tabs', 'downloads'},
+        manifestPermissions: {'tabs', 'unlisted.permission'},
         entries: [tabsRow],
         registeredToolNames: {'tabs'},
       );
       expect(violations, hasLength(1));
       expect(violations.single.kind, 'dead_permission');
-      expect(violations.single.detail, contains('downloads'));
+      expect(violations.single.detail, contains('unlisted.permission'));
+    });
+
+    test('gh-1630: the five dead-permission rows are excluded, on the '
+        'record', () {
+      for (final dead in const [
+        'downloads',
+        'identity',
+        'contentSettings',
+        'fontSettings',
+        'desktopCapture',
+      ]) {
+        final row = manifestEntries().firstWhere((e) => e.tool == dead);
+        expect(row.tier, MatrixTier.excluded,
+            reason: '$dead must stay absent from manifest and registry');
+        expect(row.rationale, isNotNull, reason: '$dead needs its rationale');
+        expect(row.rationale, contains('gh-1630'));
+      }
+      final everywhere = {
+        ...corePermissions(),
+        ...secondTierOptionalPermissions,
+      };
+      for (final dead in const [
+        'downloads',
+        'identity',
+        'contentSettings',
+        'fontSettings',
+        'desktopCapture',
+      ]) {
+        expect(everywhere, isNot(contains(dead)),
+            reason: '$dead row moved to excluded — it must not be required '
+                'of any manifest profile');
+      }
     });
 
     test('core tool whose permission the manifest lacks → ghost_tool', () {
@@ -330,7 +362,6 @@ void main() {
         'readingList',
         'pageCapture',
         'tabCapture',
-        'desktopCapture',
         'userScripts',
       });
     });
