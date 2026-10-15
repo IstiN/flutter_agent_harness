@@ -217,19 +217,22 @@ extension ModelCapabilityCapsSettings on AgentCli {
     String provider,
     String modelId,
     String field,
-  ) => _removeCapabilityYaml(
-    ['models', 'overrides', provider, modelId, field],
-    'models.overrides.$provider.$modelId.$field removed',
-  );
+  ) => _removeCapabilityYaml([
+    'models',
+    'overrides',
+    provider,
+    modelId,
+    field,
+  ], 'models.overrides.$provider.$modelId.$field removed');
 
   /// Removes the whole override entry for (provider, modelId).
-  Future<void> _removeCapabilityOverride(
-    String provider,
-    String modelId,
-  ) => _removeCapabilityYaml(
-    ['models', 'overrides', provider, modelId],
-    'models.overrides.$provider.$modelId removed',
-  );
+  Future<void> _removeCapabilityOverride(String provider, String modelId) =>
+      _removeCapabilityYaml([
+        'models',
+        'overrides',
+        provider,
+        modelId,
+      ], 'models.overrides.$provider.$modelId removed');
 
   /// The shared capability remove path (one body for both twins): removes
   /// the yaml node at [segments] from the USER config file, validated with
@@ -270,6 +273,7 @@ extension ModelCapabilityCapsSettings on AgentCli {
       io.writeln('could not write $path');
       return;
     }
+    await _notifyUserConfigFileChanged();
     io.writeln('$message → $path (${applicationNote('models')})');
     await _applyCapabilityEdit(segments[2], segments[3]);
   }

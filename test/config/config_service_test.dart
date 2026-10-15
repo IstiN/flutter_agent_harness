@@ -7,6 +7,7 @@ library;
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/cli/cli_config.dart';
+import 'package:flutter_agent_harness/src/agent/stuck_tool.dart';
 import 'package:flutter_agent_harness/src/config/config_service.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/power_config.dart';
@@ -925,6 +926,76 @@ void main() {
       expect(() => validateAgentSection(agentNode), returnsNormally);
       expect(() => CliConfig.fromYaml(raised), returnsNormally);
       expect(CliConfig.fromYaml(raised).contextWindowCap, 1000000);
+    });
+
+    test('agent validation agrees on the misuseBreaker kill switch '
+        '(gh-1572)', () {
+      // gh-1572 makes the emitter render `agent.misuseBreaker: false`;
+      // the strict mirror must accept exactly what the boot parser
+      // accepts, or `fa config check` false-fails on fa's own output and
+      // the settings-hub agent upserts refuse to save.
+      final bad = loadYaml('agent:\n  misuseBreaker: off\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(bad), throwsConfigException);
+      expect(() => validateAgentSection(bad['agent']), throwsConfigException);
+      final good = loadYaml('agent:\n  misuseBreaker: false\n') as YamlMap;
+      final agentNode = good['agent'] as YamlMap;
+      expect(() => validateAgentSection(agentNode), returnsNormally);
+      expect(() => CliConfig.fromYaml(good), returnsNormally);
+      expect(CliConfig.fromYaml(good).misuseBreaker, isFalse);
+    });
+
+    test('agent validation agrees on the stuckTool section (gh-1054)', () {
+      // The emitter renders `agent.stuckTool:` when configured; the
+      // mirror validates it with the section's own strict parser so the
+      // two can never disagree about a key again.
+      final bad = loadYaml('agent:\n  stuckTool: 3\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(bad), throwsConfigException);
+      expect(() => validateAgentSection(bad['agent']), throwsConfigException);
+      final good =
+          loadYaml('agent:\n  stuckTool:\n    floorSeconds: 90\n') as YamlMap;
+      final agentNode = good['agent'] as YamlMap;
+      expect(() => validateAgentSection(agentNode), returnsNormally);
+      expect(() => CliConfig.fromYaml(good), returnsNormally);
+      expect(
+        CliConfig.fromYaml(good).stuckTool?.floor,
+        const Duration(seconds: 90),
+      );
+    });
+
+    test('everything the agent emitter renders passes the strict '
+        'mirror validator', () {
+      // Emitter↔validator parity, mechanically: every shape
+      // `_agentSectionYaml` can render (cli_config.dart) must validate
+      // (the same drift class the copyWith refactor closed for the
+      // constructor — gh-1572 rework).
+      final shapes = [
+        CliConfig(contextWindowCap: 256000),
+        CliConfig(agentLoadMode: 'pi'),
+        CliConfig(misuseBreaker: false),
+        CliConfig(stuckTool: StuckToolConfig(floor: Duration(seconds: 90))),
+        CliConfig(
+          contextWindowCap: 256000,
+          agentLoadMode: 'omp',
+          misuseBreaker: false,
+          stuckTool: const StuckToolConfig(),
+        ),
+      ];
+      for (final config in shapes) {
+        final doc = loadYaml(config.toYaml()) as YamlMap;
+        final agentNode = doc['agent'];
+        expect(
+          agentNode,
+          isA<YamlMap>(),
+          reason: 'emitter: ${config.toYaml()}',
+        );
+        expect(
+          () => validateAgentSection(agentNode),
+          returnsNormally,
+          reason:
+              'the emitter wrote a section the validator rejects:\n'
+              '${config.toYaml()}',
+        );
+      }
     });
   });
   group('host capability (AC11)', () {
