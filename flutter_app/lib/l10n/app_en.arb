@@ -231,6 +231,65 @@
   "@launcherSearchHint": {},
   "launcherTabWidgets": "Widgets",
   "@launcherTabWidgets": {},
+  "launcherLoadUnpacked": "Load unpacked",
+  "@launcherLoadUnpacked": {},
+  "unpackedLoadTitle": "Load unpacked widget",
+  "@unpackedLoadTitle": {},
+  "unpackedLoadIdLine": "id: {id}",
+  "@unpackedLoadIdLine": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "unpackedLoadNetworkNote": "This widget declares network access — it can fetch from the network (jsr.fetchJson).",
+  "@unpackedLoadNetworkNote": {},
+  "unpackedLoadCommandsNote": "Shell commands it may run (jsr.exec): {commands}",
+  "@unpackedLoadCommandsNote": {
+    "placeholders": {
+      "commands": {}
+    }
+  },
+  "unpackedLoadReplaceNote": "A widget with this id already exists ({source}, v{version}). Replacing overwrites its code; the saved data (storage.json) is kept.",
+  "@unpackedLoadReplaceNote": {
+    "placeholders": {
+      "source": {},
+      "version": {}
+    }
+  },
+  "unpackedLoadConfirm": "Load",
+  "@unpackedLoadConfirm": {},
+  "unpackedLoadReplaceConfirm": "Replace",
+  "@unpackedLoadReplaceConfirm": {},
+  "unpackedLoadErrorTitle": "Widget was not loaded",
+  "@unpackedLoadErrorTitle": {},
+  "unpackedLoadDone": "{name} loaded from the folder",
+  "@unpackedLoadDone": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "unpackedLoadFailed": "Load failed: {error}",
+  "@unpackedLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "unpackedSourceChip": "unpacked",
+  "@unpackedSourceChip": {},
+  "unpackedSourceBadgeTooltip": "Loaded from a local folder (unpacked)",
+  "@unpackedSourceBadgeTooltip": {},
+  "unpackedSourceCatalog": "installed from the catalog",
+  "@unpackedSourceCatalog": {},
+  "unpackedSourceUnpacked": "loaded from a local folder",
+  "@unpackedSourceUnpacked": {},
+  "unpackedSourceAgent": "created by the agent",
+  "@unpackedSourceAgent": {},
+  "unpackedSourceUnknown": "installed from an unknown source ({source})",
+  "@unpackedSourceUnknown": {
+    "placeholders": {
+      "source": {}
+    }
+  },
   "settingsResetApps": "Reset apps",
   "@settingsResetApps": {},
   "settingsResetAppsHint": "Restore the widget apps to their initial state",

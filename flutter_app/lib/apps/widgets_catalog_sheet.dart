@@ -10,6 +10,7 @@ import 'package:fa/apps/app_load_error.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/js_app_navigation.dart';
+import 'package:fa/apps/unpacked_loader.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
@@ -561,6 +562,23 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
                             style: theme.textTheme.bodySmall,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      // Provenance (gh-1616 I3): a locally unpacked widget
+                      // carries the chip; agent-created apps (no install
+                      // record) render nothing.
+                      if (app.installSource == UnpackedWidgetLoader.origin)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Chip(
+                            label: Text(
+                              context.l10n.unpackedSourceChip,
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
                           ),
                         ),
                     ],
