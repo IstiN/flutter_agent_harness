@@ -58,6 +58,9 @@ final _turns = [
 /// parens carry the RUNNING count — no done/lost noise on the live line).
 const _allRunning = 'Background jobs (10)';
 
+/// The drained collapsed board row: all ten settled, nothing left running.
+const _allDrained = 'Background jobs (10) · 0 running · 10 done · 0 lost';
+
 /// One settle notice per finished job (`[bash] sh-… exited(code)`); exactly
 /// ten of these prove every command started AND finished — the proof set
 /// lives in the harness as [shellJobSettleNotice] / `settledJobNumbers`
@@ -172,23 +175,30 @@ void main() {
           '$settledNumbers',
     );
 
-    // ── THE DRAIN: `0 running`, one terminal card, no live row ────────
-    await harness.waitForScreen(
-      '0 running',
+    // ── THE DRAIN: the terminal card, no live row ─────────────────────
+    // Anchored on the FULL drained collapsed row, never the `0 running`
+    // substring: the peak frame's `10 running` CONTAINS `0 running`, so
+    // the old wait matched the still-full board instantly and anchored
+    // nothing — it held only because the raw-side drain predicate above
+    // plus the settle window happened to order the repaint first. The
+    // exact row can appear only after the board itself has drained
+    // (issue #1365).
+    final drainedScreen = await harness.waitForScreen(
+      _allDrained,
       timeout: const Duration(seconds: 30),
+    );
+    expect(
+      drainedScreen,
+      contains(_allDrained),
+      reason:
+          'the settled collapsed turn hands ONE terminal summary '
+          'card to the transcript, drained:\n$drainedScreen',
     );
     await harness.waitForOutput(settleMs: 300);
     final after = harness.viewportLines;
     expectComposerReserved(after, 80);
     _writeShot(harness, '302_shell_job_countdown_0_running');
     final screen = after.join('\n');
-    expect(
-      screen,
-      contains('Background jobs (10) · 0 running · 10 done · 0 lost'),
-      reason:
-          'the settled collapsed turn hands ONE terminal summary '
-          'card to the transcript, drained:\n$screen',
-    );
     expect(
       _stuckRunning.allMatches(screen),
       isEmpty,
