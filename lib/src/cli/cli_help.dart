@@ -597,6 +597,7 @@ SKILLS AND CONTEXT FILES
   /provider [name] [baseUrl] [token] | custom | aiin [--no-browser] [key [apiKey]]
                      | openrouter oauth [headless] [--no-browser]
                      | chatgpt oauth [headless] [--no-browser] | /provider copilot
+                     | /provider export
                      | codemie sso [orgUrl] [--no-browser] | dial setup | kimi
                      show or switch the provider/endpoint (token optional,
                      saved to the OS secure store when available); custom is
@@ -626,12 +627,19 @@ SKILLS AND CONTEXT FILES
                     /provider copilot connects a GitHub Copilot account via
                     the GitHub device flow (open the shown URL, enter the
                     code; also works headless) or by pasting an existing
-                    GitHub token; the account saves as a named entry
+                    GitHub token; a pasted fine-grained PAT (github_pat_…)
+                    rides PAT mode — fa uses it directly against the
+                    Copilot API, no token exchange; the account saves as a
+                    named entry
                     (copilot-<login>, individual/business/enterprise/custom
                     endpoint) with its token in the secure store under
                     FA_KEY_COPILOT_<NAME> (env FA_COPILOT_CLIENT_ID
                     overrides the device-flow client id); the short-lived
                     Copilot token refreshes automatically
+                    /provider export copies the saved Copilot account's
+                    token to the clipboard (several accounts → the account
+                    picker) — one line: token copied to clipboard; the
+                    token itself never prints
   /providers         provider queue editor (list/add/remove/move/test)
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode
