@@ -45,6 +45,7 @@ import 'hep.dart';
 import 'stream_json.dart';
 import 'key_event.dart';
 import 'key_status.dart';
+import 'model_presets.dart' show knownModelPresets;
 import 'provider_error_text.dart';
 import 'sigint_action.dart';
 import '../agent/agent_loop.dart';
@@ -269,6 +270,7 @@ import 'tui_chrome.dart';
 import 'termios_guard.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
+export 'model_presets.dart' show bundledCatalogModelIds, knownModelPresets;
 
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
