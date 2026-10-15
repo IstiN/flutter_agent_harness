@@ -152,8 +152,7 @@ void main() {
     test('carries the raw content without JS and exactly one h1', () {
       final html = site.renderBlogPostPage(
         post(
-          body:
-              '![Hello & <welcome>](assets/cover.png)\n\n# Hello & <welcome>\n\nDistinctive core text.',
+          body: '![Hello & <welcome>](assets/cover.png)\n\n# Hello & <welcome>\n\nDistinctive core text.',
         ),
       );
       expect(html, contains('Distinctive core text'));
@@ -227,8 +226,7 @@ void main() {
       final d = site.DocsPage(
         source: site.docsRegistry.first,
         title: 'Tool availability',
-        body:
-            'Body text with [a relative link](redaction.md) and [an outside one](backend-agent-mode.md).',
+        body: 'Body text with [a relative link](redaction.md) and [an outside one](backend-agent-mode.md).',
         description: 'desc',
         raw: '# Tool availability\n\nraw',
       );

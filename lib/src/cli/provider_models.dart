@@ -244,9 +244,9 @@ extension on AgentCli {
   /// together: a folded row carries the union of its identities' models.
   int _providerModelCount(String name) {
     final id = canonicalProviderName(name);
-    return _crossProviderCandidates(
-      '',
-    ).where((e) => canonicalProviderName(e.$1) == id).length;
+    return _crossProviderCandidates('')
+        .where((e) => canonicalProviderName(e.$1) == id)
+        .length;
   }
 
   /// Step 2 of the two-step model pick: the chosen provider's model list
