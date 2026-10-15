@@ -13,6 +13,135 @@ block a release again.
 
 ## Unreleased
 
+- fix(bindings): gh-1624 — the gh-1570 binding preflight no longer kills
+  translating-proxy factories. `_validateModelEndpoint`'s vendor-prefix
+  verdict was fatal on ANY endpoint, so `FA_PROVIDER_TYPE=anthropic` +
+  bifrost's `/anthropic` path + `zai/glm-5.3` exit-64'd every boot on
+  1.0.576 (the prefix is a routing key on a translating proxy, not a
+  dialect declaration). The vendor-prefix check now fires ONLY on the
+  endpoints that carry a dialect verdict — the three family-exclusive
+  canonical vendor endpoints (api.anthropic.com, api.openai.com,
+  generativelanguage), mirroring the family verdict's scope: those keep
+  the gh-1570 fail-fast, ROUTERS (OpenRouter/Copilot/DIAL/kimi — the
+  prefix is a routing key there too; OpenRouter's canonical ids are
+  `anthropic/claude-*`) and unknown/private endpoints carry the mismatch
+  as a `ProviderModelBinding.warnings` entry, never exit 64. The warning
+  is rendered on EVERY resolve path (gh-1624 review): the `FA_PROVIDER_*`
+  boot notice, the provider queue (per entry at boot, on queue reload,
+  and in `/provider queue test`), and the `--model`/`--base-url` flag
+  revalidation — a rider never boots silently.
+  **Breaking-change note for 1.0.576 upgraders behind proxy
+  factories: the migration is the `wire:` FA_PROVIDER_CONFIG key** —
+  documented now (README env-preconfig section,
+  docs/agents/providers.md §Translating proxies, `--help`) with its
+  caveat: the override engages only when the declared wire DIFFERS from
+  the provider record's own kind (`record anthropic + wire: anthropic`
+  still runs the checks). REG matrix (AC1/AC2/AC3) pinned in
+  `test/model_roles/provider_model_binding_test.dart`; AC4 IT drives a
+  bifrost-shaped loopback proxy through the production anthropic adapter
+  (`test/model_roles/bifrost_proxy_binding_test.dart`).
+- gh-1596: the first-run wizard (`site/setup.sh`) no longer crashes or
+  corrupts input under `curl | sh` on dash (Ubuntu sh) or busybox ash
+  (Alpine): `scripts/gen_installers.dart` now renders the provider/mode/
+  approval menus from the live provider catalog into plain POSIX sh — the
+  bashisms that killed dash (`printf -v`, `read -p`) and silently corrupted
+  busybox ash are gone; the hidden API-key prompt uses `stty -echo` + a
+  by-name `read` (dash has no `read -s`) and the key never rides printf
+  argv; EOF/Ctrl-C mid-wizard aborts non-zero with no half-written
+  `~/.fah`, and non-TTY runs print guidance and exit 1. The wizard's temp
+  config is `mktemp`-created (no predictable, symlink-followable fixed
+  path). A new path-triggered `installer-portability` CI leg proves the
+  script under dash + busybox ash (ubuntu) and bash (macOS) on every
+  `site/**` or generator change.
+- fix(cli): gh-1572 — `fa` boot no longer rewrites `~/.fah/config.yaml`
+  from a lossy config. `persistConfig` (bin/fah_runapp.dart) built a
+  fresh `CliConfig` carrying only some fields and `persistConfig()` ran
+  unconditionally at boot, so every launch silently dropped the user's
+  `spills:`, `subagents:`, `jobs:`, `headless:`, `agent:`, `quota:`,
+  `tui:`, `trajectory:`, `waiting:`, `power.hold` and `auto_update`
+  settings (first reported on 1.0.547). Three cooperating fixes: the
+  boot save is now `saved.copyWith(<live overlays>)` so every parsed
+  section rides along by construction; `CliConfig.copyWith` replaces the
+  drifted hand-rolled `withCustomProviders` field list (itself dropping
+  spills/subagents/waiting/jobs/agentMode/misuseBreaker/streamThinking
+  inside `saveCliConfig`'s merge step); the `_diskPreservedSections`
+  disk backstop covers every known top-level key. `spills:` renders in
+  `toYaml` (new `SpillsConfig.toYaml`) and `agent.misuseBreaker: false`
+  persists too; an unchanged save no longer rewrites the file at all.
+  Rework round: the boot snapshot re-syncs from disk after every
+  sanctioned mid-session settings write (`onUserConfigFileChanged` — a
+  cleared context cap, an `auto_update` key drop or a global compaction
+  pick is no longer resurrected/overwritten by the next save in the
+  same session); `validateAgentSection` (the strict `fa config check` /
+  `config set` / settings-hub mirror) accepts the emitter's
+  `agent.misuseBreaker` and `agent.stuckTool` keys so `fa config check`
+  never false-fails on fa's own output; clearing the context cap drops
+  only the cap key instead of the whole `agent:` block (the sibling
+  `mode:`/`misuseBreaker:` keys survive); and the `providersQueue:`
+  block (no typed renderer) joins the disk backstop so a save can never
+  silently delete the user's queue. Rework round 2 (merge + guards):
+  `validateAgentSection`'s per-key switch became the `_agentKeyValidators`
+  table (the two gh-1572 keys pushed the switch form to complexity 13 —
+  over the repo's CRAP ratchet; the table keeps the mirror complete at
+  complexity 4), and the last two direct USER-config writers —
+  `_writeTtsrSection` and `_writeMcpSection` — fire the re-sync hook, so
+  a mid-session ttsr rule toggle or mcp server edit survives the next
+  persist too (the writer roster in `settings_flow_config_sync.dart` is
+  now exhaustive).
+- gh-1606: the `copilot` provider accepts fine-grained PATs
+  (`github_pat_…`) directly — PAT mode skips the `copilot_internal/v2/token`
+  exchange entirely (GitHub 404s every PAT exchange) and sends the raw PAT
+  as the Bearer against the configured Copilot base URL with the official
+  Copilot CLI's first-party identity headers
+  (`copilot-integration-id: copilot-developer-cli`,
+  `user-agent: copilot/<fa-version> (<os>) term/unknown`, installed by the
+  host at startup). OAuth device-flow tokens keep the exchange +
+  proactive-refresh flow unchanged; a PAT 401/403 surfaces the error
+  instead of a doomed refresh retry. Headless `COPILOT_GITHUB_TOKEN` now
+  works with a PAT. Connect flow: the paste hint explains PAT mode, the
+  dead-PAT case surfaces at the model fetch, and `/provider export` copies
+  the saved Copilot account's full token to the clipboard (account picker
+  on several entries; the token never prints to the transcript).
+
+- gh-1575: macOS clipboard paste fixed for TIFF-only pasteboards + the
+  Ctrl+V text fallback. `_readMacos` probes `«class TIFF»` after PNGf/JPEG
+  miss and converts via `sips -s format png` (a Preview/browser copy used
+  to dead-end on `clipboard holds no image`; a failed conversion keeps the
+  unavailable fall-through and every scratch file is cleaned up); new
+  `readPasteboardText` (`pbpaste` / xclip+wl-paste / PowerShell
+  Get-Clipboard) behind the same injectable `ProcessRunner`/`platform:`
+  seam, and Ctrl+V with a TEXT clipboard now inserts the clipboard text
+  into the composer instead of printing the image probe's dead-end reason
+  — bracketed-paste routing, gesture pairing and silent-failure semantics
+  unchanged. Review pass: the Windows `Get-Clipboard` read pins UTF-8
+  console output and normalizes embedded `\r\n` (OEM-code-page mojibake),
+  the Linux text backends pin `text/plain;charset=utf-8` (an image-only
+  clipboard can no longer leak bytes as "text"), the library doc no longer
+  overclaims the `FA_FAKE_PASTEBOARD` seam, and `FaTuiCallbacks` moved to
+  a `fa_tui_callbacks.dart` part file keeping `fa_tui.dart` under the
+  2800-line gate.
+
+- gh-1555 (W1, lazy/windowed-everywhere reads): the legacy full-open call
+  sites migrate to windowed opens, so a session ledger past the gh-1073
+  2 GiB full-open backstop stays openable on every user-facing read path.
+  The TUI session picker, `/resume`, and the boot name-resolution scan
+  open windowed and resolve the display name through paged reads; the
+  subagent transcript preview opens the child windowed (tail only); the
+  `_loadSession` marathon fallback no longer degenerates to a refused
+  full open when the boundary walk exhausts its page cap (it proceeds
+  with the tail-anchored windowed session; the boot cap owns over-window
+  residue); and the headless `fa trajectory` resolver opens windowed,
+  reading the whole ledger for the cost/inspect views through the new
+  `SessionTree.ensureWholeLedgerResident` — a sequential forward scan in
+  bounded strips (`WindowedSessionStorage.loadAllOlder`), not the
+  boundary-walk's doubling strips (whose per-strip record cap measured
+  ~13x read/parse amplification over the whole file). The same change
+  block-prepends paged chunks in `_indexChunk` (one `insertAll` per
+  list), removing an O(n²) the suspended-eviction walk paid per record.
+  Trajectory export streaming (AC3a), split-and-retain rotation
+  activation (W2), and the opt-in write-side caps (W3) remain follow-up
+  work.
+
 - gh-1605: the FinalizeGate gains a "grader parity" named check. A
   produced entry point (script/CLI the verifier will run itself) is only
   verified when it survives the grader's own invocation: the checklist
@@ -57,6 +186,35 @@ block a release again.
   wins: a cancel racing the final retry settles `StopReason.aborted` for
   any empty shape (the exit-contract race is pinned by tests), and the
   backoff sleep is cancellation-aware.
+
+- gh-1574: SQLite reads work on installed binaries — bundle libs land where
+  the binary looks. The AOT binary's native-assets resolver reads
+  `<exe_dir>/../lib/<name>` (the `dart build cli` bundle layout), but every
+  POSIX installer copied the bundle libs beside the binary
+  (`<install_dir>/lib`), so `read path=x.db` died with a raw FFI dump
+  (`Couldn't resolve native function 'sqlite3_initialize' … Failed to load
+  dynamic library '~/.local/lib/libsqlite3.dylib'`); it only worked on machines
+  with a manual symlink in `~/.local/lib`. Fixed the layout in all three
+  install paths — `site/install.sh` (incl. the quarantine-xattr pass and the
+  source-build advice), `install_local.sh`, and `fa update`
+  (`bin/self_manage.dart` `copyBundleLibs`, now public and layout-pinned by
+  tests; also aligns Windows `fa update` with `install.ps1`, which was
+  already correct) — plus clean degradation in the FFI engine:
+  `Sqlite3Engine.openReadOnly` classifies the dart:ffi resolver's
+  library-load failure (`isSqliteDynamicLibraryLoadFailure`) and throws a
+  clean `SQLite is unavailable — reinstall or run fa update` note instead of
+  the raw resolver dump; a Dart-level system-library fallback is impossible
+  with package:sqlite3 native assets (build-time asset mapping, no loader
+  override). Installs already broken by the old layout self-heal: on the
+  bundled library's first failed load the binary moves the stale
+  `<exe_dir>/libsqlite3.*` into `<exe_dir>/../lib/` and retries the load
+  (`repairStaleSqliteBundleLayout`) — so one `fa update` suffices (the
+  successor binary repairs on its first SQLite read; a pre-fix binary cannot
+  repair itself), and the stale `<bin>/lib` leftovers disappear as they
+  migrate. The POSIX installers also report a failed lib copy instead of
+  swallowing it (`site/install.sh` warns naming the lib dir; same in
+  `install_local.sh`), and `site/install.sh.template` carries the same
+  layout so regenerating the installers cannot resurrect the old one.
 
 - gh-1556: bench pipeline stops bleeding score + fa deadline awareness.
   Bench: the harbor ladder kill uses the `[f]a` bracket trick and is

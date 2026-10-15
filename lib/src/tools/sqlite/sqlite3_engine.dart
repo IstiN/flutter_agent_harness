@@ -7,17 +7,115 @@ library;
 
 import 'dart:typed_data';
 
+import 'dart:io';
+
 import 'package:sqlite3/sqlite3.dart';
 
 import 'sqlite_reader.dart';
 
+/// One-time successor-side layout repair for installs made before gh-1574
+/// was fixed (gh-1574 r2 review): the pre-fix installers — and one `fa
+/// update` run by a pre-fix binary, whose baked-in copy code still targets
+/// the old layout — leave the bundled libraries in `<exe_dir>/lib`,
+/// which nothing reads. Moves every `libsqlite3.*` found there into the
+/// `<exe_dir>/../lib/` directory the native-assets resolver actually reads,
+/// reporting whether anything moved so the caller can retry the load.
+///
+/// Best-effort and conservative: never throws, never clobbers a file that
+/// already exists at the target, touches only `libsqlite3.*` names (a dev
+/// run's "exe" is the Dart VM, whose directories must not be disturbed),
+/// and returns false on any surprise so the real load error still surfaces.
+bool repairStaleSqliteBundleLayout({String? executablePath}) {
+  try {
+    final exeDir = File(
+      executablePath ?? Platform.resolvedExecutable,
+    ).parent.path;
+    final staleDir = Directory('$exeDir${Platform.pathSeparator}lib');
+    if (!staleDir.existsSync()) return false;
+    final targetDirPath =
+        '$exeDir${Platform.pathSeparator}..${Platform.pathSeparator}lib';
+    if (_normalizeDirPath(staleDir.path) == _normalizeDirPath(targetDirPath)) {
+      return false;
+    }
+    var moved = false;
+    for (final entity in staleDir.listSync()) {
+      if (entity is! File) continue;
+      final segments = entity.uri.pathSegments.where((s) => s.isNotEmpty);
+      final name = segments.isEmpty ? '' : segments.last;
+      if (!name.startsWith('libsqlite3.')) continue;
+      final target = File('$targetDirPath/$name');
+      if (target.existsSync()) continue;
+      target.parent.createSync(recursive: true);
+      try {
+        entity.renameSync(target.path);
+      } on FileSystemException {
+        // Cross-device rename: fall back to copy + delete.
+        entity.copySync(target.path);
+        entity.deleteSync();
+      }
+      moved = true;
+    }
+    return moved;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// [path] with `.`/`..` segments and duplicate separators resolved — used
+/// only for equality checks between two layout paths.
+String _normalizeDirPath(String path) {
+  final parts = <String>[];
+  for (final part in path.split(Platform.pathSeparator)) {
+    if (part.isEmpty || part == '.') continue;
+    if (part == '..' && parts.isNotEmpty && parts.last != '..') {
+      parts.removeLast();
+      continue;
+    }
+    parts.add(part);
+  }
+  return parts.join(Platform.pathSeparator);
+}
+
 /// A [SqliteEngine] opening databases through `package:sqlite3` (FFI).
 final class Sqlite3Engine implements SqliteEngine {
-  /// Creates an engine.
-  const Sqlite3Engine();
+  /// Creates an engine. [openOverride] replaces the real `sqlite3.open`
+  /// (test seam for simulating native-assets library-load failures);
+  /// [layoutRepair] replaces [repairStaleSqliteBundleLayout] (test seam for
+  /// the successor-side layout repair).
+  final SqliteOpen? openOverride;
+
+  final bool Function()? layoutRepair;
+
+  const Sqlite3Engine({this.openOverride, this.layoutRepair});
 
   @override
   SqliteDatabase openReadOnly(String path) {
+    try {
+      return (openOverride ?? _openBundledLibrary)(path);
+    } on ArgumentError catch (error) {
+      // gh-1574: a missing bundled libsqlite3 (installers must place it in
+      // <exe_dir>/../lib) surfaces as the ffi resolver's ArgumentError —
+      // degrade to the clean sqlite-unavailable note instead of the raw FFI
+      // dump. A Dart-level system-library fallback is not possible with
+      // package:sqlite3 native assets (bindings resolve via the build-time
+      // asset mapping; no loader override), so the repair is the layout.
+      if (!isSqliteDynamicLibraryLoadFailure(error)) rethrow;
+      // gh-1574 r2: heal pre-fix installs on the successor side — move the
+      // stale <exe_dir>/libsqlite3.* into <exe_dir>/../lib and retry the
+      // load once, so the first SQLite read on an updated binary repairs
+      // the layout instead of demanding a second `fa update`.
+      if ((layoutRepair ?? repairStaleSqliteBundleLayout)()) {
+        try {
+          return (openOverride ?? _openBundledLibrary)(path);
+        } on ArgumentError catch (retryError) {
+          if (!isSqliteDynamicLibraryLoadFailure(retryError)) rethrow;
+        }
+      }
+      throw StateError(sqliteUnavailableMessage(path));
+    }
+  }
+
+  static SqliteDatabase _openBundledLibrary(String path) {
     final db = sqlite3.open(path, mode: OpenMode.readOnly);
     db.execute('PRAGMA busy_timeout = $sqliteBusyTimeoutMs');
     return _Sqlite3Database(db);

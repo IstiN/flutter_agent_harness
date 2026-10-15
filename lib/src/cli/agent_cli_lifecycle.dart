@@ -97,6 +97,9 @@ extension AgentCliLifecycle on AgentCli {
     // Lease bookkeeping: release OUR lease (graceful exit, #428); a
     // viewer never touches the owner's lease.
     await _releaseSessionLease();
+    // herdr pane registration (issue #1481): released exactly once, real
+    // quit only — awaited so process exit cannot cut the report.
+    await _herdrRelease();
     // A session nobody wrote to leaves no file behind (never a viewer's
     // call — the owner's file is not ours to delete).
     if (_viewer == null) await deleteSessionIfEmpty();
@@ -104,6 +107,13 @@ extension AgentCliLifecycle on AgentCli {
     // a deleted session has no chain to fold and no artifact should
     // outlive it.
     await _flushUsageLedger();
+    // gh-1590: the REPL close flushes the coalesced job-board snapshot
+    // and disarms the throttle's trailing leg — the last thing the
+    // process does must never be a pending ledger write. The obligations
+    // ledger and the subagent registry flush the same way.
+    await _flushJobBoardPersist();
+    await _flushObligationsLedger();
+    await _subagentManager.flushPersist();
   }
 
   /// Warm the endpoint metadata (model list, dial features, reported

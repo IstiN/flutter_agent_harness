@@ -462,6 +462,10 @@ extension SlashCommandDispatch on AgentCli {
         _checkpoints.clear();
         _ttsr?.reset();
         _session = await _createSession();
+        // /reset is an in-process switch to a brand-new session — herdr
+        // must re-report it, or every later report (release included)
+        // carries the stale pre-reset id (#1483 review).
+        _herdrSessionSwitched();
         _syncMailboxPrefix();
         // Re-claim ownership for the new session (#428).
         await _releaseSessionLease();
@@ -893,6 +897,9 @@ extension ProviderQueueEditor on AgentCli {
               queue,
               secrets: _queueSecrets(queue.entries),
               quotaFeed: quotaService,
+              // gh-1624 (review r2): the reloaded queue's unverified
+              // binding mismatches say themselves, like at boot.
+              onBindingWarning: io.writeln,
             );
     } on ConfigException catch (error) {
       io.writeln('queue reload failed: ${error.message}');
@@ -933,7 +940,17 @@ extension ProviderQueueEditor on AgentCli {
     final entry = runtime.entries[index];
     final secrets = _queueSecrets([entry]);
     try {
-      final chain = buildProviderQueueChain([entry], secrets: secrets);
+      // gh-1624 (review r2): the probe's chain rebuild surfaces the
+      // entry's unverified binding warnings before the probe itself.
+      final warnings = <String>[];
+      final chain = buildProviderQueueChain(
+        [entry],
+        secrets: secrets,
+        warnings: warnings,
+      );
+      for (final warning in warnings) {
+        io.writeln(warning);
+      }
       final probe = chain.single;
       final stream = probe.streamForKey(probe.keyRing.currentCredential.value)(
         probe.model,

@@ -1,14 +1,19 @@
 // l10n:ignore-file — prototype redesign ships en-only copy for now
+// (the "Load unpacked" button below is the one deliberate exception: the
+// key already exists for the launcher row, so it is reused).
 import 'dart:async';
 
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_load_error.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/unpacked_load_flow.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:fa/apps/js_app_navigation.dart';
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/folder_picker.dart';
 import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
@@ -461,13 +466,28 @@ class _AppsPanelState extends State<AppsPanel> {
         // Lives OUTSIDE the demo section on purpose — an install with no
         // demo apps (or an old one that already seeded them) must still
         // see the gallery.
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton.icon(
-            onPressed: _openWidgetsCatalog,
-            icon: const Icon(Icons.widgets_outlined, size: 18),
-            label: const Text('Get widgets'),
-          ),
+        Row(
+          children: [
+            const Spacer(),
+            TextButton.icon(
+              onPressed: _openWidgetsCatalog,
+              icon: const Icon(Icons.widgets_outlined, size: 18),
+              label: const Text('Get widgets'),
+            ),
+            // gh-1616: Chrome-parity "Load unpacked" — a local
+            // apps/<id>/ folder loads, validates and persists like a
+            // catalog install. Hidden on hosts with no folder picker.
+            if (createFolderPicker() != null)
+              TextButton.icon(
+                onPressed: () => loadUnpackedWidget(
+                  context,
+                  manager: widget.manager,
+                  appsStore: _appsStore,
+                ),
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: Text(context.l10n.launcherLoadUnpacked),
+              ),
+          ],
         ),
         const SizedBox(height: 8),
 

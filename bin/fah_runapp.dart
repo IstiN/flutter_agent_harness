@@ -2,6 +2,13 @@ part of 'fah.dart';
 
 Future<void> _runApp(List<String> args) async {
   final packageVersion = _packageVersion();
+  // The Copilot PAT-mode user-agent carries the real fa version + OS
+  // (`copilot/<version> (<os>) term/unknown`) — lib/ stays pure Dart, so
+  // the host installs the identity at startup.
+  installCopilotCliIdentity(
+    version: packageVersion,
+    os: Platform.operatingSystem,
+  );
   _applyProviderFilterEnv();
   // Platform-aware chord display (issue #809): Option/Cmd labels on macOS.
   tuiKeyHintDarwin = Platform.isMacOS;
@@ -233,7 +240,11 @@ Future<void> _runApp(List<String> args) async {
   if (home == null || home.isEmpty) {
     _fail('cannot resolve home directory; pass --session-root');
   }
-  late final CliConfig saved;
+  // gh-1572 rework: mutable — the onUserConfigFileChanged hook re-syncs
+  // it after every sanctioned settings-hub write to ~/.fah/config.yaml,
+  // so persistConfig's copyWith base never re-renders the boot values
+  // over a newer sanctioned edit.
+  late CliConfig saved;
   try {
     saved = loadCliConfig(home);
   } on ConfigException catch (error) {
@@ -378,6 +389,7 @@ Future<void> _runApp(List<String> args) async {
     EnvProviderPreconfig? faPreconfig,
     String? unknownSavedProvider,
     String? incompatibleSavedEndpoint,
+    List<String> bindingWarnings,
   })
   cliStartup;
   try {
@@ -419,6 +431,13 @@ Future<void> _runApp(List<String> args) async {
       '"$provider" (the config was not modified; run /provider or edit '
       'the file to switch)',
     );
+  }
+  // gh-1624 (review r2): a `--model`/`--base-url` flag over a restored
+  // binding can author an UNVERIFIED dialect mismatch (private/router
+  // endpoint, foreign `vendor/` prefix) — the flag path says it on the
+  // same channel as the restore warnings above, never silently.
+  for (final warning in cliStartup.bindingWarnings) {
+    stderr.writeln('warning: binding — $warning');
   }
 
   final cwd = effective.cwd ?? Directory.current.path;
@@ -783,6 +802,10 @@ Future<void> _runApp(List<String> args) async {
   // winning scope and the shadowed scopes.
   ProviderQueueRuntime? queueRuntime;
   final queueNotices = <String>[];
+  // gh-1624 (review r2): queue entries carrying an unverified dialect
+  // mismatch say it on the boot — the queue lane replaces main-model
+  // resolution, its warnings never ride silently.
+  final queueBindingWarnings = <String>[];
   try {
     final queue = resolveProviderQueueAtBoot(projectDir: cwd, homeDir: home);
     if (queue.entries.isNotEmpty) {
@@ -792,6 +815,7 @@ Future<void> _runApp(List<String> args) async {
       queueRuntime = ProviderQueueRuntime.build(
         queue,
         secrets: collectQueueSecrets(queue.entries, keyCache),
+        onBindingWarning: queueBindingWarnings.add,
       );
       queueNotices.addAll(queue.notices);
     }
@@ -943,6 +967,13 @@ Future<void> _runApp(List<String> args) async {
     // the `wire:` override in particular must never be invisible (a
     // silenced dialect check is asserted, not forgotten).
     io.writeln('note: binding — ${preconfig.binding.echo()}');
+    // gh-1624: a dialect mismatch that is UNVERIFIED rather than fatal
+    // (vendor-prefixed model id on an unknown/private endpoint — the
+    // translating-proxy class) rides the binding as a warning; the boot
+    // says it once, loudly, and proceeds.
+    for (final warning in preconfig.binding.warnings) {
+      io.writeln('warning: binding — $warning');
+    }
     // A declared level on an adapter that is not wired to the
     // config-carried level is carried but never sent — say so once
     // instead of silently ignoring it (issue #734 E1). gh-1426 wired the
@@ -987,6 +1018,10 @@ Future<void> _runApp(List<String> args) async {
   // the loud handover, never a silent degrade (issue #418).
   for (final notice in queueNotices) {
     io.writeln(notice);
+  }
+  // gh-1624 (review r2): the queue lane's unverified binding mismatches.
+  for (final warning in queueBindingWarnings) {
+    io.writeln(warning);
   }
   if (io.isInteractive && !io.supportsRawMode) {
     io.writeln(
@@ -1313,6 +1348,19 @@ Future<void> _runApp(List<String> args) async {
           if (value != null && value.isNotEmpty) return value;
           return keyCache.read(name);
         },
+        // herdr pane self-report (issue #1481): the gate reads the pane env
+        // herdr exports to every pane process; each report spawns the pane's
+        // herdr binary fire-and-forget (reporter-side short timeout, silent
+        // on failure). Outside herdr the reporter is inert.
+        herdrEnvLookup: (name) => Platform.environment[name],
+        // Kill-on-timeout with drained stdio (bin/fah_herdr_spawn.dart,
+        // unit-pinned by test/bin_herdr_spawn_drain_test.dart): the
+        // reporter abandons a slow report (2s, silent), but the subprocess
+        // must not linger — it is killed inside the kill window so a
+        // wedged herdr can't leak one process per state transition, and
+        // its stdout/stderr are drained so a chatty herdr can't block on
+        // a full pipe until that window.
+        herdrSpawn: spawnHerdrReport,
         // `/key` manages the platform secure store; `/provider ... <token>`
         // persists the token there.
         secureKeys: keyCache,
@@ -1532,6 +1580,21 @@ Future<void> _runApp(List<String> args) async {
         },
         onModeChanged: (_) async => persistConfig(),
         onApprovalChanged: () async => persistConfig(),
+        // gh-1572 rework: the settings-hub flows write ~/.fah/config.yaml
+        // directly (surgical validated-yaml upserts, drop-key edits).
+        // Re-sync the boot snapshot after every sanctioned write so the
+        // next persistConfig renders the freshest on-disk truth instead
+        // of re-rendering the stale boot values over the flow's write.
+        // A reload failure (unparseable file) keeps the previous
+        // snapshot — the next save refuses loudly through its own
+        // merge-step parse, same as before this hook existed.
+        onUserConfigFileChanged: () async {
+          try {
+            saved = loadCliConfig(home);
+          } on ConfigException {
+            // Keep the previous snapshot (see above).
+          }
+        },
         // Global `tools:` toggles (`/tools <id> global`): the CLI owns the
         // live scope; persistConfig writes it back (see below).
         onToolsConfigChanged: () async => persistConfig(),
@@ -1596,29 +1659,31 @@ Future<void> _runApp(List<String> args) async {
   persistConfig = () async {
     await saveCliConfig(
       home,
-      CliConfig(
+      // gh-1572: [saved] is the BASE — every parsed section rides along
+      // (copyWith), so a save can never reset a field the boot did not
+      // mention (the old fresh-`CliConfig` construction silently dropped
+      // spills/subagents/jobs/headless/agent/quota/tui/trajectory/waiting
+      // on every boot). Only the session-live overlays are applied on
+      // top; saveCliConfig's disk-preservation backstop additionally
+      // re-attaches any top-level block the emitter omits. The rework's
+      // onUserConfigFileChanged hook keeps [saved] fresh against the
+      // sanctioned mid-session writes (settings-hub upserts and key
+      // drops), so the base never re-renders over a newer edit.
+      saved.copyWith(
         // The provider/model triple is per-folder now (folder_model_state):
         // keep the LOADED seed in the global config so a `/model` or
         // `/provider` switch in one workspace never leaks into the others
         // across restarts — the switch persists through the folder's state
         // file instead, and explicit --model/--provider/--base-url still
-        // win per launch.
-        providerKind: saved.providerKind,
-        modelId: saved.modelId,
-        baseUrl: saved.baseUrl,
+        // win per launch. copyWith keeps [saved]'s triple unless the live
+        // resolver/registry replaced it below.
         mode: cli.currentMode.name,
         approvalMode: cli.approval.mode.label,
         allowedTools: cli.approval.alwaysAllowedTools,
-        // Prompt overrides are static per session; keep the loaded raw map
-        // so saving doesn't drop the section.
-        promptOverrides: saved.promptOverrides,
         // Roles: the live resolver's config (a `/model` switch re-pins the
         // default chain, the settings-hub agent-models flow pins the
         // smol/subagent chains — possibly creating the resolver on demand).
         modelRoles: cli.config.modelRolesResolver?.config ?? saved.modelRoles,
-        // TTSR rules are static per session; keep the loaded config so
-        // saving doesn't drop the section.
-        ttsr: saved.ttsr,
         // Saved custom providers (the live registry the CLI mutates).
         customProviders:
             cli.config.customProviders?.entries ?? saved.customProviders,
@@ -1629,7 +1694,6 @@ Future<void> _runApp(List<String> args) async {
         // Third-party skills consent (mutable via the startup dialog and
         // `/skills access`); shell-execution policy is static per session.
         skillsAccess: skillsAccess,
-        skillsDisableShellExecution: saved.skillsDisableShellExecution,
         // The live global `skills:` toggles (read from the loaded config,
         // updated by `/skills <name> global`); null before the first
         // resolution, in which case the loaded section is kept as-is.
@@ -1642,26 +1706,14 @@ Future<void> _runApp(List<String> args) async {
         // rebuild, in which case the loaded section is kept as-is
         // (project/runtime scopes stay live and are never persisted).
         tools: cli.globalTools ?? saved.tools,
-        // The remaining static sections are carried through the save so
-        // the whole-file rewrite cannot drop them (issue #288 audit); a
-        // forgetful caller is additionally backstopped by saveCliConfig's
-        // disk-block preservation. The compaction engine is deliberately
-        // NOT carried: the settings-hub Compaction flow's session scope
-        // promises "no file change", and its project/global scopes write
-        // the yaml through the targeted upsert themselves — persisting
-        // the live override here would leak a session (or project) pick
-        // into ~/.fah/config.yaml on the next boot or change hook. The
-        // on-disk `compaction:` block survives via the preservation
-        // backstop instead.
-        memory: saved.memory,
-        redact: saved.redact,
-        a2a: saved.a2a,
-        providerTimeouts: saved.providerTimeouts,
-        images: saved.images,
-        fabric: saved.fabric,
-        // Static per session: keep the loaded `power:` section so a save
-        // never drops the user's sleep-prevention level.
-        powerSleepPrevention: saved.powerSleepPrevention,
+        // `compaction:` rides along from [saved] — the LOADED global
+        // value, never the settings-hub's live override
+        // (AgentCliConfig.liveCompactionEngine) or a project-scope pick,
+        // so a session/project selection cannot leak into the global
+        // file. The strict section only ever holds `engine` +
+        // `judgeBudgetSeconds`, so the typed render is value-faithful;
+        // the global/project flows write their yaml through the targeted
+        // upsert themselves and the session scope persists nothing.
       ),
     );
   };

@@ -146,8 +146,9 @@ extension on AgentCli {
     if (spec != null) return spec.kind;
     final registry = config.customProviders;
     for (final entry in registry?.entries ?? const <CustomProviderEntry>[]) {
-      if (entry.name == name)
+      if (entry.name == name) {
         return resolveCliProviderSpec(entry.apiType)?.kind;
+      }
     }
     return null;
   }
@@ -243,9 +244,9 @@ extension on AgentCli {
   /// together: a folded row carries the union of its identities' models.
   int _providerModelCount(String name) {
     final id = canonicalProviderName(name);
-    return _crossProviderCandidates(
-      '',
-    ).where((e) => canonicalProviderName(e.$1) == id).length;
+    return _crossProviderCandidates('')
+        .where((e) => canonicalProviderName(e.$1) == id)
+        .length;
   }
 
   /// Step 2 of the two-step model pick: the chosen provider's model list
@@ -351,17 +352,17 @@ extension on AgentCli {
             _apiKey,
           );
           _allProvidersModelCache[activeProvider] = ids.isEmpty
-              ? (_knownModels[activeProvider] ?? [_agent.state.model.id])
+              ? (knownModelPresets[activeProvider] ?? [_agent.state.model.id])
               : ids;
         } on Object {
           _allProvidersModelCache[activeProvider] =
-              _knownModels[activeProvider] ?? [_agent.state.model.id];
+              knownModelPresets[activeProvider] ?? [_agent.state.model.id];
         }
       }
       // Always include the active provider's fallback list.
       if (!_allProvidersModelCache.containsKey(activeProvider)) {
         _allProvidersModelCache[activeProvider] =
-            _knownModels[activeProvider] ?? [_agent.state.model.id];
+            knownModelPresets[activeProvider] ?? [_agent.state.model.id];
       }
       await _refreshEnvKeyedProviders(activeProvider);
       _allProvidersCacheRefreshed = true;
@@ -599,7 +600,7 @@ extension on AgentCli {
   /// priority chain is:
   /// 1. The cross-provider cache (preloaded / fetched models).
   /// 2. The legacy active-provider cache (refreshed by `/v1/models`).
-  /// 3. The bundled `_knownModels` list (hardcoded, kept for providers
+  /// 3. The bundled `knownModelPresets` list (hardcoded, kept for providers
   ///    that don't ship a remote catalog entry yet).
   /// 4. The remote catalog's `contextWindows` keys — data-driven from
   ///    `fa1.dev/models-catalog.json` (NOT hardcoded).
@@ -613,7 +614,7 @@ extension on AgentCli {
     } else if (_modelCache.isNotEmpty) {
       known = _modelCache;
     } else {
-      final hardcoded = _knownModels[activeProvider];
+      final hardcoded = knownModelPresets[activeProvider];
       final catalogSeeds = remoteCatalogEnrichment.chatFallbackFor(
         resolveCliProviderSpec(activeProvider)?.kind,
       );
@@ -856,7 +857,7 @@ extension on AgentCli {
         _allProvidersModelCache[activeName] ??
         (_modelCache.isNotEmpty
             ? _modelCache
-            : (_knownModels[provider] ?? [_agent.state.model.id]));
+            : (knownModelPresets[provider] ?? [_agent.state.model.id]));
     if (filter.isEmpty) return all.toList();
     final lower = filter.toLowerCase();
     return all.where((id) => id.toLowerCase().contains(lower)).toList();
@@ -1333,7 +1334,7 @@ extension on AgentCli {
   /// with the live controller + model.
   Future<void> _modelEditInteractive() => interactiveModelEdit(
     current: _agent.state.model,
-    prompt: _tuiController!.openPrompt,
+    prompt: (spec) => _openHerdrPrompt(_tuiController!, spec),
     onResult: io.writeln,
     onApply: _replaceModelLimitsFromEdit,
   );
@@ -1399,36 +1400,9 @@ extension on AgentCli {
 
 /// Known model ids shown by `/models` and the `/model` picker. Maps the
 /// provider name stored on the active [Model] to a short, useful subset.
-///
-/// TDD note: providers whose chat endpoint actually serves a `/v1/models`
-/// response (MiniMax, OpenAI, OpenRouter, Google, Anthropic) are NOT
-/// listed here — `/v1/models` is the source of truth. The list below is
-/// a LAST-RESORT offline fallback only — picked when the live endpoint
-/// fetch fails AND the remote catalog hasn't shipped an entry for that
-/// provider. If you're adding a provider here because `/models` is
-/// empty in the UI, first try `/v1/models` against the real endpoint
-/// with the right auth — adding here is a temporary band-aid.
-const _knownModels = <String, List<String>>{
-  'openrouter': [
-    'anthropic/claude-sonnet-4',
-    'openai/gpt-4o-mini',
-    'google/gemini-2.5-pro',
-    'anthropic/claude-opus-4',
-    'openai/gpt-4.1-mini',
-  ],
-  'kimi': ['k3', 'kimi-for-coding', 'kimi-for-coding-highspeed', 'k3-256k'],
-  'anthropic': ['claude-sonnet-4-5', 'claude-opus-4', 'claude-haiku-4'],
-  'google': ['gemini-2.5-pro', 'gemini-2.0-flash'],
-  'openai': ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
-};
-
-/// Model ids the CLI can put on screen WITHOUT any user config — the
-/// offline fallback catalog above. The cli_visual leak guard subtracts
-/// these from the real-config markers so a hermetic screen is never
-/// flagged for bundled-catalog content (issue #508).
-Set<String> get bundledCatalogModelIds => {
-  for (final ids in _knownModels.values) ...ids,
-};
+/// The table itself lives in `model_presets.dart` (gh-1596 AC6: shared
+/// with the installer generator, which renders the wizard's model menus
+/// from the same source).
 
 /// Formats a token count as a compact preset label (`4K`, `16K`, `1M`).
 String formatTokenPreset(int tokens) {

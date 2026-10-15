@@ -6,19 +6,28 @@
 /// pasteboard instead of touching a real one.
 ///
 /// - macOS: `osascript` writes `«class PNGf»` (fallback `«class JPEG»`) to a
-///   temp file we then read.
+///   temp file we then read. A TIFF-only pasteboard (Preview, most browsers)
+///   holds neither (gh-1575): a third `«class TIFF»` probe lands the bytes in
+///   a scratch file and `sips -s format png` converts them to PNG.
 /// - Linux: `xclip -selection clipboard -t image/png -o`, falling back to
 ///   `wl-paste --type image/png` (Wayland).
 /// - Windows: PowerShell `Get-Clipboard -Format Image` saved as PNG.
-/// - `FA_FAKE_PASTEBOARD=<path>` short-circuits everything and reads that
-///   file — the test seam for the PTY golden tests (and handy for
-///   debugging on a headless box).
+/// - `readPasteboardText` reads the clipboard's plain text the same way
+///   (`pbpaste` / `xclip`+`wl-paste` / PowerShell `Get-Clipboard`) — the
+///   Ctrl+V text fallback when the image probe misses (gh-1575).
+/// - `FA_FAKE_PASTEBOARD=<path>` short-circuits the IMAGE read: that file
+///   is returned as-is — the test seam for the PTY golden tests (and handy
+///   for debugging on a headless box). The TEXT read has no fake seam —
+///   it consults only the real platform pasteboard (script it with the
+///   injected [ProcessRunner]).
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data' show BytesBuilder;
 
 import 'paste_image.dart';
+import 'pasteboard_platform.dart';
 
 /// Runs a process to completion with stdout captured as RAW BYTES
 /// (injectable `Process.run`). Binary mode is load-bearing: the default
@@ -30,19 +39,25 @@ typedef ProcessRunner =
 /// The default [ProcessRunner]: `Process.start` + an explicit stdout byte
 /// fold — `Process.run` has no bytes mode, so the raw pipe is the only
 /// lossless path. stderr is drained and discarded (exit codes carry
-/// failures).
+/// failures). The wait is bounded by [pasteboardProcessTimeout] (gh-1606
+/// review): a wedged reader is killed and the wait surfaces as a
+/// [TimeoutException] — the dispatchers map it into the named
+/// unavailable result like any other read failure.
 Future<ProcessResult> _runBinaryProcess(
   String executable,
   List<String> args,
 ) async {
   final process = await Process.start(executable, args);
-  final stdout = await process.stdout.fold(
-    BytesBuilder(),
-    (builder, chunk) => builder..add(chunk),
-  );
-  await process.stderr.drain<void>();
-  final exitCode = await process.exitCode;
-  return ProcessResult(process.pid, exitCode, stdout.toBytes(), null);
+  final wait = () async {
+    final stdout = await process.stdout.fold(
+      BytesBuilder(),
+      (builder, chunk) => builder..add(chunk),
+    );
+    await process.stderr.drain<void>();
+    final exitCode = await process.exitCode;
+    return ProcessResult(process.pid, exitCode, stdout.toBytes(), null);
+  }();
+  return boundedPasteboardWait(wait, process);
 }
 
 /// The `FA_FAKE_PASTEBOARD` seam: reads the pinned file. `null` = no fake
@@ -56,17 +71,6 @@ PasteboardRead? _readFakePasteboard(String? fake) {
   }
 }
 
-/// The effective platform id (`macos`/`linux`/`windows`): the explicit
-/// [platform] pin wins (unit tests), else the host [Platform]. `null` =
-/// no pasteboard reader for this platform.
-String? _effectivePlatform(String? platform) {
-  if (platform != null) return platform;
-  if (Platform.isMacOS) return 'macos';
-  if (Platform.isLinux) return 'linux';
-  if (Platform.isWindows) return 'windows';
-  return null;
-}
-
 /// Dispatches to the platform reader. Never throws (doc): a missing
 /// xclip/osascript/powershell surfaces as a ProcessException here — turn
 /// it into the named unavailable result the transcript prints as a clean
@@ -77,7 +81,7 @@ Future<PasteboardRead> _readPlatform(
   String? platform,
 ) async {
   try {
-    switch (_effectivePlatform(platform)) {
+    switch (pasteboardPlatform(platform)) {
       case 'macos':
         return await _readMacos(run, tmp);
       case 'linux':
@@ -118,38 +122,196 @@ Future<PasteboardRead> _readMacos(ProcessRunner runner, Directory tmp) async {
     ('«class PNGf»', 'png'),
     ('«class JPEG»', 'jpg'),
   ]) {
-    final target =
-        '${tmp.path}/fa-clipboard-${DateTime.now().microsecondsSinceEpoch}'
-        '.$ext';
-    final script = [
-      'set pngData to (the clipboard as $appleClass)',
-      'set imgFile to (open for access POSIX file "$target" with write permission)',
-      'try',
-      'write pngData to imgFile',
-      'close access imgFile',
-      'on error errStr',
-      'try',
-      'close access imgFile',
-      'end try',
-      'error errStr',
-      'end try',
-    ];
-    final result = await runner('osascript', [
-      for (final line in script) ...['-e', line],
+    final bytes = await _osascriptClipboardClassToFile(
+      runner,
+      tmp,
+      appleClass,
+      ext,
+    );
+    if (bytes != null) return PasteboardImage(bytes);
+  }
+  // gh-1575: TIFF-only pasteboards (an image copied from Preview or a
+  // browser) hold neither PNGf nor JPEG — probe «class TIFF» and convert
+  // to PNG with sips (ships with macOS). A failed conversion keeps the
+  // unavailable fall-through: no silent garbage bytes ever become a chip.
+  final tiff = await _osascriptClipboardClassToFile(
+    runner,
+    tmp,
+    '«class TIFF»',
+    'tiff',
+  );
+  if (tiff != null) {
+    final png = await _convertTiffToPng(runner, tmp, tiff);
+    if (png != null) return PasteboardImage(png);
+  }
+  return const PasteboardUnavailable('clipboard holds no image');
+}
+
+/// Asks osascript to write one clipboard flavor to a scratch file; the
+/// bytes when the class was available and the file landed, else null. A
+/// successful read drops the scratch file — a golden run pastes many
+/// images and each would otherwise litter the temp dir.
+Future<List<int>?> _osascriptClipboardClassToFile(
+  ProcessRunner runner,
+  Directory tmp,
+  String appleClass,
+  String ext,
+) async {
+  final target =
+      '${tmp.path}/fa-clipboard-${DateTime.now().microsecondsSinceEpoch}'
+      '.$ext';
+  final script = [
+    'set pngData to (the clipboard as $appleClass)',
+    'set imgFile to (open for access POSIX file "$target" with write permission)',
+    'try',
+    'write pngData to imgFile',
+    'close access imgFile',
+    'on error errStr',
+    'try',
+    'close access imgFile',
+    'end try',
+    'error errStr',
+    'end try',
+  ];
+  final result = await runner('osascript', [
+    for (final line in script) ...['-e', line],
+  ]);
+  if (result.exitCode != 0) return null;
+  try {
+    final bytes = File(target).readAsBytesSync();
+    File(target).deleteSync();
+    return bytes;
+  } on Object {
+    return null;
+  }
+}
+
+/// Converts TIFF [bytes] to PNG via `sips -s format png <in> --out <out>`;
+/// the PNG bytes, or null when anything in the pipeline failed. Both
+/// scratch files are cleaned up on every path.
+Future<List<int>?> _convertTiffToPng(
+  ProcessRunner runner,
+  Directory tmp,
+  List<int> bytes,
+) async {
+  final stamp = DateTime.now().microsecondsSinceEpoch;
+  final tiffPath = '${tmp.path}/fa-clipboard-$stamp.tiff';
+  final pngPath = '${tmp.path}/fa-clipboard-$stamp.png';
+  try {
+    File(tiffPath).writeAsBytesSync(bytes);
+    final result = await runner('sips', [
+      '-s',
+      'format',
+      'png',
+      tiffPath,
+      '--out',
+      pngPath,
     ]);
-    if (result.exitCode == 0) {
+    if (result.exitCode != 0) return null;
+    return File(pngPath).readAsBytesSync();
+  } on Object {
+    return null;
+  } finally {
+    for (final path in [tiffPath, pngPath]) {
       try {
-        final bytes = File(target).readAsBytesSync();
-        // Read OK: drop the scratch file — a golden run pastes many
-        // images and each would otherwise litter the temp dir.
-        File(target).deleteSync();
-        return PasteboardImage(bytes);
+        final file = File(path);
+        if (file.existsSync()) file.deleteSync();
       } on Object {
-        // Fall through to the next class / the unavailable path.
+        // Best-effort cleanup — never mask the real outcome.
       }
     }
   }
-  return const PasteboardUnavailable('clipboard holds no image');
+}
+
+/// Reads the platform pasteboard's TEXT content (gh-1575): `pbpaste`
+/// (macOS), `xclip -selection clipboard -o` with a `wl-paste` fallback
+/// (Linux), PowerShell `Get-Clipboard` (Windows). Never throws — every
+/// failure becomes [PasteboardUnavailable]. Empty stdout counts as no
+/// text: an empty paste must never reach the composer.
+Future<PasteboardRead> readPasteboardText({
+  ProcessRunner? runner,
+  /// Pins the platform branch so unit tests can exercise every platform
+  /// path (same seam as [readPasteboardImage]).
+  String? platform,
+}) async {
+  final run = runner ?? _runBinaryProcess;
+  try {
+    switch (pasteboardPlatform(platform)) {
+      case 'macos':
+        return _textFromStdout(await run('pbpaste', const []));
+      case 'linux':
+        return await _readLinuxText(run);
+      case 'windows':
+        return await _readWindowsText(run);
+    }
+  } on Object catch (error) {
+    return PasteboardUnavailable('pasteboard text read failed: $error');
+  }
+  return const PasteboardUnavailable('no pasteboard reader for this platform');
+}
+
+/// Decodes a text backend's stdout as UTF-8 (malformed bytes degrade to
+/// replacement chars — never a throw); empty output = no text.
+PasteboardRead _textFromStdout(ProcessResult result) {
+  if (result.exitCode != 0) {
+    return const PasteboardUnavailable('clipboard holds no text');
+  }
+  final stdout = result.stdout;
+  final bytes = stdout is List<int> ? stdout : utf8.encode('$stdout');
+  final text = utf8.decode(bytes, allowMalformed: true);
+  if (text.isEmpty) {
+    return const PasteboardUnavailable('clipboard holds no text');
+  }
+  return PasteboardText(text);
+}
+
+Future<PasteboardRead> _readLinuxText(ProcessRunner runner) async {
+  // Type-pinned like the image path (gh-1575 review): unpinned wl-paste
+  // pastes the FIRST MIME the source offers — for an image-only clipboard
+  // the raw image bytes would reach the composer as "text". Pinned, both
+  // backends fail cleanly and the named reason prints instead.
+  for (final (executable, args) in [
+    (
+      'xclip',
+      ['-selection', 'clipboard', '-t', 'text/plain;charset=utf-8', '-o'],
+    ),
+    ('wl-paste', ['--type', 'text/plain;charset=utf-8', '--no-newline']),
+  ]) {
+    final read = _textFromStdout(await runner(executable, args));
+    if (read is PasteboardText) return read;
+  }
+  return const PasteboardUnavailable(
+    'xclip/wl-paste unavailable or clipboard holds no text',
+  );
+}
+
+Future<PasteboardRead> _readWindowsText(ProcessRunner runner) async {
+  // Pin the console encoding (gh-1575 review): Windows PowerShell 5.1
+  // writes redirected stdout in the OEM code page, so a UTF-8 decode of
+  // an unpinned read mojibakes every non-ASCII character.
+  final read = _textFromStdout(
+    await runner('powershell', [
+      '-NoProfile',
+      '-Command',
+      '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Get-Clipboard',
+    ]),
+  );
+  if (read is! PasteboardText) return read;
+  // PowerShell's output formatter appends exactly one newline to the
+  // captured stream — the clipboard text itself never carries it — and
+  // formats every embedded line break as `\r\n`; normalize to `\n` (the
+  // composer inserts verbatim, no `\r` normalization downstream).
+  var text = read.text;
+  if (text.endsWith('\r\n')) {
+    text = text.substring(0, text.length - 2);
+  } else if (text.endsWith('\n')) {
+    text = text.substring(0, text.length - 1);
+  }
+  text = text.replaceAll('\r\n', '\n');
+  if (text.isEmpty) {
+    return const PasteboardUnavailable('clipboard holds no text');
+  }
+  return PasteboardText(text);
 }
 
 /// Linux: `xclip -selection clipboard -t image/png -o`, falling back to

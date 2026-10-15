@@ -37,6 +37,8 @@ final class AgentCliConfig {
     this.providerKind = 'openai-completions',
     this.envVarIsSet,
     this.envVarValue,
+    this.herdrEnvLookup,
+    this.herdrSpawn,
     this.modelsFetcher,
     this.modelsHttpClient,
     this.tuiMouseCapture = true,
@@ -101,6 +103,7 @@ final class AgentCliConfig {
     this.aiinConnectFn,
     this.copilotDeviceFlowFn,
     this.copilotUserFn,
+    this.clipboardWrite,
     this.codeMieSsoAuthenticateFn,
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
@@ -129,6 +132,7 @@ final class AgentCliConfig {
     this.cubeSource,
     this.cubeSettings,
     this.onCubeSettingsChanged,
+    this.onUserConfigFileChanged,
     this.cubeRegistryClient,
     this.extRuntimeFactory,
     this.extBootstrapJs = '$kExtTransportStdioJs\n;\n$kExtBootstrapCoreJs',
@@ -303,6 +307,18 @@ final class AgentCliConfig {
   /// hook before confirming, so persistence lands with the feedback line.
   final Future<void> Function()? onCubeSettingsChanged;
 
+  /// Called after a settings-hub flow wrote the USER config file
+  /// directly — every sanctioned write that bypasses the host's
+  /// whole-file save: the surgical validated-yaml upserts (user-scope
+  /// wins), the drop-key / clear-key edits, the ttsr block replace and
+  /// the mcp block replace (the roster lives on
+  /// `SettingsConfigSyncFlow._notifyUserConfigFileChanged`). Hosts
+  /// holding a boot-time snapshot of the user config re-read it here so
+  /// their next whole-file save renders the freshest on-disk truth
+  /// instead of re-rendering the stale boot values OVER the flow's write
+  /// (gh-1572 rework). Null (tests, web) makes the writes one-way.
+  final Future<void> Function()? onUserConfigFileChanged;
+
   /// Fetches one [DapHubSnapshot] (probe outcome in
   /// [DapHubSnapshot.connected]): the resolved config url/name plus the
   /// live connection state. File reads and the plugin status stay on the
@@ -363,6 +379,13 @@ final class AgentCliConfig {
   /// copilot` (GET api.github.com/user → login). Tests inject a fake;
   /// production calls [fetchGitHubLogin].
   final Future<String> Function(String githubToken)? copilotUserFn;
+
+  /// Optional override for the platform clipboard write behind `/provider
+  /// export` (gh-1606): copies [text] to the host clipboard; resolves to
+  /// null on success, the failure reason otherwise (the text itself never
+  /// surfaces). Tests inject a fake; production runs
+  /// [writeClipboardText] (pbcopy/xclip/wl-copy/clip).
+  final Future<String?> Function(String text)? clipboardWrite;
 
   /// Optional override for the CodeMie SSO browser flow
   /// (`/provider codemie sso`). Tests inject a fake returning canned
@@ -726,6 +749,23 @@ final class AgentCliConfig {
   /// from its catalog env names when no explicit token is passed. Null
   /// (tests, web) means no key is ever found this way.
   final String? Function(String name)? envVarValue;
+
+  /// Reads a herdr pane env var on the host (issue #1481): the herdr pane
+  /// reporter's whole gate input (`HERDR_ENV`, `HERDR_PANE_ID`,
+  /// `HERDR_BIN_PATH`, plus the `FA_HERDR=0` kill switch). herdr exports
+  /// the vars to every pane process, so the CLI's own process env is the
+  /// right source. Null (tests, web) = every var unset — the reporter is
+  /// constructed inert and spawns nothing. lib/src stays dart:io-free; the
+  /// executable injects the `Platform.environment` lookup.
+  final String? Function(String name)? herdrEnvLookup;
+
+  /// The herdr pane reporter's transport (issue #1481): one fire-and-forget
+  /// spawn of `$HERDR_BIN_PATH pane …` per report, cut by the reporter's
+  /// short timeout, silent on failure. The executable injects a
+  /// `Process.run`-backed closure (lib/ stays dart:io-free); null (tests
+  /// without a recorder, web) keeps the reporter spawn-free even behind an
+  /// active gate.
+  final Future<void> Function(List<String> argv)? herdrSpawn;
 
   /// Fetches model ids from an OpenAI-compatible `/models` endpoint (the
   /// `/models` picker and the custom-provider flow). Null uses the built-in

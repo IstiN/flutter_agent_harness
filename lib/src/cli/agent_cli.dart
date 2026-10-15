@@ -45,6 +45,7 @@ import 'hep.dart';
 import 'stream_json.dart';
 import 'key_event.dart';
 import 'key_status.dart';
+import 'model_presets.dart' show knownModelPresets;
 import 'provider_error_text.dart';
 import 'sigint_action.dart';
 import '../agent/agent_loop.dart';
@@ -102,6 +103,7 @@ import '../approval/approval.dart';
 import '../wire/wire_serve.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
+import '../compaction/bench_trigger.dart';
 import '../compaction/compaction.dart';
 import '../compaction/host_wiring.dart';
 import '../compaction/structured/continuation_notice.dart';
@@ -237,6 +239,11 @@ import 'paste_image.dart';
 // a stub that always reports unavailable.
 import 'clipboard_reader_stub.dart'
     if (dart.library.io) 'clipboard_reader.dart';
+// Pasteboard writes (`/provider export`, gh-1606) are VM-only
+// (pbcopy/xclip/wl-copy/clip); web builds get a stub that always reports
+// unavailable.
+import 'clipboard_writer_stub.dart'
+    if (dart.library.io) 'clipboard_writer.dart';
 // Job-registry process probes are VM-only (`ps` via dart:io); web builds
 // get a stub that always reports "no process table".
 import '../env/process_probe_stub.dart'
@@ -254,6 +261,7 @@ import 'text_format.dart';
 import 'terminal_setup.dart';
 import 'tui_helpers.dart';
 import 'tui_prompt.dart';
+import 'herdr_reporter.dart';
 import 'scripted_test_stream.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
@@ -262,9 +270,11 @@ import 'tui_chrome.dart';
 import 'termios_guard.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
+export 'model_presets.dart' show bundledCatalogModelIds, knownModelPresets;
 
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
+part 'provider_export_command.dart';
 part 'agent_cli_compaction.dart';
 part 'provider_models.dart';
 part 'codemie_provider_commands.dart';
@@ -276,6 +286,8 @@ part 'settings_flow.dart';
 part 'settings_flow_auto_update.dart';
 part 'settings_flow_harness_mode.dart';
 part 'settings_flow_model_caps.dart';
+part 'settings_flow_context_cap.dart';
+part 'settings_flow_config_sync.dart';
 part 'agent_commands.dart';
 part 'approval_commands.dart';
 part 'skill_commands.dart';
@@ -311,6 +323,7 @@ part 'agent_cli_input.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
+part 'agent_cli_herdr.dart';
 
 /// gh-1603: the explicit headless marker for a run that settled WITHOUT a
 /// final answer (an unrecoverable empty completion after the nudge budget).
@@ -337,6 +350,7 @@ class AgentCli {
     MarkdownSurface? markdownSurface,
     DateTime Function()? waitingClock,
     Future<void> Function(Duration)? waitingSleep,
+    this.ledgerClock,
     SigintPolicy? sigintPolicy,
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
@@ -346,7 +360,12 @@ class AgentCli {
            waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
        _useTui = useTui && io.supportsRawMode,
        sigintPolicy = sigintPolicy ?? SigintPolicy(),
-       _deadline = config.deadline ?? SessionDeadline() {
+       _deadline = config.deadline ?? SessionDeadline(),
+       _herdr = HerdrReporter(
+         envLookup: config.herdrEnvLookup,
+         runProcess: config.herdrSpawn,
+         clock: waitingClock,
+       ) {
     // Sleep prevention (issue #325): null runner (tests, web) → none.
     _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
     _env = CwdOverrideEnv(config.env);
@@ -546,9 +565,16 @@ class AgentCli {
           },
           registrySource: () async {
             final session = _session;
-            if (session == null) return const [];
+            final repo = _repo;
+            // Foreign repo implementations (test seams, alternate stores)
+            // have no raw-scan API — degrade to an empty registry rather
+            // than crash the boot cast (gh-1555 W1 tests drive exactly
+            // such a repo through the picker/resume paths).
+            if (session == null || repo is! JsonlSessionRepo) {
+              return const [];
+            }
             return subagentRegistryRows(
-              repo: _repo as JsonlSessionRepo,
+              repo: repo,
               parent: await session.getMetadata(),
             );
           },
@@ -670,6 +696,14 @@ class AgentCli {
     // LLM request payload while armed (`time-left: 5min`); unarmed keeps
     // the request byte-for-byte (the provider returns null).
     _agent.budgetLineProvider = _deadline.budgetLine;
+    // gh-1602: the provider ladder's rate-limit retries are bounded by
+    // the SAME one session deadline — a retry sleep never crosses the
+    // deadline minus its wrap-up margin, so a quota blip cannot eat the
+    // window reserved for the wrap-up answer. Unarmed keeps the ladder
+    // bounded only by its attempt budget.
+    transientRetryDeadlineLeft = () => _deadline.isArmed
+        ? Duration(milliseconds: _deadline.remainingMs)
+        : null;
     // The FinalizeGate (gh-1412, attendance-corrected gh-1516): headless
     // sessions only — `fa -p`, the bench — the run being actually
     // UNATTENDED. The approval mode is a permission policy, never an
@@ -1040,6 +1074,14 @@ class AgentCli {
   @visibleForTesting
   set sessionForTest(Session? session) => _session = session;
 
+  /// Test seam: swaps the session repo so CLI paths can be driven over a
+  /// store shape the real repo never produces — gh-1555's incident-shape
+  /// fixture refuses every FULL open (what a ledger past the gh-1073 2 GiB
+  /// backstop does) so the windowed-everywhere migration is provable
+  /// without a giant on-disk fixture.
+  @visibleForTesting
+  set repoForTest(SessionRepo repo) => _repo = repo;
+
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
   /// after tool wiring, and `/provider`/`/model` switches must show up in
@@ -1217,6 +1259,13 @@ class AgentCli {
   /// waiting clock through it instead of really sleeping.
   final Future<void> Function(Duration) _waitingSleep;
 
+  /// Clock seam for the ledger persist windows (gh-1590 tests): the
+  /// `shell_job_registry` / `obligations_ledger` throttles read this
+  /// instead of [DateTime.now], so a test can pin the window (frozen
+  /// clock) and make record-count pins deterministic — a CI stall
+  /// cannot open a second window mid-test. Null = wall clock.
+  final DateTime Function()? ledgerClock;
+
   /// The session's retained-subagent registry (tests, the app settings
   /// Agents panel, hosts observing children).
   SubagentManager get subagentManager => _subagentManager;
@@ -1347,6 +1396,38 @@ class AgentCli {
   /// appends (reset in `_rehydrateJobBoard` on every session load).
   final LedgerSnapshotDeduper _jobBoardPersistDeduper = LedgerSnapshotDeduper();
 
+  /// gh-1590: bounds WHEN `shell_job_registry` snapshots may append —
+  /// mutations inside the persist window coalesce behind one snapshot
+  /// plus a trailing flush, so N board state changes no longer append N
+  /// full records (only the latest snapshot is ever read on resume).
+  /// Reset in `_rehydrateJobBoard` next to the deduper; flushed and
+  /// disarmed by `_flushJobBoardPersist` at run finalize / teardown.
+  late final LedgerSnapshotThrottle _jobBoardPersistThrottle =
+      LedgerSnapshotThrottle(
+        clock: ledgerClock,
+        onFlushDue: () => unawaited(_persistJobBoard()),
+      );
+
+  /// gh-1590 (review IMPORTANT): bounds WHEN `obligations_ledger`
+  /// snapshots may append — the per-message ingest coalesces inside the
+  /// persist window behind the trailing flush (a classifying message
+  /// used to append one full snapshot, each re-serializing every entry).
+  /// Deliberate writes (`obligation_mark_done`, pending-wait records)
+  /// bypass the window. Reset in `_obligationsWriterFor` next to the
+  /// writer swap; flushed and disarmed by `_flushObligationsLedger` at
+  /// run finalize / teardown.
+  late final LedgerSnapshotThrottle _obligationsPersistThrottle =
+      LedgerSnapshotThrottle(
+        clock: ledgerClock,
+        onFlushDue: () => unawaited(_flushCoalescedObligations()),
+      );
+
+  /// gh-1590: suppresses byte-identical `obligations_ledger` snapshot
+  /// appends — without it every no-ledger session would grow one
+  /// identical snapshot per teardown flush. Reset next to the throttle.
+  final LedgerSnapshotDeduper _obligationsPersistDeduper =
+      LedgerSnapshotDeduper();
+
   /// The obligations ledger writer (issue #1380 A1) and the session it was
   /// rehydrated from: cumulative in-memory state reloaded from the
   /// session's latest `obligations_ledger` snapshot, swapped lazily when
@@ -1427,6 +1508,14 @@ class AgentCli {
     parseExecutor: config.parseExecutor,
   );
   Session? _session;
+
+  /// The herdr pane reporter (issue #1481): fire-and-forget pane-state
+  /// reports while this CLI runs inside a herdr pane. The gate is
+  /// evaluated once in the constructor — outside herdr (and in every test
+  /// that leaves [AgentCliConfig.herdrEnvLookup] unset) this stays inert
+  /// for the process lifetime and the hooks in agent_cli_herdr.dart are
+  /// no-ops.
+  late final HerdrReporter _herdr;
 
   /// Issue-385 blob persistence state: one persister per session (dedup
   /// sets live in it); recreated when the session changes.
@@ -1710,6 +1799,9 @@ class AgentCli {
     // Due scheduled messages (schedule_message): re-arm any pending records
     // from previous runs — restart-survivable reminders.
     unawaited(_scheduledMessages.start());
+    // herdr pane state (issue #1481): the boot report — the pane never sits
+    // `unknown` before the first turn. No-op outside herdr.
+    _herdrBootIdle();
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) {
         // Line-mode abort marker: the settle path uses it to DROP the
@@ -2026,6 +2118,14 @@ class AgentCli {
       // the token reporter greps the captured run log. Stdout stays the
       // pipeable prose stream (issue #774 AC3).
       await _flushUsageLedger(mirrorTokensLineToRunLog: true);
+      // gh-1590: land a coalesced job-board snapshot and disarm the
+      // throttle's trailing leg — a headless exit must not leave a
+      // pending Timer holding the isolate, nor a final board state
+      // missing from the ledger. The obligations ledger and the
+      // subagent registry flush the same way.
+      await _flushJobBoardPersist();
+      await _flushObligationsLedger();
+      await _subagentManager.flushPersist();
     }
     // gh-1603: the exit-code policy lives in the part-file extension — an
     // unfinished session prints the explicit marker and exits 1; error/
@@ -2142,13 +2242,29 @@ class AgentCli {
   /// [effectiveContextWindow] under the owner cap, no overhead subtracted
   /// (the CLI carries no fixed request overhead).
   CompactionSettings get _effectiveCompactionSettings {
+    // An explicit `compactionSettings` config pin beats the bench env
+    // (gh-1604): `FAH_COMPACT_TRIGGER_TOKENS` retunes the DEFAULTS for a
+    // bench run — it must never silently rewrite a user-pinned section,
+    // including `enabled: false` (the knob cannot re-enable compaction
+    // the user switched off). Unset env = byte-identical base.
     final override = config.compactionSettings;
     if (override != null) return override;
-    return resolveCompactionHostWiring(
-      mainModel: _agent.state.model,
-      contextWindowCap: config.contextWindowCap,
-    ).settings;
+    return resolveBenchCompactionSettings(
+      resolveCompactionHostWiring(
+        mainModel: _agent.state.model,
+        contextWindowCap: config.contextWindowCap,
+      ).settings,
+      window: _effectiveContextWindow,
+      env: environment,
+    );
   }
+
+  /// Test seam (gh-1604 rework): the compaction settings the live gates
+  /// use — the explicit config pin when present, else the host defaults
+  /// with the bench env knob composed.
+  @visibleForTesting
+  CompactionSettings get effectiveCompactionSettingsForTest =>
+      _effectiveCompactionSettings;
 
   /// Whether a guided flow is between prompts.
   var _providerFlowActive = false;

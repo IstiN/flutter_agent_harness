@@ -175,20 +175,47 @@ FA_PROVIDER_CONFIG_BASE64=$(printf '%s' "$FA_PROVIDER_CONFIG" | base64)
 ZAI_API_KEY_BASE64=$(printf '%s' "$ZAI_API_KEY" | base64)
 ```
 
+`wire` is optional and declares the adapter kind the endpoint speaks
+(`openai-completions`, `anthropic`, `google`, …), overriding the provider
+record's own kind. **Translating proxies** (bifrost, LiteLLM, one-api:
+one host serving several dialect paths, `vendor/model` prefixes used as
+routing keys) need nothing extra since gh-1624 — a `vendor/`-prefixed
+model whose prefix names another dialect boots with a warning on
+routers and unknown/private endpoints instead of refusing to start.
+Only the family-exclusive vendor endpoints (api.anthropic.com,
+api.openai.com, …) still fail fast on a dialect mismatch. The `wire:`
+override engages ONLY when it differs from the provider record's own
+kind (`record anthropic + wire: anthropic` changes nothing — the checks
+still run).
+
+```bash
+# bifrost's anthropic path translating zai/glm-5.3 (no wire: needed):
+FA_PROVIDER_TYPE=anthropic
+FA_PROVIDER_CONFIG='{"baseUrl":"http://192.168.1.23:8080/anthropic","model":"zai/glm-5.3","apiKeyEnvVar":"BIFROST_KEY"}'
+```
+
 GitHub Copilot is a first-class provider. `/provider copilot` connects a
 GitHub account via the device-code flow (open the shown
-`verification_uri`, enter the `user_code`) or by pasting an existing PAT
-— the flow works headless too — and the Flutter app offers the same
-connect as a sheet. Accounts save as named entries (`copilot-<login>` by
+`verification_uri`, enter the `user_code`) or by pasting an existing
+token — the flow works headless too — and the Flutter app offers the same
+connect as a sheet. Device-flow OAuth tokens (recommended) are exchanged
+for a short-lived Copilot API token; a fine-grained PAT (`github_pat_…`,
+needs the "Copilot Requests" permission) is used directly against the
+Copilot API — no exchange, so it works anywhere a stable revocable
+credential matters (docker/CI). Classic `ghp_` tokens are not supported
+by Copilot. Accounts save as named entries (`copilot-<login>` by
 default); the plan picks the host — individual `api.githubcopilot.com`,
 business `api.business.githubcopilot.com`, enterprise
 `api.enterprise.githubcopilot.com`, or a custom `--base-url` override —
 and several accounts can coexist side by side. Tokens live only in the
 OS secure store (Keychain / Secret Service); `config.yaml` carries name,
-plan, and baseUrl, never a token. CI runs store-less via the
+plan, and baseUrl, never a token. `/provider export` copies the saved
+account's token to the clipboard (for moving it to a headless box). CI
+runs store-less via the
 `FA_KEY_COPILOT_<NAME>` env (plus a `_2`… ring for more entries), and
 headless runs take `--provider copilot --model <id>` with
-`COPILOT_GITHUB_TOKEN`. Models come from a live `GET /models` (with
+`COPILOT_GITHUB_TOKEN` (an OAuth token or a fine-grained PAT). Models
+come from a live `GET /models` (with
 capabilities and limits). The device-flow client id is overridable via
 `FA_COPILOT_CLIENT_ID` — that GitHub endpoint is undocumented, so a
 custom client id carries an account-ban risk; override only with cause.
@@ -299,3 +326,5 @@ cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 MIT — see [LICENSE](LICENSE).
 
 <!-- factory ladder smoke: trivial doc touch to walk the full machine pipeline (review → validate → merge) -->
+
+<!-- re-validation trigger after c5e9e48 rework push: head-moved lane re-arm (operator, owner-directed sweep) -->

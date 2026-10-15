@@ -84,6 +84,10 @@ concurrency:
 #               run only when the diff modifies flutter_app/pubspec.lock
 #               (issue #1267 N2; same path-triggered model — PRs not
 #               touching the lockfile pay nothing)
+#   installer-portability → gh-1596 REG-1/REG-2: the POSIX-dialect proof
+#               for the first-run wizard (site/** or the generator
+#               touched) — dash + busybox ash on ubuntu, bash on macOS;
+#               red blocks the merge via the quality-gate platform class
 #   test-faui → packages/fa_ui tests sharded ×3 by manifest   (app/core/shared;
 #               issue #283 — same template as test-core: manifest assert,
 #               per-shard coverage merged to ONE report, junit durations
@@ -223,6 +227,11 @@ jobs:
       # PR-only (issue #551): test/integration/** changes run the no-key
       # mock-LLM integration legs per-PR instead of at tag time only.
       intmock: ${{ steps.paths.outputs.intmock }}
+      # gh-1596 REG-1/REG-2: a diff touching the installer generation
+      # pipeline (site/** or scripts/gen_installers.dart) runs the
+      # sh-portability legs — template lint, golden drift, and the piped
+      # wizard under dash (ubuntu) / bash (macOS).
+      installer: ${{ steps.paths.outputs.installer }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -273,6 +282,7 @@ jobs:
               echo "::warning::merge-base(origin/main, HEAD) failed on the dispatch checkout — failing safe: exzone + locksmoke arms run"
               echo "exzone=true" >> "$GITHUB_OUTPUT"
               echo "locksmoke=true" >> "$GITHUB_OUTPUT"
+              echo "installer=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
@@ -298,6 +308,15 @@ jobs:
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
               grep -qE '^flutter_app/pubspec\.lock$'; then
             echo "locksmoke=true" >> "$GITHUB_OUTPUT"
+          fi
+          # gh-1596 REG-1/REG-2: the installer generation pipeline — every
+          # sh artifact under site/ and the generator that renders them.
+          # Gated on the SAME two events as exzone/locksmoke (pull_request
+          # + validation dispatch); the classifier failure arm above runs
+          # it fail-safe.
+          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
+              grep -qE '(^site/|^scripts/gen_installers\.dart$)'; then
+            echo "installer=true" >> "$GITHUB_OUTPUT"
           fi
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             # Dispatch done — the stages classifier below reads a
@@ -622,11 +641,13 @@ jobs:
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
       - name: dart analyze (full)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-        run: dart analyze
+        # pana score: infos dock points — keep zero
+        run: dart analyze --fatal-infos --fatal-warnings
 
       - name: dart analyze (docs-only scope)
         if: needs.changes.outputs.app != 'true' && needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true'
-        run: dart analyze lib test bin
+        # pana score: infos dock points — keep zero
+        run: dart analyze --fatal-infos --fatal-warnings lib test bin
 
       # Publish gate at PR time: publish-blocking problems (undeclared lib/
       # imports, stray PEM-like strings) used to surface only in the tag-time
@@ -829,6 +850,50 @@ jobs:
           targets=$(find test/integration -name '*_test.dart' | sort | python3 scripts/apply_quarantine.py)
           echo "integration-mock targets: $targets"
           dart test --exclude-tags llm,browser-ext,perf,pty $targets
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # gh-1596 REG-1/REG-2 — the installer sh-portability gate. A PR touching
+  # site/** or the installer generator runs the POSIX-dialect proof:
+  #   UT  template lint (AC1) + golden drift (AC1/AC6, live-catalog data)
+  #   IT  the piped wizard completes under dash + busybox ash + bash on a
+  #       real pty with scripted /dev/tty answers (AC2), the key never
+  #       leaks into the transcript (AC3), the non-TTY guard degrades
+  #       non-zero (AC4), and bash-direct parity holds (AC5).
+  # The ubuntu leg carries the curl|sh dialects (dash = Ubuntu sh, busybox
+  # ash = Alpine); the macOS leg proves the direct bash path (REG-2 —
+  # macOS sh is bash 3.2 POSIX mode, the shell that never saw the #1596
+  # crash). Shell-less tests SKIP with a named reason, so the mac leg pays
+  # nothing for the dash/busybox absence. A red leg blocks the merge via
+  # the quality-gate platform class.
+  installer-portability:
+    name: Installer sh portability (REG)
+    runs-on: ${{ matrix.os }}
+    needs: [release-pending, changes]
+    if: needs.changes.outputs.installer == 'true' && needs.release-pending.outputs.pending == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - name: Install the curl|sh dialects (dash + busybox)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dash busybox
+          dash -c 'echo dash: $(dash -c "echo ok")'
+          busybox echo busybox: ok
+      - name: UT — template lint + golden drift (AC1/AC6)
+        run: dart test test/site/setup_sh_portability_test.dart test/site/installer_golden_test.dart
+      - name: IT — piped wizard under dash/busybox/bash (AC2-AC5)
+        run: dart test test/integration/setup_wizard_portability_test.dart
 
   # Issue #675: the suite must be immune to a hostile ambient env — the
   # dmtools ai-teammate runner exports FA_PROVIDER_TYPE / FA_PROVIDER_CONFIG /
@@ -2825,7 +2890,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [release-pending, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke]
+    needs: [release-pending, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke]
     if: always() && needs.release-pending.outputs.pending == 'true'
     timeout-minutes: 5
     permissions:
@@ -2864,6 +2929,7 @@ jobs:
           echo "supply-chain  = ${{ needs.supply-chain.result }}"
           echo "dep-audit     = ${{ needs.dep-audit.result }}"
           echo "installer-it = ${{ needs.installer-verify.result }}"
+          echo "installer-reg  = ${{ needs.installer-portability.result }}"
           echo "pin-gate    = ${{ needs.install-pin-gate.result }}"
           echo "exzone      = ${{ needs.flutter-app-exzone.result }}"
           echo "lock-smoke  = ${{ needs.flutter-app-lock-smoke.result }}"
@@ -2896,6 +2962,7 @@ jobs:
           R_PTY_GATES: ${{ needs.pty-coverage-gate.result }}
           R_PTY_VISUAL: ${{ needs.pty-visual.result }}
           R_INSTALLER_VERIFY: ${{ needs.installer-verify.result }}
+          R_INSTALLER_REG: ${{ needs.installer-portability.result }}
           R_INSTALL_PIN_GATE: ${{ needs.install-pin-gate.result }}
           R_EXZONE: ${{ needs.flutter-app-exzone.result }}
           R_LOCK_SMOKE: ${{ needs.flutter-app-lock-smoke.result }}
@@ -2939,11 +3006,12 @@ jobs:
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
                     "fa-aot-build:$R_FA_AOT" \
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
+                    "installer-portability:$R_INSTALLER_REG" \
                     "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE" \
                     "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE"; do
             name="${kv%%:*}"; r="${kv#*:}"
             case "$name" in
-              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual|flutter-app-lock-smoke)
+              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual|flutter-app-lock-smoke|installer-portability)
                 if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
                   platform_red=true
                 fi
