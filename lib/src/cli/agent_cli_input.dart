@@ -201,6 +201,9 @@ extension AgentCliInput on AgentCli {
       settled.whenComplete(() {
         _tuiController?.sendBusy(false, source: 'run');
         _runStarting = false;
+        // herdr pane state (issue #1481): back at the composer — the same
+        // settle edge the busy row drops on.
+        _herdrRunIdle();
         // Per-run sleep prevention (#326): the run has fully settled —
         // drop the assertion so an idle agent lets the machine sleep.
         unawaited(runPowerAssertionsSettled());
