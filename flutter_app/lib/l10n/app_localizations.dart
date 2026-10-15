@@ -1298,6 +1298,108 @@ abstract class AppLocalizations {
   /// **'Widgets'**
   String get launcherTabWidgets;
 
+  /// No description provided for @launcherLoadUnpacked.
+  ///
+  /// In en, this message translates to:
+  /// **'Load unpacked'**
+  String get launcherLoadUnpacked;
+
+  /// No description provided for @unpackedLoadTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Load unpacked widget'**
+  String get unpackedLoadTitle;
+
+  /// No description provided for @unpackedLoadIdLine.
+  ///
+  /// In en, this message translates to:
+  /// **'id: {id}'**
+  String unpackedLoadIdLine(Object id);
+
+  /// No description provided for @unpackedLoadNetworkNote.
+  ///
+  /// In en, this message translates to:
+  /// **'This widget declares network access — it can fetch from the network (jsr.fetchJson).'**
+  String get unpackedLoadNetworkNote;
+
+  /// No description provided for @unpackedLoadCommandsNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Shell commands it may run (jsr.exec): {commands}'**
+  String unpackedLoadCommandsNote(Object commands);
+
+  /// No description provided for @unpackedLoadReplaceNote.
+  ///
+  /// In en, this message translates to:
+  /// **'A widget with this id already exists ({source}, v{version}). Replacing overwrites its code; the saved data (storage.json) is kept.'**
+  String unpackedLoadReplaceNote(Object source, Object version);
+
+  /// No description provided for @unpackedLoadConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Load'**
+  String get unpackedLoadConfirm;
+
+  /// No description provided for @unpackedLoadReplaceConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace'**
+  String get unpackedLoadReplaceConfirm;
+
+  /// No description provided for @unpackedLoadErrorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Widget was not loaded'**
+  String get unpackedLoadErrorTitle;
+
+  /// No description provided for @unpackedLoadDone.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} loaded from the folder'**
+  String unpackedLoadDone(Object name);
+
+  /// No description provided for @unpackedLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Load failed: {error}'**
+  String unpackedLoadFailed(Object error);
+
+  /// No description provided for @unpackedSourceChip.
+  ///
+  /// In en, this message translates to:
+  /// **'unpacked'**
+  String get unpackedSourceChip;
+
+  /// No description provided for @unpackedSourceBadgeTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Loaded from a local folder (unpacked)'**
+  String get unpackedSourceBadgeTooltip;
+
+  /// No description provided for @unpackedSourceCatalog.
+  ///
+  /// In en, this message translates to:
+  /// **'installed from the catalog'**
+  String get unpackedSourceCatalog;
+
+  /// No description provided for @unpackedSourceUnpacked.
+  ///
+  /// In en, this message translates to:
+  /// **'loaded from a local folder'**
+  String get unpackedSourceUnpacked;
+
+  /// No description provided for @unpackedSourceAgent.
+  ///
+  /// In en, this message translates to:
+  /// **'created by the agent'**
+  String get unpackedSourceAgent;
+
+  /// No description provided for @unpackedSourceUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'installed from an unknown source ({source})'**
+  String unpackedSourceUnknown(Object source);
+
   /// No description provided for @settingsResetApps.
   ///
   /// In en, this message translates to:
