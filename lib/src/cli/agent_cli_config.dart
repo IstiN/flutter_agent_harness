@@ -62,6 +62,10 @@ final class AgentCliConfig {
     this.approvalMode = ApprovalMode.yolo,
     this.alwaysAllowTools = const {},
     this.modelRolesResolver,
+    // Issue #1552 AC4: the roles-drop warning (gh-760 boot boundary) also
+    // surfaces in the notice stream — stderr alone is invisible inside the
+    // TUI's alternate screen. Null = no drop happened.
+    this.rolesDropNotice,
     this.providersQueueRuntime,
     this.providerQueueEnv,
     this.ttsr,
@@ -468,6 +472,12 @@ final class AgentCliConfig {
   /// had no `roles:` section (auxiliary roles resolve lazily; the default
   /// chain stays untouched).
   ModelRolesResolver? modelRolesResolver;
+
+  /// The roles-drop warning text (issue #1552 AC4), or null: the gh-760
+  /// boot boundary degraded the whole `roles:` config — the line surfaces
+  /// in the notice stream (line mode + the TUI transcript after the
+  /// banner), never stderr-only.
+  final String? rolesDropNotice;
 
   /// The provider-queue runtime (issue #418): when set, the default role
   /// resolves through the queue's stream function — sticky cursor, loud
