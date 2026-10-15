@@ -4,7 +4,9 @@
 
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -926,6 +928,119 @@ iOS row <!-- fa-platforms: ios -->
           ),
         ),
       );
+    });
+  });
+
+  group('AppsStore namespace migration (gh-1614 rework 2)', () {
+    // The review's remaining I1 finding: removeWidget/isCleanInstall/
+    // missingInstalledFiles/isEmptyAppDir/availableUpdates still built
+    // `apps/…` by string interpolation, so an id arriving from user
+    // storage (the agent's `widgets_catalog remove ../x`) could steer a
+    // listing or a recursive REMOVE outside the namespace — MemoryExecutionEnv
+    // normalizes `..`, so `apps/../vault` IS `vault/`. After the migration
+    // every path resolves through AppStorage and the escapes fail closed.
+    test('removeWidget rejects a traversal id and removes nothing outside '
+        'the namespace (force path)', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      await env.writeFile('vault/secret.txt', 'do not delete');
+      await expectLater(
+        store.removeWidget('../vault', force: true),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect((await env.exists('vault/secret.txt')).valueOrNull, isTrue);
+    });
+
+    test('removeWidget rejects a traversal id before the meta gate '
+        '(non-force path)', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      await env.writeFile('vault/secret.txt', 'do not delete');
+      await expectLater(
+        store.removeWidget('../vault'),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect((await env.exists('vault/secret.txt')).valueOrNull, isTrue);
+    });
+
+    test('isEmptyAppDir answers false for an id that cannot resolve in '
+        'the namespace (nothing to heal)', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      await env.writeFile('vault/keep.txt', 'x');
+      expect(await store.isEmptyAppDir('../vault'), isFalse);
+    });
+
+    test('isCleanInstall is false for a tampered record whose id escapes '
+        'the namespace (the outside file must not count as install '
+        'state)', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      final outside = utf8.encode('outside');
+      await env.writeBinaryFile('vault/x.js', outside);
+      await env.writeFile(
+        AppsStore.installedMetaFile,
+        jsonEncode({
+          '../vault': {
+            'origin': 'catalog',
+            'version': '1.0.0',
+            'files': {'x.js': sha256.convert(outside).toString()},
+          },
+        }),
+      );
+      // Today the walk escapes: `apps/../vault` lists the outside dir and
+      // the recorded hash matches — the tampered record reads as a CLEAN
+      // install. The namespace answer is false, always.
+      expect(await store.isCleanInstall('../vault'), isFalse);
+    });
+
+    test('missingInstalledFiles treats a recorded rel that cannot resolve '
+        'in the namespace as missing (never probes outside)', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      await env.writeFile('vault/secret.txt', 'outside');
+      await env.writeFile(
+        AppsStore.installedMetaFile,
+        jsonEncode({
+          'demo': {
+            'origin': 'catalog',
+            'version': '1.0.0',
+            'files': {
+              'widget.js': 'irrelevant',
+              '../../vault/secret.txt': 'irrelevant',
+            },
+          },
+        }),
+      );
+      final missing = await store.missingInstalledFiles('demo');
+      // The hostile rel is reported MISSING (damage → the healer
+      // reinstalls) instead of being probed outside the namespace.
+      expect(missing, contains('../../vault/secret.txt'));
+    });
+
+    test('availableUpdates skips a catalog id that cannot live in the '
+        'namespace', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      await env.writeFile('vault/manifest.json', '{"id":"vault"}');
+      final updates = await store.availableUpdates([
+        CatalogEntry(
+          id: '../vault',
+          name: 'Escape',
+          version: '9.9.9',
+          description: '',
+          author: '',
+          tags: const [],
+          minRuntime: '',
+          iconFile: '',
+          network: false,
+          allowedCommands: const [],
+          zipFile: '',
+          zipSha256: '',
+          zipSizeBytes: 0,
+        ),
+      ]);
+      expect(updates, isEmpty);
     });
   });
 }

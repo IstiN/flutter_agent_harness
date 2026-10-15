@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+import 'package:fa/apps/app_storage.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/services/app_log.dart';
@@ -198,6 +199,16 @@ Future<ToolExecutionResult> _mutate(
   final id = (arguments['id'] ?? '').toString().trim();
   if (id.isEmpty) return ToolExecutionResult.text('Provide a widget "id".');
   if (action == 'remove') {
+    // gh-1614 rework 2 (I1/AC4): the id is agent-supplied — validate it
+    // against the app namespace BEFORE touching storage. A traversal id
+    // would otherwise steer removeWidget's recursive delete outside
+    // `apps/` on hosts whose env normalizes `..`.
+    if (AppStorage.tryAppDir(id) == null) {
+      return ToolExecutionResult.text(
+        '"$id" is not a valid app id — it must be a single plain segment '
+        'under apps/ (no "..", no "/", no absolute form). Nothing removed.',
+      );
+    }
     final removed = await store.removeWidget(id);
     return ToolExecutionResult.text(
       removed

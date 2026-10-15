@@ -311,6 +311,7 @@ class JsAppInfo {
     this.platforms,
     this.dirOverride,
     this.error,
+    this.installSource,
   });
 
   factory JsAppInfo.fromManifest(
@@ -377,14 +378,20 @@ class JsAppInfo {
   String displayDescription(String? locale) =>
       (descriptionText ?? LocalizedText.parse(description)).resolve(locale);
 
+  static const _unset = Object();
+
   /// Field-preserving copy — the ONE hand-written field list (gh-1614
   /// review): flag setters compose over this instead of duplicating the
   /// 14 fields, so a future [JsAppInfo] field cannot be silently dropped
-  /// by a missed hand-maintained copy.
+  /// by a missed hand-maintained copy. [installSource] takes the
+  /// [_unset] sentinel (the `widget_publication_store.copyWith`
+  /// convention) because [withInstallSource] must also be able to CLEAR
+  /// the provenance badge, not only overwrite it.
   JsAppInfo copyWith({
     LocalizedText? nameText,
     LocalizedText? descriptionText,
     String? error,
+    Object? installSource = _unset,
   }) => JsAppInfo(
     id: id,
     name: name,
@@ -400,6 +407,9 @@ class JsAppInfo {
     platforms: platforms,
     dirOverride: dirOverride,
     error: error ?? this.error,
+    installSource: identical(installSource, _unset)
+        ? this.installSource
+        : installSource as String?,
   );
 
   /// Copy with ref file contents (ref path → text) attached, so
@@ -417,6 +427,18 @@ class JsAppInfo {
   /// of launching into a `StateError`. The FIRST error wins (an already
   /// flagged tile keeps its flag).
   JsAppInfo withError(String message) => copyWith(error: error ?? message);
+
+  /// Copy with the install source (`catalog` | `unpacked` — from
+  /// `apps/.installed.json`) attached; null for apps with no record
+  /// (agent-created). The launcher and the catalog sheet surface it
+  /// (gh-1616 invariant I3).
+  JsAppInfo withInstallSource(String? source) =>
+      installSource == source ? this : copyWith(installSource: source);
+
+  /// Where this app was installed from: `catalog` (the fa_widgets
+  /// gallery), `unpacked` (a local folder load, gh-1616), or null when
+  /// there is no install record (agent-created apps).
+  final String? installSource;
 
   final String icon;
   final String version;
@@ -636,9 +658,11 @@ class AppsStore {
       // serving the last-known models keeps the panel truthful through a
       // transient IO error, and the install-record prune below must never
       // run on an empty `seen` — that would wipe `.installed.json`.
+      final sources = await installSources();
       final cachedApps =
           _parsedApps.values
               .where((app) => app.supportsPlatform(platform))
+              .map((app) => app.withInstallSource(sources[app.id]))
               .toList()
             ..sort((a, b) => a.name.compareTo(b.name));
       return cachedApps;
@@ -753,8 +777,14 @@ class AppsStore {
       }
       if (pruned) await _writeInstalled(installed);
     }
-    apps.sort((a, b) => a.name.compareTo(b.name));
-    return apps;
+    // Provenance (gh-1616 I3): attached AFTER the cache gate — a
+    // re-install flips the recorded origin without touching the manifest,
+    // and the badge must follow the record, not the cached parse.
+    final sources = await installSources();
+    final withSource = [
+      for (final app in apps) app.withInstallSource(sources[app.id]),
+    ]..sort((a, b) => a.name.compareTo(b.name));
+    return withSource;
   }
 
   /// Reads the `{"file": ...}` i18n ref files declared by [app]'s manifest
@@ -920,7 +950,7 @@ class AppsStore {
     // tile (listApps skips the folder, the launcher shows a dead
     // placeholder). Re-seed the whole app instead.
     final currentManifest = (await _env.readTextFile(
-      'apps/$id/manifest.json',
+      AppStorage.manifestPath(id),
     )).valueOrNull;
     var skeletonBroken = false;
     if (currentManifest != null) {
@@ -932,7 +962,7 @@ class AppsStore {
       }
     }
     for (final file in files.entries) {
-      final path = 'apps/$id/${file.key}';
+      final path = AppStorage.appFile(id, file.key);
       final bundled = file.value;
       final newHash = _digest(bundled);
       final recorded = appHashes[file.key];
@@ -1042,6 +1072,12 @@ class AppsStore {
   /// clobbered. `storage.json` is user data and is always skipped. The new
   /// version is recorded even when individual files were protected.
   ///
+  /// [origin] records the install source in `.installed.json`
+  /// (`catalog` — the default — or `unpacked` for gh-1616's local-folder
+  /// loader). The unpacked loader reuses this exact write path so boot,
+  /// updates and the Apps grid need zero special cases (invariant I1);
+  /// only the recorded provenance differs.
+  ///
   /// When the manifest localizes name/description via `{"file": ...}`
   /// refs, every referenced file must exist — in the archive itself or
   /// (for updates) already on disk — otherwise the install fails BEFORE
@@ -1051,14 +1087,15 @@ class AppsStore {
     required String id,
     required String version,
     required Map<String, Uint8List> files,
+    String origin = 'catalog',
   }) async {
     await _validateI18nRefs(id, files);
     final meta = await _readInstalled();
     final entry = meta.putIfAbsent(
       id,
-      () => {'origin': 'catalog', 'version': version},
+      () => {'origin': origin, 'version': version},
     )..['version'] = version;
-    entry['origin'] = 'catalog';
+    entry['origin'] = origin;
     entry['installedAt'] = DateTime.now().toUtc().toIso8601String();
     final hashes = Map<String, String>.from(
       (entry['files'] as Map?)?.cast<String, String>() ?? const {},
@@ -1154,13 +1191,22 @@ class AppsStore {
   /// skipped — used by the launcher's long-press Remove for agent-created
   /// apps that were never catalog-installed (same storage.json keep).
   Future<bool> removeWidget(String appId, {bool force = false}) async {
+    // gh-1614 rework 2 (I1): the id arrives from user storage (the agent's
+    // `widgets_catalog remove <id>`) — resolve it through the namespace
+    // BEFORE any IO, so a traversal id fails closed instead of steering
+    // the listing and the recursive remove outside `apps/`
+    // (`apps/../vault` normalizes to `vault/` on every host).
+    final dir = AppStorage.appDir(appId);
     final meta = await _readInstalled();
     if (!force && !meta.containsKey(appId)) return false;
-    final entries =
-        (await _env.listDir('apps/$appId')).valueOrNull ?? const <FileInfo>[];
+    final entries = (await _env.listDir(dir)).valueOrNull ?? const <FileInfo>[];
     for (final item in entries) {
       if (item.name == 'storage.json') continue;
-      await _env.remove('apps/$appId/${item.name}', recursive: true);
+      // A directory-listing name is always a single segment, so the join
+      // cannot leave the (already validated) dir — the strict
+      // [AppStorage.appFile] pattern would wrongly refuse user files with
+      // spaces or unicode names here.
+      await _env.remove('$dir/${item.name}', recursive: true);
     }
     meta.remove(appId);
     await _writeInstalled(meta);
@@ -1175,7 +1221,7 @@ class AppsStore {
   /// reference assets. Returns how many app directories were removed.
   Future<int> resetToFactory() async {
     final entries =
-        (await _env.listDir('apps')).valueOrNull ?? const <FileInfo>[];
+        (await _env.listDir(AppStorage.root)).valueOrNull ?? const <FileInfo>[];
     var removed = 0;
     for (final item in entries) {
       await _env.remove('apps/${item.name}', recursive: true);
@@ -1206,8 +1252,12 @@ class AppsStore {
     final meta = await _readInstalled();
     final updates = <WidgetUpdate>[];
     for (final entry in entries) {
+      // gh-1614 rework 2: a catalog id that cannot live in the namespace is
+      // never installable (installWidget's resolver rejects it) — skip the
+      // probe instead of resolving it outside `apps/`.
+      if (!AppStorage.isResolvableId(entry.id)) continue;
       final dirExists =
-          (await _env.exists('apps/${entry.id}/manifest.json')).valueOrNull ??
+          (await _env.exists(AppStorage.manifestPath(entry.id))).valueOrNull ??
           false;
       if (!dirExists) continue;
       final installedVersion = meta[entry.id]?['version'] ?? '';
@@ -1237,17 +1287,30 @@ class AppsStore {
   }
 
   /// Whether [appId] was installed from the widget catalog (recorded in
-  /// `apps/.installed.json`). Publish flows exclude catalog downloads and
-  /// bundled demos — only user/agent-created widgets may be published
-  /// (catalog widgets are already published BY the catalog).
+  /// `apps/.installed.json` with origin `catalog`). Unpacked installs
+  /// (origin `unpacked`, gh-1616) are user-owned local code: the publish
+  /// eligibility gate and the catalog auto-update treat them exactly like
+  /// agent-created apps.
   Future<bool> isCatalogInstalled(String appId) async =>
-      (await _readInstalled()).containsKey(appId);
+      (await _readInstalled())[appId]?['origin'] == 'catalog';
+
+  /// The recorded install source per app id (`catalog` | `unpacked`) —
+  /// ids absent from the map have no record (agent-created apps).
+  Future<Map<String, String>> installSources() async {
+    final meta = await _readInstalled();
+    return {
+      for (final entry in meta.entries)
+        if (entry.value['origin'] is String)
+          entry.key: entry.value['origin'] as String,
+    };
+  }
 
   /// Ids of every directory under `apps/` — including broken
   /// half-installed ones that [listApps] skips (no manifest). The
   /// auto-update healer scans these.
   Future<List<String>> listAppDirIds() async {
-    final entries = (await _env.listDir('apps')).valueOrNull ?? const [];
+    final entries =
+        (await _env.listDir(AppStorage.root)).valueOrNull ?? const [];
     return [
       for (final entry in entries)
         if (entry.kind == FileKind.directory && !entry.name.startsWith('.'))
@@ -1259,7 +1322,11 @@ class AppsStore {
   /// failed install (wipe-then-redownload that never landed). A Remove
   /// keeps `storage.json`, so an empty dir is NEVER a removed widget.
   Future<bool> isEmptyAppDir(String id) async {
-    final entries = (await _env.listDir('apps/$id')).valueOrNull;
+    // gh-1614 rework 2: an id that cannot resolve in the namespace has no
+    // app dir — nothing to heal (and no listing outside `apps/`).
+    final dir = AppStorage.tryAppDir(id);
+    if (dir == null) return false;
+    final entries = (await _env.listDir(dir)).valueOrNull;
     return entries != null && entries.isEmpty;
   }
 
@@ -1279,6 +1346,10 @@ class AppsStore {
   /// auto-update — a modified widget stays on the manual Update path so
   /// user work is never moved underfoot.
   Future<bool> isCleanInstall(String id) async {
+    // gh-1614 rework 2: a record whose id cannot resolve in the namespace
+    // is tampered or corrupt — never clean, and never walked outside
+    // `apps/`.
+    if (!AppStorage.isResolvableId(id)) return false;
     final meta = await _readInstalled();
     final entry = meta[id];
     if (entry == null) return false;
@@ -1298,14 +1369,17 @@ class AppsStore {
       }
     }
 
-    await walk('apps/$id', '');
+    await walk(AppStorage.appDir(id), '');
     for (final name in onDisk) {
       if (name == 'storage.json') continue;
       if (!recorded.containsKey(name)) return false; // user-added
     }
     for (final file in recorded.entries) {
+      // A recorded name that cannot resolve in the namespace never named a
+      // real install file — tampered record, not a clean install.
+      if (!AppStorage.isValidRelativePath(file.key)) return false;
       final current = (await _env.readBinaryFile(
-        'apps/$id/${file.key}',
+        AppStorage.appFile(id, file.key),
       )).valueOrNull;
       if (current == null) return false; // user-deleted
       if (sha256.convert(current).toString() != file.value) return false;
@@ -1320,14 +1394,26 @@ class AppsStore {
   /// FileError notFound). Empty when the install is intact or [id] is not
   /// catalog-installed.
   Future<List<String>> missingInstalledFiles(String id) async {
+    // gh-1614 rework 2: a record whose id cannot resolve in the namespace
+    // is tampered or corrupt — nothing verifiable to check.
+    if (!AppStorage.isResolvableId(id)) return const [];
     final meta = await _readInstalled();
     final files = meta[id]?['files'];
     if (files is! Map) return const [];
     final missing = <String>[];
-    for (final rel in files.keys) {
-      final path = 'apps/$id/$rel';
+    for (final key in files.keys) {
+      final rel = key.toString();
+      // A recorded name that cannot resolve in the namespace never named a
+      // real install file (the installer validates every write through the
+      // resolver): report it MISSING so the healer reinstalls instead of
+      // probing outside `apps/`.
+      if (!AppStorage.isValidRelativePath(rel)) {
+        missing.add(rel);
+        continue;
+      }
+      final path = AppStorage.appFile(id, rel);
       if (!((await _env.exists(path)).valueOrNull ?? false)) {
-        missing.add(rel.toString());
+        missing.add(rel);
       }
     }
     return missing;
