@@ -215,16 +215,21 @@ String? _previousArg(List<String> args, int index) =>
 /// value, the explicit record field saves the caller a re-derivation — the
 /// `FA_PROVIDER_*` declaration when one is active (the caller needs it
 /// for the roles pinning, the key decision and the extra redaction), the
-/// saved provider id when it was unrecognizable, and the saved provider id
+/// saved provider id when it was unrecognizable, the saved provider id
 /// when the persisted provider/baseUrl pair was unservable (endpoint-locked
-/// kind, foreign baseUrl — the caller degrades it with a named warning).
-/// Both report fields are null otherwise.
+/// kind, foreign baseUrl — the caller degrades it with a named warning),
+/// and the revalidated binding's warnings when a `--model`/`--base-url`
+/// flag authored an unverified dialect mismatch (gh-1624 review r2 — the
+/// flag path renders them like the FA_PROVIDER notice does; warnings the
+/// active preconfig binding already carries are deduped). Both report
+/// fields are null otherwise.
 ({
   CliArgs args,
   String provider,
   EnvProviderPreconfig? faPreconfig,
   String? unknownSavedProvider,
   String? incompatibleSavedEndpoint,
+  List<String> bindingWarnings,
 })
 resolveEffectiveCliArgs(
   CliArgs parsed,
@@ -285,7 +290,7 @@ resolveEffectiveCliArgs(
   // here, before any network call). An ACTIVE FA_PROVIDER_* preconfig is
   // a binding too (AC3/H2 review): its kind survives and the flag wins
   // its slot, so the same joint check applies.
-  _revalidatePartialOverride(
+  final bindingWarnings = _revalidatePartialOverride(
     parsed,
     faPreconfig,
     saved,
@@ -300,6 +305,7 @@ resolveEffectiveCliArgs(
     faPreconfig: faPreconfig,
     unknownSavedProvider: reports.unknownSavedProvider,
     incompatibleSavedEndpoint: reports.incompatibleSavedEndpoint,
+    bindingWarnings: bindingWarnings,
   );
 }
 
@@ -354,7 +360,14 @@ bool _degradedPairResolves(String degradedKind, CliConfig saved) {
 /// dies here naming both sides, before any network call. A blank
 /// effective model is no binding to revalidate (`--base-url` over a
 /// model-less saved config fails later at the model gate, unchanged).
-void _revalidatePartialOverride(
+///
+/// Returns the effective binding's warnings (gh-1624 review r2): a
+/// vendor-prefix mismatch on an endpoint that carries no dialect verdict
+/// is NOT fatal, and the flag path must not swallow the note either — the
+/// caller renders them like the FA_PROVIDER notice's
+/// `warning: binding — …` lines. Warnings the active [faPreconfig]
+/// binding already carries are deduped (its boot notice renders them).
+List<String> _revalidatePartialOverride(
   CliArgs parsed,
   EnvProviderPreconfig? faPreconfig,
   CliConfig saved, {
@@ -363,17 +376,22 @@ void _revalidatePartialOverride(
   required bool keepSavedPair,
   required String? degradedDefault,
 }) {
-  if (parsed.providerExplicit) return;
-  if (parsed.model == null && parsed.baseUrl == null) return;
+  if (parsed.providerExplicit) return const [];
+  if (parsed.model == null && parsed.baseUrl == null) return const [];
   final effectiveModelId =
       parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
-  if (effectiveModelId.trim().isEmpty) return;
-  ProviderModelBinding.resolve(
+  if (effectiveModelId.trim().isEmpty) return const [];
+  final binding = ProviderModelBinding.resolve(
     providerKind: provider,
     modelId: effectiveModelId,
     baseUrl: keepSavedPair ? baseUrl : (parsed.baseUrl ?? degradedDefault),
     provenance: BindingProvenance.flag,
   );
+  final alreadySaid = faPreconfig?.binding.warnings ?? const <String>[];
+  return [
+    for (final warning in binding.warnings)
+      if (!alreadySaid.contains(warning)) warning,
+  ];
 }
 
 /// The boot provider: an explicit `--provider` flag or an `FA_PROVIDER_*`

@@ -508,6 +508,48 @@ void main() {
       expect(resolved.args.model, 'claude-opus-4');
     });
 
+    // gh-1624 review r2: the flag revalidation must not SWALLOW the
+    // unverified-mismatch warnings either — a `--model` rider on a saved
+    // private-endpoint binding carries the same loud note the
+    // FA_PROVIDER_* boot notice renders.
+    test('an explicit --model over a saved private-endpoint binding '
+        'surfaces the binding warnings (gh-1624 review r2)', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(model: 'zai/glm-5.3'),
+        CliConfig(
+          providerKind: 'anthropic',
+          modelId: 'claude-sonnet-4-5',
+          baseUrl: 'http://192.168.1.23:8080/anthropic',
+        ),
+        env: const {},
+      );
+      expect(resolved.provider, 'anthropic');
+      expect(resolved.args.model, 'zai/glm-5.3');
+      expect(resolved.bindingWarnings, hasLength(1));
+      expect(
+        resolved.bindingWarnings.single,
+        allOf(contains('zai/glm-5.3'), contains('routing key')),
+      );
+    });
+
+    test('binding warnings the active FA_PROVIDER_* binding already '
+        'carries are NOT duplicated by the flag revalidation (gh-1624 '
+        'review r2: the preconfig notice already says it)', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(model: 'zai/glm-5.3'),
+        CliConfig(providerKind: 'anthropic', modelId: 'claude-sonnet-4-5'),
+        env: const {
+          'FA_PROVIDER_TYPE': 'anthropic',
+          'FA_PROVIDER_CONFIG':
+              '{"baseUrl":"http://192.168.1.23:8080/anthropic",'
+              '"model":"zai/glm-5.3"}',
+        },
+      );
+      expect(resolved.faPreconfig, isNotNull);
+      expect(resolved.faPreconfig!.binding.warnings, hasLength(1));
+      expect(resolved.bindingWarnings, isEmpty);
+    });
+
     test('an explicit --model of another dialect over an ACTIVE '
         'FA_PROVIDER_* preconfig is rejected too — the preconfig binding '
         'is superseded by the flag (gh-1570 AC3/H2 review)', () {
