@@ -13,6 +13,17 @@ block a release again.
 
 ## Unreleased
 
+- fix(stuck-calls): gh-1632 — a stuck tool call in an interactive session now
+  escalates like everywhere else. `effectiveStuckTool()` defaulted every
+  non-headless host to `StuckFollowUpMode.advisory` when no explicit
+  `agent.stuckTool:` was configured, so the fa 1.0.580 incident session (a
+  dead `git fetch` in the REPL) fired its `tool_stuck` flag at the 300 s
+  threshold and then hung for 27 more minutes — advisory mode never cancels,
+  retries, or converts; only the owner's manual steering broke the deadlock.
+  The autonomous default (cancel → retry once → background-convert, then a
+  session-visible escalation) now applies in EVERY mode; `advisory` remains
+  an explicit opt-out (`agent.stuckTool.followUp: advisory`), never an
+  implicit default.
 - fix(bindings): gh-1624 — the gh-1570 binding preflight no longer kills
   translating-proxy factories. `_validateModelEndpoint`'s vendor-prefix
   verdict was fatal on ANY endpoint, so `FA_PROVIDER_TYPE=anthropic` +

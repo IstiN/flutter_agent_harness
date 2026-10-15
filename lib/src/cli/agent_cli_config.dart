@@ -959,17 +959,17 @@ final class AgentCliConfig {
   /// hostname is unavailable.
   final String? machineName;
 
-  /// The effective stuck supervision for THIS host (gh-1054 review): an
-  /// explicit `agent.stuckTool:` wins everywhere; otherwise headless runs
-  /// keep the autonomous default (unattended — nobody to advise) while
-  /// interactive REPL/TUI sessions default to advisory (a human is
-  /// present; auto-cancelling under their cursor is the ticket's
-  /// non-goal).
+  /// The effective stuck supervision for THIS host (gh-1054, gated per
+  /// gh-1632 I1): an explicit `agent.stuckTool:` wins everywhere;
+  /// otherwise the autonomous default applies in EVERY mode — interactive
+  /// REPL/TUI sessions included. The implicit interactive-advisory branch
+  /// (gh-1054 review) is what left the gh-1632 incident session hanging 27
+  /// minutes on a dead `git fetch`: the stuck flag fired, no escalation
+  /// ever followed. `advisory` stays reachable ONLY via explicit config
+  /// (`agent.stuckTool.followUp: advisory`).
   StuckToolConfig effectiveStuckTool() {
     final configured = stuckTool;
     if (configured != null) return configured;
-    return headlessRun
-        ? const StuckToolConfig()
-        : const StuckToolConfig(followUp: StuckFollowUpMode.advisory);
+    return const StuckToolConfig();
   }
 }
