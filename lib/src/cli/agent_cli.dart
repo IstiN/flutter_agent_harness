@@ -284,6 +284,8 @@ part 'settings_flow.dart';
 part 'settings_flow_auto_update.dart';
 part 'settings_flow_harness_mode.dart';
 part 'settings_flow_model_caps.dart';
+part 'settings_flow_context_cap.dart';
+part 'settings_flow_config_sync.dart';
 part 'agent_commands.dart';
 part 'approval_commands.dart';
 part 'skill_commands.dart';
