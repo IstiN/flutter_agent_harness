@@ -461,18 +461,27 @@ EnvProviderPreconfig? faProviderPreconfig(
   );
 }
 
+/// Every chain ref a roles config declares (roles + path overrides).
+List<ModelRef> _rolesChainRefs(ModelRolesConfig rolesConfig) => [
+  for (final chain in rolesConfig.roles.values) ...chain,
+  for (final override in rolesConfig.pathOverrides)
+    for (final chain in override.roles.values) ...chain,
+];
+
 /// The explicit `apiKeyName`s referenced by a roles config (the
 /// secure-store preload set; the catalog names are always preloaded), plus
 /// the endpoint-scoped `FA_KEY_<HOST>` slot of every chain entry pinned to
 /// a custom endpoint (gh-1000 AC5 — the same source a manual provider
 /// switch resolves; the catalog env names describe default endpoints
-/// only).
-Set<String> roleKeyNames(ModelRolesConfig rolesConfig) {
-  final refs = [
-    for (final chain in rolesConfig.roles.values) ...chain,
-    for (final override in rolesConfig.pathOverrides)
-      for (final chain in override.roles.values) ...chain,
-  ];
+/// only). [customProviders] mirrors the resolver's registry leg (issue
+/// #1552): a catalog-unknown ref that names one of these entries resolves
+/// its default endpoint from the entry, so an explicit ref baseUrl over a
+/// custom entry is a non-default pin the same way.
+Set<String> roleKeyNames(
+  ModelRolesConfig rolesConfig, {
+  List<CustomProviderEntry> customProviders = const [],
+}) {
+  final refs = _rolesChainRefs(rolesConfig);
   return {
     for (final ref in refs) ...[
       if (ref.apiKeyName != null) ref.apiKeyName!,
@@ -482,8 +491,11 @@ Set<String> roleKeyNames(ModelRolesConfig rolesConfig) {
       // unpinned leg, mirroring ModelRolesResolver
       // ._endpointScopedKeyNames exactly) plus, for an explicitly pinned
       // ref, the pin's own endpoint family (the empty-pin fallback set —
-      // the 1.0.556 → 1.0.564 lockout shape).
-      if (_refNeedsEndpointSlot(ref))
+      // the 1.0.556 → 1.0.564 lockout shape). The unpinned leg keeps the
+      // issue #1552 customProviders mirror (see the doc comment above):
+      // an unknown provider naming a custom entry resolves its spec
+      // through the entry.
+      if (_refNeedsEndpointSlot(ref, customProviders))
         ...CustomProviderRegistry.keySlotCandidates(ref.baseUrl!),
       if (ref.apiKeyName != null && ref.baseUrl != null)
         ...CustomProviderRegistry.keySlotCandidates(ref.baseUrl!),
@@ -497,11 +509,25 @@ Set<String> roleKeyNames(ModelRolesConfig rolesConfig) {
 /// through the provider's env-name chain instead and adds no slot
 /// (mirroring [ModelRolesResolver._endpointScopedKeyName] exactly: the
 /// ref's OWN spec decides); an unknown provider skips in the resolver and
-/// consumes no key, so it adds no slot either.
-bool _refNeedsEndpointSlot(ModelRef ref) {
+/// consumes no key, so it adds no slot either — unless it names a
+/// [customProviders] entry (issue #1552): then the entry's apiType spec
+/// decides, the same mirror the resolver applies.
+bool _refNeedsEndpointSlot(
+  ModelRef ref,
+  List<CustomProviderEntry> customProviders,
+) {
   final baseUrl = ref.baseUrl;
   if (baseUrl == null) return false;
-  final spec = resolveCliProviderSpec(ref.provider, honorBuildFilter: true);
+  var spec = resolveCliProviderSpec(ref.provider, honorBuildFilter: true);
+  if (spec == null) {
+    final lower = ref.provider.trim().toLowerCase();
+    for (final entry in customProviders) {
+      if (entry.name.toLowerCase() == lower) {
+        spec = resolveCliProviderSpec(entry.apiType, honorBuildFilter: true);
+        break;
+      }
+    }
+  }
   // Trailing-slash-normalized — mirrors ModelRolesResolver
   // ._endpointScopedKeyName exactly (the shared sameEndpoint rule).
   return spec != null && !sameEndpoint(baseUrl, spec.defaultBaseUrl);
@@ -524,7 +550,11 @@ Set<String> secureKeyPreloadNames(CliConfig saved, {required String? baseUrl}) {
       entry.keyName ?? CustomProviderRegistry.keyNameFor(entry.baseUrl),
     'VISION_API_KEY',
     'TRANSCRIBE_API_KEY',
-    if (saved.modelRoles != null) ...roleKeyNames(saved.modelRoles!),
+    if (saved.modelRoles != null)
+      ...roleKeyNames(
+        saved.modelRoles!,
+        customProviders: saved.customProviders,
+      ),
   };
 }
 
@@ -592,7 +622,11 @@ Set<String> referencedSecureKeyNames(CliConfig saved) {
   return {
     for (final entry in saved.customProviders)
       if (entry.keyName != null) entry.keyName!,
-    if (saved.modelRoles != null) ...roleKeyNames(saved.modelRoles!),
+    if (saved.modelRoles != null)
+      ...roleKeyNames(
+        saved.modelRoles!,
+        customProviders: saved.customProviders,
+      ),
   };
 }
 
@@ -727,20 +761,52 @@ List<String> secureKeyBootDiagnostics({
   return lines;
 }
 
+/// The key slots the registry leg (issue #1552) can consume: for every
+/// saved [customProviders] entry a roles chain actually names — a
+/// catalog-unknown `provider:` matched against the entry names, trim +
+/// case-fold exactly like `ModelRolesResolver._findCustomProvider` (entry
+/// names are reserved against the catalog, so the match is unambiguous) —
+/// the entry's pinned `keyName` and its endpoint-scoped `FA_KEY_<HOST>`
+/// slot. Unreferenced entries contribute nothing.
+Set<String> _referencedCustomKeyNames(
+  ModelRolesConfig rolesConfig,
+  List<CustomProviderEntry> customProviders,
+) {
+  final named = {
+    for (final ref in _rolesChainRefs(rolesConfig))
+      ref.provider.trim().toLowerCase(),
+  };
+  return {
+    for (final entry in customProviders)
+      if (named.contains(entry.name.toLowerCase())) ...[
+        if (entry.keyName != null) entry.keyName!,
+        CustomProviderRegistry.keyNameFor(entry.baseUrl),
+      ],
+  };
+}
+
 /// Collects the secrets snapshot for the model-roles resolver: every
 /// provider catalog env name plus its rotation stack (`NAME`, `NAME_2`,
 /// `NAME_3`, ...), plus any base name referenced by an explicit
 /// `apiKeyName` in the roles config. The platform secure store backs up
 /// base names where the environment has none (env wins; rotation stacks
-/// stay env-only — secure storage holds base names only).
+/// stay env-only — secure storage holds base names only). [customProviders]
+/// (the `customProviders:` section) feeds the registry leg (issue #1552):
+/// a chain entry naming one of these entries resolves keys through the
+/// entry — its pinned `keyName` first, else the endpoint-scoped slot — so
+/// both names ride the snapshot, scoped to the entries the chains actually
+/// NAME: an unreferenced saved entry changes nothing (existing configs
+/// stay byte-identical — the PR contract).
 Map<String, String> collectRoleSecrets(
   ModelRolesConfig rolesConfig,
   SecureKeyCache keys, {
   Map<String, String>? env,
+  List<CustomProviderEntry> customProviders = const [],
 }) {
   final baseNames = <String>{
     for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
-    ...roleKeyNames(rolesConfig),
+    ...roleKeyNames(rolesConfig, customProviders: customProviders),
+    ..._referencedCustomKeyNames(rolesConfig, customProviders),
   };
   final secrets = <String, String>{};
   final environment = env ?? Platform.environment;
