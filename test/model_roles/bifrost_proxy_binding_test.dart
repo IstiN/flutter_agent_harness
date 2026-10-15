@@ -107,7 +107,7 @@ void main() {
           'baseUrl': 'http://127.0.0.1:${bifrost.port}/anthropic',
           'model': 'zai/glm-5.3',
           'apiKeyEnvVar': 'BIFROST_KEY',
-          if (wire != null) 'wire': wire,
+          'wire': ?wire,
         }),
         providerConfigBase64: null,
         envVarValue: (name) => name == 'BIFROST_KEY' ? 'sk-bifrost' : null,
