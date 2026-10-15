@@ -28,13 +28,12 @@ extension SettingsAutoUpdateFlow on AgentCli {
 
   /// The confirm/write step: the surgical `auto_update` upsert, validated
   /// with the real parser before the file is written.
-  Future<bool> _writeAutoUpdateYaml(AutoUpdateMode mode) =>
-      _upsertConfigYaml(
-        const ['auto_update'],
-        mode.yamlValue,
-        projectScope: false,
-        validate: autoUpdateModeFromYaml,
-      );
+  Future<bool> _writeAutoUpdateYaml(AutoUpdateMode mode) => _upsertConfigYaml(
+    const ['auto_update'],
+    mode.yamlValue,
+    projectScope: false,
+    validate: autoUpdateModeFromYaml,
+  );
 
   /// The notify-default step: the key line is removed (defaults are never
   /// written), everything else survives byte-for-byte.
@@ -65,6 +64,7 @@ extension SettingsAutoUpdateFlow on AgentCli {
       io.writeln('could not write $path');
       return false;
     }
+    await _notifyUserConfigFileChanged();
     io.writeln('auto_update removed → $path (notify is the default)');
     return true;
   }
