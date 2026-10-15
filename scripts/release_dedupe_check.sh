@@ -15,15 +15,20 @@
 # whether the release twin may skip the gate:
 #
 #   release event AND a CI run for the same tag ref from the `push` event
-#   exists with ANY status (queued/in_progress/completed — in the hot path
-#   the push twin is still in_progress) created within the last
-#   DEDUPE_WINDOW_SECS (default 6h — the auto-release flow cuts the tag
-#   and publishes the release seconds apart; the window bounds the
-#   stale-republish edge)
+#   exists with conclusion == "success" (FAIL-CLOSED, gh-1625 review: only
+#   a GREEN push gate dedupes — behind the shared ci-<ref> concurrency
+#   group the push twin is already completed when the release twin's
+#   check executes, so any other outcome degrades to the full-gate safety
+#   net below instead of letting a red tag ship binaries) created within
+#   the last DEDUPE_WINDOW_SECS (default 6h — the auto-release flow cuts
+#   the tag and publishes the release seconds apart; the window bounds
+#   the stale-republish edge)
 #     → dedupe=true: every quality leg ANDs
 #       needs.release-dedupe.outputs.dedupe != 'true' into its `if` and
-#       the release twin executes ONLY the binaries-attach leg
-#       (idempotent --clobber upload, last wins);
+#       skips; the release twin keeps only its release-specific legs —
+#       binaries-attach (idempotent --clobber upload, last wins),
+#       release-provenance signing and installer smoke; web-spa/publish
+#       stay keyed on the quality-gate result and skip with it;
 #   anything else (no push run — a release cut on an old tag, or a tag
 #   the release created itself: API-created tags fire no push event)
 #     → dedupe=false: the release twin runs the full gate exactly as
@@ -60,16 +65,23 @@ iso_to_epoch() {
 dedupe=false
 if [ "$EVENT_NAME" = "release" ]; then
   # The lookup the ticket prescribes: this workflow's runs for the tag
-  # ref from the push event — any status dedupes (no status filter is
-  # passed: in the hot path the push twin is still in_progress) and no
+  # ref from the push event — conclusion-aware and fail-closed (gh-1625
+  # review BLOCKING #2): ONLY a `conclusion == "success"` push run
+  # dedupes. A failed/cancelled push gate must re-gate here (the twin
+  # goes red on the same commit and attaches nothing — the binaries job's
+  # own "explicit gate check keeps failed-gate runs from building
+  # publishable binaries" invariant), never be waved through. The twins
+  # share the ci-<ref> concurrency group with cancel-in-progress:
+  # false, so by the time this check executes the push run is completed
+  # and its conclusion is terminal — success-only is strictly safe. No
   # --repo flag (gh reads GH_REPO/GITHUB_REPOSITORY on the runner).
   if ! created_list=$(gh run list \
       --workflow ci.yml \
       --branch "$tag" \
       --event push \
       --limit 20 \
-      --json createdAt \
-      --jq '.[].createdAt' 2>&1); then
+      --json createdAt,conclusion,status \
+      --jq '.[] | select(.conclusion == "success") | .createdAt' 2>&1); then
     echo "::warning::gh run list failed — fail-safe: the release twin runs the full quality gate (gh-1625 AC5)"
     printf '  %s\n' "$created_list"
   else
@@ -88,7 +100,7 @@ if [ "$EVENT_NAME" = "release" ]; then
 $created_list
 EOF
     if [ -n "$recent" ]; then
-      echo "::notice::a push CI run for $tag already gates this tag (created $recent) — the release twin skips the quality gate and executes the binaries-attach leg only (gh-1625)"
+      echo "::notice::a GREEN push CI run for $tag already gates this tag (created $recent) — the release twin skips every quality leg; binaries-attach, release-provenance and installer-smoke still run (gh-1625)"
       dedupe=true
     else
       echo "no push CI run for $tag within the last ${window_secs}s — the release twin runs the full quality gate (gh-1625 AC2 old-tag safety net)"

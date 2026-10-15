@@ -42,10 +42,12 @@ on:
   # annotated tag) builds + attaches the binaries matrix. Pushed tags also
   # arrive via the push filter above; the quality gate is NOT re-run by
   # the release twin — the release-dedupe pre-check (gh-1625) short-circuits
-  # every gate leg to the binaries-attach leg when the tag's push run
-  # already gates it (the retired comment here only made the binaries
-  # UPLOAD idempotent — duplicate create + --clobber, last wins — while
-  # the full 35-40 min gate still re-ran, doubling release wall time).
+  # every gate leg when the tag's GREEN push run already gates it, while
+  # the release-specific legs (binaries attach, release-provenance,
+  # installer-smoke) keep running on the twin (the retired comment here
+  # only made the binaries UPLOAD idempotent — duplicate create +
+  # --clobber, last wins — while the full 35-40 min gate still re-ran,
+  # doubling release wall time).
   release:
     types: [published]
   schedule:
@@ -109,10 +111,13 @@ concurrency:
 #                in seconds (see the job comment below)
 #   release-dedupe → gh-1625 release-twin short-circuit: the
 #                `release: published` event fires a second run for every
-#                pushed tag; when the tag's own push run already gates it
-#                (any status, recent window), every gate leg skips
-#                (dedupe=true) and the release twin executes the
-#                binaries-attach leg only
+#                pushed tag; when the tag's own GREEN push run already
+#                gates it (conclusion == "success", recent window), every
+#                gate leg skips (dedupe=true) and the release twin keeps
+#                only its release-specific legs — binaries attach,
+#                release-provenance signing, installer smoke (web-spa/
+#                publish stay keyed on the quality-gate result and skip
+#                with it)
 # Tag-only / main-only jobs (publish, binaries, installer-smoke, release,
 #   integration) are unchanged in semantics — they just need the new aggregate.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -214,13 +219,18 @@ jobs:
   # and short-circuits in the script (scripts/release_dedupe_check.sh,
   # fixture-self-tested in Static gates):
   #   release event AND a CI run for the same tag ref from the push event
-  #   (ANY status — in the hot path the push twin is still in_progress —
-  #   within the last 6h) → dedupe=true: every gate leg ANDs
+  #   with conclusion == "success" (FAIL-CLOSED, gh-1625 review: only a
+  #   GREEN push gate dedupes — behind the shared ci-<ref> concurrency
+  #   group the push twin is already completed when this check executes,
+  #   so a failed/cancelled push run degrades to the full-gate safety net
+  #   below and the twin goes red on the same commit, attaching nothing)
+  #   within the last 6h → dedupe=true: every gate leg ANDs
   #   `needs.release-dedupe.outputs.dedupe != 'true'` into its `if` and
-  #   the release twin executes ONLY the binaries-attach leg (idempotent
-  #   --clobber upload, last wins). web-spa/publish stay keyed on the
-  #   quality-gate result and skip with it — the push twin already
-  #   attached/published.
+  #   skips. The twin keeps only its release-specific legs —
+  #   binaries-attach (idempotent --clobber upload, last wins),
+  #   release-provenance signing and installer smoke; web-spa/publish
+  #   stay keyed on the quality-gate result and skip with it — the push
+  #   twin already attached/published.
   #   no recent push run (release cut on an OLD tag, or a tag the release
   #   created itself — API-created tags fire no push event) → dedupe=false:
   #   the full gate runs exactly as before; that path stays the safety net
@@ -243,9 +253,21 @@ jobs:
     outputs:
       dedupe: ${{ steps.check.outputs.dedupe }}
     steps:
-      # Pure API pre-check: no checkout, no actions — the check must not
-      # even pay a fetch (same discipline as release-pending's
-      # non-schedule arms).
+      # The check runs a REPO script — a hosted runner's empty workspace
+      # has no scripts/ and the first cut (no checkout) died with
+      # `bash: scripts/release_dedupe_check.sh: No such file or directory`
+      # (exit 127) on every arm, cascading into a red Quality gate (runs
+      # 38696670029/38696668627). A file-based check needs a checkout; a
+      # shallow + blobless one costs seconds inside the 5-minute budget.
+      # Gated to the release arm — the only arm that reaches the script —
+      # so push/dispatch/schedule arms keep paying no fetch (the
+      # release-pending pattern; release-pending itself stays
+      # checkout-free on non-schedule arms because its logic is INLINE).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'release'
+        with:
+          fetch-depth: 1
+          filter: blob:none # the check never reads blobs — one gh run list
       - id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -3563,8 +3585,9 @@ jobs:
     # while tags were still PAT-pushed, up to v0.1.369). The release event
     # fires for every creation path, so the matrix can never be starved
     # again.
-    # gh-1625: on a deduped release twin the tag's own push run IS the
-    # gate — the twin's quality legs all skip, so the explicit
+    # gh-1625: on a deduped release twin the tag's own GREEN push run IS
+    # the gate (the dedupe lookup fires only on conclusion == "success") —
+    # the twin's quality legs all skip, so the explicit
     # `result == 'success'` check is ORed with the dedupe arm. The push
     # twin and the dedupe=false old-tag release still gate the matrix on
     # the full quality gate exactly as before.
