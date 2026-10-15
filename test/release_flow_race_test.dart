@@ -102,6 +102,16 @@ if [ -f "\$GH_STUB_DIR/curl-fail" ]; then
   echo "curl: simulated pub.dev API failure" >&2
   exit 1
 fi
+# gh-1561 rework seam (review thread 8): fail every read AFTER N total
+# reads — the shape of the pub.dev API going down MID-LEG (the top-of-leg
+# reads serve the stale replica fine, a later re-read hits the outage).
+if [ -f "\$GH_STUB_DIR/curl-fail-after" ]; then
+  c="\$GH_STUB_DIR/curl-fail-count"; n=\$(cat "\$c" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "\$c"
+  if [ "\$n" -gt "\$(cat "\$GH_STUB_DIR/curl-fail-after")" ]; then
+    echo "curl: simulated pub.dev API failure" >&2
+    exit 1
+  fi
+fi
 # gh-1561 seam: flip to the NEW version after N total reads — the shape of
 # a push run completing DURING the leg (the start-of-leg reads serve the
 # stale replica; the post-run re-read catches up). Absent = legacy behavior.
@@ -140,6 +150,15 @@ case "$cmd" in
         # base fixture when present — the past-grace re-read test (review
         # thread 2) plants a run on the SECOND read.
         cf="$GH_STUB_DIR/list-count-$branch"
+        # gh-1561 rework seam (review thread 9): a transient gh failure on
+        # the Nth read of a branch — exit 1 with empty stdout. The
+        # registration wait must read it as «still pending» (#1370
+        # doctrine), never die under set -e.
+        if [ -f "$GH_STUB_DIR/gh-list-fail-on" ] \
+            && [ "$n" -eq "$(cat "$GH_STUB_DIR/gh-list-fail-on")" ]; then
+          echo "gh: simulated transient run-list failure" >&2
+          exit 1
+        fi
         n=$(cat "$cf" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$cf"
         f="$GH_STUB_DIR/runs-$branch.$n.json"
         [ -f "$f" ] || f="$GH_STUB_DIR/runs-$branch.json"
@@ -265,6 +284,15 @@ VerifyRun runVerify(
   // gh-1561: the re-arm's push destination override — 'origin' pushes to
   // this sandbox's bare remote (production derives the App-token URL).
   String? rearmPushTo,
+  // gh-1561 rework seams (review threads 8/9): [pubdevApiDown] makes EVERY
+  // pub.dev read fail (a full API outage at the top of the leg);
+  // [curlFailAfterReads] fails every read AFTER N total reads (an outage
+  // that starts MID-LEG, at the success-branch re-read); [ghListFailOnRead]
+  // makes the Nth `gh run list` read of the tag branch fail transiently
+  // (the registration wait must survive it).
+  bool pubdevApiDown = false,
+  int? curlFailAfterReads,
+  int? ghListFailOnRead,
   String conclusion = 'success',
   bool rerunToSuccess = false,
   // #1368 fixture seams: the run-view Nth-read override (run-<id>.1.json)
@@ -337,6 +365,17 @@ VerifyRun runVerify(
   }
   if (lsremoteFailFirst) {
     File('${dir.path}/lsremote-fail-first').writeAsStringSync('');
+  }
+  if (pubdevApiDown) File('${dir.path}/curl-fail').writeAsStringSync('');
+  if (curlFailAfterReads != null) {
+    File(
+      '${dir.path}/curl-fail-after',
+    ).writeAsStringSync('${curlFailAfterReads}');
+  }
+  if (ghListFailOnRead != null) {
+    File(
+      '${dir.path}/gh-list-fail-on',
+    ).writeAsStringSync('${ghListFailOnRead}');
   }
 
   // The run-view fixture mirrors EVERY listed run's status: a queued/
@@ -880,6 +919,167 @@ void main() {
         r.ghLog.where((l) => l.contains('--branch v0.1.497')),
         hasLength(8),
         reason: 'initial + grace re-read + 6 registration reads (default)',
+      );
+    });
+  });
+
+  // ── gh-1561 rework — review threads 8/9/10 ─────────────────────────────
+  // Thread 8: read_published_version() must PROPAGATE failure — a command-
+  // substitution call site drops set -e (inherit_errexit is off), so an
+  // API outage used to read as published="" and could drive classification
+  // (worst case: the re-arm force-push) on NO data at all. Thread 9: the
+  // registration wait's fetch_runs is guarded like the terminal-wait loop
+  // (#1370 doctrine). Thread 10: the mint's least-privilege ceiling must
+  // ride an input the pinned action actually honors.
+  group('gh-1561 rework — pub.dev outage semantics + guarded registration wait', () {
+    test('pub.dev API down at the top of the leg -> loud classify failure', () {
+      // Pre-PR semantics restored (thread 8): the top-of-leg read ran in
+      // the main shell under set -e and one failed read exited loudly. The
+      // extracted helper must reproduce that — an outage must never read
+      // as published="" and slip into the behind-classification.
+      final r = runVerify('api-down-top', pubdevApiDown: true);
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.errored, isTrue, reason: r.output);
+      expect(
+        r.output,
+        contains('::error::pub.dev API unreachable — cannot classify'),
+      );
+      expect(
+        r.status,
+        isNot('release-in-flight'),
+        reason: 'no data must never masquerade as a neutral skip',
+      );
+      expect(
+        r.ghLog,
+        isEmpty,
+        reason: 'the leg dies at the top read — no classification or '
+            'recovery reads on empty data',
+      );
+    });
+
+    test('API outage must never fire the re-arm (no recovery on empty data)', () {
+      // The headline consequence from review thread 8: with published=""
+      // the old code classified «behind», reached the never-triggered arm
+      // and FORCE-PUSHED the tag purely because the API was unreachable.
+      final r = runVerify(
+        'api-down-no-rearm',
+        tagAge: const Duration(hours: 2),
+        runsJson:
+            '[{"databaseId":777,"status":"completed","conclusion":"success","event":"release"}]',
+        rearmPushTo: 'origin',
+        pubdevApiDown: true,
+        extraEnv: const {'RELEASE_APP_TOKEN': 'stub-token'},
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(
+        r.output,
+        contains('::error::pub.dev API unreachable — cannot classify'),
+      );
+      expect(r.output, isNot(contains('re-armed')), reason: r.output);
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        isEmpty,
+        reason: 'no run-list reads -> no re-arm decision, ever',
+      );
+      // The seeded 2h-backdated tag object is UNTOUCHED — the re-arm (a
+      // state-changing force-push + full ci.yml cascade) never fired.
+      final taggerDate = int.parse(
+        _gitOut([
+          'for-each-ref',
+          'refs/tags/v0.1.497',
+          '--format=%(creatordate:unix)',
+        ], cwd: r.origin),
+      );
+      final actual = DateTime.fromMillisecondsSinceEpoch(
+        taggerDate * 1000,
+        isUtc: true,
+      );
+      expect(
+        actual.isBefore(
+          DateTime.now().toUtc().subtract(const Duration(minutes: 90)),
+        ),
+        isTrue,
+        reason: 'the seeded backdate survives — the re-arm never fired',
+      );
+    });
+
+    test('pub.dev goes down mid-leg at the success re-read -> neutral skip', () {
+      // The second call site (thread 8): the top-of-leg reads serve the
+      // stale replica, the push run is green, then the API drops before the
+      // success-branch re-read — outcome UNOBSERVED, never a false
+      // «publish did not upload» and never a false green.
+      final r = runVerify(
+        'api-down-success-reread',
+        runsJson:
+            '[{"databaseId":4242,"status":"completed","conclusion":"success","event":"push"}]',
+        curlFailAfterReads: 3,
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: r.output);
+      expect(r.output, contains('outcome unobserved'));
+      expect(r.output, isNot(contains('publish did not upload')));
+    });
+
+    test('transient gh failure inside the registration wait -> still-pending, '
+        'never a dead leg (thread 9)', () {
+      // The 4th branch-list read (the 2nd registration read) fails
+      // transiently — under set -e the unguarded assignment used to kill
+      // the leg exactly when the self-heal was mid-flight.
+      final r = runVerify(
+        'rearm-gh-blip',
+        tagAge: const Duration(hours: 2),
+        runsJson: '[]',
+        secondReadJson: '[]',
+        rearmPushTo: 'origin',
+        ghListFailOnRead: 4,
+        extraEnv: const {'RELEASE_APP_TOKEN': 'stub-token'},
+      );
+      expect(r.exitCode, 0, reason: 'a gh blip must not kill the leg: ${r.output}');
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: r.output);
+      expect(r.output, contains('was re-armed by this leg'));
+      expect(
+        r.output,
+        contains('transient gh failure reading the run list (attempt 2/6)'),
+        reason: r.output,
+      );
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        hasLength(8),
+        reason: 'the failed read still consumed its registration attempt',
+      );
+    });
+
+    test('wiring: the pubdev mint ceiling rides the WORKING granular input '
+        '(thread 10)', () {
+      // Verified against the pinned action (v3.2.0, bcd2ba49): action.yml
+      // defines NO composite `permissions` input (GitHub warns `Unexpected
+      // input(s) 'permissions'` and the action never reads it — the
+      // round-1 author reply was right), but it DOES define the generated
+      // `permission-*` inputs, which the action turns into the mint
+      // request's permissions map. The ceiling must ride the honored input.
+      final daily = read('.github/workflows/daily-publish.yml');
+      final mintAt = daily.indexOf('actions/create-github-app-token@');
+      expect(
+        mintAt,
+        greaterThan(-1),
+        reason: 'the pubdev leg mints the re-arm token',
+      );
+      final mintEnd = daily.indexOf('- name: Verify pub.dev', mintAt);
+      expect(mintEnd, greaterThan(mintAt));
+      final mintBlock = daily.substring(mintAt, mintEnd);
+      expect(
+        mintBlock,
+        contains('permission-contents: write'),
+        reason: 'the least-privilege ceiling (contents:write — the tag '
+            're-push) must come from the honored input',
+      );
+      expect(
+        mintBlock,
+        isNot(contains(RegExp(r'^\s*permissions:', multiLine: true))),
+        reason: 'the composite `permissions` key is dead at this pin — '
+            'keeping it would overclaim a ceiling that does not exist',
       );
     });
   });
