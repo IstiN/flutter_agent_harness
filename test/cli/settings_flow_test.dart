@@ -2227,6 +2227,50 @@ memory:
       expect(fake.calls, 0);
     });
 
+    test(
+      'AC2: clearing the cap keeps the sibling agent keys (gh-1572)',
+      () async {
+        // gh-1572 makes `agent.mode`/`agent.misuseBreaker`/`stuckTool`
+        // first-class persisted keys — the clear must drop ONLY the cap
+        // line (the whole block goes when the cap was its last member, see
+        // the one-key test above).
+        const seed =
+            'provider: openrouter\n'
+            'agent:\n'
+            '  mode: pi\n'
+            '  contextWindowCap: 32768\n'
+            '  misuseBreaker: false\n';
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = await seededCli(fake, yaml: seed, contextWindowCap: 32768);
+        final run = cli.run();
+
+        final flow = cli.startContextCapFlow();
+        await waitForIt(() => io.out.toString().contains('context cap'));
+        io.sendLine('2'); // clear
+        await waitForIt(
+          () => io.out.toString().contains('agent.contextWindowCap removed'),
+        );
+        io.sendLine('3'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, isNotNull);
+        expect(written, isNot(contains('contextWindowCap')));
+        expect(written, contains('  mode: pi\n'));
+        expect(written, contains('  misuseBreaker: false\n'));
+        expect(written, contains('provider: openrouter'));
+        final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+        expect(parsed.contextWindowCap, isNull);
+        expect(parsed.agentLoadMode, 'pi');
+        expect(parsed.misuseBreaker, isFalse);
+        expect(fake.calls, 0);
+      },
+    );
+
     test('AC3: the flow states the change waits for the next boot', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = await seededCli(fake);
