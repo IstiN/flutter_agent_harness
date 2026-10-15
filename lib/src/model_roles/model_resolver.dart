@@ -218,29 +218,18 @@ final class ModelRolesResolver {
     if (spec == null) {
       // Issue #1552: the catalog missed — a hand-written config may name
       // a `customProviders:` entry (`provider: aiai`). The registry leg
-      // (_registryLeg) resolves through the entry: its apiType's catalog
-      // spec, with the entry's baseUrl/keyName as defaults where the ref
-      // omits them (explicit ref fields always win). The reserved-name
-      // rule (isReservedCustomProviderName) bars registry entries from
-      // catalog names, so this leg only ever answers what the catalog
-      // missed — the two namespaces never shadow.
+      // (_registryLeg) resolves through the entry; null = the gh-760 skip
+      // is already reported and classified there — degrade now. The
+      // reserved-name rule (isReservedCustomProviderName) bars registry
+      // entries from catalog names, so the leg only ever answers what
+      // the catalog missed — the two namespaces never shadow.
       final viaRegistry = _registryLeg(
         ref,
         skipped,
         onUnknownProvider: onUnknownProvider,
       );
-      if (viaRegistry != null) {
-        (ref, spec) = viaRegistry;
-      }
-    }
-    if (spec == null) {
-      // gh-760: degrade, never brick. An entry whose provider no version
-      // knows (a config written by a newer app/CLI) skips like a
-      // missing-key entry — reported in skippedEntries, never thrown —
-      // so the remaining known entries carry the role.
-      skipped.add('${ref.label} (unknown provider: ${ref.provider})');
-      onUnknownProvider();
-      return null;
+      if (viaRegistry == null) return null;
+      (ref, spec) = viaRegistry;
     }
     // Non-null alias: the registry leg reassigns `spec` above and
     // `buildRouted` below captures it — flow analysis never promotes a
@@ -370,29 +359,36 @@ final class ModelRolesResolver {
   }
 
   /// The registry LEG of chain-name resolution (issue #1552): the catalog
-  /// missed [ref]'s provider, so try the saved `customProviders:` entries.
-  /// A matched entry resolves through its apiType's catalog spec (same
-  /// honorBuildFilter rule as every user-facing roles surface), with the
-  /// entry's `baseUrl`/`keyName` as defaults where the ref omits them
-  /// (explicit ref fields always win). Returns the defaulted ref paired
-  /// with its spec, or null when this leg has no answer:
-  /// - no entry matches → the caller reports the generic unknown-provider
-  ///   skip (a name known to NEITHER namespace — gh-760);
+  /// missed [ref]'s provider, so resolve through the saved
+  /// `customProviders:` entries. A matched entry resolves through its
+  /// apiType's catalog spec (the same honorBuildFilter rule every
+  /// user-facing roles surface applies), with the entry's
+  /// `baseUrl`/`keyName` as defaults where the ref omits them (explicit
+  /// ref fields always win). Returns the defaulted ref paired with its
+  /// spec, or null with the gh-760 skip ALREADY reported to [skipped] and
+  /// classified via [onUnknownProvider] — the caller just degrades:
+  ///
+  /// - no entry matches → a name known to NEITHER namespace (gh-760): the
+  ///   generic unknown-provider skip, as before this leg existed;
   /// - the matched entry's apiType is unknown to this version (a saved
-  ///   entry written by a newer CLI) → reported HERE as an unknown
-  ///   adapter dialect — the registry entry IS known, only its dialect
-  ///   isn't, so "unknown provider" would send the user hunting an entry
-  ///   spelling that is fine.
-  /// Both null paths keep the gh-760 skip+degrade contract (version skew,
-  /// recoverable), classified via [onUnknownProvider] where the entry
-  /// itself was recognized.
+  ///   entry written by a newer CLI) → an unknown ADAPTER DIALECT skip —
+  ///   the registry entry IS known, only its dialect isn't, so "unknown
+  ///   provider" would send the user hunting an entry spelling that is
+  ///   fine.
+  ///
+  /// Both paths keep the degrade contract: a named skip reason, never a
+  /// throw, so the remaining known entries carry the role.
   (ModelRef, ProviderSpec)? _registryLeg(
     ModelRef ref,
     List<String> skipped, {
     required void Function() onUnknownProvider,
   }) {
     final entry = _findCustomProvider(ref.provider);
-    if (entry == null) return null;
+    if (entry == null) {
+      skipped.add('${ref.label} (unknown provider: ${ref.provider})');
+      onUnknownProvider();
+      return null;
+    }
     final spec = resolveCliProviderSpec(entry.apiType, honorBuildFilter: true);
     if (spec != null) return (_throughCustomEntry(ref, entry), spec);
     skipped.add('${ref.label} (unknown adapter dialect: ${entry.apiType})');
