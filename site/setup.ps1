@@ -104,12 +104,20 @@ function Read-Secure($prompt) {
 
 # Provider menu
 Write-Host "  1) OpenRouter  — one key, many models   (recommended)"
-Write-Host "  2) Anthropic  — Claude"
-Write-Host "  3) Google  — Gemini"
+Write-Host "  2) AIIN  — AIIN chat"
+Write-Host "  3) Kimi  — Moonshot Kimi for Coding"
 Write-Host "  4) OpenAI  — GPT"
-Write-Host "  5) Custom  — any OpenAI-compatible endpoint"
+Write-Host "  5) ChatGPT  — Codex — OAuth credentials"
+Write-Host "  6) GitHub Copilot  — your GitHub token"
+Write-Host "  7) CodeMie  — EPAM CodeMie"
+Write-Host "  8) DIAL  — EPAM AI DIAL"
+Write-Host "  9) MiniMax  — MiniMax chat"
+Write-Host "  10) Anthropic  — Claude"
+Write-Host "  11) Google  — Gemini"
+Write-Host "  12) Z.AI  — GLM coding plan"
+Write-Host "  13) Custom  — any OpenAI-compatible endpoint"
 Write-Host ""
-$providerChoice = Read-Choice "Pick a provider [1-5]" @("1", "2", "3", "4", "5", "openrouter", "anthropic", "google", "openai", "custom")
+$providerChoice = Read-Choice "Pick a provider [1-13]" @("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "openrouter", "aiin", "kimi", "openai", "chatgpt", "copilot", "codemie", "dial", "minimax", "anthropic", "google", "zai", "custom")
 
 
 switch -Regex ($providerChoice) {
@@ -136,41 +144,34 @@ switch -Regex ($providerChoice) {
         $baseUrl = "https://openrouter.ai/api/v1"
         $keyVar = "OPENROUTER_API_KEY"
     }
-    "^(2|anthropic)$" {
-        $provider = "anthropic"
-        $providerKind = "anthropic"
+    "^(2|aiin)$" {
+        $provider = "aiin"
+        $providerKind = "aiin"
         Write-Host ""
-        Write-Host "  Anthropic models:"
-        Write-Host "    1) claude-sonnet-4-5   (recommended)"
-        Write-Host "    2) claude-opus-4"
-        Write-Host "    3) claude-haiku-4"
-        Write-Host "    4) other — enter model id manually"
-        $m = Read-Choice "Pick a model [1-4]" @("1", "2", "3", "4")
-        switch ($m) {
-            "1" { $model = "claude-sonnet-4-5" }
-            "2" { $model = "claude-opus-4" }
-            "3" { $model = "claude-haiku-4" }
-            "4" { $model = Read-Host "Enter the Anthropic model id" }
-        }
-        $baseUrl = "https://api.anthropic.com"
-        $keyVar = "ANTHROPIC_API_KEY"
+        $model = Read-Host "Model id on that endpoint"
+        $baseUrl = "https://api.aiin.by/v1"
+        $keyVar = "AIIN_API_KEY"
     }
-    "^(3|google)$" {
-        $provider = "google"
-        $providerKind = "google"
+    "^(3|kimi)$" {
+        $provider = "kimi"
+        $providerKind = "openai-completions"
         Write-Host ""
-        Write-Host "  Google models:"
-        Write-Host "    1) gemini-2.5-pro   (recommended)"
-        Write-Host "    2) gemini-2.0-flash"
-        Write-Host "    3) other — enter model id manually"
-        $m = Read-Choice "Pick a model [1-3]" @("1", "2", "3")
+        Write-Host "  Kimi models:"
+        Write-Host "    1) k3   (recommended)"
+        Write-Host "    2) kimi-for-coding"
+        Write-Host "    3) kimi-for-coding-highspeed"
+        Write-Host "    4) k3-256k"
+        Write-Host "    5) other — enter model id manually"
+        $m = Read-Choice "Pick a model [1-5]" @("1", "2", "3", "4", "5")
         switch ($m) {
-            "1" { $model = "gemini-2.5-pro" }
-            "2" { $model = "gemini-2.0-flash" }
-            "3" { $model = Read-Host "Enter the Google model id" }
+            "1" { $model = "k3" }
+            "2" { $model = "kimi-for-coding" }
+            "3" { $model = "kimi-for-coding-highspeed" }
+            "4" { $model = "k3-256k" }
+            "5" { $model = Read-Host "Enter the Kimi model id" }
         }
-        $baseUrl = "https://generativelanguage.googleapis.com/v1beta"
-        $keyVar = "GOOGLE_API_KEY"
+        $baseUrl = "https://api.kimi.com/coding/v1"
+        $keyVar = "KIMI_API_KEY"
     }
     "^(4|openai)$" {
         $provider = "openai"
@@ -191,7 +192,91 @@ switch -Regex ($providerChoice) {
         $baseUrl = "https://api.openai.com/v1"
         $keyVar = "OPENAI_API_KEY"
     }
-    "^(5|custom)$" {
+    "^(5|chatgpt)$" {
+        $provider = "chatgpt"
+        $providerKind = "chatgpt-codex"
+        Write-Host ""
+        $model = Read-Host "Model id on that endpoint"
+        $baseUrl = "https://chatgpt.com/backend-api/codex"
+        $keyVar = "CHATGPT_OAUTH_CREDENTIALS"
+    }
+    "^(6|copilot)$" {
+        $provider = "copilot"
+        $providerKind = "copilot"
+        Write-Host ""
+        $model = Read-Host "Model id on that endpoint"
+        $baseUrl = "https://api.githubcopilot.com"
+        $keyVar = "COPILOT_GITHUB_TOKEN"
+    }
+    "^(7|codemie)$" {
+        $provider = "codemie"
+        $providerKind = "openai-completions"
+        Write-Host ""
+        $model = Read-Host "Model id on that endpoint"
+        $baseUrl = "https://codemie.lab.epam.com/code-assistant-api/v1"
+        $keyVar = "CODEMIE_API_KEY"
+    }
+    "^(8|dial)$" {
+        $provider = "dial"
+        $providerKind = "dial"
+        Write-Host ""
+        $model = Read-Host "Model id on that endpoint"
+        $baseUrl = "https://ai-proxy.lab.epam.com"
+        $keyVar = "DIAL_API_KEY"
+    }
+    "^(9|minimax)$" {
+        $provider = "minimax"
+        $providerKind = "minimax"
+        Write-Host ""
+        $model = Read-Host "Model id on that endpoint"
+        $baseUrl = "https://api.minimax.io/v1"
+        $keyVar = "MINIMAX_API_KEY"
+    }
+    "^(10|anthropic)$" {
+        $provider = "anthropic"
+        $providerKind = "anthropic"
+        Write-Host ""
+        Write-Host "  Anthropic models:"
+        Write-Host "    1) claude-sonnet-4-5   (recommended)"
+        Write-Host "    2) claude-opus-4"
+        Write-Host "    3) claude-haiku-4"
+        Write-Host "    4) other — enter model id manually"
+        $m = Read-Choice "Pick a model [1-4]" @("1", "2", "3", "4")
+        switch ($m) {
+            "1" { $model = "claude-sonnet-4-5" }
+            "2" { $model = "claude-opus-4" }
+            "3" { $model = "claude-haiku-4" }
+            "4" { $model = Read-Host "Enter the Anthropic model id" }
+        }
+        $baseUrl = "https://api.anthropic.com"
+        $keyVar = "ANTHROPIC_API_KEY"
+    }
+    "^(11|google)$" {
+        $provider = "google"
+        $providerKind = "google"
+        Write-Host ""
+        Write-Host "  Google models:"
+        Write-Host "    1) gemini-2.5-pro   (recommended)"
+        Write-Host "    2) gemini-2.0-flash"
+        Write-Host "    3) other — enter model id manually"
+        $m = Read-Choice "Pick a model [1-3]" @("1", "2", "3")
+        switch ($m) {
+            "1" { $model = "gemini-2.5-pro" }
+            "2" { $model = "gemini-2.0-flash" }
+            "3" { $model = Read-Host "Enter the Google model id" }
+        }
+        $baseUrl = "https://generativelanguage.googleapis.com/v1beta"
+        $keyVar = "GOOGLE_API_KEY"
+    }
+    "^(12|zai)$" {
+        $provider = "zai"
+        $providerKind = "zai"
+        Write-Host ""
+        $model = Read-Host "Model id on that endpoint"
+        $baseUrl = "https://api.z.ai/api/coding/paas/v4"
+        $keyVar = "ZAI_API_KEY"
+    }
+    "^(13|custom)$" {
         $provider = "custom"
         $providerKind = "openai-completions"
         $baseUrl = Read-Host "Custom base URL (e.g. http://localhost:11434/v1)"
@@ -232,16 +317,18 @@ switch -Regex ($modeChoice) {
 # Approval mode
 Write-Host ""
 Write-Host "  Tool approval:"
-Write-Host "    1) yolo (default)  — run safe tools unattended"
+Write-Host "    1) always-ask  — prompt before every tool call"
 Write-Host "    2) write  — prompt before writes/executes"
-Write-Host "    3) always-ask  — prompt before every tool call"
+Write-Host "    3) yolo (default)  — run safe tools unattended"
+Write-Host "    4) autopilot  — never prompt — for unattended runs"
 
 
-$approvalChoice = Read-Choice "Pick an approval mode [1-3]" @("1", "yolo", "2", "write", "3", "always-ask")
+$approvalChoice = Read-Choice "Pick an approval mode [1-4]" @("1", "always-ask", "2", "write", "3", "yolo", "4", "autopilot")
 switch -Regex ($approvalChoice) {
-    "^(1|yolo)$" { $approval = "yolo" }
+    "^(1|always-ask)$" { $approval = "always-ask" }
     "^(2|write)$" { $approval = "write" }
-    "^(3|always-ask)$" { $approval = "always-ask" }
+    "^(3|yolo)$" { $approval = "yolo" }
+    "^(4|autopilot)$" { $approval = "autopilot" }
 }
 
 

@@ -294,12 +294,10 @@ VerifyRun runVerify(
   // 1) — file:// so git honors --depth on the local transport.
   _git(['clone', '-q', '--depth', '1', 'file://$origin', job], cwd: dir.path);
 
-  File(
-    '${dir.path}/pubdev.json',
-  ).writeAsStringSync('{"latest":{"version":"$publishedVersion"}}');
-  File(
-    '${dir.path}/pubdev-new.json',
-  ).writeAsStringSync('{"latest":{"version":"$version"}}');
+  File('${dir.path}/pubdev.json')
+      .writeAsStringSync('{"latest":{"version":"$publishedVersion"}}');
+  File('${dir.path}/pubdev-new.json')
+      .writeAsStringSync('{"latest":{"version":"$version"}}');
   File('${dir.path}/runs-v$version.json').writeAsStringSync(runsJson ?? '[]');
   if (secondReadJson != null) {
     File('${dir.path}/runs-v$version.2.json').writeAsStringSync(secondReadJson);
@@ -316,9 +314,10 @@ VerifyRun runVerify(
   // the stub serves the -post.json success when [rerunToSuccess].
   void plantRun(String listJson) {
     if (listJson.isEmpty || listJson == '[]') return;
-    final objs = RegExp(
-      r'\{[^}]*\}',
-    ).allMatches(listJson).map((m) => m.group(0)!).toList();
+    final objs = RegExp(r'\{[^}]*\}')
+        .allMatches(listJson)
+        .map((m) => m.group(0)!)
+        .toList();
     var first = true;
     for (final obj in objs) {
       final id = RegExp(r'"databaseId":\s*(\d+)').firstMatch(obj)?.group(1);
@@ -331,9 +330,8 @@ VerifyRun runVerify(
           : '{"status":"$listed","conclusion":null}';
       File('${dir.path}/run-$id.json').writeAsStringSync(base);
       if (rerunToSuccess) {
-        File(
-          '${dir.path}/run-$id-post.json',
-        ).writeAsStringSync('{"status":"completed","conclusion":"success"}');
+        File('${dir.path}/run-$id-post.json')
+            .writeAsStringSync('{"status":"completed","conclusion":"success"}');
       }
       if (firstViewJson != null && first) {
         File('${dir.path}/run-$id.1.json').writeAsStringSync(firstViewJson);
@@ -481,9 +479,8 @@ PlanRun runPlan(
   _git(['config', 'user.name', 't'], cwd: seed);
   // gh-1522: the committed pubspec is the 0.0.0-dev placeholder — the plan
   // gate reads only git tags and the pub.dev API.
-  File(
-    '$seed/pubspec.yaml',
-  ).writeAsStringSync('name: demo\nversion: 0.0.0-dev\n');
+  File('$seed/pubspec.yaml')
+      .writeAsStringSync('name: demo\nversion: 0.0.0-dev\n');
   _git(['add', '-A'], cwd: seed);
   _git(['commit', '-q', '-m', 'seed'], cwd: seed);
   if (tagPresent) {
@@ -504,8 +501,7 @@ PlanRun runPlan(
     null => '[]',
     'head' =>
       '[{"headSha":"$headSha","event":"schedule","displayTitle":"Daily"}]',
-    _ =>
-      '[{"headSha":"0000000000000000000000000000000000000000","event":"schedule","displayTitle":"Daily"}]',
+    _ => '[{"headSha":"0000000000000000000000000000000000000000","event":"schedule","displayTitle":"Daily"}]',
   };
   File('${dir.path}/runs-main.json').writeAsStringSync(green);
   if (pubdevApiDown) File('${dir.path}/curl-fail').writeAsStringSync('');
@@ -542,26 +538,23 @@ PlanRun runPlan(
 void main() {
   // ── AC1/AC4 — «release in flight» is neutral, never an alarm ────────────
   group('AC1/AC4 — verify classifies release-in-flight, no ::error::', () {
-    test(
-      '2026-10-03 timeline: tag 60s old, tag-run not visible yet -> neutral skip',
-      () {
-        final r = runVerify('incident-timeline');
-        expect(r.exitCode, 0, reason: r.output);
-        expect(r.inFlight, isTrue, reason: r.output);
-        expect(r.errored, isFalse, reason: 'the #1189 false-alarm class');
-        expect(
-          r.outputs['run_url'] ?? '',
-          isEmpty,
-          reason: 'no run exists to link',
-        );
-        expect(r.output, contains('release in flight'));
-        expect(
-          r.ghLog.where((l) => l.contains('--branch v0.1.497')),
-          hasLength(1),
-          reason: 'the classification reads the tag-run list exactly once',
-        );
-      },
-    );
+    test('2026-10-03 timeline: tag 60s old, tag-run not visible yet -> neutral skip', () {
+      final r = runVerify('incident-timeline');
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: 'the #1189 false-alarm class');
+      expect(
+        r.outputs['run_url'] ?? '',
+        isEmpty,
+        reason: 'no run exists to link',
+      );
+      expect(r.output, contains('release in flight'));
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        hasLength(1),
+        reason: 'the classification reads the tag-run list exactly once',
+      );
+    });
 
     test('tag-run queued or in_progress -> skip, run linked', () {
       for (final status in ['queued', 'in_progress']) {
@@ -587,8 +580,7 @@ void main() {
         final r = runVerify(
           'starved-run',
           tagAge: const Duration(hours: 3),
-          runsJson:
-              '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+          runsJson: '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
           extraEnv: const {'PUBDEV_MAX_POLLS': '2'},
         );
         expect(r.exitCode, 0, reason: r.output);
@@ -597,19 +589,16 @@ void main() {
       },
     );
 
-    test(
-      'grace is tunable (RELEASE_FLIGHT_GRACE_SECS): 2h-old tag inside a 3h grace skips',
-      () {
-        final r = runVerify(
-          'grace-knob',
-          tagAge: const Duration(hours: 2),
-          runsJson: '[]',
-          extraEnv: {'RELEASE_FLIGHT_GRACE_SECS': '10800'},
-        );
-        expect(r.inFlight, isTrue, reason: r.output);
-        expect(r.errored, isFalse, reason: r.output);
-      },
-    );
+    test('grace is tunable (RELEASE_FLIGHT_GRACE_SECS): 2h-old tag inside a 3h grace skips', () {
+      final r = runVerify(
+        'grace-knob',
+        tagAge: const Duration(hours: 2),
+        runsJson: '[]',
+        extraEnv: {'RELEASE_FLIGHT_GRACE_SECS': '10800'},
+      );
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: r.output);
+    });
   });
 
   // ── AC2 — genuine trigger failure still alarms, unchanged text ──────────
@@ -647,8 +636,7 @@ void main() {
         'repush-second-read',
         tagAge: const Duration(hours: 2),
         runsJson: '[]',
-        secondReadJson:
-            '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+        secondReadJson: '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
         extraEnv: const {'PUBDEV_MAX_POLLS': '2'},
       );
       expect(r.exitCode, 0, reason: r.output);
@@ -665,30 +653,25 @@ void main() {
       );
     });
 
-    test(
-      'completed run succeeded but pub.dev behind -> publish-did-not-upload alarm',
-      () {
-        final r = runVerify(
-          'success-but-behind',
-          runsJson:
-              '[{"databaseId":4242,"status":"completed","conclusion":"success","event":"push"}]',
-        );
-        expect(r.exitCode, isNot(0), reason: r.output);
-        expect(r.errored, isTrue);
-        expect(r.output, contains('publish did not upload'));
-        expect(
-          r.ghLog.where((l) => l.contains('run rerun')),
-          isEmpty,
-          reason: 'a green run must not be rerun',
-        );
-      },
-    );
+    test('completed run succeeded but pub.dev behind -> publish-did-not-upload alarm', () {
+      final r = runVerify(
+        'success-but-behind',
+        runsJson: '[{"databaseId":4242,"status":"completed","conclusion":"success","event":"push"}]',
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.errored, isTrue);
+      expect(r.output, contains('publish did not upload'));
+      expect(
+        r.ghLog.where((l) => l.contains('run rerun')),
+        isEmpty,
+        reason: 'a green run must not be rerun',
+      );
+    });
 
     test('completed run failed -> the existing rerun recovery path fires', () {
       final r = runVerify(
         'rerun-recovers',
-        runsJson:
-            '[{"databaseId":4242,"status":"completed","conclusion":"failure","event":"push"}]',
+        runsJson: '[{"databaseId":4242,"status":"completed","conclusion":"failure","event":"push"}]',
         conclusion: 'failure',
         rerunToSuccess: true,
       );
@@ -708,8 +691,7 @@ void main() {
         final r = runVerify(
           'repushed-old-tag',
           tagAge: const Duration(hours: 2),
-          runsJson:
-              '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+          runsJson: '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
           extraEnv: const {'PUBDEV_MAX_POLLS': '2'},
         );
         expect(r.exitCode, 0, reason: r.output);
@@ -725,36 +707,32 @@ void main() {
 
   // ── #1368 — twin-run selection, bounded waits, true-state errors ─────────
   group('#1368 — push-twin selection and the bounded waits', () {
-    test(
-      'release-event-only runs past grace -> «never triggered», the exit-65 arm named',
-      () {
-        // The old release arm: the release twin attempted the publish pub.dev
-        // OIDC always rejects. Its failure must read as never-published, and
-        // recovery must never rerun THAT twin. The tag is aged past the 900s
-        // grace (20 min) — INSIDE the grace the selection correctly keeps the
-        // leg in the neutral in-flight class (pinned by the young-tag
-        // companion case below); the alarm branch is grace-expired only.
-        final r = runVerify(
-          'release-twin-only',
-          tagAge: const Duration(minutes: 20),
-          runsJson:
-              '[{"databaseId":77,"status":"completed","conclusion":"failure","event":"release"}]',
-        );
-        expect(r.exitCode, isNot(0), reason: r.output);
-        expect(r.errored, isTrue);
-        expect(
-          r.output,
-          contains(
-            'never triggered (only non-push run(s) exist — the publish job fires on push-event tag runs only)',
-          ),
-        );
-        expect(
-          r.ghLog.where((l) => l.contains('run rerun')),
-          isEmpty,
-          reason: 'rerunning the release twin can never publish',
-        );
-      },
-    );
+    test('release-event-only runs past grace -> «never triggered», the exit-65 arm named', () {
+      // The old release arm: the release twin attempted the publish pub.dev
+      // OIDC always rejects. Its failure must read as never-published, and
+      // recovery must never rerun THAT twin. The tag is aged past the 900s
+      // grace (20 min) — INSIDE the grace the selection correctly keeps the
+      // leg in the neutral in-flight class (pinned by the young-tag
+      // companion case below); the alarm branch is grace-expired only.
+      final r = runVerify(
+        'release-twin-only',
+        tagAge: const Duration(minutes: 20),
+        runsJson: '[{"databaseId":77,"status":"completed","conclusion":"failure","event":"release"}]',
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.errored, isTrue);
+      expect(
+        r.output,
+        contains(
+          'never triggered (only non-push run(s) exist — the publish job fires on push-event tag runs only)',
+        ),
+      );
+      expect(
+        r.ghLog.where((l) => l.contains('run rerun')),
+        isEmpty,
+        reason: 'rerunning the release twin can never publish',
+      );
+    });
 
     test(
       'young tag with release-only runs visible -> grace skip, never alarms',
@@ -767,8 +745,7 @@ void main() {
         // above: both branches pinned.
         final r = runVerify(
           'young-release-twin',
-          runsJson:
-              '[{"databaseId":77,"status":"queued","conclusion":null,"event":"release"}]',
+          runsJson: '[{"databaseId":77,"status":"queued","conclusion":null,"event":"release"}]',
         );
         expect(r.exitCode, 0, reason: r.output);
         expect(r.inFlight, isTrue, reason: r.output);
@@ -777,52 +754,50 @@ void main() {
       },
     );
 
+    test('release-only run registers on the spaced re-read -> still alarms (past grace)', () {
+      final r = runVerify(
+        'release-twin-second-read',
+        tagAge: const Duration(hours: 2),
+        runsJson: '[]',
+        secondReadJson: '[{"databaseId":77,"status":"completed","conclusion":"failure","event":"release"}]',
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.errored, isTrue);
+      expect(r.output, contains('only non-push run(s) exist'));
+    });
+
     test(
-      'release-only run registers on the spaced re-read -> still alarms (past grace)',
+      'twin runs: recovery targets the PUSH twin, never the release twin',
       () {
         final r = runVerify(
-          'release-twin-second-read',
-          tagAge: const Duration(hours: 2),
-          runsJson: '[]',
-          secondReadJson:
-              '[{"databaseId":77,"status":"completed","conclusion":"failure","event":"release"}]',
+          'twin-runs',
+          runsJson:
+              '[{"databaseId":55,"status":"completed","conclusion":"failure","event":"release"},'
+              '{"databaseId":4242,"status":"completed","conclusion":"failure","event":"push"}]',
+          conclusion: 'failure',
+          rerunToSuccess: true,
         );
-        expect(r.exitCode, isNot(0), reason: r.output);
-        expect(r.errored, isTrue);
-        expect(r.output, contains('only non-push run(s) exist'));
+        expect(r.exitCode, 0, reason: r.output);
+        expect(r.status, 'recovered');
+        expect(
+          r.outputs['run_url'],
+          'https://github.com/OWNER/REPO/actions/runs/4242',
+          reason: 'the push twin is the only OIDC-valid publisher',
+        );
+        expect(
+          r.ghLog.where(
+            (l) => l.contains('run rerun 4242') && l.contains('--failed'),
+          ),
+          hasLength(1),
+        );
+        expect(r.ghLog.where((l) => l.contains('run rerun 55')), isEmpty);
       },
     );
-
-    test('twin runs: recovery targets the PUSH twin, never the release twin', () {
-      final r = runVerify(
-        'twin-runs',
-        runsJson:
-            '[{"databaseId":55,"status":"completed","conclusion":"failure","event":"release"},'
-            '{"databaseId":4242,"status":"completed","conclusion":"failure","event":"push"}]',
-        conclusion: 'failure',
-        rerunToSuccess: true,
-      );
-      expect(r.exitCode, 0, reason: r.output);
-      expect(r.status, 'recovered');
-      expect(
-        r.outputs['run_url'],
-        'https://github.com/OWNER/REPO/actions/runs/4242',
-        reason: 'the push twin is the only OIDC-valid publisher',
-      );
-      expect(
-        r.ghLog.where(
-          (l) => l.contains('run rerun 4242') && l.contains('--failed'),
-        ),
-        hasLength(1),
-      );
-      expect(r.ghLog.where((l) => l.contains('run rerun 55')), isEmpty);
-    });
 
     test('pending push run reaches terminal within the wait -> classified', () {
       final r = runVerify(
         'terminal-flip',
-        runsJson:
-            '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+        runsJson: '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
         firstViewJson: '{"status":"queued","conclusion":null}',
         conclusion: 'failure',
         rerunToSuccess: true,
@@ -838,25 +813,21 @@ void main() {
       );
     });
 
-    test(
-      'pending push run past the terminal-wait budget -> neutral skip, no error',
-      () {
-        // Acceptance 3: a simulated slow tag-ci (queued) must NOT fail the
-        // verify with the «never triggered» message — the outcome is merely
-        // unobserved.
-        final r = runVerify(
-          'terminal-budget-lapse',
-          runsJson:
-              '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
-          extraEnv: const {'PUBDEV_MAX_POLLS': '2'},
-        );
-        expect(r.exitCode, 0, reason: r.output);
-        expect(r.inFlight, isTrue, reason: r.output);
-        expect(r.errored, isFalse, reason: r.output);
-        expect(r.output, contains('unobserved'));
-        expect(r.output, isNot(contains('never triggered')));
-      },
-    );
+    test('pending push run past the terminal-wait budget -> neutral skip, no error', () {
+      // Acceptance 3: a simulated slow tag-ci (queued) must NOT fail the
+      // verify with the «never triggered» message — the outcome is merely
+      // unobserved.
+      final r = runVerify(
+        'terminal-budget-lapse',
+        runsJson: '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+        extraEnv: const {'PUBDEV_MAX_POLLS': '2'},
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: r.output);
+      expect(r.output, contains('unobserved'));
+      expect(r.output, isNot(contains('never triggered')));
+    });
   });
 
   // ── unchanged paths pinned ────────────────────────────────────────────────
@@ -1047,19 +1018,23 @@ void main() {
           reason: 'the export is explicit and precedes the aggregate fails',
         );
         // The exclusion list inside the gate step: the full platform case
-        // pattern, verbatim.
+        // pattern, verbatim. installer-portability rides the SAME class
+        // (gh-1596 REG-1/REG-2: a red dash/busybox/bash leg blocks the
+        // MERGE via the aggregate, never the pure-Dart publish).
         expect(
           ci,
           contains(
             'build-web|build-android|build-ios|build-macos|fa-aot-build|'
             'installer-verify|install-pin-gate|cube-kernel-live|'
             'cli-visual-settings|pty-integration-linux|pty-coverage-gate|'
-            'pty-visual|flutter-app-lock-smoke)',
+            'pty-visual|flutter-app-lock-smoke|installer-portability)',
           ),
-          reason: 'every platform/native/PTY leg must be publish-exempt — '
+          reason:
+              'every platform/native/PTY leg must be publish-exempt — '
               'flutter-app-lock-smoke included (#1267 N2: a red lockfile '
               'smoke release build blocks the merge via the aggregate, '
-              'never the publish)',
+              'never the publish), and gh-1596 adds installer-portability '
+              'to the same publish-exempt class',
         );
       },
     );
@@ -1126,37 +1101,31 @@ void main() {
   // force the legs while the LATEST TAG's version is not served by pub.dev
   // (gh-1522: the tag is the single source of truth, never the pubspec).
   group('plan gate — re-arms the daily while a release is unresolved', () {
-    test(
-      'main moved since the last green daily -> legs run, pub.dev not consulted',
-      () {
-        final r = runPlan('main-moved', lastGreen: 'older');
-        expect(r.exitCode, 0, reason: r.output);
-        expect(r.changed, isTrue, reason: r.output);
-        expect(
-          r.curlLog,
-          isEmpty,
-          reason: 'the baseline decision already forces the legs',
-        );
-      },
-    );
+    test('main moved since the last green daily -> legs run, pub.dev not consulted', () {
+      final r = runPlan('main-moved', lastGreen: 'older');
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.changed, isTrue, reason: r.output);
+      expect(
+        r.curlLog,
+        isEmpty,
+        reason: 'the baseline decision already forces the legs',
+      );
+    });
 
-    test(
-      'main quiet + pub.dev serves the latest tag version -> all legs skip (unchanged)',
-      () {
-        final r = runPlan('quiet-served', lastGreen: 'head');
-        expect(r.exitCode, 0, reason: r.output);
-        expect(r.changed, isFalse, reason: r.output);
-        expect(r.outputs['latest_tag'], 'v0.1.497');
-        expect(r.outputs['next_tag'], 'v0.1.498');
-        expect(
-          r.outputs['pubspec_version'],
-          '0.1.497',
-          reason:
-              'gh-1522: the kept key name now carries the LATEST TAG '
-              'version, not a pubspec read',
-        );
-      },
-    );
+    test('main quiet + pub.dev serves the latest tag version -> all legs skip (unchanged)', () {
+      final r = runPlan('quiet-served', lastGreen: 'head');
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.changed, isFalse, reason: r.output);
+      expect(r.outputs['latest_tag'], 'v0.1.497');
+      expect(r.outputs['next_tag'], 'v0.1.498');
+      expect(
+        r.outputs['pubspec_version'],
+        '0.1.497',
+        reason:
+            'gh-1522: the kept key name now carries the LATEST TAG '
+            'version, not a pubspec read',
+      );
+    });
 
     test(
       'main quiet + pub.dev BEHIND the latest tag (release-in-flight green '
@@ -1293,9 +1262,8 @@ void main() {
     });
 
     test('the known subcommands still answer (no over-tightening)', () {
-      File(
-        '${dir.path}/runs-v1.json',
-      ).writeAsStringSync('[{"databaseId":7,"status":"queued"}]');
+      File('${dir.path}/runs-v1.json')
+          .writeAsStringSync('[{"databaseId":7,"status":"queued"}]');
       final list = Process.runSync('${stub.bin}/gh', [
         'run',
         'list',
