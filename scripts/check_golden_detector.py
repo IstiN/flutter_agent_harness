@@ -35,6 +35,7 @@ Self-test: python3 scripts/check_golden_detector.py --self-test
 """
 
 import argparse
+import json
 import shutil
 import struct
 import subprocess
@@ -291,22 +292,32 @@ def run_detector(scan_dir: Path, workdir: Path) -> dict[str, str]:
         raise SystemExit("dart not on PATH — cannot run the pinned detector")
     proc = subprocess.run(
         ["dart", "pub", "global", "run", "crap4dart", "check",
-         "--only", "broken_goldens"],
+         "--only", "broken_goldens", "--format", "json"],
         cwd=workdir,
         capture_output=True,
         text=True,
         timeout=DETECTOR_TIMEOUT,
     )
+    # JSON output carries the FULL violation list (the console report
+    # truncates at 20 with "... and N more", which silently halved the
+    # regression count).
     violations = {}
-    for raw in proc.stdout.splitlines():
-        s = raw.strip()
-        # violation lines: "<dir>/<name>.png: <message>" — match on the
-        # path head, not the message tail
-        if ": " in s and s.partition(":")[0].strip().endswith(".png"):
-            path, _, msg = s.partition(":")
-            # reporter keys carry the scan dir ("goldens/x.png") — index
-            # by basename so callers look fixtures up by name
-            violations.setdefault(Path(path.strip()).name, msg.strip())
+    try:
+        report = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        report = None
+    if isinstance(report, dict):
+        for gate in report.get("gates", []):
+            for v in gate.get("violations", []):
+                # index by basename so callers look fixtures up by name
+                violations.setdefault(Path(v["file"]).name, v.get("message", ""))
+    else:
+        for raw in proc.stdout.splitlines():
+            s = raw.strip()
+            # violation lines: "<dir>/<name>.png: <message>"
+            if ": " in s and s.partition(":")[0].strip().endswith(".png"):
+                path, _, msg = s.partition(":")
+                violations.setdefault(Path(path.strip()).name, msg.strip())
     if not violations and proc.returncode not in (0, 2):
         raise SystemExit(
             f"detector run failed rc={proc.returncode}:\n{proc.stdout[-800:]}\n{proc.stderr[-800:]}"
@@ -319,6 +330,12 @@ def classify(violations: dict[str, str], name: str) -> str:
     if not msg:
         return "clean"
     return "stripes" if "overflow stripes" in msg else "tofu"
+
+
+def bucket(got: str) -> str:
+    """The verdict class the FIXTURES table speaks: any detection is
+    'detect' — the artifact word (stripes/tofu) is display detail."""
+    return "detect" if got in ("tofu", "stripes") else got
 
 
 def extract_regression(workdir: Path) -> Path:
@@ -369,7 +386,7 @@ def main() -> int:
         rows, all_fixed = [], True
         for name, (_, today, target) in FIXTURES.items():
             got = classify(violations, name)
-            ok_today, ok_target = got == today, got == target
+            ok_today, ok_target = bucket(got) == today, bucket(got) == target
             all_fixed &= ok_target
             print(f"{name:32} {today:8} {target:8} {got:8}"
                   f"{' (matches measured #447 behaviour)' if ok_today else ' <-- CHANGED'}")
@@ -378,8 +395,13 @@ def main() -> int:
             reg_violations = run_detector(reg, workdir)
             total = len(list(reg.glob('*.png')))
             print(f"\nregression fixture: {REGRESSION_REF} — {total} pre-font goldens")
-            print(f"  detected: {len({*reg_violations}) & len(list(reg.glob('*.png'))) and len(reg_violations)}/{total}"
-                  f" (0/40 = the measured blind spot; 40/40 after the upstream fixes)")
+            print(f"  detected: {len(reg_violations)}/{total}"
+                  f" (0/40 = the measured blind spot; 30/40 with"
+                  f" crap4dart >=0.14.2 — the residual 10 carry only"
+                  f" sub-20 px hollow boxes (deliberately not flagged:"
+                  f" indistinguishable from rounded 16-18 px checkboxes),"
+                  f" the fa_mark logo (a real image) and sub-glyph-scale"
+                  f" text)")
         print()
         if args.expect_fixed:
             print("expect-fixed:", "MET — upstream fixes landed" if all_fixed
