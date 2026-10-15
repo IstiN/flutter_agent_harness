@@ -17,9 +17,9 @@ const manifest = JSON.parse(raw.replaceAll(/^\s*\/\/.*$/gm, ''));
 
 const CORE = [
   'alarms', 'bookmarks', 'browsingData', 'clipboardRead', 'clipboardWrite',
-  'contentSettings', 'contextMenus', 'cookies', 'debugger',
-  'declarativeNetRequest', 'downloads', 'fontSettings', 'history',
-  'identity', 'idle', 'management', 'nativeMessaging', 'notifications',
+  'contextMenus', 'cookies', 'debugger',
+  'declarativeNetRequest', 'history',
+  'idle', 'management', 'nativeMessaging', 'notifications',
   'offscreen', 'power', 'privacy', 'proxy', 'readingList', 'scripting',
   'search', 'sessions', 'sidePanel', 'storage', 'system.cpu',
   'system.display', 'system.memory', 'system.storage', 'tabCapture',
@@ -27,7 +27,14 @@ const CORE = [
   'webRequest',
 ];
 const OPTIONAL = [
-  'desktopCapture', 'pageCapture', 'topSites', 'userScripts',
+  'pageCapture', 'topSites', 'userScripts',
+];
+// gh-1630 Purple Potassium — CWS rejected these as requested-but-unused
+// (zero chrome.<perm> call sites in shipped JS). They come back only WITH
+// a real feature (never speculatively) — assert their absence forever.
+const DEAD = [
+  'contentSettings', 'downloads', 'fontSettings', 'identity',
+  'desktopCapture',
 ];
 // Issue #137 Tier 3 — excluded with reasons, pinned in
 // browser_ext/dart/src/permission_matrix.dart (excluded rows).
@@ -41,6 +48,13 @@ test('permissions are exactly the core set, each once, sorted', () => {
   assert.deepEqual(manifest.permissions, CORE);
   assert.deepEqual([...manifest.permissions].sort(), manifest.permissions, 'permissions not sorted');
   assert.equal(new Set(manifest.permissions).size, manifest.permissions.length, 'duplicate permission');
+});
+
+test('gh-1630: the five dead permissions appear in neither list', () => {
+  const everywhere = [...manifest.permissions, ...manifest.optional_permissions];
+  for (const dead of DEAD) {
+    assert.equal(everywhere.includes(dead), false, `dead permission present: ${dead}`);
+  }
 });
 
 test('optional_permissions are exactly the second tier, sorted, disjoint from permissions', () => {

@@ -81,9 +81,11 @@ const List<ToolManifestEntry> _table = [
     permissions: {'sessions'},
     tier: MatrixTier.core,
   ),
-  // Reading/download surfaces the v2.1 registry drives (browser_api_tools:
-  // history_search, bookmarks_*, downloads_*, cookies_*, nav_wait) and the
+  // Reading surfaces the v2.1 registry drives (browser_api_tools:
+  // history_search, bookmarks_*, cookies_*, nav_wait) and the
   // ChromeApi facade covers — same core tier, same manifest requirement.
+  // (The downloads_* tools went with the `downloads` permission in
+  // gh-1630 — see the excluded row below.)
   ToolManifestEntry(
     tool: 'history',
     permissions: {'history'},
@@ -92,11 +94,6 @@ const List<ToolManifestEntry> _table = [
   ToolManifestEntry(
     tool: 'bookmarks',
     permissions: {'bookmarks'},
-    tier: MatrixTier.core,
-  ),
-  ToolManifestEntry(
-    tool: 'downloads',
-    permissions: {'downloads'},
     tier: MatrixTier.core,
   ),
   ToolManifestEntry(
@@ -177,11 +174,6 @@ const List<ToolManifestEntry> _table = [
     permissions: {'omnibox'},
     tier: MatrixTier.core,
   ),
-  ToolManifestEntry(
-    tool: 'identity',
-    permissions: {'identity'},
-    tier: MatrixTier.core,
-  ),
   // chrome.runtime needs no manifest permission.
   ToolManifestEntry(tool: 'runtime', permissions: {}, tier: MatrixTier.core),
   ToolManifestEntry(
@@ -214,11 +206,6 @@ const List<ToolManifestEntry> _table = [
   ToolManifestEntry(
     tool: 'pageCapture',
     permissions: {'pageCapture'},
-    tier: MatrixTier.secondTier,
-  ),
-  ToolManifestEntry(
-    tool: 'desktopCapture',
-    permissions: {'desktopCapture'},
     tier: MatrixTier.secondTier,
   ),
   ToolManifestEntry(
@@ -284,16 +271,6 @@ const List<ToolManifestEntry> _table = [
     tier: MatrixTier.core,
   ),
   ToolManifestEntry(
-    tool: 'contentSettings',
-    permissions: {'contentSettings'},
-    tier: MatrixTier.core,
-  ),
-  ToolManifestEntry(
-    tool: 'fontSettings',
-    permissions: {'fontSettings'},
-    tier: MatrixTier.core,
-  ),
-  ToolManifestEntry(
     tool: 'nativeMessaging',
     permissions: {'nativeMessaging'},
     tier: MatrixTier.core,
@@ -319,8 +296,6 @@ const List<ToolManifestEntry> _table = [
       'management',
       'clipboardRead',
       'clipboardWrite',
-      'contentSettings',
-      'fontSettings',
       'nativeMessaging',
       'webRequest',
     },
@@ -335,6 +310,49 @@ const List<ToolManifestEntry> _table = [
   // --- excluded: absent from manifest and registry, on the record ---
   // (issue #137 moved browsingData/tts/declarativeNetRequest/privacy/
   // proxy/management to core — declared + bridge-gated instead of absent.)
+  //
+  // gh-1630 (CWS Purple Potassium): requested-but-unused is a hard
+  // rejection ("Don't future-proof"). These five rows document the removal
+  // so the absence is auditable; each comes back ONLY together with the
+  // shipping code that calls it (see the downloads rationale).
+  ToolManifestEntry(
+    tool: 'downloads',
+    permissions: {'downloads'},
+    tier: MatrixTier.excluded,
+    rationale:
+        'gh-1630: CWS rejected requested-but-unused permissions — static '
+        'review does not credit the Dart facade behind the downloads_* '
+        'tools, so the tools went with the permission; re-add ONLY with a '
+        'real agent-driven download feature (gh-1630 F2 second tier)',
+  ),
+  ToolManifestEntry(
+    tool: 'identity',
+    permissions: {'identity'},
+    tier: MatrixTier.excluded,
+    rationale:
+        'gh-1630: zero call sites — optional sign-in plumbing the agent '
+        'never invokes; re-add only with a shipping sign-in feature',
+  ),
+  ToolManifestEntry(
+    tool: 'contentSettings',
+    permissions: {'contentSettings'},
+    tier: MatrixTier.excluded,
+    rationale: 'gh-1630: zero call sites — future-proofing is a rejection',
+  ),
+  ToolManifestEntry(
+    tool: 'fontSettings',
+    permissions: {'fontSettings'},
+    tier: MatrixTier.excluded,
+    rationale: 'gh-1630: zero call sites — future-proofing is a rejection',
+  ),
+  ToolManifestEntry(
+    tool: 'desktopCapture',
+    permissions: {'desktopCapture'},
+    tier: MatrixTier.excluded,
+    rationale:
+        'gh-1630: zero call sites; capture media may only ever ride a '
+        'user-initiated surface, which an agent tool is not',
+  ),
   ToolManifestEntry(
     tool: 'gcm',
     permissions: {'gcm'},
@@ -432,14 +450,14 @@ MatrixTier? tierOfPermission(String permission) =>
 
 /// The `optional_permissions` names a store-profile manifest may carry:
 /// exactly the second tier. A checked-in manifest lists them only when its
-/// feature gate ships.
+/// feature gate ships. (gh-1630: `desktopCapture` left the set — a
+/// requested-but-unused optional permission is rejected the same way.)
 const Set<String> secondTierOptionalPermissions = {
   'search',
   'topSites',
   'readingList',
   'pageCapture',
   'tabCapture',
-  'desktopCapture',
   'userScripts',
 };
 

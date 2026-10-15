@@ -1,0 +1,304 @@
+// gh-1630 — CWS resubmission compliance, asserted mechanically (AC7):
+// the Chrome Web Store rejected "fa — browser agent" for (1) MV3
+// remotely-hosted code (jsdelivr URLs shipped in the package), (2) five
+// requested-but-unused permissions, (3) an incomplete privacy policy.
+// These tests pin the SOURCE-level invariants the packaged artifact
+// inherits; the built zip is re-checked against the same rules by
+// scripts/check_cws_compliance.py + ext_package_guard.py on every
+// packaging build (REG-1: red blocks merge).
+//
+// Default gate: pure file/JSON inspection + subprocess selftests of the
+// vendor fetch script — no Chrome, no network (the fetch E1 test serves
+// its fixture over file://).
+@TestOn('vm')
+library;
+
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:test/test.dart';
+
+/// The five permissions CWS flagged as requested-but-unused (Purple
+/// Potassium). `downloads` may come back ONLY with a real feature
+/// (gh-1630 F2 second tier) — never speculatively.
+const deadPermissions = {
+  'contentSettings',
+  'downloads',
+  'fontSettings',
+  'identity',
+  'desktopCapture',
+};
+
+/// Engines gh-1630 F1 requires vendored into the package.
+const requiredVendoredEngines = {
+  'quickjs',
+  'pyodide',
+  'sqljs',
+  'webllm',
+  'transformers',
+  'litert',
+};
+
+/// Remote-code markers (AC1). The packaged tree must not carry ANY of
+/// them — reviewers read the code, so the URL must not exist even for
+/// never-executed paths (gh-1630 I1).
+final remoteCodeMarker = RegExp(r'jsdelivr|unpkg|cdnjs|https://cdn\.');
+
+/// browser_ext/ paths that are BUILD ARTIFACTS (gitignored — regenerated
+/// by scripts/build_browser_ext.sh, never packaged from the repo tree).
+/// Everything else under browser_ext/ ships verbatim.
+const browserExtBuildArtifacts = [
+  'browser_ext/panel/app/',
+  'browser_ext/sw/agent.js',
+  'browser_ext/sw/agent.js.map',
+  'browser_ext/sw/agent.js.deps',
+  'browser_ext/vendor/',
+  'browser_ext/dart/build/',
+  'browser_ext/e2e/node_modules/',
+  'browser_ext/e2e/test-results/',
+  'browser_ext/e2e/playwright-report/',
+];
+
+/// Strict-JSON manifest parse (the source manifest carries // comments —
+/// same strip regex as scripts/build_browser_ext.sh and
+/// browser_ext/test/v21_manifest_test.mjs).
+Map<String, dynamic> parseManifest() {
+  final raw = File('browser_ext/manifest.json').readAsStringSync();
+  return jsonDecode(raw.replaceAll(RegExp(r'^\s*//.*$', multiLine: true), ''))
+      as Map<String, dynamic>;
+}
+
+List<String> manifestPermissions(Map<String, dynamic> m) =>
+    (m['permissions'] as List<dynamic>? ?? const []).cast<String>();
+
+List<String> manifestOptionalPermissions(Map<String, dynamic> m) =>
+    (m['optional_permissions'] as List<dynamic>? ?? const []).cast<String>();
+
+void main() {
+  test('AC5: the five dead permissions are gone from the manifest', () {
+    final m = parseManifest();
+    final all = [...manifestPermissions(m), ...manifestOptionalPermissions(m)];
+    for (final dead in deadPermissions) {
+      expect(all, isNot(contains(dead)),
+          reason: 'CWS Purple Potassium: "$dead" has no call site in the '
+              'shipped JS — a requested-but-unused permission is a hard '
+              'rejection ("Don\'t future-proof")');
+    }
+  });
+
+  test('I5/AC5: CSP = self + wasm-unsafe-eval, no remote origins', () {
+    final csp =
+        ((parseManifest()['content_security_policy']
+                as Map<String, dynamic>)['extension_pages'] as String)
+            .trim();
+    expect(csp, contains("'wasm-unsafe-eval'"),
+        reason: 'local pyodide/onnxruntime/quickjs wasm needs it');
+    expect(csp, contains("'self'"));
+    expect(csp, isNot(contains('http')),
+        reason: 'CSP must keep blocking every remote origin');
+  });
+
+  test('AC1 (source level): packaged-verbatim browser_ext/ files carry no '
+      'remote-code markers', () {
+    final offenders = <String>[];
+    for (final entity in Directory('browser_ext')
+        .listSync(recursive: true)
+        .whereType<File>()) {
+      final p = entity.path.replaceAll('\\', '/');
+      if (browserExtBuildArtifacts.any(p.startsWith)) continue;
+      if (remoteCodeMarker.hasMatch(entity.readAsStringSync())) {
+        offenders.add(p);
+      }
+    }
+    expect(offenders, isEmpty,
+        reason: 'CWS Blue Argon: remote-code URLs in the shipped tree are '
+            'rejected on presence, reachability irrelevant (I1)');
+  });
+
+  test('I3/I4: interpreter loader URLs are selected per build — extension '
+      'compiles vendor paths only, web keeps the CDN', () {
+    final urls = File(
+      'flutter_app/lib/sandbox/web_interpreters_urls.dart',
+    ).readAsStringSync();
+    // Compile-time selection: the ext branch is dead-code eliminated by
+    // dart2js (verified: -DFA_HOST=extension drops every CDN constant from
+    // main.dart.js; the packaging guard re-checks the real artifact).
+    expect(urls, contains("String.fromEnvironment('FA_HOST')"));
+    // The extension variant resolves into the package-local vendor dir.
+    expect(urls, contains('vendor/interpreters/'));
+    // Every vendor path is package-relative — no scheme, no host.
+    for (final match in RegExp(r"'/vendor").allMatches(urls)) {
+      fail('extension vendor paths must stay package-relative: '
+          '${match.input.substring(match.start)}');
+    }
+  });
+
+  test('I2/AC3: vendor.lock.json pins every engine artifact with sha256',
+      () {
+    final lockFile = File('browser_ext/vendor.lock.json');
+    expect(lockFile.existsSync(), isTrue,
+        reason: 'the vendor supply chain must be pinned + verifiable');
+    final lock = jsonDecode(lockFile.readAsStringSync()) as Map<String, dynamic>;
+    final engines = lock['engines'] as Map<String, dynamic>;
+    expect(engines.keys.toSet(), containsAll(requiredVendoredEngines));
+    final sha256 = RegExp(r'^[0-9a-f]{64}$');
+    for (final entry in engines.entries) {
+      final engine = entry.value as Map<String, dynamic>;
+      expect(engine['version'], isA<String>(),
+          reason: '${entry.key}: version must be pinned');
+      for (final file in (engine['files'] as List<dynamic>).cast<Map>()) {
+        expect(file['url'], isA<String>());
+        expect(file['sha256'], matches(sha256),
+            reason: '${entry.key}/${file['name']}: sha256 pin missing');
+        expect(
+          Uri.parse(file['url'] as String).path,
+          contains(engine['version'] as String),
+          reason: '${entry.key}/${file['name']}: URL must pin the version',
+        );
+      }
+    }
+  });
+
+  test('AC3/E1: fetch_vendor_assets.sh exists, is executable, wired into '
+      'the build, and fails loud on checksum mismatch', () {
+    final script = File('scripts/fetch_vendor_assets.sh');
+    expect(script.existsSync(), isTrue);
+    expect(script.statSync().mode & 0x1FF, isNot(0),
+        reason: 'build scripts must carry the executable bit');
+    final build = File('scripts/build_browser_ext.sh').readAsStringSync();
+    expect(build, contains('fetch_vendor_assets.sh'),
+        reason: 'the packaging build must fetch vendor assets from the lock');
+
+    // E1 selftest over file:// — no network: a lock fixture pinning a
+    // temp file; verify passes with the true sha256, fails loud with a
+    // corrupted one (never silently ships without assets).
+    final tmp = Directory.systemTemp.createTempSync('fah-vendor-lock');
+    addTearDown(() => tmp.deleteSync(recursive: true));
+    final asset = File('${tmp.path}/asset.js')
+      ..writeAsStringSync('console.log("vendored");\n');
+    final trueSha = sha256Hex(asset.readAsBytesSync());
+    final lockFixture = File('${tmp.path}/lock.json')
+      ..writeAsStringSync(jsonEncode({
+        'engines': {
+          'fixture': {
+            'version': '1.2.3',
+            'files': [
+              {
+                'name': 'asset.js',
+                'url': asset.uri.toString(),
+                'sha256': trueSha,
+              },
+            ],
+          },
+        },
+      }));
+    final dest = Directory('${tmp.path}/dest')..createSync();
+
+    int runScript() => Process.runSync('bash', [
+          'scripts/fetch_vendor_assets.sh',
+          '--lock', lockFixture.path,
+          '--dest', dest.path,
+          '--verify-only',
+        ]).exitCode;
+
+    expect(runScript(), 0, reason: 'intact assets must verify');
+    // Corrupt the pinned file in place — verify-only must fail LOUD.
+    asset.writeAsStringSync('console.log("tampered");\n');
+    final result = Process.runSync('bash', [
+      'scripts/fetch_vendor_assets.sh',
+      '--lock', lockFixture.path,
+      '--dest', dest.path,
+      '--verify-only',
+    ]);
+    expect(result.exitCode, isNot(0),
+        reason: 'checksum mismatch must fail the build (E1)');
+    expect(result.stderr, contains('asset.js'),
+        reason: 'the failure must name the artifact');
+  });
+
+  test('F1/AC2: extension panel staging swaps CDN engine loaders for '
+      'package-local vendor loaders (no failure stub)', () {
+    final staging = File('scripts/stage_extension_panel.py');
+    expect(staging.existsSync(), isTrue,
+        reason: 'the index.html transform must be a testable standalone '
+            'script, not an inline build heredoc');
+
+    final tmp = Directory.systemTemp.createTempSync('fah-stage-panel');
+    addTearDown(() => tmp.deleteSync(recursive: true));
+    final appDir = Directory('${tmp.path}/app')..createSync();
+    final index = File('${appDir.path}/index.html')
+      ..writeAsStringSync(_fixturePanelIndex());
+    final first = Process.runSync('python3', [
+      staging.path,
+      '--app-dir',
+      appDir.path,
+    ]);
+    expect(first.exitCode, 0, reason: first.stderr);
+    final staged = index.readAsStringSync();
+    expect(staged, isNot(contains('jsdelivr')),
+        reason: 'AC1: the staged extension index must not carry CDN URLs');
+    expect(staged, contains('vendor/'),
+        reason: 'the on-device engine loaders must resolve into the '
+            'package-local vendor dir (AC2)');
+    expect(staged, isNot(contains('ondevice_stub.js')),
+        reason: 'gh-1630: the engines are vendored — the CSP-failure stub '
+            'that disabled them must be gone');
+    // Idempotent (E3-style: a rebuild over an already-staged tree).
+    final second = Process.runSync('python3', [
+      staging.path,
+      '--app-dir',
+      appDir.path,
+    ]);
+    expect(second.exitCode, 0, reason: 'staging must be idempotent');
+  });
+
+  test('REG-1/AC7: the packaging guard scans the built zip for remote code '
+      'and CI enforces the compliance check', () {
+    final guard = File('scripts/ext_package_guard.py').readAsStringSync();
+    expect(guard, contains('remote'),
+        reason: 'ext_package_guard check must scan zip entries for '
+            'remote-code markers on the real artifact');
+    final compliance = File('scripts/check_cws_compliance.py');
+    expect(compliance.existsSync(), isTrue);
+    expect(compliance.statSync().mode & 0x1FF, isNot(0));
+    final workflow = File('.github/workflows/browser-ext.yml').readAsStringSync();
+    expect(workflow, contains('check_cws_compliance.py'),
+        reason: 'a packaging CI job must assert AC1/AC5/AC6 mechanically — '
+            'red REG blocks merge');
+  });
+}
+
+/// Minimal staged-app index.html with the three CDN on-device loader tags
+/// (the flutter_app/web/index.html shape the staging script rewrites).
+String _fixturePanelIndex() => '''
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="/panel/app/">
+  <meta charset="UTF-8">
+  <title>Fa</title>
+</head>
+<body>
+  <script src="inline_script_1.js"></script>
+  <script src="webllm_helpers.js"></script>
+  <script src="transformers_js_helpers.js"></script>
+  <script type="module" src="inline_script_4.js"></script>
+  <script type="module" src="inline_script_5.js"></script>
+  <script type="module" src="inline_script_6.js"></script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
+''';
+
+/// Minimal SHA-256 over [bytes] — the test cannot import package:crypto
+/// (not a dependency of the root package), so it shells out to sha256sum,
+/// present on every CI runner and macOS.
+String sha256Hex(List<int> bytes) {
+  final tmp = Directory.systemTemp.createTempSync('fah-sha');
+  addTearDown(() => tmp.deleteSync(recursive: true));
+  final f = File('${tmp.path}/blob')..writeAsBytesSync(bytes);
+  return Process.runSync('sha256sum', [f.path]).stdout
+      .toString()
+      .split(' ')
+      .first;
+}

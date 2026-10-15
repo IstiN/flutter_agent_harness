@@ -198,22 +198,9 @@ List<BrowserToolSpec> browserApiToolSpecs() => List.unmodifiable(const [
     permissions: {'bookmarks'},
     tier: ApprovalTier.write,
   ),
-  // downloads.
-  BrowserToolSpec(
-    name: 'downloads_start',
-    permissions: {'downloads'},
-    tier: ApprovalTier.write,
-  ),
-  BrowserToolSpec(
-    name: 'downloads_search',
-    permissions: {'downloads'},
-    tier: ApprovalTier.read,
-  ),
-  BrowserToolSpec(
-    name: 'downloads_cancel',
-    permissions: {'downloads'},
-    tier: ApprovalTier.write,
-  ),
+  // downloads: the tools went with the `downloads` permission (gh-1630 —
+  // CWS rejects requested-but-unused permissions; a static review does not
+  // credit the Dart facade). Re-add WITH the real download feature only.
   // cookies.
   BrowserToolSpec(
     name: 'cookies_get',
@@ -1034,59 +1021,14 @@ final class BrowserApiToolSurface {
       ),
 
       // -------------------------------------------------------------------
-      // downloads
+      // downloads: removed with the `downloads` permission (gh-1630 — CWS
+      // Purple Potassium rejects requested-but-unused permissions, and a
+      // static review does not credit the Dart facade these tools rode).
+      // The OutboundKind.download gate stays: tabs_open still uses it, and
+      // the download tools come back through it WITH the real feature
+      // (gh-1630 F2 second tier). ChromeApi.downloads bindings stay for
+      // the same reason (dead code today, feature seam tomorrow).
       // -------------------------------------------------------------------
-      tool(
-        'downloads_start',
-        'Starts downloading a URL; the browser picks the filename unless '
-            'one is given. Returns the download id.',
-        {
-          'url': {'type': 'string', 'description': 'URL to download'},
-          'filename': {
-            'type': 'string',
-            'description': 'target filename relative to Downloads',
-          },
-        },
-        ['url'],
-        (args) async {
-          final url = _reqStr(args, 'url');
-          await _gateOutbound(OutboundKind.download, url);
-          final filename = _optStr(args, 'filename');
-          final id = await _chrome.downloads.download(
-            url: url,
-            filename: filename,
-          );
-          return ToolExecutionResult.text('started download $id from $url');
-        },
-      ),
-      tool(
-        'downloads_search',
-        'Lists downloads, optionally filtered by a substring over URL or '
-            'filename. Returns JSON download entries.',
-        {
-          'query': {
-            'type': 'string',
-            'description': 'substring filter (default: all)',
-          },
-        },
-        const [],
-        (args) async {
-          final query = _optStr(args, 'query');
-          final items = await _chrome.downloads.search(query: query);
-          return _json([for (final d in items) d.toJson()]);
-        },
-      ),
-      tool(
-        'downloads_cancel',
-        'Cancels an in-flight download.',
-        {'id': _intProp('download id')},
-        ['id'],
-        (args) async {
-          final id = _reqInt(args, 'id');
-          await _chrome.downloads.cancel(id);
-          return ToolExecutionResult.text('cancelled download $id');
-        },
-      ),
 
       // -------------------------------------------------------------------
       // cookies
