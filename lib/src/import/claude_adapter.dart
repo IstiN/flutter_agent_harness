@@ -60,7 +60,14 @@ final class ClaudeAdapter implements HarnessAdapter {
       );
       // The slug is dash-ambiguous — discovery compares the recorded cwd
       // too and never decodes the slug (GOAL C1 negative test / E12).
-      if (!headerCwdMatches(headerCwd, cwd)) continue;
+      // An over-cap file yields no cwd on backends without partial reads
+      // (the _firstCwd size gate); it still becomes a summary — cwd
+      // unverified — so scanForeignLines' read-time refusal produces the
+      // counted `file too large` warning, the same flow the ranged
+      // prefix read already gives (GOAL E11 reporting parity).
+      final overCap = headerCwd.isEmpty && size > limits.maxFileBytes;
+      if (headerCwd.isEmpty && !overCap) continue;
+      if (headerCwd.isNotEmpty && !headerCwdMatches(headerCwd, cwd)) continue;
       final stem = path.split('/').last;
       summaries.add(
         ForeignSessionSummary(

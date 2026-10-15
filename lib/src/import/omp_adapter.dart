@@ -61,17 +61,28 @@ final class OmpAdapter implements HarnessAdapter {
           path,
           maxFileBytes: limits.maxFileBytes,
         );
-        if (header == null) continue;
-        if (!headerCwdMatches(header.cwd, cwd)) continue;
+        // A file over the size cap yields no header on backends without
+        // partial reads (the _readPrefix size gate); it still becomes a
+        // summary — id fallback: the file stem, cwd unverified — so
+        // scanForeignLines' read-time refusal produces the counted
+        // `file too large` warning, the same flow the ranged prefix read
+        // already gives (GOAL E11 reporting parity).
+        final overCap = header == null && size > limits.maxFileBytes;
+        if (header == null && !overCap) continue;
+        if (header != null && !headerCwdMatches(header.cwd, cwd)) continue;
+        final stem = path.split('/').last;
         summaries.add(
           ForeignSessionSummary(
             harness: id,
-            sourceId: header.id,
+            sourceId: header?.id ??
+                (stem.endsWith('.jsonl')
+                    ? stem.substring(0, stem.length - '.jsonl'.length)
+                    : stem),
             sourcePath: path,
             sizeBytes: size,
-            headerCwd: header.cwd,
-            title: header.title,
-            titleSource: header.titleSource,
+            headerCwd: header?.cwd ?? '',
+            title: header?.title ?? '',
+            titleSource: header?.titleSource ?? '',
             firstPreview: '-',
             lastPreview: '-',
             searchText: '',
