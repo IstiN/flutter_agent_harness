@@ -247,6 +247,7 @@ final class ProviderQueueRuntime {
     this.entries,
     this.state,
     this.streamFunction,
+    this._noticeListeners,
   );
 
   /// Builds the runtime from a resolution and the secrets snapshot.
@@ -272,6 +273,11 @@ final class ProviderQueueRuntime {
       secrets: secrets,
       streamFactory: streamFactory,
     );
+    // gh-1617 review r2: the boot-time [onNotice] is often absent — the
+    // host wires the agent AFTER the runtime is built. Every notice is
+    // dispatched through this fan-out so late-attached listeners
+    // ([addNoticeListener]) ride the same stream, in order.
+    final noticeListeners = <void Function(FallbackNotice notice)>[];
     final streamFunction = FallbackStreamFunction(
       entries: chain,
       policy: policy,
@@ -280,10 +286,21 @@ final class ProviderQueueRuntime {
       now: now,
       jitterFraction: jitterFraction,
       sleeper: sleeper,
-      onNotice: onNotice,
+      onNotice: (notice) {
+        onNotice?.call(notice);
+        for (final listener in noticeListeners) {
+          listener(notice);
+        }
+      },
       quotaFeed: quotaFeed,
     );
-    return ProviderQueueRuntime._(resolution, entries, state, streamFunction);
+    return ProviderQueueRuntime._(
+      resolution,
+      entries,
+      state,
+      streamFunction,
+      noticeListeners,
+    );
   }
 
   /// The winning scope, entries, shadowed scopes, and boot notices.
@@ -297,6 +314,17 @@ final class ProviderQueueRuntime {
 
   /// The queue-driven stream function — the default role's stream.
   final FallbackStreamFunction streamFunction;
+
+  final List<void Function(FallbackNotice notice)> _noticeListeners;
+
+  /// Registers [handler] for every queue retry/rotation/failover notice
+  /// (gh-1617 review r2): hosts build the runtime at boot but wire the
+  /// agent later, so a failover listener that re-syncs display state
+  /// (`agent.state.model` — the watchdog's arm-time window reads it)
+  /// cannot always ride the build's `onNotice`. Fired after the build
+  /// handler, in attach order.
+  void addNoticeListener(void Function(FallbackNotice notice) handler) =>
+      _noticeListeners.add(handler);
 }
 
 /// The queue editor's per-entry health rows — pure so tests pin the byte

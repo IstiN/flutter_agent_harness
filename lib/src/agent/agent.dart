@@ -776,15 +776,19 @@ class Agent {
   void _armRunWatchdog() {
     if (runIdleTimeout == Duration.zero) return;
     _runWatchdogTimer?.cancel();
-    // gh-1617 I1: the window re-derives on EVERY arm, so a mid-run roles
-    // failover re-windows the watchdog around the model actually being
-    // streamed (AC2 — the entry override wins for its entry only), and a
-    // boot re-seed of the tuning table applies from the next arm (E3: no
-    // live re-arm of an already-armed timer). Nothing configured keeps
-    // [runIdleTimeout] byte-for-byte (AC3).
-    final window = runIdleWindow.window;
-    _armedRunIdleInfo = runIdleWindow;
-    _runWatchdogTimer = Timer(window, _onRunWatchdogFired);
+    // gh-1617 I1: the window re-derives on EVERY arm, so a mid-run
+    // roles-chain OR providers-queue failover re-windows the watchdog
+    // around the model actually being streamed (AC2 — the entry override
+    // wins for its entry only; the queue lane's `agent.state.model` is
+    // re-synced by its failover listener in agent_cli.dart), and a boot
+    // re-seed of the tuning table applies from the next arm (E3: no live
+    // re-arm of an already-armed timer). Nothing configured keeps
+    // [runIdleTimeout] byte-for-byte (AC3). The getter is evaluated ONCE
+    // per arm (review r2): arms run on every agent event, so the
+    // Uri.tryParse + registry walk must not be paid twice.
+    final info = runIdleWindow;
+    _armedRunIdleInfo = info;
+    _runWatchdogTimer = Timer(info.window, _onRunWatchdogFired);
   }
 
   /// The run-idle watchdog window for the CURRENT model and where it

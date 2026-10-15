@@ -177,7 +177,10 @@ extension AgentCliSteering on AgentCli {
   /// look (issue #437 E4). gh-1617 open question 1: the notice fires at
   /// `min(ceiling, window)` — the early "still waiting" UX feedback
   /// keeps its 2m ceiling under a wide configured window, and a tight
-  /// window pulls the notice earlier.
+  /// window pulls the notice earlier. (A tighter threshold is only
+  /// reachable via a host-configured `runIdleTimeout` below the ceiling —
+  /// the derived window is floored at `runIdleTimeout`, so a tight
+  /// `providerTimeouts.streamIdleTimeoutMs` can never pull it earlier.)
   bool _runLooksWedged() {
     final last = _lastAgentEventAt;
     if (last == null) return false;

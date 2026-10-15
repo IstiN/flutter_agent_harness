@@ -988,20 +988,20 @@ AssistantMessage _zeroByteStallMessage(
 ) {
   // gh-1617 AC5: the terminal names the effective window and its
   // precedence source, and suggests raising streamIdleTimeoutMs for a
-  // genuinely warming-up model.
-  var windowNote =
+  // genuinely warming-up model. The window head is single-sourced
+  // (review r2): only the connect-budget branch appends the extra
+  // clause.
+  final head =
       'Idle window ${formatProviderTimeout(windowStory.window)} '
-      '(${windowStory.source}).';
+      '(${windowStory.source})';
   // gh-1617 AC4: a connect budget below the window stopped the replay —
   // both values are named so the config conflict is readable at a glance.
   final connect = windowStory.connectBudget;
-  if (connect != null && connect.$1 < windowStory.window) {
-    windowNote =
-        'Idle window ${formatProviderTimeout(windowStory.window)} '
-        '(${windowStory.source}); the configured connectTimeoutMs '
-        '${formatProviderTimeout(connect.$1)} (${connect.$2}) stopped the '
-        'replay budget at ${attemptLog.length} attempt(s).';
-  }
+  final windowNote = connect != null && connect.$1 < windowStory.window
+      ? '$head; the configured connectTimeoutMs '
+            '${formatProviderTimeout(connect.$1)} (${connect.$2}) stopped the '
+            'replay budget at ${attemptLog.length} attempt(s).'
+      : '$head.';
   return _terminalStory(
     model,
     attemptLog,

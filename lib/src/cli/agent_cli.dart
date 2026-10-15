@@ -743,6 +743,16 @@ class AgentCli {
     if (queueRuntime != null) {
       _agent.streamFunction = queueRuntime.streamFunction.call;
       _agent.state.model = queueRuntime.streamFunction.currentModel;
+      // gh-1617 review r2: a mid-run queue failover (sticky-cursor /
+      // cooldown move) must re-sync the display model exactly like the
+      // roles lane's `_onRolesNotice` does — the watchdog's arm-time
+      // window reads `_agent.state.model`, so a stale entry would keep
+      // the OLD entry's streamIdleTimeoutMs patience while the new entry
+      // streams (gh-1398 lets queue entries carry per-entry windows).
+      queueRuntime.addNoticeListener(
+        (notice) =>
+            _agent.state.model = queueRuntime.streamFunction.currentModel,
+      );
       _streamFunction = _agent.streamFunction;
       _rolesDriven = true;
     }
