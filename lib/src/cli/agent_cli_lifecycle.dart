@@ -411,6 +411,7 @@ extension AgentCliLifecycle on AgentCli {
     // is not ours yet — the alternate screen would wipe this line, so
     // `_runTuiRepl` re-prints the hint right after the banner.
     _printThirdPartySkillsDisabledHint();
+    _printRolesDropNotice();
     _contextFiles = await loadProjectContextFiles(
       _env,
       userFile: config.homeDir == null
@@ -421,6 +422,16 @@ extension AgentCliLifecycle on AgentCli {
     // Durable facts from past sessions join the prompt asynchronously
     // (memory stores initialize lazily; recompose on arrival).
     unawaited(_refreshMemorySection());
+  }
+
+  /// The roles-drop warning (issue #1552 AC4): the gh-760 boot boundary
+  /// degraded the whole `roles:` config — the user must see it where they
+  /// look, not only on stderr. Line mode prints here; TUI re-prints after
+  /// the banner in `_runTuiRepl` (the alternate screen wipes the original).
+  void _printRolesDropNotice() {
+    final notice = config.rolesDropNotice;
+    if (notice == null) return;
+    io.writeln(_style.dim(notice));
   }
 }
 

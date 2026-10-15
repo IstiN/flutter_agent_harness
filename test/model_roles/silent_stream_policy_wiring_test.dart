@@ -210,4 +210,69 @@ void main() {
           'per fallback attempt)',
     );
   });
+
+  test(
+    'E5-adjacent IT: an UNCONFIGURED smol role — the 3rd-stall '
+    'takeover attempt returns null (logged) and the stall error stands',
+    () async {
+      final log = <String>[];
+      final notes = <String>[];
+      final savedNotice = transientRetryNotice;
+      transientRetryNotice = (attempt, max, delay, reason) => notes.add(reason);
+      addTearDown(() => transientRetryNotice = savedNotice);
+      final slept = <Duration>[];
+      // NO 'smol' role: streamForRole(smolModelRole) throws ConfigException
+      // inside the takeover builder — the resolver's catch turns it into
+      // `null`, the policy logs the skip, and the stall error stands.
+      final config = ModelRolesConfig(
+        roles: {
+          'default': [ModelRef(provider: 'anthropic', modelId: 'claude-main')],
+        },
+      );
+      final resolver = ModelRolesResolver(
+        config: config,
+        secrets: const {'ANTHROPIC_API_KEY': 'key-1'},
+        sleeper: (delay, _) async {
+          slept.add(delay);
+          return true;
+        },
+        streamFactory: recordingFactory(log, stallsTotal: 99),
+      );
+      final wrapper = resolver.streamForRole('default');
+      final events = await wrapper
+          .call(wrapper.currentModel, const Context(messages: []))
+          .toList();
+
+      expect(
+        log,
+        const ['key-1', 'key-1', 'key-1', 'key-1', 'key-1', 'key-1'],
+        reason:
+            'the entry-level retry (retriesPerEntry: 2) re-enters the '
+            '3-stall ladder after the takeover-less error stands',
+      );
+      expect(slept, [
+        const Duration(seconds: 5),
+        const Duration(seconds: 10),
+        const Duration(seconds: 20),
+        const Duration(seconds: 5),
+        const Duration(seconds: 10),
+        const Duration(seconds: 20),
+      ], reason: 'each ladder escalates 5→10→20 into the takeover attempt');
+      expect(
+        events.last,
+        isA<ErrorEvent>(),
+        reason: 'no takeover target: the original stall error stands',
+      );
+      expect(
+        notes.any((m) => m.contains('smol-role takeover')),
+        isTrue,
+        reason: 'the takeover attempt is announced on the notice surface',
+      );
+      expect(
+        notes.any((m) => m.contains('no smol takeover target')),
+        isTrue,
+        reason: 'the null takeover is logged on the notice surface',
+      );
+    },
+  );
 }
