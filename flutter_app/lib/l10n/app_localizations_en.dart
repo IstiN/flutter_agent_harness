@@ -721,6 +721,71 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherTabWidgets => 'Widgets';
 
   @override
+  String get launcherLoadUnpacked => 'Load unpacked';
+
+  @override
+  String get unpackedLoadTitle => 'Load unpacked widget';
+
+  @override
+  String unpackedLoadIdLine(Object id) {
+    return 'id: $id';
+  }
+
+  @override
+  String get unpackedLoadNetworkNote =>
+      'This widget declares network access — it can fetch from the network (jsr.fetchJson).';
+
+  @override
+  String unpackedLoadCommandsNote(Object commands) {
+    return 'Shell commands it may run (jsr.exec): $commands';
+  }
+
+  @override
+  String unpackedLoadReplaceNote(Object source, Object version) {
+    return 'A widget with this id already exists ($source, v$version). Replacing overwrites its code; the saved data (storage.json) is kept.';
+  }
+
+  @override
+  String get unpackedLoadConfirm => 'Load';
+
+  @override
+  String get unpackedLoadReplaceConfirm => 'Replace';
+
+  @override
+  String get unpackedLoadErrorTitle => 'Widget was not loaded';
+
+  @override
+  String unpackedLoadDone(Object name) {
+    return '$name loaded from the folder';
+  }
+
+  @override
+  String unpackedLoadFailed(Object error) {
+    return 'Load failed: $error';
+  }
+
+  @override
+  String get unpackedSourceChip => 'unpacked';
+
+  @override
+  String get unpackedSourceBadgeTooltip =>
+      'Loaded from a local folder (unpacked)';
+
+  @override
+  String get unpackedSourceCatalog => 'installed from the catalog';
+
+  @override
+  String get unpackedSourceUnpacked => 'loaded from a local folder';
+
+  @override
+  String get unpackedSourceAgent => 'created by the agent';
+
+  @override
+  String unpackedSourceUnknown(Object source) {
+    return 'installed from an unknown source ($source)';
+  }
+
+  @override
   String get settingsResetApps => 'Reset apps';
 
   @override
