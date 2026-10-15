@@ -9,6 +9,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import '../a2a/a2a_client.dart';
 import '../a2a/a2a_mail_gateway.dart';
@@ -90,6 +91,7 @@ final class SubagentManager {
     this.selfId = 'main',
     this.maxPendingMessages = 16,
     this.maxReplyChars = 8000,
+    this.persistInterval = ledgerSnapshotPersistInterval,
     this.clock = _systemUtcClock,
   });
 
@@ -225,6 +227,30 @@ final class SubagentManager {
   /// Size guard: reply/message body cap in characters.
   final int maxReplyChars;
 
+  /// The write-time persist window for the registry snapshot (gh-1590):
+  /// conversational mutations inside the window coalesce behind one
+  /// append plus a trailing flush. Injectable so tests drive the
+  /// trailing leg deterministically (same shape as the clock).
+  final Duration persistInterval;
+
+  /// gh-1590: bounds WHEN registry snapshots may append — conversational
+  /// mutations (message deliveries, replies, compaction counters)
+  /// coalesce behind the trailing flush, because only the latest
+  /// snapshot is ever read on resume. Durability-critical mutations
+  /// (register/update/dispose/attach, the #332 turn-boundary billing)
+  /// persist immediately. Reset with the registry in [reset]; flushed
+  /// and disarmed by [flushPersist].
+  late final LedgerSnapshotThrottle _persistThrottle = LedgerSnapshotThrottle(
+    minInterval: persistInterval,
+    clock: clock,
+    onFlushDue: _persist,
+  );
+
+  /// gh-1590: suppresses byte-identical snapshot appends — a repeated
+  /// no-op flush (or a repeated empty-registry snapshot) must not grow
+  /// the session file. Reset with the registry in [reset].
+  final LedgerSnapshotDeduper _persistDeduper = LedgerSnapshotDeduper();
+
   final _handles = <String, SubagentHandle>{};
   final _events = StreamController<SubagentEvent>.broadcast();
   var _rehydrated = false;
@@ -286,7 +312,7 @@ final class SubagentManager {
         _emit(handle);
       }
     }
-    if (settled) _persist();
+    if (settled) _persist(force: true);
   }
 
   /// Drops the registry view so the next [rehydrate] loads afresh — used
@@ -298,6 +324,12 @@ final class SubagentManager {
     _rehydrated = false;
     _wakingChildren.clear();
     _unwakeableChildren.clear();
+    // gh-1590: the persist window and dedupe state open with the
+    // (re)hydrated registry — a session switch never inherits the
+    // previous session's window (the same reset `_rehydrateJobBoard`
+    // performs next to its deduper).
+    _persistThrottle.reset();
+    _persistDeduper.reset();
   }
 
   /// Registers a new subagent — NEVER creates a child session eagerly.
@@ -338,7 +370,9 @@ final class SubagentManager {
     }
     _handles[id] = handle;
     _emit(handle);
-    _persist();
+    // Durability-critical: a spawned child must survive a process death
+    // (task_status reads the registry; the spawn race, issue #332).
+    _persist(force: true);
     return handle;
   }
 
@@ -364,13 +398,19 @@ final class SubagentManager {
     if (clearError) handle.error = null;
     handle.lastActivity = clock().toIso8601String();
     _emit(handle);
-    _persist();
+    // Durability-critical: status transitions and the issue #332
+    // turn-boundary usage billing — an interrupted child must find its
+    // billed usage in the FILE on resume, not behind a persist window.
+    _persist(force: true);
   }
 
   /// Removes a handle (dispose).
   Future<void> dispose(String id) async {
     _handles.remove(id);
-    _persist();
+    // Durability-critical: the cleared registry must reach the file, or
+    // a stale snapshot resurrects the disposed child on resume (the
+    // deduper keeps repeated empty snapshots from growing the file).
+    _persist(force: true);
   }
 
   /// Queues [message] for [id] (Phase 3b `agent_message` / parent steering).
@@ -551,6 +591,10 @@ final class SubagentManager {
   void _touchWithMessage(SubagentHandle handle, SubagentMessage message) {
     handle.lastActivity = clock().toIso8601String();
     _events.add(SubagentEvent(handle: handle, message: message));
+    // gh-1590: coalesced — a message delivery is a conversational
+    // mutation; the mail itself lives in the fabric, the registry row
+    // only gains `lastActivity` + the pending queue. The trailing flush
+    // (or [flushPersist] at teardown) lands the final state.
     _persist();
   }
 
@@ -610,7 +654,10 @@ final class SubagentManager {
 
   /// Records a completed proactive compaction (issue #439): bumps the
   /// counter, stamps the freed-token count and the time, and persists —
-  /// unlike [notePressure] this is a durable lifecycle fact.
+  /// unlike [notePressure] this is a durable lifecycle fact. gh-1590:
+  /// the append coalesces inside the persist window — the counter is
+  /// in-memory until the trailing flush (or the next durability-critical
+  /// snapshot, or [flushPersist] at teardown) lands it.
   void recordCompaction(String id, {required int freedTokens}) {
     final handle = _handles[id];
     if (handle == null || freedTokens <= 0) return;
@@ -649,6 +696,8 @@ final class SubagentManager {
         : text;
     handle.lastActivity = clock().toIso8601String();
     _events.add(SubagentEvent(handle: handle));
+    // gh-1590: coalesced — the full reply already reached the parent as
+    // its own message; the registry row only carries the preview.
     _persist();
   }
 
@@ -662,11 +711,30 @@ final class SubagentManager {
     handle.sessionId = sessionPath;
     handle.lastActivity = clock().toIso8601String();
     _events.add(SubagentEvent(handle: handle));
-    _persist();
+    // Durability-critical: the real session path must survive a process
+    // death (`/agents open <id>` reads it from the registry).
+    _persist(force: true);
   }
 
-  /// Closes the event stream.
-  Future<void> close() => _events.close();
+  /// Closes the event stream, flushing a coalesced registry snapshot
+  /// first (gh-1590): a host tearing the manager down must not lose the
+  /// conversational mutations that coalesced inside the persist window.
+  Future<void> close() async {
+    await flushPersist();
+    await _events.close();
+  }
+
+  /// gh-1590: the shutdown flush — a coalesced snapshot lands NOW (the
+  /// deduper suppresses a no-op) and the throttle's trailing Timer leg
+  /// disarms: a pending Timer must never hold the isolate at process
+  /// exit, and a reply/message that settled inside the persist window
+  /// must still reach the file. Drains the persist chain before
+  /// returning.
+  Future<void> flushPersist() {
+    _persistThrottle.dispose();
+    _persist(force: true);
+    return _persistChain;
+  }
 
   void _emit(SubagentHandle handle) {
     _events.add(SubagentEvent(handle: handle));
@@ -684,19 +752,41 @@ final class SubagentManager {
   /// gh-1073: display strings are truncated
   /// ([subagentRegistryTextCapChars] / [subagentRegistryContextCapChars] /
   /// [subagentRegistryReplyCapChars]) — the snapshot rows were averaging
-  /// ~140 KB on a month-long session. No dedup here: every mutation
-  /// re-stamps `lastActivity`, so snapshots never repeat byte-for-byte.
-  void _persist() {
+  /// ~140 KB on a month-long session.
+  ///
+  /// gh-1590: the appends are also RATE-BOUNDED — [force] (the
+  /// durability-critical paths and [flushPersist]) bypasses the window;
+  /// every other mutation coalesces behind the trailing flush leg
+  /// ([_persistThrottle]), because only the latest snapshot is ever
+  /// read on resume. The deduper suppresses byte-identical snapshots
+  /// (previously impossible — every mutation re-stamped `lastActivity`
+  /// — but the repeated empty-registry/no-op flushes make it
+  /// load-bearing now).
+  void _persist({bool force = false}) {
     final write = sink;
     if (write == null) return;
-    final snapshot = [
-      for (final h in _handles.values) _cappedRegistryRow(h.toJson()),
-    ];
     _persistChain = _persistChain.then((_) async {
+      // gh-1590: the window gate — a refused mutation reserves the
+      // trailing flush (which re-enters here unforced) and skips the
+      // encode entirely.
+      if (!force && !_persistThrottle.shouldPersistNow()) return;
+      // Serialize ONCE — the dedupe key must be the exact payload that
+      // gets appended, and the rows must read the NEWEST handle state
+      // (mutations that queued behind the chain coalesce into it).
+      final snapshot = [
+        for (final h in _handles.values) _cappedRegistryRow(h.toJson()),
+      ];
+      final json = jsonEncode(snapshot);
+      if (!_persistDeduper.shouldPersist(json)) return;
       try {
         await write(snapshot);
+        _persistDeduper.confirmPersisted();
+        _persistThrottle.confirmPersisted();
       } on Object {
-        // Best-effort — the next mutation rewrites the full snapshot.
+        // Best-effort — the next mutation rewrites the full snapshot;
+        // roll the deduper back first so the retried identical snapshot
+        // is NOT skipped.
+        _persistDeduper.revertFailedPersist();
       }
     });
   }
@@ -704,17 +794,26 @@ final class SubagentManager {
   /// One persisted registry row with the display strings capped (gh-1073).
   Map<String, dynamic> _cappedRegistryRow(Map<String, dynamic> row) => {
     ...row,
-    'task': capLedgerText(row['task'] as String?,
-            maxChars: subagentRegistryTextCapChars) ??
+    'task':
+        capLedgerText(
+          row['task'] as String?,
+          maxChars: subagentRegistryTextCapChars,
+        ) ??
         '',
     if (row['context'] != null)
-      'context': capLedgerText(row['context'] as String?,
-          maxChars: subagentRegistryContextCapChars),
+      'context': capLedgerText(
+        row['context'] as String?,
+        maxChars: subagentRegistryContextCapChars,
+      ),
     if (row['error'] != null)
-      'error': capLedgerText(row['error'] as String?,
-          maxChars: subagentRegistryTextCapChars),
+      'error': capLedgerText(
+        row['error'] as String?,
+        maxChars: subagentRegistryTextCapChars,
+      ),
     if (row['lastReply'] != null)
-      'lastReply': capLedgerText(row['lastReply'] as String?,
-          maxChars: subagentRegistryReplyCapChars),
+      'lastReply': capLedgerText(
+        row['lastReply'] as String?,
+        maxChars: subagentRegistryReplyCapChars,
+      ),
   };
 }
