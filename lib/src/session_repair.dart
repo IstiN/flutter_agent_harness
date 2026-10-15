@@ -74,6 +74,7 @@ final class SessionRepairReport {
     required this.recordsRead,
     required this.recordsKept,
     required this.droppedByType,
+    required this.droppedBytesByType,
     required this.keptLatestByType,
     required this.bytesBefore,
     required this.bytesAfter,
@@ -96,13 +97,23 @@ final class SessionRepairReport {
   /// registry snapshots.
   final Map<String, int> droppedByType;
 
+  /// Dropped BYTES per custom type (gh-1590) — the same population as
+  /// [droppedByType], weighted: one 2.7 MB `model_request_summary` row
+  /// outweighs a thousand small ones, and the records line alone cannot
+  /// show what actually shrank.
+  final Map<String, int> droppedBytesByType;
+
   /// Latest snapshots KEPT per superseding registry type.
   final Map<String, int> keptLatestByType;
 
   /// Session file size before (the backup's size after).
   final int bytesBefore;
 
-  /// Session file size after (`bytesBefore` when [dryRun]).
+  /// Session file size after. The REAL pass stats the rewritten file;
+  /// a dry run PROJECTS it — the byte sum of the kept spans (header +
+  /// survivors + latest keep-latest snapshots), exactly what pass 2
+  /// would stream (gh-1590: the dry run must show the reduction it
+  /// would give, not `bytesBefore` parroting back).
   final int bytesAfter;
 
   /// Where the original was preserved (`.bak` suffix).
@@ -120,6 +131,10 @@ final class SessionRepairReport {
   /// Human-readable summary lines for a CLI report.
   List<String> summaryLines() {
     final droppedTotal = droppedByType.values.fold<int>(0, (a, b) => a + b);
+    final droppedBytesTotal = droppedBytesByType.values.fold<int>(
+      0,
+      (a, b) => a + b,
+    );
     final keptLatestTotal = keptLatestByType.values.fold<int>(
       0,
       (a, b) => a + b,
@@ -129,18 +144,26 @@ final class SessionRepairReport {
           '$recordsRead records read, $recordsKept kept',
       if (droppedTotal > 0)
         'dropped $droppedTotal ledger records: ${_counts(droppedByType)}',
+      if (droppedBytesTotal > 0)
+        'reclaimed ${_bytes(droppedBytesTotal)}: '
+            '${_counts(droppedBytesByType, _bytes)}',
       if (keptLatestTotal > 0)
         'kept the latest snapshot of: ${_counts(keptLatestByType)}',
       if (untouchedSegments > 0)
         '$untouchedSegments rotated segment(s) untouched — ledger '
-        'records remain in ${path.split('/').last}.part-*',
+            'records remain in ${path.split('/').last}.part-*',
       '${_bytes(bytesBefore)} → ${_bytes(bytesAfter)}'
-          '${dryRun ? '' : ' · original kept at $backupPath'}',
+          '${dryRun ? ' (projected)' : ' · original kept at $backupPath'}',
     ];
   }
 
-  static String _counts(Map<String, int> counts) => [
-    for (final entry in counts.entries) '${entry.key}×${entry.value}',
+  static String _counts(
+    Map<String, int> counts, [
+    String Function(int)? formatValue,
+  ]) => [
+    for (final entry in counts.entries)
+      '${entry.key}×'
+          '${formatValue == null ? entry.value : formatValue(entry.value)}',
   ].join(', ');
 
   static String _bytes(int bytes) {
@@ -150,7 +173,9 @@ final class SessionRepairReport {
     if (bytes >= (1 << 20)) {
       return '${(bytes / (1 << 20)).toStringAsFixed(1)} MB';
     }
-    if (bytes >= (1 << 10)) return '${(bytes / (1 << 10)).toStringAsFixed(1)} KB';
+    if (bytes >= (1 << 10)) {
+      return '${(bytes / (1 << 10)).toStringAsFixed(1)} KB';
+    }
     return '$bytes B';
   }
 }
@@ -180,7 +205,11 @@ String? _sniffCustomType(String line) {
 /// is preserved at `<path>.bak` (renamed, not copied) and the repaired
 /// content takes the original's place atomically.
 ///
-/// [dryRun] counts without touching anything. Requires a
+/// [dryRun] counts without touching anything; its report PROJECTS the
+/// rewrite — `bytesAfter` is the byte sum of the kept spans (the same
+/// spans pass 2 streams) and `droppedBytesByType` weighs each ledger's
+/// contribution (gh-1590), so `--dry-run` shows the reduction it would
+/// give instead of `bytesBefore` parroting back. Requires a
 /// [RangedReadFileSystem] (bounded streaming) and a
 /// [RenamableFileSystem] (atomic swap) — anything else fails with
 /// [SessionRepairErrorCode.unsupported] rather than half-applying.
@@ -225,6 +254,13 @@ Future<SessionRepairReport> repairSessionLedgers(
   // file position order — one record each.
   final keptSpans = scan.finishSpans();
   final recordsKept = scan.keptRecords + scan.latestByType.length;
+  // gh-1590: the dry run reports the size the rewrite would give — the
+  // exact byte sum of the spans pass 2 would stream, so `--dry-run` and
+  // the real pass agree on the same fixture.
+  final projectedBytesAfter = [
+    ...scan.headerSpan,
+    ...keptSpans,
+  ].fold<int>(0, (sum, span) => sum + (span.$2 - span.$1));
 
   if (dryRun) {
     return SessionRepairReport(
@@ -232,9 +268,10 @@ Future<SessionRepairReport> repairSessionLedgers(
       recordsRead: scan.recordsRead,
       recordsKept: recordsKept,
       droppedByType: scan.droppedByType,
+      droppedBytesByType: scan.droppedBytesByType,
       keptLatestByType: scan.keptLatestByType,
       bytesBefore: bytesBefore,
-      bytesAfter: bytesBefore,
+      bytesAfter: projectedBytesAfter,
       backupPath: '$path.bak',
       dryRun: true,
       untouchedSegments: untouchedSegments,
@@ -254,6 +291,7 @@ Future<SessionRepairReport> repairSessionLedgers(
     recordsRead: scan.recordsRead,
     recordsKept: recordsKept,
     droppedByType: scan.droppedByType,
+    droppedBytesByType: scan.droppedBytesByType,
     keptLatestByType: scan.keptLatestByType,
     bytesBefore: bytesBefore,
     bytesAfter: bytesAfter,
@@ -266,13 +304,15 @@ Future<SessionRepairReport> repairSessionLedgers(
 /// The repair IO surface: a [RangedReadFileSystem] (bounded streaming)
 /// plus a [RenamableFileSystem] (atomic swap). Anything else fails with
 /// [SessionRepairErrorCode.unsupported] rather than half-applying.
-({RangedReadFileSystem ranged, RenamableFileSystem renamable})
-_repairIoSurface(FileSystem fs) {
+({RangedReadFileSystem ranged, RenamableFileSystem renamable}) _repairIoSurface(
+  FileSystem fs,
+) {
   final Object maybeRanged = fs;
   final Object maybeRenamable = fs;
   final ranged = maybeRanged is RangedReadFileSystem ? maybeRanged : null;
-  final renamable =
-      maybeRenamable is RenamableFileSystem ? maybeRenamable : null;
+  final renamable = maybeRenamable is RenamableFileSystem
+      ? maybeRenamable
+      : null;
   if (ranged == null || renamable == null) {
     throw SessionRepairException(
       'session repair needs byte-range reads and an atomic rename; this '
@@ -311,6 +351,10 @@ final class _RepairLedgerScan {
   /// registry snapshots.
   final droppedByType = <String, int>{};
 
+  /// Dropped bytes per custom type (gh-1590) — [droppedByType] weighted
+  /// by the line's byte span, newline included.
+  final droppedBytesByType = <String, int>{};
+
   /// Latest snapshots KEPT per superseding registry type.
   final keptLatestByType = <String, int>{};
 
@@ -342,11 +386,13 @@ final class _RepairLedgerScan {
     final span = (line.start, line.end);
     if (customType != null && _drops.contains(customType)) {
       droppedByType[customType] = (droppedByType[customType] ?? 0) + 1;
+      _dropBytes(customType, span);
       return;
     }
     if (customType != null && _keepLatest.contains(customType)) {
       if (latestByType.containsKey(customType)) {
         droppedByType[customType] = (droppedByType[customType] ?? 0) + 1;
+        _dropBytes(customType, span);
       } else {
         keptLatestByType[customType] = 1;
       }
@@ -355,6 +401,13 @@ final class _RepairLedgerScan {
     }
     keptRecords++;
     _appendSpan(keptSpans, span);
+  }
+
+  /// Accounts [span]'s bytes under [type] — the report's reclaimed-bytes
+  /// per-type line (gh-1590).
+  void _dropBytes(String type, (int, int) span) {
+    droppedBytesByType[type] =
+        (droppedBytesByType[type] ?? 0) + span.$2 - span.$1;
   }
 
   /// The write-side span list: the kept spans with the latest
