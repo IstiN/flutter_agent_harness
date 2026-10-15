@@ -103,6 +103,7 @@ final class AgentCliConfig {
     this.aiinConnectFn,
     this.copilotDeviceFlowFn,
     this.copilotUserFn,
+    this.clipboardWrite,
     this.codeMieSsoAuthenticateFn,
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
@@ -378,6 +379,13 @@ final class AgentCliConfig {
   /// copilot` (GET api.github.com/user → login). Tests inject a fake;
   /// production calls [fetchGitHubLogin].
   final Future<String> Function(String githubToken)? copilotUserFn;
+
+  /// Optional override for the platform clipboard write behind `/provider
+  /// export` (gh-1606): copies [text] to the host clipboard; resolves to
+  /// null on success, the failure reason otherwise (the text itself never
+  /// surfaces). Tests inject a fake; production runs
+  /// [writeClipboardText] (pbcopy/xclip/wl-copy/clip).
+  final Future<String?> Function(String text)? clipboardWrite;
 
   /// Optional override for the CodeMie SSO browser flow
   /// (`/provider codemie sso`). Tests inject a fake returning canned
