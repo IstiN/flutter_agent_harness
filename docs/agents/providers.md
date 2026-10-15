@@ -2,6 +2,29 @@
 
 See [cli.md](cli.md) for the `/settings` hub and CLI flags.
 
+## Translating proxies and the `wire:` override (gh-1624)
+
+The boot-time binding preflight validates model ⇄ dialect ⇄ endpoint
+(`ProviderModelBinding.resolve`). The vendor-prefix verdict
+(`zai/glm-5.3` naming the `zai` record) and the family verdict
+(`claude-*`/`gpt-*`/`gemini-*` ids) fire ONLY on known catalog endpoints
+(api.anthropic.com, api.openai.com, …) — that is where a dialect
+mismatch fails the boot. On unknown/private endpoints the `vendor/`
+prefix is treated as a routing key, not a dialect declaration: a
+mismatch boots with a `warning: binding — …` line instead of exit 64.
+Translating proxies (bifrost, LiteLLM, one-api — one host serving
+several dialect paths such as `/anthropic` and `/v1`) need no extra
+configuration since gh-1624.
+
+`wire:` (the `FA_PROVIDER_CONFIG` key; `ProviderModelBinding.resolve`
+takes it as `wire:`) declares the adapter kind the endpoint speaks,
+overriding the provider record's own kind. Caveat: the override engages
+ONLY when the declared wire DIFFERS from the record's own kind —
+`record anthropic + wire: anthropic` changes nothing and the checks
+still run. The override silences the dialect checks entirely (the caller
+asserts the endpoint speaks it) and is echoed in every binding report
+(`wire override:`) so a silenced check is never invisible.
+
 ## Provider catalog (CLI auth flows)
 
 | Provider | Auth | Endpoint notes | Models list |

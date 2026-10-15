@@ -954,6 +954,13 @@ Future<void> _runApp(List<String> args) async {
     // the `wire:` override in particular must never be invisible (a
     // silenced dialect check is asserted, not forgotten).
     io.writeln('note: binding — ${preconfig.binding.echo()}');
+    // gh-1624: a dialect mismatch that is UNVERIFIED rather than fatal
+    // (vendor-prefixed model id on an unknown/private endpoint — the
+    // translating-proxy class) rides the binding as a warning; the boot
+    // says it once, loudly, and proceeds.
+    for (final warning in preconfig.binding.warnings) {
+      io.writeln('warning: binding — $warning');
+    }
     // A declared level on an adapter that is not wired to the
     // config-carried level is carried but never sent — say so once
     // instead of silently ignoring it (issue #734 E1). gh-1426 wired the

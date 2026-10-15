@@ -303,8 +303,7 @@ void main() {
     });
 
     test('AC2: an anthropic-wire binding on a known OPENAI endpoint with '
-        'a claude id stays rejected (family-exclusive verdict intact)',
-        () {
+        'a claude id stays rejected (family-exclusive verdict intact)', () {
       expect(
         () => ProviderModelBinding.resolve(
           providerKind: 'anthropic',
@@ -323,8 +322,7 @@ void main() {
     });
 
     test('AC3: wire: override (declaredWire != record kind) skips both '
-        'checks — even where they would fire — and yields no warning',
-        () {
+        'checks — even where they would fire — and yields no warning', () {
       final binding = ProviderModelBinding.resolve(
         providerKind: 'anthropic',
         modelId: 'zai/glm-5.3',

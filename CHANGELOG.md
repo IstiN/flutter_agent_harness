@@ -13,6 +13,27 @@ block a release again.
 
 ## Unreleased
 
+- fix(bindings): gh-1624 — the gh-1570 binding preflight no longer kills
+  translating-proxy factories. `_validateModelEndpoint`'s vendor-prefix
+  verdict was fatal on ANY endpoint, so `FA_PROVIDER_TYPE=anthropic` +
+  bifrost's `/anthropic` path + `zai/glm-5.3` exit-64'd every boot on
+  1.0.576 (the prefix is a routing key on a translating proxy, not a
+  dialect declaration). The vendor-prefix check is now scoped to KNOWN
+  catalog endpoints — mirroring `_validateWireEndpoint`'s "unknown
+  endpoints pass" rule: real vendor endpoints (api.anthropic.com,
+  api.openai.com, …) keep the gh-1570 fail-fast, unknown/private
+  endpoints carry the mismatch as a `ProviderModelBinding.warnings`
+  entry rendered by the boot notice (`warning: binding — …`), never
+  exit 64. **Breaking-change note for 1.0.576 upgraders behind proxy
+  factories: the migration is the `wire:` FA_PROVIDER_CONFIG key** —
+  documented now (README env-preconfig section,
+  docs/agents/providers.md §Translating proxies, `--help`) with its
+  caveat: the override engages only when the declared wire DIFFERS from
+  the provider record's own kind (`record anthropic + wire: anthropic`
+  still runs the checks). REG matrix (AC1/AC2/AC3) pinned in
+  `test/model_roles/provider_model_binding_test.dart`; AC4 IT drives a
+  bifrost-shaped loopback proxy through the production anthropic adapter
+  (`test/model_roles/bifrost_proxy_binding_test.dart`).
 - gh-1596: the first-run wizard (`site/setup.sh`) no longer crashes or
   corrupts input under `curl | sh` on dash (Ubuntu sh) or busybox ash
   (Alpine): `scripts/gen_installers.dart` now renders the provider/mode/

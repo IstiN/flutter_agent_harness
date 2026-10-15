@@ -16,15 +16,15 @@
 ///    [ProviderSpec.defaultBaseUrl], [sameEndpoint]-normalized — `zai`'s
 ///    kind routes the openai-completions adapter, so an
 ///    openai-completions binding on z.ai's OpenAI-compatible endpoint
-    passes while an anthropic binding on it does not). A
-    vendor-prefixed model id (`zai/glm-…`) naming a record of another
-    dialect is a rejection on KNOWN catalog endpoints and a WARNING
-    (carried on [ProviderModelBinding.warnings]) on unknown/private ones
-    (gh-1624: translating proxies route `vendor/` prefixes as keys, not
-    dialect declarations). An explicit `wire:` override is the
-    only escape hatch and is echoed in every report (E6: a genuinely
-    foreign-dialect endpoint behind a custom baseUrl passes only
-    through it).
+///    passes while an anthropic binding on it does not). A
+///    vendor-prefixed model id (`zai/glm-…`) naming a record of another
+///    dialect is a rejection on KNOWN catalog endpoints and a WARNING
+///    (carried on [ProviderModelBinding.warnings]) on unknown/private
+///    ones (gh-1624: translating proxies route `vendor/` prefixes as
+///    keys, not dialect declarations). An explicit `wire:` override is
+///    the only escape hatch and is echoed in every report (E6: a
+///    genuinely foreign-dialect endpoint behind a custom baseUrl passes
+///    only through it).
 /// 2. *Model ⇄ endpoint* — a model id whose family dialect is KNOWN
 ///    ([modelFamilyDialectHint]: `claude-*` is anthropic-messages,
 ///    `gemini-*` google-generative-ai, `gpt-*`/`o1`/`o3`/`o4-*`
