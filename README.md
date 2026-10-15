@@ -181,11 +181,12 @@ record's own kind. **Translating proxies** (bifrost, LiteLLM, one-api:
 one host serving several dialect paths, `vendor/model` prefixes used as
 routing keys) need nothing extra since gh-1624 — a `vendor/`-prefixed
 model whose prefix names another dialect boots with a warning on
-unknown/private endpoints instead of refusing to start. Only real vendor
-endpoints (api.anthropic.com, api.openai.com, …) still fail fast on a
-dialect mismatch. The `wire:` override engages ONLY when it differs from
-the provider record's own kind (`record anthropic + wire: anthropic`
-changes nothing — the checks still run).
+routers and unknown/private endpoints instead of refusing to start.
+Only the family-exclusive vendor endpoints (api.anthropic.com,
+api.openai.com, …) still fail fast on a dialect mismatch. The `wire:`
+override engages ONLY when it differs from the provider record's own
+kind (`record anthropic + wire: anthropic` changes nothing — the checks
+still run).
 
 ```bash
 # bifrost's anthropic path translating zai/glm-5.3 (no wire: needed):

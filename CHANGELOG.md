@@ -18,13 +18,19 @@ block a release again.
   verdict was fatal on ANY endpoint, so `FA_PROVIDER_TYPE=anthropic` +
   bifrost's `/anthropic` path + `zai/glm-5.3` exit-64'd every boot on
   1.0.576 (the prefix is a routing key on a translating proxy, not a
-  dialect declaration). The vendor-prefix check is now scoped to KNOWN
-  catalog endpoints — mirroring `_validateWireEndpoint`'s "unknown
-  endpoints pass" rule: real vendor endpoints (api.anthropic.com,
-  api.openai.com, …) keep the gh-1570 fail-fast, unknown/private
-  endpoints carry the mismatch as a `ProviderModelBinding.warnings`
-  entry rendered by the boot notice (`warning: binding — …`), never
-  exit 64. **Breaking-change note for 1.0.576 upgraders behind proxy
+  dialect declaration). The vendor-prefix check now fires ONLY on the
+  endpoints that carry a dialect verdict — the three family-exclusive
+  canonical vendor endpoints (api.anthropic.com, api.openai.com,
+  generativelanguage), mirroring the family verdict's scope: those keep
+  the gh-1570 fail-fast, ROUTERS (OpenRouter/Copilot/DIAL/kimi — the
+  prefix is a routing key there too; OpenRouter's canonical ids are
+  `anthropic/claude-*`) and unknown/private endpoints carry the mismatch
+  as a `ProviderModelBinding.warnings` entry, never exit 64. The warning
+  is rendered on EVERY resolve path (gh-1624 review): the `FA_PROVIDER_*`
+  boot notice, the provider queue (per entry at boot, on queue reload,
+  and in `/provider queue test`), and the `--model`/`--base-url` flag
+  revalidation — a rider never boots silently.
+  **Breaking-change note for 1.0.576 upgraders behind proxy
   factories: the migration is the `wire:` FA_PROVIDER_CONFIG key** —
   documented now (README env-preconfig section,
   docs/agents/providers.md §Translating proxies, `--help`) with its

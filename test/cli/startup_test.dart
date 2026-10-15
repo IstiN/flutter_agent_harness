@@ -516,7 +516,7 @@ void main() {
         'surfaces the binding warnings (gh-1624 review r2)', () {
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(model: 'zai/glm-5.3'),
-        const CliConfig(
+        CliConfig(
           providerKind: 'anthropic',
           modelId: 'claude-sonnet-4-5',
           baseUrl: 'http://192.168.1.23:8080/anthropic',
@@ -537,10 +537,7 @@ void main() {
         'review r2: the preconfig notice already says it)', () {
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(model: 'zai/glm-5.3'),
-        const CliConfig(
-          providerKind: 'anthropic',
-          modelId: 'claude-sonnet-4-5',
-        ),
+        CliConfig(providerKind: 'anthropic', modelId: 'claude-sonnet-4-5'),
         env: const {
           'FA_PROVIDER_TYPE': 'anthropic',
           'FA_PROVIDER_CONFIG':

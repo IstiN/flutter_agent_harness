@@ -293,9 +293,10 @@ PROVIDERS AND API KEYS${_providerSectionSuffix()}
   adapter kind the endpoint speaks (openai-completions, anthropic, …);
   it engages only when it differs from the provider record's own kind.
   A vendor-prefixed model (zai/glm-…) whose prefix names another dialect
-  boots with a warning on unknown/private endpoints (translating proxies
-  — bifrost, LiteLLM — route vendor/ prefixes as keys); only known
-  vendor endpoints (api.anthropic.com, …) still fail fast on a mismatch.
+  boots with a warning on routers and unknown/private endpoints
+  (translating proxies — bifrost, LiteLLM — route vendor/ prefixes as
+  keys); only the family-exclusive vendor endpoints (api.anthropic.com,
+  …) still fail fast on a mismatch.
 
   In the REPL, /provider [name] [baseUrl] [token] switches the provider and
   endpoint live (openrouter, kimi, openai, anthropic, google, codemie, dial,
