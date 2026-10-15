@@ -407,6 +407,15 @@ class LivenessBytesTest(unittest.TestCase):
 # returns ([tar-bytes], stat) — the #1339 session export joins the chunks.
 _ExecResult = collections.namedtuple("ExecResult", ["exit_code", "output"])
 
+# gh-1638 AC2: the stock perform_task sentinel must be AgentResult-SHAPED
+# (failure_mode + token attrs) — the supervised path folds the stock
+# result's token attrs, and a bare str sentinel made the fold warn
+# "'str' object has no attribute 'total_input_tokens'" on every IT.
+def _stock_result():
+    return types.SimpleNamespace(
+        failure_mode=None, total_input_tokens=0, total_output_tokens=0,
+    )
+
 
 def _empty_tar_bytes() -> bytes:
     """A valid, empty tar (the fake session root exports zero files)."""
@@ -492,11 +501,13 @@ class LegacyWatcherTest(unittest.TestCase):
         session = FakeTmuxSession()
         logging_dir = Path(self.tmpdir.name)
 
+        stock_result = _stock_result()
+
         def stock(**kwargs):
             for _ in range(14):  # ~0.7s of steady deltas
                 time.sleep(0.05)
                 session.counter["bytes"] += 100
-            return "stock-result"
+            return stock_result
 
         with mock.patch.dict(
             os.environ, clean_env(FA_AGENT_TIMEOUT_SEC="0.5", FA_PROGRESS_EXTENSION="1")
@@ -505,7 +516,7 @@ class LegacyWatcherTest(unittest.TestCase):
         ):
             started = time.monotonic()
             result = agent.perform_task("instr", session, logging_dir)
-        self.assertEqual(result, "stock-result")
+        self.assertIs(result, stock_result)
         self.assertGreater(time.monotonic() - started, 0.5)  # survived the base
         self.assertFalse(session.interrupted.is_set())
         audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
@@ -860,7 +871,7 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         logging_dir = Path(self.tmpdir.name)
         agent, _ = self._run_supervised(
             {fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
-            lambda **kwargs: "stock-result",
+            lambda **kwargs: _stock_result(),
             logging_dir,
         )
         commands = agent._run_agent_commands("instr")
@@ -878,7 +889,7 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         logging_dir = Path(self.tmpdir.name)
         self._run_supervised(
             {fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
-            lambda **kwargs: "stock-result",
+            lambda **kwargs: _stock_result(),
             logging_dir,
         )
         audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
@@ -896,7 +907,7 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         logging_dir = Path(self.tmpdir.name)
         agent, _ = self._run_supervised(
             {fa_agent_timeout.EXTERNAL_CAP_ENV: "86400"},
-            lambda **kwargs: "stock-result",
+            lambda **kwargs: _stock_result(),
             logging_dir,
         )
         audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
@@ -919,7 +930,7 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         def stock(**kwargs):
             for _ in range(6):
                 time.sleep(0.05)
-            return "stock-result"
+            return _stock_result()
 
         agent = self._agent()
         session = FakeTmuxSession()
@@ -952,7 +963,7 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         logging_dir = Path(self.tmpdir.name)
         self._run_supervised(
             {fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
-            lambda **kwargs: "stock-result",
+            lambda **kwargs: _stock_result(),
             logging_dir,
         )
         tb_audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())

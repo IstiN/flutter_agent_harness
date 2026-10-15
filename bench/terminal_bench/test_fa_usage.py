@@ -13,6 +13,7 @@ harbor stub is conditional (gh-1535): clobbering a real harbor install
 would break the parity tests in test_fa_agent_timeout loaded later by the
 same `unittest discover` process.
 """
+import enum
 import importlib.metadata
 import importlib.util
 import json
@@ -40,21 +41,31 @@ def _module(name, **attrs):
 
 def _stub_terminal_bench():
     failure_mode = _module("terminal_bench.agents.failure_mode")
-    failure_mode.FailureMode = types.SimpleNamespace(
-        NONE="none",
-        AGENT_TIMEOUT="agent_timeout",
+    # gh-1638: a REAL enum like the actual
+    # terminal_bench.agents.failure_mode.FailureMode — members carry
+    # .value (the gh-1576 raw-outcome audit reads it) and _NEVER_STARTED_
+    # MODES membership works by identity. The former SimpleNamespace of
+    # plain strings made the TB-gated tests in test_fa_agent_timeout (run
+    # against this sys.modules stub in the shared discover process) crash
+    # with "'str' object has no attribute 'value'" once the raw branch
+    # became reachable.
+    class FailureMode(enum.Enum):
+        NONE = "none"
+        AGENT_TIMEOUT = "agent_timeout"
         # gh-1209: the never-started modes fa_agent's fold-skip set names,
         # plus a ran-outcome mode outside them (PARSE_ERROR) that pins the
         # fold's default-on direction.
-        UNKNOWN_AGENT_ERROR="unknown_agent_error",
-        AGENT_INSTALLATION_FAILED="agent_installation_failed",
-        PARSE_ERROR="parse_error",
-    )  # AGENT_TIMEOUT: fa_agent.py needs it (test_fa_agent_timeout LegacyWatcherTest loads fa_agent against this stub in the shared discover process)
+        UNKNOWN_AGENT_ERROR = "unknown_agent_error"
+        AGENT_INSTALLATION_FAILED = "agent_installation_failed"
+        PARSE_ERROR = "parse_error"
+
+    failure_mode.FailureMode = FailureMode  # AGENT_TIMEOUT: fa_agent.py needs it (test_fa_agent_timeout LegacyWatcherTest loads fa_agent against this stub in the shared discover process)
 
     def installed_perform_task(self, instruction, session, logging_dir=None):
         # tb's AbstractInstalledAgent hardcodes zeros (the issue's bug).
         return FaAgentTest.AgentResult(
-            total_input_tokens=0, total_output_tokens=0, failure_mode="none"
+            total_input_tokens=0, total_output_tokens=0,
+            failure_mode=FailureMode.NONE,
         )
 
     abstract = _module(
@@ -149,6 +160,9 @@ def _harbor_distribution_present() -> bool:
 
 
 _stub_terminal_bench()
+# gh-1638: the shared alias the sentinel builders below use — the stub's
+# FailureMode is what fa_agent.py binds in this discover process.
+TB_FAILURE_MODE = sys.modules["terminal_bench.agents.failure_mode"].FailureMode
 # Stub ONLY when the real package is absent: with real harbor installed
 # (bench-harbor setup job) fa_agent.py must import the real
 # BaseInstalledAgent so the parity tests can construct FaAgent(logs_dir).
@@ -234,7 +248,8 @@ def no_exec_session(mode):
 
 class FaAgentTest(unittest.TestCase):
     class AgentResult:
-        def __init__(self, total_input_tokens=0, total_output_tokens=0, failure_mode="none"):
+        def __init__(self, total_input_tokens=0, total_output_tokens=0,
+                     failure_mode=TB_FAILURE_MODE.NONE):
             self.total_input_tokens = total_input_tokens
             self.total_output_tokens = total_output_tokens
             self.failure_mode = failure_mode
@@ -320,7 +335,9 @@ class FaAgentTest(unittest.TestCase):
         self.assertEqual(result.total_output_tokens, 0)
 
     def test_installation_failure_result_untouched(self):
-        original = self.AgentResult(failure_mode="agent_installation_failed")
+        original = self.AgentResult(
+            failure_mode=TB_FAILURE_MODE.AGENT_INSTALLATION_FAILED
+        )
         agent = self.legacy_agent()
         monkey = unittest.mock.patch.object(
             legacy_fa_agent.AbstractInstalledAgent,
@@ -338,7 +355,7 @@ class FaAgentTest(unittest.TestCase):
         # own timeout and records its own zeros, so whenever a timeout
         # result does round-trip through perform_task, it must carry the
         # session's real numbers.
-        original = self.AgentResult(failure_mode="agent_timeout")
+        original = self.AgentResult(failure_mode=TB_FAILURE_MODE.AGENT_TIMEOUT)
         agent = self.legacy_agent()
         session = self.FakeSession(MAIN_SESSION + SUBAGENT_SESSION)
         monkey = unittest.mock.patch.object(
@@ -355,7 +372,9 @@ class FaAgentTest(unittest.TestCase):
         # gh-1209: unknown_agent_error is a true never-started trial — the
         # harness never got the agent going, so there is nothing to fold
         # and the result passes through byte-for-byte.
-        original = self.AgentResult(failure_mode="unknown_agent_error")
+        original = self.AgentResult(
+            failure_mode=TB_FAILURE_MODE.UNKNOWN_AGENT_ERROR
+        )
         agent = self.legacy_agent()
         monkey = unittest.mock.patch.object(
             legacy_fa_agent.AbstractInstalledAgent,
@@ -371,7 +390,7 @@ class FaAgentTest(unittest.TestCase):
         # alone cannot distinguish "fold for any ran outcome" from a future
         # accidental fold-whitelist (mode in _FOLD_MODES); a ran-outcome
         # mode outside the stub's named set must fold too.
-        original = self.AgentResult(failure_mode="parse_error")
+        original = self.AgentResult(failure_mode=TB_FAILURE_MODE.PARSE_ERROR)
         agent = self.legacy_agent()
         session = self.FakeSession(MAIN_SESSION + SUBAGENT_SESSION)
         monkey = unittest.mock.patch.object(
