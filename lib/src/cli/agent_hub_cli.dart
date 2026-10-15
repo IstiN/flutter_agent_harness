@@ -329,8 +329,8 @@ extension AgentCliHubDriver on AgentCli {
   /// window widen applies to the next card without a restart; the log
   /// face wraps at [logFaceCardWrapWidth] instead of a fake pane width;
   /// line mode keeps its legacy 80-column fallback.
-  int get _hubBlockWidth => _tuiController?.termWidth ??
-      (_logIsUi ? logFaceCardWrapWidth : 80);
+  int get _hubBlockWidth =>
+      _tuiController?.termWidth ?? (_logIsUi ? logFaceCardWrapWidth : 80);
 
   /// The card text mode (gh-1433 AC9): the LOG face soft-wraps — nothing
   /// silently ellipsized; the TUI pane clips at its live width; line
@@ -434,10 +434,7 @@ extension AgentCliHubDriver on AgentCli {
   /// transcript, refresh the TUI's live region, persist the records.
   void _jobBoardAfterMutation() {
     _printBoardLines(
-      _jobBoard.takeTranscriptLines(
-        width: _hubBlockWidth,
-        fit: _cardTextFit,
-      ),
+      _jobBoard.takeTranscriptLines(width: _hubBlockWidth, fit: _cardTextFit),
     );
     _tuiController?.setJobBoard(_jobBoard.liveLines(width: _hubBlockWidth));
     unawaited(_persistJobBoard());
@@ -456,14 +453,32 @@ extension AgentCliHubDriver on AgentCli {
   /// gh-1073: a byte-identical snapshot is skipped — the ledger is
   /// latest-snapshot-wins, so re-appending unchanged payloads only grew
   /// the session file (29k snapshots = 3.65 GB on the ticket's session).
-  Future<void> _persistJobBoard() {
+  ///
+  /// gh-1590: the appends are also RATE-BOUNDED — only the first board
+  /// mutation inside a persist window ([ledgerSnapshotPersistInterval])
+  /// appends; the rest coalesce behind the trailing flush leg, because
+  /// only the latest snapshot is ever read. `force` bypasses the window
+  /// for the shutdown flush — the final state must reach the file even
+  /// when the mutations never stopped (the deduper still suppresses a
+  /// no-op flush).
+  Future<void> _persistJobBoard({bool force = false}) {
     final session = _session;
     if (session == null) return Future.value();
     _persistChain = _persistChain
         .then((_) async {
+          // BEFORE the gate: an empty board must neither append nor
+          // stamp the window — an empty snapshot persisting would gate
+          // the first real snapshot for a whole interval. The
+          // toRecords() cost on refused mutations is a capped-list
+          // copy, not an encode.
+          final records = _jobBoard.toRecords();
+          if (records.isEmpty) return;
+          // gh-1590: the window gate NEXT — a refused mutation reserves
+          // the trailing flush (which re-enters here unforced) and skips
+          // the encode entirely.
+          if (!force && !_jobBoardPersistThrottle.shouldPersistNow()) return;
           // Serialize ONCE — the dedupe key must be the exact payload
           // that gets appended, not a second encoding of the same board.
-          final records = _jobBoard.toRecords();
           final json = jsonEncode(records);
           if (!_jobBoardPersistDeduper.shouldPersist(json)) return;
           try {
@@ -472,6 +487,7 @@ extension AgentCliHubDriver on AgentCli {
               data: records,
             );
             _jobBoardPersistDeduper.confirmPersisted();
+            _jobBoardPersistThrottle.confirmPersisted();
           } on Object {
             // The chain swallows below by design; roll the deduper back
             // first so the retried identical snapshot is NOT skipped.
@@ -492,6 +508,10 @@ extension AgentCliHubDriver on AgentCli {
   Future<void> _rehydrateJobBoard() async {
     final session = _session;
     if (session == null) return;
+    // gh-1590: the persist window opens with the (re)hydrated session —
+    // BEFORE the empty-ledger early return, so a session switch never
+    // inherits the previous session's window.
+    _jobBoardPersistThrottle.reset();
     final latest = ShellJobBoard.latestRecords(await session.getEntries());
     if (latest.isEmpty) return;
     _jobBoard = ShellJobBoard.rehydrated(latest);
@@ -499,11 +519,19 @@ extension AgentCliHubDriver on AgentCli {
     // a repeat of whatever the previous session last wrote (gh-1073).
     _jobBoardPersistDeduper.reset();
     _printBoardLines(
-      _jobBoard.takeTranscriptLines(
-        width: _hubBlockWidth,
-        fit: _cardTextFit,
-      ),
+      _jobBoard.takeTranscriptLines(width: _hubBlockWidth, fit: _cardTextFit),
     );
+  }
+
+  /// gh-1590: the shutdown flush — a coalesced `shell_job_registry`
+  /// snapshot lands NOW (the deduper suppresses a no-op) and the
+  /// throttle's trailing Timer leg disarms: a pending Timer must never
+  /// hold the isolate at process exit, and a job that settled inside the
+  /// persist window must still reach the file (a resume rehydrates only
+  /// through the latest snapshot).
+  Future<void> _flushJobBoardPersist() {
+    _jobBoardPersistThrottle.dispose();
+    return _persistJobBoard(force: true);
   }
 
   /// Prints drained board lines dim - the one place board material reaches

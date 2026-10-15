@@ -250,6 +250,13 @@ extension AgentCliRun on AgentCli {
     await _ttsr?.settled;
     _hubCompletePanels();
     await _persistMessages();
+    // gh-1590: a run finalize gives the job board a chance to land its
+    // snapshot — UNFORCED, inside the persist window: the drain path
+    // completes one run per settle notice, and a force here would append
+    // one record per reaction run, defeating the coalescing. The final
+    // state rides the trailing leg or the shutdown flush instead; when
+    // the window is open the gate skips the encode entirely.
+    await _persistJobBoard();
     try {
       await _maybeAutoCompact();
     } on CancelledException {
