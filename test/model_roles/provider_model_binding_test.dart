@@ -80,33 +80,6 @@ void main() {
   });
 
   group('ProviderModelBinding.resolve — wire ⇄ endpoint (AC2)', () {
-    test('the incident configuration is rejected naming both sides', () {
-      // bench job 114848402110: FA_PROVIDER_TYPE=anthropic + an
-      // OpenAI-compatible proxy + zai/glm-5.3-flashx — anthropic wire
-      // spoken to an OpenAI endpoint. The vendor prefix gives the endpoint
-      // dialect away on a non-openai wire.
-      expect(
-        () => ProviderModelBinding.resolve(
-          providerKind: 'anthropic',
-          modelId: 'zai/glm-5.3-flashx',
-          baseUrl: 'http://192.168.1.10:8080/v1',
-          provenance: BindingProvenance.env,
-        ),
-        throwsA(
-          isA<ConfigException>().having(
-            (e) => e.message,
-            'message',
-            allOf(
-              contains('zai/glm-5.3-flashx'),
-              contains('http://192.168.1.10:8080/v1'),
-              contains('anthropic'),
-              contains('wire'),
-            ),
-          ),
-        ),
-      );
-    });
-
     test('a known endpoint of another dialect is rejected', () {
       expect(
         () => ProviderModelBinding.resolve(
@@ -230,19 +203,6 @@ void main() {
       expect(binding.modelId, 'gemini-2.5-pro');
     });
 
-    test('a vendor-prefixed id of another dialect on a non-openai wire is '
-        'rejected (openai/claude on an anthropic binding)', () {
-      expect(
-        () => ProviderModelBinding.resolve(
-          providerKind: 'anthropic',
-          modelId: 'openai/gpt-4o',
-          baseUrl: 'http://192.168.1.10:8080',
-          provenance: BindingProvenance.env,
-        ),
-        throwsA(isA<ConfigException>()),
-      );
-    });
-
     test('a vendor-prefixed id on an openai-dialect binding passes (the '
         'routing convention — openrouter zai/glm ids)', () {
       final binding = ProviderModelBinding.resolve(
@@ -274,6 +234,153 @@ void main() {
     });
   });
 
+  // gh-1624 REG matrix: the vendor-prefix dialect verdict is scoped to
+  // KNOWN catalog endpoints (mirroring _validateWireEndpoint's "unknown
+  // endpoints pass" rule). Translating proxies (bifrost/LiteLLM/one-api)
+  // serve multiple dialect paths and route "vendor/model" prefixes as
+  // keys — a prefix mismatch on such an endpoint is a WARNING, never the
+  // exit 64 the 1.0.576 preflight produced. This group runs on every PR
+  // touching provider_model_binding.dart.
+  group('ProviderModelBinding.resolve — vendor-prefix endpoint scoping '
+      '(gh-1624 REG, AC1/AC2/AC3)', () {
+    test('AC1: vendor-prefixed model of another dialect on an UNKNOWN '
+        'endpoint boots with a warning (was exit 64)', () {
+      // The exact factory binding from gh-1624: zai/glm-5.3 through
+      // bifrost's anthropic path — the prefix is a routing key there.
+      final binding = ProviderModelBinding.resolve(
+        providerKind: 'anthropic',
+        modelId: 'zai/glm-5.3',
+        baseUrl: 'http://192.168.1.23:8080/anthropic',
+        provenance: BindingProvenance.env,
+      );
+      expect(binding.providerKind, 'anthropic');
+      expect(binding.baseUrl, 'http://192.168.1.23:8080/anthropic');
+      expect(binding.warnings, hasLength(1));
+      expect(
+        binding.warnings.single,
+        allOf(
+          contains('zai/glm-5.3'),
+          contains('"zai"'),
+          contains('openai-completions'),
+          contains('"anthropic-messages"'),
+          contains('http://192.168.1.23:8080/anthropic'),
+          contains('routing key'),
+        ),
+      );
+    });
+
+    test('AC2: the same mismatch on a KNOWN vendor endpoint is still '
+        'fatal (gh-1570 fail-fast preserved)', () {
+      // openai-prefixed id on the anthropic record's own endpoint: the
+      // catalog verdict stands, the boot dies naming both sides.
+      expect(
+        () => ProviderModelBinding.resolve(
+          providerKind: 'anthropic',
+          modelId: 'openai/gpt-4o',
+          provenance: BindingProvenance.env,
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('openai/gpt-4o'),
+              contains('"openai"'),
+              contains('api.anthropic.com'),
+            ),
+          ),
+        ),
+      );
+      expect(
+        () => ProviderModelBinding.resolve(
+          providerKind: 'anthropic',
+          modelId: 'zai/glm-5.3',
+          baseUrl: 'https://api.anthropic.com',
+          provenance: BindingProvenance.env,
+        ),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+
+    test('AC2: an anthropic-wire binding on a known OPENAI endpoint with '
+        'a claude id stays rejected (family-exclusive verdict intact)',
+        () {
+      expect(
+        () => ProviderModelBinding.resolve(
+          providerKind: 'anthropic',
+          modelId: 'claude-sonnet-4-5',
+          baseUrl: 'https://api.openai.com/v1',
+          provenance: BindingProvenance.env,
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('api.openai.com'), contains('anthropic')),
+          ),
+        ),
+      );
+    });
+
+    test('AC3: wire: override (declaredWire != record kind) skips both '
+        'checks — even where they would fire — and yields no warning',
+        () {
+      final binding = ProviderModelBinding.resolve(
+        providerKind: 'anthropic',
+        modelId: 'zai/glm-5.3',
+        baseUrl: 'https://api.anthropic.com',
+        wire: 'openai-completions',
+        provenance: BindingProvenance.env,
+      );
+      expect(binding.providerKind, 'openai-completions');
+      expect(binding.wireOverride, isTrue);
+      expect(binding.warnings, isEmpty);
+    });
+
+    test('AC3 caveat: wire: EQUAL to the record kind does NOT engage the '
+        'override — the checks still run', () {
+      // The undocumented footgun from gh-1624: record anthropic +
+      // `wire: anthropic` changes nothing — the vendor-prefix verdict on
+      // the known endpoint still fires, and a passing binding carries no
+      // override marker.
+      expect(
+        () => ProviderModelBinding.resolve(
+          providerKind: 'anthropic',
+          modelId: 'openai/gpt-4o',
+          baseUrl: 'https://api.anthropic.com',
+          wire: 'anthropic',
+          provenance: BindingProvenance.env,
+        ),
+        throwsA(isA<ConfigException>()),
+      );
+      final binding = ProviderModelBinding.resolve(
+        providerKind: 'anthropic',
+        modelId: 'claude-sonnet-4-5',
+        baseUrl: 'https://api.anthropic.com',
+        wire: 'anthropic',
+        provenance: BindingProvenance.env,
+      );
+      expect(binding.wireOverride, isFalse);
+      expect(binding.warnings, isEmpty);
+    });
+
+    test('warnings are report notes, not identity (I5 round-trip)', () {
+      final plain = ProviderModelBinding.resolve(
+        providerKind: 'anthropic',
+        modelId: 'zai/glm-5.3',
+        baseUrl: 'http://192.168.1.23:8080/anthropic',
+        provenance: BindingProvenance.env,
+      );
+      final same = ProviderModelBinding.resolve(
+        providerKind: 'anthropic',
+        modelId: 'zai/glm-5.3',
+        baseUrl: 'http://192.168.1.23:8080/anthropic',
+        provenance: BindingProvenance.restore,
+      );
+      expect(plain, equals(same));
+      expect(plain.hashCode, same.hashCode);
+    });
+  });
   group('ProviderModelBinding.resolve — endpoint-shared wires (M5)', () {
     test('openai-completions without baseUrl or record is rejected', () {
       expect(

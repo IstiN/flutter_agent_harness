@@ -16,12 +16,15 @@
 ///    [ProviderSpec.defaultBaseUrl], [sameEndpoint]-normalized — `zai`'s
 ///    kind routes the openai-completions adapter, so an
 ///    openai-completions binding on z.ai's OpenAI-compatible endpoint
-///    passes while an anthropic binding on it does not). A
-///    vendor-prefixed model id (`zai/glm-…`) naming a record of another
-///    dialect is a rejection too. An explicit `wire:` override is the
-///    only escape hatch and is echoed in every report (E6: a genuinely
-///    foreign-dialect endpoint behind a custom baseUrl passes only
-///    through it).
+    passes while an anthropic binding on it does not). A
+    vendor-prefixed model id (`zai/glm-…`) naming a record of another
+    dialect is a rejection on KNOWN catalog endpoints and a WARNING
+    (carried on [ProviderModelBinding.warnings]) on unknown/private ones
+    (gh-1624: translating proxies route `vendor/` prefixes as keys, not
+    dialect declarations). An explicit `wire:` override is the
+    only escape hatch and is echoed in every report (E6: a genuinely
+    foreign-dialect endpoint behind a custom baseUrl passes only
+    through it).
 /// 2. *Model ⇄ endpoint* — a model id whose family dialect is KNOWN
 ///    ([modelFamilyDialectHint]: `claude-*` is anthropic-messages,
 ///    `gemini-*` google-generative-ai, `gpt-*`/`o1`/`o3`/`o4-*`
@@ -90,6 +93,7 @@ final class ProviderModelBinding {
     required this.keyEnvRef,
     required this.provenance,
     required this.wireOverride,
+    this.warnings = const [],
   });
 
   /// The RESOLVED catalog record the binding rides — `spec.name` from the
@@ -181,13 +185,14 @@ final class ProviderModelBinding {
       rawKind: rawKind,
     );
 
+    var warnings = const <String>[];
     if (!override) {
       _validateWireEndpoint(
         spec: spec,
         baseUrl: effectiveBaseUrl,
         modelId: modelId,
       );
-      _validateModelEndpoint(
+      warnings = _validateModelEndpoint(
         spec: spec,
         baseUrl: effectiveBaseUrl,
         modelId: modelId,
@@ -218,6 +223,7 @@ final class ProviderModelBinding {
       keyEnvRef: keyRef.isEmpty ? null : keyRef,
       provenance: provenance,
       wireOverride: override,
+      warnings: warnings,
     );
   }
 
@@ -246,6 +252,14 @@ final class ProviderModelBinding {
   /// Whether an explicit `wire:` override authored the wire kind — echoed
   /// in every report so a silenced dialect check is never invisible (E6).
   final bool wireOverride;
+
+  /// Loud non-fatal resolution notes (gh-1624): a vendor-prefixed model id
+  /// of another dialect riding an UNKNOWN/private endpoint — on a
+  /// translating proxy the prefix is a routing key, not a dialect
+  /// declaration, so the mismatch is reported for the host to render,
+  /// never fatal. Empty when every check passed silently. Not part of
+  /// identity (`==`/`hashCode` ignore it — I5 round-trips stay stable).
+  final List<String> warnings;
 
   /// Identity equality (I5 round-trips): record, wire, endpoint, model,
   /// key ref. Provenance and the override flag describe the AUTHOR, not
@@ -344,36 +358,51 @@ void _validateWireEndpoint({
 /// prefix names a record of ANOTHER API dialect (openai-completions is
 /// the routing dialect where `vendor/model` ids live, so prefixes agree
 /// with everything else that speaks it), and a known model family on the
-/// family-exclusive CANONICAL endpoint of a different family. Unknown
-/// ids, routers and unknown endpoints pass (D2 territory, never a
-/// guess).
-void _validateModelEndpoint({
+/// family-exclusive CANONICAL endpoint of a different family. Both
+/// verdicts are scoped to KNOWN catalog endpoints (gh-1624): on an
+/// unknown/private endpoint the `vendor/` prefix is a ROUTING KEY, not a
+/// dialect declaration (bifrost/LiteLLM/one-api translate on one host),
+/// so the prefix mismatch degrades to a returned WARNING instead of the
+/// exit-64 rejection; unknown ids, routers and unknown endpoints pass
+/// (D2 territory, never a guess).
+List<String> _validateModelEndpoint({
   required ProviderSpec spec,
   required String baseUrl,
   required String modelId,
 }) {
+  final warnings = <String>[];
   final slash = modelId.indexOf('/');
   if (slash > 0) {
     final head = modelId.substring(0, slash).trim().toLowerCase();
     final headSpec = resolveCliProviderSpec(head);
     if (headSpec != null && headSpec.api != spec.api) {
-      throw ConfigException(
-        'provider/model binding mismatch: model "$modelId" names provider '
-        '"${headSpec.name}" (dialect "${headSpec.api}") but the binding '
-        'serves "${spec.api}" on $baseUrl — use a model of the bound '
-        'provider, or an explicit `wire:` override only when the endpoint '
-        'genuinely speaks "${spec.api}"',
+      if (_knownCatalogEndpoint(baseUrl)) {
+        throw ConfigException(
+          'provider/model binding mismatch: model "$modelId" names provider '
+          '"${headSpec.name}" (dialect "${headSpec.api}") but the binding '
+          'serves "${spec.api}" on $baseUrl — use a model of the bound '
+          'provider, or an explicit `wire:` override only when the endpoint '
+          'genuinely speaks "${spec.api}"',
+        );
+      }
+      warnings.add(
+        'model "$modelId" names provider "${headSpec.name}" (dialect '
+        '"${headSpec.api}") but the binding serves "${spec.api}" on '
+        '$baseUrl — the endpoint is not a known catalog endpoint, so the '
+        'prefix is treated as a routing key (translating proxies serve '
+        'several dialect paths), not a dialect verdict; the mismatch '
+        'rides unverified',
       );
     }
-    return;
+    return warnings;
   }
   final hint = modelFamilyDialectHint(modelId);
-  if (hint == null || hint == spec.api) return;
+  if (hint == null || hint == spec.api) return warnings;
   // The family check fires only on a family-EXCLUSIVE canonical
   // endpoint: routers (OpenRouter, Copilot, DIAL, kimi, …) and unknown
   // endpoints serve many families and carry no verdict.
   final canonical = _familyExclusiveEndpointDialect(baseUrl);
-  if (canonical == null || canonical == hint) return;
+  if (canonical == null || canonical == hint) return warnings;
   throw ConfigException(
     'provider/model binding mismatch: model "$modelId" is a "$hint" '
     'dialect family id but the binding serves it on $baseUrl '
@@ -381,6 +410,18 @@ void _validateModelEndpoint({
     'explicit `wire:` override only when the endpoint genuinely speaks '
     '"${spec.api}"',
   );
+}
+
+/// Whether [baseUrl] IS a catalog record's own endpoint
+/// ([sameEndpoint]-normalized) — the only place a dialect verdict is
+/// carried. Unknown/private endpoints (proxies, gateways, self-hosted
+/// servers) yield false: nothing declared to check against (gh-1624).
+bool _knownCatalogEndpoint(String baseUrl) {
+  for (final endpointSpec in providerCatalog.values) {
+    if (endpointSpec.defaultBaseUrl.isEmpty) continue;
+    if (sameEndpoint(endpointSpec.defaultBaseUrl, baseUrl)) return true;
+  }
+  return false;
 }
 
 /// The family dialect a model id is KNOWN for — as an API dialect, so it
