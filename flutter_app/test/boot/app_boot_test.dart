@@ -96,6 +96,27 @@ void main() {
       expect(providerHttpClientFactory, isNotNull);
       expect(identical(debugPrint, originalDebugPrint), isFalse);
     });
+
+    test('installs the Copilot CLI identity — app-side PAT-mode requests '
+        'present copilot/<version> (<os>), not copilot/fa (unknown) '
+        '(gh-1606 review)', () {
+      bootWindow();
+      final userAgent = copilotPatApiHeaders(pat: 'x')['user-agent']!;
+      // The documented Copilot CLI shape: the version + host-OS slots
+      // are filled (the IO boot installs Platform.operatingSystem; web
+      // installs 'web') — only the terminal slot stays the literal
+      // `term/unknown`.
+      expect(
+        userAgent,
+        matches(
+          RegExp(
+            '^copilot/.+ \\(${Platform.operatingSystem}\\) '
+            'term/unknown\$',
+          ),
+        ),
+      );
+      expect(userAgent, isNot(contains('fa (unknown)')));
+    });
   });
 
   group('bootServices (services stage)', () {

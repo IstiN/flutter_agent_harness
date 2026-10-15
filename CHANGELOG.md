@@ -61,6 +61,21 @@ block a release again.
   a mid-session ttsr rule toggle or mcp server edit survives the next
   persist too (the writer roster in `settings_flow_config_sync.dart` is
   now exhaustive).
+- gh-1606: the `copilot` provider accepts fine-grained PATs
+  (`github_pat_…`) directly — PAT mode skips the `copilot_internal/v2/token`
+  exchange entirely (GitHub 404s every PAT exchange) and sends the raw PAT
+  as the Bearer against the configured Copilot base URL with the official
+  Copilot CLI's first-party identity headers
+  (`copilot-integration-id: copilot-developer-cli`,
+  `user-agent: copilot/<fa-version> (<os>) term/unknown`, installed by the
+  host at startup). OAuth device-flow tokens keep the exchange +
+  proactive-refresh flow unchanged; a PAT 401/403 surfaces the error
+  instead of a doomed refresh retry. Headless `COPILOT_GITHUB_TOKEN` now
+  works with a PAT. Connect flow: the paste hint explains PAT mode, the
+  dead-PAT case surfaces at the model fetch, and `/provider export` copies
+  the saved Copilot account's full token to the clipboard (account picker
+  on several entries; the token never prints to the transcript).
+
 - gh-1575: macOS clipboard paste fixed for TIFF-only pasteboards + the
   Ctrl+V text fallback. `_readMacos` probes `«class TIFF»` after PNGf/JPEG
   miss and converts via `sips -s format png` (a Preview/browser copy used
@@ -78,6 +93,7 @@ block a release again.
   overclaims the `FA_FAKE_PASTEBOARD` seam, and `FaTuiCallbacks` moved to
   a `fa_tui_callbacks.dart` part file keeping `fa_tui.dart` under the
   2800-line gate.
+
 - gh-1555 (W1, lazy/windowed-everywhere reads): the legacy full-open call
   sites migrate to windowed opens, so a session ledger past the gh-1073
   2 GiB full-open backstop stays openable on every user-facing read path.
