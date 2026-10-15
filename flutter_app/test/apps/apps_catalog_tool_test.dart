@@ -133,6 +133,14 @@ void main() {
     expect(textOf(again), contains('Nothing catalog-installed'));
   });
 
+  test('remove rejects an id that cannot live in the apps namespace '
+      '(gh-1614 rework 2 — nothing outside apps/ is touched)', () async {
+    await env.writeFile('vault/secret.txt', 'do not delete');
+    final result = await call(tool, {'action': 'remove', 'id': '../vault'});
+    expect(textOf(result), contains('not a valid app id'));
+    expect((await env.exists('vault/secret.txt')).valueOrNull, isTrue);
+  });
+
   test('write twin is write-tier with the same surface', () {
     final writeTool = appsCatalogWriteTool(env: env);
     expect(writeTool.tier, ApprovalTier.write);
