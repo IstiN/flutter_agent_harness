@@ -282,6 +282,12 @@
   "@unpackedSourceUnpacked": {},
   "unpackedSourceAgent": "создан агентом",
   "@unpackedSourceAgent": {},
+  "unpackedSourceUnknown": "установлен из неизвестного источника ({source})",
+  "@unpackedSourceUnknown": {
+    "placeholders": {
+      "source": {}
+    }
+  },
   "settingsResetApps": "Сбросить приложения",
   "@settingsResetApps": {},
   "settingsResetAppsHint": "Вернуть приложения-виджеты к изначальному состоянию",

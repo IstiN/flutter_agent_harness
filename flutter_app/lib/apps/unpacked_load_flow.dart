@@ -176,7 +176,9 @@ class UnpackedLoadConfirmDialog extends StatelessWidget {
   /// The existing install this load replaces: its source
   /// (`catalog` | `unpacked`), the [UnpackedWidgetLoader.agentCreatedSource]
   /// sentinel for an app with no install record (agent-created), or null
-  /// when the id is fresh.
+  /// when the id is fresh. Any other value a future origin records is
+  /// surfaced verbatim as an unknown source in the replace note — never
+  /// mislabeled as a catalog install.
   final String? existingSource;
   final String? existingVersion;
 
@@ -185,11 +187,21 @@ class UnpackedLoadConfirmDialog extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final replaces = existingSource != null;
-    final sourceLabel = switch (existingSource) {
-      UnpackedWidgetLoader.origin => l10n.unpackedSourceUnpacked,
-      UnpackedWidgetLoader.agentCreatedSource => l10n.unpackedSourceAgent,
-      _ => l10n.unpackedSourceCatalog,
-    };
+    // The note names the old install's provenance. Known sources get
+    // their label — `catalog` has an explicit case so a future origin
+    // can never silently fall into it; ANY other recorded value (a CLI
+    // load, the ticket's second tier) is surfaced verbatim as an
+    // unknown source instead of masquerading as a catalog install
+    // (gh-1616 review).
+    final source = existingSource;
+    final sourceLabel = source == null
+        ? ''
+        : switch (source) {
+            'catalog' => l10n.unpackedSourceCatalog,
+            UnpackedWidgetLoader.origin => l10n.unpackedSourceUnpacked,
+            UnpackedWidgetLoader.agentCreatedSource => l10n.unpackedSourceAgent,
+            final unknown => l10n.unpackedSourceUnknown(unknown),
+          };
     return AlertDialog(
       icon: const Icon(Icons.folder_open),
       title: Text(l10n.unpackedLoadTitle),

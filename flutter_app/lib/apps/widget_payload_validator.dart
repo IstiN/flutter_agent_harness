@@ -344,6 +344,23 @@ class WidgetPayloadValidator {
     // error per retry.
     final rawId = stamped['id'];
     if (rawId is String && rawId.trim().isNotEmpty) {
+      // A padded id is refused, not silently trimmed: the picked folder
+      // is stored byte-honest, so an id trimmed only at the loader would
+      // come back padded out of the stored manifest
+      // (`JsAppInfo.fromManifest` reads the raw bytes) — the trimmed
+      // install record would miss it (no provenance badge) and Remove
+      // would target an `apps/<id>/` folder that does not exist
+      // (gh-1616 review, AC2: named errors, never silent weirdness).
+      if (rawId.trim() != rawId) {
+        errors.add(
+          WidgetPayloadError(
+            'id_invalid',
+            "manifest id '$rawId' carries leading/trailing whitespace — "
+                'the id rule runs on the trimmed form (${rawId.trim()}); '
+                'write it unpadded in manifest.json',
+          ),
+        );
+      }
       _checkId(rawId.trim(), errors);
     }
     try {

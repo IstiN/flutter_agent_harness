@@ -781,6 +781,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get unpackedSourceAgent => 'created by the agent';
 
   @override
+  String unpackedSourceUnknown(Object source) {
+    return 'installed from an unknown source ($source)';
+  }
+
+  @override
   String get settingsResetApps => 'Reset apps';
 
   @override

@@ -787,6 +787,11 @@ class AppLocalizationsRu extends AppLocalizations {
   String get unpackedSourceAgent => 'создан агентом';
 
   @override
+  String unpackedSourceUnknown(Object source) {
+    return 'установлен из неизвестного источника ($source)';
+  }
+
+  @override
   String get settingsResetApps => 'Сбросить приложения';
 
   @override

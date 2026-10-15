@@ -46,12 +46,14 @@ class UnpackedInspection {
   /// The manifest id — the destination folder name under `apps/`. Null
   /// when the manifest never parsed (the load is refused anyway).
   ///
-  /// Trimmed: the id rule (`^[a-z0-9][a-z0-9-]{1,31}$`) is enforced on
-  /// `id.trim()` (the same value `WidgetManifest.fromJson` stores), so
-  /// every consumer — the replace lookup, the confirm dialog, the install
-  /// folder — sees the rule-enforced form. A padded manifest id
-  /// (`" fa-agents "`) lands in `apps/fa-agents/`, never in a
-  /// space-padded folder that violates the rule it just passed.
+  /// Trimmed so every consumer — the issues dialog, the replace lookup,
+  /// the confirm dialog — names the rule-enforced form even while
+  /// reporting. The validator itself REFUSES a padded id (a stored
+  /// manifest keeps its bytes, so trimming only here would leave
+  /// `JsAppInfo.fromManifest` parsing the padded model id over trimmed
+  /// records — badge lost, Remove no-op); a padded id therefore never
+  /// reaches [UnpackedWidgetLoader.install], and this trim is the
+  /// last-resort normalization, not the fix.
   String? get id => validation.id?.trim();
   String? get name => validation.name;
   String? get version => validation.version;

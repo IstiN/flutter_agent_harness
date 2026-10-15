@@ -1394,6 +1394,12 @@ abstract class AppLocalizations {
   /// **'created by the agent'**
   String get unpackedSourceAgent;
 
+  /// No description provided for @unpackedSourceUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'installed from an unknown source ({source})'**
+  String unpackedSourceUnknown(Object source);
+
   /// No description provided for @settingsResetApps.
   ///
   /// In en, this message translates to:

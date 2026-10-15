@@ -199,10 +199,7 @@ void main() {
           .where((e) => e.code == 'id_invalid')
           .map((e) => e.message);
       expect(messages, hasLength(2), reason: '${result.errors}');
-      expect(
-        messages.where((m) => m.contains('whitespace')),
-        hasLength(1),
-      );
+      expect(messages.where((m) => m.contains('whitespace')), hasLength(1));
       expect(
         messages.where((m) => m.contains('[a-z0-9][a-z0-9-]{1,31}')),
         hasLength(1),

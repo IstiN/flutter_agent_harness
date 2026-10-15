@@ -284,6 +284,12 @@
   "@unpackedSourceUnpacked": {},
   "unpackedSourceAgent": "created by the agent",
   "@unpackedSourceAgent": {},
+  "unpackedSourceUnknown": "installed from an unknown source ({source})",
+  "@unpackedSourceUnknown": {
+    "placeholders": {
+      "source": {}
+    }
+  },
   "settingsResetApps": "Reset apps",
   "@settingsResetApps": {},
   "settingsResetAppsHint": "Restore the widget apps to their initial state",
