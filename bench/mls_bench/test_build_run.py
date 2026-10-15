@@ -236,9 +236,12 @@ class RegressionPinsTest(unittest.TestCase):
 
     def test_bench_harbor_family_anchors(self):
         # #1128 folded the old bench-4.0.yml into the whole-family surface;
-        # the 4.0 anchors and the MLS-free boundary move with it.
+        # #1316 made the 2.x family the DEFAULT (4.0/3.0/2.0 stay one
+        # dispatch input away) — the dataset anchor pins the shipped
+        # default, not the retired 4.0 one (gh-1638: this REG kept the
+        # pre-#1316 literal and stayed red, dispatch-gated-only).
         text = (WORKFLOWS / "bench-harbor.yml").read_text()
-        self.assertIn("terminal-bench/terminal-bench@4.0.0", text)
+        self.assertIn("terminal-bench/terminal-bench-2-1@latest", text)
         self.assertIn("fa_agent:FaAgent", text)
         self.assertNotIn("mls", text.lower())
 

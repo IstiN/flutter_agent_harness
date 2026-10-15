@@ -1,0 +1,59 @@
+# gh-1638 AC4 (the systemic lesson): the bench-script python tests ran
+# ONLY inside the bench workflows' setup jobs (dispatch-gated), so the
+# Oct-14 merge wave rotted them on main invisibly for 3+ days — every
+# dispatch died at setup while the main quality gate (dart test / coverage
+# / guards) never executes a line of python. This job runs the EXACT setup
+# gate (same discovery roots, same pinned deps) on every bench/** change:
+# a red bench-script test now fails the PR and main cannot rot silently.
+name: Bench script tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bench/**'
+      - '.github/workflows/bench-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'bench/**'
+      - '.github/workflows/bench-tests.yml'
+  workflow_dispatch:
+
+# Superseded PR runs die instantly; main-push runs are never cancelled
+# mid-flight (same release-protection principle as ci.yml).
+concurrency:
+  group: Bench script tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# SEC-08 (#796): explicit minimal permissions.
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Unit-test bench scripts
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # terminal-bench-era note (bench-harbor.yml): harbor is fine on 3.13;
+      # typer-based CLIs break on 3.14.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      # Pinned exactly like the bench workflows' setup gate: the adapters
+      # target the harbor 0.23.0 BaseInstalledAgent / terminal-bench 0.2.18
+      # import surfaces.
+      - run: pip install 'harbor[modal]==0.23.0' 'terminal-bench==0.2.18'
+
+      # Same gate as bench.yml / bench-harbor.yml "Unit-test bench scripts"
+      # (plus the bench-mls.yml root — all three bench discovery roots);
+      # keep the step bodies in sync with those workflows.
+      - name: Unit-test bench scripts
+        run: |
+          python -m unittest discover -s bench/terminal_bench -v
+          python -m unittest discover -s bench/harbor_fa -v
+          python -m unittest discover -s bench/mls_bench -v
