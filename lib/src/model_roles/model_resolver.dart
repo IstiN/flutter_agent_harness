@@ -337,18 +337,7 @@ final class ModelRolesResolver {
               }
               return rotated;
             },
-            buildTakeover: role == smolModelRole
-                ? null
-                : () {
-                    try {
-                      final smolWrapper = streamForRole(smolModelRole);
-                      final smolModel = smolWrapper.currentModel;
-                      return (model, context, {cancelToken}) => smolWrapper
-                          .call(smolModel, context, cancelToken: cancelToken);
-                    } on ConfigException {
-                      return null; // smol not configured (logged by the policy)
-                    }
-                  },
+            buildTakeover: role == smolModelRole ? null : _smolTakeoverStream,
             onNotice: (note) =>
                 transientRetryNotice?.call(0, 1, Duration.zero, note),
           ),
@@ -555,6 +544,24 @@ final class ModelRolesResolver {
         sleeper: sleeper,
       );
     });
+  }
+
+  /// The smol-role takeover stream, or `null` when smol is not configured
+  /// (the policy logs the skip; the stall error stands). Runs at ESCALATION
+  /// time (the 3rd stall), never at entry build. Split out of
+  /// [_buildEntry]'s takeover closure (CRAP ratchet): the catch-clause
+  /// line is never credited by the VM's coverage instrumentation even when
+  /// the handler runs — at CC 12 that read as one permanently-uncovered
+  /// line → CRAP 12.0008 > the 12.0 ratchet, unfixable by tests in place.
+  StreamFunction? _smolTakeoverStream() {
+    try {
+      final smolWrapper = streamForRole(smolModelRole);
+      final smolModel = smolWrapper.currentModel;
+      return (model, context, {cancelToken}) =>
+          smolWrapper.call(smolModel, context, cancelToken: cancelToken);
+    } on ConfigException {
+      return null; // smol not configured (logged by the policy)
+    }
   }
 
   /// Resolves [role] to its current model and stream function, or `null`
