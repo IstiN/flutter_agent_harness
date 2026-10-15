@@ -131,8 +131,19 @@ void main() {
     ).readAsStringSync();
     // Compile-time selection: the ext branch is dead-code eliminated by
     // dart2js (verified: -DFA_HOST=extension drops every CDN constant from
-    // main.dart.js; the packaging guard re-checks the real artifact).
-    expect(urls, contains("String.fromEnvironment('FA_HOST')"));
+    // main.dart.js; the packaging guard re-checks the real artifact). The
+    // gate reuses kFaBuildHost (relay_probe.dart — the same
+    // String.fromEnvironment('FA_HOST') define office_boot_web.dart
+    // consumes; --dart-define=FA_HOST=extension comes from
+    // build_browser_ext.sh), so assert the gate, not a re-declaration.
+    expect(urls, contains("kFaBuildHost == 'extension'"));
+    expect(
+      File('flutter_app/lib/services/relay/relay_probe.dart')
+          .readAsStringSync(),
+      contains("String.fromEnvironment('FA_HOST')"),
+      reason: 'kFaBuildHost must stay the FA_HOST define the extension '
+          'build passes',
+    );
     // The extension variant resolves into the package-local vendor dir.
     expect(urls, contains('vendor/interpreters/'));
     // Every vendor path is package-relative — no scheme, no host.
@@ -205,6 +216,9 @@ void main() {
         },
       }));
     final dest = Directory('${tmp.path}/dest')..createSync();
+    // Simulate a completed fetch: the pinned artifact sits in the dest
+    // tree, byte-identical to the lock fixture source.
+    File('${dest.path}/asset.js').writeAsBytesSync(asset.readAsBytesSync());
 
     int runScript() => Process.runSync('bash', [
           'scripts/fetch_vendor_assets.sh',
@@ -214,8 +228,11 @@ void main() {
         ]).exitCode;
 
     expect(runScript(), 0, reason: 'intact assets must verify');
-    // Corrupt the pinned file in place — verify-only must fail LOUD.
-    asset.writeAsStringSync('console.log("tampered");\n');
+    // Corrupt the pinned file in the dest tree — verify-only must fail
+    // LOUD (the source fixture stays intact: the tamper is purely in the
+    // vendor tree the package would zip).
+    File('${dest.path}/asset.js')
+        .writeAsStringSync('console.log("tampered");\n');
     final result = Process.runSync('bash', [
       'scripts/fetch_vendor_assets.sh',
       '--lock', lockFixture.path,
