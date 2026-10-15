@@ -78,8 +78,9 @@ Set<String> _gateClosure(YamlMap jobs) {
 /// that key on `release-pending` but hang outside the aggregate's needs
 /// (step-timings is `if: always()`, js-ext-integration and faui-coverage
 /// are ungated legs of the same graph).
-Set<String> _guardedJobs(YamlMap jobs) => _gateClosure(jobs)
-  ..addAll(['step-timings', 'js-ext-integration', 'faui-coverage']);
+Set<String> _guardedJobs(YamlMap jobs) =>
+    _gateClosure(jobs)
+      ..addAll(['step-timings', 'js-ext-integration', 'faui-coverage']);
 
 List<String> _needsOf(YamlMap job) {
   final needs = job['needs'];
@@ -87,10 +88,6 @@ List<String> _needsOf(YamlMap job) {
   if (needs is YamlList) return needs.map((n) => n.toString()).toList();
   return const [];
 }
-
-YamlMap _stepById(YamlMap job, String id) => (job['steps'] as YamlList)
-    .map((s) => s as YamlMap)
-    .firstWhere((s) => s['id']?.toString() == id);
 
 void main() {
   final ciText = read('.github/workflows/ci.yml');
@@ -116,25 +113,25 @@ void main() {
       expect(
         check['run'].toString(),
         contains('scripts/release_dedupe_check.sh'),
-        reason: 'the decision logic is extracted + fixture-self-tested '
+        reason:
+            'the decision logic is extracted + fixture-self-tested '
             '(aab-gate-selftest pattern), never inlined',
       );
       expect(
         check['uses'],
         isNull,
-        reason: 'gh-1625: the pre-check must not even pay a checkout — '
+        reason:
+            'gh-1625: the pre-check must not even pay a checkout — '
             'the lookup is one gh run list API call',
       );
       expect(
         (job['permissions'] as YamlMap)['actions'].toString(),
         'read',
-        reason: 'gh run list needs actions: read (SEC-08: explicit '
+        reason:
+            'gh run list needs actions: read (SEC-08: explicit '
             'minimal job-level permissions)',
       );
-      expect(
-        (job['permissions'] as YamlMap)['contents'].toString(),
-        'read',
-      );
+      expect((job['permissions'] as YamlMap)['contents'].toString(), 'read');
     });
 
     test('every release-arm-reachable gate leg ANDs the dedupe guard on '
@@ -149,8 +146,13 @@ void main() {
         'js-ext-integration',
         'faui-coverage',
       ]) {
-        expect(guarded, contains(canary), reason: 'closure walk must reach '
-            '$canary — the guarded set is stale');
+        expect(
+          guarded,
+          contains(canary),
+          reason:
+              'closure walk must reach '
+              '$canary — the guarded set is stale',
+        );
       }
       expect(guarded.length, greaterThanOrEqualTo(30));
       for (final id in guarded) {
@@ -159,20 +161,23 @@ void main() {
         expect(
           _needsOf(job),
           contains('release-dedupe'),
-          reason: 'gh-1625: `$id` executes on release events — without the '
+          reason:
+              'gh-1625: `$id` executes on release events — without the '
               'needs edge the guard expression reads an empty output and '
               'the workflow parse fails outright',
         );
         expect(
           ifText,
           contains(dedupeClause),
-          reason: 'gh-1625 AC1: `$id` must skip explicitly (visible '
+          reason:
+              'gh-1625 AC1: `$id` must skip explicitly (visible '
               'SKIPPED) when the tag\'s push run already gates it',
         );
         expect(
           ifText,
           contains(pendingClause),
-          reason: 'gh-1625: the dedupe guard must be ANDed ON TOP of '
+          reason:
+              'gh-1625: the dedupe guard must be ANDed ON TOP of '
               '`$id`\'s gh-1551 pending guard, never replace it — the '
               'same replacement blind spot ci_release_pending_guard_test '
               'pins for the changes-keyed conditions',
@@ -184,8 +189,11 @@ void main() {
         'release twin', () {
       final gate = jobs['quality-gate'] as YamlMap;
       final gateIf = gate['if'].toString();
-      expect(gateIf, startsWith('always()'),
-          reason: 'the aggregate keeps collecting leg results on real runs');
+      expect(
+        gateIf,
+        startsWith('always()'),
+        reason: 'the aggregate keeps collecting leg results on real runs',
+      );
       expect(gateIf, contains(pendingClause));
       expect(gateIf, contains(dedupeClause));
       // ci_1267_path_triggered_legs_test pins the needs-list TAIL — new
@@ -205,70 +213,116 @@ void main() {
         ciText.lastIndexOf('  # Any release publication', triggerAt),
         triggerAt,
       );
-      expect(comment, contains('release-dedupe'),
-          reason: 'the trigger comment quoted by gh-1625 must describe the '
-              'new short-circuit, not the tolerated double-gate');
+      expect(
+        comment,
+        contains('release-dedupe'),
+        reason:
+            'the trigger comment quoted by gh-1625 must describe the '
+            'new short-circuit, not the tolerated double-gate',
+      );
       expect(
         comment,
         isNot(contains('tolerates')),
-        reason: 'the retired only-the-upload-is-idempotent note must stay '
+        reason:
+            'the retired only-the-upload-is-idempotent note must stay '
             'retired',
       );
     });
   });
 
-  group('AC2/AC5 — the check fails safe and keeps the old-tag safety net',
-      () {
+  group('AC2/AC5 — the check fails safe and keeps the old-tag safety net', () {
     test('the script defaults to dedupe=false and only flips inside a '
         'successful release-arm lookup', () {
       final script = read('scripts/release_dedupe_check.sh');
-      final releaseBranchAt =
-          script.indexOf('[ "\$EVENT_NAME" = "release" ]');
-      expect(releaseBranchAt, greaterThanOrEqualTo(0),
-          reason: 'only the release arm may dedupe (AC3)');
+      final releaseBranchAt = script.indexOf('[ "\$EVENT_NAME" = "release" ]');
+      expect(
+        releaseBranchAt,
+        greaterThanOrEqualTo(0),
+        reason: 'only the release arm may dedupe (AC3)',
+      );
       // Line-anchored ASSIGNMENT matches — the doc comment narrates both
       // values mid-sentence and must not satisfy the ordering pins.
-      final defaults = RegExp(r'^dedupe=false\s*$', multiLine: true)
-          .allMatches(script)
-          .toList();
-      expect(defaults, isNotEmpty,
-          reason: 'AC5: the fail-safe default assignment must exist');
+      final defaults = RegExp(
+        r'^dedupe=false\s*$',
+        multiLine: true,
+      ).allMatches(script).toList();
+      expect(
+        defaults,
+        isNotEmpty,
+        reason: 'AC5: the fail-safe default assignment must exist',
+      );
       final defaultAt = defaults.first.start;
-      final flips = RegExp(r'^\s*dedupe=true\s*$', multiLine: true)
-          .allMatches(script)
-          .toList();
-      expect(flips, isNotEmpty,
-          reason: 'the release arm must be able to dedupe');
+      final flips = RegExp(
+        r'^\s*dedupe=true\s*$',
+        multiLine: true,
+      ).allMatches(script).toList();
+      expect(
+        flips,
+        isNotEmpty,
+        reason: 'the release arm must be able to dedupe',
+      );
       final flipAt = flips.first.start;
-      expect(flipAt, greaterThan(releaseBranchAt),
-          reason: 'AC5: dedupe=true may only be reached on a successful '
-              'release-arm lookup');
-      expect(defaultAt, lessThan(releaseBranchAt),
-          reason: 'AC5: the fail-safe default precedes the release arm');
-      expect(script, contains('::warning::'),
-          reason: 'AC5: an API failure degrades loudly, never silently');
-      expect(script, isNot(contains('exit 1')),
-          reason: 'AC5: the pre-check never reddens the run on a check '
-              'error — the full gate decides');
+      expect(
+        flipAt,
+        greaterThan(releaseBranchAt),
+        reason:
+            'AC5: dedupe=true may only be reached on a successful '
+            'release-arm lookup',
+      );
+      expect(
+        defaultAt,
+        lessThan(releaseBranchAt),
+        reason: 'AC5: the fail-safe default precedes the release arm',
+      );
+      expect(
+        script,
+        contains('::warning::'),
+        reason: 'AC5: an API failure degrades loudly, never silently',
+      );
+      expect(
+        script,
+        isNot(contains('exit 1')),
+        reason:
+            'AC5: the pre-check never reddens the run on a check '
+            'error — the full gate decides',
+      );
     });
 
     test('the lookup keys on the tag ref, the push event, this workflow, '
         'and ANY run status', () {
       final script = read('scripts/release_dedupe_check.sh');
-      expect(script, contains('--event push'),
-          reason: 'gh-1625: the push twin of the tag is the gate');
-      expect(script, contains('--branch'),
-          reason: 'gh-1625: runs are matched per tag ref '
-              '(gh run list --branch <tag>)');
-      expect(script, contains('--workflow ci.yml'),
-          reason: 'only THIS workflow\'s push runs gate the tag');
-      expect(script, isNot(contains('--status')),
-          reason: 'any status dedupes — in the hot path the push twin is '
-              'still in_progress when the release event fires '
-              '(run 38687023638 vs 38687023803)');
-      expect(script, contains('DEDUPE_WINDOW_SECS'),
-          reason: 'the recent window bounds the stale-republish edge '
-              '(AC2: an old tag\'s release must run the full gate)');
+      expect(
+        script,
+        contains('--event push'),
+        reason: 'gh-1625: the push twin of the tag is the gate',
+      );
+      expect(
+        script,
+        contains('--branch'),
+        reason:
+            'gh-1625: runs are matched per tag ref '
+            '(gh run list --branch <tag>)',
+      );
+      expect(
+        script,
+        contains('--workflow ci.yml'),
+        reason: 'only THIS workflow\'s push runs gate the tag',
+      );
+      expect(
+        script,
+        isNot(contains('--status')),
+        reason:
+            'any status dedupes — in the hot path the push twin is '
+            'still in_progress when the release event fires '
+            '(run 38687023638 vs 38687023803)',
+      );
+      expect(
+        script,
+        contains('DEDUPE_WINDOW_SECS'),
+        reason:
+            'the recent window bounds the stale-republish edge '
+            '(AC2: an old tag\'s release must run the full gate)',
+      );
     });
   });
 
@@ -276,13 +330,20 @@ void main() {
     test('non-release arms short-circuit in the script without an API '
         'call', () {
       final script = read('scripts/release_dedupe_check.sh');
-      expect(script, contains('else'),
-          reason: 'the non-release arm must exist and short-circuit');
+      expect(
+        script,
+        contains('else'),
+        reason: 'the non-release arm must exist and short-circuit',
+      );
       final ghAt = script.indexOf('gh run list');
       final elseAt = script.indexOf('else');
-      expect(ghAt, greaterThan(elseAt),
-          reason: 'gh-1625 AC3: the gh lookup lives INSIDE the release '
-              'arm — push/dispatch/schedule arms never call the API');
+      expect(
+        ghAt,
+        greaterThan(elseAt),
+        reason:
+            'gh-1625 AC3: the gh lookup lives INSIDE the release '
+            'arm — push/dispatch/schedule arms never call the API',
+      );
     });
 
     test('the concurrency rule is untouched: tag runs are never cancelled '
@@ -292,7 +353,8 @@ void main() {
       expect(
         concurrency['cancel-in-progress'].toString(),
         "\${{ github.event_name == 'pull_request' }}",
-        reason: 'gh-1625: the release twin still queues behind the push '
+        reason:
+            'gh-1625: the release twin still queues behind the push '
             'twin — it must never be cancelled, only shortened',
       );
     });
@@ -321,7 +383,8 @@ void main() {
         expect(
           _needsOf(job),
           isNot(contains('release-dedupe')),
-          reason: 'gh-1625 AC3: `$id` never executes on the release twin — '
+          reason:
+              'gh-1625 AC3: `$id` never executes on the release twin — '
               'it must stay untouched',
         );
         expect(
@@ -346,7 +409,8 @@ void main() {
       expect(
         ifText,
         contains("needs.quality-gate.result == 'success'"),
-        reason: 'the push twin and the dedupe=false old-tag release still '
+        reason:
+            'the push twin and the dedupe=false old-tag release still '
             'gate the matrix on the full quality gate',
       );
       expect(
@@ -355,7 +419,8 @@ void main() {
           "(github.event_name == 'release' && "
           "needs.release-dedupe.outputs.dedupe == 'true')",
         ),
-        reason: 'AC1: on a deduped release twin the tag\'s push run IS the '
+        reason:
+            'AC1: on a deduped release twin the tag\'s push run IS the '
             'gate — the release twin executes the binaries-attach leg only',
       );
       expect(
@@ -374,7 +439,8 @@ void main() {
       expect(
         jobText,
         contains('--clobber'),
-        reason: 'AC4: both twins may attach the same asset — the upload '
+        reason:
+            'AC4: both twins may attach the same asset — the upload '
             'must stay idempotent (last wins), exactly as before',
       );
     });
@@ -385,15 +451,15 @@ void main() {
       expect(
         webSpa['if'].toString(),
         contains("needs.quality-gate.result == 'success'"),
-        reason: 'deliberate: the push twin already attached fa-web-spa.zip; '
+        reason:
+            'deliberate: the push twin already attached fa-web-spa.zip; '
             'a future edit keying web-spa on the dedupe output would '
             're-run the ~30 min build on every release twin',
       );
     });
   });
 
-  group('RG — the regression guard is wired (aab-gate-selftest pattern)',
-      () {
+  group('RG — the regression guard is wired (aab-gate-selftest pattern)', () {
     test('the static gate fixture-self-tests the extracted check', () {
       final staticJob = jobs['static'] as YamlMap;
       final runs = (staticJob['steps'] as YamlList)
@@ -402,7 +468,8 @@ void main() {
       expect(
         runs,
         contains('scripts/release_dedupe_selftest.sh'),
-        reason: 'gh-1625: the release-event short-circuit decision must be '
+        reason:
+            'gh-1625: the release-event short-circuit decision must be '
             'fixture-tested on every PR — a regressed stub contract or '
             'fail-safe default must red the gate, not the next release',
       );
@@ -411,15 +478,26 @@ void main() {
     test('the selftest drives the check against a stubbed gh and pins the '
         'short-circuit scenario', () {
       final selftest = read('scripts/release_dedupe_selftest.sh');
-      expect(selftest, contains('release_dedupe_check.sh'),
-          reason: 'the selftest exercises the REAL script');
-      expect(selftest, contains('GH_STUB_FIXTURE'),
-          reason: 'a PATH-stubbed gh serves fixtures — no network, no '
-              'token (sm_merge_guard_selftest pattern)');
-      expect(selftest, contains('GH_CALL_LOG'),
-          reason: 'the stub records invocations — the selftest can pin '
-              'the lookup shape (--event push / --branch tag) and prove '
-              'non-release arms make NO API call');
+      expect(
+        selftest,
+        contains('release_dedupe_check.sh'),
+        reason: 'the selftest exercises the REAL script',
+      );
+      expect(
+        selftest,
+        contains('GH_STUB_FIXTURE'),
+        reason:
+            'a PATH-stubbed gh serves fixtures — no network, no '
+            'token (sm_merge_guard_selftest pattern)',
+      );
+      expect(
+        selftest,
+        contains('GH_CALL_LOG'),
+        reason:
+            'the stub records invocations — the selftest can pin '
+            'the lookup shape (--event push / --branch tag) and prove '
+            'non-release arms make NO API call',
+      );
     });
   });
 }
