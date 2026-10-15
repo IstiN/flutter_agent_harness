@@ -52,20 +52,21 @@ void main() {
       expect(
         cond,
         contains("github.event_name == 'workflow_dispatch'"),
-        reason: 'PR validation IS a workflow_dispatch (dispatch-only CI) — '
+        reason:
+            'PR validation IS a workflow_dispatch (dispatch-only CI) — '
             'a pull_request-only classifier leaves every narrowed arm '
             'path-blind on real validation runs (the slice-1 model)',
       );
     });
 
-    test('the dispatch arm derives the validated diff from the fork point',
-        () {
+    test('the dispatch arm derives the validated diff from the fork point', () {
       final run = stepById(changes, 'paths')['run'] as String;
       expect(run, contains('git rev-parse HEAD'));
       expect(
         run,
         contains('git merge-base origin/main'),
-        reason: 'no pull_request context exists on dispatches — the '
+        reason:
+            'no pull_request context exists on dispatches — the '
             'validated diff is the fork point with origin/main '
             '(fetch-depth: 0 carries it)',
       );
@@ -83,7 +84,8 @@ void main() {
       expect(
         run.indexOf('exit 0'),
         lessThan(run.indexOf('ci_fast_gate')),
-        reason: 'on dispatches the four group outputs must stay with the '
+        reason:
+            'on dispatches the four group outputs must stay with the '
             'non-PR filter step (full gate) — the stages classifier reads '
             'a pull_request event base/head only',
       );
@@ -95,7 +97,8 @@ void main() {
       expect(
         body.split(exzoneGrep).length - 1,
         1,
-        reason: 'the exzone grep moved into the shared block — a second '
+        reason:
+            'the exzone grep moved into the shared block — a second '
             'copy would let the two arms drift',
       );
     });
@@ -115,7 +118,8 @@ void main() {
       expect(
         cond,
         contains("needs.changes.outputs.exzone == 'true'"),
-        reason: 'the gh-1280-era unconditional dispatch arm is gone — a '
+        reason:
+            'the gh-1280-era unconditional dispatch arm is gone — a '
             'lib/src-only PR must never pay for the macOS leg again',
       );
       expect(cond, contains("github.event_name == 'workflow_dispatch'"));
@@ -138,23 +142,29 @@ void main() {
       final include =
           ((job['strategy'] as YamlMap)['matrix'] as YamlMap)['include']
               as YamlList;
-      final targets =
-          include.map((e) => (e as YamlMap)['os'] as String).toSet();
-      expect(targets, {'linux', 'windows'},
-          reason: '#1265 broke exactly these two — the smoke must cover '
-              'both, on the same hosted runners the nightly uses');
+      final targets = include
+          .map((e) => (e as YamlMap)['os'] as String)
+          .toSet();
+      expect(
+        targets,
+        {'linux', 'windows'},
+        reason:
+            '#1265 broke exactly these two — the smoke must cover '
+            'both, on the same hosted runners the nightly uses',
+      );
     });
 
     test('the resolve rides the shared --enforce-lockfile action', () {
-      final steps = (jobs['flutter-app-lock-smoke'] as YamlMap)['steps']
-          as YamlList;
+      final steps =
+          (jobs['flutter-app-lock-smoke'] as YamlMap)['steps'] as YamlList;
       expect(
         steps
             .map((s) => (s as YamlMap)['uses'] as String?)
             .where((u) => u == pubGetAction)
             .length,
         1,
-        reason: 'a bare flutter_app pub get would float the very transitive '
+        reason:
+            'a bare flutter_app pub get would float the very transitive '
             'the smoke exists to catch (test/ci_pub_get_retry_guard_test '
             'AC2) — and the #726 retry must guard the cold git-dep clones',
       );
@@ -165,38 +175,54 @@ void main() {
       expect(
         job,
         contains(r'flutter build ${{ matrix.os }} --release'),
-        reason: 'debug builds pass where release breaks (#1265 was '
+        reason:
+            'debug builds pass where release breaks (#1265 was '
             'release-only: R8/minify/tree-shake class) — the smoke must '
             'build what the nightly builds',
       );
-      expect(job, contains("flutter-version: '3.47.x'"),
-          reason: 'same pinned SDK as the nightly build-release legs (#281) '
-              '— a floating SDK would smoke a different tree than ships');
+      expect(
+        job,
+        contains("flutter-version: '3.47.x'"),
+        reason:
+            'same pinned SDK as the nightly build-release legs (#281) '
+            '— a floating SDK would smoke a different tree than ships',
+      );
     });
 
-    test('a red smoke reddens the required Quality gate (platform class)',
-        () {
-      expect(
-        body,
-        contains('install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke]'),
-        reason: 'quality-gate must NEED the leg — a leg outside the '
-            'aggregate never blocks the merge',
-      );
-      expect(body,
-          contains('R_LOCK_SMOKE: \${{ needs.flutter-app-lock-smoke.result }}'));
+    test('a red smoke reddens the required Quality gate (platform class)', () {
       expect(
         body,
         contains(
-            '"flutter-app-exzone:\$R_EXZONE" "flutter-app-lock-smoke:\$R_LOCK_SMOKE"; do'),
-        reason: 'the verdict loop must consume the result — an unlisted '
+          'install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke]',
+        ),
+        reason:
+            'quality-gate must NEED the leg — a leg outside the '
+            'aggregate never blocks the merge',
+      );
+      expect(
+        body,
+        contains('R_LOCK_SMOKE: \${{ needs.flutter-app-lock-smoke.result }}'),
+      );
+      expect(
+        body,
+        contains(
+          '"flutter-app-exzone:\$R_EXZONE" "flutter-app-lock-smoke:\$R_LOCK_SMOKE"; do',
+        ),
+        reason:
+            'the verdict loop must consume the result — an unlisted '
             'need reports in the log and gates nothing',
       );
       expect(
         body,
-        contains('pty-coverage-gate|pty-visual|flutter-app-lock-smoke)'),
-        reason: 'platform class (#1368): a red windows release build blocks '
+        contains(
+          'pty-coverage-gate|pty-visual|flutter-app-lock-smoke'
+          '|installer-portability)',
+        ),
+        reason:
+            'platform class (#1368): a red windows release build blocks '
             'the MERGE via the aggregate but never holds the pure-Dart '
-            'publish hostage',
+            'publish hostage (gh-1596 grew the class with the installer '
+            'sh-portability leg)',
       );
     });
   });
