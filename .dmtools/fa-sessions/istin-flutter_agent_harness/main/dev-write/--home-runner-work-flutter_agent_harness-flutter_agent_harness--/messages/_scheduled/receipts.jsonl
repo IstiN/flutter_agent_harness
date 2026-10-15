@@ -1,0 +1,1 @@
+{"ts":"2026-10-15T07:45:40.804608Z","event":"scheduled","id":"1792050340803717_0000_132chtj","dueMs":1792052140803,"to":"main","text":"Backstop check (pr-1566 rework): if background job sh-38-hn88edtx90jtzh2v (full `dart test --exclude-tags integration` suite) has produced no completion notice by now, check `bash_job status/output sh"}
