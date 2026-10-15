@@ -28,6 +28,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/copilot_cli_identity.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa/services/sessions_root.dart';
@@ -208,10 +209,16 @@ final class FaAppBoot {
 }
 
 /// The window stage: binding, embedded-pane handshake, sandbox-safe URL
-/// strategy, the platform HTTP transport, and the debug-print tee. All
-/// synchronous, all before any async service work.
+/// strategy, the platform HTTP transport, the Copilot CLI identity (the
+/// app is a second first-class PAT surface — gh-1606 review), and the
+/// debug-print tee. All synchronous, all before any async service work.
 void bootWindow() {
   WidgetsFlutterBinding.ensureInitialized();
+  // The PAT-mode user-agent carries the app version + host OS
+  // (`copilot/<version> (<os>) term/unknown`) — without this install
+  // app-side PAT requests present the keep-working default
+  // `copilot/fa (unknown)` (gh-1606 review).
+  installHostCopilotCliIdentity();
   // Office.onReady FIRST (issue #202): the pane's handshake starts before
   // any later boot step can die on a sandboxed host.
   bootOfficeApi();

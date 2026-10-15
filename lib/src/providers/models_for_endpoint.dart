@@ -325,23 +325,33 @@ final class _CopilotDialect extends ModelListDialect {
     final gClient = client ?? http.Client();
     final gOwnsClient = client == null;
     try {
-      // The GitHub key is worthless to the Copilot API itself: exchange it
-      // for the short-lived Copilot token first (goal/copilot_provider.md,
-      // /models section).
-      final apiToken = await fetchCopilotApiToken(
-        githubToken: apiKey,
-        client: gClient,
-      );
-      // Same proxy-ep derivation as the chat path: the token names the
-      // tenant's API host; the configured tier host is only the fallback.
-      final effectiveBase =
-          (copilotApiBaseUrlFromToken(apiToken.token) ?? baseUrl).replaceAll(
-            RegExp(r'/+$'),
-            '',
-          );
+      // PAT mode (gh-1606): a fine-grained PAT IS the Copilot API
+      // credential — no exchange, no proxy-ep; the configured base URL
+      // (the seat's tier host, what the official CLI picks for a PAT) is
+      // the target, with the first-party CLI identity headers.
+      final Map<String, String> headers;
+      final String effectiveBase;
+      if (isFineGrainedGitHubPat(apiKey)) {
+        headers = copilotPatApiHeaders(pat: apiKey);
+        effectiveBase = baseUrl.replaceAll(RegExp(r'/+$'), '');
+      } else {
+        // The GitHub key is worthless to the Copilot API itself: exchange
+        // it for the short-lived Copilot token first
+        // (goal/copilot_provider.md, /models section).
+        final apiToken = await fetchCopilotApiToken(
+          githubToken: apiKey,
+          client: gClient,
+        );
+        // Same proxy-ep derivation as the chat path: the token names the
+        // tenant's API host; the configured tier host is only the
+        // fallback.
+        effectiveBase = (copilotApiBaseUrlFromToken(apiToken.token) ?? baseUrl)
+            .replaceAll(RegExp(r'/+$'), '');
+        headers = copilotApiHeaders(copilotToken: apiToken.token);
+      }
       final uri = Uri.parse('$effectiveBase/models');
       final response = await gClient
-          .get(uri, headers: copilotApiHeaders(copilotToken: apiToken.token))
+          .get(uri, headers: headers)
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) {
         return (const <String>[], const <String, int>{}, const <String, int>{});

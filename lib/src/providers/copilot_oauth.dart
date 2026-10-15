@@ -105,10 +105,11 @@ String? copilotApiBaseUrlFromToken(String token) {
 }
 
 /// Whether [token] is a GitHub fine-grained PAT (v2, `github_pat_…`).
-/// Per the official Copilot CLI docs this IS a supported Copilot
-/// credential — but only with the "Copilot Requests" permission, so the
-/// connect flow uses this to print an informational hint at paste time
-/// (the exchange itself decides).
+/// PAT mode (gh-1606): fa uses the PAT DIRECTLY as the Copilot API Bearer
+/// (no exchange, the official Copilot CLI's first-party identity headers)
+/// — it must carry the "Copilot Requests" permission and the account a
+/// Copilot seat. Also drives the paste-time hint and the connect flow's
+/// PAT branches.
 bool isFineGrainedGitHubPat(String token) => token.startsWith('github_pat_');
 
 /// Whether [token] is a GitHub classic PAT (`ghp_…`). Official Copilot
@@ -116,13 +117,62 @@ bool isFineGrainedGitHubPat(String token) => token.startsWith('github_pat_');
 /// credential type — the connect flow warns at paste time and re-asks.
 bool isClassicGitHubPat(String token) => token.startsWith('ghp_');
 
+/// The first-party Copilot CLI client identity (PAT mode): the official
+/// Copilot CLI presents `copilot-developer-cli` plus a
+/// `copilot/<version> (<os>) term/unknown` user-agent when it uses a
+/// fine-grained PAT directly — the only request shape the Copilot API
+/// accepts a PAT with (the vscode-chat editor identity is honored only
+/// for exchanged OAuth tokens). fa reuses that shape with the user's own
+/// token and seat.
+const copilotDeveloperCliIntegrationId = 'copilot-developer-cli';
+
+/// The host-installed version for the PAT-mode user-agent. bin/fah.dart
+/// installs the real package version at startup via
+/// [installCopilotCliIdentity]; the default keeps provider requests
+/// working (and tests deterministic) without a host.
+String _copilotCliVersion = 'fa';
+
+/// The host-installed OS for the PAT-mode user-agent (see
+/// [_copilotCliVersion]).
+String _copilotCliOs = 'unknown';
+
+/// Installs the host's version + OS for the PAT-mode user-agent
+/// (`copilot/<version> (<os>) term/unknown`). Hosts call this once at
+/// startup — `Platform.operatingSystem` is dart:io, and this library
+/// stays pure Dart.
+void installCopilotCliIdentity({required String version, required String os}) {
+  _copilotCliVersion = version;
+  _copilotCliOs = os;
+}
+
+/// The Copilot API headers for a fine-grained PAT (PAT mode): the raw PAT
+/// as Bearer plus the first-party Copilot CLI identity. A fresh
+/// `x-request-id` UUID per call.
+Map<String, String> copilotPatApiHeaders({required String pat}) => {
+  'authorization': 'Bearer $pat',
+  'content-type': 'application/json',
+  'copilot-integration-id': copilotDeveloperCliIntegrationId,
+  'user-agent': 'copilot/$_copilotCliVersion ($_copilotCliOs) term/unknown',
+  'x-request-id': _uuidV4(),
+};
+
+/// The Copilot API request headers for whichever bearer [copilotToken]
+/// carries the call: an exchanged short-lived token keeps the vscode-chat
+/// identity; a raw fine-grained PAT presents the Copilot CLI identity
+/// (the only shape the API accepts a PAT with).
+Map<String, String> copilotRequestHeaders({required String copilotToken}) =>
+    isFineGrainedGitHubPat(copilotToken)
+    ? copilotPatApiHeaders(pat: copilotToken)
+    : copilotApiHeaders(copilotToken: copilotToken);
+
 /// Exchanges a GitHub token for a Copilot API token (goal:
 /// copilot-proxy-go internal/auth/github_client.go).
 ///
-/// Supported GitHub credentials (official Copilot CLI docs, 2026-09):
-/// fine-grained PATs (v2, `github_pat_…`) WITH the "Copilot Requests"
-/// permission, and OAuth tokens (`gho_`/`ghu_` from the Copilot CLI or gh
-/// apps). Classic PATs (`ghp_…`) are NOT supported by Copilot.
+/// Only OAuth tokens (`gho_`/`ghu_` from the Copilot CLI or gh apps)
+/// exchange. A fine-grained PAT (v2, `github_pat_…`) NEVER hits this
+/// function in PAT mode — the caller checks [isFineGrainedGitHubPat] and
+/// uses the raw PAT as the Copilot Bearer instead. Classic PATs
+/// (`ghp_…`) are not supported by Copilot at all.
 ///
 /// Throws [CopilotAuthException] on a non-200 — HTTP 401 means the GitHub
 /// token is dead (the caller must trigger re-auth, not a token refresh);
@@ -156,6 +206,19 @@ Future<CopilotApiToken> fetchCopilotApiToken({
     );
   }
   if (response.statusCode == 404) {
+    if (isFineGrainedGitHubPat(githubToken)) {
+      throw CopilotAuthException(
+        'Copilot token exchange failed (HTTP 404): GitHub never grants a '
+        'fine-grained PAT the internal token exchange — fa uses '
+        'github_pat_… tokens directly against the Copilot API instead '
+        '(recent fa versions, same as the official Copilot CLI), so a '
+        'PAT should never be exchanged at all. For the PAT to work it '
+        'must carry the "Copilot Requests" permission (github.com/'
+        'settings/personal-access-tokens → edit → Permissions); the '
+        'GitHub device flow (/provider copilot) mints a working OAuth '
+        'token. Body: ${response.body.trim()}',
+      );
+    }
     throw CopilotAuthException(
       'Copilot token exchange failed (HTTP 404): GitHub does not grant '
       'this token Copilot access. A fine-grained PAT (github_pat_…) needs '
@@ -310,6 +373,9 @@ final class CopilotTokenManager {
       _inFlight ??= _get().whenComplete(() => _inFlight = null);
 
   Future<String> _get() async {
+    // A fine-grained PAT (gh-1606) IS the Copilot API credential: no
+    // exchange, no cache, no refresh — returned verbatim on every call.
+    if (isFineGrainedGitHubPat(githubToken)) return githubToken;
     final cached = _cached;
     final now = _now();
     if (cached != null && _isUsable(cached, now)) return cached.token;
