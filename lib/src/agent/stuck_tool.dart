@@ -47,9 +47,10 @@ const defaultStuckHeartbeatSeconds = 60;
 const defaultStuckCancelGraceSeconds = 10;
 
 /// How the threshold follow-up behaves: [autonomous] cancels/retries/
-/// converts (headless parity — the mode-independent default), [advisory]
-/// only emits the advisory stuck event (interactive comfort; kill switch
-/// for the autonomy).
+/// converts and is THE default in EVERY mode — headless and interactive
+/// alike (gh-1632 I1); [advisory] only emits the advisory stuck event and
+/// exists solely as an explicit opt-out
+/// (`agent.stuckTool.followUp: advisory`).
 enum StuckFollowUpMode { autonomous, advisory }
 
 /// The cancel reason the stuck supervisor puts on a call/yield token — a

@@ -236,7 +236,7 @@ void main() {
     AgentCli cli({required bool headless}) => AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: 'k',
         env: MemoryExecutionEnv(cwd: '/work'),
         sessionRoot: '/sessions',
         headlessRun: headless,
@@ -258,7 +258,7 @@ void main() {
     final explicit = AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: 'k',
         env: MemoryExecutionEnv(cwd: '/work'),
         sessionRoot: '/sessions',
         stuckTool: const StuckToolConfig(

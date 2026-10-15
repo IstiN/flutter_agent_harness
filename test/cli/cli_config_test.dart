@@ -1036,7 +1036,7 @@ prompts:
                   contextWindow: 100000,
                   maxTokens: 4096,
                 ),
-                apiKey: '[REDACTED:Sensitive Value]',
+                apiKey: 'k',
                 env: MemoryExecutionEnv(cwd: '/work'),
                 sessionRoot: '/sessions',
                 headlessRun: headless,

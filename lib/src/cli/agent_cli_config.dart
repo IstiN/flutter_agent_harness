@@ -241,8 +241,10 @@ final class AgentCliConfig {
 
   /// Whether this process drives a headless run (`fah run "<prompt>"` and
   /// friends) as opposed to an interactive REPL/TUI session. Set by the
-  /// executable's dispatch; decides the DEFAULT supervision mode only —
-  /// an explicit `agent.stuckTool:` wins in both (gh-1054 review).
+  /// executable's dispatch. Does NOT select the supervision default:
+  /// since gh-1632 the autonomous default applies in EVERY mode and
+  /// `advisory` is reachable only via explicit `agent.stuckTool:` config
+  /// (the gh-1054 interactive-advisory default branch is gone).
   final bool headlessRun;
 
   /// Per-call judge/summarizer budget seconds (`compaction.
