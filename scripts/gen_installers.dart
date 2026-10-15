@@ -1,15 +1,30 @@
 #!/usr/bin/env dart
 
-// Generates site/install.sh and site/install.ps1 from site/install-config.yaml.
+// Generates site/install.sh, site/install.ps1, site/install.bat,
+// site/setup.sh and site/setup.ps1.
 //
-// Usage:
-//   dart run scripts/gen_installers.dart
+// Sources:
+//   site/install-config.yaml  — banner, signing anchor, setup recipe, agent modes
+//   site/install.sh.template / .ps1 / .bat
+//   site/setup.sh.template / site/setup.ps1.template
+//   lib/src/model_roles/provider_catalog.dart — the LIVE provider table
+//     (gh-1596 AC6: the wizard's provider list, adapter kinds, endpoints and
+//     key-env names are generated from the catalog, never hand-maintained)
+//   lib/src/approval/approval.dart — the ApprovalMode enum (the wizard's
+//     approval menu == always-ask/write/yolo/autopilot, AC6)
+//   lib/src/cli/model_presets.dart — the CLI's offline model presets
+//     (the wizard's model menus, AC6)
 //
-// After editing site/install-config.yaml, rerun this script and commit the
-// generated installer files. Do not edit install.sh / install.ps1 by hand.
+// After editing any source, rerun this script and commit the generated
+// installer files. Do not edit install.sh / setup.sh / *.ps1 by hand —
+// the golden drift test (test/site/installer_golden_test.dart) fails on
+// drift, including catalog drift without regeneration.
 
 import 'dart:io';
 
+import 'package:flutter_agent_harness/src/approval/approval.dart';
+import 'package:flutter_agent_harness/src/cli/model_presets.dart';
+import 'package:flutter_agent_harness/src/model_roles/provider_catalog.dart';
 import 'package:yaml/yaml.dart';
 
 const _configPath = 'site/install-config.yaml';
@@ -33,11 +48,17 @@ final _generatedHeader =
 '''
         .trim();
 
-void main() {
+/// Renders every generated installer artifact WITHOUT touching the
+/// filesystem. Keys are repo-relative paths, values are the exact bytes to
+/// commit (the .ps1 entries carry their UTF-8 BOM — see [main]).
+///
+/// Exposed for the golden drift test (test/site/installer_golden_test.dart):
+/// the test re-renders from the live sources and compares against the
+/// committed tree, so a catalog/preset/approval change without
+/// regeneration fails the suite.
+Map<String, String> renderInstallers() {
   final config = loadYaml(File(_configPath).readAsStringSync()) as YamlMap;
-  final providers = config['providers'] as YamlList;
   final modes = config['modes'] as YamlList;
-  final approvalModes = config['approval_modes'] as YamlList;
   final installConfig = config['install'] as YamlMap;
 
   final shBanner = _shBanner(installConfig);
@@ -63,6 +84,9 @@ void main() {
       'block (the release-signing trust anchor embedded via {{SIGNING_PEM}})',
     );
   }
+
+  final providers = _wizardProviders();
+  final approvalModes = _wizardApprovalModes();
 
   final sh = File(_shTemplatePath)
       .readAsStringSync()
@@ -94,14 +118,6 @@ void main() {
     _generatedHeader.replaceAll('# ', ':: '),
   );
 
-  File(_shOut).writeAsStringSync(sh);
-  // Windows PowerShell 5.1 parses scripts WITHOUT a BOM in the system ANSI
-  // code page, which mojibakes the UTF-8 banner/glyphs at parse time (the
-  // OutputEncoding line cannot fix already-corrupted literals). Writing the
-  // BOM makes PS 5.1 read the file as UTF-8.
-  File(_psOut).writeAsStringSync('\uFEFF$ps');
-  File(_batOut).writeAsStringSync(bat);
-
   final shSetup = File(_shSetupTemplatePath)
       .readAsStringSync()
       .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeader)
@@ -122,37 +138,211 @@ void main() {
       .replaceFirst('{{APPROVAL_MENU}}', _psApprovalMenu(approvalModes))
       .replaceFirst('{{APPROVAL_SWITCH}}', _psApprovalSwitch(approvalModes));
 
-  File(_shSetupOut).writeAsStringSync(shSetup);
-  // Same UTF-8 BOM rationale as install.ps1 (see above).
-  File(_psSetupOut).writeAsStringSync('\uFEFF$psSetup');
+  return {
+    _shOut: sh,
+    _batOut: bat,
+    _shSetupOut: shSetup,
+    // .ps1 content arrives WITHOUT the BOM; main() adds it at write time
+    // (see below) and the golden test asserts the BOM bytes separately.
+    _psOut: ps,
+    _psSetupOut: psSetup,
+  };
+}
 
-  print(
-    'Generated $_shOut, $_psOut, $_shSetupOut and $_psSetupOut from $_configPath',
-  );
+void main() {
+  final rendered = renderInstallers();
+  for (final entry in rendered.entries) {
+    // Windows PowerShell 5.1 parses scripts WITHOUT a BOM in the system ANSI
+    // code page, which mojibakes the UTF-8 banner/glyphs at parse time (the
+    // OutputEncoding line cannot fix already-corrupted literals). Writing the
+    // BOM makes PS 5.1 read the file as UTF-8.
+    final content = entry.key.endsWith('.ps1')
+        ? '\uFEFF${entry.value}'
+        : entry.value;
+    File(entry.key).writeAsStringSync(content);
+  }
+  print('Generated ${rendered.keys.join(', ')} from $_configPath');
+}
+
+// ── Wizard data (gh-1596 AC6) ───────────────────────────────────────────────
+
+/// One wizard provider row: the identity/data half comes from the live
+/// catalog ([ProviderSpec]), the display half from [_providerMeta].
+final class _WizardProvider {
+  const _WizardProvider({
+    required this.id,
+    required this.kind,
+    required this.name,
+    required this.note,
+    required this.recommended,
+    required this.baseUrl,
+    required this.keyVar,
+    required this.models,
+    required this.custom,
+  });
+
+  /// The config/choice id (`provider="openrouter"`).
+  final String id;
+
+  /// The catalog adapter kind — the config.yaml `provider:` value
+  /// (canonicalProviderKind boundary).
+  final String kind;
+
+  /// Menu display name.
+  final String name;
+
+  /// Menu note after the dash.
+  final String note;
+
+  final bool recommended;
+
+  final String baseUrl;
+
+  /// The API-key env var the wizard offers to persist.
+  final String keyVar;
+
+  /// Preset model ids, in menu order; the first carries `(recommended)`.
+  /// Empty = the wizard asks for the model id directly (no fake menu).
+  final List<String> models;
+
+  /// The synthesized `custom` row (endpoint + model asked, menu skipped).
+  final bool custom;
+}
+
+/// Curated display metadata for every wizard provider. The catalog owns
+/// the LIST; this map owns only how each row reads on screen. A catalog
+/// provider without an entry here hard-errors the generation (the drift
+/// guard — a new provider must ship with its wizard copy).
+const _providerMeta = <String, (String, String)>{
+  'openrouter': ('OpenRouter', 'one key, many models'),
+  'aiin': ('AIIN', 'AIIN chat'),
+  'kimi': ('Kimi', 'Moonshot Kimi for Coding'),
+  'openai': ('OpenAI', 'GPT'),
+  'chatgpt': ('ChatGPT', 'Codex — OAuth credentials'),
+  'copilot': ('GitHub Copilot', 'your GitHub token'),
+  'codemie': ('CodeMie', 'EPAM CodeMie'),
+  'dial': ('DIAL', 'EPAM AI DIAL'),
+  'minimax': ('MiniMax', 'MiniMax chat'),
+  'anthropic': ('Anthropic', 'Claude'),
+  'google': ('Google', 'Gemini'),
+  'zai': ('Z.AI', 'GLM coding plan'),
+  'custom': ('Custom', 'any OpenAI-compatible endpoint'),
+};
+
+/// The wizard provider list (AC6): openrouter first (recommended), then
+/// the rest by catalog order, `custom` synthesized last.
+List<_WizardProvider> _wizardProviders() {
+  _WizardProvider row(String id, {bool recommended = false}) {
+    final spec = providerCatalog[id];
+    if (spec == null) {
+      throw StateError(
+        'provider_catalog has no "$id" — the wizard presets are generated '
+        'from the live catalog (gh-1596 AC6); fix _wizardProviders',
+      );
+    }
+    final meta = _providerMeta[id];
+    if (meta == null) {
+      throw StateError(
+        'no wizard display metadata for catalog provider "$id" — add a '
+        '_providerMeta entry (name + note) and regenerate the installers',
+      );
+    }
+    return _WizardProvider(
+      id: spec.name,
+      kind: spec.kind,
+      name: meta.$1,
+      note: meta.$2,
+      recommended: recommended,
+      baseUrl: spec.defaultBaseUrl,
+      keyVar: spec.apiKeyEnvNames.first,
+      models: knownModelPresets[spec.name] ?? const [],
+      custom: false,
+    );
+  }
+
+  return [
+    row('openrouter', recommended: true),
+    for (final spec in providerCatalog.values)
+      if (spec.name != 'openrouter') row(spec.name),
+    // `custom` is not a catalog entry: the guided any-endpoint flow.
+    _WizardProvider(
+      id: 'custom',
+      kind: 'openai-completions',
+      name: _providerMeta['custom']!.$1,
+      note: _providerMeta['custom']!.$2,
+      recommended: false,
+      baseUrl: '',
+      keyVar: 'OPENAI_API_KEY',
+      models: const [],
+      custom: true,
+    ),
+  ];
+}
+
+/// Curated menu notes per approval-mode label.
+const _approvalNotes = <String, String>{
+  'always-ask': 'prompt before every tool call',
+  'write': 'prompt before writes/executes',
+  'yolo': 'run safe tools unattended',
+  'autopilot': 'never prompt — for unattended runs',
+};
+
+/// The wizard's default approval mode (the CLI default, cli_config.dart).
+const _approvalDefault = 'yolo';
+
+final class _WizardApprovalMode {
+  const _WizardApprovalMode(this.id, this.note, this.isDefault);
+
+  final String id;
+  final String note;
+  final bool isDefault;
+}
+
+/// The approval-mode list (AC6): the live [ApprovalMode] enum order —
+/// always-ask, write, yolo, autopilot (kAutopilotLabel).
+List<_WizardApprovalMode> _wizardApprovalModes() {
+  final labels = [for (final mode in ApprovalMode.values) mode.label];
+  return [
+    for (final label in labels)
+      _WizardApprovalMode(
+        label,
+        _approvalNotes[label] ??
+            (throw StateError(
+              'no wizard note for approval mode "$label" — add an '
+              '_approvalNotes entry and regenerate the installers',
+            )),
+        label == _approvalDefault,
+      ),
+  ];
 }
 
 // ── Shell fragments ─────────────────────────────────────────────────────────
+//
+// gh-1596 I1: every emitted sh fragment is POSIX sh (dash + busybox ash +
+// bash). The `ask` helper prints its result on stdout — call sites assign
+// via command substitution (`var=$(ask …)`); `ask_hidden` keeps the
+// by-name `read -r` assignment (echo suppressed via stty — dash has no
+// `read -s`) so the API key never rides printf argv.
 
-String _shProviderMenu(YamlList providers) {
+String _shProviderMenu(List<_WizardProvider> providers) {
   final b = StringBuffer();
   b.writeln(r'# Provider menu');
   for (var i = 0; i < providers.length; i++) {
     final p = providers[i];
-    final note = p['note'] ?? '';
-    final rec = p['recommended'] == true ? '   (recommended)' : '';
-    b.writeln('say "  ${i + 1}) ${p['name']}  — $note$rec"');
+    final rec = p.recommended ? '   (recommended)' : '';
+    b.writeln('say "  ${i + 1}) ${p.name}  — ${p.note}$rec"');
   }
   b.writeln(r'say ""');
   b.writeln(r'provider_choice=""');
   b.writeln(r'while true; do');
-  b.write(r'  ask provider_choice "Pick a provider [1-');
+  b.write(r'  provider_choice=$(ask "Pick a provider [1-');
   b.write(providers.length);
-  b.writeln(r']" "1"');
+  b.writeln(r']" "1")');
   b.writeln(r'  case "$provider_choice" in');
   for (var i = 0; i < providers.length; i++) {
     final p = providers[i];
     b.writeln(
-      '    ${i + 1}|${p['id']}) provider="${p['id']}"; provider_kind="${p['kind']}"; break ;;',
+      '    ${i + 1}|${p.id}) provider="${p.id}"; provider_kind="${p.kind}"; break ;;',
     );
   }
   b.write(r'    *) warn "enter 1-');
@@ -163,52 +353,55 @@ String _shProviderMenu(YamlList providers) {
   return b.toString();
 }
 
-String _shProviderCases(YamlList providers) {
+String _shProviderCases(List<_WizardProvider> providers) {
   final b = StringBuffer();
   b.writeln(r'# Model selection');
   b.writeln(r'model=""');
   b.writeln(r'base_url=""');
   b.writeln(r'case "$provider" in');
-  for (var i = 0; i < providers.length; i++) {
-    final p = providers[i];
-    b.writeln('  ${p['id']})');
-    if (p['custom'] == true) {
+  for (final p in providers) {
+    b.writeln('  ${p.id})');
+    if (p.custom) {
       b.writeln(r'    say ""');
       b.writeln(
-        r'    ask base_url "Custom base URL (e.g. http://localhost:11434/v1)"',
+        r'    base_url=$(ask "Custom base URL (e.g. http://localhost:11434/v1)")',
       );
-      b.writeln(r'    ask model "Model id on that endpoint"');
-      b.writeln('    key_var="${p['key_var']}"');
+      b.writeln(r'    model=$(ask "Model id on that endpoint")');
+      b.writeln('    key_var="${p.keyVar}"');
+    } else if (p.models.isEmpty) {
+      // No offline presets for this provider: ask for the model id
+      // directly — never show a fake numbered menu.
+      b.writeln(r'    say ""');
+      b.writeln(r'    model=$(ask "Model id on that endpoint")');
+      b.writeln('    base_url="${p.baseUrl}"');
+      b.writeln('    key_var="${p.keyVar}"');
     } else {
       b.writeln(r'    say ""');
-      b.writeln('    say "  ${p['name']} models:"');
-      final models = p['models'] as YamlList;
-      for (var j = 0; j < models.length; j++) {
-        final m = models[j];
-        final label = m['label'] ?? m['id'];
-        final rec = m['recommended'] == true ? '   (recommended)' : '';
+      b.writeln('    say "  ${p.name} models:"');
+      for (var j = 0; j < p.models.length; j++) {
+        final label = p.models[j];
+        final rec = j == 0 ? '   (recommended)' : '';
         b.writeln('    say "    ${j + 1}) $label$rec"');
       }
       b.writeln(
-        '    say "    ${models.length + 1}) other — enter model id manually"',
+        '    say "    ${p.models.length + 1}) other — enter model id manually"',
       );
       b.writeln(r'    while true; do');
-      b.writeln(r'      ask model "Pick a model" "1"');
+      b.writeln(r'      model=$(ask "Pick a model" "1")');
       b.writeln(r'      case "$model" in');
-      for (var j = 0; j < models.length; j++) {
-        final m = models[j];
-        b.writeln('        ${j + 1}) model="${m['id']}"; break ;;');
+      for (var j = 0; j < p.models.length; j++) {
+        b.writeln('        ${j + 1}) model="${p.models[j]}"; break ;;');
       }
       b.writeln(
-        '        ${models.length + 1}) ask model "Enter the ${p['name']} model id"; break ;;',
+        '        ${p.models.length + 1}) model=\$(ask "Enter the ${p.name} model id"); break ;;',
       );
       b.write(r'        *) warn "enter 1-');
-      b.write(models.length + 1);
+      b.write(p.models.length + 1);
       b.writeln(r'" ;;');
       b.writeln(r'      esac');
       b.writeln(r'    done');
-      b.writeln('    base_url="${p['base_url']}"');
-      b.writeln('    key_var="${p['key_var']}"');
+      b.writeln('    base_url="${p.baseUrl}"');
+      b.writeln('    key_var="${p.keyVar}"');
     }
     b.writeln(r'    ;;');
   }
@@ -234,7 +427,7 @@ String _shModeCases(YamlList modes) {
   final b = StringBuffer();
   b.writeln(r'mode=""');
   b.writeln(r'while true; do');
-  b.writeln(r'  ask mode "Pick a mode" "1"');
+  b.writeln(r'  mode=$(ask "Pick a mode" "1")');
   b.writeln(r'  case "$mode" in');
   for (var i = 0; i < modes.length; i++) {
     final m = modes[i];
@@ -248,29 +441,29 @@ String _shModeCases(YamlList modes) {
   return b.toString();
 }
 
-String _shApprovalMenu(YamlList approvalModes) {
+String _shApprovalMenu(List<_WizardApprovalMode> approvalModes) {
   final b = StringBuffer();
   b.writeln(r'# Approval mode');
   b.writeln(r'say ""');
   b.writeln(r'say "  Tool approval:"');
   for (var i = 0; i < approvalModes.length; i++) {
     final a = approvalModes[i];
-    final note = a['note'] ?? '';
-    final rec = a['default'] == true ? ' (default)' : '';
-    b.writeln('say "    ${i + 1}) ${a['id']}$rec  — $note"');
+    final rec = a.isDefault ? ' (default)' : '';
+    b.writeln('say "    ${i + 1}) ${a.id}$rec  — ${a.note}"');
   }
   return b.toString();
 }
 
-String _shApprovalCases(YamlList approvalModes) {
+String _shApprovalCases(List<_WizardApprovalMode> approvalModes) {
+  final defaultChoice = approvalModes.indexWhere((a) => a.isDefault) + 1;
   final b = StringBuffer();
   b.writeln(r'approval=""');
   b.writeln(r'while true; do');
-  b.writeln(r'  ask approval "Pick an approval mode" "1"');
+  b.writeln('  approval=\$(ask "Pick an approval mode" "$defaultChoice")');
   b.writeln(r'  case "$approval" in');
   for (var i = 0; i < approvalModes.length; i++) {
     final a = approvalModes[i];
-    b.writeln('    ${i + 1}|${a['id']}) approval="${a['id']}"; break ;;');
+    b.writeln('    ${i + 1}|${a.id}) approval="${a.id}"; break ;;');
   }
   b.write(r'    *) warn "enter 1-');
   b.write(approvalModes.length);
@@ -283,24 +476,23 @@ String _shApprovalCases(YamlList approvalModes) {
 // ── PowerShell fragments ────────────────────────────────────────────────────
 // In this section every `$` that should appear in the generated .ps1 file is
 // written as `\$` so Dart's string interpolation ignores it. Dart `${...}` is
-// still used for values coming from install-config.yaml.
+// still used for values coming from the wizard data.
 
-String _psProviderMenu(YamlList providers) {
+String _psProviderMenu(List<_WizardProvider> providers) {
   final b = StringBuffer();
   b.writeln('# Provider menu');
   for (var i = 0; i < providers.length; i++) {
     final p = providers[i];
-    final note = p['note'] ?? '';
-    final rec = p['recommended'] == true ? '   (recommended)' : '';
-    b.writeln('Write-Host "  ${i + 1}) ${p['name']}  — $note$rec"');
+    final rec = p.recommended ? '   (recommended)' : '';
+    b.writeln('Write-Host "  ${i + 1}) ${p.name}  — ${p.note}$rec"');
   }
   b.writeln(r'Write-Host ""');
   final valid = <String>[];
   for (var i = 0; i < providers.length; i++) {
     valid.add('"${i + 1}"');
   }
-  for (var i = 0; i < providers.length; i++) {
-    valid.add('"${providers[i]['id']}"');
+  for (final p in providers) {
+    valid.add('"${p.id}"');
   }
   b.writeln(
     '\$providerChoice = Read-Choice "Pick a provider [1-${providers.length}]" @(${valid.join(', ')})',
@@ -308,50 +500,53 @@ String _psProviderMenu(YamlList providers) {
   return b.toString();
 }
 
-String _psProviderSwitch(YamlList providers) {
+String _psProviderSwitch(List<_WizardProvider> providers) {
   final b = StringBuffer();
   b.writeln('switch -Regex (\$providerChoice) {');
   for (var i = 0; i < providers.length; i++) {
     final p = providers[i];
-    b.writeln('    "^(${i + 1}|${p['id']})\$" {');
-    b.writeln('        \$provider = "${p['id']}"');
-    b.writeln('        \$providerKind = "${p['kind']}"');
-    if (p['custom'] == true) {
+    b.writeln('    "^(${i + 1}|${p.id})\$" {');
+    b.writeln('        \$provider = "${p.id}"');
+    b.writeln('        \$providerKind = "${p.kind}"');
+    if (p.custom) {
       b.writeln(
         '        \$baseUrl = Read-Host "Custom base URL (e.g. http://localhost:11434/v1)"',
       );
       b.writeln('        \$model = Read-Host "Model id on that endpoint"');
-      b.writeln('        \$keyVar = "${p['key_var']}"');
+      b.writeln('        \$keyVar = "${p.keyVar}"');
+    } else if (p.models.isEmpty) {
+      b.writeln(r'        Write-Host ""');
+      b.writeln('        \$model = Read-Host "Model id on that endpoint"');
+      b.writeln('        \$baseUrl = "${p.baseUrl}"');
+      b.writeln('        \$keyVar = "${p.keyVar}"');
     } else {
       b.writeln(r'        Write-Host ""');
-      b.writeln('        Write-Host "  ${p['name']} models:"');
-      final models = p['models'] as YamlList;
-      for (var j = 0; j < models.length; j++) {
-        final m = models[j];
-        final label = m['label'] ?? m['id'];
-        final rec = m['recommended'] == true ? '   (recommended)' : '';
+      b.writeln('        Write-Host "  ${p.name} models:"');
+      for (var j = 0; j < p.models.length; j++) {
+        final label = p.models[j];
+        final rec = j == 0 ? '   (recommended)' : '';
         b.writeln('        Write-Host "    ${j + 1}) $label$rec"');
       }
       b.writeln(
-        '        Write-Host "    ${models.length + 1}) other — enter model id manually"',
+        '        Write-Host "    ${p.models.length + 1}) other — enter model id manually"',
       );
       final valid = List.generate(
-        models.length + 1,
+        p.models.length + 1,
         (j) => '"${j + 1}"',
       ).join(', ');
       b.writeln(
-        '        \$m = Read-Choice "Pick a model [1-${models.length + 1}]" @($valid)',
+        '        \$m = Read-Choice "Pick a model [1-${p.models.length + 1}]" @($valid)',
       );
       b.writeln('        switch (\$m) {');
-      for (var j = 0; j < models.length; j++) {
-        b.writeln('            "${j + 1}" { \$model = "${models[j]['id']}" }');
+      for (var j = 0; j < p.models.length; j++) {
+        b.writeln('            "${j + 1}" { \$model = "${p.models[j]}" }');
       }
       b.writeln(
-        '            "${models.length + 1}" { \$model = Read-Host "Enter the ${p['name']} model id" }',
+        '            "${p.models.length + 1}" { \$model = Read-Host "Enter the ${p.name} model id" }',
       );
       b.writeln(r'        }');
-      b.writeln('        \$baseUrl = "${p['base_url']}"');
-      b.writeln('        \$keyVar = "${p['key_var']}"');
+      b.writeln('        \$baseUrl = "${p.baseUrl}"');
+      b.writeln('        \$keyVar = "${p.keyVar}"');
     }
     b.writeln(r'    }');
   }
@@ -392,26 +587,25 @@ String _psModeSwitch(YamlList modes) {
   return b.toString();
 }
 
-String _psApprovalMenu(YamlList approvalModes) {
+String _psApprovalMenu(List<_WizardApprovalMode> approvalModes) {
   final b = StringBuffer();
   b.writeln('# Approval mode');
   b.writeln(r'Write-Host ""');
   b.writeln(r'Write-Host "  Tool approval:"');
   for (var i = 0; i < approvalModes.length; i++) {
     final a = approvalModes[i];
-    final note = a['note'] ?? '';
-    final rec = a['default'] == true ? ' (default)' : '';
-    b.writeln('Write-Host "    ${i + 1}) ${a['id']}$rec  — $note"');
+    final rec = a.isDefault ? ' (default)' : '';
+    b.writeln('Write-Host "    ${i + 1}) ${a.id}$rec  — ${a.note}"');
   }
   return b.toString();
 }
 
-String _psApprovalSwitch(YamlList approvalModes) {
+String _psApprovalSwitch(List<_WizardApprovalMode> approvalModes) {
   final b = StringBuffer();
   final valid = <String>[];
   for (var i = 0; i < approvalModes.length; i++) {
     valid.add('"${i + 1}"');
-    valid.add('"${approvalModes[i]['id']}"');
+    valid.add('"${approvalModes[i].id}"');
   }
   b.writeln(
     '\$approvalChoice = Read-Choice "Pick an approval mode [1-${approvalModes.length}]" @(${valid.join(', ')})',
@@ -419,7 +613,7 @@ String _psApprovalSwitch(YamlList approvalModes) {
   b.writeln('switch -Regex (\$approvalChoice) {');
   for (var i = 0; i < approvalModes.length; i++) {
     final a = approvalModes[i];
-    b.writeln('    "^(${i + 1}|${a['id']})\$" { \$approval = "${a['id']}" }');
+    b.writeln('    "^(${i + 1}|${a.id})\$" { \$approval = "${a.id}" }');
   }
   b.writeln(r'}');
   return b.toString();
