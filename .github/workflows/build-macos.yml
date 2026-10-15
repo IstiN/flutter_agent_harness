@@ -89,7 +89,11 @@ jobs:
   build-macos:
     name: Build macOS ${{ matrix.arch }}
     needs: version
-    runs-on: [self-hosted, macOS, ARM64]
+    # gh-1600 F-A: pin the ONE self-hosted macOS runner (fa-m5-1) via its
+    # unique registration label — the generic [self-hosted, macOS, ARM64]
+    # list also matched the Linux self-hosted box's labels (same routing
+    # bug that sent the build-mobile iOS jobs to Linux, gh-1600).
+    runs-on: [self-hosted, macos-m5]
     # Issue #239: TestFlight submit now waits for Apple processing (bounded,
     # default 90 min) + a ~1-min one-shot appearance probe AFTER the
     # build/notarize work (gh-1041: the blocking distribution wait moved to
@@ -147,42 +151,17 @@ jobs:
           update_mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR_BASE/flutter_agent_harness.git"
 
       # ── Checkout ────────────────────────────────────────────────────────────
+      # gh-1600 AC2: hardened mirror-checkout — the bare `rm -rf
+      # "$GITHUB_WORKSPACE"` used to fail the whole checkout on stale
+      # unremovable leftovers in the persistent shared workspace (bench
+      # docker leftovers, jobs/fa-2.1-docker-cpu-14/). The per-arch build
+      # cache below is parked outside the workspace before the clean and
+      # restored after the clone (preserve-path/preserve-cache-dir).
       - name: Checkout repository from local mirrors
-        run: |
-          set -euo pipefail
-
-          MIRROR_BASE="$HOME/actions-runner-yoloit/mirror"
-          MAIN_MIRROR="$MIRROR_BASE/flutter_agent_harness.git"
-          ARCH="${{ matrix.arch }}"
-          BUILD_CACHE_DIR="$HOME/actions-runner-yoloit/build-cache/macos-$ARCH"
-
-          echo "HOME=$HOME"
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
-          echo "MAIN_MIRROR=$MAIN_MIRROR"
-          echo "ARCH=$ARCH"
-
-          if [ -d "$GITHUB_WORKSPACE/build/macos" ]; then
-            echo "Preserving existing macOS build cache for $ARCH..."
-            rm -rf "$BUILD_CACHE_DIR"
-            mkdir -p "$BUILD_CACHE_DIR"
-            mv "$GITHUB_WORKSPACE/build/macos" "$BUILD_CACHE_DIR/"
-          fi
-
-          cd /tmp
-          rm -rf "$GITHUB_WORKSPACE"
-          mkdir -p "$GITHUB_WORKSPACE"
-
-          echo "Cloning main repo with mirror reference..."
-          git clone --reference "$MAIN_MIRROR" --depth=1 \
-            https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
-
-          cd "$GITHUB_WORKSPACE"
-
-          if [ -d "$BUILD_CACHE_DIR/macos" ]; then
-            echo "Restoring macOS build cache for $ARCH..."
-            mkdir -p build
-            mv "$BUILD_CACHE_DIR/macos" build/
-          fi
+        uses: ./.github/actions/mirror-checkout
+        with:
+          preserve-path: build/macos
+          preserve-cache-dir: '$HOME/actions-runner-yoloit/build-cache/macos-${{ matrix.arch }}'
 
       # Persistent pinned SDK (issue #354): same rationale as
       # build-mobile.yml — on a persistent self-hosted runner the

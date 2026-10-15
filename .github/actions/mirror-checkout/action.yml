@@ -1,0 +1,108 @@
+name: 'Mirror checkout (self-hosted)'
+description: >-
+  The shared self-hosted mirror-checkout for the macOS publish legs
+  (build-mobile.yml build-ios/submit-ios, build-macos.yml build-macos):
+  clone the repo into $GITHUB_WORKSPACE from the persistent local git
+  mirror. gh-1600 AC2: the workspace on a persistent self-hosted runner is
+  SHARED across workflow runs — bench-harbor used to park jobs/<run-id>/
+  (trial dirs bind-mounted into task containers) in it, and the old bare
+  `rm -rf "$GITHUB_WORKSPACE"` exited 1 on the unremovable leftovers,
+  failing the checkout before any build step. The clean is now
+  log-and-prune: remove what is removable, move a still-blocked remainder
+  into $RUNNER_TEMP, and as a last resort clone into a sibling directory
+  and move the checkout in around the stub — a stale unremovable path can
+  no longer fail the checkout. (The root cause moved the bench output
+  outside the workspace: bench-harbor.yml now writes
+  $RUNNER_TEMP/bench/jobs; this tolerance covers stale leftovers and any
+  future leak.)
+
+inputs:
+  repo-url:
+    description: 'Repository URL cloned from the local mirror'
+    required: false
+    default: 'https://github.com/IstiN/flutter_agent_harness.git'
+  preserve-path:
+    description: >-
+      Workspace-relative path preserved across the clean (parked in
+      preserve-cache-dir before the clean, restored after the clone) —
+      e.g. build-macos''s per-arch build cache
+    required: false
+    default: ''
+  preserve-cache-dir:
+    description: 'Directory the preserved path is parked in (required when preserve-path is set; $HOME expands at run time)'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Clean workspace (gh-1600 log-and-prune) and clone from the local mirror
+      shell: bash
+      run: |
+        set -euo pipefail
+        REPO_URL='${{ inputs.repo-url }}'
+        MIRROR="$HOME/actions-runner-yoloit/mirror/$(basename "$REPO_URL")"
+        PRESERVE='${{ inputs.preserve-path }}'
+        CACHE='${{ inputs.preserve-cache-dir }}'
+        cd /tmp
+        echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+        echo "MIRROR=$MIRROR"
+
+        # Park the preserved path (per-arch build cache) outside the
+        # workspace first — the clean below removes everything else.
+        if [ -n "$PRESERVE" ]; then
+          SRC="$GITHUB_WORKSPACE/$PRESERVE"
+          if [ -d "$SRC" ]; then
+            echo "Preserving existing $PRESERVE in $CACHE..."
+            rm -rf "$CACHE"
+            mkdir -p "$CACHE"
+            mv "$SRC" "$CACHE/"
+          fi
+        fi
+
+        # gh-1600 AC2: tolerate stale unremovable paths in the persistent
+        # shared workspace (bench leftovers held by docker containers) —
+        # log-and-prune, never fail the checkout.
+        if ! rm -rf "$GITHUB_WORKSPACE" 2>/dev/null; then
+          echo "::warning::$GITHUB_WORKSPACE not fully removable — stale paths held by another process (gh-1600); pruning what is removable"
+          rm -rf "$GITHUB_WORKSPACE" || true
+        fi
+        if [ -d "$GITHUB_WORKSPACE" ] && [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+          STALE="${RUNNER_TEMP:-/tmp}/stale-workspace-$(date +%Y%m%d-%H%M%S)"
+          echo "::warning::$GITHUB_WORKSPACE still non-empty after prune — moving the remainder to $STALE (gh-1600)"
+          mkdir -p "$(dirname "$STALE")" 2>/dev/null || true
+          if ! mv "$GITHUB_WORKSPACE" "$STALE" 2>/dev/null; then
+            echo "::warning::$GITHUB_WORKSPACE could not be moved aside either — cloning around the stub (gh-1600)"
+          fi
+        fi
+        mkdir -p "$GITHUB_WORKSPACE"
+
+        CLONE_TARGET="$GITHUB_WORKSPACE"
+        if [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+          # A mount-point stub survived the prune AND the move-aside (a live
+          # bind mount). git clone refuses a non-empty target — build the
+          # checkout in a sibling and move it in around the stub. A bench
+          # leftover path (e.g. jobs/<run-id>/) is not a repo path; if one
+          # ever collides, the move below skips it with a note.
+          CLONE_TARGET="$GITHUB_WORKSPACE.checkout"
+          rm -rf "$CLONE_TARGET"
+        fi
+        git clone --reference "$MIRROR" --depth=1 "$REPO_URL" "$CLONE_TARGET"
+        if [ "$CLONE_TARGET" != "$GITHUB_WORKSPACE" ]; then
+          while IFS= read -r entry; do
+            name="$(basename "$entry")"
+            if [ -e "$GITHUB_WORKSPACE/$name" ]; then
+              echo "::warning::stub collision on '$name' — left in $CLONE_TARGET (gh-1600)"
+            else
+              mv "$entry" "$GITHUB_WORKSPACE/"
+            fi
+          done < <(find "$CLONE_TARGET" -mindepth 1 -maxdepth 1)
+          rm -rf "$CLONE_TARGET"
+        fi
+        echo "Checked out: $(git -C "$GITHUB_WORKSPACE" log -1 --oneline)"
+
+        if [ -n "$PRESERVE" ] && [ -d "$CACHE/$(basename "$PRESERVE")" ]; then
+          echo "Restoring $PRESERVE from $CACHE..."
+          mkdir -p "$GITHUB_WORKSPACE/$(dirname "$PRESERVE")"
+          mv "$CACHE/$(basename "$PRESERVE")" "$GITHUB_WORKSPACE/$(dirname "$PRESERVE")/"
+        fi

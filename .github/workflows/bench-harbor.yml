@@ -593,13 +593,20 @@ jobs:
             false|FALSE|False|no|off) unset FA_PROGRESS_EXTENSION;;
             1|true|TRUE|True|yes|on) export FA_PROGRESS_EXTENSION=1;;
           esac
-          # Pinned --job-name: one jobs/<name>/ dir per shard, so the summary
+          # Pinned --job-name: one <name>/ dir per shard, so the summary
           # job's downloads cannot collide on harbor's timestamped default.
           # The family label keys results per dataset version (fa-4.0-*
           # matches the historical 4.0 names exactly).
+          # gh-1600 AC2: the output lives OUTSIDE $GITHUB_WORKSPACE — on the
+          # shared self-hosted runner a leftover jobs/<name>/ in the
+          # workspace (trial dirs bind-mounted into task containers) made
+          # the next mobile build's clean choke. RUNNER_TEMP is
+          # runner-managed scratch, never a workspace path.
+          mkdir -p "$RUNNER_TEMP/bench/jobs"
           .bench-venv/bin/harbor run -d "$DATASET" -a fa_agent:FaAgent \
             -e "$ENV_TYPE" -m "$MODEL" -k "$ATTEMPTS" -n "$NCONC" \
-            --job-name "fa-${FAMILY}-${ENV_TYPE}-${{ matrix.kind }}-${{ matrix.i }}" -o jobs \
+            --job-name "fa-${FAMILY}-${ENV_TYPE}-${{ matrix.kind }}-${{ matrix.i }}" \
+            -o "$RUNNER_TEMP/bench/jobs" \
             "${args[@]}"
 
       - name: Upload harbor job (shard ${{ matrix.i }})
@@ -607,7 +614,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: harbor-job-shard-${{ matrix.i }}
-          path: jobs/
+          # gh-1600: the harbor output moved outside the workspace
+          # ($RUNNER_TEMP/bench/jobs — see the harbor run step).
+          path: ${{ runner.temp }}/bench/jobs/
 
       - name: Upload to Harbor Hub
         if: always() && env.HARBOR_API_KEY != ''
@@ -615,9 +624,35 @@ jobs:
           HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
         run: |
           shopt -s nullglob
-          for job_dir in jobs/fa-${FAMILY}-*; do
+          # gh-1600: iterate the out-of-workspace output dir (see the harbor
+          # run step).
+          for job_dir in "$RUNNER_TEMP/bench/jobs"/fa-${FAMILY}-*; do
             .bench-venv/bin/harbor upload "$job_dir" --public
           done
+
+      # gh-1600 AC2: a cancelled/interrupted shard can leave the trial
+      # containers (and their bind mounts over the output dir) alive on the
+      # persistent self-hosted box — those holds made the NEXT workflow's
+      # workspace clean fail. Tear the shard's containers down BEFORE
+      # removing the output dir; both are best-effort (the uploads above
+      # already ran) so cleanup can never mask the shard's verdict.
+      - name: Tear down bench containers + output dir (gh-1600)
+        if: always()
+        env:
+          KIND: ${{ matrix.kind }}
+          SHARD: ${{ matrix.i }}
+        run: |
+          set -euo pipefail
+          if command -v docker >/dev/null 2>&1; then
+            ids=$(docker ps -aq --filter "name=fa-${FAMILY}-${ENV_TYPE}-${KIND}-${SHARD}" 2>/dev/null || true)
+            if [ -n "$ids" ]; then
+              # shellcheck disable=SC2086
+              docker rm -f $ids >/dev/null 2>&1 || true
+              echo "tore down bench containers: $ids"
+            fi
+          fi
+          rm -rf "${RUNNER_TEMP:-/tmp}/bench" 2>/dev/null \
+            || echo "::warning::$RUNNER_TEMP/bench not fully removable — a container still holds it (gh-1600)"
 
   summary:
     name: Aggregate resolution rate

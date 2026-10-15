@@ -602,7 +602,12 @@ jobs:
   build-ios:
     name: Build iOS IPA
     needs: version
-    runs-on: [self-hosted, macOS, ARM64]
+    # gh-1600 F-A: pin the ONE self-hosted macOS runner (fa-m5-1) via its
+    # unique registration label. The old generic [self-hosted, macOS, ARM64]
+    # list also matched the Linux self-hosted box's labels, and this job ran
+    # there — no ruby/fastlane/Xcode (`bundle: command not found`, exit 127;
+    # later steps died on `security: command not found`).
+    runs-on: [self-hosted, macos-m5]
     # Issue #344: a wedged self-hosted worker (lost completion report)
     # otherwise holds the slot AND the in_progress status until the 300m
     # daily-publish watcher times out; a job-level timeout lets GitHub
@@ -625,16 +630,13 @@ jobs:
             git -C "$MIRROR" fetch origin
           fi
 
+      # gh-1600 AC2: the workspace on this persistent box is SHARED across
+      # workflow runs — the old bare workspace rm -rf failed the checkout on
+      # stale unremovable bench leftovers
+      # (jobs/fa-2.1-docker-cpu-14/, docker-held trial mounts). The composite
+      # action cleans log-and-prune and clones around a surviving stub.
       - name: Checkout repository from local mirror
-        run: |
-          set -euo pipefail
-          MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
-          cd /tmp
-          rm -rf "$GITHUB_WORKSPACE"
-          mkdir -p "$GITHUB_WORKSPACE"
-          git clone --reference "$MIRROR" --depth=1 \
-            https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
-          echo "Checked out: $(git -C $GITHUB_WORKSPACE log -1 --oneline)"
+        uses: ./.github/actions/mirror-checkout
 
       # Persistent pinned SDK (issue #354): subosito/flutter-action with
       # cache: true on this PERSISTENT runner cost 5m39s setup (untar ~1GB
@@ -1029,7 +1031,9 @@ jobs:
   submit-ios:
     name: Submit iOS to TestFlight
     needs: [build-ios]
-    runs-on: [self-hosted, macOS, ARM64]
+    # gh-1600 F-A: same unique-macos-label pin as build-ios above — the
+    # generic [self-hosted, macOS, ARM64] list also matched the Linux box.
+    runs-on: [self-hosted, macos-m5]
     # Issue #344 wedge bound + #351 arithmetic: the submit_only lane waits
     # for Apple processing (TESTFLIGHT_WAIT_TIMEOUT_SECONDS, default 5400s
     # = 90m — a healthy slow ASC processing is NOT a wedge); distribution
@@ -1059,15 +1063,11 @@ jobs:
             git -C "$MIRROR" fetch origin
           fi
 
+      # gh-1600 AC2: hardened mirror-checkout (see build-ios) — the bare
+      # workspace rm -rf must never fail this checkout on stale unremovable
+      # leftovers in the persistent shared workspace.
       - name: Checkout repository from local mirror
-        run: |
-          set -euo pipefail
-          MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
-          cd /tmp
-          rm -rf "$GITHUB_WORKSPACE"
-          mkdir -p "$GITHUB_WORKSPACE"
-          git clone --reference "$MIRROR" --depth=1 \
-            https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
+        uses: ./.github/actions/mirror-checkout
 
       - name: Setup environment (self-hosted)
         run: |
