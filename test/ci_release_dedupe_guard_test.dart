@@ -12,15 +12,17 @@
 ///
 /// The fix mirrors gh-1551's `release-pending` pre-check: a `release-dedupe`
 /// job decides whether the tag's own push run already gates it
-/// (`gh run list --branch <tag> --event push`, any status, recent window);
-/// dedupe=true short-circuits EVERY quality leg of the release twin to the
-/// binaries-attach leg only. Deliberately text/YAML-level asserts (the
-/// repo's workflow-shape never-again pattern, same as
-/// ci_release_pending_guard_test.dart):
+/// (`gh run list --branch <tag> --event push`, conclusion-aware, recent
+/// window); dedupe=true short-circuits EVERY quality leg of the release
+/// twin, while the release-specific legs keep running on it (binaries
+/// attach, release-provenance signing, installer smoke) and web-spa/publish
+/// stay keyed on the quality-gate result and skip with it. Deliberately
+/// text/YAML-level asserts (the repo's workflow-shape never-again pattern,
+/// same as ci_release_pending_guard_test.dart):
 ///  AC1  annotated tag push → release published: exactly ONE full-gate
 ///       run (the push twin); the release twin skips every quality leg and
-///       executes only the binaries-attach leg (web-spa/publish stay keyed
-///       on the quality-gate result and skip with it),
+///       keeps only the release-specific legs — binaries-attach,
+///       release-provenance and installer-smoke still run,
 ///  AC2  release published on an old tag (no fresh push run within the
 ///       window) → dedupe=false → the full gate still runs (safety net),
 ///  AC3  push/dispatch/schedule behavior unchanged: the check
@@ -30,13 +32,21 @@
 ///  AC4  the binaries-attach leg stays reachable under dedupe=true via an
 ///       explicit release-arm clause, and the idempotent `--clobber`
 ///       last-wins upload is preserved,
-///  AC5  the dedupe check fails safe: dedupe defaults false and is only
-///       flipped inside a successful release-arm lookup — an `gh run list`
-///       error warns and degrades to the full gate,
+///  AC5  the dedupe check fails safe, twice over: dedupe defaults false
+///       and is only flipped inside a successful release-arm lookup (an
+///       `gh run list` error warns and degrades to the full gate), AND the
+///       lookup is conclusion-aware — only a GREEN (conclusion ==
+///       "success") push run dedupes, so a failed/cancelled push gate
+///       degrades to the full-gate safety net instead of letting the twin
+///       attach publishable binaries with no green gate anywhere
+///       (gh-1625 review BLOCKING #2),
 ///  RG   the regression guard: the decision logic is extracted to
 ///       scripts/release_dedupe_check.sh and fixture-self-tested by
 ///       scripts/release_dedupe_selftest.sh (aab-gate-selftest pattern),
-///       wired into the static gate.
+///       wired into the static gate; the pre-check job provides the repo
+///       script to the runner with a pinned, arm-gated checkout (the
+///       first cut invoked the script with NO checkout — exit 127 reddened
+///       every arm, runs 38696670029/38696668627).
 library;
 
 import 'dart:io';
@@ -103,26 +113,67 @@ void main() {
         (job!['outputs'] as YamlMap)['dedupe'].toString(),
         r'${{ steps.check.outputs.dedupe }}',
       );
-      // The check is a pure API pre-check — no checkout, no fetch, no
-      // actions at all (one run: step, like release-pending's non-schedule
-      // arms).
+      // The check runs a REPO script — a hosted runner's empty workspace
+      // has no scripts/ (the first cut had NO checkout: exit 127 reddened
+      // the pre-check on every arm and cascaded into a red Quality gate,
+      // runs 38696670029/38696668627). A step must provide the file, and
+      // it must run on every arm that can reach the check step (the
+      // release-pending pattern: the fetch is gated to the arm that
+      // needs it, other arms keep paying nothing). The fetch is shallow +
+      // blobless — seconds inside the 5-minute job budget; the lookup
+      // itself is still ONE gh run list API call.
       final steps = job['steps'] as YamlList;
-      expect(steps, hasLength(1), reason: 'one step: the check script');
-      final check = steps.first as YamlMap;
-      expect(check['id'].toString(), 'check');
+      final stepMaps = steps.map((s) => s as YamlMap).toList();
+      final checkouts = stepMaps
+          .where(
+            (s) =>
+                s['uses']?.toString().startsWith('actions/checkout') ?? false,
+          )
+          .toList();
+      expect(
+        checkouts,
+        hasLength(1),
+        reason:
+            'the check step runs the repo scripts/release_dedupe_check.sh '
+            '— exactly one checkout step must provide it (no checkout = '
+            'exit 127 on every arm, the af1396d3 CI failure)',
+      );
+      final checkout = checkouts.single;
+      expect(
+        checkout['if']?.toString(),
+        contains("github.event_name == 'release'"),
+        reason:
+            'the checkout is gated to the release arm — the only arm '
+            'that reaches the script (AC3: push/dispatch/schedule arms '
+            'pay no fetch, same discipline as release-pending)',
+      );
+      final checkoutWith = checkout['with'] as YamlMap?;
+      expect(
+        checkoutWith?['fetch-depth'].toString(),
+        '1',
+        reason: 'shallow — the check never walks git history',
+      );
+      expect(
+        checkoutWith?['filter'].toString(),
+        'blob:none',
+        reason: 'blobless (gh-1477 convention) — the check never reads '
+            'blobs, only the gh run list API',
+      );
+      final checkoutAt = stepMaps.indexOf(checkout);
+      final check = stepMaps.singleWhere(
+        (s) => s['id']?.toString() == 'check',
+      );
+      expect(
+        checkoutAt,
+        lessThan(stepMaps.indexOf(check)),
+        reason: 'the checkout precedes the check step that needs it',
+      );
       expect(
         check['run'].toString(),
         contains('scripts/release_dedupe_check.sh'),
         reason:
             'the decision logic is extracted + fixture-self-tested '
             '(aab-gate-selftest pattern), never inlined',
-      );
-      expect(
-        check['uses'],
-        isNull,
-        reason:
-            'gh-1625: the pre-check must not even pay a checkout — '
-            'the lookup is one gh run list API call',
       );
       expect(
         (job['permissions'] as YamlMap)['actions'].toString(),
@@ -288,8 +339,8 @@ void main() {
       );
     });
 
-    test('the lookup keys on the tag ref, the push event, this workflow, '
-        'and ANY run status', () {
+    test('the lookup is conclusion-aware and fails CLOSED: dedupe only '
+        'on a green push-run gate', () {
       final script = read('scripts/release_dedupe_check.sh');
       expect(
         script,
@@ -310,11 +361,23 @@ void main() {
       );
       expect(
         script,
-        isNot(contains('--status')),
+        contains('--json createdAt,conclusion,status'),
         reason:
-            'any status dedupes — in the hot path the push twin is '
-            'still in_progress when the release event fires '
-            '(run 38687023638 vs 38687023803)',
+            'gh-1625 review BLOCKING #2: the decision filters on the run '
+            'conclusion — the projection must fetch it (the first cut '
+            'fetched only createdAt and deduped on ANY status)',
+      );
+      expect(
+        script,
+        contains('select(.conclusion == "success")'),
+        reason:
+            'gh-1625 review BLOCKING #2, fail-closed: only a SUCCESSFUL '
+            'push run dedupes — a failed/cancelled push gate degrades to '
+            'the AC2 full-gate safety net, so publishable binaries can '
+            'never attach with no green gate anywhere. Strictly safe '
+            'behind the shared ci-<ref> concurrency group: the push twin '
+            'is already completed (never in_progress) when the release '
+            'twin\'s check executes',
       );
       expect(
         script,
@@ -420,8 +483,9 @@ void main() {
           "needs.release-dedupe.outputs.dedupe == 'true')",
         ),
         reason:
-            'AC1: on a deduped release twin the tag\'s push run IS the '
-            'gate — the release twin executes the binaries-attach leg only',
+            'AC1: on a deduped release twin the tag\'s GREEN push run IS '
+            'the gate — the twin builds the matrix on it while every '
+            'quality leg skips',
       );
       expect(
         ifText,
@@ -445,8 +509,50 @@ void main() {
       );
     });
 
+    test('the deduped twin keeps its release-specific legs — binaries, '
+        'release-provenance and installer-smoke still run (web-spa/publish '
+        'skip with the gate)', () {
+      // gh-1625 review SUGGESTION #5: the short-circuit is NOT
+      // "binaries-attach only" — the twin still signs the checksums
+      // (release-provenance) and smoke-tests the installers
+      // (installer-smoke). A comment or doc claiming "ONLY binaries"
+      // invites a future edit that silently drops release signing.
+      final provenance = jobs['release-provenance'] as YamlMap;
+      final provenanceIf = provenance['if'].toString();
+      expect(
+        provenanceIf,
+        contains("needs.binaries.result == 'success'"),
+        reason: 'release-provenance signs what binaries attached',
+      );
+      expect(
+        provenanceIf,
+        contains("github.event_name == 'release'"),
+        reason: 'release-provenance stays reachable on the release twin',
+      );
+      expect(
+        provenanceIf,
+        isNot(contains('release-dedupe')),
+        reason:
+            'no dedupe clause — release-provenance runs on the deduped '
+            'twin exactly as on the push twin',
+      );
+      final installerSmoke = jobs['installer-smoke'] as YamlMap;
+      final smokeIf = installerSmoke['if'].toString();
+      expect(
+        smokeIf,
+        contains("github.event_name == 'release'"),
+        reason: 'installer-smoke stays reachable on the release twin',
+      );
+      expect(
+        smokeIf,
+        isNot(contains('release-dedupe')),
+        reason: 'no dedupe clause — installer-smoke runs on the deduped '
+            'twin exactly as on the push twin',
+      );
+    });
+
     test('web-spa stays keyed on the quality-gate result (skips with the '
-        'deduped gate — binaries-attach only)', () {
+        'deduped gate — the push twin already attached)', () {
       final webSpa = jobs['web-spa'] as YamlMap;
       expect(
         webSpa['if'].toString(),
