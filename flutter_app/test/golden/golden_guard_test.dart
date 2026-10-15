@@ -80,6 +80,8 @@ const _coverage = <String, String>{
   'lib/apps/js_app_view.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/widgets_catalog_sheet.dart':
       'test/golden/widgets_catalog_golden_test.dart',
+  'lib/apps/unpacked_load_flow.dart':
+      'test/golden/unpacked_load_golden_test.dart',
   'lib/apps/dynamic_widget_tile.dart':
       'test/golden/dynamic_messages_golden_test.dart',
   'lib/apps/dynamic_messages_sheet.dart':
