@@ -190,6 +190,48 @@ def cmd_check(zip_path: str) -> int:
                         "requires 3",
                     )
                     failures += 1
+                # gh-1630 AC5: the five Purple-Potassium permissions are
+                # gone and stay gone — a manifest regression here means the
+                # extension requests capabilities its shipped code never
+                # calls (a hard CWS rejection).
+                dead = {"contentSettings", "downloads", "fontSettings",
+                        "identity", "desktopCapture"}
+                declared = set(manifest.get("permissions") or []) | set(
+                    manifest.get("optional_permissions") or []
+                )
+                resurrected = sorted(declared & dead)
+                if resurrected:
+                    error(
+                        "manifest-dead-permissions (gh-1630)",
+                        f"{zip_path}: root manifest.json re-declares "
+                        f"{', '.join(resurrected)} — removed by gh-1630 "
+                        "(CWS Purple Potassium: requested-but-unused); "
+                        "re-add only together with the shipping code that "
+                        "calls it",
+                    )
+                    failures += 1
+                # gh-1630 I5/AC5: CSP = self + wasm-unsafe-eval, never a
+                # remote origin.
+                csp = (manifest.get("content_security_policy") or {}).get(
+                    "extension_pages", ""
+                )
+                if csp:
+                    if "'wasm-unsafe-eval'" not in csp or "'self'" not in csp:
+                        error(
+                            "manifest-csp-wasm (gh-1630)",
+                            f"{zip_path}: extension_pages CSP {csp!r} lacks "
+                            "'self' 'wasm-unsafe-eval' — the vendored "
+                            "pyodide/onnxruntime/quickjs wasm cannot boot",
+                        )
+                        failures += 1
+                    if re.search(r"https?://", csp):
+                        error(
+                            "manifest-csp-remote",
+                            f"{zip_path}: extension_pages CSP {csp!r} "
+                            "mentions a remote origin — CSP must keep "
+                            "blocking every remote host",
+                        )
+                        failures += 1
                 icons: "set[str]" = set()
                 top = manifest.get("icons")
                 if isinstance(top, dict):
@@ -209,6 +251,41 @@ def cmd_check(zip_path: str) -> int:
                         f"missing from the zip: {', '.join(missing)}",
                     )
                     failures += 1
+
+        # --- remote-code scan (gh-1630 AC1, Blue Argon) -----------------
+        # Every packaged byte is scanned for remote-hosting markers: CWS
+        # rejects the PRESENCE of a remotely-hosted-code URL, even on
+        # never-executed paths, and reviewers read the shipped sources.
+        # This is the mechanical REG-1 backstop for the dart-define
+        # tree-shaking that keeps the CDN constants out of the compiled
+        # panel bundle (see flutter_app/lib/sandbox/web_interpreters_urls.dart)
+        # and for the lock-declared rewrites that strip remote constants
+        # out of the vendored bundles.
+        remote_marker = re.compile(rb"jsdelivr|unpkg|cdnjs|https://cdn\.")
+        hits = []
+        for name in names:
+            if name.endswith("/"):
+                continue
+            try:
+                content = z.read(name)
+            except (zipfile.BadZipFile, RuntimeError):
+                continue
+            match = remote_marker.search(content)
+            if match:
+                context = content[
+                    max(0, match.start() - 40): match.end() + 40
+                ]
+                hits.append(f"{name}: …{context.decode('utf-8', 'replace')}…")
+        if hits:
+            error(
+                "remote-hosted-code (gh-1630 AC1)",
+                f"{zip_path}: {len(hits)} packaged file(s) carry "
+                "remote-code markers (jsdelivr/unpkg/cdnjs/https://cdn.) — "
+                "CWS Blue Argon rejects the PRESENCE of remote code, "
+                "reachability irrelevant. First offenders: "
+                f"{'; '.join(hits[:5])}",
+            )
+            failures += 1
 
     if failures:
         error(
