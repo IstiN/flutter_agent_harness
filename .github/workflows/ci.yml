@@ -257,14 +257,16 @@ jobs:
       # has no scripts/ and the first cut (no checkout) died with
       # `bash: scripts/release_dedupe_check.sh: No such file or directory`
       # (exit 127) on every arm, cascading into a red Quality gate (runs
-      # 38696670029/38696668627). A file-based check needs a checkout; a
-      # shallow + blobless one costs seconds inside the 5-minute budget.
-      # Gated to the release arm — the only arm that reaches the script —
-      # so push/dispatch/schedule arms keep paying no fetch (the
-      # release-pending pattern; release-pending itself stays
-      # checkout-free on non-schedule arms because its logic is INLINE).
+      # 38696670029/38696668627, on a plain workflow_dispatch arm). The
+      # check step itself is UNCONDITIONAL (no job-level if — a skipped
+      # pre-check would empty its output), so the checkout must be too:
+      # every arm that runs the step needs the file present. A shallow +
+      # blobless fetch costs seconds inside the 5-minute budget — the
+      # price of keeping the decision extracted to a script that the
+      # static gate fixture-self-tests (the alternative, inlining like
+      # release-pending, would orphan the selftested script; release-
+      # pending stays checkout-free only because its logic IS inline).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.event_name == 'release'
         with:
           fetch-depth: 1
           filter: blob:none # the check never reads blobs — one gh run list

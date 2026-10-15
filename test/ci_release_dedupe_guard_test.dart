@@ -44,9 +44,11 @@
 ///       scripts/release_dedupe_check.sh and fixture-self-tested by
 ///       scripts/release_dedupe_selftest.sh (aab-gate-selftest pattern),
 ///       wired into the static gate; the pre-check job provides the repo
-///       script to the runner with a pinned, arm-gated checkout (the
-///       first cut invoked the script with NO checkout — exit 127 reddened
-///       every arm, runs 38696670029/38696668627).
+///       script to the runner with a pinned, unconditional shallow +
+///       blobless checkout (the first cut invoked the script with NO
+///       checkout — exit 127 reddened every arm, runs
+///       38696670029/38696668627; the checkout must cover every arm
+///       because the check step itself is unconditional).
 library;
 
 import 'dart:io';
@@ -140,12 +142,14 @@ void main() {
       );
       final checkout = checkouts.single;
       expect(
-        checkout['if']?.toString(),
-        contains("github.event_name == 'release'"),
+        checkout['if'],
+        isNull,
         reason:
-            'the checkout is gated to the release arm — the only arm '
-            'that reaches the script (AC3: push/dispatch/schedule arms '
-            'pay no fetch, same discipline as release-pending)',
+            'the checkout must be UNCONDITIONAL: the check step itself '
+            'has no job-level if and runs on EVERY arm (push/dispatch/'
+            'schedule/release) — a release-gated checkout would re-create '
+            'the exit-127 failure on the non-release arms (the exact '
+            'af1396d3 workflow_dispatch failure)',
       );
       final checkoutWith = checkout['with'] as YamlMap?;
       expect(
