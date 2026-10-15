@@ -227,16 +227,16 @@ void main() {
       );
     },
   );
-  test('the interactive host defaults to advisory supervision; a headless run '
-      'defaults to autonomous (issue review)', () {
-    // gh-1054 review: auto-cancelling under a present human is the
-    // ticket's non-goal — the REPL/TUI default is advisory; `fa run`
-    // (unattended) keeps the autonomous default. No explicit config in
-    // either construction.
+  test('gh-1632 I1: the wired supervision is autonomous in EVERY mode by '
+      'default — advisory only via explicit config', () {
+    // gh-1632: the incident (fa 1.0.580, 27 min hung on a dead git fetch)
+    // was an interactive session on the implicit advisory default — the
+    // stuck flag fired, nothing escalated. The REPL/TUI default is now
+    // autonomous like the headless one; `advisory` is an explicit opt-out.
     AgentCli cli({required bool headless}) => AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: 'k',
+        apiKey: '[REDACTED:Sensitive Value]',
         env: MemoryExecutionEnv(cwd: '/work'),
         sessionRoot: '/sessions',
         headlessRun: headless,
@@ -246,29 +246,29 @@ void main() {
     );
     expect(
       cli(headless: false).agent.stuckTool!.followUp,
-      StuckFollowUpMode.advisory,
-      reason: 'a human is present in the REPL/TUI — advise only',
+      StuckFollowUpMode.autonomous,
+      reason: 'a default-config REPL/TUI recovers on its own (I1)',
     );
     expect(
       cli(headless: true).agent.stuckTool!.followUp,
       StuckFollowUpMode.autonomous,
       reason: 'fa run is unattended — the autonomous default',
     );
-    // An explicit agent.stuckTool wins in both.
+    // An explicit agent.stuckTool wins in both — advisory stays opt-in.
     final explicit = AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: 'k',
+        apiKey: '[REDACTED:Sensitive Value]',
         env: MemoryExecutionEnv(cwd: '/work'),
         sessionRoot: '/sessions',
         stuckTool: const StuckToolConfig(
-          followUp: StuckFollowUpMode.autonomous,
+          followUp: StuckFollowUpMode.advisory,
         ),
       ),
       io: FakeCliIO(),
       streamFunction: FakeStreamFunction(const []).call,
     );
-    expect(explicit.agent.stuckTool!.followUp, StuckFollowUpMode.autonomous);
+    expect(explicit.agent.stuckTool!.followUp, StuckFollowUpMode.advisory);
   });
 
   test(

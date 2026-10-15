@@ -1018,13 +1018,14 @@ prompts:
         );
       });
       test(
-        'the effective supervision is advisory for interactive hosts, '
-        'autonomous for headless — explicit config wins everywhere',
+        'gh-1632 I1: the autonomous default applies in EVERY mode — advisory '
+        'only via explicit config',
         () {
-          // Issue review (gh-1054): the ticket's non-goal — auto-cancelling
-          // interactive sessions with a human present. The autonomous
-          // default is a headless-only policy; `agent.stuckTool:` in the
-          // yaml always wins.
+          // gh-1632: the incident (fa 1.0.580 hung 27 min on a dead git
+          // fetch) was an interactive session running the implicit advisory
+          // default — the stuck flag fired but nothing ever escalated.
+          // `advisory` is an explicit opt-out only; the default is
+          // autonomous everywhere (supersedes the gh-1054 review stance).
           AgentCliConfig cli({bool headless = false, StuckToolConfig? stuck}) =>
               AgentCliConfig(
                 model: const Model(
@@ -1035,7 +1036,7 @@ prompts:
                   contextWindow: 100000,
                   maxTokens: 4096,
                 ),
-                apiKey: 'k',
+                apiKey: '[REDACTED:Sensitive Value]',
                 env: MemoryExecutionEnv(cwd: '/work'),
                 sessionRoot: '/sessions',
                 headlessRun: headless,
@@ -1043,8 +1044,10 @@ prompts:
               );
           expect(
             cli().effectiveStuckTool().followUp,
-            StuckFollowUpMode.advisory,
-            reason: 'REPL/TUI: a human is present — advise only',
+            StuckFollowUpMode.autonomous,
+            reason:
+                'REPL/TUI default-config sessions recover too (gh-1632 I1) '
+                '— the 27-minute hang happened exactly here',
           );
           expect(
             cli(headless: true).effectiveStuckTool().followUp,
@@ -1060,6 +1063,7 @@ prompts:
           expect(
             cli(stuck: explicit).effectiveStuckTool(),
             same(explicit),
+            reason: 'advisory stays reachable ONLY via explicit config (I1)',
           );
         },
       );
