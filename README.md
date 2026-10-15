@@ -309,3 +309,4 @@ MIT — see [LICENSE](LICENSE).
 <!-- factory ladder smoke: trivial doc touch to walk the full machine pipeline (review → validate → merge) -->
 
 <!-- re-validation trigger after c5e9e48 rework push: head-moved lane re-arm (operator, owner-directed sweep) -->
+<!-- operator sweep: head re-trigger to supersede orphaned in_progress check-runs -->
