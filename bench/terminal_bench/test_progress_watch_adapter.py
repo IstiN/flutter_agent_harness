@@ -11,10 +11,13 @@ deadline-loop behavior under the gap-aware ProgressWatch is testable
 anywhere python3 runs.
 """
 import base64
+import collections
 import importlib.util
+import io
 import json
 import os
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -129,6 +132,30 @@ fa_agent = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fa_agent)
 
 
+# gh-1638 AC2: the fake container must speak docker-py's shapes — exec_run
+# returns an ExecResult NAMEDTUPLE (exit_code, output) (the adapter both
+# unpacks it in _fold_session_usage and reads attributes elsewhere), and
+# get_archive returns ([tar-bytes], stat) for the #1339 session export.
+_ExecResult = collections.namedtuple("ExecResult", ["exit_code", "output"])
+
+
+def _empty_tar_bytes() -> bytes:
+    """A valid, empty tar (the fake session root exports zero files)."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w"):
+        pass
+    return buf.getvalue()
+
+
+# gh-1638 AC2: the stock perform_task sentinel must be AgentResult-SHAPED
+# (failure_mode + token attrs) — the supervised path folds the stock
+# result's token attrs, and a bare str sentinel made the fold warn.
+def _stock_result():
+    return types.SimpleNamespace(
+        failure_mode=None, total_input_tokens=0, total_output_tokens=0,
+    )
+
+
 class FakeContainer:
     """exec_run surface: byte counter, pane buffer, trace file, snapshot."""
 
@@ -141,18 +168,21 @@ class FakeContainer:
         joined = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
         if "wc -c" in joined:
             total = sum(len(chunk) for chunk in self.pane)
-            return types.SimpleNamespace(exit_code=0, output=f"{total}\n".encode())
+            return _ExecResult(0, f"{total}\n".encode())
         if "tail -c +" in joined:
             start = int(joined.split("+")[1].split()[0])  # tail -c +N is 1-based
             data = "".join(self.pane)[start - 1:]
-            return types.SimpleNamespace(exit_code=0, output=data.encode())
+            return _ExecResult(0, data.encode())
         if "cat /tmp/fa-conn-trace.jsonl" in joined and self.trace_file:
-            return types.SimpleNamespace(exit_code=0, output=self.trace_file.encode())
+            return _ExecResult(0, self.trace_file.encode())
         if "cat /tmp/fa-conn-snapshot.jsonl" in joined:
-            return types.SimpleNamespace(exit_code=0, output=b"")
+            return _ExecResult(0, b"")
         if "cat /tmp/fa-conn-snapshot.json" in joined and self.snapshot:
-            return types.SimpleNamespace(exit_code=0, output=self.snapshot.encode())
-        return types.SimpleNamespace(exit_code=0, output=b"")
+            return _ExecResult(0, self.snapshot.encode())
+        return _ExecResult(0, b"")
+
+    def get_archive(self, path, **kwargs):
+        return ([_empty_tar_bytes()], {})
 
 
 class FakeSession:
@@ -207,7 +237,7 @@ class Round3AdapterTest(unittest.TestCase):
             for _ in range(20):
                 time.sleep(0.03)
                 session.container.pane.append("x" * 100)
-            return "stock-result"
+            return _stock_result()
 
         env = clean_env(
             FA_AGENT_TIMEOUT_SEC="0.3",
@@ -215,7 +245,8 @@ class Round3AdapterTest(unittest.TestCase):
             FA_STALL_GAP_SEC="240",
         )
         result, _ = self._run(session, stock, logging_dir, env)
-        self.assertEqual(result, "stock-result")
+        self.assertIsNone(result.failure_mode)
+        self.assertEqual(result.total_input_tokens, 0)
         self.assertFalse(session.interrupted.is_set())
         audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
         self.assertEqual(audit["policy"], "progress-watch")
@@ -276,7 +307,7 @@ class Round3AdapterTest(unittest.TestCase):
             for _ in range(8):
                 time.sleep(0.03)
                 session.container.pane.append("x" * 10)
-            return "stock-result"
+            return _stock_result()
 
         env = clean_env(
             FA_AGENT_TIMEOUT_SEC="0.2",
@@ -314,7 +345,7 @@ class Round3AdapterTest(unittest.TestCase):
             time.sleep(0.35)
             session.container.pane.append(full[20:])
             time.sleep(0.1)
-            return "stock-result"
+            return _stock_result()
 
         env = clean_env(
             FA_AGENT_TIMEOUT_SEC="0.5",
@@ -338,7 +369,7 @@ class Round3AdapterTest(unittest.TestCase):
 
         def stock(session):
             time.sleep(0.05)
-            return "stock-result"
+            return _stock_result()
 
         env = clean_env(
             FA_AGENT_TIMEOUT_SEC="0.5",
@@ -357,11 +388,12 @@ class Round3AdapterTest(unittest.TestCase):
 
         def stock(session):
             time.sleep(0.1)
-            return "stock-result"
+            return _stock_result()
 
         env = clean_env(FA_AGENT_TIMEOUT_SEC="0.5", FA_STALL_GAP_SEC="240")
         result, stderr = self._run(session, stock, logging_dir, env)
-        self.assertEqual(result, "stock-result")
+        self.assertIsNone(result.failure_mode)
+        self.assertEqual(result.total_input_tokens, 0)
         guard = json.loads((logging_dir / "export-guard.json").read_text())
         self.assertEqual(guard["session_records"], 1)
         self.assertEqual(guard["export_files"], 0)
