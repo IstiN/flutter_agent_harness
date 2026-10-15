@@ -39,8 +39,7 @@ void main() {
       expect(capped.messages.every((m) => m.preview.isNotEmpty), isTrue);
     });
 
-    test('a 1000-message request keeps only the newest summaries in full',
-        () {
+    test('a 1000-message request keeps only the newest summaries in full', () {
       final capped = capTrajectoryRequestDetail(detailWith(1000));
       // The request SIZE stays truthful — only the per-message detail is
       // bounded.
@@ -53,7 +52,10 @@ void main() {
       expect(full.length, requestSummaryMaxMessages);
       // The KEPT messages are the newest ones (the tail the Request tab
       // is actually scrolled to).
-      expect(full.first.preview, contains('${1000 - requestSummaryMaxMessages}'));
+      expect(
+        full.first.preview,
+        contains('${1000 - requestSummaryMaxMessages}'),
+      );
       expect(full.last.preview, contains('999'));
       // Everything older degrades to a size-only stub.
       final stubs = capped.messages
@@ -69,7 +71,9 @@ void main() {
 
     test('the persisted record size stays under the char budget', () {
       // 200 messages × 8 KB block texts ≈ 1.6 MB unbounded.
-      final capped = capTrajectoryRequestDetail(detailWith(200, blockChars: 8192));
+      final capped = capTrajectoryRequestDetail(
+        detailWith(200, blockChars: 8192),
+      );
       final encoded = capped.toJson().toString().length;
       expect(
         encoded,
@@ -90,11 +94,36 @@ void main() {
         requestSummaryMaxMessages,
       );
     });
+
+    test('a 1000-message request with huge texts stays bounded regardless '
+        'of message text length (gh-1590 AC)', () {
+      // 64 KB block texts — the walk fills its 256 KiB budget after a
+      // handful of messages and every older message degrades to a stub,
+      // so the encoded record cannot chase the message text length.
+      final huge = capTrajectoryRequestDetail(
+        detailWith(1000, blockChars: 64 << 10),
+      );
+      final tiny = capTrajectoryRequestDetail(detailWith(1000, blockChars: 1));
+      final hugeEncoded = huge.toJson().toString().length;
+      final tinyEncoded = tiny.toJson().toString().length;
+      // Bounded: full summaries (≤ the char budget) + 936 stub rows —
+      // NOT 1000 × 64 KB.
+      final bound =
+          requestSummaryCharsBudget +
+          requestSummaryMaxMessages * (requestPreviewChars + 2048) +
+          1000 * 256;
+      expect(hugeEncoded, lessThan(bound));
+      // Independent of text length: the 64 KB-text record lands within a
+      // small constant of the 1-char-text record's size.
+      expect(hugeEncoded, lessThan(tinyEncoded * 10));
+      // The request description stays truthful.
+      expect(huge.messageCount, 1000);
+      expect(huge.messages, hasLength(1000));
+    });
   });
 
   group('request capture wiring (gh-1073)', () {
-    test('trajectoryRequestBlocks stays bounded per block (existing cap)',
-        () {
+    test('trajectoryRequestBlocks stays bounded per block (existing cap)', () {
       final blocks = trajectoryRequestBlocks([
         TextContent(text: 'x' * (requestBlockChars * 2)),
       ]);
