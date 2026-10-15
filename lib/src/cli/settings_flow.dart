@@ -804,6 +804,12 @@ extension SettingsFlow on AgentCli {
       io.writeln('ttsr: could not write $path');
       return false;
     }
+    // A USER-file write just bypassed the host's whole-file save — fire
+    // the re-sync hook so the next persist renders this edit instead of
+    // the stale boot snapshot (gh-1572 rework; the boot snapshot carries
+    // `ttsr:` with no live overlay, so without the re-sync a rule
+    // add/toggle/delete was re-rendered over at the next persist).
+    if (path == _userConfigPath()) await _notifyUserConfigFileChanged();
     final live = _syncLiveTtsrRules(before, section);
     io.writeln(
       'ttsr saved → $path '
@@ -1438,6 +1444,13 @@ extension SettingsFlow on AgentCli {
       io.writeln('mcp: could not write $path');
       return false;
     }
+    // A USER-file write just bypassed the host's whole-file save — fire
+    // the re-sync hook so the next persist renders this edit instead of
+    // the stale boot snapshot (gh-1572 rework; `AgentCliConfig.mcpConfig`
+    // is never assigned by the CLI host, so the persist overlay resolves
+    // to the boot snapshot's section and without the re-sync a server
+    // add/edit/delete was re-rendered over at the next persist).
+    if (path == _userConfigPath()) await _notifyUserConfigFileChanged();
     final manager = _mcp.manager;
     if (manager == null) {
       io.writeln(
@@ -1929,55 +1942,6 @@ extension SettingsFlow on AgentCli {
     await controller.onSessionOpened();
   }
 
-  /// The settings-hub row and `/settings` summary label for the owner cap
-  /// (issue #394): the model's raw window vs the effective cap.
-  String _contextCapStatusLabel() {
-    final cap = config.contextWindowCap;
-    final window = _agent.state.model.contextWindow;
-    return cap == null ? 'off (window $window)' : '$window → $cap';
-  }
-
-  /// Settings → Context cap: the `agent:` section (`contextWindowCap`,
-  /// issue #394) — set or clear the owner-side cap the compaction
-  /// thresholds, the ctx meter and the loop's over-window guard clamp
-  /// through. Writes go through the surgical validated-yaml upsert into
-  /// the USER config (the machine-level file `fa config set agent…`
-  /// also uses); the running session keeps its boot cap (honest note).
-  /// Loops until the pick is cancelled or `done`.
-  Future<void> startContextCapFlow() async {
-    for (;;) {
-      final picked = await _pickOption('context cap', _contextCapMenuOptions());
-      if (picked == null || picked == 'done') return;
-      await _applyContextCapPick(picked);
-    }
-  }
-
-  /// Dispatches one [startContextCapFlow] menu pick; the caller re-renders
-  /// the menu afterwards. Split out to keep each function's complexity
-  /// under the repo's CRAP gate.
-  Future<void> _applyContextCapPick(String picked) async {
-    switch (picked) {
-      case 'set':
-        await _askContextCapValue();
-      case 'clear':
-        await _clearContextCap();
-    }
-  }
-
-  /// The main menu of [startContextCapFlow]. Pure builder.
-  List<FlowOption> _contextCapMenuOptions() {
-    final cap = config.contextWindowCap;
-    return [
-      ('set', 'Set the cap', cap == null ? 'currently off' : 'currently $cap'),
-      (
-        'clear',
-        'Clear the cap',
-        cap == null ? 'already off' : 'removes agent.contextWindowCap',
-      ),
-      ('done', 'Done', ''),
-    ];
-  }
-
   /// The cap branch: an empty answer keeps the current value; anything
   /// else rides verbatim into the yaml upsert — the strict boot parser
   /// ([parseImagesSection]) validates the edited section BEFORE the
@@ -2026,78 +1990,6 @@ extension SettingsFlow on AgentCli {
         // config — the next write re-syncs.
         break;
     }
-  }
-
-  /// The set branch: a positive integer at or above the compaction
-  /// reserve. The raw answer goes through the validated upsert — an
-  /// invalid value prints the parser's verbatim [ConfigException] and
-  /// writes NOTHING (AC4). A cap at or above the model's own window
-  /// clamps nothing — the flow warns after a successful write.
-  Future<void> _askContextCapValue() async {
-    final current = config.contextWindowCap;
-    final answer = await _askLine(
-      'context cap in tokens (min 16384, empty keeps '
-      "${current ?? 'off'}): ",
-    );
-    if (answer == null) return;
-    final value = answer.trim();
-    if (value.isEmpty) return;
-    final wrote = await _upsertConfigYaml(
-      const ['agent', 'contextWindowCap'],
-      value,
-      projectScope: false,
-      validate: validateAgentSection,
-    );
-    if (wrote) _warnCapNoOp(value);
-  }
-
-  /// The ≥-window warning: the cap only CLAMPS below the model's window;
-  /// at or above it the setting is a legal no-op.
-  void _warnCapNoOp(String value) {
-    final cap = int.tryParse(value);
-    final window = _agent.state.model.contextWindow;
-    if (cap != null && window > 0 && cap >= window) {
-      io.writeln('note: $cap ≥ model window $window — the cap clamps nothing');
-    }
-  }
-
-  /// The clear branch: the `agent:` section's only key is
-  /// `contextWindowCap`, so clearing drops the whole top-level block
-  /// (a bare `agent:` would fail the strict diagnostics validator).
-  Future<void> _clearContextCap() async {
-    if (config.contextWindowCap == null) {
-      io.writeln('context cap: already off — nothing to clear');
-      return;
-    }
-    final path = _userConfigPath();
-    if (path == null) {
-      io.writeln('context cap: no user config on this host — not saved');
-      return;
-    }
-    final read = await _env.readTextFile(path);
-    final String source;
-    switch (read) {
-      case Ok(:final value):
-        source = value;
-      case Err(:final error):
-        io.writeln('cannot read $path: $error — not saved');
-        return;
-    }
-    final edited = _dropTopLevelBlock(source, 'agent');
-    // Never persist a file the next boot would reject.
-    try {
-      loadYaml(edited);
-    } on Object catch (error) {
-      io.writeln('not saved: $error');
-      return;
-    }
-    if (await _env.writeFile(path, edited) is Err) {
-      io.writeln('could not write $path');
-      return;
-    }
-    io.writeln(
-      'agent.contextWindowCap removed → $path (${applicationNote('agent')})',
-    );
   }
 
   /// Removes the top-level `[key]:` block from [source] — the key line
@@ -2396,6 +2288,11 @@ extension SettingsFlow on AgentCli {
       io.writeln('could not write $path');
       return false;
     }
+    // A user-file write just bypassed the host's whole-file save — fire
+    // the re-sync hook so the next persist renders this write instead of
+    // the stale boot snapshot (gh-1572 rework). Project writes touch a
+    // different file; the snapshot tracks the user one only.
+    if (!projectScope) await _notifyUserConfigFileChanged();
     io.writeln(
       '${segments.join('.')} = $value → $path '
       '(${note ?? applicationNote(segments.first)})',

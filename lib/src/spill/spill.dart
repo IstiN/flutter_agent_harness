@@ -107,6 +107,26 @@ final class SpillsConfig {
   /// threshold both mean legacy behavior.
   bool get isActive => enabled && threshold > 0;
 
+  /// The `spills:` yaml section, only the non-default values — the file
+  /// stays minimal (defaults are never written). Empty at the defaults,
+  /// so [CliConfig.toYaml] embeds it only when explicitly configured
+  /// (gh-1572: the section used to be unrenderable and silently dropped
+  /// by every save).
+  String toYaml() {
+    if (enabled &&
+        threshold == 8192 &&
+        headChars == 2000 &&
+        tailChars == 2000) {
+      return '';
+    }
+    final buffer = StringBuffer('spills:\n');
+    if (!enabled) buffer.write('  enabled: false\n');
+    if (threshold != 8192) buffer.write('  threshold: $threshold\n');
+    if (headChars != 2000) buffer.write('  headChars: $headChars\n');
+    if (tailChars != 2000) buffer.write('  tailChars: $tailChars\n');
+    return buffer.toString();
+  }
+
   /// Parses the `spills:` yaml section. Tolerant (issue #678 AC11):
   /// booleans/numbers are accepted, mistyped scalars fall back to the
   /// default with a note, unknown keys are noted and ignored, and a

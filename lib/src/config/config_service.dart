@@ -30,6 +30,7 @@ import 'dart:convert';
 import 'package:yaml/yaml.dart';
 
 import '../a2a/a2a_config.dart';
+import '../agent/stuck_tool.dart';
 import '../cli/custom_providers.dart';
 import '../compaction/compaction_engine.dart';
 import '../cube/config/cube_settings.dart';
@@ -1298,42 +1299,78 @@ void validateProviderTimeoutsSection(Object? node) {
 /// in `cli_config.dart` (pinned by test): the section takes exactly
 /// `contextWindowCap` (a positive integer at or above the compaction
 /// reserve — a cap below 16384 must never soften that floor; a cap above
-/// the catalog window is the #729 raise path and validates unchanged) and
+/// the catalog window is the #729 raise path and validates unchanged),
 /// `mode` (the load preset `default|pi|omp`, validated by the shared
-/// [agentLoadModeValidationError] rule).
+/// [agentLoadModeValidationError] rule), `misuseBreaker` (a boolean —
+/// gh-1572 makes the emitter render the kill switch, so the mirror has
+/// to accept it or `fa config check` false-fails on fa's own output) and
+/// `stuckTool` (validated with the section's own strict parser, the same
+/// one the boot parser applies).
+///
+/// The per-key checks live in [_agentKeyValidators] — the same
+/// table-driven shape the section dispatch above uses — so the dispatch
+/// function itself stays flat (the gh-1572 rework's two new keys pushed
+/// the switch form over the repo's CRAP ratchet; the table cannot drift
+/// the same way a switch can).
 void validateAgentSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('must be a map, got: $node');
   }
   for (final entry in node.entries) {
-    final key = '${entry.key}';
-    switch (key) {
-      case 'contextWindowCap':
-        final value = entry.value;
-        if (value is! int || value <= 0) {
-          throw ConfigException(
-            '"agent.contextWindowCap" must be a positive integer (tokens)',
-          );
-        }
-        if (value < 16384) {
-          throw ConfigException(
-            '"agent.contextWindowCap" must be at least 16384 — below the '
-            'compaction reserve the compaction trigger threshold would go '
-            'negative',
-          );
-        }
-      case 'mode':
-        // The tool-load preset (issue #680): `default|pi|omp`, validated
-        // by the shared rule in load_modes.dart (the same one the boot
-        // parser in cli_config.dart applies — one source, no drift).
-        // `default` is legal and explicit — the written file stays
-        // parseable.
-        final error = agentLoadModeValidationError(entry.value);
-        if (error != null) throw ConfigException(error);
-      default:
-        throw ConfigException('unknown "agent" key: $key');
+    final validate = _agentKeyValidators['${entry.key}'];
+    if (validate == null) {
+      throw ConfigException('unknown "agent" key: ${entry.key}');
     }
+    validate(entry.value);
   }
+}
+
+/// The `agent:` per-key validators, keyed by the yaml key (gh-1572
+/// rework). Note `config_service.dart` deliberately cannot import
+/// `cli_config.dart` (dart:io lives in lib, the validator set must not) —
+/// each entry mirrors the boot parser's rule BY VALUE, and the
+/// emitter↔validator parity test in `config_service_test.dart` keeps the
+/// mirror honest.
+final _agentKeyValidators = <String, void Function(Object?)>{
+  'contextWindowCap': _validateAgentCapValue,
+  'misuseBreaker': _validateAgentMisuseBreakerValue,
+  'stuckTool': (value) => StuckToolConfig.fromYaml(value),
+  'mode': _validateAgentModeValue,
+};
+
+/// Mirrors `_parseAgentContextWindowCap` (the cap branch): a positive
+/// integer at or above the compaction reserve — a cap below 16384 must
+/// never soften that floor.
+void _validateAgentCapValue(Object? value) {
+  if (value is! int || value <= 0) {
+    throw ConfigException(
+      '"agent.contextWindowCap" must be a positive integer (tokens)',
+    );
+  }
+  if (value < 16384) {
+    throw ConfigException(
+      '"agent.contextWindowCap" must be at least 16384 — below the '
+      'compaction reserve the compaction trigger threshold would go '
+      'negative',
+    );
+  }
+}
+
+/// Mirrors `_parseAgentMisuseBreakerValue` (gh-1572): a boolean, `false`
+/// persisted, the `true` default never written.
+void _validateAgentMisuseBreakerValue(Object? value) {
+  if (value is! bool) {
+    throw ConfigException('"agent.misuseBreaker" must be a boolean');
+  }
+}
+
+/// Mirrors the boot parser's mode branch (issue #680): the shared
+/// [agentLoadModeValidationError] rule — the same one the boot parser in
+/// `cli_config.dart` applies, one source, no drift. `default` is legal
+/// and explicit — the written file stays parseable.
+void _validateAgentModeValue(Object? value) {
+  final error = agentLoadModeValidationError(value);
+  if (error != null) throw ConfigException(error);
 }
 
 /// Mirrors the strict private parser in `cli_config.dart` (pinned by
