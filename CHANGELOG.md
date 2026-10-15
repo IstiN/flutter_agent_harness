@@ -13,6 +13,41 @@ block a release again.
 
 ## Unreleased
 
+- fix(cli): gh-1572 — `fa` boot no longer rewrites `~/.fah/config.yaml`
+  from a lossy config. `persistConfig` (bin/fah_runapp.dart) built a
+  fresh `CliConfig` carrying only some fields and `persistConfig()` ran
+  unconditionally at boot, so every launch silently dropped the user's
+  `spills:`, `subagents:`, `jobs:`, `headless:`, `agent:`, `quota:`,
+  `tui:`, `trajectory:`, `waiting:`, `power.hold` and `auto_update`
+  settings (first reported on 1.0.547). Three cooperating fixes: the
+  boot save is now `saved.copyWith(<live overlays>)` so every parsed
+  section rides along by construction; `CliConfig.copyWith` replaces the
+  drifted hand-rolled `withCustomProviders` field list (itself dropping
+  spills/subagents/waiting/jobs/agentMode/misuseBreaker/streamThinking
+  inside `saveCliConfig`'s merge step); the `_diskPreservedSections`
+  disk backstop covers every known top-level key. `spills:` renders in
+  `toYaml` (new `SpillsConfig.toYaml`) and `agent.misuseBreaker: false`
+  persists too; an unchanged save no longer rewrites the file at all.
+  Rework round: the boot snapshot re-syncs from disk after every
+  sanctioned mid-session settings write (`onUserConfigFileChanged` — a
+  cleared context cap, an `auto_update` key drop or a global compaction
+  pick is no longer resurrected/overwritten by the next save in the
+  same session); `validateAgentSection` (the strict `fa config check` /
+  `config set` / settings-hub mirror) accepts the emitter's
+  `agent.misuseBreaker` and `agent.stuckTool` keys so `fa config check`
+  never false-fails on fa's own output; clearing the context cap drops
+  only the cap key instead of the whole `agent:` block (the sibling
+  `mode:`/`misuseBreaker:` keys survive); and the `providersQueue:`
+  block (no typed renderer) joins the disk backstop so a save can never
+  silently delete the user's queue. Rework round 2 (merge + guards):
+  `validateAgentSection`'s per-key switch became the `_agentKeyValidators`
+  table (the two gh-1572 keys pushed the switch form to complexity 13 —
+  over the repo's CRAP ratchet; the table keeps the mirror complete at
+  complexity 4), and the last two direct USER-config writers —
+  `_writeTtsrSection` and `_writeMcpSection` — fire the re-sync hook, so
+  a mid-session ttsr rule toggle or mcp server edit survives the next
+  persist too (the writer roster in `settings_flow_config_sync.dart` is
+  now exhaustive).
 - gh-1575: macOS clipboard paste fixed for TIFF-only pasteboards + the
   Ctrl+V text fallback. `_readMacos` probes `«class TIFF»` after PNGf/JPEG
   miss and converts via `sips -s format png` (a Preview/browser copy used
@@ -30,7 +65,6 @@ block a release again.
   overclaims the `FA_FAKE_PASTEBOARD` seam, and `FaTuiCallbacks` moved to
   a `fa_tui_callbacks.dart` part file keeping `fa_tui.dart` under the
   2800-line gate.
-
 - gh-1555 (W1, lazy/windowed-everywhere reads): the legacy full-open call
   sites migrate to windowed opens, so a session ledger past the gh-1073
   2 GiB full-open backstop stays openable on every user-facing read path.
