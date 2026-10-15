@@ -516,10 +516,10 @@ void main() {
         _err(
           m,
           'Provider zero-byte stall after 2 attempt(s) over 962s — the '
-              'endpoint accepted the request but never produced output; '
-              'the run-idle watchdog killed every silent attempt '
-              '(zero-byte stall). Check the provider status or try again '
-              'later.',
+          'endpoint accepted the request but never produced output; '
+          'the run-idle watchdog killed every silent attempt '
+          '(zero-byte stall). Check the provider status or try again '
+          'later.',
         ),
       );
       expect(r.kind, QueueDeathKind.timeout);
@@ -591,7 +591,11 @@ void main() {
         ),
       ]) {
         final r = classify(_err(m, formatProviderError(exception)));
-        expect(r.kind, QueueDeathKind.timeout, reason: r.runtimeType.toString());
+        expect(
+          r.kind,
+          QueueDeathKind.timeout,
+          reason: r.runtimeType.toString(),
+        );
       }
     });
 
@@ -679,6 +683,76 @@ void main() {
         throwsA(isA<ConfigException>()),
       );
     });
+
+    // gh-1624 review r2: a queue entry whose vendor prefix names another
+    // dialect stops exit-64ing on a private endpoint (the PR fix) but must
+    // not ride SILENTLY either — the chain builder emits the binding's
+    // warnings on the same out-channel pattern as [skipped].
+    test('a queue entry with a foreign-dialect prefix on a private '
+        'endpoint rides LOUD: the chain emits the binding warnings '
+        '(gh-1624 review r2)', () {
+      final warnings = <String>[];
+      final chain = buildProviderQueueChain(
+        [
+          _entry(
+            'anthropic',
+            'zai/glm-5.3',
+            baseUrl: 'http://192.168.1.23:8080/anthropic',
+          ),
+        ],
+        secrets: _secrets(),
+        warnings: warnings,
+      );
+      expect(chain, hasLength(1));
+      expect(warnings, hasLength(1));
+      expect(
+        warnings.single,
+        allOf(
+          contains('anthropic/zai/glm-5.3'),
+          contains('zai/glm-5.3'),
+          contains('routing key'),
+        ),
+      );
+    });
+
+    test('a quiet entry emits no binding warnings (channel stays empty)', () {
+      final warnings = <String>[];
+      buildProviderQueueChain(
+        [_entry('anthropic', 'claude-sonnet-4-5')],
+        secrets: _secrets(),
+        warnings: warnings,
+      );
+      expect(warnings, isEmpty);
+    });
+  });
+
+  // gh-1624 review r2: the runtime build forwards the chain's binding
+  // warnings so hosts (boot, REPL queue reload) can render them — the
+  // queue lane's mismatch never rides silently.
+  group('ProviderQueueRuntime.build — binding warning surfacing', () {
+    test(
+      'build forwards the chain\'s binding warnings to onBindingWarning',
+      () {
+        final lines = <String>[];
+        ProviderQueueRuntime.build(
+          ProviderQueueResolution(
+            scope: ProviderQueueScope.env,
+            entries: [
+              _entry(
+                'anthropic',
+                'zai/glm-5.3',
+                baseUrl: 'http://192.168.1.23:8080/anthropic',
+              ),
+            ],
+            notices: const [],
+          ),
+          secrets: _secrets(),
+          onBindingWarning: lines.add,
+        );
+        expect(lines, hasLength(1));
+        expect(lines.single, contains('zai/glm-5.3'));
+      },
+    );
   });
 
   group('ProviderQueueRuntime failover (UT-18..26, IT-37)', () {
@@ -944,45 +1018,44 @@ void main() {
       },
     );
 
-    test(
-      'sole queue entry waits out a quota wall: waited total in the story '
-      '(issue #1066)',
-      () async {
-        final m = _model('anthropic', 'm1');
-        List<AssistantMessageEvent> quotaWallTurn() => [
-          StartEvent(partial: _msg(m)),
-          _err(m, '429: quota', retryAfter: const Duration(seconds: 90)),
-        ];
-        final probe = _Probe({
-          'key-head': [quotaWallTurn(), quotaWallTurn(), quotaWallTurn()],
-        });
-        final rt = runtime([
-          _entry('anthropic', 'm1'),
-        ], probe, policy: const ModelRolesRetryPolicy(
+    test('sole queue entry waits out a quota wall: waited total in the story '
+        '(issue #1066)', () async {
+      final m = _model('anthropic', 'm1');
+      List<AssistantMessageEvent> quotaWallTurn() => [
+        StartEvent(partial: _msg(m)),
+        _err(m, '429: quota', retryAfter: const Duration(seconds: 90)),
+      ];
+      final probe = _Probe({
+        'key-head': [quotaWallTurn(), quotaWallTurn(), quotaWallTurn()],
+      });
+      final rt = runtime(
+        [_entry('anthropic', 'm1')],
+        probe,
+        policy: const ModelRolesRetryPolicy(
           retriesPerEntry: 2,
           maxWait: Duration(seconds: 30),
-        ));
+        ),
+      );
 
-        final events = await drive(rt.streamFunction);
+      final events = await drive(rt.streamFunction);
 
-        // Queue deaths ride the transport-flagged rotation path, but the
-        // QUOTA class keys the accounting: two 90s wait-outs announced as
-        // plain retries, and the story reports the waited total.
-        expect(sleeps, [
-          const Duration(seconds: 90),
-          const Duration(seconds: 90),
-        ]);
-        expect(
-          notices.map((n) => n.kind),
-          everyElement(FallbackNoticeKind.retry),
-        );
-        final error = events.whereType<ErrorEvent>().single;
-        final text = error.error.errorMessage!;
-        expect(text, contains('Provider chain exhausted'));
-        expect(text, contains('waited 3m on rate limits'));
-        expect(text, contains('Queue health'));
-      },
-    );
+      // Queue deaths ride the transport-flagged rotation path, but the
+      // QUOTA class keys the accounting: two 90s wait-outs announced as
+      // plain retries, and the story reports the waited total.
+      expect(sleeps, [
+        const Duration(seconds: 90),
+        const Duration(seconds: 90),
+      ]);
+      expect(
+        notices.map((n) => n.kind),
+        everyElement(FallbackNoticeKind.retry),
+      );
+      final error = events.whereType<ErrorEvent>().single;
+      final text = error.error.errorMessage!;
+      expect(text, contains('Provider chain exhausted'));
+      expect(text, contains('waited 3m on rate limits'));
+      expect(text, contains('Queue health'));
+    });
 
     test(
       'mid-turn committed failure stands; next turn uses the next entry (UT-midturn-boundary)',
