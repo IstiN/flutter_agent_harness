@@ -238,6 +238,11 @@ import 'paste_image.dart';
 // a stub that always reports unavailable.
 import 'clipboard_reader_stub.dart'
     if (dart.library.io) 'clipboard_reader.dart';
+// Pasteboard writes (`/provider export`, gh-1606) are VM-only
+// (pbcopy/xclip/wl-copy/clip); web builds get a stub that always reports
+// unavailable.
+import 'clipboard_writer_stub.dart'
+    if (dart.library.io) 'clipboard_writer.dart';
 // Job-registry process probes are VM-only (`ps` via dart:io); web builds
 // get a stub that always reports "no process table".
 import '../env/process_probe_stub.dart'
@@ -267,6 +272,7 @@ export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
+part 'provider_export_command.dart';
 part 'agent_cli_compaction.dart';
 part 'provider_models.dart';
 part 'codemie_provider_commands.dart';
