@@ -111,10 +111,14 @@ for engine, entry in sorted(lock["engines"].items()):
             tmp = out_path + ".tmp"
             os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
             # -fsSL: fail on HTTP errors, follow redirects, silent; retries
-            # for the flaky big-wasm legs.
+            # for the flaky big-wasm legs. --retry-max-time spans CDN
+            # rate-limit windows (jsdelivr 503s arrive in bursts — 4×3s
+            # exhausted them and failed the whole build, gh-1630): 6 tries
+            # spread over up to 5 min ride out a window per file.
             subprocess.run(
-                ["curl", "-fsSL", "--retry", "4", "--retry-delay", "3",
-                 "--retry-all-errors", url, "-o", tmp],
+                ["curl", "-fsSL", "--retry", "6", "--retry-delay", "5",
+                 "--retry-max-time", "300", "--retry-all-errors",
+                 url, "-o", tmp],
                 check=True,
             )
             data = open(tmp, "rb").read()

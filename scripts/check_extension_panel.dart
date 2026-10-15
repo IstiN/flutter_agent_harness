@@ -6,8 +6,11 @@
 //   CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
 //     dart run scripts/check_extension_panel.dart [seconds]
 //
-// Exit code 0 = no fatal errors. CDN-CSP blocks (jsdelivr — the opt-in
-// on-device LLM features) are reported but allowlisted.
+// Exit code 0 = no fatal errors. Since gh-1630 the panel carries NO
+// remote code at all (the on-device engines load from the package-local
+// vendor dir), so jsdelivr/CSP-block noise is no longer allowlisted — any
+// such console error is fatal, because it means a CDN import crept back
+// into the bundle (CWS Blue Argon) or a vendored asset failed to load.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -179,10 +182,10 @@ Future<void> main(List<String> args) async {
   }, panelSession);
   stderr.writeln('=== probe: ${jsonEncode(probe)}');
 
-  final allow = RegExp(r'jsdelivr\.net|cdn\.jsdelivr');
-  final fatal = errors.where(
-    (e) => !allow.hasMatch(e) && !e.contains('is not defined'),
-  );
+  // gh-1630: no remote-code allowlist — a CDN mention in the panel
+  // console is a REGRESSION (Blue Argon), and any vendored-asset load
+  // failure is exactly what this checker exists to catch.
+  final fatal = errors.where((e) => !e.contains('is not defined'));
   stderr.writeln('=== panel console over $watchSecs s ===');
   for (final e in errors) {
     stderr.writeln(e.length > 600 ? '${e.substring(0, 600)}…' : e);
@@ -191,9 +194,7 @@ Future<void> main(List<String> args) async {
   for (final w in warnings.take(8)) {
     stderr.writeln(w.length > 160 ? '${w.substring(0, 160)}…' : w);
   }
-  stderr.writeln(
-    'fatal=${fatal.length} cdnBlocked=${errors.length - fatal.length}',
-  );
+  stderr.writeln('fatal=${fatal.length} consoleErrors=${errors.length}');
   wsSub.cancel();
   errSub.cancel();
   proc.kill();

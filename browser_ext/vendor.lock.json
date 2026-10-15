@@ -94,11 +94,11 @@
         {
           "name": "webllm/0.2.84/webllm.mjs",
           "url": "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm",
-          "sha256": "ae2f6856c174794bae3dc5288364d0cce80bb0dd576ebaef4b7627c2f7943fa5",
+          "sha256": "99c6e2e632bc40eb07b13ba9cfbb851445d6ac058f4fa750d2f1855dd23ed4aa",
           "replacements": [
             [
               "https://www.jsdelivr.com/using-sri-with-dynamic-files",
-              "vendored jsdelivr +esm bundle (gh-1630)"
+              "vendored from the lock-pinned upstream bundle (gh-1630)"
             ]
           ]
         }
@@ -146,11 +146,11 @@
         {
           "name": "litert/0.12.1/litert.mjs",
           "url": "https://cdn.jsdelivr.net/npm/@litert-lm/core@0.12.1/+esm",
-          "sha256": "97cb73e25c024b776a9b07ef6398f73204adbe614d5715ba8212646f2a3ce2dd",
+          "sha256": "db4d6959a58c3a2f2dfb396957b72d17749e839dab82a4cd4b4921c504f8096b",
           "replacements": [
             [
               "https://www.jsdelivr.com/using-sri-with-dynamic-files",
-              "vendored jsdelivr +esm bundle (gh-1630)"
+              "vendored from the lock-pinned upstream bundle (gh-1630)"
             ],
             [
               "from\"/npm/@litertjs/wasm-utils@2.5.0/+esm\"",
@@ -165,11 +165,11 @@
         {
           "name": "litert/0.12.1/wasm-utils.mjs",
           "url": "https://cdn.jsdelivr.net/npm/@litertjs/wasm-utils@2.5.0/+esm",
-          "sha256": "3828c2bb619eece3bd7f5af09d85ad0e9475a3890aca033a5e5e027b9915bd53",
+          "sha256": "af350dc19717effa1b1e80f1f8c60584304ea7eb07af52cb092a11d69848253a",
           "replacements": [
             [
               "https://www.jsdelivr.com/using-sri-with-dynamic-files",
-              "vendored jsdelivr +esm bundle (gh-1630)"
+              "vendored from the lock-pinned upstream bundle (gh-1630)"
             ]
           ]
         },
