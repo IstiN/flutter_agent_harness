@@ -389,6 +389,7 @@ Future<void> _runApp(List<String> args) async {
     EnvProviderPreconfig? faPreconfig,
     String? unknownSavedProvider,
     String? incompatibleSavedEndpoint,
+    List<String> bindingWarnings,
   })
   cliStartup;
   try {
@@ -430,6 +431,13 @@ Future<void> _runApp(List<String> args) async {
       '"$provider" (the config was not modified; run /provider or edit '
       'the file to switch)',
     );
+  }
+  // gh-1624 (review r2): a `--model`/`--base-url` flag over a restored
+  // binding can author an UNVERIFIED dialect mismatch (private/router
+  // endpoint, foreign `vendor/` prefix) — the flag path says it on the
+  // same channel as the restore warnings above, never silently.
+  for (final warning in cliStartup.bindingWarnings) {
+    stderr.writeln('warning: binding — $warning');
   }
 
   final cwd = effective.cwd ?? Directory.current.path;
@@ -794,6 +802,10 @@ Future<void> _runApp(List<String> args) async {
   // winning scope and the shadowed scopes.
   ProviderQueueRuntime? queueRuntime;
   final queueNotices = <String>[];
+  // gh-1624 (review r2): queue entries carrying an unverified dialect
+  // mismatch say it on the boot — the queue lane replaces main-model
+  // resolution, its warnings never ride silently.
+  final queueBindingWarnings = <String>[];
   try {
     final queue = resolveProviderQueueAtBoot(projectDir: cwd, homeDir: home);
     if (queue.entries.isNotEmpty) {
@@ -803,6 +815,7 @@ Future<void> _runApp(List<String> args) async {
       queueRuntime = ProviderQueueRuntime.build(
         queue,
         secrets: collectQueueSecrets(queue.entries, keyCache),
+        onBindingWarning: queueBindingWarnings.add,
       );
       queueNotices.addAll(queue.notices);
     }
@@ -954,6 +967,13 @@ Future<void> _runApp(List<String> args) async {
     // the `wire:` override in particular must never be invisible (a
     // silenced dialect check is asserted, not forgotten).
     io.writeln('note: binding — ${preconfig.binding.echo()}');
+    // gh-1624: a dialect mismatch that is UNVERIFIED rather than fatal
+    // (vendor-prefixed model id on an unknown/private endpoint — the
+    // translating-proxy class) rides the binding as a warning; the boot
+    // says it once, loudly, and proceeds.
+    for (final warning in preconfig.binding.warnings) {
+      io.writeln('warning: binding — $warning');
+    }
     // A declared level on an adapter that is not wired to the
     // config-carried level is carried but never sent — say so once
     // instead of silently ignoring it (issue #734 E1). gh-1426 wired the
@@ -998,6 +1018,10 @@ Future<void> _runApp(List<String> args) async {
   // the loud handover, never a silent degrade (issue #418).
   for (final notice in queueNotices) {
     io.writeln(notice);
+  }
+  // gh-1624 (review r2): the queue lane's unverified binding mismatches.
+  for (final warning in queueBindingWarnings) {
+    io.writeln(warning);
   }
   if (io.isInteractive && !io.supportsRawMode) {
     io.writeln(
