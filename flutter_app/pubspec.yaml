@@ -67,7 +67,13 @@ dependencies:
   # setupBridge channel list from JsWidgetBridge.handledChannels instead of
   # a hand-maintained copy, so `jsr.hostCall`/`jsr.capture` no longer hang
   # forever on JSC builds (voxel.attach probes → infinite spinner,
-  # fa-craft → permanent legacy scene3d fallback at ~2 FPS).
+  # fa-craft → permanent legacy scene3d fallback at ~2 FPS). 0.4.171
+  # (pr-1621 lock bump) adds the typed-array binary lane
+  # (`jsr.hostCallBinary`, (pointer, length) on the QuickJS native
+  # backend — b64 fallback on JSC/web) and the packed voxel binary lane
+  # (`voxel.mesh.bin`/`voxel.blocks.bin`), and raises the quickjs_runtime
+  # floor to ^0.3.6 (pure-Dart, additive symbol-probed FFI), which forced
+  # the transitive quickjs_runtime 0.3.5→0.3.6 bump in flutter_app/pubspec.lock.
   js_widget_runtime: ^0.4.156
 
   # The fa_widgets catalog validator — the SAME rule engine the catalog CI
