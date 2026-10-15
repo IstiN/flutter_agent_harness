@@ -893,53 +893,120 @@ final class CliConfig {
   /// `off` touches no update host at all.
   final AutoUpdateMode autoUpdate;
 
-  /// Returns a copy with [entries] as the custom-providers list; every
-  /// other field carries over. [saveCliConfig] uses it for its
-  /// merge-before-write union (issue #221) — keep this field list in sync
-  /// with the constructor when a section is added.
-  CliConfig withCustomProviders(List<CustomProviderEntry> entries) {
+  /// Returns a copy with the given fields replaced; every omitted field
+  /// carries over (null = keep). The base for the boot's `persistConfig`
+  /// save (gh-1572): the loaded config is the base, only the session-live
+  /// overlays are passed, so a save can never reset a section the caller
+  /// did not mention. Nullable sections model absence as null — a
+  /// `copyWith` cannot CLEAR one (pass the parsed value or keep it).
+  CliConfig copyWith({
+    String? providerKind,
+    String? modelId,
+    String? baseUrl,
+    String? mode,
+    String? approvalMode,
+    List<String>? allowedTools,
+    Map<String, String>? promptOverrides,
+    ModelRolesConfig? modelRoles,
+    TtsrConfig? ttsr,
+    int? contextWindowCap,
+    StuckToolConfig? stuckTool,
+    String? agentLoadMode,
+    List<CustomProviderEntry>? customProviders,
+    ModelsConfig? models,
+    McpConfig? mcp,
+    A2aConfig? a2a,
+    ProviderTimeoutsOverride? providerTimeouts,
+    SkillsAccess? skillsAccess,
+    bool? skillsDisableShellExecution,
+    bool? skillsLiveRediscovery,
+    Map<String, bool>? skillToggles,
+    MemoryConfig? memory,
+    FabricConfig? fabric,
+    CubeSettings? cube,
+    ToolsConfig? tools,
+    RedactionConfig? redact,
+    SpillsConfig? spills,
+    CompactionEngine? compactionEngine,
+    int? compactionJudgeBudgetSeconds,
+    bool? wireDump,
+    ImageRegistryConfig? images,
+    String? agentMode,
+    bool? misuseBreaker,
+    SubagentsConfig? subagents,
+    WaitingConfig? waiting,
+    JobsConfig? jobs,
+    HeadlessConfig? headless,
+    PowerAssertionLevel? powerSleepPrevention,
+    PowerAssertionHold? powerHold,
+    QuotaSection? quota,
+    String? tuiTheme,
+    bool? tuiClassic,
+    StatusLineConfig? statusLine,
+    LinksConfig? links,
+    bool? streamThinking,
+    AutoUpdateMode? autoUpdate,
+  }) {
     return CliConfig(
-      providerKind: providerKind,
-      modelId: modelId,
-      baseUrl: baseUrl,
-      mode: mode,
-      approvalMode: approvalMode,
-      allowedTools: allowedTools,
-      promptOverrides: promptOverrides,
-      modelRoles: modelRoles,
-      ttsr: ttsr,
-      customProviders: entries,
-      models: models,
-      mcp: mcp,
-      a2a: a2a,
-      providerTimeouts: providerTimeouts,
-      skillsAccess: skillsAccess,
-      skillsDisableShellExecution: skillsDisableShellExecution,
-      skillsLiveRediscovery: skillsLiveRediscovery,
-      skillToggles: skillToggles,
-      memory: memory,
-      fabric: fabric,
-      cube: cube,
-      tools: tools,
-      redact: redact,
-      compactionEngine: compactionEngine,
-      compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
-      wireDump: wireDump,
-      images: images,
-      contextWindowCap: contextWindowCap,
-      stuckTool: stuckTool,
-      agentLoadMode: agentLoadMode,
-      powerSleepPrevention: powerSleepPrevention,
-      powerHold: powerHold,
-      quota: quota,
-      tuiTheme: tuiTheme,
-      tuiClassic: tuiClassic,
-      statusLine: statusLine,
-      links: links,
-      headless: headless,
-      autoUpdate: autoUpdate,
+      providerKind: providerKind ?? this.providerKind,
+      modelId: modelId ?? this.modelId,
+      baseUrl: baseUrl ?? this.baseUrl,
+      mode: mode ?? this.mode,
+      approvalMode: approvalMode ?? this.approvalMode,
+      allowedTools: allowedTools ?? this.allowedTools,
+      promptOverrides: promptOverrides ?? this.promptOverrides,
+      modelRoles: modelRoles ?? this.modelRoles,
+      ttsr: ttsr ?? this.ttsr,
+      contextWindowCap: contextWindowCap ?? this.contextWindowCap,
+      stuckTool: stuckTool ?? this.stuckTool,
+      agentLoadMode: agentLoadMode ?? this.agentLoadMode,
+      customProviders: customProviders ?? this.customProviders,
+      models: models ?? this.models,
+      mcp: mcp ?? this.mcp,
+      a2a: a2a ?? this.a2a,
+      providerTimeouts: providerTimeouts ?? this.providerTimeouts,
+      skillsAccess: skillsAccess ?? this.skillsAccess,
+      skillsDisableShellExecution:
+          skillsDisableShellExecution ?? this.skillsDisableShellExecution,
+      skillsLiveRediscovery:
+          skillsLiveRediscovery ?? this.skillsLiveRediscovery,
+      skillToggles: skillToggles ?? this.skillToggles,
+      memory: memory ?? this.memory,
+      fabric: fabric ?? this.fabric,
+      cube: cube ?? this.cube,
+      tools: tools ?? this.tools,
+      redact: redact ?? this.redact,
+      spills: spills ?? this.spills,
+      compactionEngine: compactionEngine ?? this.compactionEngine,
+      compactionJudgeBudgetSeconds:
+          compactionJudgeBudgetSeconds ?? this.compactionJudgeBudgetSeconds,
+      wireDump: wireDump ?? this.wireDump,
+      images: images ?? this.images,
+      agentMode: agentMode ?? this.agentMode,
+      misuseBreaker: misuseBreaker ?? this.misuseBreaker,
+      subagents: subagents ?? this.subagents,
+      waiting: waiting ?? this.waiting,
+      jobs: jobs ?? this.jobs,
+      headless: headless ?? this.headless,
+      powerSleepPrevention: powerSleepPrevention ?? this.powerSleepPrevention,
+      powerHold: powerHold ?? this.powerHold,
+      quota: quota ?? this.quota,
+      tuiTheme: tuiTheme ?? this.tuiTheme,
+      tuiClassic: tuiClassic ?? this.tuiClassic,
+      statusLine: statusLine ?? this.statusLine,
+      links: links ?? this.links,
+      streamThinking: streamThinking ?? this.streamThinking,
+      autoUpdate: autoUpdate ?? this.autoUpdate,
     );
   }
+
+  /// Returns a copy with [entries] as the custom-providers list; every
+  /// other field carries over. [saveCliConfig] uses it for its
+  /// merge-before-write union (issue #221). A [copyWith] delegation, so
+  /// the field list can never drift from the constructor again (the old
+  /// hand-rolled copy silently dropped whole sections — gh-1572).
+  CliConfig withCustomProviders(List<CustomProviderEntry> entries) =>
+      copyWith(customProviders: entries);
 
   String toYaml() {
     final buffer = StringBuffer()
@@ -1020,6 +1087,7 @@ final class CliConfig {
     buffer.write(_compactionYaml());
     if (wireDump) buffer.write('trajectory:\n  wireDump: true\n');
     if (images != null) buffer.write(_imagesYaml());
+    buffer.write(_spillsYaml());
     buffer.write(_agentSectionYaml());
     // The subagents heartbeat section (issue #383), only when explicitly
     // configured; defaults are never written so the file stays minimal.
@@ -1042,13 +1110,14 @@ final class CliConfig {
   String _outputYaml() =>
       streamThinking ? 'output:\n  streamThinking: true\n' : '';
 
-  /// The `agent:` section, only when a cap, a load mode, or a stuck-tool
-  /// config is persisted; defaults are never written so the file stays
-  /// minimal.
+  /// The `agent:` section, only when a cap, a load mode, a stuck-tool
+  /// config, or the misuse-breaker kill switch is persisted; defaults are
+  /// never written so the file stays minimal.
   String _agentSectionYaml() {
     final stuckYaml = _stuckToolYaml();
     if (contextWindowCap == null &&
         agentLoadMode == null &&
+        misuseBreaker &&
         stuckYaml.isEmpty) {
       return '';
     }
@@ -1058,6 +1127,9 @@ final class CliConfig {
     }
     if (agentLoadMode != null) {
       section.write('  mode: $agentLoadMode\n');
+    }
+    if (!misuseBreaker) {
+      section.write('  misuseBreaker: false\n');
     }
     section.write(stuckYaml);
     return section.toString();
@@ -1250,6 +1322,12 @@ final class CliConfig {
     }
     return buffer.toString();
   }
+
+  /// The `spills:` section (issue #678), only when explicitly
+  /// configured; defaults are never written so the file stays minimal
+  /// (gh-1572: the emitter used to be unable to render the section at
+  /// all, so every save dropped it).
+  String _spillsYaml() => spills?.toYaml() ?? '';
 
   String _allowedToolsYaml() {
     if (allowedTools.isEmpty) return 'allowedTools: []\n';
@@ -1634,8 +1712,13 @@ Future<void> saveCliConfig(String homeDir, CliConfig config) async {
   await _serializedConfigWrite(file.path, () async {
     final diskText = file.existsSync() ? file.readAsStringSync() : '';
     final merged = _mergeWithOnDisk(file, config, diskText);
+    final finalText = _preserveDiskSections(diskText, merged.toYaml());
+    // gh-1572: boot calls the save unconditionally — an unchanged save
+    // must not touch the file (no mtime churn, no canonicalizing rewrite
+    // when the emitter already matches the disk, no writer race noise).
+    if (finalText == diskText) return;
     final tmp = File('${file.path}.tmp.$pid.${_configTmpCounter++}');
-    await tmp.writeAsString(_preserveDiskSections(diskText, merged.toYaml()));
+    await tmp.writeAsString(finalText);
     try {
       await tmp.rename(file.path);
     } on FileSystemException {
@@ -1682,6 +1765,32 @@ const _diskPreservedSections = {
   // `streamThinking: true`; a hand-written block (the default-false
   // form, comments, future keys) survives a save untouched.
   'output',
+  // gh-1572: the sections the boot's persistConfig used to drop — every
+  // known top-level key is backstopped, so a save can never silently
+  // delete one. `waiting:` has no typed renderer at all (its raw block
+  // is the only faithful form, like `memory:`/`a2a:`); the rest render
+  // when the caller carries them — caller wins wherever it rendered.
+  'spills',
+  'subagents',
+  'waiting',
+  'jobs',
+  'headless',
+  'agent',
+  'quota',
+  'tui',
+  'trajectory',
+  // The power section (issues #325/#326) and the `auto_update` scalar
+  // (issue #1377): known top-level keys the emitter writes only when
+  // non-default — a hand-written block survives a save from a config
+  // that does not carry them.
+  'power',
+  'auto_update',
+  // The main-model provider queue (issue #418): a top-level section the
+  // emitter can NEVER render (no CliConfig field — the queue resolver in
+  // startup.dart reads it straight from the yaml), so without the
+  // backstop any save silently deleted the user's queue. Raw-block
+  // survival, like `waiting:`/`memory:`.
+  'providersQueue',
 };
 
 /// Re-attaches the [_diskPreservedSections] blocks of [diskText] to
