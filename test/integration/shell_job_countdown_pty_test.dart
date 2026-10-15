@@ -58,6 +58,9 @@ final _turns = [
 /// parens carry the RUNNING count — no done/lost noise on the live line).
 const _allRunning = 'Background jobs (10)';
 
+/// The drained collapsed board row: all ten settled, nothing left running.
+const _allDrained = 'Background jobs (10) · 0 running · 10 done · 0 lost';
+
 /// One settle notice per finished job (`[bash] sh-… exited(code)`); exactly
 /// ten of these prove every command started AND finished — the proof set
 /// lives in the harness as [shellJobSettleNotice] / `settledJobNumbers`
@@ -181,12 +184,12 @@ void main() {
     // exact row can appear only after the board itself has drained
     // (issue #1365).
     final drainedScreen = await harness.waitForScreen(
-      'Background jobs (10) · 0 running · 10 done · 0 lost',
+      _allDrained,
       timeout: const Duration(seconds: 30),
     );
     expect(
       drainedScreen,
-      contains('Background jobs (10) · 0 running · 10 done · 0 lost'),
+      contains(_allDrained),
       reason:
           'the settled collapsed turn hands ONE terminal summary '
           'card to the transcript, drained:\n$drainedScreen',
