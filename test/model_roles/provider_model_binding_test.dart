@@ -378,6 +378,85 @@ void main() {
       expect(plain, equals(same));
       expect(plain.hashCode, same.hashCode);
     });
+
+    // gh-1624 review r2: the verdict's scope is "endpoints that CARRY a
+    // dialect verdict" — the three family-exclusive canonical endpoints —
+    // not "any known catalog endpoint". On a ROUTER the `vendor/` prefix
+    // is a routing key exactly like on a translating proxy (OpenRouter's
+    // canonical ids ARE `anthropic/claude-*`, `google/gemini-*`), so the
+    // mismatch degrades to a warning there too.
+    test('review: a prefix mismatch on a known ROUTER endpoint warns, '
+        'never exit 64 (OpenRouter canonical id format)', () {
+      final claude = ProviderModelBinding.resolve(
+        providerKind: 'openai-completions',
+        recordName: 'openrouter',
+        modelId: 'anthropic/claude-3.5-sonnet',
+        provenance: BindingProvenance.env,
+      );
+      expect(claude.providerKind, 'openai-completions');
+      expect(claude.baseUrl, 'https://openrouter.ai/api/v1');
+      expect(claude.warnings, hasLength(1));
+      expect(
+        claude.warnings.single,
+        allOf(
+          contains('anthropic/claude-3.5-sonnet'),
+          contains('"anthropic"'),
+          contains('routing key'),
+        ),
+      );
+      final gemini = ProviderModelBinding.resolve(
+        providerKind: 'openai-completions',
+        recordName: 'openrouter',
+        modelId: 'google/gemini-2.0-flash',
+        provenance: BindingProvenance.queue,
+      );
+      expect(gemini.warnings, hasLength(1));
+      expect(gemini.warnings.single, contains('google/gemini-2.0-flash'));
+    });
+
+    test('review: a prefix mismatch on the family-exclusive vendor '
+        'endpoints stays fatal (both directions)', () {
+      // anthropic-prefixed id on the openai record's own endpoint: the
+      // catalog verdict stands, the boot dies naming both sides.
+      expect(
+        () => ProviderModelBinding.resolve(
+          providerKind: 'openai',
+          modelId: 'anthropic/claude-3.5-sonnet',
+          provenance: BindingProvenance.env,
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('anthropic/claude-3.5-sonnet'),
+              contains('api.openai.com'),
+            ),
+          ),
+        ),
+      );
+      // google-prefixed id on the anthropic record's own endpoint.
+      expect(
+        () => ProviderModelBinding.resolve(
+          providerKind: 'anthropic',
+          modelId: 'google/gemini-2.0-flash',
+          provenance: BindingProvenance.env,
+        ),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+
+    test('review: warnings is pinned unmodifiable (identity-class '
+        'invariant)', () {
+      final binding = ProviderModelBinding.resolve(
+        providerKind: 'anthropic',
+        modelId: 'zai/glm-5.3',
+        baseUrl: 'http://192.168.1.23:8080/anthropic',
+        provenance: BindingProvenance.env,
+      );
+      expect(binding.warnings, isNotEmpty);
+      expect(() => binding.warnings.add('nope'), throwsUnsupportedError);
+    });
   });
   group('ProviderModelBinding.resolve — endpoint-shared wires (M5)', () {
     test('openai-completions without baseUrl or record is rejected', () {

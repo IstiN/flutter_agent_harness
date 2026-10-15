@@ -170,12 +170,17 @@ final _timeoutPatterns = [
 ///
 /// Entries with no configured key are SKIPPED (the roles precedent) and
 /// reported in [skipped]; a queue that skips everything throws
-/// [ConfigException].
+/// [ConfigException]. Entries whose binding resolves with WARNINGS
+/// (gh-1624: an unverified vendor-prefix dialect mismatch on an endpoint
+/// that carries no verdict) are chained, and the render-ready warning
+/// lines are emitted to [warnings] when given — a host that ignores the
+/// channel lets the rider go silent (gh-1624 review r2).
 List<ChainEntry> buildProviderQueueChain(
   List<ProviderQueueEntry> entries, {
   required Map<String, String> secrets,
   StreamFunction Function(String kind, String apiKey)? streamFactory,
   List<String>? skipped,
+  List<String>? warnings,
 }) {
   final skipped_ = skipped ?? <String>[];
   final factory = streamFactory ?? providerStreamFunction;
@@ -205,6 +210,13 @@ List<ChainEntry> buildProviderQueueChain(
       );
     } on ConfigException catch (error) {
       throw ConfigException('queue entry ${entry.label}: ${error.message}');
+    }
+    // gh-1624 review r2: the entry's binding can carry an unverified
+    // mismatch warning (private/router endpoint, foreign-dialect prefix).
+    // The queue lane replaces main-model resolution — its warnings say
+    // themselves on the same channel discipline as the skipped entries.
+    for (final warning in binding.warnings) {
+      warnings?.add('warning: binding — ${entry.label}: $warning');
     }
     final stack = collectKeyStack(secrets, keyEnv);
     if (stack.isEmpty) {
@@ -264,14 +276,23 @@ final class ProviderQueueRuntime {
     Future<bool> Function(Duration delay, CancelToken? cancelToken)? sleeper,
     void Function(FallbackNotice notice)? onNotice,
     QuotaFeed? quotaFeed,
+    void Function(String line)? onBindingWarning,
   }) {
     final entries = resolution.entries;
     final state = ProviderQueueState();
+    // gh-1624 review r2: the chain's binding warnings (unverified
+    // dialect mismatches on private/router endpoints) must not die in
+    // the builder — hosts render them on the boot/reload notice channel.
+    final bindingWarnings = <String>[];
     final chain = buildProviderQueueChain(
       entries,
       secrets: secrets,
       streamFactory: streamFactory,
+      warnings: bindingWarnings,
     );
+    for (final line in bindingWarnings) {
+      onBindingWarning?.call(line);
+    }
     final streamFunction = FallbackStreamFunction(
       entries: chain,
       policy: policy,

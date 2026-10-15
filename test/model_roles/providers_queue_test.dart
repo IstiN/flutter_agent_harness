@@ -679,6 +679,75 @@ void main() {
         throwsA(isA<ConfigException>()),
       );
     });
+
+    // gh-1624 review r2: a queue entry whose vendor prefix names another
+    // dialect stops exit-64ing on a private endpoint (the PR fix) but must
+    // not ride SILENTLY either — the chain builder emits the binding's
+    // warnings on the same out-channel pattern as [skipped].
+    test('a queue entry with a foreign-dialect prefix on a private '
+        'endpoint rides LOUD: the chain emits the binding warnings '
+        '(gh-1624 review r2)', () {
+      final warnings = <String>[];
+      final chain = buildProviderQueueChain(
+        [
+          _entry(
+            'anthropic',
+            'zai/glm-5.3',
+            baseUrl: 'http://192.168.1.23:8080/anthropic',
+          ),
+        ],
+        secrets: _secrets(),
+        warnings: warnings,
+      );
+      expect(chain, hasLength(1));
+      expect(warnings, hasLength(1));
+      expect(
+        warnings.single,
+        allOf(
+          contains('anthropic/zai/glm-5.3'),
+          contains('zai/glm-5.3'),
+          contains('routing key'),
+        ),
+      );
+    });
+
+    test('a quiet entry emits no binding warnings (channel stays empty)',
+        () {
+      final warnings = <String>[];
+      buildProviderQueueChain(
+        [_entry('anthropic', 'claude-sonnet-4-5')],
+        secrets: _secrets(),
+        warnings: warnings,
+      );
+      expect(warnings, isEmpty);
+    });
+  });
+
+  // gh-1624 review r2: the runtime build forwards the chain's binding
+  // warnings so hosts (boot, REPL queue reload) can render them — the
+  // queue lane's mismatch never rides silently.
+  group('ProviderQueueRuntime.build — binding warning surfacing', () {
+    test('build forwards the chain\'s binding warnings to onBindingWarning',
+        () {
+      final lines = <String>[];
+      ProviderQueueRuntime.build(
+        ProviderQueueResolution(
+          scope: ProviderQueueScope.env,
+          entries: [
+            _entry(
+              'anthropic',
+              'zai/glm-5.3',
+              baseUrl: 'http://192.168.1.23:8080/anthropic',
+            ),
+          ],
+          notices: const [],
+        ),
+        secrets: _secrets(),
+        onBindingWarning: lines.add,
+      );
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('zai/glm-5.3'));
+    });
   });
 
   group('ProviderQueueRuntime failover (UT-18..26, IT-37)', () {
