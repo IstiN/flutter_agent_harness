@@ -110,7 +110,12 @@ void main() {
         .whereType<File>()) {
       final p = entity.path.replaceAll('\\', '/');
       if (browserExtBuildArtifacts.any(p.startsWith)) continue;
-      if (remoteCodeMarker.hasMatch(entity.readAsStringSync())) {
+      // Bytes first, then a MALFORMED-tolerant decode: the tree carries
+      // PNG icons — a strict utf-8 decode throws and kills the scan
+      // mid-walk, and RegExp has no byte-pattern overload in Dart.
+      if (remoteCodeMarker.hasMatch(
+        utf8.decode(entity.readAsBytesSync(), allowMalformed: true),
+      )) {
         offenders.add(p);
       }
     }
@@ -244,9 +249,28 @@ void main() {
     final staged = index.readAsStringSync();
     expect(staged, isNot(contains('jsdelivr')),
         reason: 'AC1: the staged extension index must not carry CDN URLs');
-    expect(staged, contains('vendor/'),
-        reason: 'the on-device engine loaders must resolve into the '
-            'package-local vendor dir (AC2)');
+    expect(
+      staged,
+      allOf(
+        contains('vendor_loader_webllm.js'),
+        contains('vendor_loader_transformers.js'),
+        contains('vendor_loader_litert.js'),
+      ),
+      reason: 'the three CDN loader tags are replaced by vendor loader '
+          'tags (AC2)',
+    );
+    for (final loader in const [
+      'vendor_loader_webllm.js',
+      'vendor_loader_transformers.js',
+      'vendor_loader_litert.js',
+    ]) {
+      final body = File('${appDir.path}/$loader').readAsStringSync();
+      expect(body, contains('../../vendor/'),
+          reason: '$loader must import the engine from the package-local '
+              'vendor dir (AC2)');
+      expect(body, isNot(contains('jsdelivr')),
+          reason: '$loader must not carry CDN URLs (AC1)');
+    }
     expect(staged, isNot(contains('ondevice_stub.js')),
         reason: 'gh-1630: the engines are vendored — the CSP-failure stub '
             'that disabled them must be gone');
