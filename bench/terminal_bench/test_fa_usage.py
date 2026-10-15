@@ -22,6 +22,8 @@ import tempfile
 import types
 import unittest
 import unittest.mock
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 
 _BENCH = Path(__file__).resolve().parent.parent
@@ -330,9 +332,15 @@ class FaAgentTest(unittest.TestCase):
                     return 1, b""
 
         agent = self.legacy_agent()
-        result = agent.perform_task("do it", BrokenSession())
+        # gh-1638 AC2: the fail-soft warning is pinned AND captured — the
+        # suite's own log stays warning-clean while the test still proves
+        # the fold degrades to zeros instead of failing the trial.
+        stderr = StringIO()
+        with redirect_stderr(stderr):
+            result = agent.perform_task("do it", BrokenSession())
         self.assertEqual(result.total_input_tokens, 0)
         self.assertEqual(result.total_output_tokens, 0)
+        self.assertIn("session usage extraction failed", stderr.getvalue())
 
     def test_installation_failure_result_untouched(self):
         original = self.AgentResult(

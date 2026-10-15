@@ -147,6 +147,15 @@ def _empty_tar_bytes() -> bytes:
     return buf.getvalue()
 
 
+# gh-1638 AC2: the stock perform_task sentinel must be AgentResult-SHAPED
+# (failure_mode + token attrs) — the supervised path folds the stock
+# result's token attrs, and a bare str sentinel made the fold warn.
+def _stock_result():
+    return types.SimpleNamespace(
+        failure_mode=None, total_input_tokens=0, total_output_tokens=0,
+    )
+
+
 class FakeContainer:
     """exec_run surface: byte counter, pane buffer, trace file, snapshot."""
 
@@ -228,7 +237,7 @@ class Round3AdapterTest(unittest.TestCase):
             for _ in range(20):
                 time.sleep(0.03)
                 session.container.pane.append("x" * 100)
-            return "stock-result"
+            return _stock_result()
 
         env = clean_env(
             FA_AGENT_TIMEOUT_SEC="0.3",
@@ -236,7 +245,8 @@ class Round3AdapterTest(unittest.TestCase):
             FA_STALL_GAP_SEC="240",
         )
         result, _ = self._run(session, stock, logging_dir, env)
-        self.assertEqual(result, "stock-result")
+        self.assertIsNone(result.failure_mode)
+        self.assertEqual(result.total_input_tokens, 0)
         self.assertFalse(session.interrupted.is_set())
         audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
         self.assertEqual(audit["policy"], "progress-watch")
@@ -297,7 +307,7 @@ class Round3AdapterTest(unittest.TestCase):
             for _ in range(8):
                 time.sleep(0.03)
                 session.container.pane.append("x" * 10)
-            return "stock-result"
+            return _stock_result()
 
         env = clean_env(
             FA_AGENT_TIMEOUT_SEC="0.2",
@@ -335,7 +345,7 @@ class Round3AdapterTest(unittest.TestCase):
             time.sleep(0.35)
             session.container.pane.append(full[20:])
             time.sleep(0.1)
-            return "stock-result"
+            return _stock_result()
 
         env = clean_env(
             FA_AGENT_TIMEOUT_SEC="0.5",
@@ -359,7 +369,7 @@ class Round3AdapterTest(unittest.TestCase):
 
         def stock(session):
             time.sleep(0.05)
-            return "stock-result"
+            return _stock_result()
 
         env = clean_env(
             FA_AGENT_TIMEOUT_SEC="0.5",
@@ -378,11 +388,12 @@ class Round3AdapterTest(unittest.TestCase):
 
         def stock(session):
             time.sleep(0.1)
-            return "stock-result"
+            return _stock_result()
 
         env = clean_env(FA_AGENT_TIMEOUT_SEC="0.5", FA_STALL_GAP_SEC="240")
         result, stderr = self._run(session, stock, logging_dir, env)
-        self.assertEqual(result, "stock-result")
+        self.assertIsNone(result.failure_mode)
+        self.assertEqual(result.total_input_tokens, 0)
         guard = json.loads((logging_dir / "export-guard.json").read_text())
         self.assertEqual(guard["session_records"], 1)
         self.assertEqual(guard["export_files"], 0)
