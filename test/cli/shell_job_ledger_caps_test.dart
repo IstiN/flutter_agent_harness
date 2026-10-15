@@ -32,8 +32,7 @@ void main() {
       expect(records.last['id'], 'sh-${shellJobBoardPersistedCardCap + 20}');
     });
 
-    test('a rehydrated board from capped records is still terminal-safe',
-        () {
+    test('a rehydrated board from capped records is still terminal-safe', () {
       final board = ShellJobBoard();
       for (var i = 1; i <= shellJobBoardPersistedCardCap + 5; i++) {
         board.start(_card('sh-$i'));
@@ -57,10 +56,11 @@ void main() {
           detail: huge,
         );
       final records = board.toRecords();
-      expect((records.single['label'] as String).length,
-          ledgerTextCapChars);
-      expect((records.single['detail'] as String).length,
-          lessThanOrEqualTo(ledgerTextCapChars));
+      expect((records.single['label'] as String).length, ledgerTextCapChars);
+      expect(
+        (records.single['detail'] as String).length,
+        lessThanOrEqualTo(ledgerTextCapChars),
+      );
       // The LIVE board keeps the full label for rendering — the cap is
       // the persisted record's alone.
       expect(board.allCards.single.label.length, huge.length);
@@ -97,6 +97,159 @@ void main() {
       deduper.confirmPersisted();
       deduper.reset();
       expect(deduper.shouldPersist('snap'), isTrue);
+    });
+  });
+
+  group('LedgerSnapshotThrottle (gh-1590)', () {
+    test('the first snapshot persists; N mutations inside the window '
+        'coalesce behind the trailing flush', () {
+      var now = DateTime(2026, 10, 13, 12);
+      final throttle = LedgerSnapshotThrottle(
+        minInterval: const Duration(seconds: 30),
+        clock: () => now,
+      );
+      expect(
+        throttle.shouldPersistNow(),
+        isTrue,
+        reason: 'a never-persisted ledger appends its first snapshot',
+      );
+      throttle.confirmPersisted();
+      // gh-1590 acceptance shape: N shell-job state changes inside the
+      // window must leave ONE snapshot, not N — the deduper only
+      // suppressed byte-identical payloads, so 1,635 distinct board
+      // states once appended 1,635 records.
+      for (var i = 1; i <= 25; i++) {
+        now = now.add(const Duration(seconds: 1));
+        expect(
+          throttle.shouldPersistNow(),
+          isFalse,
+          reason: 'mutation $i inside the window coalesces',
+        );
+      }
+      expect(
+        throttle.hasPending,
+        isTrue,
+        reason: 'the coalesced state reserves a trailing flush',
+      );
+    });
+
+    test('the trailing flush becomes due one window after the first '
+        'refused mutation, then the window closes again', () {
+      var now = DateTime(2026, 10, 13, 12);
+      final throttle = LedgerSnapshotThrottle(
+        minInterval: const Duration(seconds: 30),
+        clock: () => now,
+      );
+      throttle.shouldPersistNow();
+      throttle.confirmPersisted();
+      now = now.add(const Duration(seconds: 10));
+      expect(throttle.shouldPersistNow(), isFalse);
+      // Not due yet — the pending mutation is only 10s old.
+      now = now.add(const Duration(seconds: 10));
+      expect(throttle.poll(), isFalse);
+      // One full window after the refusal (t=10 → t=40) the trailing
+      // flush may land.
+      now = now.add(const Duration(seconds: 20));
+      expect(throttle.poll(), isTrue);
+      throttle.confirmPersisted();
+      expect(throttle.poll(), isFalse);
+      expect(throttle.hasPending, isFalse);
+      // The window closed again with the flush.
+      expect(throttle.shouldPersistNow(), isFalse);
+    });
+
+    test('a mutation after a full open window persists immediately '
+        '(steady state ≈ one snapshot per window)', () {
+      var now = DateTime(2026, 10, 13, 12);
+      final throttle = LedgerSnapshotThrottle(
+        minInterval: const Duration(seconds: 30),
+        clock: () => now,
+      );
+      expect(throttle.shouldPersistNow(), isTrue);
+      throttle.confirmPersisted();
+      now = now.add(const Duration(seconds: 31));
+      expect(
+        throttle.shouldPersistNow(),
+        isTrue,
+        reason:
+            'an idle window re-opens without needing the trailing '
+            'flush',
+      );
+      throttle.confirmPersisted();
+      expect(throttle.hasPending, isFalse);
+    });
+
+    test('reset re-opens the window (fresh session)', () {
+      var now = DateTime(2026, 10, 13, 12);
+      final throttle = LedgerSnapshotThrottle(
+        minInterval: const Duration(seconds: 30),
+        clock: () => now,
+      );
+      throttle.shouldPersistNow();
+      throttle.confirmPersisted();
+      now = now.add(const Duration(seconds: 1));
+      expect(throttle.shouldPersistNow(), isFalse);
+      throttle.reset();
+      expect(
+        throttle.shouldPersistNow(),
+        isTrue,
+        reason:
+            'a rehydrated board persists its first snapshot at '
+            'once — the deduper reset next to it depends on that',
+      );
+    });
+
+    test('a refusal arms the production trailing leg, and its flush '
+        're-owns the window', () async {
+      var fired = 0;
+      late final LedgerSnapshotThrottle throttle;
+      throttle = LedgerSnapshotThrottle(
+        minInterval: const Duration(milliseconds: 40),
+        onFlushDue: () {
+          fired++;
+          // The production wiring persists and confirms from the flush —
+          // the window restarts with the flushed snapshot.
+          throttle.confirmPersisted();
+        },
+      );
+      expect(throttle.shouldPersistNow(), isTrue);
+      throttle.confirmPersisted();
+      // A refusal arms the leg…
+      expect(throttle.shouldPersistNow(), isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(
+        fired,
+        1,
+        reason:
+            'the trailing leg lands the coalesced '
+            'snapshot when the mutations stop',
+      );
+      expect(
+        throttle.hasPending,
+        isFalse,
+        reason: 'the flush consumed the pending reservation',
+      );
+    });
+
+    test('dispose disarms the trailing leg mid-flight', () async {
+      var fired = 0;
+      final throttle = LedgerSnapshotThrottle(
+        minInterval: const Duration(milliseconds: 40),
+        onFlushDue: () => fired++,
+      );
+      expect(throttle.shouldPersistNow(), isTrue);
+      throttle.confirmPersisted();
+      expect(throttle.shouldPersistNow(), isFalse);
+      // The shutdown flush disposes BEFORE the leg can fire.
+      throttle.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(
+        fired,
+        0,
+        reason:
+            'a disposed throttle never fires — the '
+            'shutdown flush replaces it',
+      );
     });
   });
 }

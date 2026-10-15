@@ -271,5 +271,63 @@ void main() {
       final healed = (await fs.readTextFile(path)).getOrThrow();
       expect(healed, contains('"to'));
     });
+
+    test('dry-run projects the bytesAfter the real repair produces '
+        '(gh-1590)', () async {
+      await writeSession([
+        header(),
+        for (var i = 1; i <= 5; i++) message('m$i'),
+        for (var i = 1; i <= 3; i++)
+          custom(
+            'c$i',
+            customType: 'model_request_summary',
+            data: {'pad': 'x' * 4000},
+          ),
+        for (var i = 1; i <= 4; i++)
+          custom(
+            'j$i',
+            customType: 'shell_job_registry',
+            data: {'gen': i, 'pad': 'y' * 2000},
+          ),
+      ]);
+      final dry = await repairSessionLedgers(fs, path, dryRun: true);
+      expect(
+        dry.bytesAfter,
+        lessThan(dry.bytesBefore),
+        reason:
+            'the dry run must show the reduction the repair would '
+            'give — not bytesBefore parroting back (gh-1590: the user '
+            'reads 1.10 GiB → 1.10 GiB and never applies the repair)',
+      );
+      // The dry-run size line reads as a projection, not a no-op.
+      expect(dry.summaryLines().last, contains('(projected)'));
+      // Dropped bytes are accounted per ledger type, and they explain
+      // the whole delta (kept + dropped spans partition the file).
+      final droppedBytes = dry.droppedBytesByType.values.fold<int>(
+        0,
+        (a, b) => a + b,
+      );
+      expect(droppedBytes, greaterThan(0));
+      expect(dry.bytesBefore - dry.bytesAfter, droppedBytes);
+      expect(
+        dry.droppedBytesByType['model_request_summary'],
+        isNotNull,
+        reason: 'the per-type accounting names the dominant ledger',
+      );
+      expect(
+        dry.summaryLines().join('\n'),
+        contains('reclaimed'),
+        reason: 'the dropped-bytes-per-type line is part of the summary',
+      );
+
+      // gh-1590 acceptance: the dry-run bytesAfter equals the real-run
+      // bytesAfter on the same fixture.
+      final real = await repairSessionLedgers(fs, path);
+      expect(real.bytesAfter, dry.bytesAfter);
+      // The real report carries the same byte accounting, and its size
+      // line is NOT a projection.
+      expect(real.droppedBytesByType, dry.droppedBytesByType);
+      expect(real.summaryLines().last, isNot(contains('(projected)')));
+    });
   });
 }
