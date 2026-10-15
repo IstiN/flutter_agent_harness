@@ -45,6 +45,10 @@ Future<void> main(List<String> args) async {
     '--remote-debugging-port=0',
     '--no-first-run',
     '--disable-gpu',
+    // Same Linux flags the dart integration driver uses
+    // (test/browser_ext/chrome_driver.dart): containers disable
+    // unprivileged user namespaces, so the chrome sandbox cannot start.
+    if (Platform.isLinux) ...['--no-sandbox', '--disable-dev-shm-usage'],
     'about:blank',
   ]);
   late final StreamSubscription<String> errSub;
@@ -206,9 +210,13 @@ Future<void> main(List<String> args) async {
 /// key) when present, else of the absolute load path — first 16 bytes,
 /// hex digits mapped 0-9a-f → a-p.
 String extensionIdForPath(String path) {
-  final manifest =
-      jsonDecode(File('$path/manifest.json').readAsStringSync())
-          as Map<String, dynamic>;
+  // The SOURCE manifest carries // comments (Chrome tolerates them; the
+  // packaged copy is stripped strict JSON) — parse with the same
+  // tolerance as scripts/check_cws_compliance.py.
+  final raw = File('$path/manifest.json').readAsStringSync();
+  final manifest = jsonDecode(
+        raw.replaceAll(RegExp(r'^\s*//.*$', multiLine: true), ''),
+      ) as Map<String, dynamic>;
   final key = manifest['key'] as String?;
   final List<int> input = key != null ? base64Decode(key) : utf8.encode(path);
   final digest = sha256.convert(input).bytes;

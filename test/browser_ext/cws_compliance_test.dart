@@ -257,12 +257,35 @@ void main() {
     final appDir = Directory('${tmp.path}/app')..createSync();
     final index = File('${appDir.path}/index.html')
       ..writeAsStringSync(_fixturePanelIndex());
+    // The real flutter build copies the CDN loader modules themselves
+    // into app/ — staging must delete the orphans (remote URLs in their
+    // bodies), keeping unrelated scripts (inline_script_1.js) intact.
+    for (final name in const [
+      'inline_script_1.js',
+      'inline_script_4.js',
+      'inline_script_5.js',
+      'inline_script_6.js',
+    ]) {
+      File('${appDir.path}/$name')
+          .writeAsStringSync('// placeholder for $name\n');
+    }
     final first = Process.runSync('python3', [
       staging.path,
       '--app-dir',
       appDir.path,
     ]);
     expect(first.exitCode, 0, reason: first.stderr);
+    for (final orphan in const [
+      'inline_script_4.js',
+      'inline_script_5.js',
+      'inline_script_6.js',
+    ]) {
+      expect(File('${appDir.path}/$orphan').existsSync(), isFalse,
+          reason: 'the stripped CDN loader module must be deleted from '
+              'the staged copy, not left as dead weight');
+    }
+    expect(File('${appDir.path}/inline_script_1.js').existsSync(), isTrue,
+        reason: 'unrelated scripts must survive staging');
     final staged = index.readAsStringSync();
     expect(staged, isNot(contains('jsdelivr')),
         reason: 'AC1: the staged extension index must not carry CDN URLs');
@@ -330,8 +353,15 @@ String _fixturePanelIndex() => '''
   <script src="inline_script_1.js"></script>
   <script src="webllm_helpers.js"></script>
   <script src="transformers_js_helpers.js"></script>
+  <!-- Mirrors the real flutter_app/web/index.html: each CDN loader tag
+       carries a doc comment that mentions jsdelivr — the staging must
+       strip the comment WITH the tag or the marker scan fails. -->
+  <!-- WebLLM: loaded as an ES module from jsdelivr (on-device LLM). -->
   <script type="module" src="inline_script_4.js"></script>
+  <!-- transformers.js: ES-module import from jsdelivr; wasm assets load
+       from jsdelivr automatically. -->
   <script type="module" src="inline_script_5.js"></script>
+  <!-- LiteRT-LM: awaited ES-module import from jsdelivr. -->
   <script type="module" src="inline_script_6.js"></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
