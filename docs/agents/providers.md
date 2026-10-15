@@ -2,6 +2,37 @@
 
 See [cli.md](cli.md) for the `/settings` hub and CLI flags.
 
+## Translating proxies and the `wire:` override (gh-1624)
+
+The boot-time binding preflight validates model ⇄ dialect ⇄ endpoint
+(`ProviderModelBinding.resolve`). Both dialect verdicts fire ONLY on the
+three family-exclusive vendor endpoints (api.anthropic.com,
+api.openai.com, generativelanguage) — the vendor-prefix verdict
+(`zai/glm-5.3` naming the `zai` record) and the family verdict
+(`claude-*`/`gpt-*`/`gemini-*` ids) alike; that is where a dialect
+mismatch fails the boot. ROUTERS (OpenRouter, Copilot, DIAL, kimi) never
+carry a verdict — they serve many families and route `vendor/` prefixes
+as keys (OpenRouter's canonical ids ARE `anthropic/claude-*`), so a
+`claude-*` id on an openai-completions binding over OpenRouter passes
+the family check and a foreign prefix boots with a warning. On
+unknown/private endpoints the `vendor/` prefix is likewise treated as a
+routing key, not a dialect declaration: a mismatch boots with a
+`warning: binding — …` line instead of exit 64. Translating proxies
+(bifrost, LiteLLM, one-api — one host serving several dialect paths such
+as `/anthropic` and `/v1`) need no extra configuration since gh-1624.
+The warning is rendered wherever the binding boots: the `FA_PROVIDER_*`
+notice, the provider queue (per entry, at boot and `/provider queue
+test`), and the `--model`/`--base-url` flag revalidation.
+
+`wire:` (the `FA_PROVIDER_CONFIG` key; `ProviderModelBinding.resolve`
+takes it as `wire:`) declares the adapter kind the endpoint speaks,
+overriding the provider record's own kind. Caveat: the override engages
+ONLY when the declared wire DIFFERS from the record's own kind —
+`record anthropic + wire: anthropic` changes nothing and the checks
+still run. The override silences the dialect checks entirely (the caller
+asserts the endpoint speaks it) and is echoed in every binding report
+(`wire override:`) so a silenced check is never invisible.
+
 ## Provider catalog (CLI auth flows)
 
 | Provider | Auth | Endpoint notes | Models list |
