@@ -1,0 +1,199 @@
+{
+  "_comment": [
+    "gh-1630 I2 — the vendor supply chain lock: every artifact the",
+    "extension package carries is pinned to a URL + post-transform",
+    "SHA-256. scripts/fetch_vendor_assets.sh fetches ONLY from this",
+    "lock, applies the declared `replacements` (each must occur exactly",
+    "once — that is how remote constants are stripped out of vendored",
+    "bundles, e.g. pyodide's CDN default indexURL), verifies the",
+    "checksum and fails the build loud on any mismatch. Binaries are",
+    "build-time fetched, never committed (browser_ext/vendor/ is",
+    "gitignored); the PACKAGE carries them, the repo carries the lock."
+  ],
+  "lock_version": 1,
+  "engines": {
+    "quickjs": {
+      "version": "0.31.0",
+      "files": [
+        {
+          "name": "interpreters/index.global.js",
+          "url": "https://cdn.jsdelivr.net/npm/quickjs-emscripten@0.31.0/dist/index.global.js",
+          "sha256": "326c4de4f53ddd7d1cc8b9bc8189d1c3b68906315e5439141f0409d9c01ef99a"
+        },
+        {
+          "name": "interpreters/asyncify/emscripten-module.browser.mjs",
+          "url": "https://cdn.jsdelivr.net/npm/@jitl/quickjs-wasmfile-release-asyncify@0.31.0/dist/emscripten-module.browser.mjs",
+          "sha256": "45d2ce579cc5579179ed6f48bcd6372d0f2dbfeb65bf9fe3077bbb1db0762bc3"
+        },
+        {
+          "name": "interpreters/asyncify/emscripten-module.wasm",
+          "url": "https://cdn.jsdelivr.net/npm/@jitl/quickjs-wasmfile-release-asyncify@0.31.0/dist/emscripten-module.wasm",
+          "sha256": "98d27ff5e8babbca4b28a7b9242f554cd51e758498d90b00638a4b1b36b6f463"
+        },
+        {
+          "name": "interpreters/asyncify/ffi.mjs",
+          "url": "https://cdn.jsdelivr.net/npm/@jitl/quickjs-wasmfile-release-asyncify@0.31.0/dist/ffi.mjs",
+          "sha256": "19f2837ec473e9f023d3988c5a141a0b9f806ca453fdf53fd8540539aa2a062b"
+        }
+      ]
+    },
+    "pyodide": {
+      "version": "0.26.4",
+      "files": [
+        {
+          "name": "interpreters/pyodide.js",
+          "url": "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js",
+          "sha256": "4ca912d6a4c63813b007ff0e8666c914ad891b1702262321a9ec7639828699c7",
+          "replacements": [
+            [
+              "https://cdn.jsdelivr.net/pyodide/v${d.version}/full/",
+              "../../vendor/interpreters/"
+            ]
+          ]
+        },
+        {
+          "name": "interpreters/pyodide.asm.js",
+          "url": "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.asm.js",
+          "sha256": "919560652ed3dad3707cb3a394785da1e046fb13dc0defa162058ff230cb7eed"
+        },
+        {
+          "name": "interpreters/pyodide.asm.wasm",
+          "url": "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.asm.wasm",
+          "sha256": "b7e66a19427a55010ac3367c1b6c64b893f9826f783412945fdf0c3337f3bc94"
+        },
+        {
+          "name": "interpreters/python_stdlib.zip",
+          "url": "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/python_stdlib.zip",
+          "sha256": "72894522b791858b9d613ac786b951d8b5094035dcf376313ea24a466810f336"
+        },
+        {
+          "name": "interpreters/pyodide-lock.json",
+          "url": "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide-lock.json",
+          "sha256": "cd50b49de944c579045e122fe8628b31f9ce446379f032f36c05e273d38766e0"
+        }
+      ]
+    },
+    "sqljs": {
+      "version": "1.14.1",
+      "files": [
+        {
+          "name": "interpreters/sql-wasm.js",
+          "url": "https://cdn.jsdelivr.net/npm/sql.js@1.14.1/dist/sql-wasm.js",
+          "sha256": "77d6435bac506af0e3c59636dce9d22b1b14156348bc327f41a1577f3212360f"
+        },
+        {
+          "name": "interpreters/sql-wasm.wasm",
+          "url": "https://cdn.jsdelivr.net/npm/sql.js@1.14.1/dist/sql-wasm.wasm",
+          "sha256": "438c88f666dc054ce4e9395f80fe9db4218b1a3c379960454880f048a7898aed"
+        }
+      ]
+    },
+    "webllm": {
+      "version": "0.2.84",
+      "files": [
+        {
+          "name": "webllm/0.2.84/webllm.mjs",
+          "url": "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm",
+          "sha256": "ae2f6856c174794bae3dc5288364d0cce80bb0dd576ebaef4b7627c2f7943fa5",
+          "replacements": [
+            [
+              "https://www.jsdelivr.com/using-sri-with-dynamic-files",
+              "vendored jsdelivr +esm bundle (gh-1630)"
+            ]
+          ]
+        }
+      ]
+    },
+    "transformers": {
+      "version": "4.2.0",
+      "files": [
+        {
+          "name": "transformers/4.2.0/transformers.min.js",
+          "url": "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.min.js",
+          "sha256": "457e45a83fbf6fda2ba5f902fcf31415a8aca6b64fb58b04b47c6bb341001278",
+          "replacements": [
+            [
+              "https://cdn.jsdelivr.net/npm/onnxruntime-web@${it.versions.web}/dist/",
+              "../../vendor/transformers/4.2.0/"
+            ]
+          ]
+        },
+        {
+          "name": "transformers/4.2.0/ort-wasm-simd-threaded.wasm",
+          "url": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0-dev.20260416-b7804b056c/dist/ort-wasm-simd-threaded.wasm",
+          "sha256": "f4f290847a4df02d0b93cdbf39b4b0e71acefbe80573e7e6b9342a7abd7b290a"
+        },
+        {
+          "name": "transformers/4.2.0/ort-wasm-simd-threaded.mjs",
+          "url": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0-dev.20260416-b7804b056c/dist/ort-wasm-simd-threaded.mjs",
+          "sha256": "5f2cd914554830762579c372d0211614c1e3f40ab3f6c0cfcf0900343229071d"
+        },
+        {
+          "name": "transformers/4.2.0/ort-wasm-simd-threaded.asyncify.wasm",
+          "url": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0-dev.20260416-b7804b056c/dist/ort-wasm-simd-threaded.asyncify.wasm",
+          "sha256": "e0c0c6d3e73d43b8a249972f8358f845b08cc16fec3c80efafdf8bed40366786"
+        },
+        {
+          "name": "transformers/4.2.0/ort-wasm-simd-threaded.asyncify.mjs",
+          "url": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0-dev.20260416-b7804b056c/dist/ort-wasm-simd-threaded.asyncify.mjs",
+          "sha256": "5959c6733039619c9af710d8e1bae8d6e84402787990637be987c2b1bd6c5fa9"
+        }
+      ]
+    },
+    "litert": {
+      "version": "0.12.1",
+      "files": [
+        {
+          "name": "litert/0.12.1/litert.mjs",
+          "url": "https://cdn.jsdelivr.net/npm/@litert-lm/core@0.12.1/+esm",
+          "sha256": "97cb73e25c024b776a9b07ef6398f73204adbe614d5715ba8212646f2a3ce2dd",
+          "replacements": [
+            [
+              "https://www.jsdelivr.com/using-sri-with-dynamic-files",
+              "vendored jsdelivr +esm bundle (gh-1630)"
+            ],
+            [
+              "from\"/npm/@litertjs/wasm-utils@2.5.0/+esm\"",
+              "from\"./wasm-utils.mjs\""
+            ],
+            [
+              "\"https://cdn.jsdelivr.net/npm/@litert-lm/core@0.12.1/wasm\"",
+              "\"../../vendor/litert/0.12.1\""
+            ]
+          ]
+        },
+        {
+          "name": "litert/0.12.1/wasm-utils.mjs",
+          "url": "https://cdn.jsdelivr.net/npm/@litertjs/wasm-utils@2.5.0/+esm",
+          "sha256": "3828c2bb619eece3bd7f5af09d85ad0e9475a3890aca033a5e5e027b9915bd53",
+          "replacements": [
+            [
+              "https://www.jsdelivr.com/using-sri-with-dynamic-files",
+              "vendored jsdelivr +esm bundle (gh-1630)"
+            ]
+          ]
+        },
+        {
+          "name": "litert/0.12.1/litertlm_wasm_internal.js",
+          "url": "https://cdn.jsdelivr.net/npm/@litert-lm/core@0.12.1/wasm/litertlm_wasm_internal.js",
+          "sha256": "b4c53f9432e9b38f0d7d6f4872b22d1bb1f287d683c8512ea481a92eeaf2acb5"
+        },
+        {
+          "name": "litert/0.12.1/litertlm_wasm_internal.wasm",
+          "url": "https://cdn.jsdelivr.net/npm/@litert-lm/core@0.12.1/wasm/litertlm_wasm_internal.wasm",
+          "sha256": "ef9042c0a81dff1221cd0a50b68d723b9c821cba99561edc314b86deac302e82"
+        },
+        {
+          "name": "litert/0.12.1/litertlm_wasm_compat_internal.js",
+          "url": "https://cdn.jsdelivr.net/npm/@litert-lm/core@0.12.1/wasm/litertlm_wasm_compat_internal.js",
+          "sha256": "e1aa7cf26d231c25017ff64386de4c7ad7d11916aff3e770e87a6f2516b178f9"
+        },
+        {
+          "name": "litert/0.12.1/litertlm_wasm_compat_internal.wasm",
+          "url": "https://cdn.jsdelivr.net/npm/@litert-lm/core@0.12.1/wasm/litertlm_wasm_compat_internal.wasm",
+          "sha256": "eb9dd77f3f1c025149e4605916300b597caa07dd3774f0d3af242ab9fe06ae0b"
+        }
+      ]
+    }
+  }
+}
