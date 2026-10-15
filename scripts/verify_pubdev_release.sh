@@ -119,18 +119,30 @@ fi
 # the newest by version. Fails (non-zero) when the API is unreachable —
 # callers decide whether that is fatal.
 read_published_version() {
-  local acc="" v attempt
+  local acc="" v attempt ok=1
   for attempt in 1 2 3; do
-    v=$(curl -fsS --retry 3 \
-      https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version')
+    if v=$(curl -fsS --retry 3 \
+      https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version'); then
+      ok=0
+    fi
     acc=$(printf '%s\n%s\n' "$acc" "$v" | sed '/^$/d' | sort -V | tail -1)
     [ "$attempt" = 3 ] || sleep "$read_sleep"
   done
+  # gh-1561 rework (review thread 8): a command-substitution subshell does
+  # NOT inherit set -e (inherit_errexit is off), so a failing loop would
+  # silently fall through to the printf — propagating an empty read into
+  # the classification. Return the failure explicitly; callers decide.
+  [ "$ok" -eq 0 ] || return 1
   printf '%s' "$acc"
 }
 
-published=""
-published=$(read_published_version)
+# Top of the leg — the pre-PR inline loop ran in the main shell under
+# set -e: one failed read exited the leg loudly. Preserve that (thread 8):
+# NO data must never classify, and never drive rerun/re-arm recovery.
+published=$(read_published_version) || {
+  echo "::error::pub.dev API unreachable — cannot classify"
+  exit 1
+}
 emit "published=$published"
 echo "pubspec=$pubspec published=$published"
 newest=$(printf '%s\n%s\n' "$pubspec" "$published" | sort -V | tail -1)
@@ -266,7 +278,15 @@ if [ -z "$tag_run" ]; then
     attempt=1
     while [ "$attempt" -le "$registration_reads" ]; do
       sleep "$read_sleep"
-      runs_json=$(fetch_runs)
+      # Same doctrine as the terminal-wait loop below (#1370 review —
+      # gh-1561 rework, thread 9): a transient gh/network failure reads as
+      # «still pending», never kills the leg under set -e mid-self-heal.
+      # The failed read still consumes the attempt.
+      if ! runs_json=$(fetch_runs); then
+        echo "transient gh failure reading the run list (attempt $attempt/$registration_reads)"
+        attempt=$(( attempt + 1 ))
+        continue
+      fi
       tag_run=$(push_run_of "$runs_json")
       [ -n "$tag_run" ] && break
       attempt=$(( attempt + 1 ))
@@ -323,7 +343,7 @@ if [ "$conclusion" = "success" ]; then
   # green, so the start-of-leg read is stale — re-read before any verdict
   # (gh-1561). A blipping API yields an empty read: outcome UNOBSERVED —
   # neutral skip, never a false green and never a false «did not upload».
-  fresh=$(read_published_version)
+  fresh=$(read_published_version) || fresh=""
   if [ -z "$fresh" ]; then
     in_flight "the $tag push run succeeded but the pub.dev API is unreachable — outcome unobserved, the next daily re-verifies"
   fi

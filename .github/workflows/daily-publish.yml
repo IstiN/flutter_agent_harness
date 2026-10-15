@@ -540,21 +540,29 @@ jobs:
       # (gh-1172), the App's push can (the same mechanism ci.yml's release
       # job uses to cut tags). Job-scoped, expires with the job; this job's
       # own GITHUB_TOKEN stays read-scoped (job-level permissions block).
-      # Shape mirrors the validator-proven precedent exactly (ci.yml release
-      # job, the create-github-app-token step): NO `if:` at all — secrets
+      # Shape mirrors the validator-proven precedent (ci.yml release job,
+      # the create-github-app-token step): NO `if:` at all — secrets
       # context in a step-if trips GitHub's workflow validator; and a mint
       # on an unconfigured App (forks, rotation gap) fails, is SWALLOWED by
       # continue-on-error, outputs.token stays empty, and the script's
-      # manual-re-push alarm fires exactly as before this change. The
-      # least-privilege ceiling rides the action's `permissions` input
-      # (contents:write covers the tag re-push), identical to the precedent.
+      # manual-re-push alarm fires exactly as before this change.
+      # Least privilege, verified against the PINNED action (v3.2.0,
+      # bcd2ba49 — review thread 10): the composite `permissions` input
+      # does NOT exist there (action.yml defines only the generated
+      # `permission-*` inputs — GitHub warns `Unexpected input(s)
+      # 'permissions'` and the action never reads it; ci.yml:3980 rides
+      # that warning). The HONORED ceiling is the granular
+      # `permission-contents` input, which the action turns into the mint
+      # request's permissions map: contents:write only — the tag re-push —
+      # instead of the installation's full grant set. Without it the token
+      # inherits every permission the fa-release-bot installation has.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         continue-on-error: true
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permissions: contents:write
+          permission-contents: write
 
       - name: Verify pub.dev serves the pubspec version
         id: check

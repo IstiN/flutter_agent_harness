@@ -150,6 +150,7 @@ case "$cmd" in
         # base fixture when present — the past-grace re-read test (review
         # thread 2) plants a run on the SECOND read.
         cf="$GH_STUB_DIR/list-count-$branch"
+        n=$(cat "$cf" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$cf"
         # gh-1561 rework seam (review thread 9): a transient gh failure on
         # the Nth read of a branch — exit 1 with empty stdout. The
         # registration wait must read it as «still pending» (#1370
@@ -159,7 +160,6 @@ case "$cmd" in
           echo "gh: simulated transient run-list failure" >&2
           exit 1
         fi
-        n=$(cat "$cf" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$cf"
         f="$GH_STUB_DIR/runs-$branch.$n.json"
         [ -f "$f" ] || f="$GH_STUB_DIR/runs-$branch.json"
         [ -f "$f" ] || f="$GH_STUB_DIR/runs.json"
