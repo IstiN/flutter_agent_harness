@@ -40,8 +40,12 @@ on:
         default: false
   # Any release publication (API `gh release create`, web UI, or a pushed
   # annotated tag) builds + attaches the binaries matrix. Pushed tags also
-  # arrive via the push filter above; the binaries job tolerates the
-  # double-fire (duplicate create + --clobber upload, last wins).
+  # arrive via the push filter above; the quality gate is NOT re-run by
+  # the release twin — the release-dedupe pre-check (gh-1625) short-circuits
+  # every gate leg to the binaries-attach leg when the tag's push run
+  # already gates it (the retired comment here only made the binaries
+  # UPLOAD idempotent — duplicate create + --clobber, last wins — while
+  # the full 35-40 min gate still re-ran, doubling release wall time).
   release:
     types: [published]
   schedule:
@@ -103,6 +107,12 @@ concurrency:
 #                the release arming mechanism (gh-1537), but a tick with
 #                no commits since the last v* tag skips the whole gate
 #                in seconds (see the job comment below)
+#   release-dedupe → gh-1625 release-twin short-circuit: the
+#                `release: published` event fires a second run for every
+#                pushed tag; when the tag's own push run already gates it
+#                (any status, recent window), every gate leg skips
+#                (dedupe=true) and the release twin executes the
+#                binaries-attach leg only
 # Tag-only / main-only jobs (publish, binaries, installer-smoke, release,
 #   integration) are unchanged in semantics — they just need the new aggregate.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -190,16 +200,69 @@ jobs:
           echo "release pending: $pending"
           echo "pending=$pending" >> "$GITHUB_OUTPUT"
 
+  # ─────────────────────────────────────────────────────────────────────
+  # gh-1625: dedupe the release-event twin of a tag run. The v* tag push
+  # fires the full quality gate by design (the release pipeline keys on
+  # the tag and the gate runs BEFORE anything publishes — gh-1537/gh-1172);
+  # the `release: published` event for the SAME tag fires a second,
+  # identical gate (observed on v1.0.580: push run 38687023638 in_progress
+  # + release run 38687023803 pending behind it on the shared ci-<ref>
+  # concurrency group below — the 35-40 min gate ran twice per release).
+  # This pre-check mirrors `release-pending` above: it runs on EVERY event
+  # (no job-level if — a skipped pre-check would empty its output and the
+  # implicit-success() default would force-skip every leg that needs it)
+  # and short-circuits in the script (scripts/release_dedupe_check.sh,
+  # fixture-self-tested in Static gates):
+  #   release event AND a CI run for the same tag ref from the push event
+  #   (ANY status — in the hot path the push twin is still in_progress —
+  #   within the last 6h) → dedupe=true: every gate leg ANDs
+  #   `needs.release-dedupe.outputs.dedupe != 'true'` into its `if` and
+  #   the release twin executes ONLY the binaries-attach leg (idempotent
+  #   --clobber upload, last wins). web-spa/publish stay keyed on the
+  #   quality-gate result and skip with it — the push twin already
+  #   attached/published.
+  #   no recent push run (release cut on an OLD tag, or a tag the release
+  #   created itself — API-created tags fire no push event) → dedupe=false:
+  #   the full gate runs exactly as before; that path stays the safety net
+  #   (AC2).
+  # Fail-safe (AC5): dedupe defaults false and flips only on a successful
+  # `gh run list` — an API error degrades to the full gate with a loud
+  # warning, never to a skipped gate; the pre-check never reddens the run.
+  # AC3: non-release arms short-circuit in the script BEFORE any API call.
+  # The concurrency rule below is untouched: the release twin still queues
+  # behind the push twin (tag runs are never cancelled mid-flight) — it
+  # just no longer re-runs the gate when its turn comes.
+  # ─────────────────────────────────────────────────────────────────────
+  release-dedupe:
+    name: Release dedupe check (gh-1625)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # gh run list — the push-run lookup for the tag ref
+    outputs:
+      dedupe: ${{ steps.check.outputs.dedupe }}
+    steps:
+      # Pure API pre-check: no checkout, no actions — the check must not
+      # even pay a fetch (same discipline as release-pending's
+      # non-schedule arms).
+      - id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/release_dedupe_check.sh
+
   changes:
     name: Classify changes
     runs-on: ubuntu-24.04-arm
-    needs: release-pending
+    needs: [release-pending, release-dedupe]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips the classifier too — every downstream leg is gated on
     # release-pending and would skip anyway, so classifying would be
     # wasted work (and a skipped classifier with empty outputs would
     # wave every changes-keyed leg past its path gate).
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
       contents: read
@@ -383,8 +446,8 @@ jobs:
   cube-kernel-live:
     name: Cube kernel live (macOS)
     runs-on: [self-hosted, macos-m5]
-    needs: [release-pending, changes]
-    if: needs.changes.outputs.core == 'true' && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: needs.changes.outputs.core == 'true' && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 10
     permissions:
       contents: read
@@ -424,10 +487,10 @@ jobs:
   static:
     name: Static gates
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 8
     permissions:
       contents: read
@@ -613,6 +676,15 @@ jobs:
       - name: SM merge guard self-test (gh-1568)
         run: bash scripts/sm_merge_guard_selftest.sh
 
+      # gh-1625: the release-event dedupe pre-check is fixture-self-tested
+      # against a PATH-stubbed gh — recent/stale/no push run for the tag,
+      # the 6h window boundary, non-release arms making NO API call, and
+      # a failing `gh run list` degrading to dedupe=false — so the
+      # release twin's short-circuit cannot rot silently before the next
+      # release (#1100 pattern).
+      - name: Release dedupe self-test (gh-1625)
+        run: bash scripts/release_dedupe_selftest.sh
+
       # #1431: the size-budget gate's own red exits are fixture-tested
       # (#1100 pattern) — an engine rev-hash rename must UPDATE not NEW,
       # vendored engine churn warns instead of reddening, first-party
@@ -697,10 +769,10 @@ jobs:
     # green-skips the real steps in seconds instead.
     name: Core tests (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04-arm
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     permissions:
       contents: read
     timeout-minutes: 12
@@ -817,11 +889,11 @@ jobs:
   integration-mock:
     name: Integration tests (mock LLM)
     runs-on: ubuntu-24.04-arm
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     timeout-minutes: 25
     permissions:
       contents: read
-    if: needs.changes.outputs.intmock == 'true' && needs.release-pending.outputs.pending == 'true'
+    if: needs.changes.outputs.intmock == 'true' && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
@@ -868,8 +940,8 @@ jobs:
   installer-portability:
     name: Installer sh portability (REG)
     runs-on: ${{ matrix.os }}
-    needs: [release-pending, changes]
-    if: needs.changes.outputs.installer == 'true' && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: needs.changes.outputs.installer == 'true' && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -908,8 +980,8 @@ jobs:
   hostile-env:
     name: Hostile ambient env
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
-    if: (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 15
     permissions:
       contents: read
@@ -962,10 +1034,10 @@ jobs:
   fa-aot-build:
     name: AOT fa binary (compiled once per run, gh-1300)
     runs-on: ubuntu-24.04-arm
-    needs: release-pending
+    needs: [release-pending, release-dedupe]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 15
     permissions:
       contents: read
@@ -1041,10 +1113,10 @@ jobs:
     # raw json feeds the #928 duration gate (pty-coverage-gate below).
     # gh-1300: needs the once-per-run AOT build; FA_BIN points every CLI
     # spawn (PTY harness + headless helpers) at the prebuilt binary.
-    needs: [release-pending, fa-aot-build]
+    needs: [release-pending, release-dedupe, fa-aot-build]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     name: PTY/CLI integration (linux, shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-24.04-arm
     # 40 > 30: the leg now carries the coverage + file-reporter overhead the
@@ -1246,10 +1318,10 @@ jobs:
   pty-coverage-gate:
     name: PTY gates (coverage ratchet + duration budget, merged shards)
     runs-on: ubuntu-24.04-arm
-    needs: [release-pending, pty-integration-linux]
+    needs: [release-pending, release-dedupe, pty-integration-linux]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1372,10 +1444,10 @@ jobs:
   pty-visual:
     name: Terminal visual (PTY screenshots, PR)
     runs-on: ubuntu-24.04-arm
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 45
     permissions:
       contents: read
@@ -1432,10 +1504,10 @@ jobs:
   coverage-gate:
     name: Coverage ratchet
     runs-on: ubuntu-24.04-arm
-    needs: [release-pending, changes, test-core]
+    needs: [release-pending, release-dedupe, changes, test-core]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1492,10 +1564,10 @@ jobs:
   guards:
     name: CRAP + duplication
     runs-on: ubuntu-24.04-arm
-    needs: [release-pending, changes, test-core]
+    needs: [release-pending, release-dedupe, changes, test-core]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 6
     permissions:
       contents: read
@@ -1663,8 +1735,8 @@ jobs:
   flutter-analyze:
     name: Flutter app analyze (ubuntu)
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
-    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 8
     permissions:
       contents: read
@@ -1731,8 +1803,8 @@ jobs:
   flutter-tests:
     name: Flutter app tests (shard ${{ matrix.shard }}/2)
     runs-on: ubuntu-24.04-arm
-    needs: [release-pending, changes]
-    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     # End-of-run drain can stall minutes under shared-runner load while
     # every test already passed (0 failures, killed mid-drain on #330):
     # fa_ui shards get 12m and flutter_app is the heaviest package.
@@ -1847,11 +1919,11 @@ jobs:
   flutter-app-exzone:
     name: Exclusion zone (macOS JS-engine tests)
     runs-on: macos-latest
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     if: >-
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
       needs.changes.outputs.exzone == 'true' &&
-      needs.release-pending.outputs.pending == 'true'
+      needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 25
     permissions:
       contents: read
@@ -1904,11 +1976,11 @@ jobs:
   flutter-app-lock-smoke:
     name: Lockfile smoke (${{ matrix.os }} release)
     runs-on: ${{ matrix.runner }}
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     if: >-
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
       needs.changes.outputs.locksmoke == 'true' &&
-      needs.release-pending.outputs.pending == 'true'
+      needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 45
     permissions:
       contents: read
@@ -1975,8 +2047,8 @@ jobs:
   app-crap-gate:
     name: Flutter app CRAP ratchet
     runs-on: ubuntu-latest
-    needs: [release-pending, changes, flutter-tests]
-    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes, flutter-tests]
+    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 6
     permissions:
       contents: read
@@ -2066,8 +2138,8 @@ jobs:
   test-faui:
     name: fa_ui tests (shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
-    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 12
     permissions:
       contents: read
@@ -2137,10 +2209,10 @@ jobs:
   faui-coverage:
     name: fa_ui coverage merge (one report)
     runs-on: ubuntu-latest
-    needs: [release-pending, changes, test-faui]
+    needs: [release-pending, release-dedupe, changes, test-faui]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
       contents: read
@@ -2184,8 +2256,8 @@ jobs:
   cli-visual-settings:
     name: Settings screenshots (PTY)
     runs-on: ubuntu-24.04-arm
-    needs: [release-pending, changes]
-    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 20
     permissions:
       contents: read
@@ -2262,8 +2334,8 @@ jobs:
   build-web:
     name: Build web (debug)
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
-    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 20
     permissions:
       contents: read
@@ -2303,8 +2375,8 @@ jobs:
   build-android:
     name: Build Android APK (debug)
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
-    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 20
     permissions:
       contents: read
@@ -2400,8 +2472,8 @@ jobs:
   build-ios:
     name: Build iOS (debug, unsigned)
     runs-on: macos-latest
-    needs: [release-pending, changes]
-    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 30
     permissions:
       contents: read
@@ -2529,8 +2601,8 @@ jobs:
   build-macos:
     name: Build macOS (debug)
     runs-on: macos-latest
-    needs: [release-pending, changes]
-    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes]
+    if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 30
     permissions:
       contents: read
@@ -2656,10 +2728,10 @@ jobs:
   supply-chain:
     name: Supply-chain gate
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
       contents: read
@@ -2744,10 +2816,10 @@ jobs:
   dep-audit:
     name: Dependency audit (${{ matrix.graph }})
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 15
     permissions:
       contents: read
@@ -2850,10 +2922,10 @@ jobs:
   installer-verify:
     name: Installer verify IT (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 10
     permissions:
       contents: read
@@ -2875,10 +2947,10 @@ jobs:
   install-pin-gate:
     name: Install pin provenance gate
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
       contents: read
@@ -2890,8 +2962,8 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [release-pending, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke]
-    if: always() && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke]
+    if: always() && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
       contents: read
@@ -3043,11 +3115,11 @@ jobs:
   perf-gate:
     name: Perf gate (trajectory)
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     timeout-minutes: 20
     permissions:
       contents: read
-    if: github.event_name == 'pull_request' && needs.changes.outputs.perf == 'true' && needs.release-pending.outputs.pending == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.perf == 'true' && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
@@ -3080,14 +3152,14 @@ jobs:
   usage-fold:
     name: Usage fold (ledger chain)
     runs-on: ubuntu-latest
-    needs: [release-pending, changes]
+    needs: [release-pending, release-dedupe, changes]
     timeout-minutes: 10
     permissions:
       contents: read
     if: >-
       (github.event_name != 'pull_request' ||
       needs.changes.outputs.usagefold == 'true') &&
-      needs.release-pending.outputs.pending == 'true'
+      needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
@@ -3108,8 +3180,8 @@ jobs:
     name: Per-step timing telemetry
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [release-pending, changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, build-web, build-android, build-ios, build-macos]
-    if: always() && needs.release-pending.outputs.pending == 'true'
+    needs: [release-pending, release-dedupe, changes, static, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, build-web, build-android, build-ios, build-macos]
+    if: always() && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     permissions:
       actions: read
     steps:
@@ -3272,10 +3344,10 @@ jobs:
   js-ext-integration:
     name: JS engine integration (quickjs-ng)
     runs-on: ubuntu-latest
-    needs: [release-pending, quality-gate]
+    needs: [release-pending, release-dedupe, quality-gate]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
-    if: needs.release-pending.outputs.pending == 'true'
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 25
     permissions:
       contents: read
@@ -3482,7 +3554,7 @@ jobs:
   binaries:
     name: Build native binaries
     runs-on: ${{ matrix.runner }}
-    needs: quality-gate
+    needs: [release-dedupe, quality-gate]
     timeout-minutes: 45
     # Tag pushes (annotated, via PAT) and `release: published` events both
     # build the matrix. Since v0.1.370 the daily-publish plan creates
@@ -3491,13 +3563,20 @@ jobs:
     # while tags were still PAT-pushed, up to v0.1.369). The release event
     # fires for every creation path, so the matrix can never be starved
     # again.
+    # gh-1625: on a deduped release twin the tag's own push run IS the
+    # gate — the twin's quality legs all skip, so the explicit
+    # `result == 'success'` check is ORed with the dedupe arm. The push
+    # twin and the dedupe=false old-tag release still gate the matrix on
+    # the full quality gate exactly as before.
     # Same !cancelled() pattern as the release job: the transitive skip
     # through always()-quality-gate starved this matrix on tag pushes and
     # release events alike (fa#456) — no linux/windows CLI assets since
     # v0.1.370. The explicit gate check keeps failed-gate runs from
     # building publishable binaries.
     if: >-
-      !cancelled() && needs.quality-gate.result == 'success' &&
+      !cancelled() &&
+      (needs.quality-gate.result == 'success' ||
+      (github.event_name == 'release' && needs.release-dedupe.outputs.dedupe == 'true')) &&
       ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       github.event_name == 'release')
     permissions:

@@ -199,15 +199,20 @@ void main() {
         'tolerates-the-double-fire note is gone)', () {
       final triggerAt = ciText.indexOf('release:\n    types: [published]');
       expect(triggerAt, greaterThanOrEqualTo(0));
+      // Same clamped-window approach as ci_release_pending_guard_test's
+      // AC5: the comment block immediately above the trigger.
       final comment = ciText.substring(
-        ciText.lastIndexOf('\n  #', triggerAt),
+        ciText.lastIndexOf('  # Any release publication', triggerAt),
         triggerAt,
       );
+      expect(comment, contains('release-dedupe'),
+          reason: 'the trigger comment quoted by gh-1625 must describe the '
+              'new short-circuit, not the tolerated double-gate');
       expect(
         comment,
-        contains('release-dedupe'),
-        reason: 'the trigger comment quoted by gh-1625 must describe the '
-            'new short-circuit, not the tolerated double-gate',
+        isNot(contains('tolerates')),
+        reason: 'the retired only-the-upload-is-idempotent note must stay '
+            'retired',
       );
     });
   });
@@ -221,9 +226,20 @@ void main() {
           script.indexOf('[ "\$EVENT_NAME" = "release" ]');
       expect(releaseBranchAt, greaterThanOrEqualTo(0),
           reason: 'only the release arm may dedupe (AC3)');
-      final defaultAt = script.indexOf('dedupe=false');
-      final flipAt = script.indexOf('dedupe=true');
-      expect(defaultAt, greaterThanOrEqualTo(0));
+      // Line-anchored ASSIGNMENT matches — the doc comment narrates both
+      // values mid-sentence and must not satisfy the ordering pins.
+      final defaults = RegExp(r'^dedupe=false\s*$', multiLine: true)
+          .allMatches(script)
+          .toList();
+      expect(defaults, isNotEmpty,
+          reason: 'AC5: the fail-safe default assignment must exist');
+      final defaultAt = defaults.first.start;
+      final flips = RegExp(r'^\s*dedupe=true\s*$', multiLine: true)
+          .allMatches(script)
+          .toList();
+      expect(flips, isNotEmpty,
+          reason: 'the release arm must be able to dedupe');
+      final flipAt = flips.first.start;
       expect(flipAt, greaterThan(releaseBranchAt),
           reason: 'AC5: dedupe=true may only be reached on a successful '
               'release-arm lookup');

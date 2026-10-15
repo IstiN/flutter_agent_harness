@@ -60,8 +60,9 @@ iso_to_epoch() {
 dedupe=false
 if [ "$EVENT_NAME" = "release" ]; then
   # The lookup the ticket prescribes: this workflow's runs for the tag
-  # ref from the push event — no --status filter (any status dedupes) and
-  # no --repo flag (gh reads GH_REPO/GITHUB_REPOSITORY on the runner).
+  # ref from the push event — any status dedupes (no status filter is
+  # passed: in the hot path the push twin is still in_progress) and no
+  # --repo flag (gh reads GH_REPO/GITHUB_REPOSITORY on the runner).
   if ! created_list=$(gh run list \
       --workflow ci.yml \
       --branch "$tag" \
