@@ -3528,6 +3528,15 @@
       "total": 121341,
       "cacheRead": 3196224,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-15T01:39:01Z",
+      "prompt": 134512,
+      "completion": 6297,
+      "total": 140809,
+      "cacheRead": 2971264,
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-1604": [
