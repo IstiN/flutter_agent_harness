@@ -27,6 +27,7 @@ import 'dart:io';
 import 'dart:typed_data' show BytesBuilder;
 
 import 'paste_image.dart';
+import 'pasteboard_platform.dart';
 
 /// Runs a process to completion with stdout captured as RAW BYTES
 /// (injectable `Process.run`). Binary mode is load-bearing: the default
@@ -38,19 +39,25 @@ typedef ProcessRunner =
 /// The default [ProcessRunner]: `Process.start` + an explicit stdout byte
 /// fold — `Process.run` has no bytes mode, so the raw pipe is the only
 /// lossless path. stderr is drained and discarded (exit codes carry
-/// failures).
+/// failures). The wait is bounded by [pasteboardProcessTimeout] (gh-1606
+/// review): a wedged reader is killed and the wait surfaces as a
+/// [TimeoutException] — the dispatchers map it into the named
+/// unavailable result like any other read failure.
 Future<ProcessResult> _runBinaryProcess(
   String executable,
   List<String> args,
 ) async {
   final process = await Process.start(executable, args);
-  final stdout = await process.stdout.fold(
-    BytesBuilder(),
-    (builder, chunk) => builder..add(chunk),
-  );
-  await process.stderr.drain<void>();
-  final exitCode = await process.exitCode;
-  return ProcessResult(process.pid, exitCode, stdout.toBytes(), null);
+  final wait = () async {
+    final stdout = await process.stdout.fold(
+      BytesBuilder(),
+      (builder, chunk) => builder..add(chunk),
+    );
+    await process.stderr.drain<void>();
+    final exitCode = await process.exitCode;
+    return ProcessResult(process.pid, exitCode, stdout.toBytes(), null);
+  }();
+  return boundedPasteboardWait(wait, process);
 }
 
 /// The `FA_FAKE_PASTEBOARD` seam: reads the pinned file. `null` = no fake
@@ -64,17 +71,6 @@ PasteboardRead? _readFakePasteboard(String? fake) {
   }
 }
 
-/// The effective platform id (`macos`/`linux`/`windows`): the explicit
-/// [platform] pin wins (unit tests), else the host [Platform]. `null` =
-/// no pasteboard reader for this platform.
-String? _effectivePlatform(String? platform) {
-  if (platform != null) return platform;
-  if (Platform.isMacOS) return 'macos';
-  if (Platform.isLinux) return 'linux';
-  if (Platform.isWindows) return 'windows';
-  return null;
-}
-
 /// Dispatches to the platform reader. Never throws (doc): a missing
 /// xclip/osascript/powershell surfaces as a ProcessException here — turn
 /// it into the named unavailable result the transcript prints as a clean
@@ -85,7 +81,7 @@ Future<PasteboardRead> _readPlatform(
   String? platform,
 ) async {
   try {
-    switch (_effectivePlatform(platform)) {
+    switch (pasteboardPlatform(platform)) {
       case 'macos':
         return await _readMacos(run, tmp);
       case 'linux':
@@ -240,7 +236,7 @@ Future<PasteboardRead> readPasteboardText({
 }) async {
   final run = runner ?? _runBinaryProcess;
   try {
-    switch (_effectivePlatform(platform)) {
+    switch (pasteboardPlatform(platform)) {
       case 'macos':
         return _textFromStdout(await run('pbpaste', const []));
       case 'linux':

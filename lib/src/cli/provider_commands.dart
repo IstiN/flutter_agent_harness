@@ -594,7 +594,8 @@ extension on AgentCli {
   }
 
   /// Dispatches the subcommand forms of `/provider` (custom, openrouter
-  /// oauth, chatgpt oauth, copilot connect, codemie sso, dial setup).
+  /// oauth, chatgpt oauth, copilot connect, codemie sso, dial setup,
+  /// export).
   /// Returns true when one handled it.
   bool _dispatchProviderSubcommand(List<String> args) {
     if (_startAiinArg(args)) return true;
@@ -605,6 +606,7 @@ extension on AgentCli {
     if (_startCodeMieArg(args)) return true;
     if (_startDialSetupArg(args)) return true;
     if (_startKimiArg(args)) return true;
+    if (_startProviderExportArg(args)) return true;
     return false;
   }
 
@@ -749,14 +751,19 @@ extension on AgentCli {
           );
           continue;
         }
-        // Fine-grained PATs work only with the "Copilot Requests"
-        // permission — hint now so an exchange 404 is self-explanatory.
+        // Fine-grained PAT: fa uses it DIRECTLY against the Copilot API
+        // (PAT mode, gh-1606 — same as the official Copilot CLI; the
+        // token exchange is never called). It still needs the "Copilot
+        // Requests" permission, and the device flow stays the
+        // recommended default.
         if (isFineGrainedGitHubPat(token)) {
           io.writeln(
-            'fine-grained PAT detected: it must carry the "Copilot '
-            'Requests" permission (github.com/settings/'
-            'personal-access-tokens → edit → Permissions), or the token '
-            'exchange will fail with 404.',
+            'fine-grained PAT detected: fa uses it directly against the '
+            'Copilot API (no token exchange — same as the official '
+            'Copilot CLI). It must carry the "Copilot Requests" '
+            'permission (github.com/settings/personal-access-tokens → '
+            'edit → Permissions); the GitHub device flow stays the '
+            'recommended default.',
           );
         }
         return token;
@@ -842,19 +849,38 @@ extension on AgentCli {
     // swallows errors into an empty list, which would drop the user into
     // manual model entry with no hint why (fine-grained PAT, no Copilot
     // plan on the account, dead network — live finding 2026-09). One
-    // cheap GET; the model fetch exchanges again.
-    try {
-      await fetchCopilotApiToken(
-        githubToken: githubToken,
-        client: config.modelsHttpClient,
-      );
-    } on CopilotAuthException catch (error) {
-      io.writeln('warning: ${error.message}');
-      io.writeln('continuing — pick or type the model id manually');
+    // cheap GET; the model fetch exchanges again. A fine-grained PAT
+    // skips this entirely (PAT mode): GitHub 404s every PAT exchange,
+    // and the /models fetch below validates it against the Copilot API
+    // directly.
+    if (!isFineGrainedGitHubPat(githubToken)) {
+      try {
+        await fetchCopilotApiToken(
+          githubToken: githubToken,
+          client: config.modelsHttpClient,
+        );
+      } on CopilotAuthException catch (error) {
+        io.writeln('warning: ${error.message}');
+        io.writeln('continuing — pick or type the model id manually');
+      }
     }
     // No provider carries a default model — the id comes from the live
     // /models list (user picks) or a manual entry.
     final ids = await _fetchProviderModelIds(spec.name, baseUrl, githubToken);
+    if (isFineGrainedGitHubPat(githubToken) && ids.isEmpty) {
+      // PAT mode validates against the Copilot API HERE (no exchange):
+      // an empty answer is the dialect's collapse of EVERY failure
+      // (rejected PAT, no granted models, transport error) — soften the
+      // causes so a flaky network doesn't read as a token problem
+      // (gh-1606 review).
+      io.writeln(
+        'note: the Copilot API returned no models for this PAT — it was '
+        'rejected, granted nothing, or the request itself failed; check '
+        'the "Copilot Requests" permission '
+        '(github.com/settings/personal-access-tokens → edit → '
+        'Permissions) and the account\'s Copilot seat',
+      );
+    }
     final picked = ids.isNotEmpty
         ? await _pickModelFromList(ids, title: 'Copilot model')
         : await _manualModelId();
