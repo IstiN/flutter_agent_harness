@@ -289,7 +289,14 @@ PROVIDERS AND API KEYS${_providerSectionSuffix()}
   value has a base64 twin (FA_PROVIDER_CONFIG_BASE64,
   <apiKeyEnvVar>_BASE64) for platforms that mangle special characters:
   the plain value wins when both carry the same value; mismatched or
-  malformed twins fail loud at boot.
+  malformed twins fail loud at boot. wire is optional and declares the
+  adapter kind the endpoint speaks (openai-completions, anthropic, …);
+  it engages only when it differs from the provider record's own kind.
+  A vendor-prefixed model (zai/glm-…) whose prefix names another dialect
+  boots with a warning on routers and unknown/private endpoints
+  (translating proxies — bifrost, LiteLLM — route vendor/ prefixes as
+  keys); only the family-exclusive vendor endpoints (api.anthropic.com,
+  …) still fail fast on a mismatch.
 
   In the REPL, /provider [name] [baseUrl] [token] switches the provider and
   endpoint live (openrouter, kimi, openai, anthropic, google, codemie, dial,
