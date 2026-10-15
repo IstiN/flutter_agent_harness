@@ -857,8 +857,10 @@ final class ToolCallHeartbeatEvent extends AgentEvent {
 
 /// What the stuck-call follow-up did (or decided) at the threshold.
 enum StuckFollowUpAction {
-  /// Advisory only (interactive mode): the threshold was hit, nothing was
-  /// cancelled.
+  /// The threshold was hit and the configured follow-up mode is
+  /// `advisory` (an explicit `agent.stuckTool.followUp: advisory`
+  /// opt-out — gh-1632 removed the implicit interactive default):
+  /// nothing was cancelled.
   advisory,
 
   /// The stuck call was cancelled and is being retried once (marked).
