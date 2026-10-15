@@ -63,9 +63,14 @@ def main() -> int:
 
     html = open(index_path, encoding="utf-8").read()
 
-    # 1) Drop the CDN loader tags (attribute order agnostic), the old
-    #    on-device stub tag, and any stale loader tags (idempotency).
+    # 1) Drop the CDN loader tags (attribute order agnostic) TOGETHER
+    #    with their preceding doc comments — the flutter web build copies
+    #    flutter_app/web/index.html verbatim, and those comments describe
+    #    the jsdelivr imports the package must not even mention (the
+    #    marker scan below enforces it). Also drops the old on-device
+    #    stub tag and any stale loader tags (idempotency).
     html, n_cdn = re.subn(
+        r'(?:<!--[\s\S]*?-->\s*)?'
         r'<script type="module" src="inline_script_[456]\.js"></script>\s*',
         "", html)
     html, n_stub = re.subn(
@@ -133,10 +138,16 @@ def main() -> int:
               f"staging: {leftover[:3]}")
         return 1
 
-    # 5) The obsolete stub file must not ship.
-    stub = os.path.join(app_dir, "ondevice_stub.js")
-    if os.path.isfile(stub):
-        os.remove(stub)
+    # 5) Files the stripped tags pointed at must not ship either: the
+    #    CDN loader modules (inline_script_[456].js) are dead weight with
+    #    remote URLs in their bodies — delete them from the staged copy
+    #    (the repo's flutter_app/web/ originals stay untouched). The
+    #    obsolete stub goes the same way.
+    for junk in ("inline_script_4.js", "inline_script_5.js",
+                 "inline_script_6.js", "ondevice_stub.js"):
+        victim = os.path.join(app_dir, junk)
+        if os.path.isfile(victim):
+            os.remove(victim)
 
     open(index_path, "w", encoding="utf-8").write(html)
     print(f"on-device loaders staged from the vendor dir "

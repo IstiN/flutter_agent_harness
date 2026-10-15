@@ -137,6 +137,34 @@ for engine, entry in sorted(lock["engines"].items()):
         os.replace(out_path + ".tmp", out_path)
         verified += 1
 
+# The asyncify FFI module imports `@jitl/quickjs-ffi-types` — a bare npm
+# specifier a browser page cannot resolve. The lock's replacement rewires
+# it onto a vendored one-function shim (assertSync, the only export the
+# module uses); this generates that companion file (not fetched — it is
+# repo-owned code, so its content lives here; idempotent, gh-1630).
+SHIM_NAME = "interpreters/asyncify/ffi-types-shim.mjs"
+SHIM = """// Vendored shim for the single @jitl/quickjs-ffi-types export the
+// asyncify FFI module uses (the vendor lock's replacement rewires the
+// bare import onto this file — a browser page cannot resolve npm
+// specifiers; gh-1630). assertSync wraps an emscripten cwrap'd function
+// and throws if it ever returns a thenable (i.e. an unexpected asyncify
+// suspension on a path declared synchronous).
+export function assertSync(fn) {
+  return function (...args) {
+    const result = fn.apply(this, args);
+    if (result != null && typeof result.then === 'function') {
+      throw new Error('assertSync: function returned a promise');
+    }
+    return result;
+  };
+}
+"""
+shim_path = os.path.join(dest, SHIM_NAME)
+os.makedirs(os.path.dirname(shim_path), exist_ok=True)
+if not os.path.exists(shim_path) or open(shim_path, encoding="utf-8").read() != SHIM:
+    open(shim_path, "w", encoding="utf-8").write(SHIM)
+    print(f"vendor: {SHIM_NAME} written (generated companion)")
+
 print(f"vendor: {len(lock['engines'])} engines — "
       f"{fetched} fetched, {verified} repaired, {skipped} already verified")
 PY

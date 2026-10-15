@@ -33,7 +33,13 @@
         {
           "name": "interpreters/asyncify/ffi.mjs",
           "url": "https://cdn.jsdelivr.net/npm/@jitl/quickjs-wasmfile-release-asyncify@0.31.0/dist/ffi.mjs",
-          "sha256": "19f2837ec473e9f023d3988c5a141a0b9f806ca453fdf53fd8540539aa2a062b"
+          "sha256": "ee9b6572d09cd71a3d7c3cb76025a8540ec0d2b57ad6df85568213357ed31838",
+          "replacements": [
+            [
+              "from\"@jitl/quickjs-ffi-types\"",
+              "from\"./ffi-types-shim.mjs\""
+            ]
+          ]
         }
       ]
     },
