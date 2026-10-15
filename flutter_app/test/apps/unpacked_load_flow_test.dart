@@ -258,12 +258,13 @@ void main() {
     );
   });
 
-  testWidgets('AC4: a padded-id pick still warns over the trimmed-id install', (
+  testWidgets('AC2: a padded-id pick is rejected by name, install untouched', (
     tester,
   ) async {
-    // The id is trimmed before the replace lookup (gh-1616 review): a
-    // " fa-agents " manifest must be recognized as replacing the
-    // existing fa-agents install, not as a fresh id.
+    // gh-1616 review round 2: the validator refuses ids with
+    // leading/trailing whitespace, so the padded pick never reaches the
+    // replace check at all — the named-issues dialog explains, and the
+    // existing fa-agents install survives byte-for-byte.
     final (env, manager) = await _pump(tester, _StubPicker(const {}));
     final store = AppsStore(env, readAsset: (_) async => '');
     await store.installWidget(
@@ -308,8 +309,50 @@ void main() {
     await tester.tap(find.text('load'));
     await tester.pumpAndSettle();
 
+    // The named-issues dialog — NOT a confirm over a padded install.
+    expect(find.byType(UnpackedLoadIssuesDialog), findsOneWidget);
+    expect(find.textContaining('whitespace'), findsOneWidget);
+    expect(find.byIcon(Icons.warning_amber_outlined), findsNothing);
+    expect(find.text('Replace'), findsNothing);
+
+    // The existing install is untouched.
+    expect(
+      (await env.readTextFile('apps/fa-agents/widget.js')).valueOrNull,
+      'catalog',
+    );
+  });
+
+  testWidgets('an unknown future origin is surfaced, never read as catalog', (
+    tester,
+  ) async {
+    // gh-1616 review: if a future origin ever lands in
+    // `.installed.json` (a CLI load, the ticket's second tier), the
+    // replace dialog must not claim it came from the catalog — the raw
+    // value is surfaced as an unknown source instead.
+    final (env, manager) = await _pump(tester, _StubPicker(goodFolder()));
+    final store = AppsStore(env, readAsset: (_) async => '');
+    await store.installWidget(
+      id: 'fa-agents',
+      version: '2.0.0',
+      origin: 'cli', // a future origin this build does not know
+      files: {
+        'manifest.json': utf8.encode(
+          jsonEncode({'id': 'fa-agents', 'name': 'Cat', 'version': '2.0.0'}),
+        ),
+        'widget.js': utf8.encode('catalog'),
+      },
+    );
+
+    await tester.tap(find.text('load'));
+    await tester.pumpAndSettle();
+
+    // The replace warning fires (any existing id is replaced) and names
+    // the honest unknown provenance with the raw value — no catalog lie.
     expect(find.byIcon(Icons.warning_amber_outlined), findsOneWidget);
     expect(find.text('Replace'), findsOneWidget);
+    expect(find.textContaining('unknown source'), findsOneWidget);
+    expect(find.textContaining('(cli)'), findsOneWidget);
+    expect(find.textContaining('the catalog'), findsNothing);
   });
 
   testWidgets('E1: an empty pick (vanished folder) is a silent no-op', (

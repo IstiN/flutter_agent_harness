@@ -167,6 +167,48 @@ void main() {
       }
     });
 
+    test('a whitespace-padded id is rejected with the trimmed form named', () {
+      // gh-1616 review round 2: the id rule runs on `id.trim()`, so a
+      // padded-but-otherwise-valid id would PASS validation and then be
+      // stored byte-padded — where `JsAppInfo.fromManifest` parses the
+      // padded model id back, the trimmed install record misses it and
+      // Remove targets a folder that does not exist. The pad itself is
+      // the named error; the fix belongs at the validator, not at the
+      // loader's consumption point.
+      final result = validate({
+        'id': ' fa-agents ',
+        'name': 'x',
+        'version': '1.0.0',
+      });
+      expect(result.isValid, isFalse);
+      final idErrors = result.errors
+          .where((e) => e.code == 'id_invalid')
+          .toList();
+      expect(idErrors, hasLength(1), reason: '${result.errors}');
+      expect(idErrors.single.message, contains('whitespace'));
+      expect(
+        idErrors.single.message,
+        contains('fa-agents'),
+        reason: 'the trimmed form the manifest must carry is named',
+      );
+    });
+
+    test('a padded id that ALSO breaks the pattern names both problems', () {
+      final result = validate({'id': ' BAD ID ', 'name': 'x'});
+      final messages = result.errors
+          .where((e) => e.code == 'id_invalid')
+          .map((e) => e.message);
+      expect(messages, hasLength(2), reason: '${result.errors}');
+      expect(
+        messages.where((m) => m.contains('whitespace')),
+        hasLength(1),
+      );
+      expect(
+        messages.where((m) => m.contains('[a-z0-9][a-z0-9-]{1,31}')),
+        hasLength(1),
+      );
+    });
+
     test('traversal ids cannot survive: apps/… escapes are impossible', () {
       final result = validate({'id': '../../../etc', 'name': 'x'});
       expect(result.errors.map((e) => e.code), contains('id_invalid'));

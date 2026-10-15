@@ -88,37 +88,59 @@ void main() {
       );
 
       test(
-        'a whitespace-padded manifest id installs under the trimmed id',
+        'a whitespace-padded manifest id is rejected before anything is written',
         () async {
-          // The id rule runs against `id.trim()` (and WidgetManifest
-          // itself trims), so the folder the widget lands in and the
-          // `.installed.json` key must carry the trimmed, rule-enforced
-          // form — never a padded `apps/ fa-agents /` (gh-1616 review).
+          // gh-1616 review round 2: installable manifest BYTES are stored
+          // unchanged, so a padded id that merely trims at the loader
+          // still parses back padded (`JsAppInfo.fromManifest` reads the
+          // raw manifest id) — the trimmed install record misses it (no
+          // provenance badge) and Remove targets `apps/ fa-agents /`
+          // which does not exist (silent no-op reported as success). The
+          // validator refuses the padded id up front, so the
+          // manifest-id ≠ folder-name state is unreachable.
           final env = MemoryExecutionEnv();
           final loader = UnpackedWidgetLoader(env: env);
           final inspection = await loader.inspect(folder(id: ' fa-agents '));
-          expect(inspection.isValid, isTrue, reason: '${inspection.errors}');
-          expect(inspection.id, 'fa-agents');
-
-          await loader.install(inspection);
-
-          final listed = [
-            for (final e
-                in (await env.listDir('apps')).valueOrNull ??
-                    const <FileInfo>[])
-              e.name,
-          ];
-          expect(listed, containsAll(['.installed.json', 'fa-agents']));
+          expect(inspection.isValid, isFalse);
+          expect(inspection.errors.map((e) => e.code), contains('id_invalid'));
           expect(
-            listed,
-            everyElement(isNot(contains(' '))),
-            reason: 'no space-padded sibling folder may be created',
+            inspection.errors.map((e) => e.message).join('\n'),
+            contains('whitespace'),
           );
+          expect(() => loader.install(inspection), throwsStateError);
+
+          // Nothing was written: no folder (trimmed or padded), no meta
+          // record — nothing for the grid or Remove to trip over.
+          expect((await env.listDir('apps')).valueOrNull ?? [], isEmpty);
+        },
+      );
+
+      test(
+        'a loaded widget keeps badge provenance and Remove deletes its folder',
+        () async {
+          // The reviewer's pin for the manifest-id == folder-name
+          // invariant the padded-id rejection protects: the model id read
+          // back from the stored manifest hits the install record (the
+          // `unpacked` badge renders) and the launcher's Remove — which
+          // keys off the MODEL id, force — deletes the folder AND the
+          // record (no zombie left behind).
+          final env = MemoryExecutionEnv();
+          final store = AppsStore(env, readAsset: (_) async => '');
+          final loader = UnpackedWidgetLoader(env: env, appsStore: store);
+          await loader.install(await loader.inspect(folder()));
+
+          final app = (await store.listApps()).singleWhere(
+            (a) => a.id == 'fa-agents',
+          );
+          expect(app.installSource, 'unpacked');
+
+          expect(await store.removeWidget(app.id, force: true), isTrue);
           expect(
             (await env.readTextFile(
               'apps/fa-agents/manifest.json',
             )).valueOrNull,
-            isNotNull,
+            isNull,
+            reason: 'Remove deletes the code files',
           );
           final meta = castMeta(
             jsonDecode(
@@ -127,8 +149,7 @@ void main() {
               )).getOrThrow(),
             ),
           );
-          expect(meta.keys, contains('fa-agents'));
-          expect(meta.keys, isNot(contains(' fa-agents ')));
+          expect(meta.keys, isNot(contains('fa-agents')));
         },
       );
 
