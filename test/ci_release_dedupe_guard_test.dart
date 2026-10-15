@@ -119,11 +119,11 @@ void main() {
       // has no scripts/ (the first cut had NO checkout: exit 127 reddened
       // the pre-check on every arm and cascaded into a red Quality gate,
       // runs 38696670029/38696668627). A step must provide the file, and
-      // it must run on every arm that can reach the check step (the
-      // release-pending pattern: the fetch is gated to the arm that
-      // needs it, other arms keep paying nothing). The fetch is shallow +
-      // blobless — seconds inside the 5-minute job budget; the lookup
-      // itself is still ONE gh run list API call.
+      // since the check step itself is UNCONDITIONAL (no job-level if —
+      // a skipped pre-check would empty its output), the checkout must be
+      // unconditional too: every arm that can run the step needs the file.
+      // The fetch is shallow + blobless — seconds inside the 5-minute job
+      // budget; the lookup itself is still ONE gh run list API call.
       final steps = job['steps'] as YamlList;
       final stepMaps = steps.map((s) => s as YamlMap).toList();
       final checkouts = stepMaps
