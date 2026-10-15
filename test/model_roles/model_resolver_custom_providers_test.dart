@@ -106,8 +106,10 @@ void main() {
         secrets: const {'AIAI_API_KEY': 'k'},
         customProviders: [_bycom()],
       );
-      expect(resolver.chainFor('default')!.single.keyRing.baseName,
-          'AIAI_API_KEY');
+      expect(
+        resolver.chainFor('default')!.single.keyRing.baseName,
+        'AIAI_API_KEY',
+      );
     });
 
     test('explicit ref fields win over the entry defaults', () {
@@ -213,6 +215,38 @@ void main() {
         contains('unknown provider'),
       );
     });
+
+    test('a matched entry with an unknown apiType names the dialect, not '
+        'the provider', () {
+      // The registry entry IS known (the name matched) — only its adapter
+      // dialect is not (a saved entry written by a newer CLI). "unknown
+      // provider" wording would send the user hunting an entry spelling
+      // that is actually fine.
+      final futureDialect = CustomProviderEntry(
+        name: 'quantum',
+        apiType: 'quantum-chat',
+        baseUrl: 'https://quantum.example/v1',
+        modelId: 'q-1',
+      );
+      final resolver = _resolver(
+        {
+          'default': [ModelRef(provider: 'quantum', modelId: 'q-1')],
+        },
+        customProviders: [futureDialect],
+      );
+      expect(
+        () => resolver.chainFor('default'),
+        throwsA(isA<UnknownProviderRoleException>()),
+      );
+      expect(
+        resolver.skippedEntries['default']!.join(' '),
+        allOf(
+          contains('unknown adapter dialect'),
+          contains('quantum-chat'),
+          isNot(contains('unknown provider')),
+        ),
+      );
+    });
   });
 
   group('REG-2 — key provenance unchanged (issue #40 invariant)', () {
@@ -226,24 +260,9 @@ void main() {
       // through the endpoint-scoped slot / the adapter's spec env names,
       // exactly like the twin.
       const layouts = [
-        (
-          'entry pin',
-          {'AIAI_API_KEY': 'k'},
-          'AIAI_API_KEY',
-          'AIAI_API_KEY',
-        ),
-        (
-          'endpoint slot',
-          {'FA_KEY_API_BYCOM_BY': 'k'},
-          null,
-          null,
-        ),
-        (
-          'spec env fallback',
-          {'OPENAI_API_KEY': 'k'},
-          null,
-          null,
-        ),
+        ('entry pin', {'AIAI_API_KEY': 'k'}, 'AIAI_API_KEY', 'AIAI_API_KEY'),
+        ('endpoint slot', {'FA_KEY_API_BYCOM_BY': 'k'}, null, null),
+        ('spec env fallback', {'OPENAI_API_KEY': 'k'}, null, null),
       ];
       for (final (label, secrets, entryKeyName, refApiKeyName) in layouts) {
         final byName = _resolver(
@@ -253,19 +272,16 @@ void main() {
           secrets: secrets,
           customProviders: [_bycom(keyName: entryKeyName)],
         ).chainFor('default')!.single.keyRing.baseName;
-        final byKind = _resolver(
-          {
-            'default': [
-              ModelRef(
-                provider: 'openai',
-                modelId: 'glm-4.6',
-                baseUrl: 'https://api.bycom.by/v1',
-                apiKeyName: refApiKeyName,
-              ),
-            ],
-          },
-          secrets: secrets,
-        ).chainFor('default')!.single.keyRing.baseName;
+        final byKind = _resolver({
+          'default': [
+            ModelRef(
+              provider: 'openai',
+              modelId: 'glm-4.6',
+              baseUrl: 'https://api.bycom.by/v1',
+              apiKeyName: refApiKeyName,
+            ),
+          ],
+        }, secrets: secrets).chainFor('default')!.single.keyRing.baseName;
         expect(byName, byKind, reason: 'key layout: $label');
       }
     });

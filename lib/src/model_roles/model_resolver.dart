@@ -226,7 +226,21 @@ final class ModelRolesResolver {
       final entry = _findCustomProvider(ref.provider);
       if (entry != null) {
         spec = resolveCliProviderSpec(entry.apiType, honorBuildFilter: true);
-        if (spec != null) ref = _throughCustomEntry(ref, entry);
+        if (spec != null) {
+          ref = _throughCustomEntry(ref, entry);
+        } else {
+          // The registry entry IS known (the name matched) — only its
+          // adapter dialect is not (a saved entry written by a newer CLI
+          // against a dialect this version predates). Say so: "unknown
+          // provider" would send the user hunting an entry spelling that
+          // is fine. Same gh-760 skip+degrade contract as the
+          // unknown-in-both case below (version skew, recoverable).
+          skipped.add(
+            '${ref.label} (unknown adapter dialect: ${entry.apiType})',
+          );
+          onUnknownProvider();
+          return null;
+        }
       }
     }
     if (spec == null) {

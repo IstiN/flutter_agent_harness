@@ -82,11 +82,7 @@ void main() {
         final resolved = resolver.resolveRole(role);
         if (resolved == null) fail('role $role did not resolve');
         expect(resolved.model.provider, 'openai', reason: role);
-        expect(
-          resolved.model.baseUrl,
-          'https://api.bycom.by/v1',
-          reason: role,
-        );
+        expect(resolved.model.baseUrl, 'https://api.bycom.by/v1', reason: role);
       }
       expect(resolver.skippedEntries.values.expand((s) => s), isEmpty);
     });
@@ -115,30 +111,32 @@ void main() {
       );
     });
 
-    test('a keyless entry picks the endpoint-scoped slot from the store',
-        () async {
-      final entry = _bycom(keyName: null);
-      final roles = ModelRolesConfig(
-        roles: {
-          for (final role in _roles)
-            role: [ModelRef(provider: 'aiai', modelId: 'glm-4.6')],
-        },
-      );
-      final saved = CliConfig(customProviders: [entry], modelRoles: roles);
-      final resolver = await _bootResolver(
-        saved,
-        roles,
-        store: const {'FA_KEY_API_BYCOM_BY': 'k'},
-      );
-      for (final role in _roles) {
-        expect(resolver.resolveRole(role), isNotNull, reason: role);
-      }
-      expect(
-        resolver.chainFor('default')!.single.keyRing.baseName,
-        'FA_KEY_API_BYCOM_BY',
-        reason: 'issue #40: the endpoint-scoped slot serves custom endpoints',
-      );
-    });
+    test(
+      'a keyless entry picks the endpoint-scoped slot from the store',
+      () async {
+        final entry = _bycom(keyName: null);
+        final roles = ModelRolesConfig(
+          roles: {
+            for (final role in _roles)
+              role: [ModelRef(provider: 'aiai', modelId: 'glm-4.6')],
+          },
+        );
+        final saved = CliConfig(customProviders: [entry], modelRoles: roles);
+        final resolver = await _bootResolver(
+          saved,
+          roles,
+          store: const {'FA_KEY_API_BYCOM_BY': 'k'},
+        );
+        for (final role in _roles) {
+          expect(resolver.resolveRole(role), isNotNull, reason: role);
+        }
+        expect(
+          resolver.chainFor('default')!.single.keyRing.baseName,
+          'FA_KEY_API_BYCOM_BY',
+          reason: 'issue #40: the endpoint-scoped slot serves custom endpoints',
+        );
+      },
+    );
   });
 
   group('AC4 — the roles-drop warning reaches the notice stream', () {
@@ -176,8 +174,13 @@ void main() {
             await Future<void>.delayed(const Duration(milliseconds: 5));
           }
         }
-        expect(printed, isTrue, reason: 'the drop notice must reach the IO '
-            'stream (line mode), never stderr only');
+        expect(
+          printed,
+          isTrue,
+          reason:
+              'the drop notice must reach the IO '
+              'stream (line mode), never stderr only',
+        );
       } finally {
         io.sendLine('/exit');
         await run;
