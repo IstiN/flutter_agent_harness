@@ -175,6 +175,25 @@ FA_PROVIDER_CONFIG_BASE64=$(printf '%s' "$FA_PROVIDER_CONFIG" | base64)
 ZAI_API_KEY_BASE64=$(printf '%s' "$ZAI_API_KEY" | base64)
 ```
 
+`wire` is optional and declares the adapter kind the endpoint speaks
+(`openai-completions`, `anthropic`, `google`, …), overriding the provider
+record's own kind. **Translating proxies** (bifrost, LiteLLM, one-api:
+one host serving several dialect paths, `vendor/model` prefixes used as
+routing keys) need nothing extra since gh-1624 — a `vendor/`-prefixed
+model whose prefix names another dialect boots with a warning on
+routers and unknown/private endpoints instead of refusing to start.
+Only the family-exclusive vendor endpoints (api.anthropic.com,
+api.openai.com, …) still fail fast on a dialect mismatch. The `wire:`
+override engages ONLY when it differs from the provider record's own
+kind (`record anthropic + wire: anthropic` changes nothing — the checks
+still run).
+
+```bash
+# bifrost's anthropic path translating zai/glm-5.3 (no wire: needed):
+FA_PROVIDER_TYPE=anthropic
+FA_PROVIDER_CONFIG='{"baseUrl":"http://192.168.1.23:8080/anthropic","model":"zai/glm-5.3","apiKeyEnvVar":"BIFROST_KEY"}'
+```
+
 GitHub Copilot is a first-class provider. `/provider copilot` connects a
 GitHub account via the device-code flow (open the shown
 `verification_uri`, enter the `user_code`) or by pasting an existing
