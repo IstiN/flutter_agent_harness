@@ -6,9 +6,16 @@
 /// grid) reflects reality: an agent-side manifest rename shows up without
 /// reinstall or restart, and a manifest the agent broke renders a visible
 /// error affordance while the panel stays usable.
+///
+/// Also covers the gh-1616 unpacked-provenance badge composition: a
+/// broken UNPACKED app must show both the folder badge and the error
+/// badge, in different corners (never one painted over the other).
 library;
 
+import 'dart:convert';
+
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/unpacked_loader.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -156,5 +163,50 @@ void main() {
 
     // The panel stays usable: the healthy neighbor still opens its menu.
     expect(find.text('2048'), findsWidgets);
+  });
+
+  testWidgets('gh-1616 — broken unpacked app: both badges, different corners', (
+    tester,
+  ) async {
+    // An unpacked-loaded app (unpacked install record) whose manifest the
+    // agent later broke: the folder badge (provenance) and the error
+    // badge (the issue #866 affordance) apply at the same time — and
+    // must BOTH be visible, in different corners, never one painted
+    // over the other.
+    final env = MemoryExecutionEnv();
+    await env.writeFile(
+      'apps/2048/manifest.json',
+      '{"id": "2048", "name": "2048", "description": "Tile game"}',
+    );
+    await env.writeFile('apps/2048/widget.js', '(function(){});');
+    final store = await _store(env);
+    await store.installWidget(
+      id: '2048',
+      version: '1.0.0',
+      files: {
+        'manifest.json': utf8.encode(
+          '{"id": "2048", "name": "2048", "description": "Tile game"}',
+        ),
+        'widget.js': utf8.encode('(function(){});'),
+      },
+      origin: UnpackedWidgetLoader.origin,
+    );
+    // The agent edit that breaks the manifest AFTER the unpacked load.
+    await env.writeFile('apps/2048/manifest.json', '{"name": ');
+
+    await _pumpLauncher(tester, env);
+
+    expect(find.text('!'), findsWidgets, reason: 'the error badge shows');
+    final unpackedRect = tester.getRect(
+      find.byTooltip('Loaded from a local folder (unpacked)'),
+    );
+    final errorRect = tester.getRect(find.text('!'));
+    expect(
+      unpackedRect.overlaps(errorRect),
+      isFalse,
+      reason:
+          'the folder badge must not cover the error badge — they share no '
+          'corner',
+    );
   });
 }
