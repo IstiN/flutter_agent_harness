@@ -13,6 +13,54 @@ block a release again.
 
 ## Unreleased
 
+- gh-1596: the first-run wizard (`site/setup.sh`) no longer crashes or
+  corrupts input under `curl | sh` on dash (Ubuntu sh) or busybox ash
+  (Alpine): `scripts/gen_installers.dart` now renders the provider/mode/
+  approval menus from the live provider catalog into plain POSIX sh — the
+  bashisms that killed dash (`printf -v`, `read -p`) and silently corrupted
+  busybox ash are gone; the hidden API-key prompt uses `stty -echo` + a
+  by-name `read` (dash has no `read -s`) and the key never rides printf
+  argv; EOF/Ctrl-C mid-wizard aborts non-zero with no half-written
+  `~/.fah`, and non-TTY runs print guidance and exit 1. The wizard's temp
+  config is `mktemp`-created (no predictable, symlink-followable fixed
+  path). A new path-triggered `installer-portability` CI leg proves the
+  script under dash + busybox ash (ubuntu) and bash (macOS) on every
+  `site/**` or generator change.
+- fix(cli): gh-1572 — `fa` boot no longer rewrites `~/.fah/config.yaml`
+  from a lossy config. `persistConfig` (bin/fah_runapp.dart) built a
+  fresh `CliConfig` carrying only some fields and `persistConfig()` ran
+  unconditionally at boot, so every launch silently dropped the user's
+  `spills:`, `subagents:`, `jobs:`, `headless:`, `agent:`, `quota:`,
+  `tui:`, `trajectory:`, `waiting:`, `power.hold` and `auto_update`
+  settings (first reported on 1.0.547). Three cooperating fixes: the
+  boot save is now `saved.copyWith(<live overlays>)` so every parsed
+  section rides along by construction; `CliConfig.copyWith` replaces the
+  drifted hand-rolled `withCustomProviders` field list (itself dropping
+  spills/subagents/waiting/jobs/agentMode/misuseBreaker/streamThinking
+  inside `saveCliConfig`'s merge step); the `_diskPreservedSections`
+  disk backstop covers every known top-level key. `spills:` renders in
+  `toYaml` (new `SpillsConfig.toYaml`) and `agent.misuseBreaker: false`
+  persists too; an unchanged save no longer rewrites the file at all.
+  Rework round: the boot snapshot re-syncs from disk after every
+  sanctioned mid-session settings write (`onUserConfigFileChanged` — a
+  cleared context cap, an `auto_update` key drop or a global compaction
+  pick is no longer resurrected/overwritten by the next save in the
+  same session); `validateAgentSection` (the strict `fa config check` /
+  `config set` / settings-hub mirror) accepts the emitter's
+  `agent.misuseBreaker` and `agent.stuckTool` keys so `fa config check`
+  never false-fails on fa's own output; clearing the context cap drops
+  only the cap key instead of the whole `agent:` block (the sibling
+  `mode:`/`misuseBreaker:` keys survive); and the `providersQueue:`
+  block (no typed renderer) joins the disk backstop so a save can never
+  silently delete the user's queue. Rework round 2 (merge + guards):
+  `validateAgentSection`'s per-key switch became the `_agentKeyValidators`
+  table (the two gh-1572 keys pushed the switch form to complexity 13 —
+  over the repo's CRAP ratchet; the table keeps the mirror complete at
+  complexity 4), and the last two direct USER-config writers —
+  `_writeTtsrSection` and `_writeMcpSection` — fire the re-sync hook, so
+  a mid-session ttsr rule toggle or mcp server edit survives the next
+  persist too (the writer roster in `settings_flow_config_sync.dart` is
+  now exhaustive).
 - gh-1606: the `copilot` provider accepts fine-grained PATs
   (`github_pat_…`) directly — PAT mode skips the `copilot_internal/v2/token`
   exchange entirely (GitHub 404s every PAT exchange) and sends the raw PAT
