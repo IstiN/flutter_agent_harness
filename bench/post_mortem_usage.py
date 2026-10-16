@@ -98,22 +98,31 @@ def _dedup_session_text(session_dirs):
 
 
 def _fold_row(row, session_dirs):
-    """(input, output, warning) for one row from its session files.
+    """(input, output, warning, usage_incomplete) for one row from its
+    session files.
 
-    (None, None, warning) means the session files exist but say nothing
-    usable — tokens: null, the E4 degradation.
+    (None, None, warning, usage_incomplete) means the session files exist
+    but say nothing usable — tokens: null, the E4 degradation — with
+    `usage_incomplete` set when a request-side record dangled (gh-1643:
+    the row still gets its marker, never bare null without it).
     """
     text = _dedup_session_text(session_dirs)
     if not text.strip():
-        return None, None, "session files present but empty/unreadable"
+        return None, None, "session files present but empty/unreadable", False
     try:
         usage = fa_usage.extract_from_text(text)
     except Exception as exc:  # noqa: BLE001 — E4: degrade, never crash
-        return None, None, f"session usage extraction failed ({exc})"
+        return None, None, f"session usage extraction failed ({exc})", False
     if not (usage.input_tokens or usage.output_tokens
             or usage.estimated_input_tokens or usage.estimated_output_tokens):
-        # Nothing usable parsed (corrupt lines only, E4): tokens: null.
-        return None, None, "no usable usage records in the session files"
+        # Nothing usable parsed (corrupt lines only, E4): tokens: null —
+        # but a dangling request-side record still marks the row (gh-1643).
+        return (
+            None,
+            None,
+            "no usable usage records in the session files",
+            usage.usage_incomplete,
+        )
     if usage.warnings:
         print(
             f"[post-mortem] warning: {row.get('trial_name')}: "
@@ -124,6 +133,7 @@ def _fold_row(row, session_dirs):
         usage.input_tokens + usage.estimated_input_tokens,
         usage.output_tokens + usage.estimated_output_tokens,
         None,
+        usage.usage_incomplete,
     )
 
 
@@ -266,7 +276,13 @@ def post_mortem(runs_dir, stall_gap_sec=None):
                 continue
             if not session_dirs:
                 continue
-            tin, tout, warning = _fold_row(row, session_dirs)
+            tin, tout, warning, usage_incomplete = _fold_row(row, session_dirs)
+            if usage_incomplete:
+                # gh-1643 AC1: the fold only partially knows this trial's
+                # spend — the marker rides the row in EVERY branch, so a
+                # bare 0/null without it is impossible.
+                row["usage_incomplete"] = True
+                changed = True
             if warning:
                 row["total_input_tokens"] = None
                 row["total_output_tokens"] = None

@@ -148,6 +148,95 @@ class PostMortemUsageTest(unittest.TestCase):
         finally:
             run.cleanup()
 
+    def test_killed_mid_request_row_gets_totals_and_incomplete_marker(self):
+        # gh-1643 AC1: a trial killed before its first assistant message
+        # finalizes has only request-side records — the fold prices the
+        # KNOWN request volume and stamps `usage_incomplete` on the row
+        # (never bare 0/null without the marker).
+        run = _Run([dict(KILLED_ROW)])
+        try:
+            run.add_session(
+                "train-fasttext",
+                "train-fasttext-1",
+                [
+                    json.dumps(
+                        {
+                            "type": "custom",
+                            "id": "c0",
+                            "customType": "usage_segment_start",
+                            "data": {"at": "t"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "custom",
+                            "id": "c1",
+                            "customType": "model_request_summary",
+                            "data": {
+                                "messageCount": 1,
+                                "systemPromptChars": 8000,
+                                "messages": [
+                                    {"role": "user", "chars": 1200, "preview": "p"}
+                                ],
+                            },
+                        }
+                    ),
+                ],
+            )
+            report = pmu.post_mortem(run.root)
+            row = json.loads((run.shard / "results.json").read_text())["results"][0]
+            # ceil((8000 + 1200) / 4) = 2300 estimated input.
+            self.assertEqual(row["total_input_tokens"], 2300)
+            self.assertEqual(row["total_output_tokens"], 0)
+            self.assertTrue(row["usage_incomplete"])
+            self.assertEqual(report["patched"][0]["trial"], "train-fasttext-1")
+        finally:
+            run.cleanup()
+
+    def test_zero_known_chars_still_markers_the_row(self):
+        # A dangling summary with NO known chars: totals degrade to null
+        # (nothing usable) but the row still carries `usage_incomplete` —
+        # bare null without the marker is the honesty gap this closes.
+        run = _Run([dict(KILLED_ROW)])
+        try:
+            run.add_session(
+                "train-fasttext",
+                "train-fasttext-1",
+                [
+                    json.dumps(
+                        {
+                            "type": "custom",
+                            "id": "c1",
+                            "customType": "model_request_summary",
+                            "data": {"messageCount": 3},
+                        }
+                    ),
+                ],
+            )
+            pmu.post_mortem(run.root)
+            row = json.loads((run.shard / "results.json").read_text())["results"][0]
+            self.assertIsNone(row["total_input_tokens"])
+            self.assertTrue(row["usage_incomplete"])
+        finally:
+            run.cleanup()
+
+    def test_patched_finalized_rows_carry_no_marker(self):
+        # A trial with finalized messages is complete accounting — no
+        # `usage_incomplete` key appears on the row.
+        run = _Run([dict(KILLED_ROW)])
+        try:
+            run.add_session(
+                "train-fasttext",
+                "train-fasttext-1",
+                [_assistant_record("r1", "2026-01-01T00:00:10Z", 1000, 200)],
+            )
+            pmu.post_mortem(run.root)
+            row = json.loads((run.shard / "results.json").read_text())["results"][0]
+            self.assertEqual(row["total_input_tokens"], 1000)
+            self.assertNotIn("usage_incomplete", row)
+        finally:
+            run.cleanup()
+
     def test_corrupt_session_degrades_to_null_tokens_with_warning(self):
         # E4: missing/corrupt JSONL -> tokens: null + warning, never a crash.
         run = _Run([dict(KILLED_ROW)])
