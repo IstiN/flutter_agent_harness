@@ -124,16 +124,18 @@ void main() {
     }
   });
 
-  test('gh-1646: the composed headless prompt carries work-to-the-wall',
-      () async {
-    // Snapshot of the composed system-prompt section (C1): the
-    // harness-owned clock rides the prompt the unattended agent sees.
-    final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
-    expect(prompt, contains('Work to the wall (gh-1646)'));
-    expect(prompt, contains('time-left notices'));
-    expect(prompt, contains('interrupted automatically when time expires'));
-    expect(prompt, isNot(contains('FA_DEADLINE_EPOCH_MS')));
-  });
+  test(
+    'gh-1646: the composed headless prompt carries work-to-the-wall',
+    () async {
+      // Snapshot of the composed system-prompt section (C1): the
+      // harness-owned clock rides the prompt the unattended agent sees.
+      final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+      expect(prompt, contains('Work to the wall (gh-1646)'));
+      expect(prompt, contains('time-left notices'));
+      expect(prompt, contains('interrupted automatically when time expires'));
+      expect(prompt, isNot(contains('FA_DEADLINE_EPOCH_MS')));
+    },
+  );
 
   test('interactive boots never carry the contract', () async {
     for (final mode in [
