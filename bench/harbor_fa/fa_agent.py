@@ -395,10 +395,21 @@ class FaAgent(BaseInstalledAgent):
         self._cap = cap
         self._deadline_epoch_ms = deadline
         if cap is None:
-            await self.exec_as_agent(
-                environment, command=self._agent_command(instruction),
-                env=self._provider_env,
-            )
+            # gh-1643 C4: the run outcome class is stashed for
+            # populate_context_post_run — a plain exec ends completed or
+            # crashed, a cancellation is the harness's kill.
+            try:
+                await self.exec_as_agent(
+                    environment, command=self._agent_command(instruction),
+                    env=self._provider_env,
+                )
+            except asyncio.CancelledError:
+                self._run_outcome = "external_kill"
+                raise
+            except BaseException:
+                self._run_outcome = "crashed"
+                raise
+            self._run_outcome = "completed"
             return
         if knobs is None:
             # A known external cap with no adapter knobs: the harness owns
@@ -820,10 +831,28 @@ class FaAgent(BaseInstalledAgent):
         Harbor semantics: n_input_tokens INCLUDES cache tokens. cost_usd
         comes from the pinned bench price table (bench/pricing.json);
         unpriced model → None, which the summary renders as n/a.
+
+        gh-1643 (C2/C4): the run outcome class (self-kill at cap /
+        external kill / completed / crashed / never-started — stashed by
+        run()) and the usage_incomplete marker (a request killed before
+        its assistant message finalized — the fold's totals are partial)
+        land in ``agent_result.metadata``, so ``result.json`` carries the
+        classification instead of consumers doing exception.txt
+        archaeology.
         """
         usage = fa_usage.extract_from_dir(self.logs_dir / "fah-sessions")
         for warning in usage.warnings:
             print(f"[fa_agent] warning: {warning}", file=sys.stderr)
+        # AC4: every terminal outcome class is exported — even when the
+        # session produced no usage records at all (the C3 never-started
+        # shape keeps totals untouched, but the outcome is explicit).
+        metadata = {**(context.metadata or {})}
+        metadata["failure_mode"] = getattr(self, "_run_outcome", None) or (
+            "never_started"
+        )
+        if usage.usage_incomplete:
+            metadata["usage_incomplete"] = True
+        context.metadata = metadata
         if not (
             usage.input_tokens
             or usage.output_tokens

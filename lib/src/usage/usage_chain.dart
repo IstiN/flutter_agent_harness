@@ -473,6 +473,7 @@ final class UsageChainFolder {
       total: folder.totalOf(segments),
       chainRecords: scan.recordCount,
       chainHash: scan.chainHash,
+      usageIncomplete: scan.usageIncomplete,
     );
   }
 }

@@ -48,6 +48,16 @@ class SessionUsage:
         # model id -> per-model tally; "" when the record named no model.
         self.models = {}
         self.warnings = []
+        # gh-1643: True when at least one `model_request_summary` never
+        # finalized (the run was killed before its assistant message) —
+        # the totals cover PARTIAL knowledge (estimated request-side
+        # input, no output). Consumers must never read them as complete
+        # accounting.
+        self.usage_incomplete = False
+        # Last model id seen on a finalized request (gh-1643): a dangling
+        # request carries no model of its own, so its estimate is
+        # attributed to the model the session actually ran on.
+        self.last_model = ""
 
     @property
     def estimated_tokens(self) -> int:
@@ -68,6 +78,48 @@ def _per_model(usage: SessionUsage, model: str) -> dict:
         model,
         {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "estimatedOutput": 0},
     )
+
+
+def _feed_dangling(usage: SessionUsage, known_chars: int) -> None:
+    """A `model_request_summary` whose request never finalized (gh-1643).
+
+    The run was killed before its assistant message: the summary's KNOWN
+    request-side volume — system prompt + outbound message chars, persisted
+    BEFORE the request — counts as estimated input at the shared chars/4
+    rate; output is unknown and stays 0. The usage is marked incomplete:
+    a request the fold only partially knows is never a silent zero.
+    """
+    usage.usage_incomplete = True
+    est = math.ceil(known_chars / _CHARS_PER_TOKEN)
+    if est == 0:
+        return
+    usage.estimated_input_tokens += est
+    model = usage.last_model or ""
+    tally = _per_model(usage, model)
+    tally["estimatedInput"] = tally.get("estimatedInput", 0) + est
+
+
+def _request_known_chars(data) -> int:
+    """Known request-side chars of one `model_request_summary` record.
+
+    `systemPromptChars` + Σ per-message `chars` — the same basis the Dart
+    fold's dangling-request fallback uses (gh-1073's ledger cap preserves
+    both, so the estimate survives the newest-tail capping).
+    """
+    if not isinstance(data, dict):
+        return 0
+    total = 0
+    system = data.get("systemPromptChars")
+    if isinstance(system, int) and not isinstance(system, bool):
+        total += system
+    messages = data.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if isinstance(message, dict):
+                chars = message.get("chars")
+                if isinstance(chars, int) and not isinstance(chars, bool):
+                    total += chars
+    return total
 
 
 def _content_chars(content) -> int:
@@ -101,6 +153,8 @@ def _feed(usage: SessionUsage, obj) -> None:
     if not isinstance(message, dict) or message.get("role") != "assistant":
         return
     model = message.get("model") or ""
+    if model:
+        usage.last_model = model
     usage_or_flat = message.get("usage")
     if not isinstance(usage_or_flat, dict):
         # Flat trajectory-export shape fallback.
@@ -158,17 +212,63 @@ def _feed(usage: SessionUsage, obj) -> None:
 
 
 def extract_from_text(text: str, usage: SessionUsage = None) -> SessionUsage:
-    """Sum usage over concatenated JSONL text (container exec / single file)."""
+    """Sum usage over concatenated JSONL text (container exec / single file).
+
+    gh-1643: request-side records fold too. A `model_request_summary` whose
+    request never produced a finalized assistant message — flushed by a
+    later summary, a segment marker, a session header, or the end of the
+    text — contributes its KNOWN request-side volume as estimated input and
+    sets `usage_incomplete`. Finalized requests never double-count: the
+    assistant message's usage supersedes its summary.
+    """
     usage = usage if usage is not None else SessionUsage()
+    pending_chars = None
     for line in text.splitlines():
-        if '"usage"' not in line and '"inputTokens"' not in line:
+        if (
+            '"usage"' not in line
+            and '"inputTokens"' not in line
+            and '"model_request_summary"' not in line
+            and '"usage_segment_start"' not in line
+        ):
             continue
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue  # corrupt line contributes nothing (fail-soft)
-        if isinstance(obj, dict):
-            _feed(usage, obj)
+        if not isinstance(obj, dict):
+            continue
+        record_type = obj.get("type")
+        if (
+            record_type == "custom"
+            and obj.get("customType") == "model_request_summary"
+        ):
+            if pending_chars is not None:
+                # The previous request never finalized — count it now.
+                _feed_dangling(usage, pending_chars)
+            pending_chars = _request_known_chars(obj.get("data"))
+            continue
+        if record_type == "custom" and obj.get("customType") == "usage_segment_start":
+            if pending_chars is not None:
+                _feed_dangling(usage, pending_chars)
+                pending_chars = None
+            continue
+        if record_type == "session":
+            # A new chain header: anything pending belongs to the previous
+            # chain (replay/takeover file pairs) — it never finalized.
+            if pending_chars is not None:
+                _feed_dangling(usage, pending_chars)
+                pending_chars = None
+            continue
+        if record_type != "message":
+            continue
+        _feed(usage, obj)
+        message = obj.get("message")
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            # The request finalized: its summary is superseded by the
+            # message usage — never double-count.
+            pending_chars = None
+    if pending_chars is not None:
+        _feed_dangling(usage, pending_chars)
     return usage
 
 
