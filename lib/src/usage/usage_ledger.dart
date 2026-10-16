@@ -261,6 +261,7 @@ final class UsageLedger {
     required this.total,
     required this.chainRecords,
     required this.chainHash,
+    this.usageIncomplete = false,
   });
 
   /// usage.json schema version written by this build.
@@ -287,6 +288,12 @@ final class UsageLedger {
   /// hand-edits and crash remnants are detected, never merged into (E3).
   final String chainHash;
 
+  /// gh-1643: at least one request started and never finalized (killed
+  /// mid-stream) — the totals are PARTIAL (estimated input, no output) and
+  /// consumers must not read them as complete accounting. Serialized ONLY
+  /// when true, so every unaffected fold stays byte-identical (AC2/I6).
+  final bool usageIncomplete;
+
   /// Serializes to the artifact JSON map (schema order fixed for
   /// byte-determinism, I6).
   Map<String, dynamic> toJson() => {
@@ -296,6 +303,7 @@ final class UsageLedger {
     'segments': [for (final segment in segments) segment.toJson()],
     'total': total.toJson(),
     'chain': {'records': chainRecords, 'hash': chainHash},
+    if (usageIncomplete) 'usageIncomplete': true,
   };
 
   /// Deserializes from a JSON map; unknown fields are ignored so newer
@@ -322,6 +330,7 @@ final class UsageLedger {
             ),
       chainRecords: rawChain is Map ? rawChain['records'] as int? ?? 0 : 0,
       chainHash: rawChain is Map ? rawChain['hash'] as String? ?? '' : '',
+      usageIncomplete: json['usageIncomplete'] as bool? ?? false,
     );
   }
 }
