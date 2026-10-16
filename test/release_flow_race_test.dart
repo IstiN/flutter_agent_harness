@@ -435,7 +435,7 @@ VerifyRun runVerify(
       // Test seams — production defaults live in the script.
       'PUBDEV_READ_SLEEP_SECS': '0',
       'PUBDEV_POLL_SLEEP_SECS': '0',
-      if (rearmPushTo != null) 'RELEASE_APP_PUSH_URL': rearmPushTo,
+      'RELEASE_APP_PUSH_URL': ?rearmPushTo,
       ...extraEnv,
     },
   );
