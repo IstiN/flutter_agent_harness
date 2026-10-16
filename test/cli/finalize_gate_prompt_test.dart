@@ -106,6 +106,8 @@ void main() {
     // out of the contract.
     expect(finalizeGateContractPrompt, isNot(contains('FA_DEADLINE_EPOCH_MS')));
     expect(finalizeGateContractPrompt, isNot(contains('date +%s')));
+    // No internal issue refs ride the model-facing prompt (owner review).
+    expect(finalizeGateContractPrompt, isNot(contains('gh-1646')));
     expect(finalizeGateContractPrompt, isNot(contains('exit license')));
     expect(finalizeGateContractPrompt, isNot(contains('protocol violation')));
     expect(finalizeGateContractPrompt, isNot(contains('NAMES the blocker')));
@@ -130,7 +132,7 @@ void main() {
       // Snapshot of the composed system-prompt section (C1): the
       // harness-owned clock rides the prompt the unattended agent sees.
       final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
-      expect(prompt, contains('Work to the wall (gh-1646)'));
+      expect(prompt, contains('Work to the wall'));
       expect(prompt, contains('time-left notices'));
       expect(prompt, contains('interrupted automatically when time expires'));
       expect(prompt, isNot(contains('FA_DEADLINE_EPOCH_MS')));
