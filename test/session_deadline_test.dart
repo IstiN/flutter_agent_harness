@@ -16,10 +16,7 @@ void main() {
     });
 
     test('parses combined durations covering the whole string', () {
-      expect(
-        parseDeadlineSpec('1h30m').duration,
-        const Duration(minutes: 90),
-      );
+      expect(parseDeadlineSpec('1h30m').duration, const Duration(minutes: 90));
       expect(
         parseDeadlineSpec('2h15m30s').duration,
         const Duration(hours: 2, minutes: 15, seconds: 30),
@@ -39,15 +36,16 @@ void main() {
         throwsFormatException,
         reason: '90 must never silently read as 90 ms',
       );
-      expect(
-        () => parseDeadlineSpec('25'),
-        throwsFormatException,
-      );
+      expect(() => parseDeadlineSpec('25'), throwsFormatException);
     });
 
     test('rejects garbage, trailing units, zero and negative shapes', () {
       for (final bad in ['', 'abc', '25x', '1h30', '-5m', '5 m', '0s', '1m1']) {
-        expect(() => parseDeadlineSpec(bad), throwsFormatException, reason: bad);
+        expect(
+          () => parseDeadlineSpec(bad),
+          throwsFormatException,
+          reason: bad,
+        );
       }
     });
   });
@@ -73,7 +71,9 @@ void main() {
 
     setUp(() {
       nowMs = DateTime.utc(2026, 1, 1).millisecondsSinceEpoch;
-      deadline = SessionDeadline(clock: () => DateTime.fromMillisecondsSinceEpoch(nowMs));
+      deadline = SessionDeadline(
+        clock: () => DateTime.fromMillisecondsSinceEpoch(nowMs),
+      );
     });
 
     test('unarmed: budgetLine null, pollNotices empty, remainingMs throws', () {
@@ -128,6 +128,15 @@ void main() {
       expect(second.single.text, contains('background shell jobs'));
       expect(second.single.text, contains('bash_job stop'));
       expect(second.single.text, contains('finalize your outputs'));
+      // gh-1652 C3: the steer also carries the grader-parity clause —
+      // the last check before finalizing is the grader's own oracle,
+      // not the agent's checklist.
+      expect(
+        second.single.text,
+        contains('run each produced entry point the way the grader will'),
+      );
+      expect(second.single.text, contains('neutral cwd, clean env'));
+      expect(second.single.text, contains('fix what diverges'));
       expect(deadline.pollNotices(), isEmpty);
 
       // T-30s: write the final answer NOW.
@@ -143,18 +152,39 @@ void main() {
       expect(deadline.budgetLine(), 'time-left: 0s');
     });
 
+    test('gh-1652 C3: the wrap-up steer text carries the parity clause', () {
+      // Pinned on the ladder itself (not just a fired notice): the
+      // clause must survive any refactor of the notice plumbing.
+      final text = const DeadlineLadder().text(
+        DeadlineNoticeKind.wrapUp,
+        formatTimeLeft(3 * 60 * 1000),
+      );
+      expect(text, contains('before finalizing'));
+      expect(
+        text,
+        contains('the way the grader will (neutral cwd, clean env)'),
+      );
+      expect(text, contains('fix what diverges'));
+      // The other rungs stay parity-free — the steer is a T-3min matter.
+      expect(
+        const DeadlineLadder().text(DeadlineNoticeKind.halfBudget, '5min'),
+        isNot(contains('grader')),
+      );
+      expect(
+        const DeadlineLadder().text(DeadlineNoticeKind.finalAnswer, '30s'),
+        isNot(contains('grader')),
+      );
+    });
+
     test('a jump across several crossings batches them in ladder order', () {
       deadline.setDuration(const Duration(minutes: 25));
       nowMs += const Duration(minutes: 24, seconds: 45).inMilliseconds;
       final notices = deadline.pollNotices();
-      expect(
-        notices.map((n) => n.kind),
-        [
-          DeadlineNoticeKind.halfBudget,
-          DeadlineNoticeKind.wrapUp,
-          DeadlineNoticeKind.finalAnswer,
-        ],
-      );
+      expect(notices.map((n) => n.kind), [
+        DeadlineNoticeKind.halfBudget,
+        DeadlineNoticeKind.wrapUp,
+        DeadlineNoticeKind.finalAnswer,
+      ]);
       expect(deadline.pollNotices(), isEmpty);
     });
 
@@ -179,22 +209,19 @@ void main() {
       compressed.setDuration(const Duration(seconds: 20));
       // 9s left: past the 50% mark (10s), not yet the 5s wrap-up steer.
       nowMs += 11000;
-      expect(
-        compressed.pollNotices().map((n) => n.kind),
-        [DeadlineNoticeKind.halfBudget],
-      );
+      expect(compressed.pollNotices().map((n) => n.kind), [
+        DeadlineNoticeKind.halfBudget,
+      ]);
       // 5s left: the wrap-up steer.
       nowMs += 4000;
-      expect(
-        compressed.pollNotices().map((n) => n.kind),
-        [DeadlineNoticeKind.wrapUp],
-      );
+      expect(compressed.pollNotices().map((n) => n.kind), [
+        DeadlineNoticeKind.wrapUp,
+      ]);
       // 0.9s left: the final-answer steer.
       nowMs += 4100;
-      expect(
-        compressed.pollNotices().map((n) => n.kind),
-        [DeadlineNoticeKind.finalAnswer],
-      );
+      expect(compressed.pollNotices().map((n) => n.kind), [
+        DeadlineNoticeKind.finalAnswer,
+      ]);
     });
   });
 
@@ -216,10 +243,7 @@ void main() {
 
     test('a valid env epoch arms the clock', () {
       final epoch = bootMs + const Duration(minutes: 25).inMilliseconds;
-      final d = resolveSessionDeadline(
-        envValue: '$epoch',
-        clock: fakeClock,
-      );
+      final d = resolveSessionDeadline(envValue: '$epoch', clock: fakeClock);
       expect(d.isArmed, isTrue);
       expect(d.deadlineEpochMs, epoch);
     });
@@ -239,7 +263,10 @@ void main() {
         flagSpec: '25m',
         clock: fakeClock,
       );
-      expect(d.deadlineEpochMs, bootMs + const Duration(minutes: 25).inMilliseconds);
+      expect(
+        d.deadlineEpochMs,
+        bootMs + const Duration(minutes: 25).inMilliseconds,
+      );
     });
 
     test('an invalid flag spec throws (user-facing, never silent)', () {

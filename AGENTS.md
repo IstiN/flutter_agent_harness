@@ -171,7 +171,10 @@ factual: paths, commands, invariants — no essays.
   unmet items is budget-conditional (gh-1646): compliant only when the
   wall clock is effectively reached or every unmet item names a blocker
   the agent cannot change — an honest ledger is not an early-exit
-  license. The loop parses
+  license. Step 2.5 (gh-1652) re-runs each produced entry point the way
+  the grader will — neutral cwd, fresh subprocess, clean env — so the
+  ledger's oracle is the verifier's own invocation, not the agent's
+  checklist. The loop parses
   the final answer's `task-ledger` fenced block (`parseTaskLedger`,
   last block wins) and emits `TaskLedgerEvent`; hosts persist the hidden
   `task_ledger` custom record (CLI: `agent_event_handler.dart` →

@@ -16,6 +16,7 @@ Those turns produced no state; running the checklist ritual on them is noise. Ot
 
 1. **Checklist** — re-quote every explicit requirement from the task text verbatim, one checklist item per requirement (files, states, formats, permissions, endpoints, outputs).
 2. **Verify each item with a real command** against the produced state — never from memory, never "I wrote it earlier". Note expected vs actual.
+2.5. **Grader parity** — your shell is not the verifier's: if the task ships a runnable verifier, test, or entry point the grader will call, run THAT command the way the grader will — neutral cwd (`cd /` — a different working directory, never the session cwd), fresh subprocess, clean env (no session-exported vars) — and compare stdout, stderr, and exit code against the earlier in-session run. Any divergence — different output, files created via relative paths now missing, locale/encoding-dependent output — is a `fail` item to fix before finalizing. The ledger row for the main artifact uses this invocation as its `command:`.
 3. **Fix every unmet item** — a failed item is fixed and re-verified. Fix attempts are bounded (don't spiral on one dead end — switch approach), but a bounded attempt is NEVER a permission to stop: while budget remains, the next compliant action is another approach, not a final answer.
 
 **The unmet-item wall (gh-1646).** A final answer that still carries `fail` items is compliant ONLY when one of these holds:
@@ -32,7 +33,6 @@ Named checks every checklist must include when they apply:
 - **Canonical artifacts** — verify with the artifacts the task PROVIDES (configs, datasets, archives, URLs), never a self-made stand-in.
 - **Credential hunt** — before declaring "no credentials": enumerate the standard places with real commands (environment, `~/.aws/`, `~/.config/`, `~/.hf/`, `~/.git-credentials`, `~/.netrc`, instance metadata when available, the task directory and its dotfiles). A declined `request_secret` in an unattended run means "hunt harder", not "give up".
 - **Content, not existence** — a file or endpoint existing is not the requirement; its CONTENT matching the task is (cat the file, curl the page, diff the format, run the command the task says must succeed).
-- **Grader parity** — your shell is not the verifier's: a produced entry point (a script/CLI the grader will run) is verified only when it survives the grader's own invocation. Re-run each produced entry point from a different working directory (`cd /` — any neutral cwd, never the session cwd) in a fresh subprocess with a clean env (no session-exported vars), capture stdout, stderr and exit code, and diff against the earlier in-session run. Any divergence — different output, files created via relative paths now missing, locale/encoding-dependent output — is a `fail` ledger item, not a pass.
 
 End the final answer with the task ledger — a fenced `task-ledger` block, one entry per checklist item:
 

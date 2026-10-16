@@ -225,6 +225,32 @@ def classify_early_exit_unmet(
     return duration_secs < cap_secs - margin
 
 
+def classify_clean_exit_wrong(clean_exit: bool, ledger_unmet, reward_zero):
+    """gh-1652 C4: the CLEAN-WRONG verdict for one trial.
+
+    True = the trial ended on its own (clean `__FA_EXIT=0`), its FINAL
+    task ledger carries ZERO unmet items (the agent believed it was
+    done — it validated through its own checklist oracle), and every
+    verifier reward is 0 — the grader's own invocation was never run.
+    False = not in the class (killed, an unmet ledger — that is the
+    gh-1646 surrender class instead — or a nonzero reward). None =
+    unclassifiable — a missing ledger or verifier-reward input (legacy
+    artifacts) never fabricates the class.
+
+    DISJOINT from `classify_early_exit_unmet` by construction: the two
+    classes key on opposite sides of `ledger_unmet <= 0`, so a trial is
+    counted once.
+
+    Duplicated in bench/terminal_bench/summary.py (the summary scripts
+    are standalone-by-design) — change both together.
+    """
+    if ledger_unmet is None or reward_zero is None:
+        return None
+    if not clean_exit or ledger_unmet > 0 or not reward_zero:
+        return False
+    return True
+
+
 def _ledger_cell(trial_dir: Path) -> str:
     """gh-1412: the trial's checklist-coverage cell from its last hidden
     `task_ledger` record — "checklist: V/T [(N unmet)]", "checklist: none"
@@ -417,6 +443,9 @@ def _trial_rows(job_dir: Path) -> list[dict]:
         )
         cap_secs = _audit_cap_secs(trial_dir)
         ledger_unmet = _ledger_unmet_count(trial_dir)
+        # gh-1652 C4: reward-0 evidence — every verifier reward is zero
+        # (no partial credit). No scores = no verdict = unclassifiable.
+        reward_zero = (not any(v > 0.0 for v in scores)) if scores else None
         rows.append({
             "resolved": resolved,
             "exception": exception,
@@ -434,6 +463,10 @@ def _trial_rows(job_dir: Path) -> list[dict]:
             "early_exit_unmet": classify_early_exit_unmet(
                 clean_exit, ledger_unmet, duration_secs, cap_secs
             ),
+            "clean_exit_wrong": classify_clean_exit_wrong(
+                clean_exit, ledger_unmet, reward_zero
+            ),
+            "reward_zero": reward_zero,
             "duration_secs": duration_secs,
             "cap_secs": cap_secs,
         })
@@ -628,6 +661,35 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
             lines.append(
                 f"{unclassified} failure(s) unclassifiable — no cap,"
                 " duration, or ledger data (never counted as early exits)"
+            )
+
+    # gh-1652 C4: the CLEAN-WRONG class — the mirror image of the
+    # surrender guard above. The agent exited cleanly BELIEVING it was
+    # done (zero-unmet ledger) and the verifier still scored reward 0:
+    # it validated through its own oracle, never the grader's
+    # invocation. Disjoint from the guard above by construction
+    # (ledger_unmet <= 0 vs > 0) — a trial is counted once.
+    clean_wrongs = [
+        r for r in scored_failures if r.get("clean_exit_wrong") is True
+    ]
+    clean_unclassified = sum(
+        1 for r in scored_failures if r.get("clean_exit_wrong") is None
+    )
+    if scored_failures:
+        share = f"{len(clean_wrongs) / len(scored_failures):.0%}"
+        lines.append("")
+        lines.append(
+            f"**clean_exit_wrong (gh-1652): {len(clean_wrongs)}/"
+            f"{len(scored_failures)} failures ({share})** — clean exit +"
+            " zero-unmet task ledger + verifier reward 0"
+        )
+        for r in clean_wrongs:
+            lines.append(f"- {r['trial']}")
+        if clean_unclassified:
+            lines.append(
+                f"{clean_unclassified} failure(s) unclassifiable for"
+                " clean_exit_wrong — no ledger or verifier-reward data"
+                " (never counted)"
             )
 
     # gh-1578: the errored class splits by OWNER. Verifier timeouts (the

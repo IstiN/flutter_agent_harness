@@ -364,7 +364,7 @@ void main() {
       expect(contract, contains('request_secret'));
     });
 
-    test('gh-1605: documents the grader-parity named check', () {
+    test('gh-1605/gh-1652: documents the grader-parity named check', () {
       // The verifier runs produced entry points itself — a fresh
       // subprocess from a different working directory with a clean env —
       // so an in-session pass proves nothing about what the grader sees.
@@ -376,6 +376,11 @@ void main() {
       expect(contract, contains('fresh subprocess'));
       expect(contract, contains('relative paths'));
       expect(contract, contains('divergence'));
+      // gh-1652 C1: the check is a NUMBERED step (2.5) inside the loop
+      // — between verify and fix — not a named-checks bullet; flash
+      // executes numbered steps but skimmed the bullet list.
+      expect(contract, contains('2.5. **Grader parity**'));
+      expect(contract, isNot(contains('- **Grader parity**')));
     });
 
     test('mandates command-verified state, never memory', () {

@@ -105,15 +105,67 @@ void main() {
     }
   });
 
-  test('gh-1646: the composed headless prompt carries the unmet-item wall',
-      () async {
-    // Snapshot of the composed system-prompt section (C1): the budget
-    // condition rides the prompt the unattended agent actually sees.
-    final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
-    expect(prompt, contains('The unmet-item wall (gh-1646)'));
-    expect(prompt, contains('ONLY when one of these holds'));
-    expect(prompt, contains('exit license'));
+  test(
+    'gh-1646: the composed headless prompt carries the unmet-item wall',
+    () async {
+      // Snapshot of the composed system-prompt section (C1): the budget
+      // condition rides the prompt the unattended agent actually sees.
+      final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+      expect(prompt, contains('The unmet-item wall (gh-1646)'));
+      expect(prompt, contains('ONLY when one of these holds'));
+      expect(prompt, contains('exit license'));
+    },
+  );
+
+  test('gh-1652 C1: grader parity is numbered step 2.5 between verify '
+      'and fix', () {
+    // The CLEAN-WRONG regression (41% of bench failures): the parity
+    // check sat buried as a named-checks bullet and flash read it
+    // without executing it. It is now a numbered step in the loop
+    // itself, between verify (2) and fix (3).
+    expect(finalizeGateContractPrompt, contains('2.5. **Grader parity**'));
+    // Elevated, not duplicated: the old bullet is gone.
+    expect(finalizeGateContractPrompt, isNot(contains('- **Grader parity**')));
+    // The step sits between verify and fix in the numbered loop.
+    final verifyAt = finalizeGateContractPrompt.indexOf('2. **Verify');
+    final parityAt = finalizeGateContractPrompt.indexOf('2.5. **Grader');
+    final fixAt = finalizeGateContractPrompt.indexOf('3. **Fix');
+    expect(verifyAt, greaterThanOrEqualTo(0));
+    expect(parityAt, greaterThan(verifyAt));
+    expect(fixAt, greaterThan(parityAt));
   });
+
+  test('gh-1652 C2: the neutral-cwd recipe is concrete and the ledger '
+      'row pins the grader-shaped invocation', () {
+    // The recipe, actable without interpretation: neutral cwd, fresh
+    // subprocess, clean env, compare output/exit code.
+    expect(
+      finalizeGateContractPrompt,
+      contains('run THAT command the way the grader will'),
+    );
+    expect(finalizeGateContractPrompt, contains('cd /'));
+    expect(finalizeGateContractPrompt, contains('neutral cwd'));
+    expect(finalizeGateContractPrompt, contains('fresh subprocess'));
+    expect(finalizeGateContractPrompt, contains('clean env'));
+    expect(finalizeGateContractPrompt, contains('exit code'));
+    // The ledger row for the main artifact uses THIS invocation as its
+    // command — not a self-referential grep/cat check.
+    expect(
+      finalizeGateContractPrompt,
+      contains('uses this invocation as its `command:`'),
+    );
+  });
+
+  test(
+    'gh-1652: the composed headless prompt carries the parity step',
+    () async {
+      // Snapshot of the composed system-prompt section: the numbered
+      // parity step rides the prompt the unattended agent actually sees.
+      final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+      expect(prompt, contains('2.5. **Grader parity**'));
+      expect(prompt, contains('neutral cwd'));
+    },
+  );
 
   test('interactive boots never carry the contract', () async {
     for (final mode in [
