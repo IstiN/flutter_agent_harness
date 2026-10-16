@@ -885,7 +885,7 @@ jobs:
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           name: coverage-shard-${{ matrix.shard }}
@@ -894,7 +894,7 @@ jobs:
 
       # junit durations for the weekly shard-rebalance.yml (retention 7d so
       # a quiet week never starves it into the file-count fallback).
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           name: junit-shard-${{ matrix.shard }}
@@ -1093,7 +1093,7 @@ jobs:
           version="${version#v}"
           echo "$version" > fa-local/bundle/version.txt
           ./fa-local/bundle/bin/fah --version
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fa-aot-bin
           path: fa-local/bundle/
@@ -1192,7 +1192,7 @@ jobs:
       # guard FAILS the shard loudly if the artifact is missing or dead —
       # a silent JIT fallback would hide the optimization from AC1's
       # before/after numbers.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: fa-aot-bin
           path: fa-local/bundle
@@ -1272,7 +1272,7 @@ jobs:
       # fails the shard loudly, and the retries stay if: always()-reachable
       # so red legs keep their evidence. Guarded by
       # test/ci_pty_artifact_upload_retry_guard_test.dart.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         id: upload_integration_json
         if: always()
         with:
@@ -1280,14 +1280,14 @@ jobs:
           path: test-results/integration-shard-${{ matrix.shard }}.json
           retention-days: 2
       - name: Retry integration-json upload (transient blob-storage reset, gh-1412)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.upload_integration_json.outcome == 'failure'
         with:
           name: integration-json-shard-${{ matrix.shard }}
           path: test-results/integration-shard-${{ matrix.shard }}.json
           retention-days: 2
           overwrite: true
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         id: upload_integration_junit
         if: always()
         with:
@@ -1295,7 +1295,7 @@ jobs:
           path: test-results/junit-integration-shard-${{ matrix.shard }}.xml
           retention-days: 7
       - name: Retry junit upload (transient blob-storage reset, gh-1412)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.upload_integration_junit.outcome == 'failure'
         with:
           name: junit-integration-shard-${{ matrix.shard }}
@@ -1307,7 +1307,7 @@ jobs:
       - name: Format coverage to lcov (shard ${{ matrix.shard }})
         if: always()
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         id: upload_pty_coverage
         if: always()
         with:
@@ -1315,7 +1315,7 @@ jobs:
           path: coverage/lcov.info
           retention-days: 2
       - name: Retry coverage upload (transient blob-storage reset, gh-1412)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.upload_pty_coverage.outcome == 'failure'
         with:
           name: pty-coverage-shard-${{ matrix.shard }}
@@ -1359,7 +1359,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.x'
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: pty-coverage-shard-*
           path: pty-coverage-shards
@@ -1370,7 +1370,7 @@ jobs:
       - name: Assert integration shard manifest (union/disjoint/exists)
         run: python3 scripts/assert_shard_manifest.py scripts/test_integration_shards.json --shards 3 --tags integration --exclude browser_ext --exclude-tag llm
       # The leg's dart json reports for the #928 duration gate below.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: integration-json-shard-*
           path: integration-json-shards
@@ -1518,7 +1518,7 @@ jobs:
           # harness waits and shares the dispatch-wave packing.
           FA_PTY_BUDGET_SCALE: '2'
         run: cd flutter_app && flutter test test/cli_visual --tags integration
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: cli-visual-screenshots-pr
@@ -1558,7 +1558,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           pattern: coverage-shard-*
@@ -1634,7 +1634,7 @@ jobs:
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           pattern: coverage-shard-*
@@ -1899,7 +1899,7 @@ jobs:
           # sources [lib] exactly.
           flutter test --exclude-tags integration --coverage $(cat shard-files.txt)
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: app-coverage-shard-${{ matrix.shard }}
           path: flutter_app/coverage/lcov.info
@@ -2101,7 +2101,7 @@ jobs:
           path: ~/.pub-cache
           key: pub-crap4dart-${{ runner.os }}
           restore-keys: pub-crap4dart-${{ runner.os }}-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         with:
           pattern: app-coverage-shard-*
@@ -2141,7 +2141,7 @@ jobs:
       # ad-hoc run.
       - name: Upload crap_report.json artifact (issue 490 AC2)
         if: always() && (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: crap_report
           path: flutter_app/crap_report.json
@@ -2212,7 +2212,7 @@ jobs:
             test-results/flutter-shard-${{ matrix.shard }}.json \
             test-results/junit-faui-shard-${{ matrix.shard }}.xml
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: faui-coverage-shard-${{ matrix.shard }}
           path: packages/fa_ui/coverage/lcov.info
@@ -2220,7 +2220,7 @@ jobs:
 
       # junit durations for the weekly shard-rebalance.yml (AC3), same
       # contract as the core shards.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: junit-faui-shard-${{ matrix.shard }}
           path: packages/fa_ui/test-results/junit-faui-shard-${{ matrix.shard }}.xml
@@ -2247,7 +2247,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: faui-coverage-shard-*
           path: faui-coverage-shards
@@ -2264,7 +2264,7 @@ jobs:
             -o packages/fa_ui/coverage/lcov.merged.info \
             faui-coverage-shards/*/lcov.info
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: faui-coverage
           path: packages/fa_ui/coverage/lcov.merged.info
@@ -2328,7 +2328,7 @@ jobs:
           cd flutter_app && flutter test test/cli_visual/fa_cli_visual_test.dart
           --tags integration --name "settings hub → (compaction|memory)"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: cli-visual-settings-screenshots
@@ -3248,7 +3248,7 @@ jobs:
           EOF
           cp /tmp/jobs.json step-timings.json
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: step-timings
           path: step-timings.json
@@ -3812,7 +3812,7 @@ jobs:
 
       - name: Upload seeded size baselines (#1096 ratchet)
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: size-baselines-web-spa
           path: scripts/size_budget/*.tsv
