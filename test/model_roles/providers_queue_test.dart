@@ -1125,6 +1125,101 @@ void main() {
       },
     );
   });
+
+  group('ProviderQueueRuntime notice listeners (gh-1617 review r2)', () {
+    // gh-1617 review r2 (IMPORTANT): hosts build the runtime at boot but
+    // wire the agent later — the queue lane needs a late-attach listener
+    // so a mid-run failover can re-sync `agent.state.model` (the
+    // watchdog's arm-time window reads it) exactly like the roles lane's
+    // `_onRolesNotice` does.
+    late DateTime now;
+
+    setUp(() {
+      now = DateTime.utc(2026);
+    });
+
+    Future<List<AssistantMessageEvent>> drive(FallbackStreamFunction fn) async {
+      final out = fn(
+        _model('anthropic', 'ignored'),
+        const Context(messages: []),
+      );
+      final events = <AssistantMessageEvent>[];
+      await for (final event in out) {
+        events.add(event);
+      }
+      return events;
+    }
+
+    ProviderQueueRuntime failoverRuntime({
+      void Function(FallbackNotice notice)? onNotice,
+      List<FallbackNotice>? lateNotices,
+    }) {
+      final probe = _Probe({
+        'key-head': [_deathTurn(_model('anthropic', 'm1'), '502 Bad Gateway')],
+        'key-two': [_okTurn(_model('anthropic', 'm2'), 'a')],
+      });
+      final rt = ProviderQueueRuntime.build(
+        ProviderQueueResolution(
+          scope: ProviderQueueScope.env,
+          entries: [
+            _entry('anthropic', 'm1'),
+            _entry('anthropic', 'm2', apiKeyEnv: 'K2_API_KEY'),
+          ],
+          notices: const [],
+        ),
+        secrets: _secrets(),
+        policy: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+        now: () => now,
+        jitterFraction: () => 1.0,
+        sleeper: (delay, token) async => true,
+        onNotice: onNotice,
+        streamFactory: (kind, apiKey) => probe.streamForKey(apiKey),
+      );
+      if (lateNotices != null) rt.addNoticeListener(lateNotices.add);
+      return rt;
+    }
+
+    test('a late-attached listener rides the same dispatch as the build '
+        'handler', () async {
+      final buildNotices = <FallbackNotice>[];
+      final lateNotices = <FallbackNotice>[];
+      final rt = failoverRuntime(
+        onNotice: buildNotices.add,
+        lateNotices: lateNotices,
+      );
+      await drive(rt.streamFunction);
+      expect(
+        buildNotices.where((n) => n.kind == FallbackNoticeKind.modelFallback),
+        hasLength(1),
+      );
+      expect(
+        lateNotices.map((n) => n.kind),
+        buildNotices.map((n) => n.kind),
+        reason:
+            'the late listener sees exactly the notices the build '
+            'handler sees, in order',
+      );
+    });
+
+    test('a listener works with NO build handler (the boot never wired '
+        'onNotice — the fah_runapp shape)', () async {
+      final lateNotices = <FallbackNotice>[];
+      final rt = failoverRuntime(lateNotices: lateNotices);
+      await drive(rt.streamFunction);
+      expect(
+        lateNotices.where((n) => n.kind == FallbackNoticeKind.modelFallback),
+        hasLength(1),
+      );
+    });
+
+    test('no listener: dispatch stays inert and the failover is '
+        'byte-identical (legacy boot)', () async {
+      final rt = failoverRuntime();
+      final events = await drive(rt.streamFunction);
+      expect(events.whereType<DoneEvent>(), hasLength(1));
+      expect(rt.state.currentIndex, 1);
+    });
+  });
 }
 
 void _bootScopeTests() {
