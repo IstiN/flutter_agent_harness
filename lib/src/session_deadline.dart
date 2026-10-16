@@ -88,7 +88,9 @@ final class DeadlineLadder {
   String text(DeadlineNoticeKind kind, String timeLeft) => switch (kind) {
     DeadlineNoticeKind.halfBudget =>
       'Half of your time budget has elapsed ($timeLeft remaining). '
-          'Stop widening the search: converge on the deliverables.',
+          'Stop widening the search: converge on the deliverables. '
+          'Do not stop while work remains: unfinished work is not a reason '
+          'to wrap up — you are interrupted at the deadline anyway.',
     DeadlineNoticeKind.wrapUp =>
       'Deadline in $timeLeft — stop exploring and finalize your outputs '
           'NOW: drain or kill background shell jobs (`bash_job stop <id>`) '
@@ -193,8 +195,10 @@ String formatTimeLeft(int remainingMs) {
 final class SessionDeadline {
   /// Creates a clock. [clock] defaults to [DateTime.now]; tests inject a
   /// fake. [ladder] defaults to the standard T-3min/T-30s windows.
-  SessionDeadline({DateTime Function()? clock, this.ladder = const DeadlineLadder()})
-    : _clock = clock ?? DateTime.now;
+  SessionDeadline({
+    DateTime Function()? clock,
+    this.ladder = const DeadlineLadder(),
+  }) : _clock = clock ?? DateTime.now;
 
   /// The injected wall clock.
   final DateTime Function() _clock;
