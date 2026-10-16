@@ -167,7 +167,11 @@ factual: paths, commands, invariants — no essays.
   `agent_cli_prompt.dart`; interactive modes never carry it) — before any
   final summary the agent re-quotes every explicit requirement as a
   checklist, verifies each item with a real command against the produced
-  state, and fixes or explicitly reports every unmet item. The loop parses
+  state, and fixes every unmet item. A final answer that still carries
+  unmet items is budget-conditional (gh-1646): compliant only when the
+  wall clock is effectively reached or every unmet item names a blocker
+  the agent cannot change — an honest ledger is not an early-exit
+  license. The loop parses
   the final answer's `task-ledger` fenced block (`parseTaskLedger`,
   last block wins) and emits `TaskLedgerEvent`; hosts persist the hidden
   `task_ledger` custom record (CLI: `agent_event_handler.dart` →
