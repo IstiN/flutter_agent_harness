@@ -67,8 +67,7 @@ void main() {
     );
   });
 
-  test('gh-1646 C2: "report" is no longer an alternative to "fix" — the '
-      'old early-exit license wording is gone', () {
+  test('gh-1646 C2: "report" is no longer an alternative to "fix"', () {
     // The regression: "fixes or explicitly reports every unmet item"
     // made an honest ledger gate-compliant at ANY moment — 49% of the
     // bench failures exited cleanly with unmet ledgers and budget left.
@@ -79,23 +78,43 @@ void main() {
     );
   });
 
-  test('gh-1646 C1: the unmet-item wall — final answers with unmet items '
-      'are budget-conditional', () {
-    expect(finalizeGateContractPrompt, contains('The unmet-item wall'));
-    expect(finalizeGateContractPrompt, contains('ONLY when'));
-    // Wall branch: a named deadline source, not a feeling.
-    expect(finalizeGateContractPrompt, contains('FA_DEADLINE_EPOCH_MS'));
-    expect(finalizeGateContractPrompt, contains('date +%s'));
-    // Blocker branch: every unmet item names its blocker.
-    expect(finalizeGateContractPrompt, contains('NAMES the blocker'));
-    // The positive rule: budget remaining → the only compliant action.
-    expect(finalizeGateContractPrompt, contains('exit license'));
+  test('gh-1646 C1: work to the wall — the harness owns the clock', () {
+    // The owner CHANGE REQUEST dropped the deadline self-policing
+    // (shell arithmetic on FA_DEADLINE_EPOCH_MS) and the violation
+    // framing ("exit license"/"protocol violation"/blocker
+    // bookkeeping): the harness reports the clock (the time-left
+    // notice ladder) and interrupts the run at the wall — the prompt
+    // points at that, never at the agent's own deadline tracking.
+    expect(finalizeGateContractPrompt, contains('Work to the wall'));
     expect(
       finalizeGateContractPrompt,
-      contains('the ONLY compliant action is to continue working'),
+      contains('time-left notices report the remaining budget'),
     );
-    // The caffe-cifar-10 shape is named as the violation it is.
-    expect(finalizeGateContractPrompt, contains('to finish from here'));
+    expect(
+      finalizeGateContractPrompt,
+      contains('the next compliant action is another approach'),
+    );
+    expect(
+      finalizeGateContractPrompt,
+      contains('you are interrupted automatically when time expires'),
+    );
+    expect(
+      finalizeGateContractPrompt,
+      contains('A final answer is written when the task is done'),
+    );
+    // The rejected self-policing machinery and violation framing stay
+    // out of the contract.
+    expect(finalizeGateContractPrompt, isNot(contains('FA_DEADLINE_EPOCH_MS')));
+    expect(finalizeGateContractPrompt, isNot(contains('date +%s')));
+    expect(finalizeGateContractPrompt, isNot(contains('exit license')));
+    expect(finalizeGateContractPrompt, isNot(contains('protocol violation')));
+    expect(finalizeGateContractPrompt, isNot(contains('NAMES the blocker')));
+    // The ledger semantics line stays short — no new violation
+    // conditions on the `fail` status.
+    expect(
+      finalizeGateContractPrompt,
+      contains('`fail` = could not meet it before the deadline, reported'),
+    );
   });
 
   test('headless boots carry the contract under any approval mode', () async {
@@ -105,14 +124,15 @@ void main() {
     }
   });
 
-  test('gh-1646: the composed headless prompt carries the unmet-item wall',
+  test('gh-1646: the composed headless prompt carries work-to-the-wall',
       () async {
-    // Snapshot of the composed system-prompt section (C1): the budget
-    // condition rides the prompt the unattended agent actually sees.
+    // Snapshot of the composed system-prompt section (C1): the
+    // harness-owned clock rides the prompt the unattended agent sees.
     final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
-    expect(prompt, contains('The unmet-item wall (gh-1646)'));
-    expect(prompt, contains('ONLY when one of these holds'));
-    expect(prompt, contains('exit license'));
+    expect(prompt, contains('Work to the wall (gh-1646)'));
+    expect(prompt, contains('time-left notices'));
+    expect(prompt, contains('interrupted automatically when time expires'));
+    expect(prompt, isNot(contains('FA_DEADLINE_EPOCH_MS')));
   });
 
   test('interactive boots never carry the contract', () async {
