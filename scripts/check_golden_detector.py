@@ -16,6 +16,16 @@ square WITH an X). The issue measured what that means for this repo:
     - yellow "25:00" digits on the dark timer card: glyph edges pass
       the stripe heuristic (panel_dark).
 
+Version expectations of the regression fixture (measured; re-check
+after every upstream bump — `regression_note` defers here instead of
+hardcoding a version-pinned fraction in its print):
+  0.9.5:    0/40 pre-font goldens detected — the solid-Ahem-rectangle
+            blind spot; this is why broken_goldens stays `warning`.
+  >=0.14.2: 30/40 detected; the residual 10 carry only sub-20 px
+            hollow boxes (deliberately not flagged: indistinguishable
+            from rounded 16-18 px checkboxes), the fa_mark logo (a
+            real image) and sub-glyph-scale text.
+
 The detector fixes belong to upstream (IstiN/crap4dart). This harness
 pins the truth HERE, as synthetic pixel fixtures — one per class — so
 re-verification after every upstream release is one command:
@@ -411,14 +421,17 @@ def extract_regression(workdir: Path) -> Path:
 
 
 def regression_note(detected: int, total: int) -> str:
-    """The --regression footnote line."""
+    """The --regression footnote line.
+
+    Measured counts only: the per-version expectations (0/40 on the
+    0.9.5 detector, 30/40 on >=0.14.2, and the residual-10 make-up)
+    live in the module docstring. Hardcoding a version-pinned fraction
+    here makes the line lie the moment the detector bumps — the number
+    printed IS the measurement, the docstring carries the interpretation.
+    """
     return (f"  detected: {detected}/{total}"
-            f" (0/40 = the measured blind spot; 30/40 with"
-            f" crap4dart >=0.14.2 — the residual 10 carry only"
-            f" sub-20 px hollow boxes (deliberately not flagged:"
-            f" indistinguishable from rounded 16-18 px checkboxes),"
-            f" the fa_mark logo (a real image) and sub-glyph-scale"
-            f" text)")
+            f" (0/40 = the 0.9.5 blind spot; expectations per detector"
+            f" version live in the module docstring)")
 
 
 def main() -> int:
