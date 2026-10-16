@@ -59,6 +59,37 @@ final openRouterModel = Model(
 Context simpleContext() =>
     Context(messages: [UserMessage.text('hi', timestamp: DateTime.utc(2026))]);
 
+/// Streams [reasoningChunks] as `reasoning` deltas and returns the final
+/// thinking text (gh-1655 stuttering-relay fixtures).
+Future<String> reasoningThinkingOf(List<String> reasoningChunks) async {
+  final client = sseClient(
+    sseBody([
+      for (final text in reasoningChunks)
+        {
+          'choices': [
+            {
+              'delta': {'reasoning': text},
+            },
+          ],
+        },
+      {
+        'choices': [
+          {'delta': <String, dynamic>{}, 'finish_reason': 'stop'},
+        ],
+      },
+      'data: [DONE]\n\n',
+    ]),
+  );
+  final stream = streamOpenAICompletions(
+    openRouterModel,
+    simpleContext(),
+    const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+    client,
+  );
+  final events = await stream.toList();
+  return events.whereType<ThinkingEndEvent>().single.content;
+}
+
 void main() {
   group('streamOpenAICompletions', () {
     test('streams text with live partial accumulation', () async {
@@ -204,6 +235,152 @@ void main() {
       expect(done.message.content.single, isA<ToolCall>());
     });
 
+    test(
+      'a re-sent tool-call frame with a fresh id merges, never re-executes',
+      () async {
+        // gh-1655: stuttering relays re-send a call frame under a freshly
+        // generated id — the id/index lookup misses and a second identical
+        // block spawns, so the command executes twice in one turn.
+        final client = sseClient(
+          sseBody([
+            {
+              'choices': [
+                {
+                  'delta': {
+                    'tool_calls': [
+                      {
+                        'id': 'chatcmpl-tool-bd624c1dd04fbbc9',
+                        'function': {
+                          'name': 'bash',
+                          'arguments': '{"command":"js hello.js"}',
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              'choices': [
+                {
+                  'delta': {
+                    'tool_calls': [
+                      {
+                        'id': 'chatcmpl-tool-9b456367dc7027d2',
+                        'function': {
+                          'name': 'bash',
+                          'arguments': '{"command":"js hello.js"}',
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              'choices': [
+                {'delta': <String, dynamic>{}, 'finish_reason': 'tool_calls'},
+              ],
+            },
+            'data: [DONE]\n\n',
+          ]),
+        );
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          client,
+        );
+
+        final events = await stream.toList();
+        expect(events.whereType<ToolCallStartEvent>(), hasLength(1));
+
+        final end = events.whereType<ToolCallEndEvent>().single;
+        // The re-sent frame's newer id is adopted only when the old one is
+        // empty — the original id stays.
+        expect(end.toolCall.id, 'chatcmpl-tool-bd624c1dd04fbbc9');
+        expect(end.toolCall.name, 'bash');
+        // The repeated arguments must not be appended twice.
+        expect(end.toolCall.arguments, {'command': 'js hello.js'});
+        expect(events.last as DoneEvent, isA<DoneEvent>());
+        expect((events.last as DoneEvent).reason, StopReason.toolUse);
+      },
+    );
+
+    test('two genuinely different calls in one message stay two blocks', () async {
+      final client = sseClient(
+        sseBody([
+          {
+            'choices': [
+              {
+                'delta': {
+                  'tool_calls': [
+                    {
+                      'index': 0,
+                      'id': 'call_a',
+                      'function': {'name': 'bash', 'arguments': '{"command'},
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              'choices': [
+                {
+                  'delta': {
+                    'tool_calls': [
+                      {'index': 0, 'function': {'arguments': '":"ls"}'}},
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              'choices': [
+                {
+                  'delta': {
+                    'tool_calls': [
+                      {
+                        'index': 1,
+                        'id': 'call_b',
+                        'function': {
+                          'name': 'bash',
+                          'arguments': '{"command":"pwd"}',
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              'choices': [
+                {'delta': <String, dynamic>{}, 'finish_reason': 'tool_calls'},
+              ],
+            },
+            'data: [DONE]\n\n',
+          ]),
+        );
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          client,
+        );
+
+        final events = await stream.toList();
+        expect(events.whereType<ToolCallStartEvent>(), hasLength(2));
+        final ends = events.whereType<ToolCallEndEvent>().toList();
+        expect(ends, hasLength(2));
+        expect(ends[0].toolCall.id, 'call_a');
+        expect(ends[0].toolCall.arguments, {'command': 'ls'});
+        expect(ends[1].toolCall.id, 'call_b');
+        expect(ends[1].toolCall.arguments, {'command': 'pwd'});
+      },
+    );
+
     test('dedupes cumulative and overlapping reasoning chunks', () async {
       List<Map<String, dynamic>> chunks(Iterable<String> texts) => [
         for (final text in texts)
@@ -248,6 +425,26 @@ void main() {
       );
       // Clean incremental deltas pass through untouched.
       expect(await thinkingOf(['let me ', 'think']), 'let me think');
+    });
+
+    test('a 1-char punctuation stutter in reasoning deltas is trimmed', () async {
+      // gh-1655: stuttering relays re-send standalone punctuation tokens —
+      // a 1-char overlap below the old k >= 2 floor survived the dedupe,
+      // doubling every sentence-punctuation char in the thinking text.
+      expect(
+        await reasoningThinkingOf(['greeting', '.', '.', ' I should']),
+        'greeting. I should',
+      );
+      expect(await reasoningThinkingOf(["I'm Fa", ',', ',']), "I'm Fa,");
+    });
+
+    test('an ellipsis split across reasoning deltas survives untrimmed', () async {
+      // The second delta repeats the tail char INSIDE itself — a legit "…"
+      // continuation, not a seam, so the 1-char trim must not fire.
+      expect(
+        await reasoningThinkingOf(['hmm', '.', '..', ' done']),
+        'hmm... done',
+      );
     });
 
     test('streams reasoning deltas as thinking blocks', () async {
