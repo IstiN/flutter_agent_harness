@@ -245,6 +245,69 @@ void main() {
         reason: 'the failure must name the artifact');
   });
 
+  test('AC3/E2: a full fetch lands the REPLACEMENT-TRANSFORMED bytes, '
+      'not the raw download', () {
+    // gh-1630 regression: the fresh-download path verified the transformed
+    // bytes in memory, then os.replace()d the RAW tmp download over the
+    // destination — every lock entry with `replacements` shipped its
+    // remote constants verbatim and the packaging guard rejected the zip
+    // (5 files with jsdelivr markers; ffi.mjs kept the unresolvable npm
+    // import). The lock pins the sha256 of the TRANSFORMED bytes, so the
+    // landed file must hash to the pin and carry no remote constant.
+    final tmp = Directory.systemTemp.createTempSync('fah-vendor-fetch');
+    addTearDown(() => tmp.deleteSync(recursive: true));
+    final raw = 'fetch("https://cdn.fixture.invalid/engine@1.2.3.js");\n';
+    final source = File('${tmp.path}/engine.js')..writeAsStringSync(raw);
+    const localRef = 'fetch("./vendor/engine-1.2.3.js");\n';
+    final lockFixture = File('${tmp.path}/lock.json')
+      ..writeAsStringSync(jsonEncode({
+        'engines': {
+          'fixture': {
+            'version': '1.2.3',
+            'files': [
+              {
+                'name': 'engine.js',
+                'url': source.uri.toString(),
+                'sha256': sha256Hex(utf8.encode(localRef)),
+                'replacements': [
+                  [
+                    'https://cdn.fixture.invalid/engine@1.2.3.js',
+                    './vendor/engine-1.2.3.js',
+                  ],
+                ],
+              },
+            ],
+          },
+        },
+      }));
+    final dest = Directory('${tmp.path}/dest')..createSync();
+
+    final result = Process.runSync('bash', [
+      'scripts/fetch_vendor_assets.sh',
+      '--lock', lockFixture.path,
+      '--dest', dest.path,
+    ]);
+    expect(result.exitCode, 0, reason: result.stderr);
+
+    final landed = File('${dest.path}/engine.js').readAsStringSync();
+    expect(landed, localRef,
+        reason: 'the fetched artifact must land with the lock-declared '
+            'replacement applied — shipping the raw download re-introduces '
+            'the remote constant the lock exists to strip (AC1)');
+    expect(landed, isNot(contains('cdn.fixture.invalid')));
+    // The staged tree must verify against the same lock it was fetched
+    // from (the CI cache leg re-runs --verify-only on it).
+    final verify = Process.runSync('bash', [
+      'scripts/fetch_vendor_assets.sh',
+      '--lock', lockFixture.path,
+      '--dest', dest.path,
+      '--verify-only',
+    ]);
+    expect(verify.exitCode, 0,
+        reason: 'the freshly fetched tree must pass --verify-only:\n'
+            '${verify.stderr}');
+  });
+
   test('F1/AC2: extension panel staging swaps CDN engine loaders for '
       'package-local vendor loaders (no failure stub)', () {
     final staging = File('scripts/stage_extension_panel.py');

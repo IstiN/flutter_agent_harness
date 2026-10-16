@@ -123,6 +123,14 @@ for engine, entry in sorted(lock["engines"].items()):
             )
             data = open(tmp, "rb").read()
             data = verify(data)
+            # Ship the VERIFIED (replacement-transformed) bytes: verify()
+            # transforms in memory, tmp still holds the raw download —
+            # renaming it straight over the destination shipped the raw
+            # upstream payload and the packaging guard rejected the zip
+            # (remote-code markers the lock replacements had already
+            # stripped in memory). Overwrite tmp, then atomically rename.
+            with open(tmp, "wb") as f:
+                f.write(data)
             os.replace(tmp, out_path)
             fetched += 1
             print(f"vendor: {name} fetched + verified "
