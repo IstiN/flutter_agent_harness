@@ -308,9 +308,11 @@ void main() {
       },
     );
 
-    test('two genuinely different calls in one message stay two blocks', () async {
-      final client = sseClient(
-        sseBody([
+    test(
+      'two genuinely different calls in one message stay two blocks',
+      () async {
+        final client = sseClient(
+          sseBody([
             {
               'choices': [
                 {
