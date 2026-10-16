@@ -175,8 +175,11 @@ const _run555JobsCliCancelled = '''
 ''';
 
 /// BSD `date` stand-in (gh-1649): macOS/BSD `date` has no GNU `-d` —
-/// `date -u -d <iso> +%s` fails loud there. Everything else delegates to
-/// the real date (PATH minus the shim dir).
+/// `date -u -d <iso> +%s` fails loud there. Emulates the BSD
+/// `date -u -j -f <fmt> <input> +<out>` form for the ISO-UTC shape the
+/// jobs API serves (days-from-civil arithmetic, verified byte-equal to
+/// GNU date), delegates everything else to the real date (PATH minus the
+/// shim dir).
 const _bsdDateShim = r'''
 #!/usr/bin/env bash
 for a in "$@"; do
@@ -185,6 +188,20 @@ for a in "$@"; do
     exit 1
   fi
 done
+if [ "${1:-}" = "-u" ] && [ "${2:-}" = "-j" ] && [ "${3:-}" = "-f" ] \
+   && [ "$4" = '%Y-%m-%dT%H:%M:%SZ' ]; then
+  IFS='-T:' read -r y mo d h mi s <<< "$5"
+  s="${s%%[!0-9]*}"
+  yy=$(( 10#$y )); mm=$(( 10#$mo )); dd=$(( 10#$d ))
+  if [ "$mm" -le 2 ]; then yy=$((yy - 1)); fi
+  era=$(( (yy >= 0 ? yy : yy - 399) / 400 ))
+  yoe=$((yy - era * 400))
+  doy=$(( (153 * (mm + (mm > 2 ? -3 : 9)) + 2) / 5 + dd - 1 ))
+  doe=$(( yoe * 365 + yoe / 4 - yoe / 100 + doy ))
+  days=$(( era * 146097 + doe - 719468 ))
+  echo $(( days * 86400 + 10#$h * 3600 + 10#$mi * 60 + 10#$s ))
+  exit 0
+fi
 exec "$(PATH="${PATH#*:}" command -v date)" "$@"
 ''';
 
@@ -401,30 +418,47 @@ ReportRun runReport(
 void main() {
   // ── AC1 — signal-first excerpt over tree noise (#1473) ──────────────────
   group('signal-first excerpt', () {
-    test('tree-noise child log -> quotes the server message, not the tree tail',
-        () {
-      final r = runReport(
-        'tree-noise',
-        legResults: const {'pubdev': 'failure'},
-        legUrls: const {'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777'},
-        fixtures: const {'failed-log-777.txt': _treeNoiseLog},
-      );
-      expect(r.exitCode, isNot(0), reason: r.output);
-      expect(r.created, isTrue, reason: 'a failing leg files an issue: ${r.output}');
-      expect(r.createdBody,
-          contains('Message from server: CHANGELOG.md exceeds the maximum '
-              'content length (262144 bytes)'),
-          reason: 'the signal line must be quoted, not the tree tail');
-      expect(r.createdBody, isNot(contains('z_last_tree_noise.dart')),
-          reason: 'the raw tail is tree noise and must not dominate the digest');
-      // The normalized signature is embedded for future root-cause dedup.
-      expect(
-        r.createdBody,
-        contains('daily-publish-sig: CHANGELOG.md exceeds the maximum content '
-            'length (262144 bytes)'),
-        reason: 'the server message is the root-cause signature',
-      );
-    });
+    test(
+      'tree-noise child log -> quotes the server message, not the tree tail',
+      () {
+        final r = runReport(
+          'tree-noise',
+          legResults: const {'pubdev': 'failure'},
+          legUrls: const {
+            'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777',
+          },
+          fixtures: const {'failed-log-777.txt': _treeNoiseLog},
+        );
+        expect(r.exitCode, isNot(0), reason: r.output);
+        expect(
+          r.created,
+          isTrue,
+          reason: 'a failing leg files an issue: ${r.output}',
+        );
+        expect(
+          r.createdBody,
+          contains(
+            'Message from server: CHANGELOG.md exceeds the maximum '
+            'content length (262144 bytes)',
+          ),
+          reason: 'the signal line must be quoted, not the tree tail',
+        );
+        expect(
+          r.createdBody,
+          isNot(contains('z_last_tree_noise.dart')),
+          reason: 'the raw tail is tree noise and must not dominate the digest',
+        );
+        // The normalized signature is embedded for future root-cause dedup.
+        expect(
+          r.createdBody,
+          contains(
+            'daily-publish-sig: CHANGELOG.md exceeds the maximum content '
+            'length (262144 bytes)',
+          ),
+          reason: 'the server message is the root-cause signature',
+        );
+      },
+    );
 
     test('priority order: ::error:: beats a later Message from server', () {
       final log = '''
@@ -438,16 +472,26 @@ final noise line
       final r = runReport(
         'priority',
         legResults: const {'play': 'failure'},
-        legUrls: const {'play': 'https://github.com/OWNER/REPO/actions/runs/888'},
+        legUrls: const {
+          'play': 'https://github.com/OWNER/REPO/actions/runs/888',
+        },
         fixtures: {'failed-log-888.txt': log},
       );
       expect(r.created, isTrue, reason: r.output);
       // The signature comes from the highest-priority signal (::error::)...
-      expect(r.createdBody,
-          contains('daily-publish-sig: primary injected failure'));
-      expect(r.createdBody, isNot(contains('daily-publish-sig: Message from server')));
+      expect(
+        r.createdBody,
+        contains('daily-publish-sig: primary injected failure'),
+      );
+      expect(
+        r.createdBody,
+        isNot(contains('daily-publish-sig: Message from server')),
+      );
       // ...while the excerpt still quotes the first matches with context.
-      expect(r.createdBody, contains('Message from server: some secondary complaint'));
+      expect(
+        r.createdBody,
+        contains('Message from server: some secondary complaint'),
+      );
       expect(r.createdBody, contains('::error::primary injected failure'));
     });
 
@@ -455,16 +499,27 @@ final noise line
       final r = runReport(
         'tail-fallback',
         legResults: const {'website': 'failure'},
-        legUrls: const {'website': 'https://github.com/OWNER/REPO/actions/runs/889'},
+        legUrls: const {
+          'website': 'https://github.com/OWNER/REPO/actions/runs/889',
+        },
         fixtures: {'failed-log-889.txt': _noSignalLog},
       );
       expect(r.created, isTrue, reason: r.output);
-      expect(r.createdBody, contains('progress line 80'),
-          reason: 'without a signal line the excerpt is the raw tail');
-      expect(r.createdBody, isNot(contains('progress line 10')),
-          reason: 'the fallback tail is bounded');
-      expect(r.createdBody, isNot(contains('Error signature')),
-          reason: 'no signature is derived from noise');
+      expect(
+        r.createdBody,
+        contains('progress line 80'),
+        reason: 'without a signal line the excerpt is the raw tail',
+      );
+      expect(
+        r.createdBody,
+        isNot(contains('progress line 10')),
+        reason: 'the fallback tail is bounded',
+      );
+      expect(
+        r.createdBody,
+        isNot(contains('Error signature')),
+        reason: 'no signature is derived from noise',
+      );
       expect(
         r.ghLog.where((l) => l.contains('search issues')),
         isEmpty,
@@ -491,39 +546,57 @@ final noise line
       // the #1472 empty-shrug class must be gone.
       expect(r.createdBody, contains('Cancelled while running'));
       expect(r.createdBody, contains('Leg: TestFlight'));
-      expect(r.createdBody, contains('5h59m53s'),
-          reason: '05:17:00Z -> 11:16:53Z elapsed');
-      expect(r.createdBody, contains('360'),
-          reason: 'the timeout-minutes ceiling from daily-publish.yml');
-      expect(r.createdBody, isNot(contains('(no failed-step log available')),
-          reason: 'the cancelled leg job log IS served per-job mid-run');
+      expect(
+        r.createdBody,
+        contains('5h59m53s'),
+        reason: '05:17:00Z -> 11:16:53Z elapsed',
+      );
+      expect(
+        r.createdBody,
+        contains('360'),
+        reason: 'the timeout-minutes ceiling from daily-publish.yml',
+      );
+      expect(
+        r.createdBody,
+        isNot(contains('(no failed-step log available')),
+        reason: 'the cancelled leg job log IS served per-job mid-run',
+      );
       expect(r.createdBody, contains('mid-checkout kill point'));
       expect(r.summary, contains('⚠️'));
     });
 
-    test('cancelled digest still extracts elapsed on BSD hosts (no GNU date -d)',
-        () {
-      // gh-1649: `date -u -d <iso> +%s` is GNU-only — on macOS dev hosts
-      // (where the pre-commit hook runs) both timestamps resolved empty and
-      // the digest degraded to "killed after unknown elapsed". Shim `date`
-      // to BSD behavior and demand the real elapsed (the portable pair
-      // release_dedupe_check.sh already uses: GNU -d, then BSD -j -f).
-      final r = runReport(
-        'cancelled-bsd-date',
-        legResults: const {'testflight': 'cancelled'},
-        fixtures: const {
-          'run-555.json': _run555Jobs,
-          'failed-log-job-11.txt': 'checkout noise\nmid-checkout kill point',
-        },
-        withWorkflowYaml: true,
-        pathShims: const {'date': _bsdDateShim},
-      );
-      expect(r.createdBody, contains('5h59m53s'),
-          reason: '05:17:00Z -> 11:16:53Z elapsed, BSD date included:\n'
-              '${r.createdBody}');
-      expect(r.createdBody, isNot(contains('unknown elapsed')),
-          reason: r.createdBody);
-    });
+    test(
+      'cancelled digest still extracts elapsed on BSD hosts (no GNU date -d)',
+      () {
+        // gh-1649: `date -u -d <iso> +%s` is GNU-only — on macOS dev hosts
+        // (where the pre-commit hook runs) both timestamps resolved empty and
+        // the digest degraded to "killed after unknown elapsed". Shim `date`
+        // to BSD behavior and demand the real elapsed (the portable pair
+        // release_dedupe_check.sh already uses: GNU -d, then BSD -j -f).
+        final r = runReport(
+          'cancelled-bsd-date',
+          legResults: const {'testflight': 'cancelled'},
+          fixtures: const {
+            'run-555.json': _run555Jobs,
+            'failed-log-job-11.txt': 'checkout noise\nmid-checkout kill point',
+          },
+          withWorkflowYaml: true,
+          pathShims: const {'date': _bsdDateShim},
+        );
+        expect(
+          r.createdBody,
+          contains('5h59m53s'),
+          reason:
+              '05:17:00Z -> 11:16:53Z elapsed, BSD date included:\n'
+              '${r.createdBody}',
+        );
+        expect(
+          r.createdBody,
+          isNot(contains('unknown elapsed')),
+          reason: r.createdBody,
+        );
+      },
+    );
 
     test('ceiling lookup handles the CLI leg name with a literal +', () {
       final r = runReport(
@@ -533,12 +606,21 @@ final noise line
         withWorkflowYaml: true,
       );
       expect(r.created, isTrue, reason: r.output);
-      expect(r.createdBody, contains('Leg: CLI + macOS desktop'),
-          reason: 'the cancelled CLI leg job is resolved from the jobs API');
-      expect(r.createdBody, contains('Timeout ceiling'),
-          reason: 'the CLI leg name contains + which must match literally');
-      expect(r.createdBody, contains('360'),
-          reason: 'the fixture yaml gives the CLI leg timeout-minutes: 360');
+      expect(
+        r.createdBody,
+        contains('Leg: CLI + macOS desktop'),
+        reason: 'the cancelled CLI leg job is resolved from the jobs API',
+      );
+      expect(
+        r.createdBody,
+        contains('Timeout ceiling'),
+        reason: 'the CLI leg name contains + which must match literally',
+      );
+      expect(
+        r.createdBody,
+        contains('360'),
+        reason: 'the fixture yaml gives the CLI leg timeout-minutes: 360',
+      );
     });
 
     test('cancelled digest degrades gracefully without the workflow file', () {
@@ -557,49 +639,59 @@ final noise line
 
   // ── AC3 — root-cause dedup by normalized signature (#1473 vs #1452) ─────
   group('root-cause dedup', () {
-    test('open issue carrying the same signature -> comment, not a new issue',
-        () {
-      final r = runReport(
-        'sig-dedup',
-        legResults: const {'pubdev': 'failure'},
-        legUrls: const {'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777'},
-        fixtures: const {
-          'failed-log-777.txt': _treeNoiseLog,
-          // #1452: the CHANGELOG > 256 KiB root cause is already open.
-          'search.json': '[{"number": 1452}]',
-        },
-      );
-      expect(r.exitCode, isNot(0), reason: r.output);
-      expect(r.created, isFalse,
-          reason: 'a signature match must not file a symptom duplicate');
-      expect(
-        r.ghLog.where((l) => l.contains('issue comment 1452')),
-        hasLength(1),
-        reason: 'the digest lands as a comment on the root-cause issue',
-      );
-      expect(r.comments, contains('Root-cause dedup'));
-      expect(r.comments, contains('#1452'));
-      expect(
-        r.comments,
-        contains('Message from server: CHANGELOG.md exceeds the maximum '
-            'content length (262144 bytes)'),
-        reason: 'the comment still carries the full digest',
-      );
-      expect(
-        r.comments,
-        contains('https://github.com/OWNER/REPO/actions/runs/777'),
-        reason: 'the new run link rides the comment',
-      );
-      expect(
-        r.ghLog.singleWhere((l) => l.contains('search issues')),
-        contains('CHANGELOG.md exceeds the maximum content length'),
-        reason: 'the search query carries the normalized signature',
-      );
-    });
+    test(
+      'open issue carrying the same signature -> comment, not a new issue',
+      () {
+        final r = runReport(
+          'sig-dedup',
+          legResults: const {'pubdev': 'failure'},
+          legUrls: const {
+            'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777',
+          },
+          fixtures: const {
+            'failed-log-777.txt': _treeNoiseLog,
+            // #1452: the CHANGELOG > 256 KiB root cause is already open.
+            'search.json': '[{"number": 1452}]',
+          },
+        );
+        expect(r.exitCode, isNot(0), reason: r.output);
+        expect(
+          r.created,
+          isFalse,
+          reason: 'a signature match must not file a symptom duplicate',
+        );
+        expect(
+          r.ghLog.where((l) => l.contains('issue comment 1452')),
+          hasLength(1),
+          reason: 'the digest lands as a comment on the root-cause issue',
+        );
+        expect(r.comments, contains('Root-cause dedup'));
+        expect(r.comments, contains('#1452'));
+        expect(
+          r.comments,
+          contains(
+            'Message from server: CHANGELOG.md exceeds the maximum '
+            'content length (262144 bytes)',
+          ),
+          reason: 'the comment still carries the full digest',
+        );
+        expect(
+          r.comments,
+          contains('https://github.com/OWNER/REPO/actions/runs/777'),
+          reason: 'the new run link rides the comment',
+        );
+        expect(
+          r.ghLog.singleWhere((l) => l.contains('search issues')),
+          contains('CHANGELOG.md exceeds the maximum content length'),
+          reason: 'the search query carries the normalized signature',
+        );
+      },
+    );
 
-    test('gh log line 2+ items: two signal lines both quoted in the dedup comment',
-        () {
-      final log = '''
+    test(
+      'gh log line 2+ items: two signal lines both quoted in the dedup comment',
+      () {
+        final log = '''
 noise
 ::error::first recurring failure (inject_failure=cli) — nothing dispatched
 padding
@@ -608,41 +700,54 @@ padding
 error: second recurring failure: compiler exploded
 tail noise
 ''';
-      final r = runReport(
-        'sig-dedup-multi',
-        legResults: const {'cli': 'failure'},
-        legUrls: const {'cli': 'https://github.com/OWNER/REPO/actions/runs/890'},
-        fixtures: {
-          'failed-log-890.txt': log,
-          'search.json': '[{"number": 1400}]',
-        },
-      );
-      expect(r.created, isFalse);
-      expect(r.comments, contains('first recurring failure'));
-      expect(r.comments, contains('second recurring failure: compiler exploded'),
-          reason: 'every signal match in the window is quoted, not just one');
-    });
+        final r = runReport(
+          'sig-dedup-multi',
+          legResults: const {'cli': 'failure'},
+          legUrls: const {
+            'cli': 'https://github.com/OWNER/REPO/actions/runs/890',
+          },
+          fixtures: {
+            'failed-log-890.txt': log,
+            'search.json': '[{"number": 1400}]',
+          },
+        );
+        expect(r.created, isFalse);
+        expect(r.comments, contains('first recurring failure'));
+        expect(
+          r.comments,
+          contains('second recurring failure: compiler exploded'),
+          reason: 'every signal match in the window is quoted, not just one',
+        );
+      },
+    );
   });
 
   // ── AC4 — existing lifecycle behavior is unchanged ──────────────────────
   group('existing lifecycle behavior', () {
-    test('dedup by open leg issue (title match) still comments, never re-files',
-        () {
-      final r = runReport(
-        'title-dedup',
-        legResults: const {'pubdev': 'failure'},
-        legUrls: const {'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777'},
-        fixtures: const {
-          'failed-log-777.txt': _treeNoiseLog,
-          'search.json': '[]',
-          'issues.json':
-              '[{"number": 1400, "title": "[daily-publish] pubdev leg failed"}]',
-        },
-      );
-      expect(r.exitCode, isNot(0), reason: r.output);
-      expect(r.created, isFalse);
-      expect(r.ghLog.where((l) => l.contains('issue comment 1400')), hasLength(1));
-    });
+    test(
+      'dedup by open leg issue (title match) still comments, never re-files',
+      () {
+        final r = runReport(
+          'title-dedup',
+          legResults: const {'pubdev': 'failure'},
+          legUrls: const {
+            'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777',
+          },
+          fixtures: const {
+            'failed-log-777.txt': _treeNoiseLog,
+            'search.json': '[]',
+            'issues.json':
+                '[{"number": 1400, "title": "[daily-publish] pubdev leg failed"}]',
+          },
+        );
+        expect(r.exitCode, isNot(0), reason: r.output);
+        expect(r.created, isFalse);
+        expect(
+          r.ghLog.where((l) => l.contains('issue comment 1400')),
+          hasLength(1),
+        );
+      },
+    );
 
     test('auto-close on green still closes the leg issue', () {
       final r = runReport(
@@ -655,7 +760,10 @@ tail noise
       );
       expect(r.exitCode, 0, reason: r.output);
       expect(r.created, isFalse);
-      expect(r.ghLog.where((l) => l.contains('issue close 1401')), hasLength(1));
+      expect(
+        r.ghLog.where((l) => l.contains('issue close 1401')),
+        hasLength(1),
+      );
     });
 
     test('all-skipped stays green and files nothing', () {
@@ -683,13 +791,15 @@ tail noise
       expect(
         r.createdBody,
         contains('injected failure (inject_failure=pubdev)'),
-        reason: 'the filed digest quotes the injected error line verbatim — '
+        reason:
+            'the filed digest quotes the injected error line verbatim — '
             'this is what the workflow verify step asserts',
       );
       expect(
         r.createdBody,
         contains('daily-publish-sig: injected failure (inject_failure=pubdev)'),
-        reason: 'gh log prefixes (job/step/timestamp) are stripped from the '
+        reason:
+            'gh log prefixes (job/step/timestamp) are stripped from the '
             'signature',
       );
     });
@@ -697,23 +807,32 @@ tail noise
 
   // ── wiring — the workflow asserts the excerpt, the script ships the bits ─
   group('wiring', () {
-    test('daily-publish.yml verifies the injected excerpt, not just issue creation',
-        () {
-      final daily = File('.github/workflows/daily-publish.yml')
-          .readAsStringSync();
-      expect(daily, contains('Verify injected-failure excerpt'),
-          reason: 'the TEST hook must assert the digest content (gh-1478)');
-      expect(daily, contains('inject_failure verify'));
-      expect(daily, contains('injected failure (inject_failure='));
-      expect(daily, contains("inputs.inject_failure != ''"),
-          reason: 'on schedule triggers the inputs context is EMPTY (not '
+    test(
+      'daily-publish.yml verifies the injected excerpt, not just issue creation',
+      () {
+        final daily = File(
+          '.github/workflows/daily-publish.yml',
+        ).readAsStringSync();
+        expect(
+          daily,
+          contains('Verify injected-failure excerpt'),
+          reason: 'the TEST hook must assert the digest content (gh-1478)',
+        );
+        expect(daily, contains('inject_failure verify'));
+        expect(daily, contains('injected failure (inject_failure='));
+        expect(
+          daily,
+          contains("inputs.inject_failure != ''"),
+          reason:
+              'on schedule triggers the inputs context is EMPTY (not '
               "'none'), so the verify step must also gate on != '' or the "
-              'daily cron goes red every run hunting a nonexistent issue');
-    });
+              'daily cron goes red every run hunting a nonexistent issue',
+        );
+      },
+    );
 
     test('report script ships the gh-1478 machinery', () {
-      final script =
-          File('scripts/daily_publish_report.sh').readAsStringSync();
+      final script = File('scripts/daily_publish_report.sh').readAsStringSync();
       for (final needle in [
         'signal_excerpt',
         'error_signature',

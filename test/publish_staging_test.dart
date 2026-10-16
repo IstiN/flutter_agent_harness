@@ -569,26 +569,32 @@ void main() {
       }
     });
 
-    test('stage script forwards an optional version to the stamper, after the size guard', () {
-      final script = File(_stagingScript).readAsStringSync();
-      final guard = script.indexOf('size=\$(du -sm');
-      final stamp = script.indexOf('/stamp_staged_release.sh"');
-      expect(
-        stamp,
-        greaterThan(guard),
-        reason:
-            'the stamp must run on the COMPLETE staged tree (after the '
-            'rsync + size guard), never before',
-      );
-      expect(script, contains('if [ "\${2:-}" ]'));
-    });
+    test(
+      'stage script forwards an optional version to the stamper, after the size guard',
+      () {
+        final script = File(_stagingScript).readAsStringSync();
+        final guard = script.indexOf('size=\$(du -sm');
+        final stamp = script.indexOf('/stamp_staged_release.sh"');
+        expect(
+          stamp,
+          greaterThan(guard),
+          reason:
+              'the stamp must run on the COMPLETE staged tree (after the '
+              'rsync + size guard), never before',
+        );
+        expect(script, contains('if [ "\${2:-}" ]'));
+      },
+    );
 
     test('stamper enforces the tag↔staged-version invariant before upload', () {
       final stamp = File('scripts/stamp_staged_release.sh').readAsStringSync();
       // The stamp writes the version, then GUARDS staged == <version> —
       // a desync (missing version line, second version field) fails before
-      // the upload instead of shipping 0.0.0-dev to pub.dev.
-      final sed = stamp.indexOf('sed -i "s/^version:');
+      // the upload instead of shipping 0.0.0-dev to pub.dev. The in-place
+      // edit is the portable `sed -i.bak` form (gh-1649: BSD sed has no
+      // suffix-less -i, so the bare GNU form failed every macOS dev-host
+      // stamp).
+      final sed = stamp.indexOf('sed -i.bak "s/^version:');
       final guard = stamp.indexOf("!= \"\$version\"");
       expect(sed, greaterThan(-1));
       expect(guard, greaterThan(sed));
@@ -604,39 +610,43 @@ void main() {
       () {
         // Mirrors the changelog_cap_guard wiring — asserted here as part of
         // the stamp contract (the stage is a publish surface).
-        final stamp = File('scripts/stamp_staged_release.sh')
-            .readAsStringSync();
+        final stamp = File(
+          'scripts/stamp_staged_release.sh',
+        ).readAsStringSync();
         expect(stamp, contains('check_changelog_size.sh'));
         expect(stamp, contains('keeping only the fresh section'));
       },
     );
 
-    test('ci.yml publish stage passes the tag version and verifies the staged stamp', () {
-      final ci = File('.github/workflows/ci.yml').readAsStringSync();
-      final publish = ci.indexOf('  publish:');
-      expect(publish, greaterThan(0));
-      expect(
-        ci.contains(
-          'stage_publish_package.sh /tmp/publish-stage "\${GITHUB_REF_NAME#v}"',
-        ),
-        isTrue,
-        reason:
-            'the publish job must stamp the stage from the TAG '
-            '(v1.0.550 → 1.0.550), not ship the placeholder',
-      );
-      final stage = ci.indexOf(
-        'stage_publish_package.sh /tmp/publish-stage',
-        publish,
-      );
-      final verify = ci.indexOf('Verify staged version matches tag', stage);
-      expect(
-        verify,
-        greaterThan(stage),
-        reason:
-            'the staged-version↔tag guard must run after staging, before '
-            'the upload (gh-1522)',
-      );
-    });
+    test(
+      'ci.yml publish stage passes the tag version and verifies the staged stamp',
+      () {
+        final ci = File('.github/workflows/ci.yml').readAsStringSync();
+        final publish = ci.indexOf('  publish:');
+        expect(publish, greaterThan(0));
+        expect(
+          ci.contains(
+            'stage_publish_package.sh /tmp/publish-stage "\${GITHUB_REF_NAME#v}"',
+          ),
+          isTrue,
+          reason:
+              'the publish job must stamp the stage from the TAG '
+              '(v1.0.550 → 1.0.550), not ship the placeholder',
+        );
+        final stage = ci.indexOf(
+          'stage_publish_package.sh /tmp/publish-stage',
+          publish,
+        );
+        final verify = ci.indexOf('Verify staged version matches tag', stage);
+        expect(
+          verify,
+          greaterThan(stage),
+          reason:
+              'the staged-version↔tag guard must run after staging, before '
+              'the upload (gh-1522)',
+        );
+      },
+    );
 
     test(
       'install_local.sh stamps version.txt from git describe, not the pubspec',
@@ -705,44 +715,53 @@ void main() {
             '# Changelog\n\nCurated window.\n\n## Unreleased\n\n'
                 '- pending bullet\n\n## 1.0.998\n\n- old entry\n',
       );
-      File('$stage/pubspec.yaml')
-          .writeAsStringSync('name: fa\nversion: 0.0.0-dev\n');
+      File(
+        '$stage/pubspec.yaml',
+      ).writeAsStringSync('name: fa\nversion: 0.0.0-dev\n');
       File('$stage/CHANGELOG.md').writeAsStringSync(
         stagedChangelog ?? File('$repo/CHANGELOG.md').readAsStringSync(),
       );
       return _StampFixture(repo: repo, stage: stage);
     }
 
-    ProcessResult stamp(_StampFixture fx, String version,
-        {Map<String, String> pathShims = const {}}) {
+    /// Writes [pathShims] (name -> script body) into a dir inside the
+    /// fixture and returns its path — OS-tool stand-ins that reproduce
+    /// host differences (BSD `sed`/`date` on macOS dev hosts, gh-1649)
+    /// without requiring that host.
+    String shimDir(_StampFixture fx, Map<String, String> pathShims) {
+      final dir = Directory('${fx.repo}/.path-shims')
+        ..createSync(recursive: true);
+      pathShims.forEach((name, body) {
+        File('${dir.path}/$name').writeAsStringSync(body);
+        Process.runSync('chmod', ['+x', '${dir.path}/$name']);
+      });
+      return dir.path;
+    }
+
+    ProcessResult stamp(
+      _StampFixture fx,
+      String version, {
+      Map<String, String> pathShims = const {},
+    }) {
       // No explicit environment when no shims are requested: byte-identical
       // inherit-the-runner-env behavior for the existing spec tests.
       final env = pathShims.isEmpty
           ? null
           : <String, String>{
               ...Platform.environment,
-              'PATH': _shimDir(fx, pathShims) +
-                  ':' +
-                  (Platform.environment['PATH'] ?? ''),
+              'PATH':
+                  '${shimDir(fx, pathShims)}:${Platform.environment['PATH'] ?? ''}',
             };
-      return Process.runSync('bash', [
-        File('scripts/stamp_staged_release.sh').absolute.path,
-        fx.stage,
-        version,
-      ], workingDirectory: fx.repo, environment: env);
-    }
-
-    /// Writes [pathShims] (name -> script body) into a dir inside the
-    /// fixture and returns its path — OS-tool stand-ins that reproduce
-    /// host differences (BSD `sed`/`date` on macOS dev hosts, gh-1649)
-    /// without requiring that host.
-    String _shimDir(_StampFixture fx, Map<String, String> pathShims) {
-      final dir = Directory('${fx.repo}/.path-shims')..createSync(recursive: true);
-      pathShims.forEach((name, body) {
-        File('${dir.path}/$name').writeAsStringSync(body);
-        Process.runSync('chmod', ['+x', '${dir.path}/$name']);
-      });
-      return dir.path;
+      return Process.runSync(
+        'bash',
+        [
+          File('scripts/stamp_staged_release.sh').absolute.path,
+          fx.stage,
+          version,
+        ],
+        workingDirectory: fx.repo,
+        environment: env,
+      );
     }
 
     test('stamps the pubspec to exactly the tag version', () {
@@ -769,37 +788,44 @@ void main() {
       expect(
         File('${fx.stage}/pubspec.yaml').readAsStringSync(),
         contains('version: 1.0.999'),
-        reason: 'the pubspec must stamp on hosts where suffix-less -i cannot run',
+        reason:
+            'the pubspec must stamp on hosts where suffix-less -i cannot run',
       );
     });
 
-    test('folds the curated Unreleased body under the tag section; no Unreleased header survives', () {
-      final fx = fixture();
-      final r = stamp(fx, '1.0.999');
-      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-      final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
-      expect(staged, isNot(contains('## Unreleased')));
-      expect(staged, contains('## 1.0.999'));
-      expect(staged, contains('- pending bullet'));
-      // the older curated section is preserved after the fresh one
-      expect(staged, contains('## 1.0.998'));
-      expect(
-        staged.indexOf('## 1.0.999'),
-        lessThan(staged.indexOf('## 1.0.998')),
-      );
-    });
+    test(
+      'folds the curated Unreleased body under the tag section; no Unreleased header survives',
+      () {
+        final fx = fixture();
+        final r = stamp(fx, '1.0.999');
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
+        expect(staged, isNot(contains('## Unreleased')));
+        expect(staged, contains('## 1.0.999'));
+        expect(staged, contains('- pending bullet'));
+        // the older curated section is preserved after the fresh one
+        expect(staged, contains('## 1.0.998'));
+        expect(
+          staged.indexOf('## 1.0.999'),
+          lessThan(staged.indexOf('## 1.0.998')),
+        );
+      },
+    );
 
-    test('generated section matches the repo formatting convention (blank lines, PR #1526 thread 4)', () {
-      final fx = fixture();
-      final r = stamp(fx, '1.0.999');
-      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-      final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
-      // blank line after the fresh section header, and a blank line
-      // between the fresh section and the next `## ` — raw markdown must
-      // not run sections together (the repo's hand-curated convention).
-      expect(staged, contains('## 1.0.999\n\n- pending bullet'));
-      expect(staged, contains('- pending bullet\n\n## 1.0.998'));
-    });
+    test(
+      'generated section matches the repo formatting convention (blank lines, PR #1526 thread 4)',
+      () {
+        final fx = fixture();
+        final r = stamp(fx, '1.0.999');
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
+        // blank line after the fresh section header, and a blank line
+        // between the fresh section and the next `## ` — raw markdown must
+        // not run sections together (the repo's hand-curated convention).
+        expect(staged, contains('## 1.0.999\n\n- pending bullet'));
+        expect(staged, contains('- pending bullet\n\n## 1.0.998'));
+      },
+    );
 
     test(
       'over-cap staged file trims oldest-first, keeping the fresh section',
