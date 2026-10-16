@@ -10,12 +10,12 @@
 ///   requirement as a checklist, verifies each item with a real command
 ///   against the produced state, and fixes every unmet item. A final
 ///   answer that still carries unmet items is budget-conditional (gh-1646):
-///   compliant only when the wall clock is effectively reached or every
-///   unmet item names a blocker the agent cannot change — an honest
-///   ledger is not an early-exit license. Step 2.5 (gh-1652) re-runs each
-///   produced entry point the way the grader will — neutral cwd, fresh
-///   subprocess, clean env — so the ledger's oracle is the verifier's
-///   own invocation, not the agent's checklist.
+///   compliant only when the harness-reported wall clock is spent or
+///   every unmet item names a blocker the agent cannot change. Step
+///   2.5 (gh-1652) re-runs each produced entry point the way the grader
+///   will — neutral cwd, fresh subprocess, clean env — so the
+///   ledger's oracle is the verifier's own invocation, not the agent's
+///   checklist.
 /// - **TaskLedger** — the checklist itself as a hidden session record
 ///   (`task_ledger` custom record, shaped like `model_request_summary`):
 ///   post-mortems see WHAT was self-checked, the bench summary reports
