@@ -421,10 +421,10 @@ void main() {
       expect(await thinkingOf(['при', 'прив', 'привет']), 'привет');
       // Sliding-window relays: every chunk overlaps the previous tail.
       // gh-1655: the 1-char 'ж' stutter heading 'жаем' is trimmed too now,
-      // so the doubled-ж seam no longer survives ('Продолжжжжаем' before).
+      // so the doubled seam no longer survives ('Продолжжжжаем' before).
       expect(
         await thinkingOf(['Прод', 'родол', 'олжжж', 'жаем']),
-        'Продолжжаем',
+        'Продолжжжаем',
       );
       // Clean incremental deltas pass through untouched.
       expect(await thinkingOf(['let me ', 'think']), 'let me think');
