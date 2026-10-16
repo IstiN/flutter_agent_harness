@@ -134,12 +134,14 @@ void main() {
       // failures without opening logs.
       expect(terminal.error.errorMessage, contains(zeroByteStallTag));
       // The per-attempt story names the machine trigger, not just the
-      // raw abort (review r1, thread 1).
+      // raw abort (review r1, thread 1) — and the governing idle window
+      // (gh-1617: the replay event carries idleWindowMs; this direct-
+      // ladder call has no agent fire, so the provider default shows).
       expect(
         terminal.error.errorMessage,
         contains(
-          'run-idle watchdog replay of zero-byte request: '
-          'Request was aborted',
+          'run-idle watchdog replay of zero-byte request '
+          '(idle window 300s from default): Request was aborted',
         ),
       );
       // The terminal is classified RETRYABLE/transport so the roles

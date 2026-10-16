@@ -7,11 +7,14 @@ the ladder tests run anywhere (pure stdlib shared module).
 """
 import asyncio
 import base64
+import collections
 import importlib.util
+import io
 import json
 import os
 import re
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -397,6 +400,31 @@ class LivenessBytesTest(unittest.TestCase):
             0,
         )
 
+# gh-1638 AC2: the fake container must speak docker-py's shapes. exec_run
+# returns an ExecResult NAMEDTUPLE (exit_code, output) — the adapter both
+# unpacks it (_fold_session_usage) and reads attributes off it
+# (_progress_bytes); the old SimpleNamespace broke the unpack. get_archive
+# returns ([tar-bytes], stat) — the #1339 session export joins the chunks.
+_ExecResult = collections.namedtuple("ExecResult", ["exit_code", "output"])
+
+# gh-1638 AC2: the stock perform_task sentinel must be AgentResult-SHAPED
+# (failure_mode + token attrs) — the supervised path folds the stock
+# result's token attrs, and a bare str sentinel made the fold warn
+# "'str' object has no attribute 'total_input_tokens'" on every IT.
+def _stock_result():
+    return types.SimpleNamespace(
+        failure_mode=None, total_input_tokens=0, total_output_tokens=0,
+    )
+
+
+def _empty_tar_bytes() -> bytes:
+    """A valid, empty tar (the fake session root exports zero files)."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w"):
+        pass
+    return buf.getvalue()
+
+
 class FakeTmuxSession:
     """Duck-typed TmuxSession: pane tap via a byte counter, keys recorded."""
 
@@ -405,14 +433,18 @@ class FakeTmuxSession:
         self.sent = []
         self.copied = []
         self.interrupted = threading.Event()
-        self.container = types.SimpleNamespace(exec_run=self._exec_run)
+        self.container = types.SimpleNamespace(
+            exec_run=self._exec_run,
+            get_archive=self._get_archive,
+        )
 
     def _exec_run(self, cmd, **kwargs):
         if "wc -c" in " ".join(cmd):
-            return types.SimpleNamespace(
-                exit_code=0, output=f"{self.counter['bytes']}\n".encode()
-            )
-        return types.SimpleNamespace(exit_code=0, output=b"")
+            return _ExecResult(0, f"{self.counter['bytes']}\n".encode())
+        return _ExecResult(0, b"")
+
+    def _get_archive(self, path, **kwargs):
+        return ([_empty_tar_bytes()], {})
 
     def copy_to_container(self, *args, **kwargs):
         self.copied.append(args)
@@ -469,11 +501,13 @@ class LegacyWatcherTest(unittest.TestCase):
         session = FakeTmuxSession()
         logging_dir = Path(self.tmpdir.name)
 
+        stock_result = _stock_result()
+
         def stock(**kwargs):
             for _ in range(14):  # ~0.7s of steady deltas
                 time.sleep(0.05)
                 session.counter["bytes"] += 100
-            return "stock-result"
+            return stock_result
 
         with mock.patch.dict(
             os.environ, clean_env(FA_AGENT_TIMEOUT_SEC="0.5", FA_PROGRESS_EXTENSION="1")
@@ -482,7 +516,7 @@ class LegacyWatcherTest(unittest.TestCase):
         ):
             started = time.monotonic()
             result = agent.perform_task("instr", session, logging_dir)
-        self.assertEqual(result, "stock-result")
+        self.assertIs(result, stock_result)
         self.assertGreater(time.monotonic() - started, 0.5)  # survived the base
         self.assertFalse(session.interrupted.is_set())
         audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
@@ -837,7 +871,7 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         logging_dir = Path(self.tmpdir.name)
         agent, _ = self._run_supervised(
             {fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
-            lambda **kwargs: "stock-result",
+            lambda **kwargs: _stock_result(),
             logging_dir,
         )
         commands = agent._run_agent_commands("instr")
@@ -855,7 +889,7 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         logging_dir = Path(self.tmpdir.name)
         self._run_supervised(
             {fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
-            lambda **kwargs: "stock-result",
+            lambda **kwargs: _stock_result(),
             logging_dir,
         )
         audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
@@ -873,7 +907,7 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         logging_dir = Path(self.tmpdir.name)
         agent, _ = self._run_supervised(
             {fa_agent_timeout.EXTERNAL_CAP_ENV: "86400"},
-            lambda **kwargs: "stock-result",
+            lambda **kwargs: _stock_result(),
             logging_dir,
         )
         audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
@@ -896,7 +930,7 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         def stock(**kwargs):
             for _ in range(6):
                 time.sleep(0.05)
-            return "stock-result"
+            return _stock_result()
 
         agent = self._agent()
         session = FakeTmuxSession()
@@ -929,7 +963,7 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         logging_dir = Path(self.tmpdir.name)
         self._run_supervised(
             {fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
-            lambda **kwargs: "stock-result",
+            lambda **kwargs: _stock_result(),
             logging_dir,
         )
         tb_audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
@@ -1033,6 +1067,34 @@ class TerminalBenchExternalCapTest(unittest.TestCase):
         self.assertEqual(
             audit["outcome"], str(self.legacy_fa.FailureMode.UNKNOWN_AGENT_ERROR.value)
         )
+
+    def test_installation_failure_stays_raw_in_the_stock_audit(self):
+        # gh-1638: BOTH never-started modes (the whole _NEVER_STARTED_MODES
+        # set, not just unknown_agent_error) must land the audit with the
+        # raw failure-mode string — the skip is fold-only, never audit.
+        logging_dir = Path(self.tmpdir.name)
+        agent = self._agent()
+        session = FakeTmuxSession()
+        sentinel = types.SimpleNamespace(
+            failure_mode=self.legacy_fa.FailureMode.AGENT_INSTALLATION_FAILED
+        )
+        env = clean_env_all(
+            FA_PROVIDER_CONFIG="{}",
+            **{fa_agent_timeout.EXTERNAL_CAP_ENV: "1800"},
+        )
+        with mock.patch.dict(os.environ, env), mock.patch.object(
+            self.legacy_fa.AbstractInstalledAgent, "perform_task",
+            side_effect=lambda *a, **k: sentinel,
+        ):
+            agent.perform_task("instr", session, logging_dir)
+        audit = json.loads((logging_dir / "fa-agent-timeout.json").read_text())
+        self.assertEqual(
+            audit["outcome"],
+            str(self.legacy_fa.FailureMode.AGENT_INSTALLATION_FAILED.value),
+        )
+        # The fold never ran: a never-started trial has no session to fold,
+        # so the totals stay the stock zeros.
+        self.assertEqual(audit["policy"], "external-cap")
 
     def test_no_cap_no_knobs_stock_run_stays_byte_identical(self):
         # AC5/REG-2: no cap, no knobs — no export, no audit.

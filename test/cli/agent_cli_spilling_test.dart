@@ -292,6 +292,51 @@ void main() {
     expect(disabled, absent);
     expect(disabled, zeroThreshold);
   });
+
+  test('L4/AC1 guard: the skills stamp precision drift in '
+      'systemPromptChars normalizes flat (the gh-1617 CI flake)', () {
+    // Two legacy sessions whose prompt TEXT is byte-identical but whose
+    // skills-scan stamp rendered with a different ISO precision: Dart's
+    // toIso8601String emits a 6-digit fraction for a scan time carrying
+    // microseconds (27 chars) and 3-digit millis when it lands on a whole
+    // microsecond (24 chars). `systemPromptChars` counts the raw prompt,
+    // so the counted length drifts by exactly 3 between two runs that
+    // produced the same prompt — the CI shard 2/4 failure this guard
+    // pins. The normalizer must flatten the count like it flattens the
+    // stamp text, while everything else stays compared.
+    const stampMicros = 'skills index scanned at 2026-10-15T21:50:31.123456Z';
+    const stampMillis = 'skills index scanned at 2026-10-15T21:50:31.123Z';
+    String session(String stamp, int chars) =>
+        '{"type":"session","version":3,"id":"UUID","timestamp":"T",'
+        '"cwd":"/work","metadata":{"agent":"cli","model":"test-model"}}\n'
+        '{"type":"custom","id":"X","parentId":"X","timestamp":"T",'
+        '"customType":"trajectory_prompt_blob","data":{"hash":"H","text":'
+        '"$stamp\\n\\n<prompt body>"}}\n'
+        '{"type":"custom","id":"X","parentId":"X","timestamp":"T",'
+        '"customType":"model_request_summary","data":{"messageCount":1,'
+        '"systemPromptChars":$chars,"toolCount":29,"toolNames":["read"]}}\n';
+    final microsRun = session(stampMicros, 5147);
+    final millisRun = session(stampMillis, 5144);
+
+    // The raw counts genuinely differ (the RED state the CI leg hit).
+    expect(microsRun, isNot(millisRun));
+    // After normalization both flat-map to the same session: the stamp
+    // text AND its counted length stop being compared.
+    expect(_normalize(microsRun), _normalize(millisRun));
+    // The normalization is not blanket amnesia: a real prompt-length
+    // difference OUTSIDE the stamp drift would still show (the count is
+    // flattened unconditionally, so pin the text stays compared instead).
+    expect(
+      _normalize(microsRun),
+      contains('skills index scanned at T'),
+      reason: 'the stamp text collapses to a fixed form, not away',
+    );
+    expect(
+      _normalize(microsRun),
+      contains('<prompt body>'),
+      reason: 'the prompt body itself stays byte-compared',
+    );
+  });
 }
 
 ToolCall _bashCall(String id, String command) =>
@@ -440,4 +485,15 @@ String _normalize(String jsonl) => jsonl
     .replaceAllMapped(
       RegExp(r'"(id|parentId)":"[0-9a-f]{8,}"'),
       (m) => '"${m.group(1)}":"X"',
+    )
+    // gh-1617 CI flake: `systemPromptChars` counts the RAW prompt, whose
+    // skills-scan stamp renders with run-dependent ISO precision (Dart's
+    // toIso8601String emits a 6-digit fraction when the scan time carries
+    // microseconds, 3-digit millis when it lands on a whole microsecond —
+    // a 3-char length drift), so two legacy runs with a BYTE-IDENTICAL
+    // prompt text can report different lengths. The informational count
+    // stops being compared; the prompt TEXT itself stays byte-compared.
+    .replaceAllMapped(
+      RegExp(r'"systemPromptChars":\d+'),
+      (_) => '"systemPromptChars":0',
     );
