@@ -3,30 +3,18 @@
 # manifest, builds the app bundle with the office host flag, runs the
 # office package Dart unit tests, the app's office wiring tests, and
 # Playwright (chromium + webkit) against the assembled pane pages.
-# Path-filtered so unrelated pushes skip it.
+#
+# gh-1659: this workflow is the DISPATCH-ONLY daily leg now. The PR/push
+# gate moved into ci.yml (job `office-addin-suite`, path-gated on the
+# classifier's `office_addin` output — same path list the retired
+# push/pull_request triggers carried), so a PR gets ONE workflow entry
+# instead of two. daily-publish.yml still dispatches THIS workflow for
+# the addin leg and watches its office-addin-suite job (#343/#344), and
+# the two job bodies are pinned step-identical by
+# test/ci_1659_office_addin_matrix_test.dart — update both together.
 name: Office add-in
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'office_addin/**'
-      - 'flutter_app/**'
-      - 'packages/**'
-      - 'lib/**'
-      - 'pubspec.lock'
-      - 'scripts/build_office_addin.sh'
-      - '.github/workflows/office-addin.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'office_addin/**'
-      - 'flutter_app/**'
-      - 'packages/**'
-      - 'lib/**'
-      - 'pubspec.lock'
-      - 'scripts/build_office_addin.sh'
-      - '.github/workflows/office-addin.yml'
   workflow_dispatch:
 
 # Cancel superseded runs of the same ref (issue #177) — but a

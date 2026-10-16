@@ -94,6 +94,13 @@ concurrency:
 #               for the first-run wizard (site/** or the generator
 #               touched) — dash + busybox ash on ubuntu, bash on macOS;
 #               red blocks the merge via the quality-gate platform class
+#   office-addin-suite → Outlook add-in acceptance suite (gh-1659: moved
+#               from the standalone office-addin.yml — its push/PR
+#               triggers are retired, so a lib/**- or flutter_app/**-
+#               touching PR gets ONE workflow entry; PATH-TRIGGERED on
+#               pull_request + SM validation dispatches, same model as
+#               exzone/locksmoke; the daily-publish addin leg still
+#               dispatches office-addin.yml directly)
 #   test-faui → packages/fa_ui tests sharded ×3 by manifest   (app/core/shared;
 #               issue #283 — same template as test-core: manifest assert,
 #               per-shard coverage merged to ONE report, junit durations
@@ -319,6 +326,11 @@ jobs:
       # sh-portability legs — template lint, golden drift, and the piped
       # wizard under dash (ubuntu) / bash (macOS).
       installer: ${{ steps.paths.outputs.installer }}
+      # gh-1659: the Outlook add-in acceptance suite — same path list the
+      # retired standalone office-addin.yml push/PR triggers carried,
+      # gated on pull_request + SM validation dispatches like
+      # exzone/locksmoke (tags/schedule never ran the suite and skip it).
+      office_addin: ${{ steps.paths.outputs.office_addin }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -370,6 +382,7 @@ jobs:
               echo "exzone=true" >> "$GITHUB_OUTPUT"
               echo "locksmoke=true" >> "$GITHUB_OUTPUT"
               echo "installer=true" >> "$GITHUB_OUTPUT"
+              echo "office_addin=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
@@ -404,6 +417,15 @@ jobs:
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
               grep -qE '(^site/|^scripts/gen_installers\.dart$)'; then
             echo "installer=true" >> "$GITHUB_OUTPUT"
+          fi
+          # gh-1659: the office add-in acceptance suite — the exact path
+          # list the retired standalone office-addin.yml push/PR triggers
+          # carried. Gated on the SAME two events as exzone/locksmoke
+          # (pull_request + validation dispatch); the classifier failure
+          # arm above runs it fail-safe.
+          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
+              grep -qE '(^office_addin/|^flutter_app/|^packages/|^lib/|^pubspec\.lock$|^scripts/build_office_addin\.sh$|^\.github/workflows/office-addin\.yml$)'; then
+            echo "office_addin=true" >> "$GITHUB_OUTPUT"
           fi
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             # Dispatch done — the stages classifier below reads a
