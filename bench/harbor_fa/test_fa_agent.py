@@ -318,6 +318,84 @@ class HarborKillPathTest(unittest.TestCase):
         self.assertEqual(agent.audit_payload["policy"], "flat-cap")
 
 
+class RunOutcomeClassTest(unittest.TestCase):
+    """gh-1643 C4: run() stashes the terminal outcome class for
+    populate_context_post_run — every terminal outcome maps to exactly one
+    of agent_timeout (self-kill at cap) / external_kill / completed /
+    crashed; never-started has no run() at all and defaults in the context
+    fold (metadata failure_mode = 'never_started').
+    """
+
+    def setUp(self):
+        self._env = _clean_env(
+            FA_AGENT_TIMEOUT_SEC="1",
+            FA_PROVIDER_CONFIG=json.dumps({"apiKeyEnvVar": "FA_KEY_FAKE"}),
+            FA_KEY_FAKE="secret",
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _knobs(self):
+        return fa_agent_timeout.TimeoutKnobs.from_env()
+
+    def test_self_kill_maps_to_agent_timeout(self):
+        agent = FakeAgent()
+        with self.assertRaises(asyncio.TimeoutError):
+            asyncio.run(agent._run_with_deadline(self._knobs(), "task", object()))
+        self.assertEqual(agent._run_outcome, "agent_timeout")
+
+    def test_natural_completion_maps_to_completed(self):
+        agent = FakeAgent(launch_delay=0.05)
+        # A fast poll: the exec finishes before the first evaluate, so the
+        # loop exits at its done() check (completed) — the 1s flat cap
+        # never fires.
+        with mock.patch.object(fa_agent, "_POLL_SEC", 0.05):
+            asyncio.run(agent._run_with_deadline(self._knobs(), "task", object()))
+        self.assertEqual(agent._run_outcome, "completed")
+
+    def test_crashed_exec_maps_to_crashed(self):
+        agent = FakeAgent(launch_error=RuntimeError("fa died"))
+        # Same shape, 30s cap: the exec task itself raises.
+        with mock.patch.object(fa_agent, "_POLL_SEC", 0.05), mock.patch.dict(
+            os.environ, {"FA_AGENT_TIMEOUT_SEC": "30"}
+        ):
+            with self.assertRaises(RuntimeError):
+                asyncio.run(
+                    agent._run_with_deadline(
+                        fa_agent_timeout.TimeoutKnobs.from_env(),
+                        "task",
+                        object(),
+                    )
+                )
+        self.assertEqual(agent._run_outcome, "crashed")
+
+    def test_cancelled_run_maps_to_external_kill(self):
+        agent = FakeAgent()
+
+        async def scenario():
+            task = asyncio.create_task(
+                agent._run_with_deadline(self._knobs(), "task", object())
+            )
+            await asyncio.sleep(0.1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        asyncio.run(scenario())
+        self.assertEqual(agent._run_outcome, "external_kill")
+
+    def test_no_cap_plain_exec_maps_to_completed(self):
+        env = _clean_env(
+            FA_PROVIDER_CONFIG=json.dumps({"apiKeyEnvVar": "FA_KEY_FAKE"}),
+            FA_KEY_FAKE="secret",
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        agent = FakeAgent(launch_delay=0.05)
+        asyncio.run(agent.run("task", environment=object(), context=None))
+        self.assertEqual(agent._run_outcome, "completed")
+
+
 class NoKnobsDelegationTest(unittest.TestCase):
     def test_no_knobs_single_exec_and_no_deadline(self):
         # No knobs => today's single awaited exec, unsupervised, and NO

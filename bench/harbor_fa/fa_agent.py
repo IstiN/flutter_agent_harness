@@ -559,10 +559,14 @@ class FaAgent(BaseInstalledAgent):
             # 1800.000s, zero audit files). The container is still up
             # during teardown, so the flush lands. Never masked by an exec
             # failure; the cancellation always re-raises.
+            self._run_outcome = "external_kill"
             await self._flush_external_kill_audit(
                 environment, knobs, ladder, cap, cause="cancelled"
             )
             raise
+        self._run_outcome = (
+            "agent_timeout" if outcome else ("crashed" if error is not None else "completed")
+        )
         if outcome:
             raise asyncio.TimeoutError(
                 f"fa agent killed by bench timeout ladder: {outcome}"
@@ -589,6 +593,7 @@ class FaAgent(BaseInstalledAgent):
                     env=self._provider_env,
                 )
         except asyncio.CancelledError:
+            self._run_outcome = "external_kill"
             await self._flush_external_kill_audit(
                 environment, None, None, cap, cause="cancelled"
             )
@@ -606,6 +611,7 @@ class FaAgent(BaseInstalledAgent):
             deadline_epoch_ms=self._deadline_epoch_ms,
             cap=cap,
         )
+        self._run_outcome = "crashed" if error is not None else "completed"
         if error is not None:
             raise error
 
