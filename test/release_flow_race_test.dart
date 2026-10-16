@@ -105,6 +105,9 @@ fi
 # gh-1561 rework seam (review thread 8): fail every read AFTER N total
 # reads — the shape of the pub.dev API going down MID-LEG (the top-of-leg
 # reads serve the stale replica fine, a later re-read hits the outage).
+# (2026-10-16 operator note: comment-only re-trigger — resets the
+# validation_failed park (#633) for a fresh SM dispatch; no behavior
+# change, the head was locally green: 92/92 in this suite.)
 if [ -f "\$GH_STUB_DIR/curl-fail-after" ]; then
   c="\$GH_STUB_DIR/curl-fail-count"; n=\$(cat "\$c" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "\$c"
   if [ "\$n" -gt "\$(cat "\$GH_STUB_DIR/curl-fail-after")" ]; then
