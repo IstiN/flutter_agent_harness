@@ -167,8 +167,10 @@ ToolExecutionResult _prefixMarks(
 ///   result is a marked error. Never die silently.
 ///
 /// Advisory mode ([StuckFollowUpMode.advisory]) stops after the advisory
-/// stuck event: nothing is ever cancelled (interactive sessions with a
-/// human present).
+/// stuck event: nothing is ever cancelled. It is an explicit opt-out
+/// (`agent.stuckTool.followUp: advisory`) — never an implicit default:
+/// gh-1632 removed the interactive-advisory default after the incident
+/// session hung 27 minutes on a dead call with only the flag emitted.
 /// The follow-up stage an attempt is supervised under: attempt 1 is
 /// cancelled and retried once; from attempt 2 on a further hang converts
 /// to a background job before escalating.
