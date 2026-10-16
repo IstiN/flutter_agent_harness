@@ -90,6 +90,7 @@ final class UsageChainScan {
     required this.segments,
     required this.recordCount,
     required this.chainHash,
+    this.usageIncomplete = false,
   });
 
   /// Segments in chain order (always at least one).
@@ -100,6 +101,13 @@ final class UsageChainScan {
 
   /// `sha256:`-prefixed fingerprint over the consumed raw record lines.
   final String chainHash;
+
+  /// gh-1643: true when at least one request started and never finalized —
+  /// its `model_request_summary` dangled (killed mid-stream, provider
+  /// error, abort) and its contribution is PARTIAL (estimated input only,
+  /// output unknown). Consumers must never read such a fold as complete
+  /// accounting.
+  final bool usageIncomplete;
 }
 
 /// Scans raw session-chain JSONL lines into [UsageChainScan].
@@ -169,9 +177,16 @@ final class UsageChainScanner {
 
   /// Handles a `custom` record that is not a segment marker: a
   /// `model_request_summary` becomes the pending pair for the assistant
-  /// message its request produces.
+  /// message its request produces. A summary superseded by another summary
+  /// means the earlier request never finalized (gh-1643) — it is flushed
+  /// as a fallback, never silently dropped.
   void _handleSummary(Map<String, dynamic> decoded, _ScanState state) {
     if (decoded['customType'] == modelRequestSummaryCustomType) {
+      final superseded = state.pending;
+      if (superseded != null) {
+        state.segments.last.requests.add(superseded.fallback());
+        state.usageIncomplete = true;
+      }
       state.pending = _PendingSummary.fromData(decoded['data']);
     }
   }
@@ -268,6 +283,11 @@ final class _ScanState {
   _PendingSummary? pending;
   var recordCount = 0;
 
+  /// gh-1643: at least one request started and never finalized (its
+  /// `model_request_summary` dangled) — the fold's totals cover partial
+  /// knowledge only, so consumers must see the incomplete marker.
+  var usageIncomplete = false;
+
   /// The current segment, creating the first lazily so a chain with no
   /// markers still folds as ONE segment.
   _ScanSegment current() {
@@ -284,18 +304,20 @@ final class _ScanState {
   }
 
   /// A segment boundary: a summary whose request never produced an
-  /// assistant message (provider error, abort) counts, with zero-fill
-  /// marked estimated — never silently dropped (E1's "counts summed over
-  /// what exists").
+  /// assistant message (provider error, abort) counts, with its KNOWN
+  /// request-side volume marked estimated — never silently dropped (E1),
+  /// and never silent zeros (gh-1643: the estimate rides the fallback).
   void closeSegment(DateTime? boundaryAt) {
     if (pending case final summary?) {
       segments.last.requests.add(summary.fallback());
+      usageIncomplete = true;
       pending = null;
     }
     segments.add(_ScanSegment()..setOpenedAt(boundaryAt));
   }
 
-  /// Builds the scan result. A dangling summary still counts. A
+  /// Builds the scan result. A dangling summary still counts — with its
+  /// known request-side volume (gh-1643), and flagged incomplete. A
   /// header-only chain still yields ONE (empty) segment so the ledger
   /// schema stays stable. A marker that closed a contentful segment
   /// opens a new one — when nothing followed it (the first drive after
@@ -306,6 +328,7 @@ final class _ScanState {
   UsageChainScan finish() {
     if (pending case final summary?) {
       segments.lastOrNull?.requests.add(summary.fallback());
+      usageIncomplete = true;
       pending = null;
     }
     if (segments.isEmpty) segments.add(_ScanSegment());
@@ -324,6 +347,7 @@ final class _ScanState {
       ],
       recordCount: recordCount,
       chainHash: 'sha256:${sha256.convert(_bytes.toBytes())}',
+      usageIncomplete: usageIncomplete,
     );
   }
 }
@@ -375,15 +399,22 @@ extension on _ScanSegment? {
 /// A `model_request_summary` record waiting for the assistant message its
 /// request produces (the summary always lands first on the chain).
 final class _PendingSummary {
-  _PendingSummary(this.inputChars);
+  _PendingSummary(this.inputChars, this.systemPromptChars);
 
   /// Σ `chars` of the summary's outbound request messages — the estimated
   /// input-token basis.
   final int inputChars;
 
+  /// Length of the outbound system prompt (gh-1643): part of the request's
+  /// known input volume, counted by the dangling-request fallback.
+  final int systemPromptChars;
+
   factory _PendingSummary.fromData(Object? data) {
     var chars = 0;
+    var systemChars = 0;
     if (data is Map) {
+      final rawSystem = data['systemPromptChars'];
+      if (rawSystem is int) systemChars = rawSystem;
       final messages = data['messages'];
       if (messages is List) {
         for (final message in messages) {
@@ -393,14 +424,17 @@ final class _PendingSummary {
         }
       }
     }
-    return _PendingSummary(chars);
+    return _PendingSummary(chars, systemChars);
   }
 
-  /// The request never produced an assistant message: count it with
-  /// zero-fill, marked estimated (E1).
-  FoldRequest fallback() => const FoldRequest(
+  /// The request never produced an assistant message (gh-1643): count its
+  /// KNOWN request-side volume — estimated input at the shared chars/4
+  /// rate (the same basis the persisted summary carried at request
+  /// submission); output is unknown and stays 0. Marked estimated, and the
+  /// scan flags the chain usageIncomplete — never a silent zero.
+  FoldRequest fallback() => FoldRequest(
     model: unknownUsageModel,
-    input: 0,
+    input: ((inputChars + systemPromptChars) / usageCharsPerToken).ceil(),
     output: 0,
     source: UsageSource.estimated,
   );
@@ -439,6 +473,7 @@ final class UsageChainFolder {
       total: folder.totalOf(segments),
       chainRecords: scan.recordCount,
       chainHash: scan.chainHash,
+      usageIncomplete: scan.usageIncomplete,
     );
   }
 }
