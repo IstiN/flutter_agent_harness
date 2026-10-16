@@ -45,6 +45,11 @@ String read(String path) => File(path).readAsStringSync();
 Set<String> _gateClosure(YamlMap jobs) {
   final closure = <String>{};
   void collect(String name) {
+    // gh-1625: the pre-check jobs (release-pending, release-dedupe) hang
+    // off the gate graph as GUARDS, not gate legs — the closure walk
+    // excludes them (the AC1 loop below skips release-pending for the
+    // same reason; release-dedupe never enters the set).
+    if (_preCheckJobs.contains(name)) return;
     if (!closure.add(name)) return;
     final needs = (jobs[name] as YamlMap)['needs'];
     if (needs is String) {
@@ -68,6 +73,10 @@ Set<String> _gateClosure(YamlMap jobs) {
 /// condition, release arms on the schedule).
 Set<String> _guardedJobs(YamlMap jobs) => _gateClosure(jobs)
   ..addAll(['step-timings', 'release', 'js-ext-integration']);
+
+/// gh-1625: the pre-check jobs are guards, not gate legs (see the closure
+/// walk above).
+const _preCheckJobs = {'release-pending', 'release-dedupe'};
 
 List<String> _needsOf(YamlMap job) {
   final needs = job['needs'];
