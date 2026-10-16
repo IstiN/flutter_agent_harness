@@ -16,7 +16,7 @@ Those turns produced no state; running the checklist ritual on them is noise. Ot
 
 1. **Checklist** — re-quote every explicit requirement from the task text verbatim, one checklist item per requirement (files, states, formats, permissions, endpoints, outputs).
 2. **Verify each item with a real command** against the produced state — never from memory, never "I wrote it earlier". Note expected vs actual.
-3. **Fix every unmet item** — a failed item is fixed and re-verified. Fix attempts are bounded (don't spiral on one dead end — switch approach), but a bounded attempt is NEVER a permission to stop: while budget remains, the next compliant action is another approach, not a final answer.
+3. **Fix every unmet item** — a failed item is fixed and re-verified. Fix attempts are bounded (don't spiral on one dead end — switch approach), but while work remains the next compliant action is another approach, not a final answer.
 
 **Work to the wall (gh-1646).** Your time-left notices report the remaining budget. While work remains, the next compliant action is another approach — not a final answer. Do not stop to wrap up: you are interrupted automatically when time expires, so no manual saving-up is needed. A final answer is written when the task is done or the deadline notice says so.
 
