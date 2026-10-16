@@ -364,7 +364,7 @@ void main() {
       expect(contract, contains('request_secret'));
     });
 
-    test('gh-1605/gh-1652: documents the grader-parity named check', () {
+    test('gh-1605/gh-1652: documents the grader-parity step (2.5, not a named check)', () {
       // The verifier runs produced entry points itself — a fresh
       // subprocess from a different working directory with a clean env —
       // so an in-session pass proves nothing about what the grader sees.

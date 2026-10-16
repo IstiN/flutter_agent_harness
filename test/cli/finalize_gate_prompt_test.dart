@@ -83,19 +83,31 @@ void main() {
       'are budget-conditional', () {
     expect(finalizeGateContractPrompt, contains('The unmet-item wall'));
     expect(finalizeGateContractPrompt, contains('ONLY when'));
-    // Wall branch: a named deadline source, not a feeling.
-    expect(finalizeGateContractPrompt, contains('FA_DEADLINE_EPOCH_MS'));
-    expect(finalizeGateContractPrompt, contains('date +%s'));
+    // Wall branch: the HARNESS-reported timer — the per-turn `time-left:`
+    // line and the deadline steers are the run's clock. The agent works to
+    // the wall the harness reports and never re-derives the remaining
+    // budget itself (gh-1654 rework: no shell clock arithmetic).
+    expect(finalizeGateContractPrompt, contains('The wall is reached'));
+    expect(
+      finalizeGateContractPrompt,
+      contains('the harness reports the timer'),
+    );
+    expect(finalizeGateContractPrompt, contains('`time-left:`'));
+    expect(finalizeGateContractPrompt, contains('never re-derive'));
     // Blocker branch: every unmet item names its blocker.
     expect(finalizeGateContractPrompt, contains('NAMES the blocker'));
     // The positive rule: budget remaining → the only compliant action.
-    expect(finalizeGateContractPrompt, contains('exit license'));
     expect(
       finalizeGateContractPrompt,
       contains('the ONLY compliant action is to continue working'),
     );
-    // The caffe-cifar-10 shape is named as the violation it is.
-    expect(finalizeGateContractPrompt, contains('to finish from here'));
+    // Work to the wall — the closing rule.
+    expect(finalizeGateContractPrompt, contains('Work to the wall'));
+    // The deadline self-policing and the violation framing stay gone.
+    expect(finalizeGateContractPrompt, isNot(contains('date +%s')));
+    expect(finalizeGateContractPrompt, isNot(contains('FA_DEADLINE_EPOCH_MS')));
+    expect(finalizeGateContractPrompt, isNot(contains('exit license')));
+    expect(finalizeGateContractPrompt, isNot(contains('protocol violation')));
   });
 
   test('headless boots carry the contract under any approval mode', () async {
@@ -113,7 +125,8 @@ void main() {
       final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
       expect(prompt, contains('The unmet-item wall (gh-1646)'));
       expect(prompt, contains('ONLY when one of these holds'));
-      expect(prompt, contains('exit license'));
+      // The violation framing cannot quietly return.
+      expect(prompt, isNot(contains('exit license')));
     },
   );
 
