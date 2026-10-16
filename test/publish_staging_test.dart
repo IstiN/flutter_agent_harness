@@ -713,12 +713,37 @@ void main() {
       return _StampFixture(repo: repo, stage: stage);
     }
 
-    ProcessResult stamp(_StampFixture fx, String version) =>
-        Process.runSync('bash', [
-          File('scripts/stamp_staged_release.sh').absolute.path,
-          fx.stage,
-          version,
-        ], workingDirectory: fx.repo);
+    ProcessResult stamp(_StampFixture fx, String version,
+        {Map<String, String> pathShims = const {}}) {
+      // No explicit environment when no shims are requested: byte-identical
+      // inherit-the-runner-env behavior for the existing spec tests.
+      final env = pathShims.isEmpty
+          ? null
+          : <String, String>{
+              ...Platform.environment,
+              'PATH': _shimDir(fx, pathShims) +
+                  ':' +
+                  (Platform.environment['PATH'] ?? ''),
+            };
+      return Process.runSync('bash', [
+        File('scripts/stamp_staged_release.sh').absolute.path,
+        fx.stage,
+        version,
+      ], workingDirectory: fx.repo, environment: env);
+    }
+
+    /// Writes [pathShims] (name -> script body) into a dir inside the
+    /// fixture and returns its path — OS-tool stand-ins that reproduce
+    /// host differences (BSD `sed`/`date` on macOS dev hosts, gh-1649)
+    /// without requiring that host.
+    String _shimDir(_StampFixture fx, Map<String, String> pathShims) {
+      final dir = Directory('${fx.repo}/.path-shims')..createSync(recursive: true);
+      pathShims.forEach((name, body) {
+        File('${dir.path}/$name').writeAsStringSync(body);
+        Process.runSync('chmod', ['+x', '${dir.path}/$name']);
+      });
+      return dir.path;
+    }
 
     test('stamps the pubspec to exactly the tag version', () {
       final fx = fixture();
@@ -727,6 +752,24 @@ void main() {
       expect(
         File('${fx.stage}/pubspec.yaml').readAsStringSync(),
         contains('version: 1.0.999'),
+      );
+    });
+
+    test('stamps the pubspec without GNU sed -i too (BSD/macOS dev hosts)', () {
+      // gh-1649: bare `sed -i "s/…"` is GNU-only — BSD sed consumes the
+      // program text as the -i backup suffix and dies before stamping, so
+      // every local (macOS) pre-commit run failed the stamper spec. Shim
+      // `sed` to BSD behavior (suffix-less -i rejected) and demand a
+      // successful stamp; the portable form is `sed -i.bak` + rm, the
+      // repo's existing convention (package_web_spa.sh,
+      // vendor_interpreters.sh, check_lockfiles_selftest.sh).
+      final fx = fixture();
+      final r = stamp(fx, '1.0.999', pathShims: const {'sed': _bsdSedShim});
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+      expect(
+        File('${fx.stage}/pubspec.yaml').readAsStringSync(),
+        contains('version: 1.0.999'),
+        reason: 'the pubspec must stamp on hosts where suffix-less -i cannot run',
       );
     });
 
@@ -819,6 +862,20 @@ void main() {
     });
   });
 }
+
+/// BSD `sed` stand-in (gh-1649): BSD sed's `-i` consumes the NEXT argument
+/// as the backup suffix, so GNU's suffix-less `sed -i "s/…" file` cannot
+/// run there — the program text becomes the suffix and the file becomes
+/// the sed script (loud failure). Everything else delegates to the real
+/// sed (PATH minus the shim dir).
+const _bsdSedShim = r'''
+#!/usr/bin/env bash
+if [ "${1:-}" = "-i" ]; then
+  echo "sed: -i requires an explicit backup-suffix argument on BSD (suffix-less -i is GNU-only)" >&2
+  exit 1
+fi
+exec "$(PATH="${PATH#*:}" command -v sed)" "$@"
+''';
 
 class _StampFixture {
   _StampFixture({required this.repo, required this.stage});

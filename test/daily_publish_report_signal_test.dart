@@ -174,6 +174,20 @@ const _run555JobsCliCancelled = '''
 }
 ''';
 
+/// BSD `date` stand-in (gh-1649): macOS/BSD `date` has no GNU `-d` —
+/// `date -u -d <iso> +%s` fails loud there. Everything else delegates to
+/// the real date (PATH minus the shim dir).
+const _bsdDateShim = r'''
+#!/usr/bin/env bash
+for a in "$@"; do
+  if [ "$a" = "-d" ]; then
+    echo "date: illegal option -- d" >&2
+    exit 1
+  fi
+done
+exec "$(PATH="${PATH#*:}" command -v date)" "$@"
+''';
+
 void _installStub(String bin) {
   File('$bin/gh').writeAsStringSync(r'''
 #!/usr/bin/env bash
@@ -305,18 +319,32 @@ ReportRun runReport(
   Map<String, String> fixtures = const {},
   bool withWorkflowYaml = false,
   String pubdevStatusOverride = 'up-to-date',
+
+  /// OS-tool stand-ins (name -> script body) installed in a PATH-prepended
+  /// dir — reproduces host differences (e.g. BSD `date`/`sed` on macOS dev
+  /// hosts, gh-1649) without requiring that host.
+  Map<String, String> pathShims = const {},
 }) {
   final dir =
       '${_fixtureRoot.path}/$name-${DateTime.now().microsecondsSinceEpoch}';
   Directory('$dir/bin').createSync(recursive: true);
   _installStub('$dir/bin');
+  var pathPrefix = '$dir/bin';
+  if (pathShims.isNotEmpty) {
+    Directory('$dir/shims').createSync();
+    pathShims.forEach((name, body) {
+      File('$dir/shims/$name').writeAsStringSync(body);
+      Process.runSync('chmod', ['+x', '$dir/shims/$name']);
+    });
+    pathPrefix = '$dir/shims:$pathPrefix';
+  }
   if (withWorkflowYaml) {
     File('$dir/daily-publish.yml').writeAsStringSync(_workflowYaml);
   }
   fixtures.forEach((k, v) => File('$dir/$k').writeAsStringSync(v));
 
   final env = <String, String>{
-    'PATH': '$dir/bin:${Platform.environment['PATH']}',
+    'PATH': '$pathPrefix:${Platform.environment['PATH']}',
     'GITHUB_REPOSITORY': 'OWNER/REPO',
     'GITHUB_RUN_ID': '555',
     'GITHUB_SERVER_URL': 'https://github.com',
@@ -471,6 +499,30 @@ final noise line
           reason: 'the cancelled leg job log IS served per-job mid-run');
       expect(r.createdBody, contains('mid-checkout kill point'));
       expect(r.summary, contains('⚠️'));
+    });
+
+    test('cancelled digest still extracts elapsed on BSD hosts (no GNU date -d)',
+        () {
+      // gh-1649: `date -u -d <iso> +%s` is GNU-only — on macOS dev hosts
+      // (where the pre-commit hook runs) both timestamps resolved empty and
+      // the digest degraded to "killed after unknown elapsed". Shim `date`
+      // to BSD behavior and demand the real elapsed (the portable pair
+      // release_dedupe_check.sh already uses: GNU -d, then BSD -j -f).
+      final r = runReport(
+        'cancelled-bsd-date',
+        legResults: const {'testflight': 'cancelled'},
+        fixtures: const {
+          'run-555.json': _run555Jobs,
+          'failed-log-job-11.txt': 'checkout noise\nmid-checkout kill point',
+        },
+        withWorkflowYaml: true,
+        pathShims: const {'date': _bsdDateShim},
+      );
+      expect(r.createdBody, contains('5h59m53s'),
+          reason: '05:17:00Z -> 11:16:53Z elapsed, BSD date included:\n'
+              '${r.createdBody}');
+      expect(r.createdBody, isNot(contains('unknown elapsed')),
+          reason: r.createdBody);
     });
 
     test('ceiling lookup handles the CLI leg name with a literal +', () {
