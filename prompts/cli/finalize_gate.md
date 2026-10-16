@@ -18,12 +18,7 @@ Those turns produced no state; running the checklist ritual on them is noise. Ot
 2. **Verify each item with a real command** against the produced state — never from memory, never "I wrote it earlier". Note expected vs actual.
 3. **Fix every unmet item** — a failed item is fixed and re-verified. Fix attempts are bounded (don't spiral on one dead end — switch approach), but a bounded attempt is NEVER a permission to stop: while budget remains, the next compliant action is another approach, not a final answer.
 
-**The unmet-item wall (gh-1646).** A final answer that still carries `fail` items is compliant ONLY when one of these holds:
-
-- **The wall is reached** — the deadline is effectively spent: there is no time for another fix-verify cycle (compare `date +%s` with `FA_DEADLINE_EPOCH_MS/1000` when the run exports it; "I feel done" is not the wall).
-- **Every unmet item is truly blocked** — by something you cannot change (a credential declined after the full hunt, an unavailable network), and each such item's `actual` NAMES the blocker.
-
-Anything else — budget remaining, no named blocker — is not a stopping point: the ONLY compliant action is to continue working. An honest ledger is not an exit license. Ending with a "to finish from here" plan while minutes of budget remain is a protocol violation, not a graceful hand-off.
+**Work to the wall (gh-1646).** Your time-left notices report the remaining budget. While work remains, the next compliant action is another approach — not a final answer. Do not stop to wrap up: you are interrupted automatically when time expires, so no manual saving-up is needed. A final answer is written when the task is done or the deadline notice says so.
 
 Named checks every checklist must include when they apply:
 
@@ -44,4 +39,4 @@ End the final answer with the task ledger — a fenced `task-ledger` block, one 
   status: pass|fixed|fail
 ```
 
-`pass` = verified against the produced state; `fixed` = failed, then fixed and re-verified; `fail` = could not meet it — a compliant terminal state ONLY at the wall or with the per-item named blocker in `actual`. A final answer whose ledger still has `fail` items without the wall reached or a named blocker per item is a protocol violation — with budget remaining, go back to work instead of reporting.
+`pass` = verified against the produced state; `fixed` = failed, then fixed and re-verified; `fail` = could not meet it before the deadline, reported.
