@@ -191,6 +191,12 @@ class AgentService extends ChangeNotifier
     /// instead of building a real HTTP one. Null = the default.
     @visibleForTesting
     StreamFunction Function(String kind, String apiKey)? rolesStreamFactory,
+
+    /// Saved custom providers for the roles resolver's registry leg
+    /// (issue #1552): chain entries may name these by name
+    /// (`provider: aiai`). The [_withEnv] boot maps the live
+    /// [ProviderRegistry] instead.
+    @visibleForTesting List<CustomProviderEntry> customProviders = const [],
   }) : _resolveSecretName = null,
        _providerRegistry = null,
        // ignore: prefer_initializing_formals
@@ -246,6 +252,7 @@ class AgentService extends ChangeNotifier
       _taskRolesResolver = ModelRolesResolver(
         config: ModelRolesConfig(roles: StoreBackedRolesMap(taskModelsStore)),
         secrets: bootSecrets,
+        customProviders: customProviders,
         streamFactory: rolesStreamFactory,
       );
     }
@@ -737,6 +744,21 @@ class AgentService extends ChangeNotifier
           retry: yamlRoles?.retry ?? const ModelRolesRetryPolicy(),
         ),
         secrets: _secretsEnv?.secretsSnapshot() ?? const {},
+        // Issue #1552: yaml `roles:` chains may name saved providers by
+        // name (`provider: aiai`) — the registry leg resolves them through
+        // the live provider registry exactly like the kind+baseUrl form.
+        // The app registry carries no keyName (keys are session-memory);
+        // entry defaults only widen NAME resolution, key provenance is
+        // unchanged (issue #40 invariant).
+        customProviders: [
+          for (final provider in providerRegistry?.providers ?? const [])
+            CustomProviderEntry(
+              name: provider.name,
+              apiType: provider.kind ?? 'openai',
+              baseUrl: provider.baseUrl,
+              modelId: provider.modelId,
+            ),
+        ],
       );
       // 429 rotation notices surface in the log (CLI parity).
       _taskRolesResolver!.onNotice = (notice) =>

@@ -63,6 +63,37 @@ Headless flows: `--provider copilot --model <id>` with `COPILOT_GITHUB_TOKEN` (O
 
 CLI: `/provider chatgpt oauth [headless]` (callback server in `lib/src/cli/chatgpt_oauth_server.dart`, exported from `lib/io.dart`). `/provider codemie sso [orgUrl]` (callback server in `lib/src/cli/codemie_sso_server.dart`, exported from `lib/io.dart`). Headless: `--provider dial --model <deployment> [--base-url …]` (dial has no default model id — `buildCliDefaultModel` throws without `--model`).
 
+## Roles × custom providers
+
+A `roles:` chain entry can name a saved `customProviders:` entry **by name** (issue #1552) — the natural hand-written config works instead of silently degrading to a single model:
+
+```yaml
+customProviders:
+  - name: aiai
+    apiType: openai          # the adapter dialect (catalog spec)
+    baseUrl: https://api.bycom.by/v1
+    modelId: glm-4.6
+    keyName: AIAI_API_KEY    # optional: the env/secure-store slot for the key
+
+roles:
+  default:
+    - provider: aiai         # names the entry above
+      model: glm-4.6
+```
+
+Rules:
+
+- **Kind-vs-name**: resolution order is catalog name, then adapter kind (`chatgpt-codex`), then the `customProviders:` registry. Registry entries can never be named after catalog providers (reserved names), so the two namespaces never shadow. An entry known to NEITHER catalog nor registry still skips + degrades exactly as before (the roles config falls back to the single model with one warning — which also prints in the TUI, not only stderr).
+- **Defaults**: the entry supplies `baseUrl` and `keyName` where the chain ref omits them; explicit ref fields always win.
+- **Key slots** (issue #40 precedence): a custom endpoint's key resolves
+  from the entry's pinned `keyName` first, then the endpoint-scoped
+  `FA_KEY_<HOST>` store slot (e.g. `FA_KEY_API_BYCOM_BY`) or its
+  `_2`/`_3`… rotation stack, and only then falls back to the adapter
+  dialect's catalog env names (`OPENAI_API_KEY` for an `openai` entry —
+  the last-resort fallback, shared with the dialect's default endpoint).
+  Export `AIAI_API_KEY=<key>` (or `/key set FA_KEY_API_BYCOM_BY <key>`)
+  and every chain entry referencing the entry resolves.
+
 ## Scoped provider timeouts (issue #1554)
 
 `connectTimeoutMs`/`streamIdleTimeoutMs` (strict positive ints, ≤ 1 h) are

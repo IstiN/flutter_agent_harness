@@ -62,6 +62,10 @@ final class AgentCliConfig {
     this.approvalMode = ApprovalMode.yolo,
     this.alwaysAllowTools = const {},
     this.modelRolesResolver,
+    // Issue #1552 AC4: the roles-drop warning (gh-760 boot boundary) also
+    // surfaces in the notice stream — stderr alone is invisible inside the
+    // TUI's alternate screen. Null = no drop happened.
+    this.rolesDropNotice,
     this.providersQueueRuntime,
     this.providerQueueEnv,
     this.ttsr,
@@ -241,8 +245,10 @@ final class AgentCliConfig {
 
   /// Whether this process drives a headless run (`fah run "<prompt>"` and
   /// friends) as opposed to an interactive REPL/TUI session. Set by the
-  /// executable's dispatch; decides the DEFAULT supervision mode only —
-  /// an explicit `agent.stuckTool:` wins in both (gh-1054 review).
+  /// executable's dispatch. Does NOT select the supervision default:
+  /// since gh-1632 the autonomous default applies in EVERY mode and
+  /// `advisory` is reachable only via explicit `agent.stuckTool:` config
+  /// (the gh-1054 interactive-advisory default branch is gone).
   final bool headlessRun;
 
   /// Per-call judge/summarizer budget seconds (`compaction.
@@ -468,6 +474,12 @@ final class AgentCliConfig {
   /// had no `roles:` section (auxiliary roles resolve lazily; the default
   /// chain stays untouched).
   ModelRolesResolver? modelRolesResolver;
+
+  /// The roles-drop warning text (issue #1552 AC4), or null: the gh-760
+  /// boot boundary degraded the whole `roles:` config — the line surfaces
+  /// in the notice stream (line mode + the TUI transcript after the
+  /// banner), never stderr-only.
+  final String? rolesDropNotice;
 
   /// The provider-queue runtime (issue #418): when set, the default role
   /// resolves through the queue's stream function — sticky cursor, loud
@@ -959,17 +971,17 @@ final class AgentCliConfig {
   /// hostname is unavailable.
   final String? machineName;
 
-  /// The effective stuck supervision for THIS host (gh-1054 review): an
-  /// explicit `agent.stuckTool:` wins everywhere; otherwise headless runs
-  /// keep the autonomous default (unattended — nobody to advise) while
-  /// interactive REPL/TUI sessions default to advisory (a human is
-  /// present; auto-cancelling under their cursor is the ticket's
-  /// non-goal).
+  /// The effective stuck supervision for THIS host (gh-1054, gated per
+  /// gh-1632 I1): an explicit `agent.stuckTool:` wins everywhere;
+  /// otherwise the autonomous default applies in EVERY mode — interactive
+  /// REPL/TUI sessions included. The implicit interactive-advisory branch
+  /// (gh-1054 review) is what left the gh-1632 incident session hanging 27
+  /// minutes on a dead `git fetch`: the stuck flag fired, no escalation
+  /// ever followed. `advisory` stays reachable ONLY via explicit config
+  /// (`agent.stuckTool.followUp: advisory`).
   StuckToolConfig effectiveStuckTool() {
     final configured = stuckTool;
     if (configured != null) return configured;
-    return headlessRun
-        ? const StuckToolConfig()
-        : const StuckToolConfig(followUp: StuckFollowUpMode.advisory);
+    return const StuckToolConfig();
   }
 }
