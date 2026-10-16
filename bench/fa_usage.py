@@ -237,29 +237,24 @@ def extract_from_text(text: str, usage: SessionUsage = None) -> SessionUsage:
             continue  # corrupt line contributes nothing (fail-soft)
         if not isinstance(obj, dict):
             continue
-        record_type = obj.get("type")
-        if (
-            record_type == "custom"
-            and obj.get("customType") == "model_request_summary"
-        ):
+        custom_type = obj.get("customType")
+        if custom_type == "model_request_summary":
             if pending_chars is not None:
                 # The previous request never finalized — count it now.
                 _feed_dangling(usage, pending_chars)
             pending_chars = _request_known_chars(obj.get("data"))
             continue
-        if record_type == "custom" and obj.get("customType") == "usage_segment_start":
+        if custom_type == "usage_segment_start":
             if pending_chars is not None:
                 _feed_dangling(usage, pending_chars)
                 pending_chars = None
             continue
-        if record_type == "session":
+        if obj.get("type") == "session":
             # A new chain header: anything pending belongs to the previous
             # chain (replay/takeover file pairs) — it never finalized.
             if pending_chars is not None:
                 _feed_dangling(usage, pending_chars)
                 pending_chars = None
-            continue
-        if record_type != "message":
             continue
         _feed(usage, obj)
         message = obj.get("message")
