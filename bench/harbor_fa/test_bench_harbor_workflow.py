@@ -671,5 +671,247 @@ class ShardDatasetEnvRegTest(unittest.TestCase):
         self.assertIn("DATASET: ${{ steps.family.outputs.dataset }}", setup_job)
 
 
+def _harbor_run_block() -> str:
+    """The harbor shard step's full `run: |` body (gh-1658 retry tests).
+
+    Sliced by the same structural markers the existing suites use: the
+    step's name and the upload step that follows it.
+    """
+    text = _HARBOR_YML.read_text()
+    start = text.index("Run harbor (fa agent")
+    run_at = text.index("run: |", start)
+    end = text.index("Upload harbor job", run_at)
+    lines = text[run_at + len("run: |") : end].splitlines()
+    while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith("- name:")):
+        # The "Upload harbor job" marker sits mid-line (after `- name: `),
+        # so the slice carries the next step's boundary prefix — drop it
+        # (and blank tails) or bash would execute `-` as a command.
+        lines.pop()
+    return "\n".join(lines)
+
+
+def _harbor_step_env_block() -> str:
+    """The Run harbor step header + env block (up to its `run:`)."""
+    text = _HARBOR_YML.read_text()
+    start = text.index("- name: Run harbor")
+    return text[start : text.index("\n        run:", start)]
+
+
+_FAKE_HARBOR = """#!/usr/bin/env bash
+# Test double for `.bench-venv/bin/harbor` (gh-1658): records every
+# invocation and fails/writes trials per $FAKE_HARBOR_MODE.
+if [ -f "$FAKE_HARBOR_CALLS" ]; then
+  calls=$(( $(cat "$FAKE_HARBOR_CALLS") + 1 ))
+else
+  calls=1
+fi
+echo "$calls" > "$FAKE_HARBOR_CALLS"
+job=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--job-name" ]; then job="$a"; fi
+  prev="$a"
+done
+echo "call=$calls job=$job" >> "$FAKE_HARBOR_LOG"
+mkdir -p "jobs/$job/trial-0"
+case "${FAKE_HARBOR_MODE}" in
+  ok)
+    printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "jobs/$job/trial-0/result.json"
+    exit 0 ;;
+  crash_zero)
+    rm -f "jobs/$job/trial-0/result.json"
+    exit 1 ;;
+  crash_then_ok)
+    if [ "$calls" -ge 2 ]; then
+      printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "jobs/$job/trial-0/result.json"
+      exit 0
+    fi
+    exit 1 ;;
+  fail_with_trials)
+    printf '{"exception_info":{"exception_type":"ContainerError"}}\\n' > "jobs/$job/trial-0/result.json"
+    exit 1 ;;
+esac
+exit 99
+"""
+
+
+@unittest.skipUnless(
+    _HARBOR_YML.exists(), "bench-harbor.yml not found (standalone bench checkout)"
+)
+@unittest.skipUnless(shutil.which("bash"), "bash not available")
+class ZeroTrialRetryTest(unittest.TestCase):
+    """gh-1658 C1/C2 — the shard step's inline retry on a zero-trial
+    startup crash.
+
+    The whole `run: |` block is executed against a fake harbor (the block
+    must be pure shell — every GitHub expression rides the step env), so
+    the retry CONTRACT is pinned behaviourally, not by string shape:
+    - success: harbor runs once, the retry branch is a no-op, no marker;
+    - zero-trial crash: exactly one retry (same --job-name), proceeds on
+      success, and a still-failing shard marks the step summary
+      `zero-trial startup failure (retried once)`;
+    - failure WITH trials: a real result — never retried, no marker.
+    """
+
+    maxDiff = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.block = _harbor_run_block()
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        venv_bin = self.root / ".bench-venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        self.harbor = venv_bin / "harbor"
+        self.harbor.write_text(_FAKE_HARBOR)
+        self.harbor.chmod(0o755)
+        self.calls = self.root / "calls"
+        self.log = self.root / "invocations.log"
+        self.summary = self.root / "step-summary.md"
+        self.env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            # The provider-key preflight (indirect expansion).
+            "FA_PROVIDER_KEY_ENV": "FAKE_KEY",
+            "FAKE_KEY": "fake-bench-key",
+            "ENV_TYPE": "docker",
+            "SHARD_TASKS": "task-a task-b",
+            "MODEL": "fake-model",
+            "ATTEMPTS": "1",
+            "NCONC": "1",
+            "DATASET": "org/ds@latest",
+            "FAMILY": "2.1",
+            "AGENT_TIMEOUT": "",
+            "PROGRESS_EXTENSION": "",
+            # The matrix identity rides the step env (pure-shell block).
+            "SHARD_KIND": "cpu",
+            "SHARD_INDEX": "3",
+            "FAKE_HARBOR_MODE": "ok",
+            "FAKE_HARBOR_CALLS": str(self.calls),
+            "FAKE_HARBOR_LOG": str(self.log),
+            "GITHUB_STEP_SUMMARY": str(self.summary),
+        }
+
+    def _run_block(self, mode: str) -> subprocess.CompletedProcess:
+        self.env["FAKE_HARBOR_MODE"] = mode
+        driver = self.root / "harbor_step.sh"
+        driver.write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + self.block + "\n")
+        return subprocess.run(
+            ["bash", str(driver)],
+            cwd=self.root,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def _calls(self) -> int:
+        return int(self.calls.read_text()) if self.calls.exists() else 0
+
+    def _jobs(self, pattern: str) -> list[str]:
+        return [p.name for p in self.root.glob(pattern)]
+
+    def test_block_is_pure_shell_subprocess_testable(self):
+        # No GitHub expression may remain in the run block: the retry
+        # contract is tested by EXECUTION here, and `${{ ... }}` is a
+        # bash bad-substitution. The matrix identity rides the step env.
+        self.assertNotRegex(self.block, r"\$\{\{")
+        self.assertIn(
+            'JOB_NAME="fa-${FAMILY}-${ENV_TYPE}-${SHARD_KIND}-${SHARD_INDEX}"',
+            self.block,
+        )
+        env_block = _harbor_step_env_block()
+        self.assertIn("SHARD_KIND: ${{ matrix.kind }}", env_block)
+        self.assertIn("SHARD_INDEX: ${{ matrix.i }}", env_block)
+
+    def test_success_runs_harbor_once_no_retry_no_marker(self):
+        # Smoke parity (ticket test matrix): the retry branch is a no-op
+        # on success — no double trials, no summary write, no attempt dir.
+        proc = self._run_block("ok")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self._calls(), 1)
+        self.assertEqual(self._jobs("jobs/fa-2.1-docker-cpu-3"), ["fa-2.1-docker-cpu-3"])
+        self.assertFalse(self.summary.exists())
+        self.assertFalse(self._jobs("jobs/_attempt1-*"))
+
+    def test_zero_trial_crash_retries_once_and_proceeds(self):
+        # AC1: a zero-trial startup failure retries once inside the same
+        # job — same --job-name — and proceeds on success.
+        proc = self._run_block("crash_then_ok")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self._calls(), 2)
+        job_names = [line.split("job=")[-1] for line in self.log.read_text().splitlines()]
+        self.assertEqual(job_names, ["fa-2.1-docker-cpu-3", "fa-2.1-docker-cpu-3"])
+        # The retried job owns the pinned name; attempt 1's (trial-less)
+        # dir is preserved aside for RCA.
+        self.assertEqual(self._jobs("jobs/fa-2.1-docker-cpu-3"), ["fa-2.1-docker-cpu-3"])
+        self.assertTrue(
+            (self.root / "jobs" / "_attempt1-fa-2.1-docker-cpu-3").is_dir()
+        )
+        self.assertFalse(self.summary.exists())
+
+    def test_still_failing_zero_trial_marks_the_step_summary(self):
+        # AC1 + C2: still-failing after the one retry → non-zero exit and
+        # the marker, so the RCA does not depend on job logs surviving.
+        proc = self._run_block("crash_zero")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self._calls(), 2)  # retried exactly once
+        marker = "zero-trial startup failure (retried once)"
+        self.assertIn(marker, self.summary.read_text())
+        self.assertIn("fa-2.1-docker-cpu-3", self.summary.read_text())
+
+    def test_failure_with_trials_is_never_retried(self):
+        # AC2: a failure with >= 1 trial is a real result — one harbor
+        # invocation, non-zero exit, no marker (a retry would double-bill
+        # and mix attempts).
+        proc = self._run_block("fail_with_trials")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self._calls(), 1)
+        self.assertFalse(self.summary.exists())
+
+    def test_retry_gate_counts_any_result_json_under_the_job_dir(self):
+        # The zero-trial gate keys on result.json PRESENCE anywhere under
+        # the shard's job dir (the same presence rule the summary's
+        # completeness count uses) — not on a particular layout.
+        self.assertIn('find "jobs/$JOB_NAME"', self.block)
+        self.assertIn("-name result.json", self.block)
+
+
+@unittest.skipUnless(
+    _HARBOR_YML.exists(), "bench-harbor.yml not found (standalone bench checkout)"
+)
+class ShardGuardWiringTest(unittest.TestCase):
+    """gh-1658 C3 wiring: the aggregate verdict must know how many shards
+    the run fielded — the setup matrix length rides the summary step env
+    and reaches summary.py as --expected-shards."""
+
+    @classmethod
+    def setUpClass(cls):
+        text = _HARBOR_YML.read_text()
+        start = text.index("Resolution summary & verdict")
+        cls.step = text[start:]
+
+    def _env_block(self) -> str:
+        return self.step[: self.step.index("run: |")]
+
+    def _run_block(self) -> str:
+        return self.step[self.step.index("run: |") :]
+
+    def test_summary_step_maps_the_setup_matrix(self):
+        self.assertIn(
+            "MATRIX_JSON: ${{ needs.setup.outputs.matrix }}", self._env_block()
+        )
+
+    def test_summary_step_passes_expected_shards_from_the_matrix_length(self):
+        # The count is DERIVED from the setup split (never hardcoded):
+        # matrix JSON in, `.include | length` out, --expected-shards on
+        # the summary.py invocation.
+        run_block = self._run_block()
+        self.assertIn("jq '.include | length'", run_block)
+        self.assertIn("--expected-shards", run_block)
+
+
 if __name__ == "__main__":
     unittest.main()
