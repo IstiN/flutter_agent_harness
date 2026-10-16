@@ -17,9 +17,12 @@ import 'package:test/test.dart';
 /// regression guard — a per-row rescan or per-cell allocation coming back
 /// shows up as a superlinear doubling ratio long before any absolute
 /// budget trips. The growth asserts take several independent attempts and
-/// gate on the min ratio (gh-1532): contention can only ADD wall time, so
-/// the min across attempts approaches the uncontended ratio and a
-/// scheduler preemption on a loaded runner can no longer flake the gate.
+/// gate on the min ratio (gh-1532), with each attempt sampling each size
+/// at its fastest run (PR #1635 validation red ×2): contention can only
+/// ADD wall time, so the per-size min approaches the uncontended ratio
+/// even when a steal window spans most of an attempt's runs, and the min
+/// across attempts covers windows longer than one attempt — a scheduler
+/// preemption on a loaded runner can no longer flake the gate.
 final _rng = Random(1496);
 
 const _words = [
@@ -134,6 +137,29 @@ double medianWrapMs(
   return times[runs ~/ 2];
 }
 
+/// Fastest wrap time over [runs] executions (one untimed warm-up first).
+///
+/// The growth assertions sample each size with the MIN, not the median:
+/// scheduler steals and GC pauses can only ADD wall time, so the fastest
+/// observed run is the least-contaminated estimate of the true per-size
+/// cost — the same principle that gates across attempts, applied within
+/// them. A median needs a majority of clean runs; a min needs exactly
+/// one, which is what survives the sustained contention shape that red
+/// the PR #1635 validation twice (a steal window spanning ≥3 of 5 runs
+/// of the doubled size in every attempt inflated every attempt median —
+/// runs 38824807299 and 38830911279). A genuine quadratic regression
+/// inflates every doubled run including the fastest, so it still trips.
+double minWrapMs(String line, int width, {int runs = 5, ElapsedUs? elapsedUs}) {
+  final measure = elapsedUs ?? _stopwatchUs;
+  wrapAnsiLine(line, width); // JIT warm-up, untimed
+  var min = double.infinity;
+  for (var i = 0; i < runs; i++) {
+    final t = measure(() => wrapAnsiLine(line, width)) / 1000.0;
+    if (t < min) min = t;
+  }
+  return min;
+}
+
 /// Independent doubling samples per growth assertion (gh-1532): the
 /// superlinear guard is gated on the MIN ratio across the attempts —
 /// contention can only ADD wall time, so the min approaches the
@@ -153,10 +179,12 @@ const _maxLinearRatio = 3.2;
 const _minGrowthRatio = 1.5;
 
 /// Growth-shape contract: doubling the input must not more than
-/// [_maxLinearRatio] the median time — see the constants above for the
-/// guard bounds and the gh-1532 rationale (min across attempts gates
-/// the superlinear guard; the max across attempts must clear
-/// [_minGrowthRatio] so a degenerate flat measurement fails).
+/// [_maxLinearRatio] the fastest wrap time — see the constants above for
+/// the guard bounds and the gh-1532 rationale. Each attempt samples each
+/// size with [minWrapMs] (the fastest run is the least-contended
+/// estimate); the min ratio across attempts gates the superlinear guard,
+/// and the max across attempts must clear [_minGrowthRatio] so a
+/// degenerate flat measurement fails.
 void expectLinearGrowth(
   String Function(int cells) build,
   int baseCells,
@@ -166,12 +194,8 @@ void expectLinearGrowth(
   var minRatio = double.infinity;
   var maxRatio = 0.0;
   for (var a = 0; a < _growthAttempts; a++) {
-    final small = medianWrapMs(build(baseCells), 80, elapsedUs: elapsedUs);
-    final doubled = medianWrapMs(
-      build(baseCells * 2),
-      80,
-      elapsedUs: elapsedUs,
-    );
+    final small = minWrapMs(build(baseCells), 80, elapsedUs: elapsedUs);
+    final doubled = minWrapMs(build(baseCells * 2), 80, elapsedUs: elapsedUs);
     final ratio = doubled / small;
     if (ratio < minRatio) minRatio = ratio;
     if (ratio > maxRatio) maxRatio = ratio;
@@ -289,9 +313,10 @@ void main() {
       // release windows a scheduler steal spanning several timed runs
       // inflated the one-shot doubling ratio past 3.2x on a ~4ms baseline.
       // 30ms of fake preemption across the first three timed runs of the
-      // doubled measurement in attempt 1 (median-of-5 absorbs single-run
-      // spikes, so a sustained steal is the realistic shape) is a ~9x ratio
-      // for that attempt — the retry-min harness must discard it.
+      // doubled measurement in attempt 1 was a ~9x MEDIAN ratio for that
+      // attempt under the pre-gh-1532 harness; the per-size min (the
+      // clean runs 4-5 pin the doubled sample) and the cross-attempt min
+      // must both ride it out.
       // Measurement call order: per attempt, 5 timed runs of the small
       // input then 5 of the doubled one.
       final spike = ContendedClock(spiked: {6, 7, 8});
@@ -312,6 +337,40 @@ void main() {
       );
     },
   );
+
+  test('growth assertion survives contention that poisons every attempt median '
+      '(PR #1635 validation red ×2)', () {
+    // The gh-1532 harness still red twice within one hour on the arm64
+    // core shards (fa runs 38824807299 shard 0 and 38830911279 shard 3,
+    // best ratios 3.35x/3.31x at 500k cells): a contention window long
+    // enough to span ≥3 of the 5 timed runs of the doubled size in EVERY
+    // attempt inflates every attempt MEDIAN, so the cross-attempt min
+    // cannot rescue it. Model that shape deterministically: 4 of the 5
+    // doubled runs spiked in each of the 3 attempts, small runs
+    // untouched (the small samples were stable in both live reds —
+    // exposure scales with run duration). Median-of-5 takes a spiked
+    // value in every attempt and fails; a per-size min finds the one
+    // clean doubled run per attempt (~2x) and passes.
+    // Measurement call order: per attempt, 5 timed runs of the small
+    // input then 5 of the doubled one.
+    final sustained = ContendedClock(
+      spiked: {6, 7, 8, 9, 16, 17, 18, 19, 26, 27, 28, 29},
+    );
+    expectLinearGrowth(
+      asciiProse,
+      100000,
+      'ASCII prose',
+      elapsedUs: sustained.call,
+    );
+    // Same layout guard as the preemption test above: the spiked indices
+    // encode the measure loop's exact call layout (3 attempts × 2 sizes
+    // × 5 timed runs).
+    expect(
+      sustained.calls,
+      30,
+      reason: 'the spiked indices encode the call layout',
+    );
+  });
 
   test('growth assertion rejects a degenerate flat measurement (gh-1532)', () {
     // AC2: the guard must stay meaningful. A constant clock makes every
