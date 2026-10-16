@@ -311,17 +311,18 @@ void main() {
     test('two genuinely different calls in one message stay two blocks', () async {
       final client = sseClient(
         sseBody([
-          {
-            'choices': [
-              {
-                'delta': {
-                  'tool_calls': [
-                    {
-                      'index': 0,
-                      'id': 'call_a',
-                      'function': {'name': 'bash', 'arguments': '{"command'},
-                    },
-                  ],
+            {
+              'choices': [
+                {
+                  'delta': {
+                    'tool_calls': [
+                      {
+                        'index': 0,
+                        'id': 'call_a',
+                        'function': {'name': 'bash', 'arguments': '{"command'},
+                      },
+                    ],
+                  },
                 },
               ],
             },
@@ -419,9 +420,11 @@ void main() {
       // Full-snapshot relays: every chunk repeats everything so far.
       expect(await thinkingOf(['при', 'прив', 'привет']), 'привет');
       // Sliding-window relays: every chunk overlaps the previous tail.
+      // gh-1655: the 1-char 'ж' stutter heading 'жаем' is trimmed too now,
+      // so the doubled-ж seam no longer survives ('Продолжжжжаем' before).
       expect(
         await thinkingOf(['Прод', 'родол', 'олжжж', 'жаем']),
-        'Продолжжжжаем',
+        'Продолжжаем',
       );
       // Clean incremental deltas pass through untouched.
       expect(await thinkingOf(['let me ', 'think']), 'let me think');
