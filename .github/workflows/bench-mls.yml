@@ -111,7 +111,7 @@ jobs:
           tar -czf fa-bundle.tar.gz -C "$bundle_dir/bundle" .
 
       - name: Upload fa bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fa-bundle
           path: fa-bundle.tar.gz
@@ -161,7 +161,7 @@ jobs:
       # AC6: the identity bundle rides its own artifact so every later job —
       # and the restore-and-inspect step — replays the same run identity.
       - name: Upload run identity bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mls-run-config
           path: mls-run-config.json
@@ -233,7 +233,7 @@ jobs:
 
       - name: Upload nop jobs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mls-jobs-nop
           path: mls/harbor/jobs/
@@ -312,7 +312,7 @@ jobs:
 
       - name: Upload oracle jobs (shard ${{ matrix.i }})
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mls-jobs-oracle-shard-${{ matrix.i }}
           path: mls/harbor/jobs/
@@ -338,7 +338,7 @@ jobs:
           path: mls
 
       - name: Download fa bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: fa-bundle
 
@@ -411,7 +411,7 @@ jobs:
 
       - name: Upload agent jobs (shard ${{ matrix.i }})
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mls-jobs-agent-shard-${{ matrix.i }}
           path: mls/harbor/jobs/
@@ -435,14 +435,14 @@ jobs:
       # artifact is uploaded.
       - name: Restore bundle (download all ladder jobs)
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: mls-jobs-*
           merge-multiple: true
           path: jobs
 
       - name: Download run identity bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: mls-run-config
 
@@ -456,7 +456,7 @@ jobs:
 
       - name: Upload merged run bundle
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mls-jobs-merged
           path: jobs/
@@ -476,7 +476,7 @@ jobs:
     steps:
       - name: Restore merged bundle
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: mls-jobs-merged
           path: jobs
