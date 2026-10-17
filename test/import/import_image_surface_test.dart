@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/import/claude_adapter.dart';
 import 'package:flutter_agent_harness/src/import/foreign_session.dart';
 import 'package:test/test.dart';
@@ -202,4 +204,160 @@ this is not json
       expect(a1.lineNumber, isNot(toolResult.lineNumber));
     });
   });
+
+  group('ClaudeAdapter.discover non-ranged prefix surface', () {
+    late Directory home;
+    late Directory project;
+    late Directory faRoot;
+
+    setUp(() {
+      home = Directory.systemTemp.createTempSync('fa_import_pfx_home');
+      project = Directory.systemTemp.createTempSync('fa_import_pfx_proj');
+      faRoot = Directory.systemTemp.createTempSync('fa_import_pfx_fa');
+    });
+
+    tearDown(() {
+      home.deleteSync(recursive: true);
+      project.deleteSync(recursive: true);
+      faRoot.deleteSync(recursive: true);
+    });
+
+    Directory bucket() => Directory(
+      '${home.path}/.claude/projects/${claudeProjectSlug(project.path)}',
+    )..createSync(recursive: true);
+
+    Future<List<ForeignSessionSummary>> discoverOn(FileSystem fs) =>
+        ClaudeAdapter().discover(
+          fs: fs,
+          cwd: project.path,
+          homeDir: home.path,
+          tempDir: Directory.systemTemp.path,
+          limits: const ImportLimits(),
+        );
+
+    test('reads the recorded cwd from a small whole-file backend', () async {
+      File('${bucket().path}/s.jsonl').writeAsStringSync(
+        '{"type":"session","version":3,"id":"s","cwd":"${project.path}"}\n'
+        '{"type":"user","message":{"role":"user","content":"hi"}}\n',
+      );
+      final summaries = await discoverOn(_ProbeEnv(project.path));
+      expect(summaries, hasLength(1));
+      expect(summaries.single.headerCwd, project.path);
+    });
+
+    test('truncates the prefix at 4 KiB but still finds the cwd', () async {
+      final filler = 'x' * 5000;
+      File('${bucket().path}/s.jsonl').writeAsStringSync(
+        '{"type":"session","version":3,"id":"s","cwd":"${project.path}"}\n'
+        '{"type":"user","message":{"role":"user","content":"$filler"}}\n',
+      );
+      final summaries = await discoverOn(_ProbeEnv(project.path));
+      expect(summaries, hasLength(1));
+      expect(summaries.single.headerCwd, project.path);
+    });
+
+    test(
+      'fileInfo failure yields no cwd and no summary, never a crash',
+      () async {
+        File('${bucket().path}/s.jsonl').writeAsStringSync(
+          '{"type":"session","version":3,"id":"s","cwd":"${project.path}"}\n',
+        );
+        final summaries = await discoverOn(
+          _ProbeEnv(project.path, failFileInfo: true),
+        );
+        expect(summaries, isEmpty);
+      },
+    );
+
+    test('readTextFile failure yields no summary, never a crash', () async {
+      File('${bucket().path}/s.jsonl').writeAsStringSync(
+        '{"type":"session","version":3,"id":"s","cwd":"${project.path}"}\n',
+      );
+      final summaries = await discoverOn(
+        _ProbeEnv(project.path, failReadText: true),
+      );
+      expect(summaries, isEmpty);
+    });
+  });
+}
+
+/// A non-ranged backend that can inject failures into the discovery
+/// prefix probes (fileInfo / readTextFile) while delegating everything
+/// else — drives the `_readWholeFilePrefix` guard branches.
+final class _ProbeEnv implements FileSystem {
+  _ProbeEnv(this.cwd, {this.failFileInfo = false, this.failReadText = false})
+    : _base = LocalExecutionEnv(cwd: cwd);
+
+  final LocalExecutionEnv _base;
+  @override
+  final String cwd;
+  final bool failFileInfo;
+  final bool failReadText;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _base.absolutePath(path);
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _base.joinPath(parts);
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) => failReadText
+      ? Future.value(
+          Err(
+            FileError(
+              FileErrorCode.permissionDenied,
+              'probe: read refused',
+              path: path,
+            ),
+          ),
+        )
+      : _base.readTextFile(path);
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _base.readBinaryFile(path);
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _base.readTextLines(path, maxLines: maxLines);
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _base.writeBinaryFile(path, content);
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _base.writeFile(path, content);
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _base.appendFile(path, content);
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      failFileInfo && path.endsWith('.jsonl')
+      ? Future.value(
+          Err(
+            FileError(
+              FileErrorCode.permissionDenied,
+              'probe: stat refused',
+              path: path,
+            ),
+          ),
+        )
+      : _base.fileInfo(path);
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _base.listDir(path);
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _base.exists(path);
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _base.createDir(path, recursive: recursive);
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _base.remove(path, recursive: recursive, force: force);
 }

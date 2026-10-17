@@ -32,7 +32,8 @@ final class ClaudeAdapter implements HarnessAdapter {
   }) async {
     final root = storeRoot(homeDir);
     final exists = await fs.exists(root);
-    final isDir = exists.valueOrNull == true &&
+    final isDir =
+        exists.valueOrNull == true &&
         (await fs.fileInfo(root)).valueOrNull?.kind == FileKind.directory;
     return isDir ? root : null;
   }
@@ -52,7 +53,10 @@ final class ClaudeAdapter implements HarnessAdapter {
     final bucket = await fs.listDir(bucketPath);
     if (bucket.isErr) return const [];
     final summaries = <ForeignSessionSummary>[];
-    for (final (path, size, mtimeMs) in await listSessionFiles(fs, bucketPath)) {
+    for (final (path, size, mtimeMs) in await listSessionFiles(
+      fs,
+      bucketPath,
+    )) {
       final headerCwd = await _firstCwd(
         fs,
         path,
@@ -97,99 +101,75 @@ final class ClaudeAdapter implements HarnessAdapter {
     required String homeDir,
     required ImportLimits limits,
   }) async {
-    var skipped = 0;
-    var skippedBlocks = 0;
+    final counters = _ParseCounters();
     // Pass 1: classify lines — sidechain records are excluded+counted
     // (AC8), message records join the tree, everything else is aux.
+    final (lines, shells) = await _classifyLines(
+      fs,
+      summary.sourcePath,
+      limits,
+      counters,
+    );
+    final branch = activeBranchIds(shells);
+    counters.skippedRecords += branch.skippedOffPath;
+    // Pass 2: emit aux + on-path records in file order.
+    final records = _emitRecords(lines, branch.pathIds, counters);
+    return ForeignParseResult(
+      records: records,
+      skippedRecords: counters.skippedRecords,
+      skippedBlocks: counters.skippedBlocks,
+    );
+  }
+
+  /// Streams the session file once, keeping every decodable line with its
+  /// 1-based number and building the tree-shell list the branch walk
+  /// consumes. Undecodable/oversized lines and sidechain entries are
+  /// counted skipped on [counters].
+  Future<(List<({int number, Map<String, dynamic> json})>, List<TreeShell>)>
+  _classifyLines(
+    FileSystem fs,
+    String path,
+    ImportLimits limits,
+    _ParseCounters counters,
+  ) async {
     final lines = <({int number, Map<String, dynamic> json})>[];
     final shells = <TreeShell>[];
-    await for (final line in scanForeignLines(fs, summary.sourcePath, limits)) {
-      if (line.text == null) {
-        skipped++;
-        continue;
-      }
-      final json = decodeJsonLine(line.text!);
+    await for (final line in scanForeignLines(fs, path, limits)) {
+      final json = line.text == null ? null : decodeJsonLine(line.text!);
       if (json == null) {
-        skipped++;
+        counters.skippedRecords++;
         continue;
       }
-      final number = line.number;
-      lines.add((number: number, json: json));
+      lines.add((number: line.number, json: json));
       if (json['isSidechain'] == true) {
-        skipped++;
+        counters.skippedRecords++;
         continue;
       }
       final uuid = json['uuid'];
       if (uuid is String && uuid.isNotEmpty) {
-        shells.add(TreeShell(number, uuid, json['parentUuid'] as String?));
+        shells.add(TreeShell(line.number, uuid, json['parentUuid'] as String?));
       } else {
-        shells.add(TreeShell.aux(number));
+        shells.add(TreeShell.aux(line.number));
       }
     }
-    final branch = activeBranchIds(shells);
-    skipped += branch.skippedOffPath;
-    // Pass 2: emit aux + on-path records in file order.
+    return (lines, shells);
+  }
+
+  /// Emits aux + on-path records in file order; off-branch forks and
+  /// sidechain entries were already counted skipped upstream.
+  List<ForeignRecord> _emitRecords(
+    List<({int number, Map<String, dynamic> json})> lines,
+    Set<String> pathIds,
+    _ParseCounters counters,
+  ) {
     final records = <ForeignRecord>[];
     for (final (number: number, :json) in lines) {
       if (json['isSidechain'] == true) continue;
       final uuid = json['uuid'];
       final isTree = uuid is String && uuid.isNotEmpty;
-      if (isTree && !branch.pathIds.contains(uuid)) {
-        // Off-branch fork — counted skipped by the branch walk above.
-        continue;
-      }
-      final message = json['message'];
-      if (isTree &&
-          (json['type'] == 'user' || json['type'] == 'assistant') &&
-          message is Map<String, dynamic>) {
-        final rawContent = message['content'];
-        final toolResults = <Map<String, dynamic>>[];
-        final parentBlocks = <dynamic>[];
-        if (rawContent is List) {
-          // Claude pairs tool results as `tool_result` blocks inside the
-          // following user message; lift each into its own toolResult
-          // record so pairing semantics match the omp shape. Lifted
-          // blocks are partitioned OUT of the parent parse —
-          // parseForeignContent counts every tool_result it sees as a
-          // skip, and a block that survives as its own record is not a
-          // dropped one.
-          for (final block in rawContent) {
-            if (block is Map<String, dynamic> &&
-                block['type'] == 'tool_result') {
-              toolResults.add(block);
-            } else {
-              parentBlocks.add(block);
-            }
-          }
-        }
-        for (final block in toolResults) {
-          records.add(
-            ForeignMessage(
-              lineNumber: number,
-              role: 'toolResult',
-              contents: parseForeignContent(
-                block['content'],
-                () => skippedBlocks++,
-              ),
-              rawMessage: block,
-              toolCallId: block['tool_use_id'] as String?,
-            ),
-          );
-        }
-        records.add(
-          ForeignMessage(
-            lineNumber: number,
-            role: message['role'] as String? ?? json['type'] as String? ?? '',
-            contents: parseForeignContent(
-              rawContent is List ? parentBlocks : rawContent,
-              () => skippedBlocks++,
-            ),
-            rawMessage: message,
-            model: message['model'] as String?,
-            provider: message['provider'] as String?,
-            stopReason: message['stopReason'] as String?,
-          ),
-        );
+      if (isTree && !pathIds.contains(uuid)) continue;
+      if (_isMessageRecord(json, isTree)) {
+        _emitMessageRecords(records, number, json, counters);
         continue;
       }
       // Unmodeled types (`last-prompt`, `permission-mode`, hook
@@ -202,11 +182,75 @@ final class ClaudeAdapter implements HarnessAdapter {
         ),
       );
     }
-    return ForeignParseResult(
-      records: records,
-      skippedRecords: skipped,
-      skippedBlocks: skippedBlocks,
+    return records;
+  }
+
+  /// Whether the record is an on-path user/assistant message with a
+  /// structured payload — the shape that becomes [ForeignMessage] records.
+  static bool _isMessageRecord(Map<String, dynamic> json, bool isTree) =>
+      isTree &&
+      (json['type'] == 'user' || json['type'] == 'assistant') &&
+      json['message'] is Map<String, dynamic>;
+
+  /// Emits one message record, lifting paired `tool_result` blocks into
+  /// their own toolResult records first (omp pairing parity).
+  void _emitMessageRecords(
+    List<ForeignRecord> records,
+    int number,
+    Map<String, dynamic> json,
+    _ParseCounters counters,
+  ) {
+    final message = json['message'] as Map<String, dynamic>;
+    final rawContent = message['content'];
+    final (toolResults, parentBlocks) = _partitionToolResults(rawContent);
+    for (final block in toolResults) {
+      records.add(
+        ForeignMessage(
+          lineNumber: number,
+          role: 'toolResult',
+          contents: parseForeignContent(block['content'], counters.countBlock),
+          rawMessage: block,
+          toolCallId: block['tool_use_id'] as String?,
+        ),
+      );
+    }
+    records.add(
+      ForeignMessage(
+        lineNumber: number,
+        role: message['role'] as String? ?? json['type'] as String? ?? '',
+        contents: parseForeignContent(
+          rawContent is List ? parentBlocks : rawContent,
+          counters.countBlock,
+        ),
+        rawMessage: message,
+        model: message['model'] as String?,
+        provider: message['provider'] as String?,
+        stopReason: message['stopReason'] as String?,
+      ),
     );
+  }
+
+  /// Claude pairs tool results as `tool_result` blocks inside the
+  /// following user message; each is lifted into its own toolResult
+  /// record so pairing semantics match the omp shape. Lifted blocks are
+  /// partitioned OUT of the parent parse — parseForeignContent counts
+  /// every tool_result it sees as a skip, and a block that survives as
+  /// its own record is not a dropped one.
+  static (List<Map<String, dynamic>>, List<dynamic>) _partitionToolResults(
+    Object? rawContent,
+  ) {
+    final toolResults = <Map<String, dynamic>>[];
+    final parentBlocks = <dynamic>[];
+    if (rawContent is List) {
+      for (final block in rawContent) {
+        if (block is Map<String, dynamic> && block['type'] == 'tool_result') {
+          toolResults.add(block);
+        } else {
+          parentBlocks.add(block);
+        }
+      }
+    }
+    return (toolResults, parentBlocks);
   }
 
   /// The recorded cwd from the file's first lines — claude lines carry it
@@ -216,34 +260,54 @@ final class ClaudeAdapter implements HarnessAdapter {
     String path, {
     required int maxFileBytes,
   }) async {
-    String? prefix;
-    if (fs is RangedReadFileSystem) {
-      final ranged = fs as RangedReadFileSystem;
-      final read = await ranged.readRange(path, 0, 4096);
-      prefix = read.isErr
-          ? null
-          : utf8.decode(read.valueOrNull ?? const [], allowMalformed: true);
-    } else {
-      // Non-ranged backends have no partial read: consult the size gate
-      // BEFORE the whole-file read (mirror of omp _readPrefix) — no
-      // backend pulls an oversized file into memory during discovery.
-      final info = await fs.fileInfo(path);
-      final file = info.valueOrNull;
-      if (info.isErr || file == null || file.kind != FileKind.file) {
-        return '';
-      }
-      if (file.size > maxFileBytes) return '';
-      final read = await fs.readTextFile(path);
-      if (read.isErr) return '';
-      final text = read.valueOrNull!;
-      prefix = text.length > 4096 ? text.substring(0, 4096) : text;
-    }
-    if (prefix == null) return '';
+    final prefix = await _readPrefix(fs, path, maxFileBytes: maxFileBytes);
     for (final line in const LineSplitter().convert(prefix).take(4)) {
       final cwd = decodeJsonLine(line)?['cwd'];
       if (cwd is String && cwd.isNotEmpty) return cwd;
     }
     return '';
+  }
+
+  /// The bounded 4 KiB prefix, '' when unreadable or oversized — no
+  /// backend pulls an oversized file into memory during discovery
+  /// (non-ranged backends consult the size gate BEFORE the whole-file
+  /// read, the omp `_readPrefix` mirror).
+  Future<String> _readPrefix(
+    FileSystem fs,
+    String path, {
+    required int maxFileBytes,
+  }) {
+    if (fs is RangedReadFileSystem) {
+      return _readRangedPrefix(fs as RangedReadFileSystem, path);
+    }
+    return _readWholeFilePrefix(fs, path, maxFileBytes: maxFileBytes);
+  }
+
+  /// The ranged partial-read shape: one 4 KiB window, decode errors
+  /// tolerated, read failures become ''.
+  Future<String> _readRangedPrefix(RangedReadFileSystem fs, String path) async {
+    final read = await fs.readRange(path, 0, 4096);
+    return read.isErr
+        ? ''
+        : utf8.decode(read.valueOrNull ?? const [], allowMalformed: true);
+  }
+
+  /// The whole-file shape with the size gate ahead of the read.
+  Future<String> _readWholeFilePrefix(
+    FileSystem fs,
+    String path, {
+    required int maxFileBytes,
+  }) async {
+    final info = await fs.fileInfo(path);
+    final file = info.valueOrNull;
+    if (info.isErr || file == null || file.kind != FileKind.file) {
+      return '';
+    }
+    if (file.size > maxFileBytes) return '';
+    final read = await fs.readTextFile(path);
+    if (read.isErr) return '';
+    final text = read.valueOrNull!;
+    return text.length > 4096 ? text.substring(0, 4096) : text;
   }
 }
 
@@ -252,3 +316,20 @@ final class ClaudeAdapter implements HarnessAdapter {
 /// discovery only compares it.
 String claudeProjectSlug(String cwd) =>
     cwd.replaceAll(RegExp(r'[/\\]+$'), '').replaceAll('/', '-');
+
+/// Mutable skip counters threaded through the [ClaudeAdapter.read] pass
+/// helpers — one parse, two tallies: whole records dropped and content
+/// blocks placeholder-ed inside mapped records.
+class _ParseCounters {
+  /// Whole records dropped while parsing (oversized/undecodable lines,
+  /// off-branch records, sidechain entries).
+  int skippedRecords = 0;
+
+  /// Content blocks dropped inside mapped records (placeholder-ed).
+  int skippedBlocks = 0;
+
+  /// The [parseForeignContent] `onSkip` callback.
+  void countBlock() {
+    skippedBlocks++;
+  }
+}
