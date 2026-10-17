@@ -220,7 +220,7 @@ void main() {
       }
       // gh-1630 F2′: `downloads` is the deliberate exception — a CORE row
       // backed by the shipped `download` tool (its static call site).
-      final dl = manifestEntries().firstWhere((e) => e.tool == 'download');
+      final dl = manifestEntries().firstWhere((e) => e.tool == 'downloads');
       expect(dl.permissions, contains('downloads'));
       expect(dl.tier, MatrixTier.core, reason: dl.rationale);
       final everywhere = {

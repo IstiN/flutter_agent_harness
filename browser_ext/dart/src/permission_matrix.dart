@@ -318,7 +318,7 @@ const List<ToolManifestEntry> _table = [
   // filename, outbound-approval gated. The other four stay excluded; each
   // comes back ONLY together with the shipping code that calls it.
   ToolManifestEntry(
-    tool: 'download',
+    tool: 'downloads',
     permissions: {'downloads'},
     tier: MatrixTier.core,
     rationale:
