@@ -313,9 +313,9 @@ void main() {
             '(AC1) instead of pre-installing. Re-derive the pattern in '
             '$actionPath and this guard TOGETHER',
       );
-      final version = RegExp(
-        r'\d+\.\d+\.\d+',
-      ).firstMatch(match!.group(0)!)!.group(0);
+      final version = RegExp(r'\d+\.\d+\.\d+')
+          .firstMatch(match!.group(0)!)!
+          .group(0);
       expect(
         version,
         isNotEmpty,
