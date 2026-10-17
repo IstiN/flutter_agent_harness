@@ -192,6 +192,14 @@ jobs:
             rm -rf "$GITHUB_WORKSPACE" || true
           fi
           if [ -d "$GITHUB_WORKSPACE" ] && [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+            # gh-1600 rework (review thread): best-effort prune of previous
+            # sidecars BEFORE creating a new one — the containers that held
+            # them may have died since, so the retry often succeeds. On
+            # this persistent box the runner's own _temp cleanup cannot
+            # remove mount-held content either; without the prune every
+            # degraded checkout would leave another timestamped dir behind
+            # (unbounded growth until manual cleanup).
+            rm -rf "${RUNNER_TEMP:-/tmp}"/stale-workspace-* 2>/dev/null || true
             STALE="${RUNNER_TEMP:-/tmp}/stale-workspace-$(date +%Y%m%d-%H%M%S)"
             echo "::warning::$GITHUB_WORKSPACE still non-empty after prune — moving the remainder to $STALE (gh-1600)"
             mkdir -p "$(dirname "$STALE")" 2>/dev/null || true
@@ -212,7 +220,19 @@ jobs:
             while IFS= read -r entry; do
               name="$(basename "$entry")"
               if [ -e "$GITHUB_WORKSPACE/$name" ]; then
-                echo "::warning::stub collision on '$name' — left in $CLONE_TARGET (gh-1600)"
+                # gh-1600 rework (review thread): fresh content must win —
+                # park the stale stub in the same $STALE sidecar and move
+                # the fresh entry in. The old path skipped the fresh entry
+                # (warning-only) and the trailing rm -rf "$CLONE_TARGET"
+                # then DELETED it, silently keeping the stale leftover at
+                # that repo path. Skip-with-warning remains only as the
+                # last-resort fallback when even parking the stub fails.
+                STALE_DIR="${STALE:-${RUNNER_TEMP:-/tmp}/stale-workspace-sidecar}"
+                if mkdir -p "$STALE_DIR" 2>/dev/null                   && mv "$GITHUB_WORKSPACE/$name" "$STALE_DIR/" 2>/dev/null; then
+                  mv "$entry" "$GITHUB_WORKSPACE/"
+                else
+                  echo "::warning::stub collision on '$name' — left in $CLONE_TARGET (gh-1600)"
+                fi
               else
                 mv "$entry" "$GITHUB_WORKSPACE/"
               fi

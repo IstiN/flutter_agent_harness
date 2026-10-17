@@ -452,7 +452,7 @@ void main() {
         );
         expect(
           script.indexOf('stale-workspace-*'),
-          lessThan(script.indexOf('stale-workspace-$(date')),
+          lessThan(script.indexOf(r'stale-workspace-$(date')),
           reason:
               'the prune must run BEFORE the new timestamped sidecar is '
               'created — otherwise the glob would also match (and '
