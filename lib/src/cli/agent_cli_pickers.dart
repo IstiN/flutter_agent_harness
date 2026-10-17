@@ -287,13 +287,31 @@ extension AgentCliPickers on AgentCli {
     }
     final adapter = adapterFor(key);
     if (adapter == null) return;
-    final home = config.homeDir ?? '';
-    final List<ForeignSessionSummary> discovered;
+    final discovered = await _discoverHarnessSessions(adapter);
+    if (discovered == null) return;
+    if (discovered.isEmpty) {
+      io.writeln('import: no ${adapter.id} sessions found for ${_env.cwd}');
+      return;
+    }
+    _importHarness = key;
+    _importSummaries = await _describeHarnessSessions(adapter, discovered);
+    _tuiController?.openPicker(
+      'import-sessions',
+      'Import from ${adapter.id}',
+      _importSessionMenuItems(''),
+    );
+  }
+
+  /// Discovers the harness's sessions under the configured home; null
+  /// when the store is absent or unreadable (already reported).
+  Future<List<ForeignSessionSummary>?> _discoverHarnessSessions(
+    HarnessAdapter adapter,
+  ) async {
     try {
-      discovered = await adapter.discover(
+      return await adapter.discover(
         fs: _env,
         cwd: _env.cwd,
-        homeDir: home,
+        homeDir: config.homeDir ?? '',
         tempDir: '',
         limits: const ImportLimits(),
       );
@@ -304,7 +322,6 @@ extension AgentCliPickers on AgentCli {
           _agent.state.model.baseUrl,
         ),
       );
-      return;
     } on ForeignFileError catch (error) {
       io.writeln(
         _keyStatusView.errorLine(
@@ -312,17 +329,16 @@ extension AgentCliPickers on AgentCli {
           _agent.state.model.baseUrl,
         ),
       );
-      return;
     }
-    if (discovered.isEmpty) {
-      io.writeln(
-        'import: no ${adapter.id} sessions found for ${_env.cwd}',
-      );
-      return;
-    }
-    _importHarness = key;
-    // Previews + the bounded keyword index (one read-only streamed pass
-    // per session; a failing file degrades to a headerless row).
+    return null;
+  }
+
+  /// Previews + the bounded keyword index (one read-only streamed pass
+  /// per session; a failing file degrades to a headerless row).
+  Future<List<ForeignSessionSummary>> _describeHarnessSessions(
+    HarnessAdapter adapter,
+    List<ForeignSessionSummary> discovered,
+  ) async {
     final described = <ForeignSessionSummary>[];
     for (final summary in discovered) {
       try {
@@ -332,19 +348,14 @@ extension AgentCliPickers on AgentCli {
             fs: _env,
             summary: summary,
             limits: const ImportLimits(),
-            homeDir: home,
+            homeDir: config.homeDir ?? '',
           ),
         );
       } on Object {
         described.add(summary);
       }
     }
-    _importSummaries = described;
-    _tuiController?.openPicker(
-      'import-sessions',
-      'Import from ${adapter.id}',
-      _importSessionMenuItems(''),
-    );
+    return described;
   }
 
   /// The picker rows: `All (<n> sessions)` first, then one row per

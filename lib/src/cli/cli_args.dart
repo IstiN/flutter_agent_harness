@@ -942,23 +942,41 @@ void _validateExtVerb(String verb, _ExtOperands operands) {
   final names = operands.positionals;
   switch (verb) {
     case 'install':
-      if (names.isEmpty && !operands.bundled) {
-        throw const CliArgsException(
-          'usage: fa ext install <source...> | --bundled [name]',
-        );
-      }
+      _requireExtInstallSource(names, operands.bundled);
     case 'remove' || 'enable' || 'disable':
-      if (names.length != 1) {
-        throw CliArgsException('usage: fa ext $verb <name>');
-      }
+      _requireExactlyOne(verb, names);
     case 'update' || 'audit':
-      if (names.length > 1) {
-        throw CliArgsException('usage: fa ext $verb [name]');
-      }
+      _requireAtMostOne(verb, names);
     case 'list':
-      if (names.isNotEmpty) {
-        throw const CliArgsException('usage: fa ext list [--json]');
-      }
+      _requireNone(names);
+  }
+}
+
+/// `fa ext install` takes at least one source, or `--bundled` with an
+/// optional name.
+void _requireExtInstallSource(List<String> names, bool bundled) {
+  if (names.isEmpty && !bundled) {
+    throw const CliArgsException(
+      'usage: fa ext install <source...> | --bundled [name]',
+    );
+  }
+}
+
+void _requireExactlyOne(String verb, List<String> names) {
+  if (names.length != 1) {
+    throw CliArgsException('usage: fa ext $verb <name>');
+  }
+}
+
+void _requireAtMostOne(String verb, List<String> names) {
+  if (names.length > 1) {
+    throw CliArgsException('usage: fa ext $verb [name]');
+  }
+}
+
+void _requireNone(List<String> names) {
+  if (names.isNotEmpty) {
+    throw const CliArgsException('usage: fa ext list [--json]');
   }
 }
 
@@ -1424,12 +1442,8 @@ CliArgsResult _parseSessionArgs(List<String> args) {
 /// for `list`, `--dry-run` and the single repair target for `repair`.
 /// Anything else is a usage error. Split out of [_parseSessionArgs] so
 /// each piece stays under the CRAP ratchet.
-({
-  bool json,
-  bool flat,
-  bool dryRun,
-  String? repairTarget,
-}) _parseSessionVerbArgs(String verb, List<String> args) {
+({bool json, bool flat, bool dryRun, String? repairTarget})
+_parseSessionVerbArgs(String verb, List<String> args) {
   var json = false;
   var flat = false;
   var dryRun = false;
@@ -1548,39 +1562,62 @@ _ImportOperands _parseImportOperands(List<String> args) {
       operands.all = true;
       continue;
     }
-    String? value;
-    String? name;
-    for (final flag in const ['--harness', '--session-root', '--cwd', '--session']) {
-      if (arg == flag || arg.startsWith('$flag=')) {
-        name = flag;
-        value = arg.length > flag.length && arg[flag.length] == '='
-            ? arg.substring(flag.length + 1)
-            : null;
-        break;
-      }
-    }
+    final (name, value) = _matchImportFlag(arg);
     if (name == null) {
       throw CliArgsException('unknown argument: $arg\n$_importUsage');
     }
     if (value == null) {
-      if (i + 1 >= args.length) {
-        throw CliArgsException('$name requires a value\n$_importUsage');
-      }
-      value = args[++i];
-    }
-    switch (name) {
-      case '--harness':
-        operands.harness = value;
-      case '--session':
-        operands.session = value;
-      case '--session-root':
-        operands.sessionRoot = value;
-      case '--cwd':
-        operands.cwd = value;
+      _applyImportFlag(operands, name, _flagValue(name, args, i + 1));
+      i++;
+    } else {
+      _applyImportFlag(operands, name, value);
     }
   }
   _validateImportOperands(operands);
   return operands;
+}
+
+/// Matches [arg] against the `fa import` flags in both the
+/// space-separated and `--flag=value` forms; `(null, null)` when the
+/// argument is not a known flag.
+(String?, String?) _matchImportFlag(String arg) {
+  for (final flag in const [
+    '--harness',
+    '--session-root',
+    '--cwd',
+    '--session',
+  ]) {
+    if (arg == flag || arg.startsWith('$flag=')) {
+      final value = arg.length > flag.length && arg[flag.length] == '='
+          ? arg.substring(flag.length + 1)
+          : null;
+      return (flag, value);
+    }
+  }
+  return (null, null);
+}
+
+/// The value of a space-separated flag, refusing to run off the end of
+/// the argument list.
+String _flagValue(String name, List<String> args, int index) {
+  if (index >= args.length) {
+    throw CliArgsException('$name requires a value\n$_importUsage');
+  }
+  return args[index];
+}
+
+/// Lands one flag's value on the operand it names.
+void _applyImportFlag(_ImportOperands operands, String name, String value) {
+  switch (name) {
+    case '--harness':
+      operands.harness = value;
+    case '--session':
+      operands.session = value;
+    case '--session-root':
+      operands.sessionRoot = value;
+    case '--cwd':
+      operands.cwd = value;
+  }
 }
 
 /// The selector rule: exactly one of `--all` / `--session` (GOAL UX
