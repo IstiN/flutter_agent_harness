@@ -4430,6 +4430,15 @@
       "total": 197106,
       "cacheRead": 578624,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-17T01:16:33Z",
+      "prompt": 93738,
+      "completion": 2707,
+      "total": 96445,
+      "cacheRead": 277760,
+      "model": "glm-5.3-flash"
     }
   ],
   "pr-1654": [
