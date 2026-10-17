@@ -373,6 +373,7 @@ final class DownloadItem {
     required this.filename,
     required this.state,
     required this.paused,
+    this.fileSize = 0,
   });
 
   final int id;
@@ -381,12 +382,17 @@ final class DownloadItem {
   final String state; // 'in_progress' | 'complete' | 'interrupted'
   final bool paused;
 
+  /// Bytes received so far (`fileSize` in chrome.downloads.search) — for
+  /// a completed download this IS the on-disk size (F2′ result `size`).
+  final int fileSize;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'url': url,
     'filename': filename,
     'state': state,
     'paused': paused,
+    'fileSize': fileSize,
   };
 }
 

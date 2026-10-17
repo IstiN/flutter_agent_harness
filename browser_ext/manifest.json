@@ -26,13 +26,12 @@
   //   devtools                — opens interactive windows, not automation
   //   passwords               — chrome exposes no such API at all
   // gh-1630 (CWS Purple Potassium) — requested-but-unused is ALSO a hard
-  // rejection; removed with the matrix rows that backed them:
-  //   contentSettings / fontSettings / identity — zero call sites;
-  //   downloads — the downloads_* curated tools went with it (a static
-  //     review does not credit the Dart facade); re-add ONLY with a real
-  //     feature bridge (gh-1630 F2 second tier);
-  //   desktopCapture — removed from optional_permissions for the same
-  //     reason (capture is agent-requested, never user-initiated).
+  // rejection. `contentSettings` / `fontSettings` / `identity` /
+  // `desktopCapture` are gone for zero call sites and stay gone.
+  // `downloads` is BACK (gh-1630 F2′, owner decision): the `download`
+  // tool (browser_api_tools.dart) is its real shipped call site — the
+  // agent saves files the user asks it to download (http/https only,
+  // size-capped, sanitized filename, outbound-approval gated).
   // `commands`/`omnibox` are manifest KEYS (below), not permissions.
   // `management` is declared but bridge-default-DENIED (self-preservation:
   // an injected page must not disable the agent's own extension).
@@ -45,6 +44,7 @@
     "contextMenus",
     "cookies",
     "debugger",
+    "downloads",
     "declarativeNetRequest",
     "history",
     "idle",

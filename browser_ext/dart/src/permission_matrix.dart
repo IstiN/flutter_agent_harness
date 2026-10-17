@@ -312,18 +312,20 @@ const List<ToolManifestEntry> _table = [
   // proxy/management to core — declared + bridge-gated instead of absent.)
   //
   // gh-1630 (CWS Purple Potassium): requested-but-unused is a hard
-  // rejection ("Don't future-proof"). These five rows document the removal
-  // so the absence is auditable; each comes back ONLY together with the
-  // shipping code that calls it (see the downloads rationale).
+  // rejection ("Don't future-proof"). `downloads` came BACK via gh-1630
+  // F2′ (owner decision) with the real call site: the `download` tool
+  // (browser_api_tools.dart) — http/https only, size-capped, sanitized
+  // filename, outbound-approval gated. The other four stay excluded; each
+  // comes back ONLY together with the shipping code that calls it.
   ToolManifestEntry(
-    tool: 'downloads',
+    tool: 'download',
     permissions: {'downloads'},
-    tier: MatrixTier.excluded,
+    tier: MatrixTier.core,
     rationale:
-        'gh-1630: CWS rejected requested-but-unused permissions — static '
-        'review does not credit the Dart facade behind the downloads_* '
-        'tools, so the tools went with the permission; re-add ONLY with a '
-        'real agent-driven download feature (gh-1630 F2 second tier)',
+        'gh-1630 F2′: the `download` tool is the permission\'s shipped '
+        'static call site (the agent saves files the user asks it to '
+        'download); write-tier + outbound-gated, so the permission is '
+        'used, not future-proofed',
   ),
   ToolManifestEntry(
     tool: 'identity',
