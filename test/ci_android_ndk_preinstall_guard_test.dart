@@ -114,19 +114,21 @@ void main() {
       );
     });
 
-    test('AC1: the action fails loudly when the version cannot be resolved',
-        () {
-      final body = read(actionPath);
-      expect(
-        body,
-        contains('::error::'),
-        reason:
-            'an unresolvable version must fail the step with an ::error:: '
-            'annotation — a silent empty version installs nothing and the '
-            'build dies later in the very unretryable auto-install path '
-            'this action exists to bypass',
-      );
-    });
+    test(
+      'AC1: the action fails loudly when the version cannot be resolved',
+      () {
+        final body = read(actionPath);
+        expect(
+          body,
+          contains('::error::'),
+          reason:
+              'an unresolvable version must fail the step with an ::error:: '
+              'annotation — a silent empty version installs nothing and the '
+              'build dies later in the very unretryable auto-install path '
+              'this action exists to bypass',
+        );
+      },
+    );
 
     test('AC1: the action skips idempotently when the NDK is present', () {
       final body = read(actionPath);
@@ -311,8 +313,9 @@ void main() {
             '(AC1) instead of pre-installing. Re-derive the pattern in '
             '$actionPath and this guard TOGETHER',
       );
-      final version =
-          RegExp(r'\d+\.\d+\.\d+').firstMatch(match!.group(0)!)!.group(0);
+      final version = RegExp(
+        r'\d+\.\d+\.\d+',
+      ).firstMatch(match!.group(0)!)!.group(0);
       expect(
         version,
         isNotEmpty,
