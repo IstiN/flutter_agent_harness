@@ -45,7 +45,8 @@ void main() {
     'transcribe_audio', 'inspect_image', 'generate_image', 'generate_video',
   ];
 
-  /// The 34 Chrome-extension tools (browser_ext/dart/src/browser_api_tools.dart).
+  /// The 32 core Chrome-extension tools
+  /// (browser_ext/dart/src/browser_api_tools.dart).
   const extensionTools = [
     'tabs_open', 'tabs_close', 'tabs_update', 'tabs_query', 'tabs_move', //
     'tabs_group', 'tabs_ungroup', 'tabs_reload', 'tabs_discard', //
@@ -53,7 +54,7 @@ void main() {
     'groups_update', 'groups_close', //
     'sessions_recent', 'sessions_restore', 'history_search', //
     'bookmarks_list', 'bookmarks_add', 'bookmarks_update', 'bookmarks_remove',
-    'downloads_start', 'downloads_search', 'downloads_cancel', //
+    'download', // gh-1630 F2′: the `downloads` permission's call site
     'cookies_get', 'cookies_set', 'cookies_remove', //
     'inject_js', 'inject_css', 'cdp_eval', 'page_screenshot', //
     'app_screenshot', 'nav_wait',
@@ -108,7 +109,7 @@ void main() {
     expectMentioned(llms, extensionTools, 'site/llms.txt');
     expect(
       llms,
-      contains('34'),
+      contains('32'),
       reason: 'llms.txt should state the tool count',
     );
   });
