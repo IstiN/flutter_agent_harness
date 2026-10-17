@@ -50,6 +50,7 @@ const _expectedNames = [
   'bookmarks_add',
   'bookmarks_update',
   'bookmarks_remove',
+  'download',
   'cookies_get',
   'cookies_set',
   'cookies_remove',
@@ -97,6 +98,7 @@ const _minArgs = <String, Map<String, Object?>>{
   'bookmarks_add': {'title': 't', 'url': 'https://x.example/'},
   'bookmarks_update': {'id': '1'},
   'bookmarks_remove': {'id': '1'},
+  'download': {'url': 'https://x.example/report.pdf'},
   'cookies_get': {'url': 'https://x.example/', 'name': 'c'},
   'cookies_set': {'url': 'https://x.example/', 'name': 'c', 'value': 'v'},
   'cookies_remove': {'url': 'https://x.example/', 'name': 'c'},
@@ -207,10 +209,10 @@ void main() {
 
   // -------------------------------------------------------------------------
   group('specs table (UT-T4)', () {
-    test('35 tools (31 core + 4 Settings-gated) with exact names', () {
+    test('36 tools (32 core + 4 Settings-gated) with exact names', () {
       final specs = browserApiToolSpecs();
       expect(specs.map((s) => s.name), unorderedEquals(_expectedNames));
-      expect(specs.map((s) => s.name).toSet().length, 35);
+      expect(specs.map((s) => s.name).toSet().length, 36);
     });
 
     test('exactly four second-tier specs, all others core', () {
@@ -224,7 +226,7 @@ void main() {
         browserApiToolSpecs()
             .where((s) => s.visibility == BrowserToolVisibility.core)
             .length,
-        31,
+        32,
       );
     });
 
@@ -281,7 +283,7 @@ void main() {
           full.names.toSet(),
           browserApiToolSpecs().map((s) => s.name).toSet(),
         );
-        expect(full.length, 35);
+        expect(full.length, 36);
         final specs = {for (final s in browserApiToolSpecs()) s.name: s};
         for (final tool in full.agentTools) {
           expect(tool.tier, specs[tool.name]!.tier, reason: tool.name);
@@ -310,7 +312,7 @@ void main() {
         gated.names.toSet(),
         browserApiToolSpecs().map((s) => s.name).toSet(),
       );
-      expect(gated.length, 35);
+      expect(gated.length, 36);
     });
 
     test('enabled + NOT granted → hidden (capability floor)', () async {
@@ -320,7 +322,7 @@ void main() {
         enabledSecondTier: secondTierToolNames(),
       );
       expect(gated.names, everyElement(isNot(isIn(secondTierToolNames()))));
-      expect(gated.length, 31);
+      expect(gated.length, 32);
     });
 
     test(
@@ -328,7 +330,7 @@ void main() {
       () async {
         final gated = await _reg(chrome); // nothing enabled
         expect(gated.names, everyElement(isNot(isIn(secondTierToolNames()))));
-        expect(gated.length, 31);
+        expect(gated.length, 32);
       },
     );
 
@@ -1378,6 +1380,135 @@ void main() {
       // prompt resolving as deny beats silently running page JS.
       applyModePromptOverrides(approvals, ApprovalMode.unattended);
       expect(approvals.overrideFor('inject_js'), ApprovalPolicy.prompt);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // download tool (gh-1630 F2′): the `downloads` permission's real call
+  // site — http/https only, size-capped via the injected probe, sanitized
+  // filename, the OutboundKind.download exfil gate, path+size result.
+  // -------------------------------------------------------------------------
+  group('download tool (gh-1630 F2′)', () {
+    (ToolRegistry, FakeChrome) dlReg(DownloadProbe? probe) {
+      final c = FakeChrome();
+      final surface = BrowserApiToolSurface(c, downloadProbe: probe);
+      return (ToolRegistry()..registerAll(surface.tools()), c);
+    }
+
+    test('happy path: gated, downloaded, waits for completion, path+size',
+        () async {
+      final probed = <String>[];
+      final (reg2, c2) = dlReg((url) async {
+        probed.add(url);
+        return 1024;
+      });
+      // Complete the download as soon as it starts (the tool polls).
+      c2.onDownloadStarted = (id) => c2.completeDownload(id, fileSize: 1024);
+      final out = _jsonOf(
+        await _run(reg2, 'download', {'url': 'https://cdn.example/report.pdf'}),
+      );
+      expect(probed, ['https://cdn.example/report.pdf']);
+      expect(out['ok'], true);
+      expect(out['state'], 'complete');
+      expect(out['size'], 1024);
+      expect(out['path'] as String, contains('report.pdf'));
+      // THE static call site the permission justification cites.
+      final items = await c2.downloads.search(query: 'report.pdf');
+      expect(items, hasLength(1));
+      expect(items.single.url, 'https://cdn.example/report.pdf');
+    });
+
+    test('scheme gate: non-http(s) refused with bad_url, nothing downloaded',
+        () async {
+      final (reg2, c2) = dlReg(null);
+      for (final url in const ['ftp://x.example/f', 'file:///etc/passwd']) {
+        await expectLater(
+          _run(reg2, 'download', {'url': url}),
+          throwsA(_errMsg('bad_url', contains('http'))),
+        );
+      }
+      expect(await c2.downloads.search(), isEmpty);
+    });
+
+    test('size cap: probe above the cap refuses download_too_large',
+        () async {
+      final (reg2, c2) =
+          dlReg((url) async => defaultMaxDownloadBytes + 1);
+      await expectLater(
+        _run(reg2, 'download', {'url': 'https://x.example/big.bin'}),
+        throwsA(_errMsg('download_too_large', contains('cap'))),
+      );
+      expect(await c2.downloads.search(), isEmpty);
+    });
+
+    test('probe unknown (null) proceeds with an honest pre-check note',
+        () async {
+      final (reg2, c2) = dlReg((url) async => null);
+      c2.onDownloadStarted = (id) => c2.completeDownload(id, fileSize: 5);
+      final out = _jsonOf(
+        await _run(reg2, 'download', {'url': 'https://x.example/f.bin'}),
+      );
+      expect(out['ok'], true);
+      expect(out['size_precheck'], 'unknown');
+    });
+
+    test('filename sanitization: traversal, separators, control chars',
+        () async {
+      final (reg2, c2) = dlReg(null);
+      c2.onDownloadStarted = (id) => c2.completeDownload(id, fileSize: 1);
+      for (final pair in const {
+        '../../../etc/passwd': 'passwd',
+        '..\\..\\evil.exe': 'evil.exe',
+        're\x00port.pdf': 'report.pdf',
+        '/abs/path/x.txt': 'x.txt',
+      }.entries) {
+        final out = _jsonOf(
+          await _run(reg2, 'download', {
+            'url': 'https://x.example/${pair.key}',
+            'filename': pair.key,
+          }),
+        );
+        expect(out['ok'], true, reason: pair.key);
+        expect(out['path'] as String, endsWith(pair.value),
+            reason: '${pair.key} -> ${out['path']}');
+      }
+      expect(await c2.downloads.search(), hasLength(4));
+    });
+
+    test('filename that sanitizes to empty refused with bad_filename',
+        () async {
+      final (reg2, _) = dlReg(null);
+      await expectLater(
+        _run(reg2, 'download', {
+          'url': 'https://x.example/f',
+          'filename': '..',
+        }),
+        throwsA(_err('bad_filename')),
+      );
+    });
+
+    test('saveAs passes through to the facade', () async {
+      final (reg2, c2) = dlReg(null);
+      c2.onDownloadStarted = (id) => c2.completeDownload(id, fileSize: 1);
+      final out = _jsonOf(
+        await _run(reg2, 'download', {
+          'url': 'https://x.example/f.bin',
+          'saveAs': true,
+        }),
+      );
+      expect(out['ok'], true);
+      final items = await c2.downloads.search(query: 'f.bin');
+      expect(items, hasLength(1));
+    });
+
+    test('still in flight at the wait deadline reports honestly', () async {
+      final (reg2, _) = dlReg(null);
+      final out = _jsonOf(
+        await _run(reg2, 'download', {'url': 'https://x.example/slow.bin'}),
+      );
+      expect(out['ok'], true);
+      expect(out['state'], 'in_progress');
+      expect(out['id'], isNotNull);
     });
   });
 }
