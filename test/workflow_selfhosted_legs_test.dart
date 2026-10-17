@@ -154,9 +154,10 @@ void main() {
       for (final f in workflows) {
         final jobs = jobsOf(f.path);
         for (final e in jobs.entries) {
-          final strategy = (e.value as YamlMap)['strategy'] as YamlMap?;
-          final matrix = strategy?['matrix'] as YamlMap?;
-          if (matrix == null) continue;
+          final strategy = (e.value as YamlMap)['strategy'];
+          if (strategy is! YamlMap) continue; // e.g. an expression string
+          final matrix = strategy['matrix'];
+          if (matrix is! YamlMap) continue;
           for (final scalar in matrixScalars(matrix)) {
             expect(
               scalar.contains('macOS') || scalar.contains('ARM64'),

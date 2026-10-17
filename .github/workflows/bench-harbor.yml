@@ -648,26 +648,32 @@ jobs:
         run: |
           set -euo pipefail
           if command -v docker >/dev/null 2>&1; then
-            # gh-1600 rework (review thread): harbor 0.23.0 never puts the
-            # job name in container names — the compose project is
-            # `{task}__{ShortUUID(7)}__env`, so trial containers look like
-            # `some-task__ab12cd3__env-main-1`. A `name=` filter can never
-            # match (and an anchored one would still over-match sibling
-            # shards, `…-cpu-1` ⊂ `…-cpu-14`). Key on the compose labels
-            # every harbor trial container carries and precision-guard on
-            # the project working dir: only containers whose compose
-            # project lives under THIS shard's $RUNNER_TEMP/bench output
-            # are torn down.
+            # gh-1600 rework round 2 (BLOCKING review thread, re-opened):
+            # harbor 0.23.0 never puts the job name in container names
+            # (compose project = `{task}__{ShortUUID(7)}__env`), AND the
+            # compose project directory lives in the shared task cache
+            # (~/.cache/harbor/tasks/packages/... — `--project-directory
+            # <task_cache>/environment`), never under $RUNNER_TEMP/bench.
+            # What IS under the bench output: the trial dirs (the -o
+            # job dir) bind-mounted into the containers as /logs/* — so
+            # the container's .Mounts[].Source is the only harbor-side
+            # path under this shard's bench output. Select by the
+            # compose project label, then precision-guard on the mount
+            # Sources; mount Sources embed the per-registration _temp
+            # path, so another workflow's or another registration's
+            # live containers are never touched.
             ids=$(docker ps -aq --filter "label=com.docker.compose.project" 2>/dev/null || true)
             torn=0
             for c in $ids; do
-              wd=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$c" 2>/dev/null || true)
-              case "$wd" in
-                "$RUNNER_TEMP/bench"/*)
-                  docker rm -f "$c" >/dev/null 2>&1 || true
-                  torn=$((torn + 1))
-                  ;;
-              esac
+              srcs=$(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$c" 2>/dev/null || true)
+              for s in $srcs; do
+                case "$s" in
+                  "$RUNNER_TEMP/bench"/*)
+                    docker rm -f "$c" >/dev/null 2>&1 || true
+                    torn=$((torn + 1))
+                    break ;;
+                esac
+              done
             done
             if [ "$torn" -gt 0 ]; then
               echo "tore down $torn bench container(s) bound to $RUNNER_TEMP/bench"
