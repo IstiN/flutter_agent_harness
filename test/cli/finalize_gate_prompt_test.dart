@@ -182,6 +182,13 @@ void main() {
     expect(finalizeGateContractPrompt, contains('tar -tf'));
     // Root-level marker/manifest files are called out explicitly.
     expect(finalizeGateContractPrompt, contains('file_id.diz'));
+    // PR #1672 review threads PRRT_kwDOTXdlLc6thCGY / PRRT_kwDOTXdlLc6thIHv:
+    // plain `ls` of the target is non-recursive, so a literal diff of the
+    // archive's recursive listing against it degrades to "root-level
+    // entries match" for nested archives. The command shape must name a
+    // recursive counterpart.
+    expect(finalizeGateContractPrompt, contains('ls -R'));
+    expect(finalizeGateContractPrompt, contains('find <target> -type f'));
   });
 
   test('interactive boots never carry the contract', () async {
