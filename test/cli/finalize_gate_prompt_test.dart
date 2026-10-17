@@ -164,6 +164,55 @@ void main() {
     },
   );
 
+  test('gh-1670 C1: feasibility before commitment — the contract names the '
+      'long-pole classes and the cheaper-strategy fallback', () {
+    // The regression (compile-compcert / crack-7z-hash transcripts): the
+    // agent committed to a from-source build / brute-force crack without
+    // estimating whether the path fit the remaining budget, and learned
+    // infeasibility only at the wall. The gate must teach the comparison
+    // at COMMITMENT time.
+    expect(
+      finalizeGateContractPrompt,
+      contains('Feasibility before commitment'),
+    );
+    // The two concrete long-pole classes.
+    expect(finalizeGateContractPrompt, contains('from-source builds'));
+    expect(finalizeGateContractPrompt, contains('large downloads'));
+    expect(finalizeGateContractPrompt, contains('brute-force searches'));
+    // The comparison target is the harness's clock (the time-left
+    // notices), not the agent's own bookkeeping.
+    expect(finalizeGateContractPrompt, contains('time-left notices'));
+    // The fallback: a cheaper strategy, never a gamble on a known-
+    // infeasible path.
+    expect(finalizeGateContractPrompt, contains('cheaper strategy'));
+    expect(
+      finalizeGateContractPrompt,
+      contains('never gamble the whole window on a path you already know'),
+    );
+    // The ticket's "(or the next-best partial)" leg (PR #1673 review
+    // thread): "reduced scope the task allows" only covers tasks whose
+    // text explicitly permits reduced scope — the compcert /
+    // crack-7z-hash transcripts are exactly the cases where even the
+    // cheapest satisfying strategy may not exist and the best move is
+    // a partial artifact plus an honest ledger row. That leg must be
+    // explicit in the contract.
+    expect(
+      finalizeGateContractPrompt,
+      contains('when no satisfying strategy fits, the next-best partial'),
+    );
+    // No internal issue refs ride the model-facing prompt (owner review).
+    expect(finalizeGateContractPrompt, isNot(contains('gh-1670')));
+  });
+
+  test(
+    'gh-1670 C2: the composed headless prompt carries the feasibility gate',
+    () async {
+      final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+      expect(prompt, contains('Feasibility before commitment'));
+      expect(prompt, contains('brute-force searches'));
+    },
+  );
+
   test('interactive boots never carry the contract', () async {
     for (final mode in [
       ApprovalMode.alwaysAsk,
