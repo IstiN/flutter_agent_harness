@@ -189,6 +189,17 @@ void main() {
       finalizeGateContractPrompt,
       contains('never gamble the whole window on a path you already know'),
     );
+    // The ticket's "(or the next-best partial)" leg (PR #1673 review
+    // thread): "reduced scope the task allows" only covers tasks whose
+    // text explicitly permits reduced scope — the compcert /
+    // crack-7z-hash transcripts are exactly the cases where even the
+    // cheapest satisfying strategy may not exist and the best move is
+    // a partial artifact plus an honest ledger row. That leg must be
+    // explicit in the contract.
+    expect(
+      finalizeGateContractPrompt,
+      contains('when no satisfying strategy fits, the next-best partial'),
+    );
     // No internal issue refs ride the model-facing prompt (owner review).
     expect(finalizeGateContractPrompt, isNot(contains('gh-1670')));
   });
