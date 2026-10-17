@@ -138,17 +138,18 @@ gates:
 
   # Pixel gate over core test/ goldens — none exist today, so this is a
   # no-op that guards the future (issue #447 AC: "and core test/ goldens
-  # if any appear"). WARNING, same rationale as flutter_app: the 0.9.5
-  # detector misses the Ahem-solid-rect and hollow-square classes and
-  # false-positives on V-converging shapes; flip to error when the
-  # upstream detector fixes land.
+  # if any appear"). ERROR since crap4dart >=0.14.2 fixed the upstream
+  # detector bugs (checkmark V, yellow-on-dark digits, hollow-box
+  # ambiguity) — scripts/check_golden_detector.py --expect-fixed is the
+  # flip gate and it is MET.
   broken_goldens:
     enabled: true
-    severity: warning
+    severity: error
     dirs: [test]
     exclude:
-      # TUI screenshots, not goldens: amber/yellow text on the dark theme
-      # trips the stripe heuristic (measured 14/14 "overflow stripes" —
-      # the same yellow-on-dark detector bug the issue documents for
-      # apps_panel/panel_dark). Revisit when upstream fixes land.
+      # TUI screenshots, not goldens: terminal text is blocky mono
+      # glyphs that read as solid Ahem rectangles (5 theme screenshots,
+      # crap4dart 0.14.2), and omp_ref/03_tool_call.png genuinely
+      # contains a yellow/black pattern. Not golden images — excluded,
+      # not a detector bug to chase.
       - 'test/integration/**'

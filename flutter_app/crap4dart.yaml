@@ -142,23 +142,19 @@ gates:
   #     apps_panel/panel_dark: yellow glyph edges alternate with the
   #     dark card ≥8px with ≥4 transitions — passes the stripe
   #     heuristic).
-  # Each exclude is an upstream IstiN/crap4dart bug. Flip to
-  # `severity: error` and drop the excludes when the upstream detector
-  # fixes land — scripts/check_golden_detector.py re-verifies all six
-  # classes against this exact detector (see its docstring).
+  # crap4dart >=0.14.2 fixed the upstream detector bugs (checkmark V,
+  # yellow-on-dark digits, copy-icon panels, checkbox squares) — the
+  # six old excludes are gone and severity is ERROR. One documented
+  # residual, re-verify via scripts/check_golden_detector.py.
   broken_goldens:
     enabled: true
-    severity: warning
+    severity: error
     dirs: [test/golden/goldens]
     exclude:
-      # false positives: green checkmark tile reads as an X (light theme)
-      - 'test/golden/goldens/launcher/grid_light.png'
-      - 'test/golden/goldens/launcher/sheet_bar_light.png'
-      - 'test/golden/goldens/launcher/sheet_bar_streaming_light.png'
-      - 'test/golden/goldens/launcher/grid_widget_tile_light.png'
-      - 'test/golden/goldens/onboarding_p4_light_phone.png'
-      # false positive: yellow "25:00" digits read as overflow stripes (dark)
-      - 'test/golden/goldens/apps_panel/panel_dark.png'
+      # false positive (only remaining): the white dock-tile row reads
+      # as solid glyph rectangles — same shape as Ahem text, no
+      # geometric discriminator; upstream issue comment documents it.
+      - 'test/golden/goldens/onboarding_p3_dark_phone.png'
 
   # Widget → golden coverage. WARNING (not error): the 0.9.5 widget
   # census is broader than the enforced test/golden/golden_guard_test.dart
