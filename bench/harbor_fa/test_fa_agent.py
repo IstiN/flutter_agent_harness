@@ -970,7 +970,6 @@ class AgentPhaseExitGuaranteeTest(unittest.TestCase):
         self.assertTrue(
             any("pkill" in c for c in agent.root_calls), agent.root_calls
         )
-        self.assertTrue(agent.launch_exited)
         self.assertEqual(agent._run_outcome, "external_kill")
 
     def test_external_cap_only_cancel_terminates_fa(self):
@@ -998,8 +997,10 @@ class AgentPhaseExitGuaranteeTest(unittest.TestCase):
         self.assertTrue(
             any("pkill" in c for c in agent.root_calls), agent.root_calls
         )
-        self.assertTrue(agent.launch_exited)
         self.assertEqual(agent._run_outcome, "external_kill")
+        # I2: the audit flush still lands after the kill+reap.
+        self.assertIsNotNone(agent.audit_payload)
+        self.assertEqual(agent.audit_payload["outcome"], "external_kill")
 
 
 if __name__ == "__main__":

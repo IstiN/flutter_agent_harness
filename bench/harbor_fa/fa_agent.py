@@ -519,7 +519,7 @@ class FaAgent(BaseInstalledAgent):
         exec_task=None,
         *,
         cause: str,
-        reap_timeout: float = _REAP_TIMEOUT_SEC,
+        reap_timeout: float | None = None,
     ) -> None:
         """gh-1589 (I3/AC4+AC7): the agent phase completes only after fa
         fully exited — natural exit, or killed and reaped.
@@ -530,6 +530,10 @@ class FaAgent(BaseInstalledAgent):
         (never a silent proceed, never an unbounded hang — the container
         teardown stays harbor's backstop). Bounded on every step.
         """
+        if reap_timeout is None:
+            # Resolved at call time so test seams (and env-driven knobs)
+            # patching the module constant take effect.
+            reap_timeout = _REAP_TIMEOUT_SEC
         await self._kill_fa(environment)
         reaped = await self._await_fa_exit(
             environment, exec_task, timeout=reap_timeout

@@ -1086,6 +1086,12 @@ class AgentCli {
   @visibleForTesting
   set sessionForTest(Session? session) => _session = session;
 
+  /// Test seam: the active session (null before the first drive) — the
+  /// gh-1589 seal tests assert `isSealed` on it after both exit paths
+  /// (headless `runHeadless`, REPL teardown).
+  @visibleForTesting
+  Session? get sessionForTest => _session;
+
   /// Test seam: swaps the session repo so CLI paths can be driven over a
   /// store shape the real repo never produces — gh-1555's incident-shape
   /// fixture refuses every FULL open (what a ledger past the gh-1073 2 GiB

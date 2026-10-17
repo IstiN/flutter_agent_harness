@@ -302,8 +302,7 @@ void main() {
     'an honest drain (E7): settle lands mid-drain, the reaction run\'s '
     'records are legal inside the boundary, and the file is byte-stable '
     'after exit',
-    () async {
-      final io = FakeCliIO();
+    () async {      final io = FakeCliIO();
       final shell = _SealShell();
       final stream = _SealStream([
         ...List.of(_leadScripts),
@@ -356,6 +355,53 @@ void main() {
       await _pump();
       final snapshotB = (await env.readTextFile(path)).valueOrNull;
       expect(snapshotB, snapshotA, reason: 'no write lands after exit');
+      io.close();
+    },
+  );
+
+  test(
+    'REG-2: the REPL quit seals the session with the SAME implementation '
+    'and close order as headless',
+    () async {
+      final io = FakeCliIO();
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'key',
+          env: env,
+          sessionRoot: '/sessions',
+          approvalMode: ApprovalMode.yolo,
+        ),
+        io: io,
+        streamFunction: FakeStreamFunction([textTurn('repl answer.')]).call,
+      );
+      final run = cli.run();
+      await waitForIt(
+        () => !cli.isBusy && io.out.toString().contains('fa>'),
+        reason: 'the REPL idles at the prompt',
+      );
+      // One driven turn: the session exists and has content (a sealed
+      // EMPTY session is deleted before the seal, not exercised here).
+      io.sendLine('hello');
+      await waitForIt(
+        () => io.out.toString().contains('repl answer.'),
+        reason: 'the turn completes',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final session = cli.sessionForTest;
+      expect(session, isNotNull);
+      expect(session!.isSealed, isTrue);
+      // The seal is live in the REPL path too: a late append is dropped.
+      await session.appendMessage(UserMessage.text('late'));
+      expect(
+        io.out.toString().split('\n').where(
+          (line) => line.contains('dropped late write (message)'),
+        ),
+        hasLength(1),
+      );
       io.close();
     },
   );
