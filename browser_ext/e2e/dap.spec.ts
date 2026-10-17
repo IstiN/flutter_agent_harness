@@ -19,6 +19,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, repoRoot, skipWithoutChrome, test } from './helpers';
 
+/// Parse a hub-feed line, tolerating noise (null when unparseable).
+function safeParse(line: string): HubEvent | null {
+  try {
+    return JSON.parse(line) as HubEvent;
+  } catch {
+    return null;
+  }
+}
+
 type HubEvent = {
   type: string;
   url?: string;
@@ -65,6 +74,24 @@ class HubProc {
           }
         } catch {
           // Build-hook noise on stdout is ignored; JSON lines are ours.
+          // gh-1630 rework: a whole-line ignore also ATE relayed events
+          // when dart-run noise interleaved into the same chunk (the hub
+          // cursor never replays, so the spec's relay bookkeeping silently
+          // lost the ext→CLI reply and the DM spec went red — CI run
+          // 38969820857). Salvage a noise-prefixed JSON object and warn
+          // loudly when a line is still unparseable — never silent.
+          const brace = line.indexOf('{');
+          const salvaged = brace > 0 ? line.slice(brace) : '';
+          const event = salvaged ? safeParse(salvaged) : null;
+          if (event) {
+            events.push(event);
+            if (!ready && event.type === 'ready' && event.url) {
+              ready = true;
+              resolve(new HubProc(proc, event.url, events));
+            }
+          } else if (!line.includes('build hooks')) {
+            console.warn('[dap-e2e-hub-feed] unparseable line:', line);
+          }
         }
       }
     });
@@ -398,25 +425,15 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
       await expect
         .poll(() => cli.output(), { timeout: 120_000, intervals: [1_000] })
         .toContain('mock: cli done');
-      try {
-        expect(hub.relayTargets()).toContain(otherId);
-      } catch (e) {
-        // The reply relay is the one remaining intermittent (#152):
-        // dump both sides so the next red run pins the sender-side cause.
-        console.log(
-          '[dap-e2e-diag]',
-          JSON.stringify({
-            extAgentId,
-            otherId,
-            relays: hub.relayTargets(),
-            extDapDm: (await fa.events()).filter(
-              (ev) => ev.toolName === 'dap_dm',
-            ),
-            cliTail: cli.output().slice(-1500),
-          }),
-        );
-        throw e;
-      }
+      // gh-1630 rework: poll, not snapshot. The reply relay lands via the
+      // hub's 100ms feed ticker a beat AFTER the CLI prints its marker;
+      // a snapshot here raced that feed (the documented #152 intermittent,
+      // CI run 38969820857) — the same observable is polled at step 3
+      // above. A poll cannot mask a real routing break: the frame either
+      // arrives (the hub records it before routing) or the leg fails loud.
+      await expect
+        .poll(() => hub.relayTargets(), { timeout: 60_000 })
+        .toContain(otherId);
     } finally {
       await cli.stop();
       fs.rmSync(home, { recursive: true, force: true });
