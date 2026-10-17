@@ -274,7 +274,7 @@ void main() {
       );
       expect(
         script.indexOf('Preserving existing macOS build cache'),
-        lessThan(script.indexOf('rm -rf "$GITHUB_WORKSPACE" || true')),
+        lessThan(script.indexOf(r'rm -rf "$GITHUB_WORKSPACE" || true')),
         reason:
             'the cache must be parked BEFORE the workspace clean — the clean '
             'removes everything else in the workspace (gh-1600)',
