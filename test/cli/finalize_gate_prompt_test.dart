@@ -186,25 +186,28 @@ void main() {
     expect(finalizeGateContractPrompt, contains('verified, then reset'));
   });
 
-  test('gh-1668 C1: the no-teardown rule is numbered step 4 inside the loop', () {
-    // Skim-proof, mirroring the gh-1652 C1 placement guard: flash
-    // executes numbered steps but skims the bullet list — the rule must
-    // ride the numbered loop, not the named-checks section or a
-    // floating paragraph after the ledger spec.
-    final fixAt = finalizeGateContractPrompt.indexOf('3. **Fix every unmet');
-    final ruleAt = finalizeGateContractPrompt.indexOf(
-      '4. **Final state is the deliverable**',
-    );
-    final wallAt = finalizeGateContractPrompt.indexOf(
-      '**Work to the wall.**',
-    );
-    expect(ruleAt, greaterThan(fixAt));
-    expect(wallAt, greaterThan(ruleAt));
-    expect(
-      finalizeGateContractPrompt,
-      isNot(contains('- **Final state is the deliverable**')),
-    );
-  });
+  test(
+    'gh-1668 C1: the no-teardown rule is numbered step 4 inside the loop',
+    () {
+      // Skim-proof, mirroring the gh-1652 C1 placement guard: flash
+      // executes numbered steps but skims the bullet list — the rule must
+      // ride the numbered loop, not the named-checks section or a
+      // floating paragraph after the ledger spec.
+      final fixAt = finalizeGateContractPrompt.indexOf('3. **Fix every unmet');
+      final ruleAt = finalizeGateContractPrompt.indexOf(
+        '4. **Final state is the deliverable**',
+      );
+      final wallAt = finalizeGateContractPrompt.indexOf(
+        '**Work to the wall.**',
+      );
+      expect(ruleAt, greaterThan(fixAt));
+      expect(wallAt, greaterThan(ruleAt));
+      expect(
+        finalizeGateContractPrompt,
+        isNot(contains('- **Final state is the deliverable**')),
+      );
+    },
+  );
 
   test('gh-1668 C2: "Content, not existence" cross-references the '
       'no-teardown rule', () {

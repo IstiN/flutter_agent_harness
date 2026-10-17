@@ -188,10 +188,13 @@ void main() {
         DeadlineNoticeKind.wrapUp,
         formatTimeLeft(3 * 60 * 1000),
       );
-      expect(text, contains('leave the final state in place'));
+      expect(text, contains('Leave the final state in place'));
       expect(text, contains('never a teardown'));
       // The gh-1652 parity clause stays intact alongside.
-      expect(text, contains('run each produced entry point the way the grader will'));
+      expect(
+        text,
+        contains('run each produced entry point the way the grader will'),
+      );
     });
 
     test('a jump across several crossings batches them in ladder order', () {
