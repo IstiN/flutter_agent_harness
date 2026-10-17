@@ -2,9 +2,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/import/claude_adapter.dart';
 import 'package:flutter_agent_harness/src/import/foreign_session.dart';
+import 'package:flutter_agent_harness/src/import/harness_adapter.dart';
+import 'package:flutter_agent_harness/src/import/import_mapper.dart';
+import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 
 /// UT tier — image-payload surface coverage (CRAP gate on
@@ -205,6 +209,90 @@ this is not json
     });
   });
 
+  group('mapper content-block and store-root surface', () {
+    test('thinking, tool-call, unknown, and skipped images map to text '
+        'placeholders; embedded images embed', () {
+      final parse = ForeignParseResult(
+        records: [
+          ForeignMessage(
+            lineNumber: 1,
+            role: 'user',
+            contents: [
+              const ForeignText('plain'),
+              const ForeignThinking('why not'),
+              ForeignToolCall(id: 't1', name: 'read', arguments: const {}),
+              const ForeignUnknownBlock('mystery', {'k': 1}),
+              const ForeignImage.skipped('blob not found: x'),
+              const ForeignImage(base64Data: 'QQ==', mimeType: 'image/png'),
+            ],
+            rawMessage: const {'role': 'user'},
+          ),
+        ],
+        skippedRecords: 0,
+        skippedBlocks: 0,
+      );
+      final mapped = mapForeignSession(parse, 'omp');
+      final user = mapped.items
+          .map((i) => i.planned)
+          .whereType<PlannedMessage>()
+          .map((p) => p.message)
+          .whereType<UserMessage>()
+          .single;
+      final blocks = user.content as List<ContentBlock>;
+      final texts = blocks.whereType<TextContent>().map((t) => t.text).toList();
+      expect(texts, contains('plain'));
+      expect(texts, contains('why not'));
+      expect(texts, contains('[tool call]'));
+      expect(texts, contains('[unmapped content]'));
+      expect(texts, contains('[image skipped: blob not found: x]'));
+      final image = blocks.whereType<ImageContent>().single;
+      expect(image.data, 'QQ==');
+      expect(image.mimeType, 'image/png');
+    });
+
+    test('expectedStoreRoot pins the documented per-harness roots', () {
+      expect(expectedStoreRoot('omp', '/home'), '/home/.omp/agent/sessions');
+      expect(expectedStoreRoot('kimi', '/home'), '/home/.kimi');
+      expect(
+        expectedStoreRoot('opencode', '/home'),
+        '/home/.local/share/opencode',
+      );
+      expect(expectedStoreRoot('claude', '/home'), '/home/.claude/projects');
+      expect(expectedStoreRoot('gemini', '/home'), '/home/.gemini');
+    });
+
+    test('custom_message records map to structured planned messages', () {
+      final parse = ForeignParseResult(
+        records: [
+          const ForeignCustomMessage(
+            lineNumber: 3,
+            customType: 'banner',
+            content: 'hello',
+            display: true,
+            details: {'tone': 'calm'},
+            attribution: 'ext',
+          ),
+        ],
+        skippedRecords: 0,
+        skippedBlocks: 0,
+      );
+      final mapped = mapForeignSession(parse, 'omp');
+      final planned = mapped.items
+          .map((i) => i.planned)
+          .whereType<PlannedCustomMessage>()
+          .single;
+      expect(planned.customType, 'import.omp');
+      expect(planned.content, 'hello');
+      expect(planned.display, isTrue);
+      // Attribution rides inside the details map (mapper pin).
+      expect(planned.details, {
+        'customType': 'banner',
+        'attribution': 'ext',
+        'details': {'tone': 'calm'},
+      });
+    });
+  });
+
   group('ClaudeAdapter.discover non-ranged prefix surface', () {
     late Directory home;
     late Directory project;
@@ -278,6 +366,44 @@ this is not json
       );
       expect(summaries, isEmpty);
     });
+
+    test(
+      'read on a whole-file backend parses lines and counts oversized',
+      () async {
+        final bucketDir = bucket();
+        File('${bucketDir.path}/s.jsonl').writeAsStringSync(
+          '{"type":"session","version":3,"id":"s","cwd":"${project.path}"}\n'
+          '{"type":"user","uuid":"u1","parentUuid":null,'
+          '"message":{"role":"user","content":"${'x' * 200}"}}\n'
+          '{"type":"assistant","uuid":"a1","parentUuid":"u1",'
+          '"message":{"role":"assistant","content":"short"}}\n',
+        );
+        final adapter = ClaudeAdapter();
+        final summaries = await discoverOn(_ProbeEnv(project.path));
+        expect(summaries, hasLength(1));
+        // A cap between the line lengths makes the long user line an
+        // oversized-skip while the header and the short assistant line
+        // still parse — both arms of the whole-file scan's line gate.
+        final parse = await adapter.read(
+          fs: _ProbeEnv(project.path),
+          summary: summaries.single,
+          homeDir: home.path,
+          limits: const ImportLimits(maxLineBytes: 128),
+        );
+        expect(
+          parse.records
+              .whereType<ForeignUnhandled>()
+              .map((r) => r.type)
+              .toSet(),
+          {'session'},
+        );
+        expect(
+          parse.records.whereType<ForeignMessage>().single.role,
+          'assistant',
+        );
+        expect(parse.skippedRecords, 1);
+      },
+    );
   });
 }
 

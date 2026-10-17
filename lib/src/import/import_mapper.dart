@@ -105,18 +105,40 @@ final class MappedImport {
 /// [harness] namespaces the inert custom entries (`import.<harness>` with
 /// the foreign customType carried byte-exact inside `data`).
 MappedImport mapForeignSession(ForeignParseResult parse, String harness) {
-  final prefix = 'import.$harness';
+  final state = _SessionMapState('import.$harness');
+  for (final record in parse.records) {
+    _mapRecord(state, record);
+  }
+  state.insertNameSlot(parse);
+  return MappedImport(
+    items: state.items,
+    skippedRecords: parse.skippedRecords,
+    skippedBlocks: parse.skippedBlocks,
+    droppedFields: state.droppedFields,
+  );
+}
+
+/// Mutable mapping state for one foreign session: the planned items in
+/// file order, the dropped-field tallies, and the title/fallback-name
+/// resolution the mapper's newest-wins rules drive.
+final class _SessionMapState {
+  _SessionMapState(this.prefix);
+
+  /// The FA customType prefix (`import.<harness>`).
+  final String prefix;
   final items = <MappedItem>[];
-  final skippedRecords = parse.skippedRecords;
   final droppedFields = <String, int>{};
-  void dropField(String field) =>
-      droppedFields[field] = (droppedFields[field] ?? 0) + 1;
+  final toolCallIds = <String>{};
 
   var title = '';
   var titleSource = '';
   String? fallbackName;
-  final toolCallIds = <String>{};
 
+  /// Tallies one more drop of [field].
+  void dropField(String field) =>
+      droppedFields[field] = (droppedFields[field] ?? 0) + 1;
+
+  /// Newest-wins title with the user-titles-beat-auto precedence.
   void updateTitle(String newTitle, String newSource) {
     if (newTitle.isEmpty) return;
     if (title.isNotEmpty && titleSource == 'user' && newSource != 'user') {
@@ -126,102 +148,118 @@ MappedImport mapForeignSession(ForeignParseResult parse, String harness) {
     titleSource = newSource;
   }
 
-  for (final record in parse.records) {
-    switch (record) {
-      case ForeignTitleSlot(:final title, :final source):
-        updateTitle(title, source);
-      case ForeignHeader():
-        break; // identity only — FA writes its own header
-      case ForeignMessage():
-        final planned = _mapMessage(
-          record,
-          prefix,
-          toolCallIds,
-          dropField,
-          (name) => fallbackName ??= name,
-        );
-        if (planned != null) {
-          items.add(MappedItem(source: record, planned: planned));
-        }
-      case ForeignModelChange(:final model):
-        final split = model.indexOf('/');
-        items.add(
-          MappedItem(
-            source: record,
-            planned: PlannedModelChange(
-              provider: split > 0 ? model.substring(0, split) : 'omp',
-              modelId: model,
-            ),
-          ),
-        );
-      case ForeignThinkingLevelChange(:final level):
-        items.add(
-          MappedItem(source: record, planned: PlannedThinkingLevel(level)),
-        );
-      case ForeignCompaction(:final summary, :final droppedFields):
-        for (final field in droppedFields) {
-          dropField(field);
-        }
-        items.add(
-          MappedItem(
-            source: record,
-            planned: PlannedCompaction(summary, droppedFields),
-          ),
-        );
-      case ForeignCustom(:final customType, :final data):
-        items.add(
-          MappedItem(
-            source: record,
-            planned: PlannedCustom(prefix, {
-              'customType': customType,
-              'data': data,
-            }),
-          ),
-        );
-      case ForeignCustomMessage(
-        :final customType,
-        :final content,
-        :final display,
-        :final details,
-        :final attribution,
-      ):
-        items.add(
-          MappedItem(
-            source: record,
-            planned: PlannedCustomMessage(
-              customType: prefix,
-              content: content,
-              display: display,
-              details: {
-                'customType': customType,
-                'attribution': ?attribution,
-                'details': ?details,
-              },
-            ),
-          ),
-        );
-      case ForeignUnhandled(:final type, :final raw):
-        items.add(
-          MappedItem(
-            source: record,
-            planned: PlannedCustom('$prefix.${_safeType(type)}', raw),
-          ),
-        );
+  /// First-come fallback session name from message content.
+  void offerFallbackName(String name) => fallbackName ??= name;
+
+  /// The PlannedName slot pinned under the first record when any name
+  /// was resolved (GOAL F5).
+  void insertNameSlot(ForeignParseResult parse) {
+    final name = (title.isNotEmpty ? title : fallbackName ?? '').trim();
+    if (name.isNotEmpty && parse.records.isNotEmpty) {
+      items.insert(
+        0,
+        MappedItem(source: parse.records.first, planned: PlannedName(name)),
+      );
     }
   }
+}
 
-  final name = (title.isNotEmpty ? title : fallbackName ?? '').trim();
-  if (name.isNotEmpty && parse.records.isNotEmpty) {
-    items.insert(
-      0,
-      MappedItem(source: parse.records.first, planned: PlannedName(name)),
-    );
+void _mapRecord(_SessionMapState state, ForeignRecord record) {
+  switch (record) {
+    case ForeignTitleSlot(:final title, :final source):
+      state.updateTitle(title, source);
+    case ForeignHeader():
+      break; // identity only — FA writes its own header
+    case ForeignMessage():
+      final planned = _mapMessage(
+        record,
+        state.prefix,
+        state.toolCallIds,
+        state.dropField,
+        state.offerFallbackName,
+      );
+      if (planned != null) {
+        state.items.add(MappedItem(source: record, planned: planned));
+      }
+    case ForeignModelChange(:final model):
+      state.items.add(_modelChangeItem(record, model, state.prefix));
+    case ForeignThinkingLevelChange(:final level):
+      state.items.add(
+        MappedItem(source: record, planned: PlannedThinkingLevel(level)),
+      );
+    case ForeignCompaction(:final summary, :final droppedFields):
+      state.items.add(_compactionItem(state, record, summary, droppedFields));
+    case ForeignCustom(:final customType, :final data):
+      state.items.add(
+        MappedItem(
+          source: record,
+          planned: PlannedCustom(state.prefix, {
+            'customType': customType,
+            'data': data,
+          }),
+        ),
+      );
+    case ForeignCustomMessage(
+      :final customType,
+      :final content,
+      :final display,
+      :final details,
+      :final attribution,
+    ):
+      state.items.add(
+        MappedItem(
+          source: record,
+          planned: PlannedCustomMessage(
+            customType: state.prefix,
+            content: content,
+            display: display,
+            details: {
+              'customType': customType,
+              'attribution': ?attribution,
+              'details': ?details,
+            },
+          ),
+        ),
+      );
+    case ForeignUnhandled(:final type, :final raw):
+      state.items.add(
+        MappedItem(
+          source: record,
+          planned: PlannedCustom('${state.prefix}.${_safeType(type)}', raw),
+        ),
+      );
   }
-  return MappedImport(
-    items: items,
-    skippedRecords: skippedRecords,
-    skippedBlocks: parse.skippedBlocks,
-    droppedFields: droppedFields,
+}
+
+/// `provider/model` split with the omp fallback (`provider` absent in FA).
+MappedItem _modelChangeItem(
+  ForeignModelChange record,
+  String model,
+  String prefix,
+) {
+  final split = model.indexOf('/');
+  return MappedItem(
+    source: record,
+    planned: PlannedModelChange(
+      provider: split > 0 ? model.substring(0, split) : 'omp',
+      modelId: model,
+    ),
+  );
+}
+
+/// The compaction slot plus its carried dropped-field tally.
+MappedItem _compactionItem(
+  _SessionMapState state,
+  ForeignCompaction record,
+  String summary,
+  List<String> droppedFields,
+) {
+  for (final field in droppedFields) {
+    state.dropField(field);
+  }
+  return MappedItem(
+    source: record,
+    planned: PlannedCompaction(summary, droppedFields),
   );
 }
 

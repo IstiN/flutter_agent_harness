@@ -103,13 +103,10 @@ final class ForeignLine {
   const ForeignLine(this.number, this.text) : byteLength = null;
 
   /// An oversized line (over [ImportLimits.maxLineBytes]).
-  const ForeignLine.overSized(this.number, this.byteLength)
-    : text = null;
+  const ForeignLine.overSized(this.number, this.byteLength) : text = null;
 
   /// An undecodable (non-UTF-8) line.
-  const ForeignLine.malformed(this.number)
-    : text = null,
-      byteLength = null;
+  const ForeignLine.malformed(this.number) : text = null, byteLength = null;
 
   /// 1-based line number.
   final int number;
@@ -146,28 +143,47 @@ Stream<ForeignLine> scanForeignLines(
     );
   }
   if (fs is! RangedReadFileSystem) {
-    final read = await fs.readTextFile(path);
-    if (read.isErr) throw ForeignFileError('unreadable file: $path');
-    var number = 0;
-    for (final line in const LineSplitter().convert(read.valueOrNull!)) {
-      number++;
-      final bytes = utf8.encode(line);
-      yield bytes.length > limits.maxLineBytes
-          ? ForeignLine.overSized(number, bytes.length)
-          : ForeignLine(number, line);
-    }
+    yield* _scanWholeFileLines(fs, path, limits);
     return;
   }
-  const chunkBytes = 1 << 20;
   // The `is!` guard above proved the host is ranged-capable; the explicit
   // bind carries the member (FileSystem itself has no ranged reads).
-  final ranged = fs as RangedReadFileSystem;
+  yield* _scanRangedLines(fs as RangedReadFileSystem, path, size, limits);
+}
+
+/// The non-ranged shape: one whole-file read, then line-split in memory.
+Stream<ForeignLine> _scanWholeFileLines(
+  FileSystem fs,
+  String path,
+  ImportLimits limits,
+) async* {
+  final read = await fs.readTextFile(path);
+  if (read.isErr) throw ForeignFileError('unreadable file: $path');
+  var number = 0;
+  for (final line in const LineSplitter().convert(read.valueOrNull!)) {
+    number++;
+    final bytes = utf8.encode(line);
+    yield bytes.length > limits.maxLineBytes
+        ? ForeignLine.overSized(number, bytes.length)
+        : ForeignLine(number, line);
+  }
+}
+
+/// The ranged shape: bounded 1 MiB windows, lines stitched across chunk
+/// boundaries via the carry buffer.
+Stream<ForeignLine> _scanRangedLines(
+  RangedReadFileSystem fs,
+  String path,
+  int size,
+  ImportLimits limits,
+) async* {
+  const chunkBytes = 1 << 20;
   var position = 0;
   var number = 0;
   var carry = <int>[];
   while (position < size) {
     final end = position + chunkBytes < size ? position + chunkBytes : size;
-    final read = await ranged.readRange(path, position, end);
+    final read = await fs.readRange(path, position, end);
     if (read.isErr) throw ForeignFileError('unreadable file: $path');
     position = end;
     final bytes = read.valueOrNull ?? Uint8List(0);
@@ -229,8 +245,7 @@ Future<List<(String path, int size, int mtimeMs)>> listSessionFiles(
 /// equality — the discovery tiebreak (GOAL E12: slugs are dash-ambiguous,
 /// so discovery never decodes one).
 bool headerCwdMatches(String headerCwd, String cwd) {
-  String trimSlash(String path) =>
-      path.replaceAll(RegExp(r'[/\\]+$'), '');
+  String trimSlash(String path) => path.replaceAll(RegExp(r'[/\\]+$'), '');
   return trimSlash(headerCwd) == trimSlash(cwd) && headerCwd.isNotEmpty;
 }
 
@@ -273,20 +288,37 @@ final class TreeShell {
 ({Set<String> pathIds, int skippedOffPath}) activeBranchIds(
   List<TreeShell> shells,
 ) {
-  final byId = <String, TreeShell>{
-    for (final shell in shells)
-      if (!shell.isAux && shell.id != null) shell.id!: shell,
-  };
-  TreeShell? leaf;
-  for (final shell in shells.reversed) {
-    if (!shell.isAux && shell.id != null) {
-      leaf = shell;
-      break;
-    }
-  }
+  final byId = _treeById(shells);
+  final leaf = _leafShell(shells);
   if (leaf == null) {
     return (pathIds: const <String>{}, skippedOffPath: 0);
   }
+  final pathIds = _leafPath(leaf, byId);
+  var skippedOffPath = 0;
+  for (final shell in shells) {
+    if (shell.isAux || shell.id == null) continue;
+    if (!pathIds.contains(shell.id)) skippedOffPath++;
+  }
+  return (pathIds: pathIds, skippedOffPath: skippedOffPath);
+}
+
+/// The id → shell index of the tree records (aux lines excluded).
+Map<String, TreeShell> _treeById(List<TreeShell> shells) => {
+  for (final shell in shells)
+    if (!shell.isAux && shell.id != null) shell.id!: shell,
+};
+
+/// The last tree line in file order — omp's loader treats it as the leaf.
+TreeShell? _leafShell(List<TreeShell> shells) {
+  for (final shell in shells.reversed) {
+    if (!shell.isAux && shell.id != null) return shell;
+  }
+  return null;
+}
+
+/// The id set of the leaf path, walking [TreeShell.parentId] to root and
+/// stopping on a repeated id to bound corrupt cycles or a dangling parent.
+Set<String> _leafPath(TreeShell leaf, Map<String, TreeShell> byId) {
   final pathIds = <String>{};
   final visited = <String>{};
   TreeShell? current = leaf;
@@ -296,12 +328,7 @@ final class TreeShell {
     final parent = current.parentId;
     current = parent == null ? null : byId[parent];
   }
-  var skippedOffPath = 0;
-  for (final shell in shells) {
-    if (shell.isAux || shell.id == null) continue;
-    if (!pathIds.contains(shell.id)) skippedOffPath++;
-  }
-  return (pathIds: pathIds, skippedOffPath: skippedOffPath);
+  return pathIds;
 }
 
 /// Decodes one JSONL line into a JSON object, or null when the line is not

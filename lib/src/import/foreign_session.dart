@@ -479,8 +479,7 @@ ForeignContent? _parseForeignBlock(
         arguments: arguments is Map<String, dynamic>
             ? arguments
             : const <String, dynamic>{},
-        partialArguments: partial ??
-            (arguments is String ? arguments : null),
+        partialArguments: partial ?? (arguments is String ? arguments : null),
       );
     case 'image':
       return _parseForeignImage(json, resolveBlob);

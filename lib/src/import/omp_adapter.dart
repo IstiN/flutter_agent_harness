@@ -31,7 +31,8 @@ final class OmpAdapter implements HarnessAdapter {
   }) async {
     final root = storeRoot(homeDir);
     final exists = await fs.exists(root);
-    final isDir = exists.valueOrNull == true &&
+    final isDir =
+        exists.valueOrNull == true &&
         (await fs.fileInfo(root)).valueOrNull?.kind == FileKind.directory;
     return isDir ? root : null;
   }
@@ -51,47 +52,70 @@ final class OmpAdapter implements HarnessAdapter {
     final listed = await fs.listDir(root);
     if (listed.isErr) return const [];
     for (final entry in listed.valueOrNull ?? const <FileInfo>[]) {
-      if (entry.kind != FileKind.directory || !candidates.contains(entry.name)) {
+      if (entry.kind != FileKind.directory ||
+          !candidates.contains(entry.name)) {
         continue;
       }
-      for (final (path, size, mtimeMs)
-          in await listSessionFiles(fs, entry.path)) {
-        final header = await _readHeader(
+      for (final (path, size, mtimeMs) in await listSessionFiles(
+        fs,
+        entry.path,
+      )) {
+        final summary = await _ompSummary(
           fs,
           path,
-          maxFileBytes: limits.maxFileBytes,
+          size,
+          mtimeMs,
+          cwd: cwd,
+          limits: limits,
         );
-        // A file over the size cap yields no header on backends without
-        // partial reads (the _readPrefix size gate); it still becomes a
-        // summary — id fallback: the file stem, cwd unverified — so
-        // scanForeignLines' read-time refusal produces the counted
-        // `file too large` warning, the same flow the ranged prefix read
-        // already gives (GOAL E11 reporting parity).
-        final overCap = header == null && size > limits.maxFileBytes;
-        if (header == null && !overCap) continue;
-        if (header != null && !headerCwdMatches(header.cwd, cwd)) continue;
-        final stem = path.split('/').last;
-        summaries.add(
-          ForeignSessionSummary(
-            harness: id,
-            sourceId: header?.id ??
-                (stem.endsWith('.jsonl')
-                    ? stem.substring(0, stem.length - '.jsonl'.length)
-                    : stem),
-            sourcePath: path,
-            sizeBytes: size,
-            headerCwd: header?.cwd ?? '',
-            title: header?.title ?? '',
-            titleSource: header?.titleSource ?? '',
-            firstPreview: '-',
-            lastPreview: '-',
-            searchText: '',
-            mtimeMs: mtimeMs,
-          ),
-        );
+        if (summary != null) summaries.add(summary);
       }
     }
     return summaries;
+  }
+
+  /// The summary for one store file, or null when the file yields no
+  /// header it can own (unreadable/undersized-no-header) or its recorded
+  /// cwd does not match the launch folder. A file over the size cap
+  /// yields no header on backends without partial reads (the _readPrefix
+  /// size gate); it still becomes a summary — id fallback: the file
+  /// stem, cwd unverified — so scanForeignLines' read-time refusal
+  /// produces the counted `file too large` warning, the same flow the
+  /// ranged prefix read already gives (GOAL E11 reporting parity).
+  Future<ForeignSessionSummary?> _ompSummary(
+    FileSystem fs,
+    String path,
+    int size,
+    int mtimeMs, {
+    required String cwd,
+    required ImportLimits limits,
+  }) async {
+    final header = await _readHeader(
+      fs,
+      path,
+      maxFileBytes: limits.maxFileBytes,
+    );
+    final overCap = header == null && size > limits.maxFileBytes;
+    if (header == null && !overCap) return null;
+    if (header != null && !headerCwdMatches(header.cwd, cwd)) return null;
+    final stem = path.split('/').last;
+    return ForeignSessionSummary(
+      harness: id,
+      sourceId:
+          header?.id ??
+          (stem.endsWith('.jsonl')
+              ? stem.substring(0, stem.length - '.jsonl'.length)
+              : stem),
+      sourcePath: path,
+      sizeBytes: size,
+      headerCwd: header?.cwd ?? '',
+      title: header?.title ?? '',
+      titleSource: header?.titleSource ?? '',
+      firstPreview: '-',
+      lastPreview: '-',
+      searchText: '',
+      mtimeMs: mtimeMs,
+    );
   }
 
   @override
@@ -101,20 +125,66 @@ final class OmpAdapter implements HarnessAdapter {
     required String homeDir,
     required ImportLimits limits,
   }) async {
-    var skipped = 0;
-    var skippedBlocks = 0;
+    final counters = _OmpCounters();
     // Pass 1: the tree skeleton + the physical slot/header lines.
+    final (shells, slotTitle, headerLine) = await _classifyOmpLines(
+      fs,
+      summary.sourcePath,
+      limits,
+      counters,
+    );
+    final branch = activeBranchIds(shells);
+    counters.skippedRecords += branch.skippedOffPath;
+    final records = <ForeignRecord>[];
+    if (slotTitle.$1.isNotEmpty) {
+      records.add(
+        ForeignTitleSlot(
+          lineNumber: 1,
+          title: slotTitle.$1,
+          source: slotTitle.$2,
+        ),
+      );
+    }
+    // Pass 2: re-read only the active branch, in file order. Blob images
+    // are pre-loaded (bounded) so content parsing stays pure.
+    final blobs = <String, ForeignImage>{};
+    final sawHeader = await _emitOmpBranch(
+      records,
+      fs,
+      summary,
+      homeDir,
+      limits,
+      branch.pathIds,
+      headerLine,
+      blobs,
+      counters,
+    );
+    if (!sawHeader) {
+      throw ForeignFileError('no session header in ${summary.sourcePath}');
+    }
+    return ForeignParseResult(
+      records: records,
+      skippedRecords: counters.skippedRecords,
+      skippedBlocks: counters.skippedBlocks,
+    );
+  }
+
+  /// Streams the session file once: builds the tree-shell skeleton,
+  /// captures the physical title-slot pair and the header line number,
+  /// and counts undecodable/id-less lines skipped on [counters].
+  Future<(List<TreeShell>, (String, String), int)> _classifyOmpLines(
+    FileSystem fs,
+    String path,
+    ImportLimits limits,
+    _OmpCounters counters,
+  ) async {
     final shells = <TreeShell>[];
     var slotTitle = ('', '');
     var headerLine = 0;
-    await for (final line in scanForeignLines(fs, summary.sourcePath, limits)) {
-      if (line.text == null) {
-        skipped++;
-        continue;
-      }
-      final json = decodeJsonLine(line.text!);
+    await for (final line in scanForeignLines(fs, path, limits)) {
+      final json = line.text == null ? null : decodeJsonLine(line.text!);
       if (json == null) {
-        skipped++;
+        counters.skippedRecords++;
         continue;
       }
       switch (json['type']) {
@@ -137,66 +207,66 @@ final class OmpAdapter implements HarnessAdapter {
             // Pre-v2 entries carry no ids: omp's own migration chains them
             // linearly in file order. Without ids they cannot join a tree;
             // count them skipped rather than guess.
-            skipped++;
+            counters.skippedRecords++;
           }
       }
     }
-    // Pass 2: re-read only the active branch, in file order. Blob images
-    // are pre-loaded (bounded) so content parsing stays pure.
-    final branch = activeBranchIds(shells);
-    skipped += branch.skippedOffPath;
-    final records = <ForeignRecord>[];
-    if (slotTitle.$1.isNotEmpty) {
-      records.add(
-        ForeignTitleSlot(
-          lineNumber: 1,
-          title: slotTitle.$1,
-          source: slotTitle.$2,
-        ),
-      );
-    }
-    final blobs = <String, ForeignImage>{};
+    return (shells, slotTitle, headerLine);
+  }
+
+  /// Whether the line rides into pass 2: a physical slot/header line, or
+  /// an id-bearing entry on the active branch.
+  static bool _keptLine(
+    int number,
+    Map<String, dynamic> json,
+    int headerLine,
+    Set<String> pathIds,
+  ) {
+    final isPhysical =
+        number == headerLine || (number == 1 && json['type'] == 'title');
+    if (isPhysical) return true;
+    final id = json['id'];
+    return id is String && pathIds.contains(id);
+  }
+
+  /// Re-reads the session file, emitting on-branch records in file order.
+  /// Returns whether a [ForeignHeader] was seen (the read-time contract).
+  Future<bool> _emitOmpBranch(
+    List<ForeignRecord> records,
+    FileSystem fs,
+    ForeignSessionSummary summary,
+    String homeDir,
+    ImportLimits limits,
+    Set<String> pathIds,
+    int headerLine,
+    Map<String, ForeignImage> blobs,
+    _OmpCounters counters,
+  ) async {
     var sawHeader = false;
     await for (final line in scanForeignLines(fs, summary.sourcePath, limits)) {
       if (line.text == null) continue;
       final json = decodeJsonLine(line.text!);
       if (json == null) continue;
-      final isPhysical = line.number == headerLine ||
-          (line.number == 1 && json['type'] == 'title');
-      final id = json['id'];
-      if (!isPhysical && !(id is String && branch.pathIds.contains(id))) {
-        continue;
-      }
+      if (!_keptLine(line.number, json, headerLine, pathIds)) continue;
       await _preloadBlobs(json, fs, homeDir, limits, blobs);
       final record = _parseRecord(
         json,
         line.number,
         blobs,
-        () => skippedBlocks++,
+        counters.countBlock,
       );
       if (record == null) {
-        skipped++;
+        counters.skippedRecords++;
         continue;
       }
       if (record is ForeignHeader) sawHeader = true;
       records.add(record);
     }
-    if (!sawHeader) {
-      throw ForeignFileError('no session header in ${summary.sourcePath}');
-    }
-    return ForeignParseResult(
-      records: records,
-      skippedRecords: skipped,
-      skippedBlocks: skippedBlocks,
-    );
+    return sawHeader;
   }
 
   Future<({String id, String cwd, String title, String titleSource})?>
-  _readHeader(
-    FileSystem fs,
-    String path, {
-    required int maxFileBytes,
-  }) async {
+  _readHeader(FileSystem fs, String path, {required int maxFileBytes}) async {
     // The header sits in the first bytes (optional 256-byte title slot,
     // then the header line): a bounded prefix read keeps discovery cheap
     // on marathon files and lets oversized files still be DISCOVERED —
@@ -246,13 +316,32 @@ final class OmpAdapter implements HarnessAdapter {
     String path,
     int bytes, {
     required int maxFileBytes,
-  }) async {
+  }) {
     if (fs is RangedReadFileSystem) {
-      final ranged = fs as RangedReadFileSystem;
-      final read = await ranged.readRange(path, 0, bytes);
-      if (read.isErr) return null;
-      return utf8.decode(read.valueOrNull ?? const [], allowMalformed: true);
+      return _readRangedPrefix(fs as RangedReadFileSystem, path, bytes);
     }
+    return _readWholeFilePrefix(fs, path, bytes, maxFileBytes: maxFileBytes);
+  }
+
+  /// The ranged shape: one bounded window, decode errors tolerated, read
+  /// failures become null.
+  Future<String?> _readRangedPrefix(
+    RangedReadFileSystem fs,
+    String path,
+    int bytes,
+  ) async {
+    final read = await fs.readRange(path, 0, bytes);
+    if (read.isErr) return null;
+    return utf8.decode(read.valueOrNull ?? const [], allowMalformed: true);
+  }
+
+  /// The whole-file shape with the size gate ahead of the read.
+  Future<String?> _readWholeFilePrefix(
+    FileSystem fs,
+    String path,
+    int bytes, {
+    required int maxFileBytes,
+  }) async {
     final info = await fs.fileInfo(path);
     final file = info.valueOrNull;
     if (info.isErr || file == null || file.kind != FileKind.file) return null;
@@ -277,14 +366,7 @@ final class OmpAdapter implements HarnessAdapter {
           source: json['source'] as String? ?? 'auto',
         );
       case 'session':
-        return ForeignHeader(
-          lineNumber: lineNumber,
-          id: json['id'] as String? ?? '',
-          cwd: json['cwd'] as String? ?? '',
-          version: (json['version'] as num?)?.toInt() ?? 0,
-          title: json['title'] as String?,
-          titleSource: json['titleSource'] as String?,
-        );
+        return _parseHeader(json, lineNumber);
       case 'message':
         final message = json['message'];
         if (message is! Map<String, dynamic>) return null;
@@ -297,25 +379,23 @@ final class OmpAdapter implements HarnessAdapter {
       case 'thinking_level_change':
         return ForeignThinkingLevelChange(
           lineNumber: lineNumber,
-          level:
-              (json['thinkingLevel'] ?? json['configured']) as String? ?? 'off',
+          level: _thinkingLevel(json),
         );
+      default:
+        return _parseRecordTail(json, lineNumber, onBlockSkip);
+    }
+  }
+
+  /// The lower-frequency record types: compaction snapshots, custom
+  /// entries, and the tolerated unknown tail (GOAL AC6).
+  ForeignRecord? _parseRecordTail(
+    Map<String, dynamic> json,
+    int lineNumber,
+    void Function() onBlockSkip,
+  ) {
+    switch (json['type']) {
       case 'compaction':
-        return ForeignCompaction(
-          lineNumber: lineNumber,
-          summary: json['summary'] as String? ?? '',
-          droppedFields: [
-            for (final field in const [
-              'firstKeptEntryId',
-              'tokensBefore',
-              'shortSummary',
-              'preserveData',
-              'fromExtension',
-              'details',
-            ])
-              if (json[field] != null) field,
-          ],
-        );
+        return _parseCompaction(json, lineNumber);
       case 'custom':
         return ForeignCustom(
           lineNumber: lineNumber,
@@ -323,17 +403,7 @@ final class OmpAdapter implements HarnessAdapter {
           data: json['data'],
         );
       case 'custom_message':
-        final content = json['content'];
-        return ForeignCustomMessage(
-          lineNumber: lineNumber,
-          customType: json['customType'] as String? ?? '',
-          content: content is String
-              ? content
-              : parseForeignContent(content, onBlockSkip),
-          display: json['display'] as bool? ?? false,
-          details: json['details'],
-          attribution: json['attribution'] as String?,
-        );
+        return _parseCustomMessage(json, lineNumber, onBlockSkip);
       case 'title_change':
         return ForeignTitleSlot(
           lineNumber: lineNumber,
@@ -349,6 +419,63 @@ final class OmpAdapter implements HarnessAdapter {
           raw: json,
         );
     }
+  }
+
+  /// The omp thinking-level slot: `thinkingLevel` first, then the legacy
+  /// `configured` key, defaulting off.
+  static String _thinkingLevel(Map<String, dynamic> json) =>
+      (json['thinkingLevel'] ?? json['configured']) as String? ?? 'off';
+
+  /// The `session` header record — the read-time contract anchor.
+  ForeignHeader _parseHeader(Map<String, dynamic> json, int lineNumber) =>
+      ForeignHeader(
+        lineNumber: lineNumber,
+        id: json['id'] as String? ?? '',
+        cwd: json['cwd'] as String? ?? '',
+        version: (json['version'] as num?)?.toInt() ?? 0,
+        title: json['title'] as String?,
+        titleSource: json['titleSource'] as String?,
+      );
+
+  /// The `compaction` record: the summary plus the names of the optional
+  /// fields the entry actually carries (the mapper drops the rest).
+  ForeignCompaction _parseCompaction(
+    Map<String, dynamic> json,
+    int lineNumber,
+  ) => ForeignCompaction(
+    lineNumber: lineNumber,
+    summary: json['summary'] as String? ?? '',
+    droppedFields: [
+      for (final field in const [
+        'firstKeptEntryId',
+        'tokensBefore',
+        'shortSummary',
+        'preserveData',
+        'fromExtension',
+        'details',
+      ])
+        if (json[field] != null) field,
+    ],
+  );
+
+  /// The `custom_message` record: string content rides as-is, structured
+  /// content goes through [parseForeignContent].
+  ForeignCustomMessage _parseCustomMessage(
+    Map<String, dynamic> json,
+    int lineNumber,
+    void Function() onBlockSkip,
+  ) {
+    final content = json['content'];
+    return ForeignCustomMessage(
+      lineNumber: lineNumber,
+      customType: json['customType'] as String? ?? '',
+      content: content is String
+          ? content
+          : parseForeignContent(content, onBlockSkip),
+      display: json['display'] as bool? ?? false,
+      details: json['details'],
+      attribution: json['attribution'] as String?,
+    );
   }
 
   ForeignMessage _parseOmpMessage(
@@ -468,9 +595,10 @@ Set<String> ompBucketSlugs(String cwd, String homeDir, String tempDir) {
 /// Strips a `data:<mime>;base64,` header, validating the payload.
 String? _base64Payload(String text) {
   final payload = text.startsWith('data:')
-      ? RegExp(r'^data:[^;,]*;base64,(.+)$', dotAll: true)
-          .firstMatch(text)
-          ?.group(1)
+      ? RegExp(
+          r'^data:[^;,]*;base64,(.+)$',
+          dotAll: true,
+        ).firstMatch(text)?.group(1)
       : text;
   if (payload == null ||
       payload.isEmpty ||
@@ -478,4 +606,21 @@ String? _base64Payload(String text) {
     return null;
   }
   return payload;
+}
+
+/// Mutable skip counters threaded through the [OmpAdapter.read] pass
+/// helpers — one parse, two tallies: whole records dropped and content
+/// blocks placeholder-ed inside mapped records.
+class _OmpCounters {
+  /// Whole records dropped while parsing (oversized/undecodable lines,
+  /// off-branch records, sidechain entries).
+  int skippedRecords = 0;
+
+  /// Content blocks dropped inside mapped records (placeholder-ed).
+  int skippedBlocks = 0;
+
+  /// The [parseForeignContent] `onSkip` callback.
+  void countBlock() {
+    skippedBlocks++;
+  }
 }

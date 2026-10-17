@@ -109,41 +109,20 @@ Future<ImportResult> runImport({
   var imported = 0;
   var alreadyImported = 0;
   for (final summary in targeted) {
-    // Two store files can carry the same header id (GOAL E9b): import
-    // the first occurrence once, count the rest like the E6 skip case.
-    if (!batchSeen.add(summary.sourceId)) {
-      alreadyImported++;
-      emit('skipped ${summary.sourceId} (duplicate in store)');
-      continue;
-    }
-    final existing = markers[summary.sourceId];
-    if (existing != null) {
-      if (await _isComplete(repo, existing, adapter.id)) {
-        alreadyImported++;
-        emit('skipped ${summary.sourceId} (already imported)');
-        continue;
-      }
-      // Importer-owned incomplete file (kill mid-import): replaced on
-      // retry (GOAL E14). Foreign sources stay untouched.
-      await repo.delete(existing, actor: 'import');
-    }
-    try {
-      final faId = await _importOne(
-        adapter: adapter,
-        fs: fs,
-        repo: repo,
-        cwd: cwd,
-        summary: summary,
-        limits: limits,
-        homeDir: homeDir,
-      );
-      imported++;
-      emit(faId.$2);
-    } on ForeignFileError catch (error) {
-      emit('warning: skipped ${summary.sourceId}: ${error.message}');
-    } on SessionException catch (error) {
-      emit('warning: skipped ${summary.sourceId}: ${error.message}');
-    }
+    final (one, already) = await _importSummary(
+      adapter: adapter,
+      fs: fs,
+      repo: repo,
+      cwd: cwd,
+      summary: summary,
+      limits: limits,
+      homeDir: homeDir,
+      batchSeen: batchSeen,
+      markers: markers,
+      emit: emit,
+    );
+    imported += one;
+    alreadyImported += already;
   }
 
   if (imported == 0 && alreadyImported == targeted.length) {
@@ -153,6 +132,56 @@ Future<ImportResult> runImport({
     return ImportResult(exitCode: 3, lines: lines);
   }
   return ImportResult(exitCode: 0, lines: lines);
+}
+
+/// Imports one targeted session, emitting the skip/import lines. Returns
+/// `(imported, alreadyImported)` tallies for the batch roll-up: two store
+/// files can carry the same header id (GOAL E9b) — the first occurrence
+/// imports once, the rest count like the E6 skip case. An existing
+/// incomplete FA file (kill mid-import) is replaced on retry (GOAL E14);
+/// foreign sources stay untouched.
+Future<(int, int)> _importSummary({
+  required HarnessAdapter adapter,
+  required FileSystem fs,
+  required JsonlSessionRepo repo,
+  required String cwd,
+  required ForeignSessionSummary summary,
+  required ImportLimits limits,
+  required String homeDir,
+  required Set<String> batchSeen,
+  required Map<String, SessionMetadata> markers,
+  required void Function(String line) emit,
+}) async {
+  if (!batchSeen.add(summary.sourceId)) {
+    emit('skipped ${summary.sourceId} (duplicate in store)');
+    return (0, 1);
+  }
+  final existing = markers[summary.sourceId];
+  if (existing != null) {
+    if (await _isComplete(repo, existing, adapter.id)) {
+      emit('skipped ${summary.sourceId} (already imported)');
+      return (0, 1);
+    }
+    await repo.delete(existing, actor: 'import');
+  }
+  try {
+    final faId = await _importOne(
+      adapter: adapter,
+      fs: fs,
+      repo: repo,
+      cwd: cwd,
+      summary: summary,
+      limits: limits,
+      homeDir: homeDir,
+    );
+    emit(faId.$2);
+    return (1, 0);
+  } on ForeignFileError catch (error) {
+    emit('warning: skipped ${summary.sourceId}: ${error.message}');
+  } on SessionException catch (error) {
+    emit('warning: skipped ${summary.sourceId}: ${error.message}');
+  }
+  return (0, 0);
 }
 
 /// Exact id, else unambiguous prefix (GOAL F13). Empty = no match;
@@ -271,10 +300,9 @@ Future<(String, String)> _importOne({
     }
   }
   await session.appendCustomEntry(
-        customType: 'import.${adapter.id}.complete',
-        data: {
-    'recordCount': mapped.items.length,
-  });
+    customType: 'import.${adapter.id}.complete',
+    data: {'recordCount': mapped.items.length},
+  );
   final metadata = await session.getMetadata();
   final details = <String>[
     if (mapped.skippedBlocks > 0) 'skipped-blocks ${mapped.skippedBlocks}',
@@ -315,9 +343,11 @@ Future<ForeignSessionSummary> describeForeignSession({
     if (search.length < limits.searchIndexBytes) {
       search
         ..write(' ')
-        ..write(text.length > limits.searchIndexBytes
-            ? text.substring(0, limits.searchIndexBytes)
-            : text);
+        ..write(
+          text.length > limits.searchIndexBytes
+              ? text.substring(0, limits.searchIndexBytes)
+              : text,
+        );
     }
   }
 
