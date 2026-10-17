@@ -74,7 +74,12 @@ void main() {
 
     test('a failed classification fails SAFE — both rare-path arms run', () {
       final run = stepById(changes, 'paths')['run'] as String;
-      expect(run, contains('failing safe: exzone + locksmoke arms run'));
+      expect(
+        run,
+        contains(
+          'failing safe: exzone + locksmoke + installer + office_addin arms run',
+        ),
+      );
       expect(run, contains('echo "exzone=true"'));
       expect(run, contains('echo "locksmoke=true"'));
     });

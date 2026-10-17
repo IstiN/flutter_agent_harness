@@ -378,7 +378,7 @@ jobs:
             HEAD_REF="$(git rev-parse HEAD)"
             BASE_REF="$(git merge-base origin/main "$HEAD_REF" 2>/dev/null || true)"
             if [ -z "$BASE_REF" ]; then
-              echo "::warning::merge-base(origin/main, HEAD) failed on the dispatch checkout — failing safe: exzone + locksmoke arms run"
+              echo "::warning::merge-base(origin/main, HEAD) failed on the dispatch checkout — failing safe: exzone + locksmoke + installer + office_addin arms run"
               echo "exzone=true" >> "$GITHUB_OUTPUT"
               echo "locksmoke=true" >> "$GITHUB_OUTPUT"
               echo "installer=true" >> "$GITHUB_OUTPUT"

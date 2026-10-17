@@ -191,7 +191,16 @@ void main() {
             'a failed classification must over-trigger, never silently '
             'skip — the #1309 class (same arm as exzone/locksmoke/installer)',
       );
-      expect(run, contains('failing safe: exzone + locksmoke arms run'));
+      // The warning must name EVERY output the fail-safe arm fires — it is
+      // the first thing an investigator reads when merge-base resolution
+      // fails on a dispatch checkout (gh-1596 added installer, gh-1659
+      // added office_addin).
+      expect(
+        run,
+        contains(
+          'failing safe: exzone + locksmoke + installer + office_addin arms run',
+        ),
+      );
     });
 
     test('the office_addin arm classifies validation dispatches too', () {
