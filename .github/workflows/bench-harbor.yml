@@ -668,7 +668,7 @@ jobs:
               srcs=$(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$c" 2>/dev/null || true)
               for s in $srcs; do
                 case "$s" in
-                  "$RUNNER_TEMP/bench"/*)
+                  "${RUNNER_TEMP:-/tmp}/bench"/*)
                     docker rm -f "$c" >/dev/null 2>&1 || true
                     torn=$((torn + 1))
                     break ;;
@@ -676,11 +676,11 @@ jobs:
               done
             done
             if [ "$torn" -gt 0 ]; then
-              echo "tore down $torn bench container(s) bound to $RUNNER_TEMP/bench"
+              echo "tore down $torn bench container(s) bound to ${RUNNER_TEMP:-/tmp}/bench"
             fi
           fi
           rm -rf "${RUNNER_TEMP:-/tmp}/bench" 2>/dev/null \
-            || echo "::warning::$RUNNER_TEMP/bench not fully removable — a container still holds it (gh-1600)"
+            || echo "::warning::${RUNNER_TEMP:-/tmp}/bench not fully removable — a container still holds it (gh-1600)"
 
   summary:
     name: Aggregate resolution rate

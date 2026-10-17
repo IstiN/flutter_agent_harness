@@ -324,13 +324,60 @@ void main() {
       );
       expect(
         script,
-        contains(r'"$RUNNER_TEMP/bench"/*'),
+        contains(r'"${RUNNER_TEMP:-/tmp}/bench"/*'),
         reason:
             'the mount-source match must be anchored to the shard\'s own '
             'out-of-workspace bench output — mount Sources embed the '
             'per-registration _temp path, so another workflow\'s or '
-            'another registration\'s live containers are never touched '
-            '(gh-1600 rework round 2)',
+            'another registration\'s live containers are never touched; '
+            'the pattern uses the \${RUNNER_TEMP:-/tmp} fallback like the '
+            'final rm -rf (gh-1600 rework rounds 2+3)',
+      );
+      // gh-1600 rework round 3 (APPROVE review, suggestion): the step runs
+      // under `set -u` and the final `rm -rf` guards with
+      // "${RUNNER_TEMP:-/tmp}/bench" — but the mount-source `case` pattern,
+      // the "tore down" summary echo, and the unremovable-dir warning echo
+      // expanded bare $RUNNER_TEMP. If the var is ever absent (a
+      // misconfigured/ephemeral runner, a local `act` run) the always()
+      // cleanup hard-fails on an unbound variable — exactly the failure
+      // mode this step's best-effort design exists to avoid. Every
+      // $RUNNER_TEMP expansion in this step must carry the :-/tmp fallback.
+      // Full-line comments are skipped — bash never expands them, so a
+      // bare $RUNNER_TEMP in prose cannot trip set -u.
+      final codeOnly = script
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('#'))
+          .join('\n');
+      var bareIdx = -1;
+      var hasBareRunnerTemp = false;
+      while ((bareIdx = codeOnly.indexOf(r'$RUNNER_TEMP', bareIdx + 1)) != -1) {
+        final next = bareIdx + r'$RUNNER_TEMP'.length < codeOnly.length
+            ? codeOnly[bareIdx + r'$RUNNER_TEMP'.length]
+            : '';
+        if (next != ':') hasBareRunnerTemp = true;
+      }
+      expect(
+        hasBareRunnerTemp,
+        isFalse,
+        reason:
+            'every \$RUNNER_TEMP expansion in the always() cleanup must use '
+            'the \${RUNNER_TEMP:-/tmp} fallback — a bare expansion under '
+            'set -u hard-fails the step when the var is absent (gh-1600 '
+            'rework round 3)',
+      );
+      expect(
+        script,
+        contains(r'"${RUNNER_TEMP:-/tmp}/bench"/*'),
+        reason:
+            'the mount-source case pattern must use the \${RUNNER_TEMP:-'
+            '/tmp} fallback like the final rm -rf (gh-1600 rework round 3)',
+      );
+      expect(
+        script,
+        contains(r'bound to ${RUNNER_TEMP:-/tmp}/bench'),
+        reason:
+            'the "tore down" summary echo must use the \${RUNNER_TEMP:-'
+            '/tmp} fallback like the final rm -rf (gh-1600 rework round 3)',
       );
     });
 
