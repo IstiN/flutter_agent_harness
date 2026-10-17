@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"branch-0001","timestamp":"2026-10-10T11:00:00.000Z","cwd":"__CWD__"}
+{"type":"message","id":"b1","parentId":null,"timestamp":"2026-10-10T11:01:00.000Z","message":{"role":"user","content":"start","timestamp":1760000000000}}
+{"type":"message","id":"b2","parentId":"b1","timestamp":"2026-10-10T11:02:00.000Z","message":{"role":"assistant","content":"main path","timestamp":1760000000000}}
+{"type":"message","id":"b3","parentId":"b2","timestamp":"2026-10-10T11:03:00.000Z","message":{"role":"user","content":"abandoned branch","timestamp":1760000000000}}
+{"type":"message","id":"b4","parentId":"b2","timestamp":"2026-10-10T11:04:00.000Z","message":{"role":"user","content":"active branch leaf","timestamp":1760000000000}}
