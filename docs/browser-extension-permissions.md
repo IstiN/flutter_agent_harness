@@ -23,9 +23,8 @@ layer before anything is persisted. See
 | `contextMenus` | Right-click menu entries | Adds "ask fa" entries for the selected text, link, image, or page the user right-clicked. |
 | `cookies` | `cookies_get` / `cookies_set` / `cookies_remove` | The agent reads/edits cookies for a site when the user asks (e.g. debugging a login issue); every cookie tool result is approval-gated. Stripped from the store profile. |
 | `debugger` | `cdp_eval`, `page_screenshot`, trusted input | The trusted-input plane: `chrome.debugger` lets the agent dispatch real browser-synthesized input and capture screenshots of background tabs. Chrome shows its "started debugging" infobar whenever it is in use. Stripped from the store profile. |
-| `downloads` | `downloads_start` / `downloads_search` / `downloads_cancel` | The agent downloads a file the user asked for and manages (find/cancel) downloads. |
+| `downloads` | `download` | The agent saves a file the user asked for (http/https URL, size-capped, filename sanitized, approval-gated) — the shipped call site behind the permission (gh-1630 F2′). |
 | `history` | `history_search` | The agent searches browsing history on request ("find that page I visited yesterday"). |
-| `identity` | Provider OAuth flows | `launchWebAuthFlow` lets the user sign in to LLM providers via browser OAuth instead of pasting long-lived API keys. |
 | `system.cpu` | Read-only CPU info | Lets the agent answer "will this machine survive this job?" from real CPU load/architecture info. |
 | `idle` | Idle awareness | Detects when the user is away so the agent can defer noisy work (tab churn) or schedule it for that window. |
 | `system.memory` | Read-only memory info | Read-only current memory capacity/usage so the agent can judge if a heavy job fits. |

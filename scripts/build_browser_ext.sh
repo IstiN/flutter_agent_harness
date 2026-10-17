@@ -37,9 +37,11 @@ else
   grep -q '"manifest_version"[[:space:]]*:[[:space:]]*3' "$manifest"
 fi
 
-# --- Vendored interpreter runtimes for the run_script tool (offscreen
-# document). Extension CSP forbids remote scripts — these ship in-bundle. ---
-"$(dirname "$0")/vendor_interpreters.sh"
+# --- Vendored engine assets (gh-1630 I2): fetched ONLY from
+# browser_ext/vendor.lock.json, SHA-256-verified, fail-loud on mismatch.
+# Covers the offscreen run_script runtimes AND the panel app's on-device
+# engines (pyodide/quickjs/sql.js/webllm/transformers/litert). ---
+"$(dirname "$0")/fetch_vendor_assets.sh"
 
 # --- Embedded agent (dart2js). Output is a build artifact: never committed. ---
 agent_js=browser_ext/sw/agent.js
@@ -155,50 +157,14 @@ PYS
     echo "FATAL: engineRevision not found in flutter_bootstrap.js" >&2
     exit 1
   fi
-  # The extension CSP forbids remote scripts, and the fa web bundle's
-  # on-device provider loaders (inline_script_4/5/6.js) import WebLLM /
-  # transformers.js / LiteRT-LM from cdn.jsdelivr.net — every panel open
-  # sprayed CSP violations (and litert's rejected import threw an uncaught
-  # promise error). On-device providers are not an extension feature (the
-  # engine is the SW relay provider), so swap the three loader tags for a
-  # local stub that mirrors their failure shape: `window.litertLmReady`
-  # rejects immediately (the Dart side awaits that promise — an unsettled
-  # one would hang provider init; a rejection is the state those loaders
-  # already reach behind the CSP), webllm/transformersjs stay undefined.
-  python3 - <<'PYS'
-import re
-p = 'browser_ext/panel/app/index.html'
-t = open(p).read()
-if 'ondevice_stub.js' not in t:
-    t2, n = re.subn(
-        r'<script type="module" src="inline_script_[456]\.js"></script>\n?',
-        '', t)
-    if n == 0:
-        raise SystemExit('FATAL: no on-device loader tags found in ' + p)
-    stub = ('  <!-- On-device provider loaders (WebLLM / transformers.js /\n'
-            '       LiteRT-LM from jsdelivr) are stripped here: the extension\n'
-            '       CSP forbids remote scripts and the panel engine is the SW\n'
-            '       relay provider. ondevice_stub.js mirrors their failure\n'
-            '       shape (litertLmReady rejects at once) so provider init\n'
-            '       fails fast instead of hanging. -->\n'
-            '  <script type="module" src="ondevice_stub.js"></script>\n')
-    marker = '<script src="flutter_bootstrap.js" async></script>'
-    assert marker in t2, 'bootstrap tag not found'
-    t2 = t2.replace(marker, stub + marker, 1)
-    open(p, 'w').write(t2)
-    open('browser_ext/panel/app/ondevice_stub.js', 'w').write(
-        "// Extension CSP: no remote scripts. See the note in index.html —\n"
-        "// this mirrors the CDN loaders' failure shape so the Dart side's\n"
-        "// awaited litertLmReady promise rejects immediately.\n"
-        "const litertLmUnavailable = Promise.reject(\n"
-        "  new Error('on-device providers unavailable in the extension (CSP)'),\n"
-        ");\n"
-        "// Mark the rejection handled so the console stays clean; awaiters\n"
-        "// still get the rejection (fail fast instead of hanging).\n"
-        "litertLmUnavailable.catch(() => {});\n"
-        "window.litertLmReady = litertLmUnavailable;\n")
-    print(f'on-device loaders stripped from the extension panel ({n} tags)')
-PYS
+  # The extension package must carry NO remote code (gh-1630 Blue Argon)
+  # and its CSP forbids remote scripts: stage the on-device engine loaders
+  # (WebLLM / transformers.js / LiteRT-LM) onto the package-local vendor
+  # dir instead of the CDN imports the web build uses. Standalone,
+  # idempotent script (test/browser_ext/cws_compliance_test.dart exercises
+  # it) — replaces the pre-gh-1630 ondevice_stub.js failure shim: the
+  # engines are vendored now, so they LOAD instead of degrading.
+  python3 scripts/stage_extension_panel.py --app-dir browser_ext/panel/app
   echo "bundled fa web app (browser_ext/panel/app/)"
 fi
 
