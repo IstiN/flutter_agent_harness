@@ -13,23 +13,32 @@ block a release again.
 
 ## Unreleased
 
-- feat(finalize-gate): gh-1652 — grader-parity execution. The FinalizeGate
-  contract's loop gains step 2.5 (between verify and fix): each produced
-  entry point is re-run the way the grader will — neutral cwd (`cd /`),
-  fresh subprocess, clean env — stdout/stderr/exit code compared against
-  the in-session run, and that invocation pinned as the main artifact's
-  ledger `command:`. The T-3min wrap-up steer carries the same clause. Both
-  bench summaries (terminal-bench, harbor) add `classify_clean_exit_wrong`
-  — the CLEAN-WRONG class (clean exit + zero-unmet final task ledger +
-  verifier reward 0) — printed next to early-exit-with-unmet-ledger and
-  disjoint from it by the `ledger_unmet <= 0` split.
-- feat(finalize-gate): gh-1646 — the unmet-item wall. A final answer whose
-  task ledger still carries unmet items is budget-conditional: compliant
-  only when the harness-reported wall clock is spent or every unmet item
-  names its blocker in `actual` — work to the wall, no deadline
-  self-policing, no violation framing. Bench summaries classify
-  early-exit-with-unmet-ledger (clean `__FA_EXIT=0`, unmet final ledger,
-  ended ≥60s before the effective cap).
+- fix(headless): gh-1589 — the headless session becomes a SEALED artifact:
+  no session-JSONL writes land after the run's agent phase ends. New
+  `Session.seal()` (state in the writer, no file-format change): raised in
+  `runHeadless`' finally and the REPL teardown as the LAST session action
+  (close order: drain → usage fold → seal → exit, one implementation both
+  paths — REG-2), it makes every writer (`_persistMessages`,
+  `shell_job_registry` snapshots, compaction, any `appendCustomEntry`,
+  leaf moves) drop late appends with exactly ONE stderr warning per
+  writer class — never a throw into an unhandled zone; the exit code
+  stays the turn's terminal outcome (issue #413 semantics untouched). The
+  settle→reaction path is sealed with the file (I2): the drain wrap-up
+  raises a fence (`_reactionRunsSealed`) so a background-shell settle or
+  task completion arriving after the final answer's drain — including the
+  registry's one-turn-deferred listener racing `_finishHeadlessDrain`'s
+  check-to-return window (the 65gGW7b 10:13:42–10:14:00 burst) — does
+  board bookkeeping only: no `_startRun`, no model request, no record.
+  An honest drain's records (final answer → seal) stay legal (E7); the
+  seal is per-run state, so resume/replay/`session_repair` are unchanged.
+  Adapter side (bench/harbor_fa, I3/AC4+AC7): `run()`/`perform_task`
+  returns only after the fa process exited on EVERY path — the ladder
+  kill became terminate-and-reap (SIGTERM → bounded exec await → SIGKILL
+  escalation → pgrep confirm), and the external-cancel paths (harbor's
+  own wait_for firing first, the no-knobs exec, external-cap-only mode)
+  now fire the kill + bounded reap before propagating, with a loud
+  `agent-phase exit guarantee degraded` stderr note when fa survives both
+  signals (never a silent proceed, never an unbounded hang).
 - fix(bench): gh-1643 — a trial killed mid-stream no longer reports 0/None
   usage. The fold read only FINALIZED assistant messages, so a run killed
   before its first assistant message (the costliest rows) folded to silent
