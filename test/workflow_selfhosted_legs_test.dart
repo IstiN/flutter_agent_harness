@@ -83,6 +83,39 @@ void main() {
       }
     }
 
+    test('audit: no workflow anywhere pins the generic macOS/ARM64 labels', () {
+      // gh-1600 rework (review thread): the routing-bug class dies only if
+      // the audit is repo-wide — a future `[self-hosted, macOS, ARM64]` pin
+      // in ANY workflow (a new daily-publish/release leg) would re-route an
+      // iOS-shaped job onto the Linux box. Precise today: the only
+      // self-hosted legs are bench-mls.yml's bare `self-hosted` (the Linux
+      // box, correctly label-free of macOS) and the `[self-hosted,
+      // macos-m5]` pins; `macos-latest` (GitHub-hosted) does not match the
+      // case-sensitive `macOS`/`ARM64` check.
+      final workflows = Directory('.github/workflows')
+          .listSync()
+          .where((f) => f.path.endsWith('.yml'))
+          .toList();
+      expect(workflows, isNotEmpty);
+      for (final f in workflows) {
+        final jobs = jobsOf(f.path);
+        for (final e in jobs.entries) {
+          final runsOn = (e.value as YamlMap)['runs-on']?.toString() ?? '';
+          expect(
+            runsOn.contains('macOS') || runsOn.contains('ARM64'),
+            isFalse,
+            reason:
+                '${f.path} job "${e.key}" carries the generic '
+                '`macOS`/`ARM64` labels — the Linux self-hosted box also '
+                'satisfies them, so a macOS-only job can be routed onto '
+                'Linux (gh-1600 F-A class). Only the `macos-m5` pin '
+                '(fa-m5-1) or GitHub-hosted `macos-*` runners are '
+                'legitimate.',
+          );
+        }
+      }
+    });
+
     test('audit: no self-hosted job in either leg skips the macos-m5 pin', () {
       for (final entry in mobileMacosLegs.entries) {
         final jobs = jobsOf(entry.key);
@@ -183,6 +216,48 @@ void main() {
             'it is not in scope from the harbor-run step (gh-1600: a '
             'set -u unbound-variable crash in an always() step fails the '
             'job)',
+      );
+      // gh-1600 rework (BLOCKING review thread): harbor 0.23.0 never puts
+      // the job name in container names — the compose project is
+      // `{task}__{ShortUUID(7)}__env`, so containers look like
+      // `some-task__ab12cd3__env-main-1`. A `name=` filter can NEVER
+      // match (and an anchored one would still be wrong: an unanchored
+      // substring over-matches sibling shards, `…-cpu-1` ⊂ `…-cpu-14`).
+      // The teardown must key on the compose labels every harbor trial
+      // container carries and precision-guard on the project working dir
+      // under this shard's $RUNNER_TEMP/bench output.
+      expect(
+        script.contains('--filter "name='),
+        isFalse,
+        reason:
+            'harbor 0.23.0 names trial containers '
+            '`{task}__{random}__env-main-1` — a docker name filter can '
+            'never match them, so the teardown is a silent no-op and '
+            'cancelled shards leak live containers on the persistent box '
+            '(gh-1600 rework)',
+      );
+      expect(
+        script,
+        contains('label=com.docker.compose.project'),
+        reason:
+            'the teardown must select containers by the compose project '
+            'label, not by name (gh-1600 rework)',
+      );
+      expect(
+        script,
+        contains('com.docker.compose.project.working_dir'),
+        reason:
+            'the working-dir label is the precision guard — only '
+            'containers whose compose project lives under this shard\'s '
+            '\$RUNNER_TEMP/bench output are torn down (gh-1600 rework)',
+      );
+      expect(
+        script,
+        contains(r'"$RUNNER_TEMP/bench"/*'),
+        reason:
+            'the working-dir match must be anchored to the shard\'s own '
+            'out-of-workspace bench output — sibling shards\' containers '
+            'must never be touched (gh-1600 rework)',
       );
     });
 
@@ -297,6 +372,93 @@ void main() {
         contains('Restoring macOS build cache'),
         reason: 'the parked cache must be restored after the clone (gh-1600 kept shape)',
       );
+    });
+  });
+
+  group('Rework — checkout hardening (review threads)', () {
+    /// All inline mirror-checkout scripts (build-ios + submit-ios +
+    /// build-macos) — the clone-around-stub block is identical in each.
+    List<String> allCheckoutScripts() {
+      final scripts = <String>[];
+      for (final wf in const [
+        '.github/workflows/build-mobile.yml',
+        '.github/workflows/build-macos.yml',
+      ]) {
+        final jobs = jobsOf(wf);
+        for (final j in jobs.entries) {
+          final steps = (j.value as YamlMap)['steps'] as YamlList?;
+          if (steps == null) continue;
+          for (final s in steps.whereType<YamlMap>()) {
+            final name = s['name']?.toString() ?? '';
+            if (name.startsWith('Checkout repository from local mirror') &&
+                s['run'] != null) {
+              scripts.add(s['run'].toString());
+            }
+          }
+        }
+      }
+      return scripts;
+    }
+
+    test('stub collision parks the stale stub — the FRESH entry always wins', () {
+      final scripts = allCheckoutScripts();
+      expect(scripts.length, 3, reason: 'build-ios + submit-ios + build-macos');
+      for (final script in scripts) {
+        // The old path skipped the fresh entry (warning-only) and the
+        // trailing `rm -rf "$CLONE_TARGET"` then DELETED it — the
+        // workspace silently kept the stale leftover at that repo path.
+        expect(
+          script,
+          contains(r'mv "$GITHUB_WORKSPACE/$name" "$STALE'),
+          reason:
+              'on a stub collision the stale leftover must move into the '
+              '\$STALE sidecar — not stay in the workspace while the '
+              'fresh checkout entry is dropped and deleted (gh-1600 '
+              'rework: fresh content always wins)',
+        );
+        expect(
+          script.indexOf(r'mv "$GITHUB_WORKSPACE/$name"'),
+          lessThan(script.indexOf(r'mv "$entry" "$GITHUB_WORKSPACE/"')),
+          reason:
+              'the stale stub must be parked BEFORE the fresh entry moves '
+              'in — same-name mv would otherwise overwrite the fresh '
+              'content (gh-1600 rework)',
+        );
+        expect(
+          script,
+          contains('stub collision on'),
+          reason:
+              'the skip-with-warning path may remain only as the '
+              'last-resort fallback when even parking the stub fails '
+              '(gh-1600 rework)',
+        );
+      }
+    });
+
+    test('old stale-workspace-* sidecars are pruned before a new one is parked', () {
+      final scripts = allCheckoutScripts();
+      expect(scripts.length, 3, reason: 'build-ios + submit-ios + build-macos');
+      for (final script in scripts) {
+        expect(
+          script,
+          contains(r'rm -rf "${RUNNER_TEMP:-/tmp}"/stale-workspace-*'),
+          reason:
+              'on the persistent box the runner\'s own _temp cleanup '
+              'cannot remove mount-held sidecars either — every degraded '
+              'checkout must first best-effort-prune previous '
+              '`stale-workspace-*` dirs (the containers that held them '
+              'may have died since, so the retry often succeeds) '
+              '(gh-1600 rework)',
+        );
+        expect(
+          script.indexOf('stale-workspace-*'),
+          lessThan(script.indexOf('stale-workspace-$(date')),
+          reason:
+              'the prune must run BEFORE the new timestamped sidecar is '
+              'created — otherwise the glob would also match (and '
+              're-delete) the fresh dir (gh-1600 rework)',
+        );
+      }
     });
   });
 }
