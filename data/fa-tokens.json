@@ -4453,6 +4453,15 @@
       "total": 79153,
       "cacheRead": 12096,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-17T10:20:34Z",
+      "prompt": 87390,
+      "completion": 1721,
+      "total": 89111,
+      "cacheRead": 11264,
+      "model": "kimi-for-coding"
     }
   ],
   "pr-1631": [
