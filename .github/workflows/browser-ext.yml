@@ -81,10 +81,13 @@ jobs:
       - name: CWS compliance check
         run: python3 scripts/check_cws_compliance.py
 
-      # Node 22's `node --test` does not glob arguments itself; bash expands
-      # the pattern (or pass the directory: node --test browser_ext/test/).
+      # Node 22's `node --test` does not glob arguments itself and rejects
+      # directory args — bash expands BOTH patterns (`*.test.mjs` and the
+      # `*_test.mjs` family: v21_manifest, panel_*). Missing the second
+      # pattern silently skips the manifest contract suite (gh-1630 rework:
+      # the F2′ re-add sat red in v21 while CI stayed green).
       - name: Node unit tests (vm sandbox)
-        run: node --test browser_ext/test/*.test.mjs
+        run: node --test browser_ext/test/*.test.mjs browser_ext/test/*_test.mjs
 
       # -j 1: every test spawns its own Chrome; parallel workers on one
       # runner fight over CPU and the DevTools handshakes get flaky.

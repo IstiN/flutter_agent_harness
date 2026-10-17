@@ -433,7 +433,7 @@ final class BrowserApiToolException implements Exception {
 /// ONLY: it leaves both DOM facts false, so the validator's
 /// credential-shape refusal never fires — plumb a DOM-probing classifier
 /// in for the full defense;
-/// [visitedOrigins] wires the exfil gate for tabs_open/downloads_start —
+/// [visitedOrigins] wires the exfil gate for tabs_open/download —
 /// null keeps the gate off, and a set (even empty) enforces it, an empty
 /// set meaning every origin counts as unvisited and prompts.
 final class BrowserApiToolSurface {
@@ -471,10 +471,12 @@ final class BrowserApiToolSurface {
 
   /// Size-cap pre-check for the `download` tool (gh-1630 F2′): a HEAD
   /// through the host's fetch seam returning the Content-Length, or null
-  /// when the length is unknown (chunked/no-CORS — the cap then stays
-  /// best-effort and the result says so). Null disables the pre-check on
-  /// bare surfaces. The host wires a fetch-based probe; this file stays
-  /// pure Dart (no dart:io), so the probe rides a constructor seam.
+  /// when the length is unknown (chunked/no-CORS — the cap is then
+  /// enforced by the in-flight check in [_awaitDownloadSettled] alone,
+  /// and the result says the pre-check was `unknown`). Null disables the
+  /// pre-check on bare surfaces. The host wires a fetch-based probe; this
+  /// file stays pure Dart (no dart:io), so the probe rides a constructor
+  /// seam.
   final DownloadProbe? downloadProbe;
 
   final InjectionValidator _injection = const InjectionValidator();
@@ -1659,7 +1661,7 @@ final class BrowserApiToolSurface {
     return tab.url;
   }
 
-  /// Exfil gate for tabs_open/downloads_start. Tool calls are
+  /// Exfil gate for tabs_open/download. Tool calls are
   /// user-authorized at this layer (source realUser); the approval
   /// tiering itself stays the host's approval gate — when the gate is
   /// wired (non-null [visitedOrigins]) a requiresApproval verdict is
