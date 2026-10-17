@@ -29,7 +29,7 @@
 #   FAILS the contract — i.e. the bug is reproduced. Zero legacy failures
 #   means the repro is broken.
 
-cd "$(git rev-parse --show-toplevel)"
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # repo root, any cwd
 MODE="${1:-}"
 SCRIPT="scripts/update_git_mirror.sh"
 if [ "$MODE" != "--legacy" ] && [ ! -f "$SCRIPT" ]; then
