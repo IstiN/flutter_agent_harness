@@ -179,6 +179,21 @@ void main() {
       );
     });
 
+    test('gh-1668 C4: the wrap-up steer leaves the final state in place', () {
+      // The teardown antipattern has a second foothold at T-3min: the
+      // wrap-up steer tells the agent to drain jobs and run the last
+      // checks — the final sentence must close the "reset to a clean
+      // state" reading before it forms.
+      final text = const DeadlineLadder().text(
+        DeadlineNoticeKind.wrapUp,
+        formatTimeLeft(3 * 60 * 1000),
+      );
+      expect(text, contains('leave the final state in place'));
+      expect(text, contains('never a teardown'));
+      // The gh-1652 parity clause stays intact alongside.
+      expect(text, contains('run each produced entry point the way the grader will'));
+    });
+
     test('a jump across several crossings batches them in ladder order', () {
       deadline.setDuration(const Duration(minutes: 25));
       nowMs += const Duration(minutes: 24, seconds: 45).inMilliseconds;

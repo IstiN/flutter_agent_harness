@@ -164,6 +164,74 @@ void main() {
     },
   );
 
+  test('gh-1668 C1: the no-teardown rule — final state is the deliverable', () {
+    // The observed antipattern (terminal-bench configure-git-webserver,
+    // 2/2): the agent verified end-to-end, then RESET its own setup
+    // "so the checker's commands run exactly as written" — the produced
+    // state no longer existed at grading.
+    expect(
+      finalizeGateContractPrompt,
+      contains('Final state is the deliverable'),
+    );
+    expect(
+      finalizeGateContractPrompt,
+      contains('never uninstall, stop, reset'),
+    );
+    expect(finalizeGateContractPrompt, contains('read-only or additive'));
+    expect(
+      finalizeGateContractPrompt,
+      contains('only if the task explicitly requires it'),
+    );
+    // The negative example pins the wrong pattern by name.
+    expect(finalizeGateContractPrompt, contains('verified, then reset'));
+  });
+
+  test('gh-1668 C1: the no-teardown rule is numbered step 4 inside the loop', () {
+    // Skim-proof, mirroring the gh-1652 C1 placement guard: flash
+    // executes numbered steps but skims the bullet list — the rule must
+    // ride the numbered loop, not the named-checks section or a
+    // floating paragraph after the ledger spec.
+    final fixAt = finalizeGateContractPrompt.indexOf('3. **Fix every unmet');
+    final ruleAt = finalizeGateContractPrompt.indexOf(
+      '4. **Final state is the deliverable**',
+    );
+    final wallAt = finalizeGateContractPrompt.indexOf(
+      '**Work to the wall.**',
+    );
+    expect(ruleAt, greaterThan(fixAt));
+    expect(wallAt, greaterThan(ruleAt));
+    expect(
+      finalizeGateContractPrompt,
+      isNot(contains('- **Final state is the deliverable**')),
+    );
+  });
+
+  test('gh-1668 C2: "Content, not existence" cross-references the '
+      'no-teardown rule', () {
+    // A file that existed mid-run but is deleted at finalization is a
+    // fail — the cross-reference lives in the SAME bullet, not a
+    // distant section the model may never connect.
+    final bulletAt = finalizeGateContractPrompt.indexOf(
+      '- **Content, not existence**',
+    );
+    final refAt = finalizeGateContractPrompt.indexOf(
+      'deleted at finalization is a `fail`',
+    );
+    expect(bulletAt, isNot(-1));
+    expect(refAt, greaterThan(bulletAt));
+    expect(refAt, lessThan(bulletAt + 700));
+    expect(finalizeGateContractPrompt, contains('(step 4)'));
+  });
+
+  test(
+    'gh-1668 C3: the composed headless prompt carries the no-teardown rule',
+    () async {
+      final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+      expect(prompt, contains('Final state is the deliverable'));
+      expect(prompt, contains('verified, then reset'));
+    },
+  );
+
   test('interactive boots never carry the contract', () async {
     for (final mode in [
       ApprovalMode.alwaysAsk,
