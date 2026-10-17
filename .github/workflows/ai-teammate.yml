@@ -183,6 +183,11 @@ jobs:
       machine-author: ${{ vars.MACHINE_AUTHOR || '' }}
       leg: ${{ needs.gate.outputs.leg || github.event.inputs.leg || '' }}
       reason: ${{ github.event.inputs.reason || 'ai-teammate-author gate' }}
+      # 2026-10-17 incident: ubuntu-slim force-cancels teammate jobs at
+      # ~15m20-52s (5 cancelled legs tonight; agents repo: 6/6 at ~15m24s).
+      # Legs under ~13 min survive — that's why short fa legs looked fine.
+      # Owner decision: ai-teammate legs pin ubuntu-latest; CI stays slim.
+      runner: 'ubuntu-latest'
     # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a
     # required named secret (plus optional ZAI_CODE_KEY / KIMI_REVIEW_KEY),
     # and `secrets: inherit` does not satisfy required-secret validation at
