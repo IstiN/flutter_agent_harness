@@ -228,7 +228,7 @@ jobs:
                 # that repo path. Skip-with-warning remains only as the
                 # last-resort fallback when even parking the stub fails.
                 STALE_DIR="${STALE:-${RUNNER_TEMP:-/tmp}/stale-workspace-sidecar}"
-                if mkdir -p "$STALE_DIR" 2>/dev/null                   && mv "$GITHUB_WORKSPACE/$name" "$STALE_DIR/" 2>/dev/null; then
+                if mkdir -p "$STALE_DIR" 2>/dev/null && mv "$GITHUB_WORKSPACE/$name" "$STALE_DIR/" 2>/dev/null; then
                   mv "$entry" "$GITHUB_WORKSPACE/"
                 else
                   echo "::warning::stub collision on '$name' — left in $CLONE_TARGET (gh-1600)"
