@@ -150,6 +150,28 @@ void main() {
       expect(texts, ['first run', 'resumed']);
     });
 
+    test('a sealed leaf move (moveTo) writes nothing and resolves null',
+        () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendMessage(UserMessage.text('only'));
+      final warnings = <String>[];
+      session.seal(onLateWrite: warnings.add);
+
+      final moved = await session.moveTo(null, summary: 'branch summary');
+      expect(moved, isNull);
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('leaf_move'));
+
+      // The file holds the message only — no leaf/branch_summary records.
+      final types = [
+        for (final record in await recordsOnDisk())
+          if (record is! MessageRecord) record.type,
+      ];
+      expect(types, isEmpty);
+    });
+
     test('the seal does not touch the session file bytes', () async {
       final session = await repo.create(
         JsonlSessionCreateOptions(cwd: '/work'),
