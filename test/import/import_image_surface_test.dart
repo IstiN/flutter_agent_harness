@@ -1,0 +1,489 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/context.dart';
+import 'package:flutter_agent_harness/src/env/execution_env.dart';
+import 'package:flutter_agent_harness/src/import/claude_adapter.dart';
+import 'package:flutter_agent_harness/src/import/foreign_session.dart';
+import 'package:flutter_agent_harness/src/import/harness_adapter.dart';
+import 'package:flutter_agent_harness/src/import/import_mapper.dart';
+import 'package:flutter_agent_harness/src/types.dart';
+import 'package:test/test.dart';
+
+/// UT tier — image-payload surface coverage (CRAP gate on
+/// `foreign_session.dart` `_parseForeignImage`/`_inlineBase64` and
+/// `claude_adapter.dart` `read`): every decode branch lands as either an
+/// embedded [ForeignImage] or a counted placeholder, and the claude read
+/// pass emits lifted tool results, on-path records, aux rides, and the
+/// exact skip accounting for corrupt/sidechain/off-branch lines.
+void main() {
+  group('parseForeignContent image branches', () {
+    var skips = 0;
+    void onSkip() => skips++;
+
+    setUp(() => skips = 0);
+
+    ForeignImage singleImage(
+      Map<String, dynamic> block, {
+      ForeignImage? Function(String blobRef)? resolveBlob,
+    }) => parseForeignContent(
+      [block],
+      onSkip,
+      resolveBlob: resolveBlob,
+    ).whereType<ForeignImage>().single;
+
+    test('plain base64 embeds with the default png mime', () {
+      final image = singleImage({'type': 'image', 'data': 'QUJD'});
+      expect(image.base64Data, 'QUJD');
+      expect(image.mimeType, 'image/png');
+      expect(image.missingReason, isNull);
+      expect(skips, 0);
+    });
+
+    test('data-URL header with the base64 flag is stripped', () {
+      final image = singleImage({
+        'type': 'image',
+        'data': 'data:image/webp;base64,QUJD',
+        'mimeType': 'image/webp',
+      });
+      expect(image.base64Data, 'QUJD');
+      expect(image.mimeType, 'image/webp');
+    });
+
+    test('claude source shape supplies data and media_type', () {
+      final image = singleImage({
+        'type': 'image',
+        'source': {
+          'type': 'base64',
+          'data': 'QUJD',
+          'media_type': 'image/jpeg',
+        },
+      });
+      expect(image.base64Data, 'QUJD');
+      expect(image.mimeType, 'image/jpeg');
+    });
+
+    test('blob reference resolves through the resolver', () {
+      final image = singleImage(
+        {'type': 'image', 'data': 'blob:sha256:cafe'},
+        resolveBlob: (ref) =>
+            ForeignImage(base64Data: 'QUJD', mimeType: 'image/png'),
+      );
+      expect(image.base64Data, 'QUJD');
+      expect(image.missingReason, isNull);
+    });
+
+    test('blob reference missing from the store is a counted placeholder', () {
+      final image = singleImage({
+        'type': 'image',
+        'data': 'blob:sha256:dead',
+      }, resolveBlob: (ref) => null);
+      expect(image.base64Data, isNull);
+      expect(image.missingReason, contains('blob not found'));
+    });
+
+    test('blob reference without any resolver is a placeholder too', () {
+      final image = singleImage({'type': 'image', 'data': 'blob:sha256:beef'});
+      expect(image.missingReason, contains('blob not found'));
+    });
+
+    test('undecodable payloads become placeholders, never throw', () {
+      const blocks = [
+        {
+          'type': 'image',
+          'data': 'data:image/svg+xml,<svg>',
+        }, // header without base64 flag
+        {'type': 'image', 'data': 'not base64!!'}, // charset violation
+        {'type': 'image', 'data': ''}, // empty payload
+        {'type': 'image'}, // no data, no source
+        {
+          'type': 'image',
+          'source': 'not-a-map',
+        }, // source present but not a map
+        {'type': 'image', 'data': 42}, // non-string data
+      ];
+      final images = parseForeignContent(
+        blocks,
+        onSkip,
+      ).whereType<ForeignImage>().toList();
+      expect(images, hasLength(6));
+      for (final image in images) {
+        expect(image.base64Data, isNull);
+        expect(image.missingReason, contains('undecodable'));
+      }
+      expect(skips, 0);
+    });
+  });
+
+  group('ClaudeAdapter.read image and tree surface', () {
+    late Directory home;
+    late Directory project;
+    late Directory faRoot;
+
+    setUp(() {
+      home = Directory.systemTemp.createTempSync('fa_import_img_home');
+      project = Directory.systemTemp.createTempSync('fa_import_img_proj');
+      faRoot = Directory.systemTemp.createTempSync('fa_import_img_fa');
+    });
+
+    tearDown(() {
+      home.deleteSync(recursive: true);
+      project.deleteSync(recursive: true);
+      faRoot.deleteSync(recursive: true);
+    });
+
+    test('lifts tool results, parses on-path images, counts skips', () async {
+      final bucket = Directory(
+        '${home.path}/.claude/projects/${claudeProjectSlug(project.path)}',
+      )..createSync(recursive: true);
+      final cwd = project.path;
+      File('${bucket.path}/claude-img.jsonl').writeAsStringSync('''
+{"type":"session","version":3,"id":"claude-img","timestamp":"2026-10-10T10:00:00.000Z","cwd":"$cwd"}
+{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"sessionId":"claude-img","cwd":"$cwd","timestamp":"2026-10-10T10:01:00.000Z","message":{"role":"user","content":"plan the API"}}
+{"type":"assistant","uuid":"a2","parentUuid":"u1","isSidechain":false,"sessionId":"claude-img","timestamp":"2026-10-10T10:02:30.000Z","message":{"role":"assistant","content":[{"type":"text","text":"fork dead end"}]}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","isSidechain":false,"sessionId":"claude-img","timestamp":"2026-10-10T10:02:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-1","name":"write","input":{"path":"api.ts"}}],"model":"claude-x","stopReason":"toolUse"}}
+{"type":"user","uuid":"u2","parentUuid":"a1","isSidechain":false,"sessionId":"claude-img","timestamp":"2026-10-10T10:03:00.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu-1","content":[{"type":"text","text":"done"}]},{"type":"image","source":{"type":"base64","data":"QUJD","media_type":"image/jpeg"}},{"type":"image","data":"data:image/png;base64,QUJD"},{"type":"image","data":"blob:sha256:cafe"},{"type":"image","data":"not base64!!"},{"type":"wat","x":1}]}}
+{"type":"user","uuid":"s1","parentUuid":null,"isSidechain":true,"sessionId":"claude-img","timestamp":"2026-10-10T10:04:00.000Z","message":{"role":"user","content":"sidechain context"}}
+this is not json
+{"type":"last-prompt","prompt":"/model"}
+''');
+      final adapter = ClaudeAdapter();
+      final summaries = await adapter.discover(
+        fs: LocalExecutionEnv(cwd: project.path),
+        cwd: project.path,
+        homeDir: home.path,
+        tempDir: Directory.systemTemp.path,
+        limits: const ImportLimits(),
+      );
+      expect(summaries, hasLength(1));
+      final parse = await adapter.read(
+        fs: LocalExecutionEnv(cwd: project.path),
+        summary: summaries.single,
+        homeDir: home.path,
+        limits: const ImportLimits(),
+      );
+
+      // Corrupt line + sidechain entry + off-branch fork a2 — each exactly
+      // one counted skip; aux lines (session, last-prompt) are NOT skips.
+      expect(parse.skippedRecords, 3);
+
+      // Unmodeled types ride as inert custom data (GOAL C2).
+      expect(
+        parse.records.whereType<ForeignUnhandled>().map((r) => r.type).toSet(),
+        {'session', 'last-prompt'},
+      );
+
+      final messages = parse.records.whereType<ForeignMessage>().toList();
+      // u1 + a1 + u2's lifted tool_result + u2's parent message.
+      expect(messages, hasLength(4));
+
+      final toolResult = messages.firstWhere((m) => m.role == 'toolResult');
+      expect(toolResult.toolCallId, 'tu-1');
+      expect(toolResult.contents.single, isA<ForeignText>());
+
+      final u2 = messages
+          .where(
+            (m) => m.role == 'user' && m.contents.any((c) => c is ForeignImage),
+          )
+          .single;
+      final images = u2.contents.whereType<ForeignImage>().toList();
+      expect(images, hasLength(4));
+      expect(images[0].base64Data, 'QUJD');
+      expect(images[0].mimeType, 'image/jpeg');
+      expect(images[1].base64Data, 'QUJD');
+      expect(images[1].mimeType, 'image/png');
+      expect(images[2].missingReason, contains('blob not found'));
+      expect(images[3].missingReason, contains('undecodable'));
+      // The unmodeled block is counted (onSkip), never kept or dropped
+      // silently.
+      expect(u2.contents, hasLength(4));
+      expect(parse.skippedBlocks, 1);
+
+      final a1 = messages
+          .where((m) => m.role == 'assistant' && m.model == 'claude-x')
+          .single;
+      // The lifted tool_result and its parent record share one source line.
+      expect(toolResult.lineNumber, u2.lineNumber);
+      expect(a1.lineNumber, isNot(toolResult.lineNumber));
+    });
+  });
+
+  group('mapper content-block and store-root surface', () {
+    test('thinking, tool-call, unknown, and skipped images map to text '
+        'placeholders; embedded images embed', () {
+      final parse = ForeignParseResult(
+        records: [
+          ForeignMessage(
+            lineNumber: 1,
+            role: 'user',
+            contents: [
+              const ForeignText('plain'),
+              const ForeignThinking('why not'),
+              ForeignToolCall(id: 't1', name: 'read', arguments: const {}),
+              const ForeignUnknownBlock('mystery', {'k': 1}),
+              const ForeignImage.skipped('blob not found: x'),
+              const ForeignImage(base64Data: 'QQ==', mimeType: 'image/png'),
+            ],
+            rawMessage: const {'role': 'user'},
+          ),
+        ],
+        skippedRecords: 0,
+        skippedBlocks: 0,
+      );
+      final mapped = mapForeignSession(parse, 'omp');
+      final user = mapped.items
+          .map((i) => i.planned)
+          .whereType<PlannedMessage>()
+          .map((p) => p.message)
+          .whereType<UserMessage>()
+          .single;
+      final blocks = user.content as List<ContentBlock>;
+      final texts = blocks.whereType<TextContent>().map((t) => t.text).toList();
+      expect(texts, contains('plain'));
+      expect(texts, contains('why not'));
+      expect(texts, contains('[tool call]'));
+      expect(texts, contains('[unmapped content]'));
+      expect(texts, contains('[image skipped: blob not found: x]'));
+      final image = blocks.whereType<ImageContent>().single;
+      expect(image.data, 'QQ==');
+      expect(image.mimeType, 'image/png');
+    });
+
+    test('expectedStoreRoot pins the documented per-harness roots', () {
+      expect(expectedStoreRoot('omp', '/home'), '/home/.omp/agent/sessions');
+      expect(expectedStoreRoot('kimi', '/home'), '/home/.kimi');
+      expect(
+        expectedStoreRoot('opencode', '/home'),
+        '/home/.local/share/opencode',
+      );
+      expect(expectedStoreRoot('claude', '/home'), '/home/.claude/projects');
+      expect(expectedStoreRoot('gemini', '/home'), '/home/.gemini');
+    });
+
+    test('custom_message records map to structured planned messages', () {
+      final parse = ForeignParseResult(
+        records: [
+          const ForeignCustomMessage(
+            lineNumber: 3,
+            customType: 'banner',
+            content: 'hello',
+            display: true,
+            details: {'tone': 'calm'},
+            attribution: 'ext',
+          ),
+        ],
+        skippedRecords: 0,
+        skippedBlocks: 0,
+      );
+      final mapped = mapForeignSession(parse, 'omp');
+      final planned = mapped.items
+          .map((i) => i.planned)
+          .whereType<PlannedCustomMessage>()
+          .single;
+      expect(planned.customType, 'import.omp');
+      expect(planned.content, 'hello');
+      expect(planned.display, isTrue);
+      // Attribution rides inside the details map (mapper pin).
+      expect(planned.details, {
+        'customType': 'banner',
+        'attribution': 'ext',
+        'details': {'tone': 'calm'},
+      });
+    });
+  });
+
+  group('ClaudeAdapter.discover non-ranged prefix surface', () {
+    late Directory home;
+    late Directory project;
+    late Directory faRoot;
+
+    setUp(() {
+      home = Directory.systemTemp.createTempSync('fa_import_pfx_home');
+      project = Directory.systemTemp.createTempSync('fa_import_pfx_proj');
+      faRoot = Directory.systemTemp.createTempSync('fa_import_pfx_fa');
+    });
+
+    tearDown(() {
+      home.deleteSync(recursive: true);
+      project.deleteSync(recursive: true);
+      faRoot.deleteSync(recursive: true);
+    });
+
+    Directory bucket() => Directory(
+      '${home.path}/.claude/projects/${claudeProjectSlug(project.path)}',
+    )..createSync(recursive: true);
+
+    Future<List<ForeignSessionSummary>> discoverOn(FileSystem fs) =>
+        ClaudeAdapter().discover(
+          fs: fs,
+          cwd: project.path,
+          homeDir: home.path,
+          tempDir: Directory.systemTemp.path,
+          limits: const ImportLimits(),
+        );
+
+    test('reads the recorded cwd from a small whole-file backend', () async {
+      File('${bucket().path}/s.jsonl').writeAsStringSync(
+        '{"type":"session","version":3,"id":"s","cwd":"${project.path}"}\n'
+        '{"type":"user","message":{"role":"user","content":"hi"}}\n',
+      );
+      final summaries = await discoverOn(_ProbeEnv(project.path));
+      expect(summaries, hasLength(1));
+      expect(summaries.single.headerCwd, project.path);
+    });
+
+    test('truncates the prefix at 4 KiB but still finds the cwd', () async {
+      final filler = 'x' * 5000;
+      File('${bucket().path}/s.jsonl').writeAsStringSync(
+        '{"type":"session","version":3,"id":"s","cwd":"${project.path}"}\n'
+        '{"type":"user","message":{"role":"user","content":"$filler"}}\n',
+      );
+      final summaries = await discoverOn(_ProbeEnv(project.path));
+      expect(summaries, hasLength(1));
+      expect(summaries.single.headerCwd, project.path);
+    });
+
+    test(
+      'fileInfo failure yields no cwd and no summary, never a crash',
+      () async {
+        File('${bucket().path}/s.jsonl').writeAsStringSync(
+          '{"type":"session","version":3,"id":"s","cwd":"${project.path}"}\n',
+        );
+        final summaries = await discoverOn(
+          _ProbeEnv(project.path, failFileInfo: true),
+        );
+        expect(summaries, isEmpty);
+      },
+    );
+
+    test('readTextFile failure yields no summary, never a crash', () async {
+      File('${bucket().path}/s.jsonl').writeAsStringSync(
+        '{"type":"session","version":3,"id":"s","cwd":"${project.path}"}\n',
+      );
+      final summaries = await discoverOn(
+        _ProbeEnv(project.path, failReadText: true),
+      );
+      expect(summaries, isEmpty);
+    });
+
+    test(
+      'read on a whole-file backend parses lines and counts oversized',
+      () async {
+        final bucketDir = bucket();
+        File('${bucketDir.path}/s.jsonl').writeAsStringSync(
+          '{"type":"session","version":3,"id":"s","cwd":"${project.path}"}\n'
+          '{"type":"user","uuid":"u1","parentUuid":null,'
+          '"message":{"role":"user","content":"${'x' * 200}"}}\n'
+          '{"type":"assistant","uuid":"a1","parentUuid":"u1",'
+          '"message":{"role":"assistant","content":"short"}}\n',
+        );
+        final adapter = ClaudeAdapter();
+        final summaries = await discoverOn(_ProbeEnv(project.path));
+        expect(summaries, hasLength(1));
+        // A cap between the line lengths makes the long user line an
+        // oversized-skip while the header and the short assistant line
+        // still parse — both arms of the whole-file scan's line gate.
+        final parse = await adapter.read(
+          fs: _ProbeEnv(project.path),
+          summary: summaries.single,
+          homeDir: home.path,
+          limits: const ImportLimits(maxLineBytes: 128),
+        );
+        expect(
+          parse.records
+              .whereType<ForeignUnhandled>()
+              .map((r) => r.type)
+              .toSet(),
+          {'session'},
+        );
+        expect(
+          parse.records.whereType<ForeignMessage>().single.role,
+          'assistant',
+        );
+        expect(parse.skippedRecords, 1);
+      },
+    );
+  });
+}
+
+/// A non-ranged backend that can inject failures into the discovery
+/// prefix probes (fileInfo / readTextFile) while delegating everything
+/// else — drives the `_readWholeFilePrefix` guard branches.
+final class _ProbeEnv implements FileSystem {
+  _ProbeEnv(this.cwd, {this.failFileInfo = false, this.failReadText = false})
+    : _base = LocalExecutionEnv(cwd: cwd);
+
+  final LocalExecutionEnv _base;
+  @override
+  final String cwd;
+  final bool failFileInfo;
+  final bool failReadText;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _base.absolutePath(path);
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _base.joinPath(parts);
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) => failReadText
+      ? Future.value(
+          Err(
+            FileError(
+              FileErrorCode.permissionDenied,
+              'probe: read refused',
+              path: path,
+            ),
+          ),
+        )
+      : _base.readTextFile(path);
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _base.readBinaryFile(path);
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _base.readTextLines(path, maxLines: maxLines);
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _base.writeBinaryFile(path, content);
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _base.writeFile(path, content);
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _base.appendFile(path, content);
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      failFileInfo && path.endsWith('.jsonl')
+      ? Future.value(
+          Err(
+            FileError(
+              FileErrorCode.permissionDenied,
+              'probe: stat refused',
+              path: path,
+            ),
+          ),
+        )
+      : _base.fileInfo(path);
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _base.listDir(path);
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _base.exists(path);
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _base.createDir(path, recursive: recursive);
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _base.remove(path, recursive: recursive, force: force);
+}
