@@ -247,12 +247,26 @@ factual: paths, commands, invariants — no essays.
   wall-clock ceiling `headless.shellJobDrainMs` (default 30 min; 0 =
   shell-job-scoped kill switch: live shell jobs detach at once while the
   pre-existing subagent drain stays unconditional), then the detach
-  summary applies (gh-1459). While the drain waits, every `headless.shellJobQuietMs`
+  summary applies (gh-1459). The drain wrap-up also raises the
+  settle→reaction fence: from `_finishHeadlessDrain` on, a job settle (or
+  task completion) does bookkeeping only — no reaction run (gh-1589 I2).
+  While the drain waits, every `headless.shellJobQuietMs`
   (default 5 min; 0 = off) of a still-running awaited job steers ONE
   interim liveness notice (`job <id> running · <elapsed> · tail: …` +
   the bash_job escape hatch), skipped for a crossing the model probed
   itself (`bash_job status/output` bumps the entry's probe generation)
-  (gh-1459 ask #4). Job logs on disk are NOT secret-redacted.
+  (gh-1459 ask #4). The headless `finally` then closes the session with
+  the SEAL (`Session.seal`, gh-1589): after the usage fold + the
+  job-board/obligations/subagent flushes (close order: drain → usage
+  fold → seal → exit, the REPL teardown seals the same way), every writer
+  observes the sealed session — late appends are DROPPED with one stderr
+  warning per writer class, never written, so the session JSONL is a
+  sealed artifact before the process exits. The seal is per-run state
+  (a resume opens the same file unsealed); the harbor adapter mirrors the
+  contract from the outside: `run()` returns only after the fa process
+  exited (kill + bounded reap on every path, incl. external cancel; loud
+  degradation when the reap times out). Job logs on disk are NOT
+  secret-redacted.
 - `lib/src/tools/availability.dart` + `availability_gate.dart` —
   capability-gated tool availability (issue #19): `resolveToolAvailability`
   merges the `tools:` scope stack (global `~/.fah/config.yaml` < project

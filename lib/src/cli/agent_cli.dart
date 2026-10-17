@@ -1117,6 +1117,12 @@ class AgentCli {
   @visibleForTesting
   set sessionForTest(Session? session) => _session = session;
 
+  /// Test seam: the active session (null before the first drive) — the
+  /// gh-1589 seal tests assert `isSealed` on it after both exit paths
+  /// (headless `runHeadless`, REPL teardown).
+  @visibleForTesting
+  Session? get sessionForTest => _session;
+
   /// Test seam: swaps the session repo so CLI paths can be driven over a
   /// store shape the real repo never produces — gh-1555's incident-shape
   /// fixture refuses every FULL open (what a ledger past the gh-1073 2 GiB
@@ -1589,6 +1595,21 @@ class AgentCli {
   var _streamedThinking = false;
   var _exited = false;
 
+  /// gh-1589: the settle→reaction fence (I2). Set when the run enters its
+  /// exit wrap-up (`_finishHeadlessDrain`, the aborted branch, the catch/
+  /// finally of `runHeadless`): from then on a background-shell settle —
+  /// or a task-job completion — does BOOKKEEPING only. No `_startRun`, no
+  /// model request, no message append: a post-drain reaction run nobody
+  /// waits for is exactly the 65gGW7b late-write burst this card closes.
+  /// REPL-only `_exited` deliberately stays untouched (different exit
+  /// semantics); the fence is headless wrap-up state. The fence is
+  /// per-RUN like the seal itself (I5): [runHeadless] resets it at entry
+  /// so a second headless run on the same instance (a wake/continuation
+  /// loop, a test harness reusing one CLI) never silently inherits a
+  /// permanently raised fence — mid-drain settles would do bookkeeping
+  /// only and the drain's reaction runs would never start.
+  bool _reactionRunsSealed = false;
+
   /// Set when the user interrupts (Esc/Ctrl-C); the TUI drain loop discards
   /// queued messages instead of starting new turns after an abort.
   var _abortRequested = false;
@@ -1996,6 +2017,13 @@ class AgentCli {
     StreamJsonWriter? streamJson,
   }) async {
     _hep = hep;
+    // gh-1589 (review): the settle→reaction fence is per-RUN state (I5 —
+    // the same per-run semantics as the seal). Reset it at entry, before
+    // the prompt drive, so a second runHeadless on this instance (a
+    // wake/continuation loop, a test harness reusing one CLI) starts
+    // unsealed: a fence inherited from the previous run's wrap-up would
+    // drop this run's mid-drain settles to bookkeeping only, silently.
+    _reactionRunsSealed = false;
     // The [net] retry voice reaches headless too (issue #1121): the bench
     // runs `fa -p`, and retries that stayed silent there made a
     // connect-stall death indistinguishable from a no-retry one in the
@@ -2139,8 +2167,10 @@ class AgentCli {
       // harness teardown, or the watchdog) — headless fa must EXIT
       // promptly, not drain job-reaction rounds or stand at the waiter
       // ceiling. Jobs own their lifecycle: they keep running, and the
-      // honest detach summary says so.
+      // honest detach summary says so. gh-1589: the settle fence goes up
+      // here too — the run is exiting, settles do bookkeeping only.
       if (terminalStopReason == StopReason.aborted) {
+        _sealReactionRuns();
         await _waiting.printHeadlessDetachSummary();
       } else {
         await _awaitHeadlessBackgroundJobs();
@@ -2149,6 +2179,9 @@ class AgentCli {
         await _waiting.waitForJobsOrSummarize(waitForJobs: waitForJobs);
       }
     } catch (error) {
+      // gh-1589: the run is over — settles from here do bookkeeping only
+      // (the finally below still seals the file).
+      _sealReactionRuns();
       io.writeln(
         _keyStatusView.errorLine('$error', _agent.state.model.baseUrl),
       );
@@ -2156,6 +2189,10 @@ class AgentCli {
     } finally {
       _headlessMode = false;
       _autoFoldCount = 0;
+      // gh-1589: the fence is up before the flushes — a settle racing the
+      // wrap-up must not start a run whose writes would fight the close
+      // sequence.
+      _sealReactionRuns();
       turnSub();
       await releasePowerAssertions();
       await _cubeCacheSaveQuietly();
@@ -2179,6 +2216,11 @@ class AgentCli {
       await _flushJobBoardPersist();
       await _flushObligationsLedger();
       await _subagentManager.flushPersist();
+      // gh-1589: the seal is the LAST session action of the run — every
+      // deliberate flush has landed, and any straggler write from here
+      // (a late settle's registry snapshot, a lost usage record) is
+      // dropped with one stderr warning per writer class.
+      _sealSessionForExit();
     }
     // gh-1603: the exit-code policy lives in the part-file extension — an
     // unfinished session prints the explicit marker and exits 1; error/
