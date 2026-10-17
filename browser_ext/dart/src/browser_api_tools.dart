@@ -54,6 +54,19 @@ const defaultResultBudgetBytes = 64 * 1024;
 typedef ExfilApprovalAsk =
     Future<bool> Function(OutboundKind kind, String url, String explanation);
 
+/// The `download` tool's size-cap pre-check (gh-1630 F2′): HEAD through
+/// the host's fetch seam → Content-Length in bytes, or null when the
+/// length is unknown (chunked encoding, opaque CORS response). Throwers
+/// and non-http(s) schemes never reach it; probe failures degrade to
+/// null (the result carries `size_precheck: "unknown"`).
+typedef DownloadProbe = Future<int?> Function(String url);
+
+/// Hard ceiling for one `download` call (F2′ "size cap"). 256 MiB keeps
+/// dataset/PDF-shaped downloads working while a runaway payload cannot
+/// silently fill the host disk; the Content-Length pre-check refuses
+/// over-cap URLs BEFORE any bytes flow (code `download_too_large`).
+const defaultMaxDownloadBytes = 256 * 1024 * 1024;
+
 /// Where a tool sits in the panel's permission UX: `core` tools ship with
 /// the default tool set, `secondTier` ones only surface in power mode.
 enum BrowserToolVisibility { core, secondTier }
@@ -198,19 +211,12 @@ List<BrowserToolSpec> browserApiToolSpecs() => List.unmodifiable(const [
     permissions: {'bookmarks'},
     tier: ApprovalTier.write,
   ),
-  // downloads.
+  // downloads (gh-1630 F2′, owner decision): the `downloads` permission
+  // is BACK, justified by this tool — the shipped static call site CWS's
+  // static review credits. Write tier (a remote URL writing to the host
+  // download dir), outbound-gated like tabs_open.
   BrowserToolSpec(
-    name: 'downloads_start',
-    permissions: {'downloads'},
-    tier: ApprovalTier.write,
-  ),
-  BrowserToolSpec(
-    name: 'downloads_search',
-    permissions: {'downloads'},
-    tier: ApprovalTier.read,
-  ),
-  BrowserToolSpec(
-    name: 'downloads_cancel',
+    name: 'download',
     permissions: {'downloads'},
     tier: ApprovalTier.write,
   ),
@@ -427,7 +433,7 @@ final class BrowserApiToolException implements Exception {
 /// ONLY: it leaves both DOM facts false, so the validator's
 /// credential-shape refusal never fires — plumb a DOM-probing classifier
 /// in for the full defense;
-/// [visitedOrigins] wires the exfil gate for tabs_open/downloads_start —
+/// [visitedOrigins] wires the exfil gate for tabs_open/download —
 /// null keeps the gate off, and a set (even empty) enforces it, an empty
 /// set meaning every origin counts as unvisited and prompts.
 final class BrowserApiToolSurface {
@@ -437,6 +443,7 @@ final class BrowserApiToolSurface {
     this.pageClassifier = urlHeuristicClassifier,
     this.visitedOrigins,
     this.exfilApproval,
+    this.downloadProbe,
   });
 
   final ChromeApi _chrome;
@@ -461,6 +468,16 @@ final class BrowserApiToolSurface {
   /// The host seeds [visitedOrigins] on allow, so the ask is once per
   /// origin, not once per call.
   final ExfilApprovalAsk? exfilApproval;
+
+  /// Size-cap pre-check for the `download` tool (gh-1630 F2′): a HEAD
+  /// through the host's fetch seam returning the Content-Length, or null
+  /// when the length is unknown (chunked/no-CORS — the cap is then
+  /// enforced by the in-flight check in [_awaitDownloadSettled] alone,
+  /// and the result says the pre-check was `unknown`). Null disables the
+  /// pre-check on bare surfaces. The host wires a fetch-based probe; this
+  /// file stays pure Dart (no dart:io), so the probe rides a constructor
+  /// seam.
+  final DownloadProbe? downloadProbe;
 
   final InjectionValidator _injection = const InjectionValidator();
   final ExfilGate _exfilGate = const ExfilGate();
@@ -1034,57 +1051,76 @@ final class BrowserApiToolSurface {
       ),
 
       // -------------------------------------------------------------------
-      // downloads
+      // downloads (gh-1630 F2′): ONE deliberate tool — `download` — is
+      // the shipped static call site justifying the `downloads`
+      // permission: http/https only, size-capped (Content-Length
+      // pre-check + in-flight enforcement), sanitized filename, the
+      // OutboundKind.download exfil gate, and a path+size result (the
+      // facade's search rides along for the wait-for-settled step). No
+      // raw downloads_* passthroughs.
       // -------------------------------------------------------------------
       tool(
-        'downloads_start',
-        'Starts downloading a URL; the browser picks the filename unless '
-            'one is given. Returns the download id.',
+        'download',
+        'Downloads a file from an http(s) URL into the host download '
+            'directory. Size-capped: a Content-Length pre-check plus an '
+            'in-flight cap enforced from the size chrome.downloads '
+            'reports (downloads with no reported length are capped by '
+            'the in-flight check only). Filename sanitized to a bare '
+            'basename, gated like every outbound action; returns the '
+            'saved path + size (a still-in-flight download reports its '
+            'id and state instead).',
         {
-          'url': {'type': 'string', 'description': 'URL to download'},
+          'url': {'type': 'string', 'description': 'http(s) URL to download'},
           'filename': {
             'type': 'string',
-            'description': 'target filename relative to Downloads',
+            'description':
+                'target file name (sanitized to a basename; default: '
+                'server-derived)',
+          },
+          'saveAs': {
+            'type': 'boolean',
+            'description': 'show a Save-As dialog (default false)',
           },
         },
         ['url'],
         (args) async {
           final url = _reqStr(args, 'url');
+          final uri = Uri.tryParse(url);
+          if (uri == null ||
+              !(uri.scheme == 'http' || uri.scheme == 'https')) {
+            throw BrowserApiToolException(
+              'bad_url',
+              'download needs an http(s) URL, got: $url',
+            );
+          }
+          final requested = _optStr(args, 'filename');
+          final sanitized = requested == null
+              ? null
+              : _sanitizeDownloadFilename(requested);
+          if (requested != null && sanitized == null) {
+            throw BrowserApiToolException(
+              'bad_filename',
+              'filename sanitizes to nothing usable: "$requested"',
+            );
+          }
+          // Outbound gate: a remote URL writing to the host disk rides
+          // the same approval surface as tabs_open (F2′ write tier).
           await _gateOutbound(OutboundKind.download, url);
-          final filename = _optStr(args, 'filename');
+          final precheck = await _probeDownloadSize(url);
           final id = await _chrome.downloads.download(
             url: url,
-            filename: filename,
+            filename: sanitized,
+            saveAs: _optBool(args, 'saveAs'),
           );
-          return ToolExecutionResult.text('started download $id from $url');
-        },
-      ),
-      tool(
-        'downloads_search',
-        'Lists downloads, optionally filtered by a substring over URL or '
-            'filename. Returns JSON download entries.',
-        {
-          'query': {
-            'type': 'string',
-            'description': 'substring filter (default: all)',
-          },
-        },
-        const [],
-        (args) async {
-          final query = _optStr(args, 'query');
-          final items = await _chrome.downloads.search(query: query);
-          return _json([for (final d in items) d.toJson()]);
-        },
-      ),
-      tool(
-        'downloads_cancel',
-        'Cancels an in-flight download.',
-        {'id': _intProp('download id')},
-        ['id'],
-        (args) async {
-          final id = _reqInt(args, 'id');
-          await _chrome.downloads.cancel(id);
-          return ToolExecutionResult.text('cancelled download $id');
+          final item = await _awaitDownloadSettled(id);
+          return _json({
+            'ok': true,
+            'id': id,
+            'state': item?.state ?? 'unknown',
+            'path': item?.filename,
+            'size': item == null || item.fileSize <= 0 ? null : item.fileSize,
+            'size_precheck': precheck,
+          });
         },
       ),
 
@@ -1625,7 +1661,7 @@ final class BrowserApiToolSurface {
     return tab.url;
   }
 
-  /// Exfil gate for tabs_open/downloads_start. Tool calls are
+  /// Exfil gate for tabs_open/download. Tool calls are
   /// user-authorized at this layer (source realUser); the approval
   /// tiering itself stays the host's approval gate — when the gate is
   /// wired (non-null [visitedOrigins]) a requiresApproval verdict is
@@ -1634,6 +1670,95 @@ final class BrowserApiToolSurface {
   /// set — once per origin), deny surfaces as 'approval_required'
   /// carrying the gate's explanation. Without a wired ask the old
   /// hard-error behavior stands.
+  /// Size-cap pre-check for [download] (F2′): asks the injected probe for
+  /// the Content-Length and refuses over-cap URLs BEFORE any bytes flow.
+  /// Unknown length (no probe / probe failure / chunked) degrades to an
+  /// honest `"unknown"` note — the cap then rides the in-flight
+  /// enforcement in [_awaitDownloadSettled] (expected total reported by
+  /// chrome.downloads), with the approval gate and Chrome's own download
+  /// UX as the remaining boundaries.
+  Future<String> _probeDownloadSize(String url) async {
+    final probe = downloadProbe;
+    if (probe == null) return 'unknown';
+    final int? size;
+    try {
+      size = await probe(url);
+    } catch (_) {
+      return 'unknown';
+    }
+    if (size == null) return 'unknown';
+    if (size > defaultMaxDownloadBytes) {
+      throw BrowserApiToolException(
+        'download_too_large',
+        '$url is $size bytes — over the $defaultMaxDownloadBytes-byte '
+        'download cap; nothing was downloaded',
+      );
+    }
+    return 'content-length $size <= cap $defaultMaxDownloadBytes';
+  }
+
+  /// Bounded wait for a download to leave `in_progress` (F2′ result needs
+  /// path + size, which only exist once the item settles). Never an
+  /// unbounded hang: the deadline reports honestly as `in_progress` with
+  /// the id, so the caller can re-check later.
+  ///
+  /// The size cap is enforced on EVERY observation, not only the
+  /// pre-check: chunked/opaque responses have no Content-Length, so the
+  /// expected total chrome.downloads reports in `fileSize` (as soon as
+  /// the response headers arrive) is the enforcement point mid-flight —
+  /// an over-cap download is cancelled and fails as `download_too_large`
+  /// instead of running uncapped to completion.
+  Future<DownloadItem?> _awaitDownloadSettled(int id) async {
+    const budget = Duration(seconds: 10);
+    const step = Duration(milliseconds: 250);
+    final deadline = DateTime.now().add(budget);
+    var last = await _findDownload(id);
+    while (true) {
+      if (last == null) return null;
+      if (last.fileSize > defaultMaxDownloadBytes) {
+        final inFlight = last.state == 'in_progress';
+        if (inFlight) await _chrome.downloads.cancel(id);
+        throw BrowserApiToolException(
+          'download_too_large',
+          'download $id is ${last.fileSize} bytes — over the '
+          '$defaultMaxDownloadBytes-byte download cap'
+          '${inFlight ? '; cancelled' : ''}',
+        );
+      }
+      if (last.state != 'in_progress') return last;
+      if (DateTime.now().isAfter(deadline)) return last;
+      await Future<void>.delayed(step);
+      last = await _findDownload(id);
+    }
+  }
+
+  Future<DownloadItem?> _findDownload(int id) async {
+    for (final item in await _chrome.downloads.search()) {
+      if (item.id == id) return item;
+    }
+    return null;
+  }
+
+  /// F2′ filename hygiene: the agent-supplied name must never carry a
+  /// path (chrome.downloads rejects traversal outright, and a silent
+  /// subdirectory write is a prompt-injection hazard) nor control
+  /// characters. Returns null when nothing usable remains (code
+  /// `bad_filename`).
+  String? _sanitizeDownloadFilename(String raw) {
+    final normalized = raw
+        .replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '')
+        .replaceAll('\\', '/');
+    final segments = [
+      for (final part in normalized.split('/'))
+        if (part.trim().isNotEmpty &&
+            part.trim() != '.' &&
+            part.trim() != '..')
+          part.trim(),
+    ];
+    if (segments.isEmpty) return null;
+    return segments.last;
+  }
+
   Future<void> _gateOutbound(OutboundKind kind, String url) async {
     final visited = visitedOrigins;
     if (visited == null) return;
@@ -1837,11 +1962,13 @@ Future<BrowserApiToolSurface> registerBrowserApiTools(
   Set<String>? visitedOrigins,
   Set<String> enabledSecondTier = const {},
   ExfilApprovalAsk? exfilApproval,
+  DownloadProbe? downloadProbe,
 }) async {
   final surface = BrowserApiToolSurface(
     chrome,
     visitedOrigins: visitedOrigins,
     exfilApproval: exfilApproval,
+    downloadProbe: downloadProbe,
   );
   final tools = surface.tools();
   registry.registerAll([

@@ -6,8 +6,11 @@
 //   CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
 //     dart run scripts/check_extension_panel.dart [seconds]
 //
-// Exit code 0 = no fatal errors. CDN-CSP blocks (jsdelivr — the opt-in
-// on-device LLM features) are reported but allowlisted.
+// Exit code 0 = no fatal errors. Since gh-1630 the panel carries NO
+// remote code at all (the on-device engines load from the package-local
+// vendor dir), so jsdelivr/CSP-block noise is no longer allowlisted — any
+// such console error is fatal, because it means a CDN import crept back
+// into the bundle (CWS Blue Argon) or a vendored asset failed to load.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -42,6 +45,10 @@ Future<void> main(List<String> args) async {
     '--remote-debugging-port=0',
     '--no-first-run',
     '--disable-gpu',
+    // Same Linux flags the dart integration driver uses
+    // (test/browser_ext/chrome_driver.dart): containers disable
+    // unprivileged user namespaces, so the chrome sandbox cannot start.
+    if (Platform.isLinux) ...['--no-sandbox', '--disable-dev-shm-usage'],
     'about:blank',
   ]);
   late final StreamSubscription<String> errSub;
@@ -179,10 +186,51 @@ Future<void> main(List<String> args) async {
   }, panelSession);
   stderr.writeln('=== probe: ${jsonEncode(probe)}');
 
-  final allow = RegExp(r'jsdelivr\.net|cdn\.jsdelivr');
-  final fatal = errors.where(
-    (e) => !allow.hasMatch(e) && !e.contains('is not defined'),
-  );
+  // gh-1630 (review): the vendored on-device engines are the WHOLE point
+  // of the resubmission — assert they actually constructed, don't infer
+  // health from an empty console (a loader that dies before installing
+  // its global used to surface only as a silenced "… is not defined").
+  // vendor_loader_webllm/transformers install window.webllm /
+  // window.transformersjs synchronously after their import; litert rides
+  // the awaited window.litertLmReady handshake (which also installs
+  // window.Engine).
+  final engines = await send('Runtime.evaluate', {
+    'expression':
+        "JSON.stringify({webllm: typeof window.webllm !== 'undefined', "
+        "transformersjs: typeof window.transformersjs !== 'undefined', "
+        "litertHandshake: typeof window.litertLmReady !== 'undefined'})",
+    'returnByValue': true,
+  }, panelSession);
+  final engineState = () {
+    try {
+      final v = ((engines['result'] as Map)['value'] as String?) ?? '';
+      return Map<String, dynamic>.from(
+        jsonDecode(v) as Map<dynamic, dynamic>,
+      );
+    } catch (_) {
+      return <String, dynamic>{};
+    }
+  }();
+  stderr.writeln('=== engine constructs: ${jsonEncode(engineState)}');
+  // The awaited handshake must SETTLE — a hung import (404 wasm, CSP
+  // kill) must not read as healthy.
+  final litert = await send('Runtime.evaluate', {
+    'expression':
+        "window.litertLmReady ? Promise.race([window.litertLmReady.then(() => 'fulfilled').catch(e => 'rejected: ' + e), new Promise(r => setTimeout(() => r('timeout'), 10000))]) : 'missing'",
+    'returnByValue': true,
+    'awaitPromise': true,
+  }, panelSession);
+  final litertState =
+      (((litert['result'] as Map)['value'] ?? 'missing') as String);
+  stderr.writeln('=== litertLmReady: $litertState');
+
+  // gh-1630: no remote-code allowlist — a CDN mention in the panel
+  // console is a REGRESSION (Blue Argon), and EVERY console error is
+  // fatal: the pre-gh-1630 "… is not defined" exemption excused the
+  // ondevice stub era (loaders that intentionally did not install their
+  // globals). The stub is gone; a missing engine global is exactly the
+  // failure this checker exists to catch.
+  final fatal = errors;
   stderr.writeln('=== panel console over $watchSecs s ===');
   for (final e in errors) {
     stderr.writeln(e.length > 600 ? '${e.substring(0, 600)}…' : e);
@@ -191,23 +239,38 @@ Future<void> main(List<String> args) async {
   for (final w in warnings.take(8)) {
     stderr.writeln(w.length > 160 ? '${w.substring(0, 160)}…' : w);
   }
-  stderr.writeln(
-    'fatal=${fatal.length} cdnBlocked=${errors.length - fatal.length}',
-  );
+  stderr.writeln('fatal=${fatal.length} consoleErrors=${errors.length}');
   wsSub.cancel();
   errSub.cancel();
   proc.kill();
   await tmp.delete(recursive: true).catchError((_) => tmp);
-  exit(fatal.isEmpty ? 0 : 1);
+  final engineFailures = <String>[
+    if (engineState['webllm'] != true)
+      'window.webllm missing — vendor_loader_webllm.js did not construct the engine',
+    if (engineState['transformersjs'] != true)
+      'window.transformersjs missing — vendor_loader_transformers.js did not construct the engine',
+    if (engineState['litertHandshake'] != true)
+      'window.litertLmReady missing — vendor_loader_litert.js did not install the handshake',
+    if (engineState['litertHandshake'] == true && litertState != 'fulfilled')
+      'litertLmReady did not settle fulfilled ($litertState)',
+  ];
+  for (final f in engineFailures) {
+    stderr.writeln('ENGINE-FAIL $f');
+  }
+  exit(fatal.isEmpty && engineFailures.isEmpty ? 0 : 1);
 }
 
 /// The unpacked-extension id: SHA-256 of the manifest `key` (DER public
 /// key) when present, else of the absolute load path — first 16 bytes,
 /// hex digits mapped 0-9a-f → a-p.
 String extensionIdForPath(String path) {
-  final manifest =
-      jsonDecode(File('$path/manifest.json').readAsStringSync())
-          as Map<String, dynamic>;
+  // The SOURCE manifest carries // comments (Chrome tolerates them; the
+  // packaged copy is stripped strict JSON) — parse with the same
+  // tolerance as scripts/check_cws_compliance.py.
+  final raw = File('$path/manifest.json').readAsStringSync();
+  final manifest = jsonDecode(
+        raw.replaceAll(RegExp(r'^\s*//.*$', multiLine: true), ''),
+      ) as Map<String, dynamic>;
   final key = manifest['key'] as String?;
   final List<int> input = key != null ? base64Decode(key) : utf8.encode(path);
   final digest = sha256.convert(input).bytes;

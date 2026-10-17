@@ -2,8 +2,10 @@
 // on-device "Gemma (transformers.js)" provider.
 // Loaded by web/index.html before flutter_bootstrap.js; the Dart side calls
 // these via dart:js_interop (lib/transformers_js/transformers_js_js_interop.dart).
-// The module itself arrives as window.transformersjs (ES-module import from
-// jsdelivr in index.html); these helpers own the stateful objects
+// The module itself arrives as window.transformersjs (the index.html
+// engine loader imports it from the build's configured source — CDN on
+// the hosted web app, package-local vendor dir in the extension); these
+// helpers own the stateful objects
 // (processor, model, stopping criteria) so only plain values cross the
 // Dart boundary.
 //

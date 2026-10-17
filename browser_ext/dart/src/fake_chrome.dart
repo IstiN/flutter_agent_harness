@@ -226,6 +226,30 @@ final class FakeChrome implements ChromeApi {
   final List<_BmRec> _bmRoots = [];
   final Set<int> _attached = {};
 
+  /// Test knob: invoked with the new download id right after download()
+  /// registers it — lets tests complete/observe in-flight downloads
+  /// while the `download` tool polls for the result (F2′).
+  void Function(int id)? onDownloadStarted;
+
+  /// Marks a download complete (the fake never completes on its own —
+  /// real downloads take wall-clock time tests must not wait for).
+  void completeDownload(int id, {int fileSize = 0}) {
+    final d = _downloads[id] ??
+        (throw StateError('no download with id $id'));
+    d.state = 'complete';
+    d.fileSize = fileSize;
+  }
+
+  /// Test knob: reports an expected total size on an in-flight download
+  /// WITHOUT completing it — chrome.downloads exposes the total in
+  /// `fileSize` as soon as the response headers arrive, which is what the
+  /// `download` tool's in-flight cap enforcement polls (F2′).
+  void growDownload(int id, {required int fileSize}) {
+    final d = _downloads[id] ??
+        (throw StateError('no download with id $id'));
+    d.fileSize = fileSize;
+  }
+
   int _nextTabId = 1;
   int _nextWindowId = 1;
   int _nextGroupId = _groupIdBase;
@@ -1287,6 +1311,7 @@ final class _FakeDownloads implements DownloadsApi {
       filename: filename ?? _fileNameOf(url),
       state: 'in_progress',
     );
+    _c.onDownloadStarted?.call(id);
     return id;
   }
 
@@ -1308,6 +1333,7 @@ final class _FakeDownloads implements DownloadsApi {
           filename: d.filename,
           state: d.state,
           paused: d.paused,
+          fileSize: d.fileSize,
         ),
       );
     }
@@ -1925,6 +1951,12 @@ final class _DlRec {
   final String filename;
   String state;
   bool paused = false;
+
+  /// Expected TOTAL size of the download, mirroring chrome.downloads'
+  /// `fileSize` (`bytesReceived` is the received-so-far counter, a
+  /// different field) — 0 while unknown/uncompleted, == on-disk size
+  /// once completed via [FakeChrome.completeDownload].
+  int fileSize = 0;
 }
 
 final class _BmRec {

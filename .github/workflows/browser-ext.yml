@@ -76,10 +76,18 @@ jobs:
       - name: Build extension
         run: bash scripts/build_browser_ext.sh
 
-      # Node 22's `node --test` does not glob arguments itself; bash expands
-      # the pattern (or pass the directory: node --test browser_ext/test/).
+      # gh-1630 REG-1: mechanical CWS resubmission compliance (AC1 source
+      # scan / AC5 manifest / AC6 privacy / AC3 lock) — red blocks merge.
+      - name: CWS compliance check
+        run: python3 scripts/check_cws_compliance.py
+
+      # Node 22's `node --test` does not glob arguments itself and rejects
+      # directory args — bash expands BOTH patterns (`*.test.mjs` and the
+      # `*_test.mjs` family: v21_manifest, panel_*). Missing the second
+      # pattern silently skips the manifest contract suite (gh-1630 rework:
+      # the F2′ re-add sat red in v21 while CI stayed green).
       - name: Node unit tests (vm sandbox)
-        run: node --test browser_ext/test/*.test.mjs
+        run: node --test browser_ext/test/*.test.mjs browser_ext/test/*_test.mjs
 
       # -j 1: every test spawns its own Chrome; parallel workers on one
       # runner fight over CPU and the DevTools handshakes get flaky.
@@ -149,6 +157,16 @@ jobs:
 
       - name: Build extension with the fa web app
         run: bash scripts/build_browser_ext.sh --with-app
+
+      # gh-1630 REG-1 (AC7): the packaged artifact itself must stay
+      # compliant — ext_package_guard check re-parses the zip (the
+      # remote-code scan + dead-permission/CSP asserts run inside it) and
+      # the source-level compliance closes the gap for files the zip
+      # does not carry (site/privacy.html, the lock).
+      - name: CWS compliance check (source + packaged artifact)
+        run: |
+          python3 scripts/check_cws_compliance.py
+          ls -la build/fa-extension.zip
 
       - name: Playwright e2e (app branch)
         env:

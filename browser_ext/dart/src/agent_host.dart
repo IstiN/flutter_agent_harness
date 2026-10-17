@@ -84,7 +84,7 @@ const _systemPrompt =
     'You can act on the web through two tool families: the browser_* page '
     'ops (navigate, read_dom, click, type, screenshot, …) and the v2 power '
     'surface (tabs_open/tabs_close, windows_*, groups_*, history_search, '
-    'bookmarks_*, downloads_*, cookies_*, inject_js, cdp_eval, …). Scripting '
+    'bookmarks_*, cookies_*, inject_js, cdp_eval, …). Scripting '
     'and debugging tools refuse restricted pages (chrome://, extension '
     'pages, the Web Store) — tab management still works there. Keep small '
     'notes under / through the read/write/edit/ls file tools. There is no '
@@ -253,6 +253,7 @@ final class AgentHost implements UiHostBackend {
         visitedOrigins: visitedOrigins,
         enabledSecondTier: _enabledTools,
         exfilApproval: _askOutbound,
+        downloadProbe: _downloadContentLength,
       );
       // Generic chrome.* bridge (issue #137): catalog + path calls over
       // every declared namespace, exec-tier gated by the dynamic ask.
@@ -262,7 +263,7 @@ final class AgentHost implements UiHostBackend {
         riskAsk: _askBridgeRisk,
         onFirstCall: _onFirstBridgeCall,
         // The SAME visited-origins gate the curated tabs_open /
-        // downloads_start ride — a bridge tabs.create/downloads.download
+        // download ride — a bridge tabs.create/downloads.download
         // to an unvisited origin must ask exactly like the curated
         // equivalent would (review M1: no exfil bypass through the
         // read-tier roots).
@@ -800,6 +801,37 @@ final class AgentHost implements UiHostBackend {
     if (body != null) request.body = body;
     final response = await client.send(request).then(http.Response.fromStream);
     return ExtHttpResponse(status: response.statusCode, body: response.body);
+  }
+
+  /// The `download` tool's size-cap pre-check (gh-1630 F2′): HEAD through
+  /// the same fetch seam as every other egress, returning Content-Length.
+  /// Anything unexpected (opaque CORS response, missing header, network
+  /// error, non-http scheme) degrades to null — the tool proceeds with an
+  /// honest `size_precheck: "unknown"` instead of guessing a size.
+  Future<int?> _downloadContentLength(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        !(uri.scheme == 'http' || uri.scheme == 'https')) {
+      return null;
+    }
+    final client = FetchClient();
+    try {
+      final request = http.Request('HEAD', uri);
+      final response = await client
+          .send(request)
+          .then(http.Response.fromStream)
+          .timeout(const Duration(seconds: 15));
+      // Drain (HEAD has no body, close anyway) and read the header.
+      final length = response.headers['content-length'];
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return null;
+      }
+      return length == null ? null : int.tryParse(length);
+    } on Object {
+      return null;
+    } finally {
+      client.close();
+    }
   }
 
   @override

@@ -207,7 +207,7 @@ void main() {
     }
   });
 
-  group('IT-S8: exfil gate over tabs_open / downloads_start', () {
+  group('IT-S8: exfil gate over tabs_open / download', () {
     test('tabs_open to a visited origin is allowed', () async {
       final (reg, chrome) = _reg(visited: {'https://a.example'});
       final out = await _run(reg, 'tabs_open', {'url': 'https://a.example/x'});
@@ -234,22 +234,53 @@ void main() {
       },
     );
 
-    test(
-      'downloads_start cross-origin requires approval; visited passes',
-      () async {
-        final (reg, chrome) = _reg(visited: {'https://a.example'});
-        await expectLater(
-          _run(reg, 'downloads_start', {
-            'url': 'https://cdn.other.example/f.bin',
-          }),
-          throwsA(_err('approval_required')),
-        );
-        final out = await _run(reg, 'downloads_start', {
-          'url': 'https://a.example/f.bin',
-        });
-        expect(out, contains('started download'));
-      },
-    );
+    // download (gh-1630 F2′): the OutboundKind.download gate is live
+    // again — the tool's exfil coverage rides exactly like tabs_open's:
+    // unvisited origin asks, allow proceeds, and the download starts.
+
+    test('download to an unvisited origin asks for approval, naming it',
+        () async {
+      final (reg, chrome) = _reg(visited: {'https://a.example'});
+      await expectLater(
+        _run(reg, 'download', {'url': 'https://unvisited.example/f.bin'}),
+        throwsA(
+          _errMsg(
+            'approval_required',
+            allOf(
+              contains('unvisited.example'),
+              contains('download'),
+              contains('cross_origin'),
+            ),
+          ),
+        ),
+      );
+      expect(await chrome.downloads.search(), isEmpty,
+          reason: 'a denied download must never start');
+    });
+
+    test('download allow proceeds and starts the download', () async {
+      final asks = <(OutboundKind, String, String)>[];
+      final (reg, chrome) = _reg(
+        visited: {'https://a.example'},
+        exfilApproval: (kind, url, explanation) async {
+          asks.add((kind, url, explanation));
+          return true;
+        },
+      );
+      chrome.onDownloadStarted =
+          (id) => chrome.completeDownload(id, fileSize: 7);
+      final out = await _run(reg, 'download', {
+        'url': 'https://b.example/f.bin',
+      });
+      expect(out, contains('"ok":true'));
+      expect(asks, hasLength(1));
+      final (kind, url, explanation) = asks.single;
+      expect(kind, OutboundKind.download);
+      expect(url, 'https://b.example/f.bin');
+      expect(explanation, contains('cross_origin'));
+      expect(await chrome.downloads.search(), hasLength(1),
+          reason: 'an allowed download must actually start');
+    });
 
     test('cross-origin ASKS the host when wired — allow proceeds', () async {
       // Regression: the gate used to throw approval_required WITHOUT ever

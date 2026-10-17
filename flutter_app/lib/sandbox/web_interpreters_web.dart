@@ -9,6 +9,8 @@ import 'dart:js_interop';
 import 'dart:typed_data';
 
 import 'package:fa/sandbox/sandbox_pip.dart';
+import 'package:fa/sandbox/web_interpreters_urls.dart'
+    show InterpreterAssets, interpreterAssets;
 
 /// Result of running a snippet in a browser-hosted interpreter.
 typedef InterpreterResult = ({bool available, String stdout, String stderr});
@@ -46,19 +48,17 @@ external JSPromise _fahSqlRun(String payloadJson);
 /// Browser-hosted Python (pyodide) and JavaScript (quickjs-emscripten)
 /// interpreters for the web sandbox.
 ///
-/// Both engines are loaded from public CDNs on first use and cached on
-/// `window`; nothing is bundled into the app. quickjs-emscripten is the same
+/// Engine scripts come from [interpreterAssets] (gh-1630 I3/I4): hosted
+/// web builds load them from public CDNs; the extension build resolves the
+/// SAME engines from the package-local, sha-verified `vendor/interpreters/`
+/// dir (no remote code — CWS Blue Argon; CSP forbids it anyway). Assets are
+/// cached on `window` after first use. quickjs-emscripten is the same
 /// QuickJS engine that runs as WASM on iOS/Android; pyodide is CPython
 /// compiled to WebAssembly for the browser.
 class WebInterpreters {
-  static const _quickJsCdn =
-      'https://cdn.jsdelivr.net/npm/quickjs-emscripten@0.31.0/dist/index.global.js';
-  static const _pyodideCdn =
-      'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
-  static const _sqlJsCdn =
-      'https://cdn.jsdelivr.net/npm/sql.js@1.14.1/dist/sql-wasm.js';
-  static const _sqlJsDistBase =
-      'https://cdn.jsdelivr.net/npm/sql.js@1.14.1/dist/';
+  /// Engine script URLs for this build (CDN on the hosted web / Office
+  /// builds, package-local vendor dir in the extension build — gh-1630).
+  static InterpreterAssets get _assets => interpreterAssets();
 
   static Future<void>? _quickJsLoading;
   static Future<void>? _pyodideLoading;
@@ -116,22 +116,33 @@ class WebInterpreters {
   static Future<void> _ensureQuickJs() {
     return _quickJsLoading ??= _ensureScript(
       'fah-quickjs-cdn',
-      _quickJsCdn,
+      _assets.quickJsScript,
     ).then((_) => _injectHelperScript('fah-quickjs-runner', _qjsRunnerSource));
   }
 
   static Future<void> _ensurePyodide() {
+    // The runner gets an EXPLICIT indexURL in both builds: the web CDN
+    // full dir, or the package-local vendor dir — a wrong base fails the
+    // load loudly naming the missing asset instead of silently falling
+    // back to a remote default (gh-1630 E2).
+    final runner = _pyRunnerSource.replaceAll(
+      '__PYODIDE_INDEX_URL__',
+      _assets.pyodideIndex,
+    );
     return _pyodideLoading ??= _ensureScript(
       'fah-pyodide-cdn',
-      _pyodideCdn,
-    ).then((_) => _injectHelperScript('fah-pyodide-runner', _pyRunnerSource));
+      _assets.pyodideScript,
+    ).then((_) => _injectHelperScript('fah-pyodide-runner', runner));
   }
 
   static Future<void> _ensureSqlJs() {
-    return _sqlJsLoading ??= _ensureScript('fah-sqljs-cdn', _sqlJsCdn).then(
+    return _sqlJsLoading ??= _ensureScript(
+      'fah-sqljs-cdn',
+      _assets.sqlJsScript,
+    ).then(
       (_) => _injectHelperScript(
         'fah-sqljs-runner',
-        _sqlRunnerSource.replaceAll('__SQLJS_DIST_BASE__', _sqlJsDistBase),
+        _sqlRunnerSource.replaceAll('__SQLJS_DIST_BASE__', _assets.sqlJsDist),
       ),
     );
   }
@@ -199,7 +210,7 @@ window.__fahQjsRun = function(code) {
   static const _pyRunnerSource = r'''
 window.__fahPyRun = function(code) {
   if (!window.__fahPyPromise) {
-    window.__fahPyPromise = loadPyodide();
+    window.__fahPyPromise = loadPyodide({ indexURL: '__PYODIDE_INDEX_URL__' });
   }
   return window.__fahPyPromise.then(function(py) {
     var out = [];
@@ -217,7 +228,7 @@ window.__fahPyRun = function(code) {
 };
 window.__fahPyPip = function(code) {
   if (!window.__fahPyPromise) {
-    window.__fahPyPromise = loadPyodide();
+    window.__fahPyPromise = loadPyodide({ indexURL: '__PYODIDE_INDEX_URL__' });
   }
   return window.__fahPyPromise.then(function(py) {
     return py.loadPackage('micropip').then(function() {

@@ -25,6 +25,13 @@
   //   gcm / instanceID        — legacy push transport, no agent surface
   //   devtools                — opens interactive windows, not automation
   //   passwords               — chrome exposes no such API at all
+  // gh-1630 (CWS Purple Potassium) — requested-but-unused is ALSO a hard
+  // rejection. `contentSettings` / `fontSettings` / `identity` /
+  // `desktopCapture` are gone for zero call sites and stay gone.
+  // `downloads` is BACK (gh-1630 F2′, owner decision): the `download`
+  // tool (browser_api_tools.dart) is its real shipped call site — the
+  // agent saves files the user asks it to download (http/https only,
+  // size-capped, sanitized filename, outbound-approval gated).
   // `commands`/`omnibox` are manifest KEYS (below), not permissions.
   // `management` is declared but bridge-default-DENIED (self-preservation:
   // an injected page must not disable the agent's own extension).
@@ -34,15 +41,12 @@
     "browsingData",
     "clipboardRead",
     "clipboardWrite",
-    "contentSettings",
     "contextMenus",
     "cookies",
     "debugger",
     "declarativeNetRequest",
     "downloads",
-    "fontSettings",
     "history",
-    "identity",
     "idle",
     "management",
     "nativeMessaging",
@@ -70,7 +74,6 @@
     "webRequest"
   ],
   "optional_permissions": [
-    "desktopCapture",
     "pageCapture",
     "topSites",
     "userScripts"

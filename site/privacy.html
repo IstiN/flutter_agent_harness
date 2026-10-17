@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy Policy — Fa (Flutter Agent Harness)</title>
-<meta name="description" content="Privacy policy of the Fa app: local-first design, keys in the platform Keychain, content sent only to the AI providers you connect.">
+<meta name="description" content="Privacy policy of the Fa app and browser extension: local-first design, keys in the platform Keychain, content sent only to the AI providers you connect.">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#070a10">
 <link rel="canonical" href="https://fa1.dev/privacy.html">
@@ -52,7 +52,7 @@
 <main>
   <a class="back" href="index.html">← Fa — Flutter Agent Harness</a>
   <h1>Privacy Policy</h1>
-  <div class="meta">Fa (Flutter Agent Harness) · Effective date: July 29, 2026</div>
+  <div class="meta">Fa (Flutter Agent Harness) · Effective date: October 15, 2026</div>
   <nav class="lang" aria-label="Language">
     <a href="#en">English</a>
     <a href="#ru">Русский</a>
@@ -60,72 +60,149 @@
 
   <section id="en">
     <h2>English</h2>
-    <p>This policy covers the <strong>Fa</strong> mobile/desktop/web
-    application, built on the open-source Flutter Agent Harness. The short
-    version: the app is designed local-first — your keys, chats, and files
-    stay on your device, and content leaves the device only to the AI
-    providers you explicitly connect.</p>
+    <p>This policy covers the <strong>Fa</strong> applications — the
+    mobile/desktop/web app and the <strong>Fa browser extension</strong>
+    ("fa — browser agent") — built on the open-source Flutter Agent
+    Harness. The short version: the products are designed local-first —
+    your keys, chats, and files stay on your device, and content leaves
+    the device only to the AI providers you explicitly connect.</p>
 
-    <h3>1. What stays on your device</h3>
+    <!-- sec:collect -->
+    <h3 data-sec="collect">1. Data we collect</h3>
+    <p>Fa has no accounts and no sign-up. Depending on how you use it, the
+    following data is handled by the app <strong>on your device</strong>:</p>
     <ul>
-      <li><strong>API keys and secrets</strong> are stored in the platform
-      Keychain (iOS/macOS) or the local secure store of the app sandbox.
-      They are never transmitted anywhere except directly to the provider
+      <li><strong>Chat and conversation content</strong> you send through
+      fa — your prompts, the agent's replies, and the conversation
+      context.</li>
+      <li><strong>Provider API keys</strong> you enter so fa can talk to
+      your chosen AI provider (e.g. OpenRouter, Anthropic, or a custom
+      endpoint).</li>
+      <li><strong>Page content the agent reads</strong> when you ask it to
+      act on a page (text, screenshots, cookies needed for the flow you
+      drive, history/bookmark entries you explicitly reference).</li>
+      <li><strong>Local files you attach</strong> or files the agent
+      creates for you in its sandbox.</li>
+      <li>The developer receives <strong>none</strong> of the above. There
+      is no telemetry or analytics in the browser extension at all; in the
+      mobile/desktop app, optional Firebase analytics/crash reporting is
+      described in section 2 and never includes message text, keys, or file
+      contents.</li>
+    </ul>
+
+    <!-- sec:handle -->
+    <h3 data-sec="handle">2. How we handle data</h3>
+    <ul>
+      <li><strong>On-device processing.</strong> Prompts, tool results, and
+      files are processed on your device. Nothing is proxied through the
+      developer: fa operates no servers that receive your conversation
+      content, keys, or files.</li>
+      <li><strong>AI requests.</strong> When you chat with the agent, the
+      relevant prompt and context are sent — directly from your device —
+      to the AI providers <strong>you</strong> configure (your keys, your
+      base URLs). Those providers process your data under their own
+      privacy policies.</li>
+      <li><strong>Analytics (app only).</strong> Where the platform makes
+      it available, the mobile/desktop app sends Firebase Analytics events
+      with metadata only (event names, provider/model identifiers, coarse
+      buckets) and Firebase Crashlytics crash reports (stack traces,
+      device model, OS version) — never API keys, message text, prompts,
+      or file contents. <strong>The browser extension sends no analytics
+      and no crash reports.</strong></li>
+      <li><strong>Website analytics.</strong> The landing page (fa1.dev)
+      uses Google Analytics 4 with IP anonymization to count page views
+      and outbound clicks. It sets no advertising cookies and tracks
+      nothing inside the app you run from the page.</li>
+    </ul>
+
+    <!-- sec:storage -->
+    <h3 data-sec="storage">3. Data storage</h3>
+    <ul>
+      <li>Everything fa keeps — chats, sessions, settings, provider keys,
+      sandbox files — is stored <strong>locally on your device or in your
+      browser</strong>: the platform Keychain / secure store for keys
+      (app), <code>chrome.storage</code> and extension storage for
+      extension state, OPFS/IndexedDB for web sandboxes and downloaded
+      model caches.</li>
+      <li>Nothing is stored cloud-side by the extension or the developer.
+      There is no fa account and no fa cloud.</li>
+      <li>On-device model files you choose to download (e.g. small
+      LLM weights) are stored in your browser's storage and are never
+      uploaded.</li>
+    </ul>
+
+    <!-- sec:sharing -->
+    <h3 data-sec="sharing">4. Data sharing</h3>
+    <ul>
+      <li>We do <strong>not sell</strong> your data, and we do not share it
+      with third parties for marketing.</li>
+      <li>The only third parties that receive your content are the
+      <strong>model providers you explicitly configure</strong> (your
+      requests go directly to their endpoints).</li>
+      <li><strong>Native messaging.</strong> When you pair the extension
+      with a local fa CLI helper, the extension and that local helper
+      exchange messages between themselves on your machine — this traffic
+      does not involve the developer or any server.</li>
+      <li>Optional system permissions (notifications, microphone,
+      calendar, contacts, health, home) are requested only in context for
+      features you invoke, and the data they touch is processed on-device
+      only.</li>
+    </ul>
+
+    <!-- sec:retention -->
+    <h3 data-sec="retention">5. Retention &amp; deletion</h3>
+    <ul>
+      <li>Local data persists until <strong>you</strong> delete it: clear
+      a chat/session inside the app, clear the extension's data via
+      browser settings, or uninstall — uninstalling the app or extension
+      removes its locally stored data.</li>
+      <li>Downloaded model weights and web-sandbox files live in your
+      browser storage and can be cleared the same way (site data /
+      extension data).</li>
+      <li>Firebase analytics/crash data (app only), where enabled, is
+      retained per Google's standard Firebase retention and contains no
+      message content.</li>
+    </ul>
+
+    <!-- sec:security -->
+    <h3 data-sec="security">6. Security</h3>
+    <ul>
+      <li><strong>Keys.</strong> Provider API keys are stored in the
+      platform Keychain (iOS/macOS) or the local secure store / browser
+      storage of the app sandbox, and are transmitted only to the provider
       they belong to.</li>
-      <li><strong>Chats, sessions, settings, and files</strong> (including
-      files the agent creates for you) are stored locally on your
-      device.</li>
-      <li><strong>Calendar, contacts, health, and smart-home data</strong>
-      is read (and written) on-device only, for the features you invoke. It
-      is never uploaded.</li>
+      <li><strong>Redaction.</strong> A layered secret-redaction pipeline
+      masks credentials and token-shaped strings in logs, session files,
+      and tool output before they are persisted, so secrets do not leak
+      into recorded sessions.</li>
+      <li><strong>Approvals.</strong> Sensitive agent actions (running
+      commands, opening pages, sending data out of the browser) pass an
+      approval gate you control, from ask-per-action to fully unattended
+      modes.</li>
+      <li>The extension loads all interpreter/LLM engine code
+      <strong>from inside the package</strong> (no remotely hosted code),
+      and its permissions are limited to what its features call.</li>
     </ul>
 
-    <h3>2. What leaves your device, and where</h3>
+    <!-- sec:children -->
+    <h3 data-sec="children">7. Children's privacy</h3>
+    <p>The app and the extension are not directed at children under 13
+    (or the equivalent minimum age in your jurisdiction), and we do not
+    knowingly collect personal data from them.</p>
+
+    <!-- sec:changes -->
+    <h3 data-sec="changes">8. Changes to this policy</h3>
+    <p>Changes are posted at this URL with a new effective date.</p>
     <ul>
-      <li><strong>AI requests.</strong> When you chat with the agent or
-      generate media (images, music, video), the relevant prompts and
-      conversation context are sent — directly from your device — to the AI
-      providers <strong>you</strong> configure (for example OpenRouter, or a
-      custom endpoint you enter). Those providers process your data under
-      their own privacy policies. The app has no server of its own and
-      proxies nothing.</li>
-      <li><strong>Analytics.</strong> If available on your platform, the app
-      sends Firebase Analytics events containing metadata only: event names
-      (e.g. "app started", "message sent"), provider/model identifiers, and
-      coarse buckets (message-length ranges, counts). Analytics
-      <strong>never</strong> includes API keys, message text, prompts, file
-      contents, or paths.</li>
-      <li><strong>Website analytics.</strong> The landing page (fa1.dev) uses
-      Google Analytics 4 with IP anonymization to count page views and
-      outbound clicks (for example the TestFlight and web-demo links). It
-      sets no advertising cookies and tracks nothing inside the app you run
-      from the page.</li>
-      <li><strong>Crash reports.</strong> If available on your platform, the
-      app sends crash reports (stack traces, device model, OS version) via
-      Firebase Crashlytics so we can fix bugs. Reports contain no message
-      text, API keys, or file contents.</li>
+      <li><strong>October 15, 2026</strong> — restructured into the
+      nine Chrome Web Store mandatory sections; added the browser
+      extension (local engine code, native messaging, no telemetry).</li>
+      <li><strong>July 29, 2026</strong> — first published version.</li>
     </ul>
 
-    <h3>3. Permissions</h3>
-    <p>All system permissions are <strong>optional</strong> and requested
-    only in context, when a feature needs them: notifications (reminders
-    and agent alerts), microphone (voice input), calendar (event planning),
-    contacts (call/text actions), health (activity summaries), and home
-    (smart-home control). The core app works without any of them, and you
-    can revoke them anytime in your device's Settings.</p>
-
-    <h3>4. No accounts, no ads, no sale of data</h3>
-    <p>The app requires no account, shows no ads, and does not sell, rent,
-    or share your personal data with third parties for their marketing.
-    There is no tracking beyond the analytics described above.</p>
-
-    <h3>5. Children's privacy</h3>
-    <p>The app is not directed at children under 13 and does not knowingly
-    collect personal data from them.</p>
-
-    <h3>6. Changes and contact</h3>
-    <p>Changes to this policy are posted at this URL. Questions: open an
-    issue at
+    <!-- sec:contact -->
+    <h3 data-sec="contact">9. Contact</h3>
+    <p>Questions, requests, or reports: open an issue at
     <a href="https://github.com/IstiN/flutter_agent_harness/issues">github.com/IstiN/flutter_agent_harness/issues</a>.</p>
   </section>
 
@@ -133,75 +210,152 @@
 
   <section id="ru">
     <h2>Русский</h2>
-    <p><em>Дата вступления в силу: 29 июля 2026 г.</em></p>
-    <p>Эта политика распространяется на приложение <strong>Fa</strong>
-    (мобильное, desktop и web), построенное на открытом Flutter Agent
-    Harness. Коротко: приложение спроектировано local-first — ключи, чаты и
-    файлы остаются на устройстве, а наружу уходит только то, что вы сами
+    <p><em>Дата вступления в силу: 15 октября 2026 г.</em></p>
+    <p>Эта политика распространяется на приложения <strong>Fa</strong> —
+    мобильное/desktop/web-приложение и <strong>расширение для браузера</strong>
+    («fa — browser agent»), построенные на открытом Flutter Agent Harness.
+    Коротко: продукты спроектированы local-first — ключи, чаты и файлы
+    остаются на вашем устройстве, а наружу уходит только то, что вы сами
     отправляете выбранным AI-провайдерам.</p>
 
-    <h3>1. Что остаётся на устройстве</h3>
+    <!-- sec:collect -->
+    <h3 data-sec="collect">1. Какие данные мы обрабатываем</h3>
+    <p>В fa нет аккаунтов и регистрации. В зависимости от использования
+    приложение обрабатывает <strong>на вашем устройстве</strong>:</p>
     <ul>
-      <li><strong>API-ключи и секреты</strong> хранятся в Keychain
-      платформы (iOS/macOS) или в локальном защищённом хранилище
-      приложения. Они никуда не передаются, кроме как напрямую тому
-      провайдеру, которому принадлежат.</li>
-      <li><strong>Чаты, сессии, настройки и файлы</strong> (включая файлы,
-      которые агент создаёт для вас) хранятся локально на устройстве.</li>
-      <li><strong>Календарь, контакты, здоровье и умный дом</strong>
-      читаются (и изменяются) только на устройстве и только для функций,
-      которые вы вызываете. Эти данные никогда не загружаются.</li>
+      <li><strong>Содержимое чатов</strong>, которое вы отправляете через
+      fa: ваши запросы, ответы агента и контекст диалога.</li>
+      <li><strong>API-ключи провайдеров</strong>, которые вы вводите, чтобы
+      fa мог обращаться к выбранному AI-провайдеру (например OpenRouter,
+      Anthropic или собственный endpoint).</li>
+      <li><strong>Содержимое страниц, которое агент читает</strong> по
+      вашей просьбе (текст, скриншоты, cookies, нужные для управляемого
+      вами сценария, записи истории/закладок, на которые вы явно
+      ссылаетесь).</li>
+      <li><strong>Локальные файлы</strong>, которые вы прикладываете, или
+      файлы, которые агент создаёт для вас в песочнице.</li>
+      <li>Разработчик <strong>не получает</strong> ничего из перечисленного.
+      В расширении нет ни телеметрии, ни аналитики вовсе; в
+      мобильном/desktop-приложении опциональные Firebase-аналитика и отчёты
+      о сбоях описаны в разделе 2 и никогда не содержат текстов сообщений,
+      ключей или содержимого файлов.</li>
     </ul>
 
-    <h3>2. Что покидает устройство и куда</h3>
+    <!-- sec:handle -->
+    <h3 data-sec="handle">2. Как мы обрабатываем данные</h3>
     <ul>
-      <li><strong>Запросы к AI.</strong> Когда вы общаетесь с агентом или
-      генерируете медиа (изображения, музыку, видео), соответствующие
-      промпты и контекст диалога отправляются — напрямую с устройства —
-      тем AI-провайдерам, которых <strong>вы</strong> настроили (например
-      OpenRouter или собственный endpoint). Эти провайдеры обрабатывают
-      данные по своим политикам конфиденциальности. У приложения нет
-      собственного сервера, и оно ничего не проксирует.</li>
-      <li><strong>Аналитика.</strong> Если доступна на вашей платформе,
-      приложение отправляет события Firebase Analytics только с
-      метаданными: имена событий (например «приложение запущено»,
-      «сообщение отправлено»), идентификаторы провайдера/модели и грубые
-      диапазоны (длина сообщения, счётчики). Аналитика
-      <strong>никогда</strong> не включает API-ключи, тексты сообщений,
-      промпты, содержимое файлов или пути.</li>
+      <li><strong>Обработка на устройстве.</strong> Запросы, результаты
+      инструментов и файлы обрабатываются на вашем устройстве. Ничего не
+      проксируется через разработчика: у fa нет серверов, получающих
+      содержимое ваших диалогов, ключи или файлы.</li>
+      <li><strong>Запросы к AI.</strong> Когда вы общаетесь с агентом,
+      соответствующий запрос и контекст отправляются — напрямую с вашего
+      устройства — тем AI-провайдерам, которых <strong>вы</strong>
+      настроили (ваши ключи, ваши base URL). Эти провайдеры обрабатывают
+      данные по своим политикам конфиденциальности.</li>
+      <li><strong>Аналитика (только приложение).</strong> Если доступна на
+      платформе, мобильное/desktop-приложение отправляет события Firebase
+      Analytics только с метаданными (имена событий, идентификаторы
+      провайдера/модели, грубые диапазоны) и отчёты о сбоях Firebase
+      Crashlytics (стек-трейсы, модель устройства, версия ОС) — никогда
+      API-ключи, тексты сообщений, промпты или содержимое файлов.
+      <strong>Расширение не отправляет ни аналитику, ни отчёты о
+      сбоях.</strong></li>
       <li><strong>Аналитика сайта.</strong> Лендинг (fa1.dev) использует
-      Google Analytics 4 с анонимизацией IP для подсчёта просмотров страницы
-      и исходящих кликов (например по ссылкам TestFlight и веб-демо).
-      Рекламные cookies не используются, а приложение, которое вы
-      запускаете со страницы, не отслеживается.</li>
-      <li><strong>Отчёты о сбоях.</strong> Если доступно на вашей платформе,
-      приложение отправляет отчёты о сбоях (стек-трейсы, модель устройства,
-      версия ОС) через Firebase Crashlytics, чтобы мы могли чинить ошибки.
-      Отчёты не содержат текстов сообщений, API-ключей или содержимого
-      файлов.</li>
+      Google Analytics 4 с анонимизацией IP для подсчёта просмотров и
+      исходящих кликов. Рекламные cookies не используются, а приложение,
+      которое вы запускаете со страницы, не отслеживается.</li>
     </ul>
 
-    <h3>3. Разрешения</h3>
-    <p>Все системные разрешения <strong>опциональны</strong> и
-    запрашиваются только в контексте, когда функции они нужны: уведомления
-    (напоминания и алерты агента), микрофон (голосовой ввод), календарь
-    (планирование событий), контакты (звонки/сообщения), здоровье (сводки
-    активности) и дом (умный дом). Приложение полностью работает и без них,
-    а отозвать их можно в любой момент в настройках устройства.</p>
+    <!-- sec:storage -->
+    <h3 data-sec="storage">3. Хранение данных</h3>
+    <ul>
+      <li>Всё, что хранит fa, — чаты, сессии, настройки, ключи, файлы
+      песочницы — хранится <strong>локально на устройстве или в
+      браузере</strong>: Keychain платформы / защищённое хранилище для
+      ключей (приложение), <code>chrome.storage</code> и хранилище
+      расширения для его состояния, OPFS/IndexedDB для веб-песочниц и
+      скачанных моделей.</li>
+      <li>Ничего не хранится в облаке ни расширением, ни разработчиком.
+      Нет аккаунта fa и облачной службы fa.</li>
+      <li>Скачанные вами файлы моделей (например веса небольших LLM)
+      хранятся в хранилище браузера и никуда не загружаются.</li>
+    </ul>
 
-    <h3>4. Без аккаунтов, рекламы и продажи данных</h3>
-    <p>Приложение не требует аккаунта, не показывает рекламу и не продаёт,
-    не сдаёт в аренду и не передаёт ваши персональные данные третьим лицам
-    для их маркетинга. Никакого трекинга, кроме описанной выше аналитики,
-    нет.</p>
+    <!-- sec:sharing -->
+    <h3 data-sec="sharing">4. Передача данных третьим лицам</h3>
+    <ul>
+      <li>Мы <strong>не продаём</strong> ваши данные и не передаём их
+      третьим лицам в маркетинговых целях.</li>
+      <li>Единственные третьи лица, получающие ваш контекст, —
+      <strong>модели-провайдеры, которых вы явно настроили</strong>
+      (запросы уходят напрямую на их endpoint'ы).</li>
+      <li><strong>Native messaging.</strong> При сопряжении расширения с
+      локальным помощником fa CLI расширение и этот помощник обмениваются
+      сообщениями между собой на вашей машине — разработчик и какие-либо
+      серверы в этом обмене не участвуют.</li>
+      <li>Опциональные системные разрешения (уведомления, микрофон,
+      календарь, контакты, здоровье, дом) запрашиваются только в контексте
+      вызываемых вами функций, а данные, к которым они дают доступ,
+      обрабатываются только на устройстве.</li>
+    </ul>
 
-    <h3>5. Конфиденциальность детей</h3>
-    <p>Приложение не предназначено для детей младше 13 лет и не собирает
-    осознанно их персональные данные.</p>
+    <!-- sec:retention -->
+    <h3 data-sec="retention">5. Срок хранения и удаление</h3>
+    <ul>
+      <li>Локальные данные хранятся, пока <strong>вы</strong> их не
+      удалите: очистите чат/сессию в приложении, данные расширения через
+      настройки браузера или удалите его — удаление приложения или
+      расширения удаляет и его локальные данные.</li>
+      <li>Скачанные модели и файлы веб-песочниц живут в хранилище браузера
+      и очищаются там же (данные сайта / данные расширения).</li>
+      <li>Данные Firebase-аналитики/сбоев (только приложение), если
+      включены, хранятся по стандартным срокам Firebase и не содержат
+      текстов сообщений.</li>
+    </ul>
 
-    <h3>6. Изменения и контакты</h3>
-    <p>Изменения политики публикуются по этому же адресу. Вопросы — через
-    issues:
+    <!-- sec:security -->
+    <h3 data-sec="security">6. Безопасность</h3>
+    <ul>
+      <li><strong>Ключи.</strong> API-ключи провайдеров хранятся в Keychain
+      платформы (iOS/macOS) или в локальном защищённом хранилище / хранилище
+      браузера песочницы приложения и передаются только тому провайдеру,
+      которому принадлежат.</li>
+      <li><strong>Редактирование секретов.</strong> Многослойный конвейер
+      маскирует учётные данные и похожие на токены строки в логах, файлах
+      сессий и выводе инструментов до записи на диск, чтобы секреты не
+      попадали в сохранённые сессии.</li>
+      <li><strong>Подтверждения.</strong> Чувствительные действия агента
+      (запуск команд, открытие страниц, вывод данных из браузера) проходят
+      настраиваемый вами шлюз подтверждений — от запроса на каждое действие
+      до полностью автономных режимов.</li>
+      <li>Расширение загружает весь код интерпретаторов и LLM-движков
+      <strong>из самого пакета</strong> (без удалённо размещаемого кода), а
+      его разрешения ограничены тем, что реально вызывают его функции.</li>
+    </ul>
+
+    <!-- sec:children -->
+    <h3 data-sec="children">7. Конфиденциальность детей</h3>
+    <p>Приложение и расширение не предназначены для детей младше 13 лет
+    (или эквивалентного минимального возраста в вашей юрисдикции), и мы не
+    собираем их персональные данные осознанно.</p>
+
+    <!-- sec:changes -->
+    <h3 data-sec="changes">8. Изменения этой политики</h3>
+    <p>Изменения публикуются по этому адресу с новой датой вступления в
+    силу.</p>
+    <ul>
+      <li><strong>15 октября 2026 г.</strong> — структура приведена к
+      девяти обязательным разделам Chrome Web Store; добавлено расширение
+      для браузера (локальный код движков, native messaging, отсутствие
+      телеметрии).</li>
+      <li><strong>29 июля 2026 г.</strong> — первая опубликованная
+      версия.</li>
+    </ul>
+
+    <!-- sec:contact -->
+    <h3 data-sec="contact">9. Контакты</h3>
+    <p>Вопросы, запросы и сообщения о проблемах — через issues:
     <a href="https://github.com/IstiN/flutter_agent_harness/issues">github.com/IstiN/flutter_agent_harness/issues</a>.</p>
   </section>
 </main>
