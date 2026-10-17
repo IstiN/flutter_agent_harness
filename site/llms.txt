@@ -32,16 +32,17 @@
 ## Chrome extension
 
 - MV3 extension that hosts the full Fa web app in a side panel; the agent
-  runs in the service worker and drives the browser with 34 tools:
+  runs in the service worker and drives the browser with 32 tools:
   `tabs_open`, `tabs_close`, `tabs_update`, `tabs_query`, `tabs_move`,
   `tabs_group`, `tabs_ungroup`, `tabs_reload`, `tabs_discard`,
   `windows_open`, `windows_update`, `windows_close`, `windows_list`,
   `groups_update`, `groups_close`, `sessions_recent`, `sessions_restore`,
   `history_search`, `bookmarks_list`, `bookmarks_add`, `bookmarks_update`,
-  `bookmarks_remove`, `downloads_start`, `downloads_search`,
-  `downloads_cancel`, `cookies_get`, `cookies_set`, `cookies_remove`,
-  `inject_js`, `inject_css`, `cdp_eval`, `page_screenshot`,
-  `app_screenshot`, `nav_wait` — plus four Settings-gated second-tier
+  `bookmarks_remove`, `download` (http/https only, size-capped, approval-
+  gated — the `downloads` permission's call site), `cookies_get`,
+  `cookies_set`, `cookies_remove`, `inject_js`, `inject_css`, `cdp_eval`,
+  `page_screenshot`, `app_screenshot`, `nav_wait` — plus four
+  Settings-gated second-tier
   tools that surface once the user enables them:
   `browser_search`, `top_sites`, `reading_list`, `page_capture`.
 - Entry points: the side panel, the omnibox (`fa <query>`), the
@@ -138,7 +139,7 @@
   git clone/push over HTTP and SSH, python3 with pip, sqlite3, QuickJS, file
   edits, web search/fetch, subagents, LSP, MCP tools, persistent memory,
   checkpoint/rewind, and long sessions with automatic context compaction;
-  the Chrome extension adds 34 browser tools, Outlook adds three mail tools.
+  the Chrome extension adds 32 browser tools, Outlook adds three mail tools.
 - Is it free? The project is MIT-licensed open source; users pay their own LLM
   provider for tokens only — no subscription or account.
 - How to install the CLI? `curl -fsSL "https://fa1.dev/install.sh" | sh`
