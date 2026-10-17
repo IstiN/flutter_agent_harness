@@ -8,13 +8,39 @@ AC6  - restore-and-inspect: run identity replay, completeness verdict,
 
 Run: python3 -m unittest discover -s bench/mls_bench
 """
+import contextlib
+import io
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 import summary_mls
+
+FIXTURE_BANNER = "TEST FIXTURE — not a real run"
+
+
+@contextlib.contextmanager
+def _fixture_output():
+    """Mark stdout written inside the block as rendered test fixture.
+
+    gh-1677: the CI unit-test step runs unittest WITHOUT --buffer, and
+    Actions CI exports GITHUB_STEP_SUMMARY for EVERY step —
+    summary_mls.main() prefers that sink over stdout, so a bare main()
+    call appends an unbannered, production-shaped fake run report to
+    the real unit-test step's summary page. The banner plus the sink
+    pop pin the whole render to stdout, under the marker line. Same
+    contract as terminal_bench's _fixture_output.
+    """
+    sink = os.environ.pop("GITHUB_STEP_SUMMARY", None)
+    print(FIXTURE_BANNER)
+    try:
+        yield
+    finally:
+        if sink is not None:
+            os.environ["GITHUB_STEP_SUMMARY"] = sink
 
 AREAS = {"alpha": "CAL", "beta": "RL", "gamma": "TS"}
 
@@ -49,7 +75,10 @@ RUN_CONFIG = {
     "mls_bench_sha": "80cf5c5" * 8,  # shape only
     "provider": "daytona",
     "subset": "lite",
-    "model": "glm-5.3-flash",
+    # gh-1677: synthetic fixture value — the run-identity block replays
+    # this verbatim into CI-visible output; a production model name
+    # there masquerades as a real run summary.
+    "model": "fixture-model",
     "fa_commit": "ff2faf9",
     "gpu_type": "H100",
     "harbor_version": "0.23.0",
@@ -89,7 +118,7 @@ class AggregateTest(unittest.TestCase):
         lines, problems, warnings = summary_mls.build_summary(run_config, summary_mls.load_trials(self.jobs))
         text = "\n".join(lines)
         self.assertIn("80cf5c5", text)              # dataset SHA replayed
-        self.assertIn("glm-5.3-flash", text)        # model replayed
+        self.assertIn("fixture-model", text)      # synthetic model replayed
         self.assertIn("ff2faf9", text)              # fa commit replayed
         self.assertIn("contract 4", text)           # budget statement replayed
         self.assertIn("| CAL | 1 | 0.5000 |", text)
@@ -226,7 +255,8 @@ class ExitContractTest(unittest.TestCase):
         old = sys.argv
         sys.argv = ["summary_mls.py", "--run-config", str(rc), str(jobs)]
         try:
-            code = summary_mls.main()
+            with _fixture_output():
+                code = summary_mls.main()
         finally:
             sys.argv = old
         return code
@@ -260,6 +290,35 @@ class ExitContractTest(unittest.TestCase):
         per, errored = summary_mls.aggregate(rows, AREAS)
         self.assertEqual(errored, ["alpha"])
         self.assertNotIn("CAL", per)
+
+
+class FixtureBannerTest(unittest.TestCase):
+    """gh-1677: a fixture render reaching CI output carries the banner
+    and never the step-summary sink."""
+
+    def test_main_render_stays_bannered_on_stdout(self):
+        # Same surface split as terminal_bench (review thread 1): with
+        # GITHUB_STEP_SUMMARY exported (every Actions step), an
+        # unbannered main() render would land on the step-summary page.
+        # run_main must pin the render to stdout, under the banner.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        sink = Path(tmp.name) / "step-summary.md"
+        os.environ["GITHUB_STEP_SUMMARY"] = str(sink)
+        self.addCleanup(os.environ.pop, "GITHUB_STEP_SUMARY", None)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ExitContractTest().run_main(
+                tmp,
+                [trial("alpha", 0.5)],
+                run_config=dict(RUN_CONFIG, expected_trials=1),
+            )
+        self.assertEqual(code, 0)
+        text = out.getvalue()
+        self.assertTrue(text.startswith(FIXTURE_BANNER), text)
+        self.assertIn("- model: `fixture-model`", text)
+        self.assertFalse(sink.exists(), f"fixture report leaked to {sink}")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,22 @@ roots):
    resolve-step plumbing is fine.
 2. The combined production run label 'zai-glm-5.3-flash (glm-5.3-flash)'
    may appear only on assertion lines (the resolve-mapping contract).
+3. A production run identity — a provider token (zai-glm,
+   kimi-for-coding) or a production model token (glm-5.3) — may never
+   sit in a run-config fixture's identity key ("model", "provider") on
+   a non-assertion line: those keys replay verbatim into the
+   CI-visible report. Exempt: the same line carrying a contract
+   payload — provider-config JSON (apiKeyEnvVar/baseUrl) or an
+   assistant usage record ("role"/"usage") — which exercises the real
+   mapping/pricing contract, not a rendered run identity.
+4. A bare production provider token assigned to ANY identifier on a
+   non-assertion line is flagged: the same-line carrier heuristic is
+   otherwise evadable via an intermediate constant
+   (_LABEL = "zai-glm-..."; os.environ["BENCH_RUN_LABEL"] = _LABEL).
+
+Assertion exemption: only lines STARTING with an assert statement are
+exempt — a trailing comment merely mentioning "assert" must not
+launder a fixture line.
 
 Out of scope by design: model-id fixtures that must reference a
 bench/pricing.json key (pricing/usage math tests) and the resolve-step
@@ -27,6 +43,8 @@ not a rendered run identity.
 
 Run: python3 -m unittest discover -s bench/terminal_bench
 """
+import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -34,8 +52,20 @@ _BENCH_DIR = Path(__file__).resolve().parent.parent
 _DISCOVERY_ROOTS = ("terminal_bench", "harbor_fa", "mls_bench")
 
 _PRODUCTION_TOKENS = ("zai-glm", "kimi-for-coding")
+_PRODUCTION_MODEL_TOKENS = ("glm-5.3",)
 _RUN_LABEL_CARRIERS = ("BENCH_RUN_LABEL", "run_label")
+# gh-1677 review round 2: run-identity keys of a run-config fixture
+# (the mls RUN_CONFIG dict) — replayed verbatim into the CI-visible
+# report, so a production value there is the masquerade sin on a
+# carrier the run-label rules cannot see.
+_RUN_IDENTITY_KEYS = ('"model"', '"provider"')
 _COMBINED_RUN_LABEL = "zai-glm-5.3-flash (glm-5.3-flash)"
+# A line carrying one of these markers is a contract payload
+# (provider-config JSON / assistant usage record), not a rendered run
+# identity — the resolve-step inputs and pricing.json-key fixtures the
+# docstring documents as out of scope.
+_CONTRACT_FIXTURE_MARKERS = ("apiKeyEnvVar", "baseUrl", '"role"', '"usage"')
+_ASSERT_PREFIXES = ("assert", "self.assert", "with self.assert")
 
 
 def _test_files():
@@ -54,23 +84,48 @@ def _violations(path: Path) -> list:
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
-        if "assert" in line:
+        if stripped.startswith(_ASSERT_PREFIXES):
             # Assertions ABOUT the plumbing may reference the real
             # strings; only assignments as fixture data are banned.
+            # startswith, not substring: a trailing comment merely
+            # mentioning "assert" must not launder a fixture line.
             continue
         if _COMBINED_RUN_LABEL in line:
             hits.append(
                 (lineno, line, "combined production run label outside an assertion")
             )
             continue
+        providers = [t for t in _PRODUCTION_TOKENS if t in line]
+        models = [t for t in _PRODUCTION_MODEL_TOKENS if t in line]
         carriers = [c for c in _RUN_LABEL_CARRIERS if c in line]
-        tokens = [t for t in _PRODUCTION_TOKENS if t in line]
-        if carriers and tokens:
+        if carriers and providers:
             hits.append(
                 (
                     lineno,
                     line,
                     "production provider string bound to a run-label carrier as fixture data",
+                )
+            )
+            continue
+        if any(k in line for k in _RUN_IDENTITY_KEYS) and (providers or models):
+            if not any(m in line for m in _CONTRACT_FIXTURE_MARKERS):
+                hits.append(
+                    (
+                        lineno,
+                        line,
+                        "production run identity in a run-config fixture",
+                    )
+                )
+                continue
+        assign = re.match(
+            r"^[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?P<q>[\"'])(?P<val>.*?)(?P=q)", stripped
+        )
+        if providers and assign:
+            hits.append(
+                (
+                    lineno,
+                    line,
+                    "production provider string assigned to a constant",
                 )
             )
     return hits
