@@ -39,7 +39,12 @@ fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-REAL_GIT="$(command -v git)"
+# Resolve the REAL git binary — NOT a PATH wrapper. This runner prepends a
+# git-push-guard shim to PATH; exec-ing it from OUR shim would ping-pong
+# (the wrapper re-resolves `git` via PATH back into the shim) and spin.
+# `command -v -p` resolves against the system default PATH.
+REAL_GIT="$(command -v -p git 2>/dev/null || true)"
+if [ -z "$REAL_GIT" ]; then REAL_GIT="$(command -v git)"; fi
 
 pass=0
 fail=0
@@ -220,7 +225,7 @@ t5() {
   local out rc
   out=$(MIRROR_CLONE_ATTEMPTS=2 update_mirror "file://$d/nope.git" "$d/mirror.git" 2>&1); rc=$?
   local attempts
-  attempts=$(echo "$out" | grep -c "attempt [0-9]*/2" || true)
+  attempts=$(echo "$out" | grep -c "recreate attempt [0-9]*/2" || true)
   if [ "$MODE" = "--legacy" ]; then
     if [ "$rc" -ne 0 ] && [ "$attempts" -eq 0 ]; then
       ok "L3 legacy: single-shot clone (0 retry attempts logged) — repro confirmed"
@@ -228,9 +233,9 @@ t5() {
       bad "L3 legacy retry shape changed (rc=$rc attempts=$attempts)"
     fi
   else
-    if [ "$rc" -ne 0 ] && [ "$attempts" -ge 2 ] \
+    if [ "$rc" -ne 0 ] && [ "$attempts" -eq 2 ] \
        && echo "$out" | grep -q "::error::" && [ ! -d "$d/mirror.git" ]; then
-      ok "T5 persistent clone failure: $attempts attempts logged, ::error::, no partial dir"
+      ok "T5 persistent clone failure: exactly $attempts recreate attempts, ::error::, no partial dir"
     else
       bad "T5 persistent clone failure contract broken: rc=$rc attempts=$attempts — $out"
     fi

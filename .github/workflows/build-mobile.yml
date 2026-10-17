@@ -619,11 +619,11 @@ jobs:
           set -euo pipefail
           MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
           mkdir -p "$(dirname "$MIRROR")"
-          if [ ! -d "$MIRROR" ]; then
-            git clone --mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR"
-          else
-            git -C "$MIRROR" fetch origin
-          fi
+          # gh-1644: shared resilient updater — fetch retries + blobless
+          # recreate with partial-dir cleanup (was single-shot; run
+          # 38855793382 died exit 128 on a mid-clone network drop).
+          bash scripts/update_git_mirror.sh \
+            https://github.com/IstiN/flutter_agent_harness.git "$MIRROR"
 
       - name: Checkout repository from local mirror
         run: |

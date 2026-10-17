@@ -110,41 +110,21 @@ jobs:
 
     steps:
       # ── Prepare persistent local git mirrors ────────────────────────────────
+      # gh-1644: the old inline single-shot logic died on the first network
+      # hiccup — the recreate fell through to a full `git clone --mirror`
+      # whose ~1 h transfer ended in "error: 2931 bytes of body are still
+      # expected" (run 38855793382, exit 128). The shared script retries the
+      # fetch with VISIBLE stderr, aborts stalled attempts, and recreates
+      # BLOBLESS (--filter=blob:none, the gh-1477 precedent) with retries and
+      # partial-dir cleanup. Contract: scripts/update_git_mirror_selftest.sh
       - name: Update local git mirrors
         run: |
           set -euo pipefail
-
           MIRROR_BASE="$HOME/actions-runner-yoloit/mirror"
           mkdir -p "$MIRROR_BASE"
-
-          update_mirror() {
-            local url="$1"
-            local mirror="$2"
-            local extra_args="${3:-}"
-            if [ ! -d "$mirror" ]; then
-              echo "Creating mirror: $mirror"
-              if [ -n "$extra_args" ]; then
-                # --mirror conflicts with --single-branch/--branch; use --bare
-                # for branch-specific mirrors (e.g. flutter_code_editor).
-                git clone --bare $extra_args "$url" "$mirror"
-              else
-                git clone --mirror "$url" "$mirror"
-              fi
-            else
-              echo "Updating mirror: $mirror"
-              if ! git -C "$mirror" fetch origin 2>/dev/null; then
-                echo "Fetch failed — recreating mirror: $mirror"
-                rm -rf "$mirror"
-                if [ -n "$extra_args" ]; then
-                  git clone --bare $extra_args "$url" "$mirror"
-                else
-                  git clone --mirror "$url" "$mirror"
-                fi
-              fi
-            fi
-          }
-
-          update_mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR_BASE/flutter_agent_harness.git"
+          bash scripts/update_git_mirror.sh \
+            https://github.com/IstiN/flutter_agent_harness.git \
+            "$MIRROR_BASE/flutter_agent_harness.git"
 
       # ── Checkout ────────────────────────────────────────────────────────────
       - name: Checkout repository from local mirrors
