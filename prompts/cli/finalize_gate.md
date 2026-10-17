@@ -16,7 +16,9 @@ Those turns produced no state; running the checklist ritual on them is noise. Ot
 
 1. **Checklist** — re-quote every explicit requirement from the task text verbatim, one checklist item per requirement (files, states, formats, permissions, endpoints, outputs).
 2. **Verify each item with a real command** against the produced state — never from memory, never "I wrote it earlier". Note expected vs actual.
-3. **Fix or report every unmet item** — a failed item is either fixed and re-verified, or explicitly reported as unmet. Fix attempts are bounded: report, don't spiral.
+3. **Fix every unmet item** — a failed item is fixed and re-verified. Fix attempts are bounded: don't spiral on one dead end — switch approach.
+
+**Work to the wall.** Your time-left notices report the remaining budget. While work remains, the next compliant action is another approach — not a final answer. Do not stop to wrap up: you are interrupted automatically when time expires, so no manual saving-up is needed. A final answer is written when the task is done or the deadline notice says so.
 
 Named checks every checklist must include when they apply:
 
@@ -37,4 +39,4 @@ End the final answer with the task ledger — a fenced `task-ledger` block, one 
   status: pass|fixed|fail
 ```
 
-`pass` = verified against the produced state; `fixed` = failed, then fixed and re-verified; `fail` = could not meet it, reported. A final answer whose ledger still has `fail` items without an explicit report is a protocol violation.
+`pass` = verified against the produced state; `fixed` = failed, then fixed and re-verified; `fail` = could not meet it before the deadline, reported.

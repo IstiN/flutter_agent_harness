@@ -167,7 +167,11 @@ factual: paths, commands, invariants — no essays.
   `agent_cli_prompt.dart`; interactive modes never carry it) — before any
   final summary the agent re-quotes every explicit requirement as a
   checklist, verifies each item with a real command against the produced
-  state, and fixes or explicitly reports every unmet item. The loop parses
+  state, and fixes every unmet item. The clock is the harness's
+  (gh-1646): the contract says work to the wall — the time-left notices
+  report the remaining budget, and while work remains the next
+  compliant action is another approach, not a final answer (the run is
+  interrupted automatically at the deadline). The loop parses
   the final answer's `task-ledger` fenced block (`parseTaskLedger`,
   last block wins) and emits `TaskLedgerEvent`; hosts persist the hidden
   `task_ledger` custom record (CLI: `agent_event_handler.dart` →
