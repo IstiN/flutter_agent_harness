@@ -13,6 +13,23 @@ block a release again.
 
 ## Unreleased
 
+- feat(finalize-gate): gh-1652 — grader-parity execution. The FinalizeGate
+  contract's loop gains step 2.5 (between verify and fix): each produced
+  entry point is re-run the way the grader will — neutral cwd (`cd /`),
+  fresh subprocess, clean env — stdout/stderr/exit code compared against
+  the in-session run, and that invocation pinned as the main artifact's
+  ledger `command:`. The T-3min wrap-up steer carries the same clause. Both
+  bench summaries (terminal-bench, harbor) add `classify_clean_exit_wrong`
+  — the CLEAN-WRONG class (clean exit + zero-unmet final task ledger +
+  verifier reward 0) — printed next to early-exit-with-unmet-ledger and
+  disjoint from it by the `ledger_unmet <= 0` split.
+- feat(finalize-gate): gh-1646 — the unmet-item wall. A final answer whose
+  task ledger still carries unmet items is budget-conditional: compliant
+  only when the harness-reported wall clock is spent or every unmet item
+  names its blocker in `actual` — work to the wall, no deadline
+  self-policing, no violation framing. Bench summaries classify
+  early-exit-with-unmet-ledger (clean `__FA_EXIT=0`, unmet final ledger,
+  ended ≥60s before the effective cap).
 - fix(bench): gh-1643 — a trial killed mid-stream no longer reports 0/None
   usage. The fold read only FINALIZED assistant messages, so a run killed
   before its first assistant message (the costliest rows) folded to silent
