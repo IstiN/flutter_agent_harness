@@ -373,6 +373,7 @@ final class DownloadItem {
     required this.filename,
     required this.state,
     required this.paused,
+    this.fileSize = 0,
   });
 
   final int id;
@@ -381,12 +382,21 @@ final class DownloadItem {
   final String state; // 'in_progress' | 'complete' | 'interrupted'
   final bool paused;
 
+  /// Expected TOTAL size of the download in bytes (`fileSize` in
+  /// chrome.downloads.search — `bytesReceived` is the received-so-far
+  /// counter, a different field). Chrome reports the total as soon as
+  /// the response headers arrive, so this is observable WHILE the item
+  /// is still in flight; for a completed download it IS the on-disk size
+  /// (F2′ result `size`).
+  final int fileSize;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'url': url,
     'filename': filename,
     'state': state,
     'paused': paused,
+    'fileSize': fileSize,
   };
 }
 
