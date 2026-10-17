@@ -192,6 +192,38 @@ _LEDGER_VERIFIED = ("pass", "fixed")  # keep in lockstep with the Dart
 # standalone-by-design — different layout roots — so this parser is
 # duplicated; change both together).
 
+# gh-1646 C3: the early-exit margin — a trial that ended ≥60s before the
+# effective cap had real budget left. Same value in the tb sibling.
+_EARLY_EXIT_MARGIN_SEC = 60.0
+
+
+def classify_early_exit_unmet(
+    clean_exit: bool,
+    ledger_unmet,
+    duration_secs,
+    cap_secs,
+    margin: float = _EARLY_EXIT_MARGIN_SEC,
+):
+    """gh-1646 C3: the early-exit-with-unmet-ledger verdict for one trial.
+
+    True = "honest surrender": the trial ended on its own (clean
+    `__FA_EXIT=0`, no harness/adapter kill), its FINAL task ledger still
+    carries unmet items, and it ended at least `margin` seconds before
+    the effective cap — budget remained and the gate wording licensed
+    the stop. False = not in the class (killed, fully verified ledger,
+    or at/near the wall). None = unclassifiable — a missing ledger,
+    duration, or cap input (legacy artifacts) never fabricates a
+    classification.
+
+    Duplicated in bench/terminal_bench/summary.py (the summary scripts
+    are standalone-by-design) — change both together.
+    """
+    if ledger_unmet is None or duration_secs is None or cap_secs is None:
+        return None
+    if not clean_exit or ledger_unmet <= 0:
+        return False
+    return duration_secs < cap_secs - margin
+
 
 def _ledger_cell(trial_dir: Path) -> str:
     """gh-1412: the trial's checklist-coverage cell from its last hidden
@@ -227,6 +259,73 @@ def _ledger_cell(trial_dir: Path) -> str:
     if unmet:
         cell += f" ({unmet} unmet)"
     return cell
+
+
+def _fa_exit_code(trial_dir: Path):
+    """The LAST `__FA_EXIT=<code>` line of the trial's fa.txt (gh-1646).
+
+    The adapter appends the marker after the fa exec
+    (`echo "__FA_EXIT=${status}" | tee -a /logs/agent/fa.txt`); harbor
+    syncs /logs/agent to <trial>/agent/, so the file lives at
+    <trial>/agent/fa.txt. None when the file is absent or carries no
+    marker (older runs — the caller falls back to the exception class).
+    """
+    try:
+        text = (trial_dir / "agent" / "fa.txt").read_text(errors="replace")
+    except OSError:
+        return None
+    code = None
+    for line in text.splitlines():
+        match = _FA_EXIT_LINE_RE.match(line.strip())
+        if match:
+            code = int(match.group(1))
+    return code
+
+
+_FA_EXIT_LINE_RE = re.compile(r"^__FA_EXIT=(\d+)$")
+
+
+def _ledger_unmet_count(trial_dir: Path):
+    """Unmet items in the trial's LAST `task_ledger` record (gh-1646 C3).
+
+    The FinalizeGate contract's honest-surrender telemetry: the agent
+    re-verifies after fixes, so the LAST ledger is the state it exited
+    with. None = no parseable ledger; an items-less ledger is None too.
+    Reuses the gh-1412 parse point (`_ledger_records`).
+    """
+    ledgers = _ledger_records(trial_dir)
+    if not ledgers:
+        return None
+    data = ledgers[-1].get("data")
+    rows = data.get("items") if isinstance(data, dict) else None
+    items = rows if isinstance(rows, list) else []
+    if not items:
+        return None
+    verified = sum(
+        1
+        for item in items
+        if isinstance(item, dict)
+        and str(item.get("status") or "").lower() in _LEDGER_VERIFIED
+    )
+    return len(items) - verified
+
+
+def _audit_cap_secs(trial_dir: Path):
+    """The trial's effective cap from its synced audit record
+    (<trial>/agent/fa-timeout-metadata.json, the gh-1576 `cap_resolution`
+    block); None when absent or cap-less (older/unsupervised runs — the
+    trial is then unclassifiable, never an early exit)."""
+    try:
+        data = json.loads(
+            (trial_dir / "agent" / "fa-timeout-metadata.json").read_text()
+        )
+    except (OSError, json.JSONDecodeError):
+        return None
+    cap = data.get("cap_resolution") if isinstance(data, dict) else None
+    value = cap.get("effective_cap_sec") if isinstance(cap, dict) else None
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    return None
 
 
 def _status(row: dict) -> str:
@@ -300,6 +399,24 @@ def _trial_rows(job_dir: Path) -> list[dict]:
             note = f"stdout {stdout_reason}"
         else:
             note = ""
+        # gh-1646 C3: the early-exit-with-unmet-ledger facts. Clean exit
+        # = the adapter's own `__FA_EXIT=0` marker; without fa.txt the
+        # exception class degrades the verdict (no exception = the exec
+        # ended on its own — a nonzero fa exit would have raised).
+        # Duration = the result.json started/finished delta; cap = the
+        # synced audit's cap_resolution. Missing inputs → verdict None
+        # (unclassifiable), never a fabricated classification.
+        exit_code = _fa_exit_code(trial_dir)
+        clean_exit = (exit_code == 0) if exit_code is not None else not exception
+        started = _parse_iso_ts(data.get("started_at"))
+        finished = _parse_iso_ts(data.get("finished_at"))
+        duration_secs = (
+            (finished - started).total_seconds()
+            if started is not None and finished is not None and finished > started
+            else None
+        )
+        cap_secs = _audit_cap_secs(trial_dir)
+        ledger_unmet = _ledger_unmet_count(trial_dir)
         rows.append({
             "resolved": resolved,
             "exception": exception,
@@ -314,6 +431,11 @@ def _trial_rows(job_dir: Path) -> list[dict]:
             "trial": f"{job_dir.name}/{trial_dir.name}",
             "integrity": verdict,
             "integrity_note": note,
+            "early_exit_unmet": classify_early_exit_unmet(
+                clean_exit, ledger_unmet, duration_secs, cap_secs
+            ),
+            "duration_secs": duration_secs,
+            "cap_secs": cap_secs,
         })
     return rows
 
@@ -485,6 +607,47 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None,
         for trial, cell in sorted(ledgered):
             if " unmet" in cell:
                 lines.append(f"- {trial}: {cell}")
+
+    # gh-1646 C3: the early-exit-with-unmet-ledger guard — the
+    # FinalizeGate contract must never read as an early-exit license.
+    # A failure that ended on its own (clean `__FA_EXIT=0`), whose FINAL
+    # task ledger still carries unmet items, ending at least the margin
+    # before the cap is an "honest surrender": reported per run so the
+    # class is visible (and, post-wording-fix, collapsible).
+    scored_failures = [
+        r
+        for rows in splits.values()
+        for r in rows
+        if not r["exception"] and not r["resolved"] and _status(r) != "compromised"
+    ]
+    early_exits = [
+        r for r in scored_failures if r.get("early_exit_unmet") is True
+    ]
+    unclassified = sum(
+        1 for r in scored_failures if r.get("early_exit_unmet") is None
+    )
+    if scored_failures:
+        share = f"{len(early_exits) / len(scored_failures):.0%}"
+        lines.append("")
+        lines.append(
+            f"**early-exit-with-unmet-ledger (gh-1646): {len(early_exits)}/"
+            f"{len(scored_failures)} failures ({share})** — clean exit +"
+            f" unmet task ledger + ≥{_EARLY_EXIT_MARGIN_SEC:.0f}s budget left"
+        )
+        for r in early_exits:
+            duration = r.get("duration_secs")
+            cap = r.get("cap_secs")
+            detail = (
+                f"{duration:.0f}s/{cap:.0f}s"
+                if duration is not None and cap is not None
+                else "duration unknown"
+            )
+            lines.append(f"- {r['trial']} ({detail})")
+        if unclassified:
+            lines.append(
+                f"{unclassified} failure(s) unclassifiable — no cap,"
+                " duration, or ledger data (never counted as early exits)"
+            )
 
     # gh-1578: the errored class splits by OWNER. Verifier timeouts (the
     # in-container verifier hung executing agent-authored code) are the
