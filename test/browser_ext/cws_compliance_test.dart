@@ -331,6 +331,52 @@ void main() {
             '${verify.stderr}');
   });
 
+  test('AC3/E1: a drifted on-disk artifact is RE-FETCHED from the lock '
+      '(the "re-fetching" path actually fetches)', () {
+    // gh-1630 review: full mode used to print "re-fetching" and then
+    // verify() the ALREADY-ON-DISK drifted bytes — which could only fail
+    // the checksum and abort the build, with no network fetch at all.
+    // The drifted payload is untrusted (E1): the script must delete it
+    // and re-download from the lock URL instead.
+    final tmp = Directory.systemTemp.createTempSync('fah-vendor-drift');
+    addTearDown(() => tmp.deleteSync(recursive: true));
+    final asset = File('${tmp.path}/asset.js')
+      ..writeAsStringSync('console.log("vendored v2");\n');
+    final lockFixture = File('${tmp.path}/lock.json')
+      ..writeAsStringSync(jsonEncode({
+        'engines': {
+          'fixture': {
+            'version': '2.0.0',
+            'files': [
+              {
+                'name': 'asset.js',
+                'url': asset.uri.toString(),
+                'sha256': sha256Hex(asset.readAsBytesSync()),
+              },
+            ],
+          },
+        },
+      }));
+    final dest = Directory('${tmp.path}/dest')..createSync();
+    // Stage a drifted artifact: stale content the lock no longer pins.
+    File('${dest.path}/asset.js')
+        .writeAsStringSync('console.log("stale drift");\n');
+
+    final result = Process.runSync('bash', [
+      'scripts/fetch_vendor_assets.sh',
+      '--lock', lockFixture.path,
+      '--dest', dest.path,
+    ]);
+    expect(result.exitCode, 0,
+        reason: 'drift must re-fetch, not abort on the drifted bytes:\n'
+            '${result.stderr}');
+    expect(
+      File('${dest.path}/asset.js').readAsBytesSync(),
+      asset.readAsBytesSync(),
+      reason: 'the drifted file must be replaced by the lock-pinned bytes',
+    );
+  });
+
   test('F1/AC2: extension panel staging swaps CDN engine loaders for '
       'package-local vendor loaders (no failure stub)', () {
     final staging = File('scripts/stage_extension_panel.py');

@@ -7,7 +7,8 @@
 #
 #   fetch_vendor_assets.sh [--lock P] [--dest D] [--verify-only]
 #
-#   default        download missing assets from the lock, apply the
+#   default        download missing assets from the lock and RE-FETCH any
+#                  whose on-disk bytes drifted from the lock pin, apply the
 #                  declared per-file `replacements` (each must occur
 #                  EXACTLY once — that is how remote constants are
 #                  stripped out of vendored bundles), verify the SHA-256
@@ -72,7 +73,7 @@ def fail(msg):
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
-fetched = verified = skipped = 0
+fetched = repaired = skipped = 0
 for engine, entry in sorted(lock["engines"].items()):
     version = entry["version"]
     for file in entry["files"]:
@@ -97,6 +98,7 @@ for engine, entry in sorted(lock["engines"].items()):
                      "ship unverified vendor assets (gh-1630 E1).")
             return data
 
+        re_fetch = False
         if os.path.exists(out_path):
             data = open(out_path, "rb").read()
             got = sha256(data)
@@ -106,48 +108,47 @@ for engine, entry in sorted(lock["engines"].items()):
             if verify_only:
                 fail(f"{name}: checksum mismatch — on disk {got}, lock pins "
                      f"{want}. The staged vendor tree is stale or tampered.")
+            # Drifted bytes: the on-disk payload is untrusted (E1), so it
+            # is deleted and the file is re-fetched from the lock URL —
+            # the log line must describe what actually happens, and the
+            # only verify() that matters runs on the fresh download below.
             print(f"vendor: {name} differs from the lock — re-fetching")
+            os.remove(out_path)
+            re_fetch = True
         elif verify_only:
             fail(f"{name}: missing from {dest} and --verify-only skips "
                  "network — run the full fetch first")
-        else:
-            print(f"vendor: downloading {name} ({engine} {version})")
-            tmp = out_path + ".tmp"
-            os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-            # -fsSL: fail on HTTP errors, follow redirects, silent; retries
-            # for the flaky big-wasm legs. --retry-max-time spans CDN
-            # rate-limit windows (jsdelivr 503s arrive in bursts — 4×3s
-            # exhausted them and failed the whole build, gh-1630): 6 tries
-            # spread over up to 5 min ride out a window per file.
-            subprocess.run(
-                ["curl", "-fsSL", "--retry", "6", "--retry-delay", "5",
-                 "--retry-max-time", "300", "--retry-all-errors",
-                 url, "-o", tmp],
-                check=True,
-            )
-            data = open(tmp, "rb").read()
-            data = verify(data)
-            # Ship the VERIFIED (replacement-transformed) bytes: verify()
-            # transforms in memory, tmp still holds the raw download —
-            # renaming it straight over the destination shipped the raw
-            # upstream payload and the packaging guard rejected the zip
-            # (remote-code markers the lock replacements had already
-            # stripped in memory). Overwrite tmp, then atomically rename.
-            with open(tmp, "wb") as f:
-                f.write(data)
-            os.replace(tmp, out_path)
-            fetched += 1
-            print(f"vendor: {name} fetched + verified "
-                  f"({len(data)} bytes)")
-            continue
-        # Existing file with drifted bytes and full mode: verify() above
-        # only runs on the freshly downloaded payload; re-verify the
-        # written result too.
+        print(f"vendor: downloading {name} ({engine} {version})")
+        tmp = out_path + ".tmp"
+        os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+        # -fsSL: fail on HTTP errors, follow redirects, silent; retries
+        # for the flaky big-wasm legs. --retry-max-time spans CDN
+        # rate-limit windows (jsdelivr 503s arrive in bursts — 4×3s
+        # exhausted them and failed the whole build, gh-1630): 6 tries
+        # spread over up to 5 min ride out a window per file.
+        subprocess.run(
+            ["curl", "-fsSL", "--retry", "6", "--retry-delay", "5",
+             "--retry-max-time", "300", "--retry-all-errors",
+             url, "-o", tmp],
+            check=True,
+        )
+        data = open(tmp, "rb").read()
         data = verify(data)
-        with open(out_path + ".tmp", "wb") as f:
+        # Ship the VERIFIED (replacement-transformed) bytes: verify()
+        # transforms in memory, tmp still holds the raw download —
+        # renaming it straight over the destination shipped the raw
+        # upstream payload and the packaging guard rejected the zip
+        # (remote-code markers the lock replacements had already
+        # stripped in memory). Overwrite tmp, then atomically rename.
+        with open(tmp, "wb") as f:
             f.write(data)
-        os.replace(out_path + ".tmp", out_path)
-        verified += 1
+        os.replace(tmp, out_path)
+        if re_fetch:
+            repaired += 1
+        else:
+            fetched += 1
+        print(f"vendor: {name} fetched + verified "
+              f"({len(data)} bytes)")
 
 # The asyncify FFI module imports `@jitl/quickjs-ffi-types` — a bare npm
 # specifier a browser page cannot resolve. The lock's replacement rewires
@@ -178,6 +179,6 @@ if not os.path.exists(shim_path) or open(shim_path, encoding="utf-8").read() != 
     print(f"vendor: {SHIM_NAME} written (generated companion)")
 
 print(f"vendor: {len(lock['engines'])} engines — "
-      f"{fetched} fetched, {verified} repaired, {skipped} already verified")
+      f"{fetched} fetched, {repaired} re-fetched, {skipped} already verified")
 PY
 echo "fetch_vendor_assets: OK ($lock → $dest)"

@@ -18,7 +18,10 @@ const manifest = JSON.parse(raw.replaceAll(/^\s*\/\/.*$/gm, ''));
 const CORE = [
   'alarms', 'bookmarks', 'browsingData', 'clipboardRead', 'clipboardWrite',
   'contextMenus', 'cookies', 'debugger',
-  'declarativeNetRequest', 'history',
+  'declarativeNetRequest',
+  // downloads back via gh-1630 F2′ — the `download` tool is its call site.
+  'downloads',
+  'history',
   'idle', 'management', 'nativeMessaging', 'notifications',
   'offscreen', 'power', 'privacy', 'proxy', 'readingList', 'scripting',
   'search', 'sessions', 'sidePanel', 'storage', 'system.cpu',
@@ -29,12 +32,11 @@ const CORE = [
 const OPTIONAL = [
   'pageCapture', 'topSites', 'userScripts',
 ];
-// gh-1630 Purple Potassium — CWS rejected these as requested-but-unused
-// (zero chrome.<perm> call sites in shipped JS). They come back only WITH
-// a real feature (never speculatively) — assert their absence forever.
-// gh-1630: the four Purple-Potassium permissions — requested-but-unused
-// is a hard CWS rejection. `downloads` is RETAINED (F2′ owner decision:
-// the `download` agent tool is its shipped static call site).
+// gh-1630 Purple Potassium — CWS rejected requested-but-unused permissions
+// (zero chrome.<perm> call sites in shipped JS). The four below stay gone
+// forever; they come back only WITH a real feature (never speculatively).
+// `downloads` is RETAINED (F2′ owner decision: the `download` agent tool
+// is its shipped static call site) — it lives in the manifest + CORE.
 const DEAD = [
   'contentSettings', 'fontSettings', 'identity', 'desktopCapture',
 ];
@@ -52,7 +54,7 @@ test('permissions are exactly the core set, each once, sorted', () => {
   assert.equal(new Set(manifest.permissions).size, manifest.permissions.length, 'duplicate permission');
 });
 
-test('gh-1630: the five dead permissions appear in neither list', () => {
+test('gh-1630: the four dead permissions appear in neither list', () => {
   const everywhere = [...manifest.permissions, ...manifest.optional_permissions];
   for (const dead of DEAD) {
     assert.equal(everywhere.includes(dead), false, `dead permission present: ${dead}`);

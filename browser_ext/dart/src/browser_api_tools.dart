@@ -1051,18 +1051,22 @@ final class BrowserApiToolSurface {
       // -------------------------------------------------------------------
       // downloads (gh-1630 F2′): ONE deliberate tool — `download` — is
       // the shipped static call site justifying the `downloads`
-      // permission: http/https only, size-capped via the injected probe,
-      // sanitized filename, the OutboundKind.download exfil gate, and a
-      // path+size result (the facade's search rides along for the
-      // wait-for-settled step). No raw downloads_* passthroughs.
+      // permission: http/https only, size-capped (Content-Length
+      // pre-check + in-flight enforcement), sanitized filename, the
+      // OutboundKind.download exfil gate, and a path+size result (the
+      // facade's search rides along for the wait-for-settled step). No
+      // raw downloads_* passthroughs.
       // -------------------------------------------------------------------
       tool(
         'download',
         'Downloads a file from an http(s) URL into the host download '
-            'directory. Size-capped via a HEAD pre-check, filename '
-            'sanitized to a bare basename, gated like every outbound '
-            'action; returns the saved path + size (a still-in-flight '
-            'download reports its id and state instead).',
+            'directory. Size-capped: a Content-Length pre-check plus an '
+            'in-flight cap enforced from the size chrome.downloads '
+            'reports (downloads with no reported length are capped by '
+            'the in-flight check only). Filename sanitized to a bare '
+            'basename, gated like every outbound action; returns the '
+            'saved path + size (a still-in-flight download reports its '
+            'id and state instead).',
         {
           'url': {'type': 'string', 'description': 'http(s) URL to download'},
           'filename': {
@@ -1667,8 +1671,10 @@ final class BrowserApiToolSurface {
   /// Size-cap pre-check for [download] (F2′): asks the injected probe for
   /// the Content-Length and refuses over-cap URLs BEFORE any bytes flow.
   /// Unknown length (no probe / probe failure / chunked) degrades to an
-  /// honest `"unknown"` note — the approval gate and Chrome's own
-  /// download UX remain the hard boundaries.
+  /// honest `"unknown"` note — the cap then rides the in-flight
+  /// enforcement in [_awaitDownloadSettled] (expected total reported by
+  /// chrome.downloads), with the approval gate and Chrome's own download
+  /// UX as the remaining boundaries.
   Future<String> _probeDownloadSize(String url) async {
     final probe = downloadProbe;
     if (probe == null) return 'unknown';
@@ -1693,17 +1699,35 @@ final class BrowserApiToolSurface {
   /// path + size, which only exist once the item settles). Never an
   /// unbounded hang: the deadline reports honestly as `in_progress` with
   /// the id, so the caller can re-check later.
+  ///
+  /// The size cap is enforced on EVERY observation, not only the
+  /// pre-check: chunked/opaque responses have no Content-Length, so the
+  /// expected total chrome.downloads reports in `fileSize` (as soon as
+  /// the response headers arrive) is the enforcement point mid-flight —
+  /// an over-cap download is cancelled and fails as `download_too_large`
+  /// instead of running uncapped to completion.
   Future<DownloadItem?> _awaitDownloadSettled(int id) async {
     const budget = Duration(seconds: 10);
     const step = Duration(milliseconds: 250);
     final deadline = DateTime.now().add(budget);
     var last = await _findDownload(id);
-    while (last != null && last.state == 'in_progress') {
-      if (DateTime.now().isAfter(deadline)) break;
+    while (true) {
+      if (last == null) return null;
+      if (last.fileSize > defaultMaxDownloadBytes) {
+        final inFlight = last.state == 'in_progress';
+        if (inFlight) await _chrome.downloads.cancel(id);
+        throw BrowserApiToolException(
+          'download_too_large',
+          'download $id is ${last.fileSize} bytes — over the '
+          '$defaultMaxDownloadBytes-byte download cap'
+          '${inFlight ? '; cancelled' : ''}',
+        );
+      }
+      if (last.state != 'in_progress') return last;
+      if (DateTime.now().isAfter(deadline)) return last;
       await Future<void>.delayed(step);
       last = await _findDownload(id);
     }
-    return last;
   }
 
   Future<DownloadItem?> _findDownload(int id) async {
