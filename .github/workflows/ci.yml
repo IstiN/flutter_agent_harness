@@ -2081,6 +2081,109 @@ jobs:
         shell: bash
         run: flutter build ${{ matrix.os }} --release
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # gh-1659 — the Office add-in acceptance suite folded into the shared
+  # matrix. It lived in office-addin.yml under push/pull_request triggers
+  # (branches:[main], path-filtered), so every lib/**- or flutter_app/**-
+  # touching PR paid for a SECOND standalone workflow whose check had to
+  # be tracked separately in branch protection. Path-triggered here
+  # exactly like exzone/locksmoke: pull_request events + SM validation
+  # dispatches (the merge-base classifier; its fail-safe arm runs it) on
+  # the SAME path list the standalone triggers carried. A red suite
+  # reddens the required Quality gate (platform class, #1368) — it must
+  # block the merge, never the pure-Dart publish. The bare check-run name
+  # is UNCHANGED ("Office add-in suite" — rulesets match the job name;
+  # only the workflow display prefix becomes "CI / …").
+  # office-addin.yml keeps ONLY workflow_dispatch: the daily-publish
+  # addin leg still dispatches it directly (#423 dispatch group intact);
+  # the two job bodies are pinned step-identical by
+  # test/ci_1659_office_addin_matrix_test.dart — update both together.
+  # ─────────────────────────────────────────────────────────────────────────
+  office-addin-suite:
+    name: Office add-in suite
+    runs-on: ubuntu-latest
+    needs: [release-pending, release-dedupe, changes]
+    # Same two-event guard as exzone/locksmoke: pull_request + SM
+    # validation dispatches. Tags/schedule/release never ran the suite
+    # (the standalone push trigger was branches:[main] only) and skip it.
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
+      needs.changes.outputs.office_addin == 'true' &&
+      needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
+    # Ceiling for the daily addin watcher's budget arithmetic (#351):
+    # dart + chrome-platform tests + add-in build + Playwright
+    # chromium/webkit install & e2e; historically ~20m.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      # office_addin/dart is a separate package (path dep on this root),
+      # so its pub get must follow the root's.
+      - name: dart pub get (root)
+        run: dart pub get
+
+      - name: Dart unit tests (office_addin/dart)
+        run: cd office_addin/dart && dart pub get && dart test
+
+      # The app build needs the gitignored placeholders (.env asset and
+      # firebase_options.dart) — same dance pages.yml does.
+      - name: App placeholders (.env + firebase_options)
+        run: |
+          touch flutter_app/.env
+          cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      # gh-1310 rework (review thread 2): resolve flutter_app through the
+      # shared retry action BEFORE the first flutter consumer — the package
+      # config doesn't exist at checkout, so "Chrome boot tests" would
+      # otherwise trigger flutter test's implicit (unenforced, unretried)
+      # pub get first.
+      - uses: ./.github/actions/flutter-pub-get
+
+      # The office boot seam compiles web-only code, so its guard tests run
+      # on the chrome platform (VM suite can't import them). FA_HOST=office
+      # compiles the real boot branch in; Office.js is absent in the test
+      # browser, pinning the clean office_unavailable failure path.
+      - name: Chrome boot tests (flutter_app/test/web)
+        run: cd flutter_app && flutter test test/web --platform chrome --dart-define=FA_HOST=office
+
+      - name: Office wiring tests (flutter_app)
+        run: cd flutter_app && flutter test test/services/office_wiring_test.dart
+
+      # Validates the manifest (fails loudly on any issue), builds the
+      # fa web app with FA_HOST=office and assembles the site slice —
+      # the artifact under test AND the upload below.
+      - name: Build Office add-in
+        run: bash scripts/build_office_addin.sh
+
+      # chromium + webkit: Outlook on the web runs the taskpane in
+      # whichever engine the browser has, so both must boot the pane.
+      - name: Playwright e2e (chromium + webkit)
+        run: |
+          cd office_addin/e2e
+          npm ci
+          npx playwright install --with-deps chromium webkit
+          npx playwright test --reporter=line
+
+      - name: Upload assembled add-in
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: office-addin
+          path: build/pages/root/outlook/
   # Issue #433: flutter_app CRAP ratchet — the app's beasts were never
   # gated (the root crap4dart.yaml covers core lib/bin only). The 2
   # flutter-tests shards above now emit --coverage; this job merges them
@@ -3008,7 +3111,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke]
+    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite]
     if: always() && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
@@ -3051,6 +3154,7 @@ jobs:
           echo "pin-gate    = ${{ needs.install-pin-gate.result }}"
           echo "exzone      = ${{ needs.flutter-app-exzone.result }}"
           echo "lock-smoke  = ${{ needs.flutter-app-lock-smoke.result }}"
+          echo "office-addin  = ${{ needs.office-addin-suite.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
         id: gate
         env:
@@ -3084,6 +3188,7 @@ jobs:
           R_INSTALL_PIN_GATE: ${{ needs.install-pin-gate.result }}
           R_EXZONE: ${{ needs.flutter-app-exzone.result }}
           R_LOCK_SMOKE: ${{ needs.flutter-app-lock-smoke.result }}
+          R_OFFICE_ADDIN: ${{ needs.office-addin-suite.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
           # Verdict pass collects blockers WITHOUT exiting, so dart_ok is
@@ -3126,10 +3231,10 @@ jobs:
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
                     "installer-portability:$R_INSTALLER_REG" \
                     "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE" \
-                    "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE"; do
+                    "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE" "office-addin-suite:$R_OFFICE_ADDIN"; do
             name="${kv%%:*}"; r="${kv#*:}"
             case "$name" in
-              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual|flutter-app-lock-smoke|installer-portability)
+              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual|flutter-app-lock-smoke|installer-portability|office-addin-suite)
                 if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
                   platform_red=true
                 fi
