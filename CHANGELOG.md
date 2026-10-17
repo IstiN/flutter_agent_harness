@@ -13,6 +13,35 @@ block a release again.
 
 ## Unreleased
 
+- fix(bench): gh-1643 — a trial killed mid-stream no longer reports 0/None
+  usage. The fold read only FINALIZED assistant messages, so a run killed
+  before its first assistant message (the costliest rows) folded to silent
+  zeros. Both folds now price a dangling `model_request_summary` at its
+  KNOWN request-side volume (system prompt + outbound message chars at the
+  shared chars/4 rate, estimated input; output unknown) and mark the usage
+  incomplete instead: `UsageChainScan.usageIncomplete` → `usage.json`
+  (`usageIncomplete: true`, written only when set so completed folds stay
+  byte-identical), `SessionUsage.usage_incomplete` → the tb adapter's
+  `usage-guard.json` row and harbor's `agent_result.metadata`, and the
+  post-mortem stamps `usage_incomplete` on every results.json row it
+  patches from a partial fold. Harbor also exports the run outcome class
+  (`agent_result.metadata.failure_mode`: agent_timeout self-kill /
+  external_kill / completed / crashed / never_started) so downstream
+  classification stops relying on exception.txt archaeology; a summary
+  superseded by another summary is flushed instead of silently dropped on
+  both sides. Never-started trials keep the gh-1638/gh-1576 audit-only
+  precedence (no fake usage).
+- fix(stuck-calls): gh-1632 — a stuck tool call in an interactive session now
+  escalates like everywhere else. `effectiveStuckTool()` defaulted every
+  non-headless host to `StuckFollowUpMode.advisory` when no explicit
+  `agent.stuckTool:` was configured, so the fa 1.0.580 incident session (a
+  dead `git fetch` in the REPL) fired its `tool_stuck` flag at the 300 s
+  threshold and then hung for 27 more minutes — advisory mode never cancels,
+  retries, or converts; only the owner's manual steering broke the deadlock.
+  The autonomous default (cancel → retry once → background-convert, then a
+  session-visible escalation) now applies in EVERY mode; `advisory` remains
+  an explicit opt-out (`agent.stuckTool.followUp: advisory`), never an
+  implicit default.
 - fix(bindings): gh-1624 — the gh-1570 binding preflight no longer kills
   translating-proxy factories. `_validateModelEndpoint`'s vendor-prefix
   verdict was fatal on ANY endpoint, so `FA_PROVIDER_TYPE=anthropic` +

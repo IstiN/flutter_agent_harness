@@ -750,7 +750,7 @@ jobs:
       # and committed to arm that arch's gate (same as pages.yml).
       - name: Upload seeded size baselines (#1096 ratchet)
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: size-baselines-macos
           path: scripts/size_budget/*.tsv
@@ -847,14 +847,14 @@ jobs:
 
       - name: Upload TestFlight PKG artifact
         if: steps.testflight_pkg.outputs.pkg_name != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fa-macos-testflight-pkg
           path: ${{ steps.testflight_pkg.outputs.pkg_name }}
           retention-days: 14
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Fa-macos-${{ matrix.arch }}
           path: |
@@ -910,7 +910,7 @@ jobs:
           echo "zip_name=$NO_ZIP" >> "$GITHUB_OUTPUT"
 
       - name: Upload no-sandbox macOS artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Fa-macos-nosandbox-${{ matrix.arch }}
           path: |
@@ -1084,7 +1084,7 @@ jobs:
           filter: blob:none
 
       - name: Download DMG artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dmgs
           pattern: Fa-macos-*

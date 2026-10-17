@@ -13,6 +13,7 @@ harbor stub is conditional (gh-1535): clobbering a real harbor install
 would break the parity tests in test_fa_agent_timeout loaded later by the
 same `unittest discover` process.
 """
+import enum
 import importlib.metadata
 import importlib.util
 import json
@@ -21,6 +22,8 @@ import tempfile
 import types
 import unittest
 import unittest.mock
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 
 _BENCH = Path(__file__).resolve().parent.parent
@@ -40,21 +43,31 @@ def _module(name, **attrs):
 
 def _stub_terminal_bench():
     failure_mode = _module("terminal_bench.agents.failure_mode")
-    failure_mode.FailureMode = types.SimpleNamespace(
-        NONE="none",
-        AGENT_TIMEOUT="agent_timeout",
+    # gh-1638: a REAL enum like the actual
+    # terminal_bench.agents.failure_mode.FailureMode — members carry
+    # .value (the gh-1576 raw-outcome audit reads it) and _NEVER_STARTED_
+    # MODES membership works by identity. The former SimpleNamespace of
+    # plain strings made the TB-gated tests in test_fa_agent_timeout (run
+    # against this sys.modules stub in the shared discover process) crash
+    # with "'str' object has no attribute 'value'" once the raw branch
+    # became reachable.
+    class FailureMode(enum.Enum):
+        NONE = "none"
+        AGENT_TIMEOUT = "agent_timeout"
         # gh-1209: the never-started modes fa_agent's fold-skip set names,
         # plus a ran-outcome mode outside them (PARSE_ERROR) that pins the
         # fold's default-on direction.
-        UNKNOWN_AGENT_ERROR="unknown_agent_error",
-        AGENT_INSTALLATION_FAILED="agent_installation_failed",
-        PARSE_ERROR="parse_error",
-    )  # AGENT_TIMEOUT: fa_agent.py needs it (test_fa_agent_timeout LegacyWatcherTest loads fa_agent against this stub in the shared discover process)
+        UNKNOWN_AGENT_ERROR = "unknown_agent_error"
+        AGENT_INSTALLATION_FAILED = "agent_installation_failed"
+        PARSE_ERROR = "parse_error"
+
+    failure_mode.FailureMode = FailureMode  # AGENT_TIMEOUT: fa_agent.py needs it (test_fa_agent_timeout LegacyWatcherTest loads fa_agent against this stub in the shared discover process)
 
     def installed_perform_task(self, instruction, session, logging_dir=None):
         # tb's AbstractInstalledAgent hardcodes zeros (the issue's bug).
         return FaAgentTest.AgentResult(
-            total_input_tokens=0, total_output_tokens=0, failure_mode="none"
+            total_input_tokens=0, total_output_tokens=0,
+            failure_mode=FailureMode.NONE,
         )
 
     abstract = _module(
@@ -149,6 +162,9 @@ def _harbor_distribution_present() -> bool:
 
 
 _stub_terminal_bench()
+# gh-1638: the shared alias the sentinel builders below use — the stub's
+# FailureMode is what fa_agent.py binds in this discover process.
+TB_FAILURE_MODE = sys.modules["terminal_bench.agents.failure_mode"].FailureMode
 # Stub ONLY when the real package is absent: with real harbor installed
 # (bench-harbor setup job) fa_agent.py must import the real
 # BaseInstalledAgent so the parity tests can construct FaAgent(logs_dir).
@@ -234,7 +250,8 @@ def no_exec_session(mode):
 
 class FaAgentTest(unittest.TestCase):
     class AgentResult:
-        def __init__(self, total_input_tokens=0, total_output_tokens=0, failure_mode="none"):
+        def __init__(self, total_input_tokens=0, total_output_tokens=0,
+                     failure_mode=TB_FAILURE_MODE.NONE):
             self.total_input_tokens = total_input_tokens
             self.total_output_tokens = total_output_tokens
             self.failure_mode = failure_mode
@@ -315,12 +332,20 @@ class FaAgentTest(unittest.TestCase):
                     return 1, b""
 
         agent = self.legacy_agent()
-        result = agent.perform_task("do it", BrokenSession())
+        # gh-1638 AC2: the fail-soft warning is pinned AND captured — the
+        # suite's own log stays warning-clean while the test still proves
+        # the fold degrades to zeros instead of failing the trial.
+        stderr = StringIO()
+        with redirect_stderr(stderr):
+            result = agent.perform_task("do it", BrokenSession())
         self.assertEqual(result.total_input_tokens, 0)
         self.assertEqual(result.total_output_tokens, 0)
+        self.assertIn("session usage extraction failed", stderr.getvalue())
 
     def test_installation_failure_result_untouched(self):
-        original = self.AgentResult(failure_mode="agent_installation_failed")
+        original = self.AgentResult(
+            failure_mode=TB_FAILURE_MODE.AGENT_INSTALLATION_FAILED
+        )
         agent = self.legacy_agent()
         monkey = unittest.mock.patch.object(
             legacy_fa_agent.AbstractInstalledAgent,
@@ -338,7 +363,7 @@ class FaAgentTest(unittest.TestCase):
         # own timeout and records its own zeros, so whenever a timeout
         # result does round-trip through perform_task, it must carry the
         # session's real numbers.
-        original = self.AgentResult(failure_mode="agent_timeout")
+        original = self.AgentResult(failure_mode=TB_FAILURE_MODE.AGENT_TIMEOUT)
         agent = self.legacy_agent()
         session = self.FakeSession(MAIN_SESSION + SUBAGENT_SESSION)
         monkey = unittest.mock.patch.object(
@@ -355,7 +380,9 @@ class FaAgentTest(unittest.TestCase):
         # gh-1209: unknown_agent_error is a true never-started trial — the
         # harness never got the agent going, so there is nothing to fold
         # and the result passes through byte-for-byte.
-        original = self.AgentResult(failure_mode="unknown_agent_error")
+        original = self.AgentResult(
+            failure_mode=TB_FAILURE_MODE.UNKNOWN_AGENT_ERROR
+        )
         agent = self.legacy_agent()
         monkey = unittest.mock.patch.object(
             legacy_fa_agent.AbstractInstalledAgent,
@@ -371,7 +398,7 @@ class FaAgentTest(unittest.TestCase):
         # alone cannot distinguish "fold for any ran outcome" from a future
         # accidental fold-whitelist (mode in _FOLD_MODES); a ran-outcome
         # mode outside the stub's named set must fold too.
-        original = self.AgentResult(failure_mode="parse_error")
+        original = self.AgentResult(failure_mode=TB_FAILURE_MODE.PARSE_ERROR)
         agent = self.legacy_agent()
         session = self.FakeSession(MAIN_SESSION + SUBAGENT_SESSION)
         monkey = unittest.mock.patch.object(
@@ -448,6 +475,227 @@ class ExtractorTest(unittest.TestCase):
         usage = fa_usage.extract_from_text(json.dumps(rec))
         self.assertTrue(any("malformed usage" in w for w in usage.warnings))
         self.assertEqual(usage.estimated_tokens, 3)  # ceil(11/4)
+
+
+class _FoldSession:
+    """A session double whose container replays a fixed JSONL text (the
+    FaAgentTest.FakeSession shape, module-level for the gh-1643 class)."""
+
+    class Container:
+        def __init__(self, text):
+            self.text = text
+
+        def exec_run(self, cmd):
+            return 0, self.text.encode()
+
+    def __init__(self, text):
+        self.container = self.Container(text)
+
+    def copy_to_container(self, *args, **kwargs):
+        pass
+
+
+class KilledTrialUsageTest(unittest.TestCase):
+    """gh-1643: a run killed mid-first-request (no finalized assistant
+    message) must fold its KNOWN request-side volume — the persisted
+    `model_request_summary` — as estimated input, and mark the usage
+    incomplete. Never silent zeros; never fake usage for never-started
+    trials (gh-1638 precedence untouched).
+    """
+
+    # The FaAgentTest doubles, reused without inheriting its test methods.
+    AgentResult = FaAgentTest.AgentResult
+    legacy_agent = FaAgentTest.legacy_agent
+
+    # The evidence-trial chain shape (run 38823577512, trial
+    # model-extraction-relu-logits__xchKHer): session + segment marker +
+    # user message + the first model_request_summary, then the external
+    # kill — no assistant message ever finalized.
+    KILLED_SESSION = _jsonl(
+        {"type": "session", "version": 3, "id": "sess-killed",
+         "timestamp": "2026-10-14T04:49:01.000Z"},
+        {"type": "custom", "id": "c0", "customType": "usage_segment_start",
+         "data": {"at": "2026-10-14T04:49:01.000Z"}},
+        {"type": "message", "id": "u0",
+         "message": {"role": "user", "content": "do it"}},
+        {"type": "custom", "id": "c1", "customType": "model_request_summary",
+         "data": {
+             "messageCount": 1,
+             "systemPromptChars": 8000,
+             "messages": [{"role": "user", "chars": 1200, "preview": "p"}],
+         }},
+    )
+    # ceil((8000 + 1200) / 4) = 2300 estimated input tokens.
+    KILLED_EST_IN = 2300
+
+    def test_extractor_folds_dangling_request_input_and_marks_incomplete(self):
+        usage = fa_usage.extract_from_text(self.KILLED_SESSION)
+        self.assertEqual(usage.estimated_input_tokens, self.KILLED_EST_IN)
+        self.assertEqual(usage.output_tokens, 0)
+        self.assertTrue(usage.usage_incomplete)
+        self.assertEqual(usage.total_tokens(), self.KILLED_EST_IN)
+
+    def test_extractor_marks_incomplete_even_without_known_chars(self):
+        # A stub/capped summary (no messages array at all) still marks the
+        # usage incomplete even though its estimate is zero — the marker
+        # must never depend on the estimate being non-zero.
+        text = _jsonl(
+            {"type": "custom", "id": "c1", "customType": "model_request_summary",
+             "data": {"messageCount": 3}},
+        )
+        usage = fa_usage.extract_from_text(text)
+        self.assertEqual(usage.total_tokens(), 0)
+        self.assertTrue(usage.usage_incomplete)
+
+    def test_two_dangling_requests_both_count(self):
+        # R4: a single-item test can pass with multi-item logic broken —
+        # request 1 killed, request 2 started, kill. Both fold.
+        text = _jsonl(
+            {"type": "custom", "id": "c1", "customType": "model_request_summary",
+             "data": {"messageCount": 1, "systemPromptChars": 400,
+                      "messages": [{"role": "user", "chars": 100}]}},
+            {"type": "custom", "id": "c2", "customType": "model_request_summary",
+             "data": {"messageCount": 1, "systemPromptChars": 200,
+                      "messages": [{"role": "user", "chars": 100}]}},
+        )
+        usage = fa_usage.extract_from_text(text)
+        # ceil(500/4) = 125, ceil(300/4) = 75.
+        self.assertEqual(usage.estimated_input_tokens, 125 + 75)
+        self.assertTrue(usage.usage_incomplete)
+
+    def test_finalized_request_counts_once_and_stays_complete(self):
+        # AC2 guard: a request whose assistant message finalized is counted
+        # from the message usage exactly once — the summary must NOT add a
+        # second tally, and the usage is NOT incomplete.
+        text = _jsonl(
+            {"type": "custom", "id": "c1", "customType": "model_request_summary",
+             "data": {"messageCount": 1, "systemPromptChars": 8000,
+                      "messages": [{"role": "user", "chars": 1200}]}},
+            assistant_rec("a0", 100, 50, 0, 0),
+        )
+        usage = fa_usage.extract_from_text(text)
+        self.assertEqual(usage.input_tokens, 100)
+        self.assertEqual(usage.output_tokens, 50)
+        self.assertEqual(usage.estimated_tokens, 0)
+        self.assertFalse(usage.usage_incomplete)
+
+    def test_segment_marker_flushes_the_dangling_request(self):
+        text = _jsonl(
+            {"type": "custom", "id": "c1", "customType": "model_request_summary",
+             "data": {"messageCount": 1, "systemPromptChars": 400,
+                      "messages": [{"role": "user", "chars": 100}]}},
+            {"type": "custom", "id": "c2", "customType": "usage_segment_start",
+             "data": {"at": "t"}},
+            assistant_rec("a0", 10, 5, 0, 0),
+        )
+        usage = fa_usage.extract_from_text(text)
+        self.assertEqual(usage.input_tokens, 10)
+        self.assertEqual(usage.estimated_input_tokens, 125)  # ceil(500/4)
+        self.assertTrue(usage.usage_incomplete)
+
+    def test_dangling_request_attributed_to_last_seen_model(self):
+        text = _jsonl(
+            assistant_rec("a0", 10, 5, 0, 0, model=MODEL),
+            {"type": "custom", "id": "c1", "customType": "model_request_summary",
+             "data": {"messageCount": 1, "systemPromptChars": 400,
+                      "messages": [{"role": "user", "chars": 100}]}},
+        )
+        usage = fa_usage.extract_from_text(text)
+        self.assertEqual(usage.models[MODEL]["estimatedInput"], 125)
+
+    def test_legacy_adapter_folds_killed_session_to_nonzero(self):
+        agent = legacy_fa_agent.FaAgent.__new__(legacy_fa_agent.FaAgent)
+        agent._bundle_tarball = Path("unused.tar.gz")  # __new__ skips __init__
+
+        result = agent._fold_session_usage(
+            _FoldSession(self.KILLED_SESSION),
+            self.AgentResult(),
+            None,
+        )
+        self.assertEqual(result.total_input_tokens, self.KILLED_EST_IN)
+        self.assertEqual(result.total_output_tokens, 0)
+
+    def test_legacy_adapter_writes_usage_guard_row_when_incomplete(self):
+        agent = legacy_fa_agent.FaAgent.__new__(legacy_fa_agent.FaAgent)
+        agent._bundle_tarball = Path("unused.tar.gz")  # __new__ skips __init__
+
+        with tempfile.TemporaryDirectory() as tmp:
+            logging_dir = Path(tmp)
+            result = agent._fold_session_usage(
+                _FoldSession(self.KILLED_SESSION), self.AgentResult(), logging_dir
+            )
+            self.assertEqual(result.total_input_tokens, self.KILLED_EST_IN)
+            guard = json.loads((logging_dir / "usage-guard.json").read_text())
+            self.assertTrue(guard["usage_incomplete"])
+            self.assertEqual(guard["estimated_input_tokens"], self.KILLED_EST_IN)
+
+    def test_legacy_adapter_writes_no_usage_guard_when_complete(self):
+        agent = legacy_fa_agent.FaAgent.__new__(legacy_fa_agent.FaAgent)
+        agent._bundle_tarball = Path("unused.tar.gz")  # __new__ skips __init__
+
+        with tempfile.TemporaryDirectory() as tmp:
+            logging_dir = Path(tmp)
+            agent._fold_session_usage(
+                _FoldSession(MAIN_SESSION + SUBAGENT_SESSION),
+                self.AgentResult(),
+                logging_dir,
+            )
+            self.assertFalse((logging_dir / "usage-guard.json").exists())
+
+    def test_harbor_adapter_marks_usage_incomplete_and_nonzero(self):
+        agent = harbor_fa_agent.FaAgent.__new__(harbor_fa_agent.FaAgent)
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "fah-sessions"
+            sessions.mkdir()
+            sessions.joinpath("s.jsonl").write_text(self.KILLED_SESSION)
+            agent.logs_dir = Path(tmp)
+            context = harbor_fa_agent.AgentContext()
+            agent.populate_context_post_run(context)
+            self.assertEqual(context.n_input_tokens, self.KILLED_EST_IN)
+            self.assertTrue(context.metadata.get("usage_incomplete"))
+
+    def test_harbor_adapter_exports_failure_mode(self):
+        agent = harbor_fa_agent.FaAgent.__new__(harbor_fa_agent.FaAgent)
+        agent._run_outcome = "agent_timeout"
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "fah-sessions"
+            sessions.mkdir()
+            sessions.joinpath("s.jsonl").write_text(self.KILLED_SESSION)
+            agent.logs_dir = Path(tmp)
+            context = harbor_fa_agent.AgentContext()
+            agent.populate_context_post_run(context)
+            self.assertEqual(context.metadata.get("failure_mode"), "agent_timeout")
+            self.assertTrue(context.metadata.get("usage_incomplete"))
+
+    def test_harbor_adapter_failure_mode_defaults_to_never_started(self):
+        # No run outcome stashed (run() never executed — install failure,
+        # never launched): the audit-only C3 shape. No usage is fabricated,
+        # and the outcome class is explicit.
+        agent = harbor_fa_agent.FaAgent.__new__(harbor_fa_agent.FaAgent)
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "fah-sessions"
+            sessions.mkdir()
+            agent.logs_dir = Path(tmp)
+            context = harbor_fa_agent.AgentContext()
+            agent.populate_context_post_run(context)
+            self.assertIsNone(context.n_input_tokens)
+            self.assertEqual(context.metadata.get("failure_mode"), "never_started")
+
+    def test_harbor_completed_run_failure_mode_without_usage_records(self):
+        # A completed run whose session died (no records): totals stay None
+        # but the outcome class is still exported (AC4 — every terminal
+        # outcome class lands in agent_result).
+        agent = harbor_fa_agent.FaAgent.__new__(harbor_fa_agent.FaAgent)
+        agent._run_outcome = "completed"
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "fah-sessions"
+            sessions.mkdir()
+            agent.logs_dir = Path(tmp)
+            context = harbor_fa_agent.AgentContext()
+            agent.populate_context_post_run(context)
+            self.assertIsNone(context.n_input_tokens)
+            self.assertEqual(context.metadata.get("failure_mode"), "completed")
+            self.assertNotIn("usage_incomplete", context.metadata)
 
 
 class PricingTest(unittest.TestCase):

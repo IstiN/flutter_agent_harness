@@ -204,6 +204,61 @@ void main() {
       secrets: secrets,
     );
 
+    /// REG-1 (issue #1552): the custom-name form — a chain entry whose
+    /// provider names a saved custom entry — resolves like the
+    /// kind+baseUrl form on BOTH paths, the resolver's registry leg fed
+    /// the same way each host wires it (CLI: the yaml `customProviders:`
+    /// list; app: the same entries).
+    test('custom-name form resolves like kind+baseUrl on both paths', () {
+      final entry = CustomProviderEntry(
+        name: 'aiai',
+        apiType: 'openai',
+        baseUrl: smolRef.baseUrl!,
+        modelId: smolRef.modelId,
+        keyName: smolRef.apiKeyName,
+      );
+      final cli = resolveCliCompactionWiring(
+        mainModel: _mainModel(),
+        rolesResolver: ModelRolesResolver(
+          config: ModelRolesConfig(
+            roles: {
+              'smol': [
+                ModelRef(
+                  provider: 'aiai',
+                  modelId: smolRef.modelId,
+                  apiKeyName: smolRef.apiKeyName,
+                ),
+              ],
+            },
+          ),
+          secrets: secrets,
+          customProviders: [entry],
+        ),
+        contextWindowCap: null,
+      );
+      final store = TaskModelsStore.inMemory({
+        TaskRole.smol: TaskRoleConfig(
+          providerKind: 'aiai',
+          baseUrl: smolRef.baseUrl!,
+          modelId: smolRef.modelId,
+          apiKeyName: smolRef.apiKeyName,
+        ),
+      });
+      final app = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        smolModel: ModelRolesResolver(
+          config: ModelRolesConfig(roles: StoreBackedRolesMap(store)),
+          secrets: secrets,
+          customProviders: [entry],
+        ).resolveRole(smolModelRole)?.model,
+      );
+      expect(cli.smolModel, isNotNull);
+      expect(cli.smolModel!.id, 'cheap-fast-model');
+      expect(cli.smolModel!.baseUrl, smolRef.baseUrl);
+      expect(app.smolModel, isNotNull);
+      expect(app.sameResolutionAs(cli), isTrue);
+    });
+
     test('no smol configured: both hosts fall back to the main model', () {
       final cli = resolveCliCompactionWiring(
         mainModel: _mainModel(),

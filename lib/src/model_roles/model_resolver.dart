@@ -24,7 +24,8 @@ import '../cancel_token.dart';
 import '../exceptions.dart';
 import '../model.dart';
 import '../secrets/secrets_store.dart';
-import '../cli/custom_providers.dart' show CustomProviderRegistry, sameEndpoint;
+import '../cli/custom_providers.dart'
+    show CustomProviderEntry, CustomProviderRegistry, sameEndpoint;
 import 'fallback_stream.dart';
 import 'key_rotation.dart';
 import 'roles_config.dart';
@@ -69,6 +70,7 @@ final class ModelRolesResolver {
   ModelRolesResolver({
     required this.config,
     required Map<String, String> secrets,
+    this.customProviders = const [],
     this.cwd,
     this.homeDir,
     this.onNotice,
@@ -107,6 +109,14 @@ final class ModelRolesResolver {
 
   /// The active configuration (replaced by [setDefaultChain]).
   ModelRolesConfig config;
+
+  /// The saved custom providers (the `customProviders:` config section) —
+  /// the registry leg of chain-name resolution (issue #1552): a chain
+  /// entry naming one of these entries (`provider: aiai`) resolves through
+  /// the entry's apiType spec, with the entry's `baseUrl`/`keyName` as
+  /// defaults where the ref omits them. Empty (default) = the legacy
+  /// catalog-only surface; nothing existing changes shape.
+  final List<CustomProviderEntry> customProviders;
 
   /// The working directory used for path-override matching.
   final String? cwd;
@@ -204,16 +214,28 @@ final class ModelRolesResolver {
     // writes) is KNOWN to this version and must not be skipped as unknown.
     // honorBuildFilter: roles are a user-facing surface — the filter the
     // old name-only + kind-loop pair applied, now in the one seam.
-    final spec = resolveCliProviderSpec(ref.provider, honorBuildFilter: true);
+    var spec = resolveCliProviderSpec(ref.provider, honorBuildFilter: true);
     if (spec == null) {
-      // gh-760: degrade, never brick. An entry whose provider no version
-      // knows (a config written by a newer app/CLI) skips like a
-      // missing-key entry — reported in skippedEntries, never thrown —
-      // so the remaining known entries carry the role.
-      skipped.add('${ref.label} (unknown provider: ${ref.provider})');
-      onUnknownProvider();
-      return null;
+      // Issue #1552: the catalog missed — a hand-written config may name
+      // a `customProviders:` entry (`provider: aiai`). The registry leg
+      // (_registryLeg) resolves through the entry; null = the gh-760 skip
+      // is already reported and classified there — degrade now. The
+      // reserved-name rule (isReservedCustomProviderName) bars registry
+      // entries from catalog names, so the leg only ever answers what
+      // the catalog missed — the two namespaces never shadow.
+      final viaRegistry = _registryLeg(
+        ref,
+        skipped,
+        onUnknownProvider: onUnknownProvider,
+      );
+      if (viaRegistry == null) return null;
+      (ref, spec) = viaRegistry;
     }
+    // Non-null alias: the registry leg reassigns `spec` above and
+    // `buildRouted` below captures it — flow analysis never promotes a
+    // captured local that is assigned more than once, so the closure must
+    // read a final.
+    final resolvedSpec = spec;
     // gh-1570 (AC8): a keyless ref needs NO credential — a localhost
     // bench endpoint or an unauthenticated gateway. The check PREEMPTS
     // key discovery: no env name is probed, and the stream factory
@@ -226,10 +248,10 @@ final class ModelRolesResolver {
         credentials: const [ApiKeyCredential('', '')],
       );
     } else {
-      final keyBase = _keyBaseName(ref, spec);
+      final keyBase = _keyBaseName(ref, resolvedSpec);
       if (keyBase == null) {
         skipped.add(
-          '${ref.label} (missing API key: ${_missingKeyHint(ref, spec)})',
+          '${ref.label} (missing API key: ${_missingKeyHint(ref, resolvedSpec)})',
         );
         return null;
       }
@@ -250,7 +272,7 @@ final class ModelRolesResolver {
     var currentKey = ring.currentCredential.value;
 
     StreamFunction buildRouted() {
-      final inner = _streamFactory(spec.kind, currentKey);
+      final inner = _streamFactory(resolvedSpec.kind, currentKey);
       return (model, context, {cancelToken}) {
         // An explicit per-call override (the compaction bypass) wins
         // over the resolver's bound session id.
@@ -270,7 +292,7 @@ final class ModelRolesResolver {
       // Build from the RESOLVED spec's name: a kind-named ref
       // (`chatgpt-codex`) is not itself a catalog key.
       model: buildCatalogModel(
-        spec.name,
+        resolvedSpec.name,
         ref.modelId,
         baseUrl: ref.baseUrl,
         contextWindow: ref.contextWindow,
@@ -304,18 +326,7 @@ final class ModelRolesResolver {
               }
               return rotated;
             },
-            buildTakeover: role == smolModelRole
-                ? null
-                : () {
-                    try {
-                      final smolWrapper = streamForRole(smolModelRole);
-                      final smolModel = smolWrapper.currentModel;
-                      return (model, context, {cancelToken}) => smolWrapper
-                          .call(smolModel, context, cancelToken: cancelToken);
-                    } on ConfigException {
-                      return null; // smol not configured (logged by the policy)
-                    }
-                  },
+            buildTakeover: role == smolModelRole ? null : _smolTakeoverStream,
             onNotice: (note) =>
                 transientRetryNotice?.call(0, 1, Duration.zero, note),
           ),
@@ -345,6 +356,83 @@ final class ModelRolesResolver {
     final current = ring.credentialByValue(currentValue);
     final next = ring.rotate(current?.name ?? ring.currentCredential.name);
     return next != null;
+  }
+
+  /// The registry LEG of chain-name resolution (issue #1552): the catalog
+  /// missed [ref]'s provider, so resolve through the saved
+  /// `customProviders:` entries. A matched entry resolves through its
+  /// apiType's catalog spec (the same honorBuildFilter rule every
+  /// user-facing roles surface applies), with the entry's
+  /// `baseUrl`/`keyName` as defaults where the ref omits them (explicit
+  /// ref fields always win). Returns the defaulted ref paired with its
+  /// spec, or null with the gh-760 skip ALREADY reported to [skipped] and
+  /// classified via [onUnknownProvider] — the caller just degrades:
+  ///
+  /// - no entry matches → a name known to NEITHER namespace (gh-760): the
+  ///   generic unknown-provider skip, as before this leg existed;
+  /// - the matched entry's apiType is unknown to this version (a saved
+  ///   entry written by a newer CLI) → an unknown ADAPTER DIALECT skip —
+  ///   the registry entry IS known, only its dialect isn't, so "unknown
+  ///   provider" would send the user hunting an entry spelling that is
+  ///   fine.
+  ///
+  /// Both paths keep the degrade contract: a named skip reason, never a
+  /// throw, so the remaining known entries carry the role.
+  (ModelRef, ProviderSpec)? _registryLeg(
+    ModelRef ref,
+    List<String> skipped, {
+    required void Function() onUnknownProvider,
+  }) {
+    final entry = _findCustomProvider(ref.provider);
+    if (entry == null) {
+      skipped.add('${ref.label} (unknown provider: ${ref.provider})');
+      onUnknownProvider();
+      return null;
+    }
+    final spec = resolveCliProviderSpec(entry.apiType, honorBuildFilter: true);
+    if (spec != null) return (_throughCustomEntry(ref, entry), spec);
+    skipped.add('${ref.label} (unknown adapter dialect: ${entry.apiType})');
+    onUnknownProvider();
+    return null;
+  }
+
+  /// The saved custom entry named by a chain ref (case-insensitive), or
+  /// null — the registry leg of the resolver's name resolution (issue
+  /// #1552). No alias canonicalization here: chain refs are hand-written
+  /// names, and the registry's own load merge already folded alias twins.
+  CustomProviderEntry? _findCustomProvider(String name) {
+    final lower = name.trim().toLowerCase();
+    for (final entry in customProviders) {
+      if (entry.name.toLowerCase() == lower) return entry;
+    }
+    return null;
+  }
+
+  /// Defaults [ref]'s pin fields from the custom entry the ref named
+  /// (issue #1552): the entry supplies `baseUrl` and `keyName` where the
+  /// ref omits them; explicit ref fields always win. Every other field
+  /// (model, window/token/modality/thinking/auth-header/tuning overrides)
+  /// is the ref's own, exactly as for a kind+baseUrl entry.
+  ModelRef _throughCustomEntry(ModelRef ref, CustomProviderEntry entry) {
+    if (ref.baseUrl != null && ref.apiKeyName != null) return ref;
+    return ModelRef(
+      provider: ref.provider,
+      modelId: ref.modelId,
+      apiKeyName: ref.apiKeyName ?? entry.keyName,
+      baseUrl: ref.baseUrl ?? entry.baseUrl,
+      contextWindow: ref.contextWindow,
+      maxTokens: ref.maxTokens,
+      input: ref.input,
+      thinkingLevel: ref.thinkingLevel,
+      authHeader: ref.authHeader,
+      connectTimeout: ref.connectTimeout,
+      streamIdleTimeout: ref.streamIdleTimeout,
+      // gh-1570 (AC8): a keyless ref routed through a custom entry keeps
+      // its keyless flag — the rebuild must not reset it to false and
+      // send the resolver probing for a credential the endpoint never
+      // takes.
+      keyless: ref.keyless,
+    );
   }
 
   /// The key base name for [ref]: its explicit `apiKeyName`, else — for a
@@ -452,6 +540,24 @@ final class ModelRolesResolver {
         sleeper: sleeper,
       );
     });
+  }
+
+  /// The smol-role takeover stream, or `null` when smol is not configured
+  /// (the policy logs the skip; the stall error stands). Runs at ESCALATION
+  /// time (the 3rd stall), never at entry build. Split out of
+  /// [_buildEntry]'s takeover closure (CRAP ratchet): the catch-clause
+  /// line is never credited by the VM's coverage instrumentation even when
+  /// the handler runs — at CC 12 that read as one permanently-uncovered
+  /// line → CRAP 12.0008 > the 12.0 ratchet, unfixable by tests in place.
+  StreamFunction? _smolTakeoverStream() {
+    try {
+      final smolWrapper = streamForRole(smolModelRole);
+      final smolModel = smolWrapper.currentModel;
+      return (model, context, {cancelToken}) =>
+          smolWrapper.call(smolModel, context, cancelToken: cancelToken);
+    } on ConfigException {
+      return null; // smol not configured (logged by the policy)
+    }
   }
 
   /// Resolves [role] to its current model and stream function, or `null`

@@ -272,9 +272,16 @@ class FaAgent(AbstractInstalledAgent):
             # means the harness never got the agent going. The fold itself
             # fails soft (zeros survive when no session file exists), so
             # folding a ran-but-empty trial is always safe.
-            if result.failure_mode in _NEVER_STARTED_MODES:
-                return result
-            result = self._fold_session_usage(session, result, logging_dir)
+            # gh-1638: the never-started guard skips ONLY the usage fold
+            # (no session exists to fold); the gh-1576 (I2) audit below
+            # must still land — with a known external cap every
+            # unsupervised termination is audited, and for never-started
+            # modes that outcome is the raw failure-mode string (the
+            # `else` branch is reachable again). Returning early here used
+            # to kill the audit for exactly those modes —
+            # test_other_failure_modes_stay_raw_in_the_stock_audit.
+            if result.failure_mode not in _NEVER_STARTED_MODES:
+                result = self._fold_session_usage(session, result, logging_dir)
             # gh-1576 (I2): with an external cap known, even this
             # unsupervised termination lands the audit — the failure mode
             # the harness recorded IS the outcome class.
@@ -709,6 +716,25 @@ class FaAgent(AbstractInstalledAgent):
             )
 
     @staticmethod
+    def _write_usage_guard(logging_dir, usage) -> None:
+        """gh-1643 usage-guard row (ExportGuard pattern): the trial ended
+        mid-request, so the folded totals are partial (estimated
+        request-side input, output unknown). Fail-soft by contract.
+        """
+        if logging_dir is None:
+            return
+        guard = {
+            "trial": Path(logging_dir).name,
+            "usage_incomplete": True,
+            "estimated_input_tokens": usage.estimated_input_tokens,
+            "estimated_output_tokens": usage.estimated_output_tokens,
+        }
+        try:
+            (Path(logging_dir) / "usage-guard.json").write_text(json.dumps(guard))
+        except OSError:
+            pass
+
+    @staticmethod
     def _guard_loud_empty(logging_dir, usage_tokens) -> None:
         """Issue #1406 loud-empty guard (ExportGuard pattern): a trial
         whose bench_metrics.json folded requests == [] while the usage
@@ -816,6 +842,14 @@ class FaAgent(AbstractInstalledAgent):
             result.total_output_tokens = (
                 usage.output_tokens + usage.estimated_output_tokens
             )
+            # gh-1643 AC1: a request killed before its assistant message
+            # finalized means the fold only PARTIALLY knows this trial's
+            # spend — the marker row makes that explicit next to the other
+            # trial guards (tb's closed TrialResults model cannot carry an
+            # extra field, so the non-zero totals above plus this row are
+            # the result-visible honesty signals).
+            if usage.usage_incomplete:
+                FaAgent._write_usage_guard(logging_dir, usage)
             # Issue #1406: with usage known, the loud-empty guard can name
             # a ConnTrace-dark trial instead of shipping an empty shell.
             FaAgent._guard_loud_empty(logging_dir, usage.total_tokens())
