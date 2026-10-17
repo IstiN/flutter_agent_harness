@@ -164,6 +164,26 @@ void main() {
     },
   );
 
+  test('gh-1669: archive extraction completeness rides the contract as a '
+      'named check', () {
+    // CLEAN-WRONG regression (terminal-bench build-pov-ray, 2/2): the
+    // agent extracted the meaningful subtrees but dropped the archive's
+    // root-level `file_id.diz`, then marked the extraction step `pass`
+    // off an `ls` of the target. The contract now pins extraction
+    // completeness as a named check, next to "Canonical artifacts".
+    expect(
+      finalizeGateContractPrompt,
+      contains('- **Archive extraction is complete**'),
+    );
+    // The check names the verification command shape — an archive
+    // listing diffed against the extracted tree, not an aspirational
+    // "make sure everything extracted".
+    expect(finalizeGateContractPrompt, contains('unzip -l'));
+    expect(finalizeGateContractPrompt, contains('tar -tf'));
+    // Root-level marker/manifest files are called out explicitly.
+    expect(finalizeGateContractPrompt, contains('file_id.diz'));
+  });
+
   test('interactive boots never carry the contract', () async {
     for (final mode in [
       ApprovalMode.alwaysAsk,

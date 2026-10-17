@@ -26,6 +26,7 @@ Named checks every checklist must include when they apply:
 - **Executable bit + shebang** on every script or binary you created (`test -x path`, shebang present) — a working file without +x is a failed task.
 - **Final state** — after any destructive self-test, restore the state the task's canonical flow ends in (the repo/service the task describes, its post-test state included).
 - **Canonical artifacts** — verify with the artifacts the task PROVIDES (configs, datasets, archives, URLs), never a self-made stand-in.
+- **Archive extraction is complete** — after extracting a provided/downloaded archive into a target directory, diff the archive's full listing against the extracted tree (`unzip -l <archive>` / `tar -tf <archive>` vs `ls` of the target); every entry — including root-level files with no extension and no obvious purpose (`file_id.diz`, `README`, `LICENSE`, version stamps) — must be present. A partial extraction is a `fail` item.
 - **Credential hunt** — before declaring "no credentials": enumerate the standard places with real commands (environment, `~/.aws/`, `~/.config/`, `~/.hf/`, `~/.git-credentials`, `~/.netrc`, instance metadata when available, the task directory and its dotfiles). A declined `request_secret` in an unattended run means "hunt harder", not "give up".
 - **Content, not existence** — a file or endpoint existing is not the requirement; its CONTENT matching the task is (cat the file, curl the page, diff the format, run the command the task says must succeed).
 
