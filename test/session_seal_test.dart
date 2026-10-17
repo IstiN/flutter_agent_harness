@@ -125,6 +125,26 @@ void main() {
       expect(first, hasLength(1));
       expect(second, isEmpty);
     });
+
+    test('a throwing onLateWrite sink never propagates (I1)', () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendMessage(UserMessage.text('before'));
+      session.seal(onLateWrite: (_) => throw StateError('sick sink'));
+
+      // The drop already happened; a sick sink must never replace it with
+      // a throw into the late-write caller's stack — exactly the
+      // unhandled-zone failure I1 forecloses.
+      await session.appendMessage(UserMessage.text('late'));
+      await session.appendCustomEntry(customType: 'x', data: 1);
+
+      final texts = [
+        for (final record in await recordsOnDisk())
+          if (record is MessageRecord) _textOf(record.message),
+      ];
+      expect(texts, ['before']);
+    });
   });
 
   group('UT-5: resume after seal', () {

@@ -360,6 +360,56 @@ void main() {
   );
 
   test(
+    'the settle→reaction fence is per-run: a second runHeadless on the '
+    'same CLI instance resets it (I5 fence twin)',
+    () async {
+      final io = FakeCliIO();
+      final shell = _SealShell();
+      final stream = _SealStream([
+        textTurn('run one answer.'),
+        ...List.of(_leadScripts),
+        textTurn('Reaction handled.'),
+      ]);
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final cli = _cli(
+        io: io,
+        env: env,
+        stream: stream,
+        drainMs: 2 * 60 * 1000,
+        ledgerClockValue: () => DateTime.now(),
+      );
+
+      // Run 1: plain answer, no background jobs — completes, raises the
+      // fence in its wrap-up, and seals the session.
+      expect(await cli.runHeadless('first run'), 0);
+
+      // Run 2 on the SAME instance: an honest drain must still start the
+      // settle's reaction run — a permanently inherited fence would do
+      // bookkeeping only and the reaction run would never start.
+      final runFuture = cli.runHeadless('start a job');
+      await waitForIt(
+        () => shell.jobs.isNotEmpty,
+        reason: 'the background job registers',
+      );
+      shell.jobs.single.finish(0);
+      expect(await runFuture, 0);
+
+      final settleRuns = [
+        for (var i = 0; i < stream.contexts.length; i++)
+          if (!stream.continuations[i] &&
+              stream.lastUserTexts[i].contains(_settleMarker))
+            i,
+      ];
+      expect(
+        settleRuns,
+        hasLength(1),
+        reason: 'the second run must not inherit the first run’s fence',
+      );
+      io.close();
+    },
+  );
+
+  test(
     'REG-2: the REPL quit seals the session with the SAME implementation '
     'and close order as headless',
     () async {
