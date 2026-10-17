@@ -116,6 +116,63 @@ void main() {
       }
     });
 
+    test('audit: matrix-defined runners never carry the generic macOS/ARM64 labels', () {
+      // gh-1600 rework round 2 (review thread): the job-level runs-on
+      // audit above reads only the parsed string — jobs routed through a
+      // matrix escape it (`runs-on: \${{ matrix.runner }}` resolves at
+      // runtime), so a future `strategy.matrix` value of
+      // `[self-hosted, macOS, ARM64]` would sail past the audit and
+      // re-route a macOS-shaped job onto the Linux box. Walk every
+      // strategy.matrix subtree and assert no scalar value (string or
+      // list item) carries the generic labels. A raw-text scan is NOT
+      // usable here: comments and display names legitimately contain
+      // `macOS` (e.g. build-macos.yml's `name: Build macOS Release (Fa)`
+      // and the gh-1600 F-A comment) — only parsed YAML values are
+      // semantically runner labels.
+      List<String> matrixScalars(Object? node) {
+        final out = <String>[];
+        void walk(Object? n) {
+          if (n is YamlMap) {
+            n.forEach((_, v) => walk(v));
+          } else if (n is YamlList) {
+            for (final v in n) {
+              walk(v);
+            }
+          } else if (n != null) {
+            out.add(n.toString());
+          }
+        }
+
+        walk(node);
+        return out;
+      }
+
+      final workflows = Directory('.github/workflows')
+          .listSync()
+          .where((f) => f.path.endsWith('.yml'))
+          .toList();
+      for (final f in workflows) {
+        final jobs = jobsOf(f.path);
+        for (final e in jobs.entries) {
+          final strategy = (e.value as YamlMap)['strategy'] as YamlMap?;
+          final matrix = strategy?['matrix'] as YamlMap?;
+          if (matrix == null) continue;
+          for (final scalar in matrixScalars(matrix)) {
+            expect(
+              scalar.contains('macOS') || scalar.contains('ARM64'),
+              isFalse,
+              reason:
+                  '${f.path} job "${e.key}" strategy.matrix carries '
+                  '`$scalar` with the generic `macOS`/`ARM64` labels — a '
+                  'matrix-routed job escapes the job-level runs-on '
+                  'audit, and the Linux self-hosted box also satisfies '
+                  'those labels (gh-1600 F-A class).',
+            );
+          }
+        }
+      }
+    });
+
     test('audit: no self-hosted job in either leg skips the macos-m5 pin', () {
       for (final entry in mobileMacosLegs.entries) {
         final jobs = jobsOf(entry.key);
@@ -217,15 +274,19 @@ void main() {
             'set -u unbound-variable crash in an always() step fails the '
             'job)',
       );
-      // gh-1600 rework (BLOCKING review thread): harbor 0.23.0 never puts
-      // the job name in container names — the compose project is
-      // `{task}__{ShortUUID(7)}__env`, so containers look like
-      // `some-task__ab12cd3__env-main-1`. A `name=` filter can NEVER
-      // match (and an anchored one would still be wrong: an unanchored
-      // substring over-matches sibling shards, `…-cpu-1` ⊂ `…-cpu-14`).
-      // The teardown must key on the compose labels every harbor trial
-      // container carries and precision-guard on the project working dir
-      // under this shard's $RUNNER_TEMP/bench output.
+      // gh-1600 rework round 2 (BLOCKING review thread, re-opened): the
+      // round-1 guard keyed on `com.docker.compose.project.working_dir`,
+      // but harbor 0.23.0 runs compose with
+      // `--project-directory <task_cache>/environment` and the task cache
+      // lives in ~/.cache/harbor/tasks/packages/... (shared across ALL
+      // shards and bench runs) — never under $RUNNER_TEMP/bench. What IS
+      // under the bench output: the trial dirs (job.py trials_dir =
+      // job_dir under the -o dir) bind-mounted into the containers as
+      // /logs/* — so the container's .Mounts[].Source is the harbor-side
+      // path that actually lives under the bench output. The guard must
+      // inspect the mount Sources and prefix-match them against
+      // "$RUNNER_TEMP/bench"/*; anything else (name filter, working_dir
+      // label) selects zero containers and cancelled shards keep leaking.
       expect(
         script.contains('--filter "name='),
         isFalse,
@@ -237,6 +298,15 @@ void main() {
             '(gh-1600 rework)',
       );
       expect(
+        script.contains('com.docker.compose.project.working_dir'),
+        isFalse,
+        reason:
+            'harbor 0.23.0 puts the compose project directory in the '
+            'shared task cache (~/.cache/harbor/tasks/packages/...), NOT '
+            'under \$RUNNER_TEMP/bench — a working_dir guard still matches '
+            'zero containers (gh-1600 rework round 2)',
+      );
+      expect(
         script,
         contains('label=com.docker.compose.project'),
         reason:
@@ -245,19 +315,21 @@ void main() {
       );
       expect(
         script,
-        contains('com.docker.compose.project.working_dir'),
+        contains(r'{{range .Mounts}}{{.Source}} {{end}}'),
         reason:
-            'the working-dir label is the precision guard — only '
-            'containers whose compose project lives under this shard\'s '
-            '\$RUNNER_TEMP/bench output are torn down (gh-1600 rework)',
+            'the bench-bound path on a harbor trial container is its '
+            'bind-mount Source (the trial dirs under the -o output), not '
+            'the compose project dir (gh-1600 rework round 2)',
       );
       expect(
         script,
         contains(r'"$RUNNER_TEMP/bench"/*'),
         reason:
-            'the working-dir match must be anchored to the shard\'s own '
-            'out-of-workspace bench output — sibling shards\' containers '
-            'must never be touched (gh-1600 rework)',
+            'the mount-source match must be anchored to the shard\'s own '
+            'out-of-workspace bench output — mount Sources embed the '
+            'per-registration _temp path, so another workflow\'s or '
+            'another registration\'s live containers are never touched '
+            '(gh-1600 rework round 2)',
       );
     });
 
