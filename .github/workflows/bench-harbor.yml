@@ -593,13 +593,20 @@ jobs:
             false|FALSE|False|no|off) unset FA_PROGRESS_EXTENSION;;
             1|true|TRUE|True|yes|on) export FA_PROGRESS_EXTENSION=1;;
           esac
-          # Pinned --job-name: one jobs/<name>/ dir per shard, so the summary
+          # Pinned --job-name: one <name>/ dir per shard, so the summary
           # job's downloads cannot collide on harbor's timestamped default.
           # The family label keys results per dataset version (fa-4.0-*
           # matches the historical 4.0 names exactly).
+          # gh-1600 AC2: the output lives OUTSIDE $GITHUB_WORKSPACE — on the
+          # shared self-hosted runner a leftover jobs/<name>/ in the
+          # workspace (trial dirs bind-mounted into task containers) made
+          # the next mobile build's clean choke. RUNNER_TEMP is
+          # runner-managed scratch, never a workspace path.
+          mkdir -p "$RUNNER_TEMP/bench/jobs"
           .bench-venv/bin/harbor run -d "$DATASET" -a fa_agent:FaAgent \
             -e "$ENV_TYPE" -m "$MODEL" -k "$ATTEMPTS" -n "$NCONC" \
-            --job-name "fa-${FAMILY}-${ENV_TYPE}-${{ matrix.kind }}-${{ matrix.i }}" -o jobs \
+            --job-name "fa-${FAMILY}-${ENV_TYPE}-${{ matrix.kind }}-${{ matrix.i }}" \
+            -o "$RUNNER_TEMP/bench/jobs" \
             "${args[@]}"
 
       - name: Upload harbor job (shard ${{ matrix.i }})
@@ -607,7 +614,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harbor-job-shard-${{ matrix.i }}
-          path: jobs/
+          # gh-1600: the harbor output moved outside the workspace
+          # ($RUNNER_TEMP/bench/jobs — see the harbor run step).
+          path: ${{ runner.temp }}/bench/jobs/
 
       - name: Upload to Harbor Hub
         if: always() && env.HARBOR_API_KEY != ''
@@ -615,9 +624,63 @@ jobs:
           HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
         run: |
           shopt -s nullglob
-          for job_dir in jobs/fa-${FAMILY}-*; do
+          # gh-1600: iterate the out-of-workspace output dir (see the harbor
+          # run step).
+          for job_dir in "$RUNNER_TEMP/bench/jobs"/fa-${FAMILY}-*; do
             .bench-venv/bin/harbor upload "$job_dir" --public
           done
+
+      # gh-1600 AC2: a cancelled/interrupted shard can leave the trial
+      # containers (and their bind mounts over the output dir) alive on the
+      # persistent self-hosted box — those holds made the NEXT workflow's
+      # workspace clean fail. Tear the shard's containers down BEFORE
+      # removing the output dir; both are best-effort (the uploads above
+      # already ran) so cleanup can never mask the shard's verdict.
+      - name: Tear down bench containers + output dir (gh-1600)
+        if: always()
+        env:
+          # ENV_TYPE is scoped to the harbor-run step above — the cleanup
+          # needs its own copy or `set -u` kills it ("ENV_TYPE: unbound
+          # variable") and the always() step fails the job.
+          ENV_TYPE: ${{ matrix.env }}
+          KIND: ${{ matrix.kind }}
+          SHARD: ${{ matrix.i }}
+        run: |
+          set -euo pipefail
+          if command -v docker >/dev/null 2>&1; then
+            # gh-1600 rework round 2 (BLOCKING review thread, re-opened):
+            # harbor 0.23.0 never puts the job name in container names
+            # (compose project = `{task}__{ShortUUID(7)}__env`), AND the
+            # compose project directory lives in the shared task cache
+            # (~/.cache/harbor/tasks/packages/... — `--project-directory
+            # <task_cache>/environment`), never under $RUNNER_TEMP/bench.
+            # What IS under the bench output: the trial dirs (the -o
+            # job dir) bind-mounted into the containers as /logs/* — so
+            # the container's .Mounts[].Source is the only harbor-side
+            # path under this shard's bench output. Select by the
+            # compose project label, then precision-guard on the mount
+            # Sources; mount Sources embed the per-registration _temp
+            # path, so another workflow's or another registration's
+            # live containers are never touched.
+            ids=$(docker ps -aq --filter "label=com.docker.compose.project" 2>/dev/null || true)
+            torn=0
+            for c in $ids; do
+              srcs=$(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$c" 2>/dev/null || true)
+              for s in $srcs; do
+                case "$s" in
+                  "${RUNNER_TEMP:-/tmp}/bench"/*)
+                    docker rm -f "$c" >/dev/null 2>&1 || true
+                    torn=$((torn + 1))
+                    break ;;
+                esac
+              done
+            done
+            if [ "$torn" -gt 0 ]; then
+              echo "tore down $torn bench container(s) bound to ${RUNNER_TEMP:-/tmp}/bench"
+            fi
+          fi
+          rm -rf "${RUNNER_TEMP:-/tmp}/bench" 2>/dev/null \
+            || echo "::warning::${RUNNER_TEMP:-/tmp}/bench not fully removable — a container still holds it (gh-1600)"
 
   summary:
     name: Aggregate resolution rate
