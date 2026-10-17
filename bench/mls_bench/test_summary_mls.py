@@ -305,7 +305,7 @@ class FixtureBannerTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         sink = Path(tmp.name) / "step-summary.md"
         os.environ["GITHUB_STEP_SUMMARY"] = str(sink)
-        self.addCleanup(os.environ.pop, "GITHUB_STEP_SUMARY", None)
+        self.addCleanup(os.environ.pop, "GITHUB_STEP_SUMMARY", None)
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -319,6 +319,21 @@ class FixtureBannerTest(unittest.TestCase):
         self.assertTrue(text.startswith(FIXTURE_BANNER), text)
         self.assertIn("- model: `fixture-model`", text)
         self.assertFalse(sink.exists(), f"fixture report leaked to {sink}")
+
+    def test_banner_test_does_not_leak_the_sink_env(self):
+        # Regression: test_main_render_stays_bannered_on_stdout's
+        # addCleanup once popped "GITHUB_STEP_SUMARY" (typo, missing
+        # final M) — os.environ.pop's default made it a silent no-op, leaving
+        # GITHUB_STEP_SUMMARY set for every later test in the process
+        # (the exact env-pollution class the hermetic pattern exists
+        # to prevent). Run the whole banner test and check the env
+        # after its teardown.
+        case = FixtureBannerTest("test_main_render_stays_bannered_on_stdout")
+        result = unittest.TestResult()
+        with contextlib.redirect_stdout(io.StringIO()):
+            case.run(result)
+        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+        self.assertNotIn("GITHUB_STEP_SUMMARY", os.environ)
 
 
 if __name__ == "__main__":
