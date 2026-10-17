@@ -328,7 +328,7 @@ t9() {
   if [ "$rc" -eq 0 ] && [ -s "$extracted" ] && bash -n "$extracted" 2>/dev/null; then
     ok "T9 mirror-extracted bootstrap is a complete, parseable script"
   else
-    bad "T9 mirror extraction broken: rc=$rc" 
+    bad "T9 mirror extraction broken: rc=$rc"
     return
   fi
   local out r2
@@ -340,11 +340,116 @@ t9() {
   fi
 }
 
+# ── verbatim workflow-block extraction (the bootstrap's production code) ────
+# extract_step_block WORKFLOW STEP-NAME → the de-indented body of the step's
+# `run: |` block. BSD-awk compatible. Used by T10/T11 to execute the REAL
+# build-macos.yml bootstrap, not a copy that could drift from it.
+extract_step_block() {
+  awk -v want="$2" '
+    index($0, "- name: " want) { iname = 1; next }
+    iname && /^[ ]*- name:/   { iname = 0 }   # a different step came first
+    iname && /^[ ]*run: \|/ {
+      indent = match($0, /[^ ]/) - 1
+      inblk = 1; iname = 0; next
+    }
+    inblk {
+      if ($0 ~ /^[ ]*$/) { print ""; next }
+      if (match($0, /[^ ]/) - 1 < indent) exit
+      print substr($0, indent + 1)
+    }
+  ' "$1"
+}
+
+# ══ T10: first-post-merge window — raw DOWN + STALE pre-merge mirror ══════
+# gh-1665 review (returned IMPORTANT): on the first run after merge the
+# persistent mirror is still a pre-merge tree; with raw.githubusercontent.com
+# unreachable but github.com git access working, the bootstrap must sync the
+# mirror (cheap inline ensure-prelude) BEFORE extracting — the step survives
+# on any runner that can reach github.com at all. Runs the VERBATIM run
+# block from .github/workflows/build-macos.yml with curl stubed to fail and
+# the repo URL rewritten to the fixture remote. RED against a bootstrap
+# that extracts from the stale mirror without syncing.
+t10() {
+  if [ "$MODE" = "--legacy" ]; then return 0; fi
+  local d="$WORK/t10"; mkdir -p "$d"; make_fixture "$d"
+  export HOME="$d/home" RUNNER_TEMP="$d/rtemp"
+  mkdir -p "$RUNNER_TEMP"
+  local mirror="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
+  git clone -q --mirror "file://$d/remote.git" "$mirror"   # STALE pre-merge
+  # the merge: the script lands on the remote AFTER the mirror was taken
+  mkdir -p "$d/work/scripts"
+  cp "$SCRIPT" "$d/work/scripts/update_git_mirror.sh"
+  git -C "$d/work" add scripts/update_git_mirror.sh
+  git -C "$d/work" commit -qm "add updater script"
+  git -C "$d/work" push -q "$d/remote.git" HEAD
+  local stale_head
+  stale_head=$(mirror_head "$mirror")
+  # verbatim bootstrap block, repo URL rewritten to the fixture
+  extract_step_block .github/workflows/build-macos.yml \
+      "Update local git mirrors" \
+    | sed -e 's#https://github.com/IstiN/flutter_agent_harness.git#file://'"$d"'/remote.git#g' \
+          -e 's#${{ github.sha }}#TESTSHA#g' > "$d/block.sh"
+  # curl hard-fails: force the mirror-extraction fallback path
+  mkdir -p "$d/curlstub"
+  printf '#!/usr/bin/env bash\nexit 22\n' > "$d/curlstub/curl"
+  chmod +x "$d/curlstub/curl"
+  local out rc
+  out=$(PATH="$d/curlstub:$PATH" bash "$d/block.sh" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ] && [ -s "$RUNNER_TEMP/update_git_mirror.sh" ] \
+     && [ "$(mirror_head "$mirror")" != "$stale_head" ]; then
+    ok "T10 first-post-merge window: prelude syncs stale mirror, extraction survives raw being down"
+  else
+    bad "T10 first-post-merge bootstrap FAILED: rc=$rc — $out"
+  fi
+  # the same prelude must exist at ALL 3 bootstrap sites (drift guard)
+  local sites
+  sites=$(grep -c "syncing the mirror" .github/workflows/build-macos.yml \
+            .github/workflows/build-mobile.yml | awk -F: '{s+=$2} END {print s}')
+  if [ "$sites" = "3" ]; then
+    ok "T10 prelude present at all 3 bootstrap sites (build-macos + build-ios + submit-ios)"
+  else
+    bad "T10 prelude drift: found at $sites/3 bootstrap sites"
+  fi
+}
+
+# ══ T11: raw DOWN + POISONED mirror dir → prelude recreates and extracts ════
+# Same returned-finding shape as T10, but the mirror dir is a poisoned
+# partial (not a repo at all): the prelude must rm + recreate it, then the
+# extraction succeeds — still with only github.com reachability required.
+t11() {
+  if [ "$MODE" = "--legacy" ]; then return 0; fi
+  local d="$WORK/t11"; mkdir -p "$d"; make_fixture "$d"
+  mkdir -p "$d/work/scripts"
+  cp "$SCRIPT" "$d/work/scripts/update_git_mirror.sh"
+  git -C "$d/work" add scripts/update_git_mirror.sh
+  git -C "$d/work" commit -qm "add updater script"
+  git -C "$d/work" push -q "$d/remote.git" HEAD
+  export HOME="$d/home" RUNNER_TEMP="$d/rtemp"
+  mkdir -p "$RUNNER_TEMP"
+  local mirror="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
+  mkdir -p "$mirror"; echo garbage > "$mirror/HEAD"   # poisoned partial dir
+  extract_step_block .github/workflows/build-macos.yml \
+      "Update local git mirrors" \
+    | sed -e 's#https://github.com/IstiN/flutter_agent_harness.git#file://'"$d"'/remote.git#g' \
+          -e 's#${{ github.sha }}#TESTSHA#g' > "$d/block.sh"
+  mkdir -p "$d/curlstub"
+  printf '#!/usr/bin/env bash\nexit 22\n' > "$d/curlstub/curl"
+  chmod +x "$d/curlstub/curl"
+  local out rc
+  out=$(PATH="$d/curlstub:$PATH" bash "$d/block.sh" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ] && [ -s "$RUNNER_TEMP/update_git_mirror.sh" ] \
+     && [ -n "$(mirror_head "$mirror")" ]; then
+    ok "T11 poisoned mirror dir: prelude recreates it, extraction survives raw being down"
+  else
+    bad "T11 poisoned-mirror bootstrap FAILED: rc=$rc — $out"
+  fi
+}
+
 echo "── gh-1644 update_git_mirror self-test (mode: ${MODE:-script}) ──"
 if [ "$MODE" = "--legacy" ]; then
   t4; t5; t6
 else
-  t1; t2; t3; t4; t5; t6; t7; t8; t9
+  t1; t2; t3; t4; t5; t6; t7; t8; t9; t10; t11
 fi
 
 echo ""
