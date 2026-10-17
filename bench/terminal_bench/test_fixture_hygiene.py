@@ -87,5 +87,51 @@ class FixtureHygieneGuardTest(unittest.TestCase):
         self.assertEqual(failures, [])
 
 
+class GuardRuleTest(unittest.TestCase):
+    """The guard's own heuristics, pinned against synthetic corpora."""
+
+    def _scan(self, text):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "test_fake.py"
+        path.write_text(text)
+        return _violations(path)
+
+    def test_run_identity_key_flags_a_production_model(self):
+        # Review thread 2: a run-config fixture's identity key
+        # ("model"/"provider") replays verbatim into the CI-visible
+        # report — a production value there is the same masquerade sin
+        # on a carrier the run-label rules cannot see.
+        hits = self._scan('RUN_CONFIG = {"model": "glm-5.3-flash"}\n')
+        self.assertEqual(len(hits), 1)
+
+    def test_contract_payload_stays_exempt(self):
+        # A provider-config JSON payload (apiKeyEnvVar/baseUrl) or an
+        # assistant usage-record ("role"/"usage") exercises the real
+        # mapping/pricing contract, not a rendered run identity.
+        text = (
+            'CFG = \'{"baseUrl":"https://x","model":"glm-5.3-flash",'
+            '"apiKeyEnvVar":"K"}\'\n'
+            'REC = {"message": {"role": "assistant", "model": '
+            '"glm-5.3-flash", "usage": {}}}\n'
+        )
+        self.assertEqual(self._scan(text), [])
+
+    def test_intermediate_constant_is_caught(self):
+        # Review thread 3: the same-line heuristic is evadable via
+        # indirection — a bare production token assigned to ANY
+        # identifier is a fixture binding regardless of later use.
+        hits = self._scan('_PROVIDER = "zai-glm-4.5"\n')
+        self.assertEqual(len(hits), 1)
+
+    def test_assert_word_in_trailing_comment_does_not_launder(self):
+        # The old "assert" substring exemption skipped a fixture line
+        # whose TRAILING COMMENT merely mentioned "assert".
+        hits = self._scan(
+            "label = fixture()  # assert 'zai-glm-5.3-flash (glm-5.3-flash)' renders\n"
+        )
+        self.assertEqual(len(hits), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
