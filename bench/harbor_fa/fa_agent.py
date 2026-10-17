@@ -137,6 +137,17 @@ _SESSION_ROOT = "/logs/agent/fah-sessions"
 _POLL_SEC = 5.0
 _AUDIT_PATH = "/logs/agent/fa-timeout-metadata.json"
 
+# ── gh-1589 (I3): the agent-phase exit guarantee ─────────────────────────
+# The pkill pattern: the `[f]a` bracket trick (gh-1556 AC1) — a plain
+# pattern would match this kill command's own sh -c wrapper.
+_AGENT_KILL_PATTERN = "[f]a --session-root"
+# Bounded reap windows: after SIGTERM, the exec wrapper is awaited this
+# long (the wrapper completes exactly when fa exits: `fa | tee; echo
+# __FA_EXIT`); past that, SIGKILL escalation + a short process check.
+# Test seams: monkeypatch to shrink.
+_REAP_TIMEOUT_SEC = 60.0
+_REAP_ESCALATION_TIMEOUT_SEC = 10.0
+
 
 # ── gh-1576: external-kill audit trail (I2) — signal lifecycle ──────────
 # ONE process-level disposition per signal, held on behalf of every live
@@ -405,6 +416,16 @@ class FaAgent(BaseInstalledAgent):
                 )
             except asyncio.CancelledError:
                 self._run_outcome = "external_kill"
+                # gh-1589 (I3): the exit guarantee holds on this path too —
+                # no exec task handle, so reap via the process table.
+                try:
+                    await self._terminate_agent_phase(
+                        environment, cause="cancelled"
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
                 raise
             except BaseException:
                 self._run_outcome = "crashed"
@@ -432,6 +453,123 @@ class FaAgent(BaseInstalledAgent):
             'echo "__FA_EXIT=${status}" | tee -a /logs/agent/fa.txt; '
             'exit "${status}"'
         )
+
+    # ── gh-1589 (I3): the agent-phase exit guarantee ──────────────────────
+
+    async def _kill_fa(self, environment, *, force: bool = False) -> bool:
+        """Best-effort SIGTERM (or SIGKILL with `force`) of the fa process.
+
+        Never raises — a failed kill is the escalation path's input, and
+        its failure must never replace the caller's own outcome (the
+        gh-1556 AC1 rule).
+        """
+        flag = "-9 " if force else ""
+        try:
+            await self.exec_as_root(
+                environment,
+                command=f"pkill {flag}-f '{_AGENT_KILL_PATTERN}' || true",
+                timeout_sec=15,
+            )
+            return True
+        except Exception:
+            return False
+
+    async def _fa_process_gone(self, environment, timeout: float) -> bool:
+        """Whether fa has exited, checked with ONE bounded server-side
+        poll loop (`pgrep` once a second for [timeout] seconds). A transport
+        error conservatively reports "alive" — the caller escalates.
+        """
+        try:
+            result = await self.exec_as_root(
+                environment,
+                command=(
+                    f"for _ in $(seq 1 {max(int(timeout), 1)}); do "
+                    f"pgrep -f '{_AGENT_KILL_PATTERN}' >/dev/null 2>&1 "
+                    "|| exit 0; sleep 1; done; exit 3"
+                ),
+                timeout_sec=timeout + 15,
+            )
+            return result.return_code == 0
+        except Exception:
+            return False
+
+    async def _await_fa_exit(
+        self, environment, exec_task, *, timeout: float
+    ) -> bool:
+        """Bounded wait for fa to exit.
+
+        With an exec task, awaiting it IS reaping: the launch wrapper
+        (`fa … | tee …; echo __FA_EXIT; exit status`) completes exactly
+        when fa does. Without one (the direct-await paths), poll the
+        process table instead.
+        """
+        if exec_task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(exec_task), timeout=timeout)
+                return True
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return False
+        return await self._fa_process_gone(environment, timeout)
+
+    async def _terminate_agent_phase(
+        self,
+        environment,
+        exec_task=None,
+        *,
+        cause: str,
+        reap_timeout: float = _REAP_TIMEOUT_SEC,
+    ) -> None:
+        """gh-1589 (I3/AC4+AC7): the agent phase completes only after fa
+        fully exited — natural exit, or killed and reaped.
+
+        SIGTERM → bounded reap (the exec wrapper's completion, or a pgrep
+        poll without a task handle) → SIGKILL escalation → a short
+        process check → a LOUD degradation note if fa survived it all
+        (never a silent proceed, never an unbounded hang — the container
+        teardown stays harbor's backstop). Bounded on every step.
+        """
+        await self._kill_fa(environment)
+        reaped = await self._await_fa_exit(
+            environment, exec_task, timeout=reap_timeout
+        )
+        if not reaped:
+            # fa ignored SIGTERM (or the exec plumbing wedged past its
+            # exit): escalate, confirm, degrade loudly (E4/AC7).
+            await self._kill_fa(environment, force=True)
+            reaped = await self._await_fa_exit(
+                environment,
+                exec_task,
+                timeout=_REAP_ESCALATION_TIMEOUT_SEC,
+            )
+            if not reaped:
+                reaped = await self._fa_process_gone(
+                    environment, _REAP_ESCALATION_TIMEOUT_SEC
+                )
+            if not reaped:
+                print(
+                    f"[fa_agent] warning: agent-phase exit guarantee degraded "
+                    f"(cause: {cause}): the fa process survived SIGTERM and "
+                    f"SIGKILL plus the {reap_timeout:.0f}s/"
+                    f"{_REAP_ESCALATION_TIMEOUT_SEC:.0f}s reap windows — "
+                    f"proceeding; container teardown is the backstop "
+                    f"(gh-1589 AC7)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        if exec_task is not None and not exec_task.done():
+            # The local exec task outlived the reap: abandon it. Only our
+            # own cancellation is swallowed; an external cancel still
+            # propagates (gh-1576 contract).
+            exec_task.cancel()
+            try:
+                await exec_task
+            except asyncio.CancelledError:
+                if not exec_task.cancelled():
+                    raise
+            except Exception:
+                pass
 
     async def _run_with_deadline(
         self, knobs: "_timeout.TimeoutKnobs", instruction: str, environment
@@ -509,33 +647,18 @@ class FaAgent(BaseInstalledAgent):
                         # a SOLVED task scored 0). The bracket trick matches the
                         # agent process but not this command line, and any kill
                         # failure is swallowed: harbor's own task timeout still
-                        # bounds the trial.
+                        # bounds the trial. gh-1589 (I3): the kill became a
+                        # TERMINATE-AND-REAP — SIGTERM, bounded wait, SIGKILL
+                        # escalation, loud degradation on a wedged fa — so the
+                        # verifier never overlaps a live agent process.
                         try:
-                            await self.exec_as_root(
+                            await self._terminate_agent_phase(
                                 environment,
-                                command="pkill -f '[f]a --session-root' || true",
-                                timeout_sec=15,
+                                exec_task=exec_task,
+                                cause=f"ladder:{outcome}",
                             )
                         except Exception:
                             pass
-                        try:
-                            await asyncio.wait_for(asyncio.shield(exec_task), timeout=60)
-                        except Exception:
-                            pass
-                        if not exec_task.done():
-                            exec_task.cancel()
-                            # An abandoned cancelled task is GC-destroyed with
-                            # "pending task" warnings and its exception never
-                            # retrieved - await the cancellation instead. Only our
-                            # own cancellation is swallowed; an external cancel of
-                            # this coroutine still propagates.
-                            try:
-                                await exec_task
-                            except asyncio.CancelledError:
-                                if not exec_task.cancelled():
-                                    raise
-                            except Exception:
-                                pass
                         break
             # Natural completion: awaiting the task surfaces the exec's own
             # failure (e.g. NonZeroAgentExitCodeError) - today's semantics
@@ -560,6 +683,20 @@ class FaAgent(BaseInstalledAgent):
             # during teardown, so the flush lands. Never masked by an exec
             # failure; the cancellation always re-raises.
             self._run_outcome = "external_kill"
+            # gh-1589 (I3): the incident's OTHER half — the pkill ladder
+            # lived inside the poll loop and never ran on this path, so fa
+            # kept writing session records while the verifier ran. Kill +
+            # bounded reap BEFORE the trial proceeds.
+            try:
+                await self._terminate_agent_phase(
+                    environment,
+                    exec_task=exec_task,
+                    cause="cancelled",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass  # the cancellation must never be masked by a kill failure
             await self._flush_external_kill_audit(
                 environment, knobs, ladder, cap, cause="cancelled"
             )
@@ -594,6 +731,16 @@ class FaAgent(BaseInstalledAgent):
                 )
         except asyncio.CancelledError:
             self._run_outcome = "external_kill"
+            # gh-1589 (I3): the exit guarantee on the unsupervised path —
+            # kill + bounded reap before the cancellation propagates.
+            try:
+                await self._terminate_agent_phase(
+                    environment, cause="cancelled"
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
             await self._flush_external_kill_audit(
                 environment, None, None, cap, cause="cancelled"
             )

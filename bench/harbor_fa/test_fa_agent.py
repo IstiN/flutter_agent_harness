@@ -25,8 +25,10 @@ integration tests need `pip install harbor`, as in the bench workflow).
 """
 import asyncio
 import base64
+import contextlib
 import dataclasses
 import importlib.util
+import io
 import json
 import os
 import signal
@@ -151,12 +153,17 @@ class FakeAgent(fa_agent.FaAgent):
     """
 
     def __init__(self, fail_pkill=False, launch_delay=None, counter=None,
-                 launch_error=None):
+                 launch_error=None, ignore_kill=False, pgrep_alive=False):
         self._version = None
         self.fail_pkill = fail_pkill
         self.launch_delay = launch_delay
         self.launch_error = launch_error
         self.counter = counter
+        # gh-1589: fa wedged ignoring SIGTERM/SIGKILL (the reap-timeout
+        # shape), and whether pgrep still reports the process alive.
+        self.ignore_kill = ignore_kill
+        self.pgrep_alive = pgrep_alive
+        self.launch_exited = False
         self.root_calls = []
         self.launch_env = None
         self.killed = None
@@ -166,11 +173,20 @@ class FakeAgent(fa_agent.FaAgent):
     async def exec_as_root(self, environment, command=None, timeout_sec=None, env=None):
         self.root_calls.append(command)
         if "pkill" in command:
-            self.killed.set()
+            if not self.ignore_kill:
+                self.killed.set()
             if self.fail_pkill:
                 raise RuntimeError(
                     "Command failed (exit 143): pkill -f 'fa --session-root' || true"
                 )
+            return _ExecResult()
+        if "pgrep" in command:
+            # gh-1589 reap poll: exit 0 = process gone, 3 = still alive.
+            if self.pgrep_alive:
+                alive = _ExecResult("alive")
+                alive.return_code = 3
+                return alive
+            return _ExecResult()
         return _ExecResult()
 
     async def exec_as_agent(self, environment, command=None, env=None, timeout_sec=None):
@@ -180,11 +196,16 @@ class FakeAgent(fa_agent.FaAgent):
             if self.launch_error is not None:
                 # The crashed-exec shape (e.g. harbor's
                 # NonZeroAgentExitCodeError after a non-zero fa exit).
+                self.launch_exited = True
                 raise self.launch_error
             if self.launch_delay is not None:
                 await asyncio.sleep(self.launch_delay)
+                self.launch_exited = True
                 return _ExecResult()
             await self.killed.wait()
+            # A cancellation (the abandon leg of a reap timeout) never
+            # counts as fa exiting — launch_exited stays False.
+            self.launch_exited = True
             return _ExecResult()
         if command.startswith("wc -c"):
             value = self.counter["bytes"] if self.counter else 10
@@ -803,6 +824,182 @@ class SignalLifecycleTest(unittest.TestCase):
                 fa_agent._release_signal_auditor(agent, signal.SIGTERM, loop)
             loop.close()
             signal.signal(signal.SIGTERM, original)
+
+
+class AgentPhaseExitGuaranteeTest(unittest.TestCase):
+    """gh-1589 (I3/AC4/AC7): the agent phase completes only after the fa
+    process fully exited — natural exit, the ladder kill, AND external
+    cancel (harbor's own wait_for firing first). The run-38271607849 gap:
+    the pkill ladder lived inside the poll loop, so the external-cancel
+    path returned with fa alive, writing session records while the
+    verifier ran.
+    """
+
+    def setUp(self):
+        self._env = _clean_env(
+            FA_AGENT_TIMEOUT_SEC="1",
+            FA_PROVIDER_CONFIG=json.dumps({"apiKeyEnvVar": "FA_KEY_FAKE"}),
+            FA_KEY_FAKE="secret",
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _knobs(self):
+        return fa_agent_timeout.TimeoutKnobs.from_env()
+
+    @contextlib.contextmanager
+    def _fast_reap(self, timeout=0.3):
+        old = (fa_agent._REAP_TIMEOUT_SEC, fa_agent._REAP_ESCALATION_TIMEOUT_SEC)
+        fa_agent._REAP_TIMEOUT_SEC = timeout
+        fa_agent._REAP_ESCALATION_TIMEOUT_SEC = timeout
+        try:
+            yield
+        finally:
+            fa_agent._REAP_TIMEOUT_SEC, fa_agent._REAP_ESCALATION_TIMEOUT_SEC = old
+
+    def test_external_cancel_kills_fa_before_returning(self):
+        # AC4/IT-3: the cancel path fires the kill ladder and REAPS fa
+        # before the cancellation propagates.
+        agent = FakeAgent()
+
+        async def scenario():
+            task = asyncio.create_task(
+                agent._run_with_deadline(self._knobs(), "task", object())
+            )
+            await asyncio.sleep(0.1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        asyncio.run(scenario())
+        self.assertTrue(
+            any("pkill" in c for c in agent.root_calls),
+            agent.root_calls,
+        )
+        self.assertTrue(
+            agent.launch_exited, "fa must be reaped before run() returns"
+        )
+        self.assertEqual(agent._run_outcome, "external_kill")
+        # I2: the audit flush still lands after the kill+reap.
+        self.assertIsNotNone(agent.audit_payload)
+        self.assertEqual(agent.audit_payload["outcome"], "external_kill")
+
+    def test_external_cancel_escalates_and_warns_when_fa_ignores_sigterm(self):
+        # AC7/E4: fa wedged ignoring SIGTERM — SIGKILL escalation, a LOUD
+        # degradation note, a bounded wait, and the deadline still enforced.
+        agent = FakeAgent(ignore_kill=True, pgrep_alive=True)
+        err = io.StringIO()
+        with self._fast_reap(), contextlib.redirect_stderr(err):
+
+            async def scenario():
+                task = asyncio.create_task(
+                    agent._run_with_deadline(self._knobs(), "task", object())
+                )
+                await asyncio.sleep(0.1)
+                task.cancel()
+                start = time.monotonic()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                return time.monotonic() - start
+
+            elapsed = asyncio.run(scenario())
+        kills = [c for c in agent.root_calls if "pkill" in c]
+        self.assertEqual(len(kills), 2, kills)
+        self.assertTrue(any("-9 " in c for c in kills), kills)
+        self.assertFalse(agent.launch_exited, "fa never died — abandoned")
+        self.assertIn("exit guarantee degraded", err.getvalue())
+        self.assertLess(elapsed, 30, "the reap wait must be bounded")
+
+    def test_ladder_kill_escalates_when_fa_ignores_sigterm(self):
+        # AC4 on the ladder path: the bounded wait expires → SIGKILL →
+        # loud note, and the TimeoutError classification is untouched.
+        agent = FakeAgent(ignore_kill=True, pgrep_alive=True)
+        err = io.StringIO()
+        with self._fast_reap(), contextlib.redirect_stderr(err):
+            with mock.patch.object(fa_agent, "_POLL_SEC", 0.05):
+                with self.assertRaises(asyncio.TimeoutError):
+                    asyncio.run(
+                        agent._run_with_deadline(
+                            self._knobs(), "task", object()
+                        )
+                    )
+        kills = [c for c in agent.root_calls if "pkill" in c]
+        self.assertTrue(any("-9 " in c for c in kills), kills)
+        self.assertIn("exit guarantee degraded", err.getvalue())
+        self.assertIsNotNone(agent.audit_payload)
+
+    def test_cancel_path_survives_a_failing_kill(self):
+        # IT-5: the pkill exec itself fails (transport/exec error) — the
+        # escalation still runs, the degradation is loud, and the
+        # cancellation still propagates (never masked, never hung).
+        agent = FakeAgent(fail_pkill=True, ignore_kill=True, pgrep_alive=True)
+        err = io.StringIO()
+        with self._fast_reap(), contextlib.redirect_stderr(err):
+
+            async def scenario():
+                task = asyncio.create_task(
+                    agent._run_with_deadline(self._knobs(), "task", object())
+                )
+                await asyncio.sleep(0.1)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+
+            asyncio.run(scenario())
+        self.assertEqual(
+            len([c for c in agent.root_calls if "pkill" in c]), 2,
+            agent.root_calls,
+        )
+        self.assertIn("exit guarantee degraded", err.getvalue())
+
+    def test_plain_exec_cancel_terminates_fa(self):
+        # AC4 (no-knobs exec): run()'s plain path owes the same exit
+        # guarantee on external cancel.
+        agent = FakeAgent()
+
+        async def scenario():
+            task = asyncio.create_task(
+                agent.run("task", environment=object(), context={})
+            )
+            await asyncio.sleep(0.1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        asyncio.run(scenario())
+        self.assertTrue(
+            any("pkill" in c for c in agent.root_calls), agent.root_calls
+        )
+        self.assertTrue(agent.launch_exited)
+        self.assertEqual(agent._run_outcome, "external_kill")
+
+    def test_external_cap_only_cancel_terminates_fa(self):
+        # AC4 (gh-1576 external-cap-only mode): same guarantee.
+        agent = FakeAgent()
+        cap = fa_agent_timeout.CapResolution(
+            external_cap_status="ok",
+            effective_cap_sec=60.0,
+            winning_cap_source="external",
+            external_cap_sec=60.0,
+        )
+        agent._cap = cap
+        agent._deadline_epoch_ms = 12345
+
+        async def scenario():
+            task = asyncio.create_task(
+                agent._run_external_cap_only("task", object())
+            )
+            await asyncio.sleep(0.1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        asyncio.run(scenario())
+        self.assertTrue(
+            any("pkill" in c for c in agent.root_calls), agent.root_calls
+        )
+        self.assertTrue(agent.launch_exited)
+        self.assertEqual(agent._run_outcome, "external_kill")
 
 
 if __name__ == "__main__":
