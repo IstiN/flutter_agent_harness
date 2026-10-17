@@ -153,11 +153,13 @@ void main() {
       );
       expect(
         body,
-        contains('flutter-app-lock-smoke|installer-portability)'),
+        contains(
+          'flutter-app-lock-smoke|installer-portability|office-addin-suite)',
+        ),
         reason:
             'platform class (#1368): a red macOS leg blocks the MERGE '
             'via the aggregate but never holds the pure-Dart publish '
-            'hostage',
+            'hostage (gh-1659 grew the class with the office-addin suite)',
       );
     });
 
