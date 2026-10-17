@@ -639,6 +639,10 @@ jobs:
       - name: Tear down bench containers + output dir (gh-1600)
         if: always()
         env:
+          # ENV_TYPE is scoped to the harbor-run step above — the cleanup
+          # needs its own copy or `set -u` kills it ("ENV_TYPE: unbound
+          # variable") and the always() step fails the job.
+          ENV_TYPE: ${{ matrix.env }}
           KIND: ${{ matrix.kind }}
           SHARD: ${{ matrix.i }}
         run: |

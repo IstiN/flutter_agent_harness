@@ -171,6 +171,19 @@ void main() {
             'containers hold the trial dirs and any earlier rm fails on the '
             'live mounts (gh-1600)',
       );
+      // The cleanup step references \$FAMILY (job env) and \$ENV_TYPE — but
+      // ENV_TYPE is only step-scoped to the harbor-run step. Without its own
+      // copy `set -u` kills the step ("ENV_TYPE: unbound variable") and the
+      // always() step fails the whole bench job.
+      expect(
+        (cleanup['env'] as YamlMap?)?.containsKey('ENV_TYPE') ?? false,
+        isTrue,
+        reason:
+            'the cleanup step must declare ENV_TYPE: \${{ matrix.env }} — '
+            'it is not in scope from the harbor-run step (gh-1600: a '
+            'set -u unbound-variable crash in an always() step fails the '
+            'job)',
+      );
     });
 
     test('every mirror-checkout script is inline with a log-and-prune clean', () {
