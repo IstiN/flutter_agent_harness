@@ -187,6 +187,13 @@ jobs:
       - uses: ./.github/actions/flutter-gemma-android-seed
         if: matrix.target == 'android'
 
+      # gh-1655: same NDK pre-install as ci.yml build-android, on the
+      # android matrix row only (no-op elsewhere) — Gradle configuration
+      # auto-installs the Flutter-pinned NDK mid-build with no retry;
+      # one truncated download reds the scheduled leg.
+      - uses: ./.github/actions/android-ndk-preinstall
+        if: matrix.target == 'android'
+
       # Linux desktop toolchain + plugin native deps (gtk3 for the runner,
       # gstreamer for audioplayers_linux).
       - name: Install Linux desktop toolchain
