@@ -163,6 +163,15 @@ background jobs, land partial results) before the guillotine; the exact
 value is audited in the trial's `fa-timeout-metadata.json`. With no
 adapter cap the export is absent — fa never invents a clock.
 
+### Shard startup failures (gh-1658)
+
+A shard whose harbor run fails with zero `result.json` files retries the
+harbor invocation once inline (same env/model/params) and marks a
+still-failing shard `zero-trial startup failure (retried once)` in the
+step summary; the aggregate verdict fails on any shard that contributed 0
+trials to the merged export. A red shard WITH trials is a real result and
+is never auto-retried (a retry would double-bill and mix attempts).
+
 ### Cost
 
 - CPU shards: default ubuntu-latest runners (GitHub minutes; the
