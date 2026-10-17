@@ -188,6 +188,24 @@ void main() {
       );
     });
 
+    test('preserve-cache-dir expands a literal \$HOME at run time', () {
+      final action = read('.github/actions/mirror-checkout/action.yml');
+      // build-macos.yml passes '$HOME/actions-runner-yoloit/build-cache/...'
+      // — bash single quotes around '${{ inputs... }}' keep it literal, so
+      // the action must expand the token itself or the per-arch cache parks
+      // in a junk ./'$HOME'/ dir under the cwd instead of the runner home
+      // (the input's documented contract).
+      expect(
+        action,
+        contains(r'CACHE="${CACHE/\$HOME/$HOME}"'),
+        reason:
+            'preserve-cache-dir values carry a literal \$HOME token; the '
+            'action must expand it at run time (gh-1600 follow-up: '
+            'build-macos''s per-arch build cache would park under '
+            './\$HOME/... and never in \$HOME)',
+      );
+    });
+
     test('the three mirror-checkout jobs use the hardened action', () {
       final mobile = read('.github/workflows/build-mobile.yml');
       final macos = read('.github/workflows/build-macos.yml');

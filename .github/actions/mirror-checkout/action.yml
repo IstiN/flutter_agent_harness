@@ -44,6 +44,11 @@ runs:
         MIRROR="$HOME/actions-runner-yoloit/mirror/$(basename "$REPO_URL")"
         PRESERVE='${{ inputs.preserve-path }}'
         CACHE='${{ inputs.preserve-cache-dir }}'
+        # Callers pass "$HOME/..." — the single-quoted assignment above keeps
+        # it literal, so expand the token here (GH expressions cannot see the
+        # runner's HOME); without this the cache parks in a junk
+        # ./'$HOME'/... dir under the cwd instead of the runner home.
+        CACHE="${CACHE/\$HOME/$HOME}"
         cd /tmp
         echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
         echo "MIRROR=$MIRROR"
