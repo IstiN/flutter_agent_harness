@@ -352,7 +352,7 @@ void main() {
       await chrome.revokePermissions(['search']);
       await syncSecondTierTools(reg, surface, secondTierToolNames());
       expect(reg.names, everyElement(isNot(isIn(secondTierToolNames()))));
-      expect(reg.length, 31); // core unaffected
+      expect(reg.length, 32); // core unaffected (incl. gated `download`)
     });
 
     test('sync is idempotent: double-apply does not duplicate', () async {
@@ -364,9 +364,9 @@ void main() {
         enabledSecondTier: {'top_sites'},
       );
       await syncSecondTierTools(reg, surface, {'top_sites'});
-      expect(reg.length, 32);
+      expect(reg.length, 33);
       await syncSecondTierTools(reg, surface, {'top_sites'});
-      expect(reg.length, 32);
+      expect(reg.length, 33);
     });
 
     test('dynamically granting an optional permission surfaces its tool '
