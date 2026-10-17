@@ -225,6 +225,9 @@ def classify_early_exit_unmet(
     return duration_secs < cap_secs - margin
 
 
+
+
+
 def classify_clean_exit_wrong(clean_exit: bool, ledger_unmet, reward_zero):
     """gh-1652 C4: the CLEAN-WRONG verdict for one trial.
 
@@ -249,7 +252,6 @@ def classify_clean_exit_wrong(clean_exit: bool, ledger_unmet, reward_zero):
     if not clean_exit or ledger_unmet > 0 or not reward_zero:
         return False
     return True
-
 
 def _ledger_cell(trial_dir: Path) -> str:
     """gh-1412: the trial's checklist-coverage cell from its last hidden
@@ -460,13 +462,15 @@ def _trial_rows(job_dir: Path) -> list[dict]:
             "trial": f"{job_dir.name}/{trial_dir.name}",
             "integrity": verdict,
             "integrity_note": note,
-            "early_exit_unmet": classify_early_exit_unmet(
-                clean_exit, ledger_unmet, duration_secs, cap_secs
-            ),
+            # gh-1652 C4: reward-0 evidence — every verifier reward is
+            # zero (no partial credit). No scores = no verdict.
+            "reward_zero": reward_zero,
             "clean_exit_wrong": classify_clean_exit_wrong(
                 clean_exit, ledger_unmet, reward_zero
             ),
-            "reward_zero": reward_zero,
+            "early_exit_unmet": classify_early_exit_unmet(
+                clean_exit, ledger_unmet, duration_secs, cap_secs
+            ),
             "duration_secs": duration_secs,
             "cap_secs": cap_secs,
         })
@@ -691,6 +695,7 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
                 " clean_exit_wrong — no ledger or verifier-reward data"
                 " (never counted)"
             )
+
 
     # gh-1578: the errored class splits by OWNER. Verifier timeouts (the
     # in-container verifier hung executing agent-authored code) are the

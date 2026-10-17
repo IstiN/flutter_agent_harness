@@ -119,6 +119,9 @@ void main() {
       final first = deadline.pollNotices();
       expect(first.map((n) => n.kind), [DeadlineNoticeKind.halfBudget]);
       expect(first.single.text, contains('Half of your time budget'));
+      // gh-1646: mid-run anti-stop — never wrap up early, the deadline
+      // interrupts by itself.
+      expect(first.single.text, contains('interrupted at the deadline'));
       expect(deadline.pollNotices(), isEmpty, reason: 'once per crossing');
 
       // T-3min: the wrap-up steer names the shell-job drain explicitly.

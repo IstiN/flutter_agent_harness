@@ -312,6 +312,70 @@ class EarlyExitGuardTest(unittest.TestCase):
         )
         self.assertNotIn("early-exit-with-unmet-ledger", self._render())
 
+    def test_pending_rows_stay_out_of_the_denominator(self):
+        # A `pending` row is a lost/crashed shard (no verdict), not an
+        # honest surrender — it must not enter the guard's denominator
+        # even when its disk state happens to carry an unmet ledger
+        # (review gh-1646: keep the share comparable with the harbor
+        # sibling's scored_failures).
+        self._trial(
+            "t",
+            "t.1-of-1.shard-1",
+            ledger_items=[_item(status="fail")],
+        )
+        self._trial(
+            "lost",
+            "lost.1-of-1.shard-1",
+            ledger_items=[_item(status="fail")],
+            resolved=None,
+        )
+        self.assertIn(
+            "early-exit-with-unmet-ledger (gh-1646): 1/1 failures (100%)",
+            self._render(),
+        )
+
+    def test_pending_only_run_stays_silent(self):
+        # A run whose every non-yes row is pending (shard crashed) has
+        # no scored failures — no guard block at all, never a fabricated
+        # share over an empty denominator.
+        self._trial(
+            "lost",
+            "lost.1-of-1.shard-1",
+            ledger_items=[_item(status="fail")],
+            resolved=None,
+        )
+        self.assertNotIn("early-exit-with-unmet-ledger", self._render())
+
+    def test_test_timeout_is_not_a_clean_exit(self):
+        # `test_timeout` = the verify phase burned the budget (gh-1206):
+        # the trial did not end on its own. Clean exit is an allow-list
+        # (failure mode empty) — the conservative direction (review
+        # gh-1646): the row stays in the denominator, never the class.
+        self._trial(
+            "t",
+            "t.1-of-1.shard-1",
+            ledger_items=[_item(status="fail")],
+            mode="test_timeout",
+        )
+        self.assertIn(
+            "early-exit-with-unmet-ledger (gh-1646): 0/1 failures (0%)",
+            self._render(),
+        )
+
+    def test_unknown_future_failure_mode_is_not_a_clean_exit(self):
+        # Allow-list, not block-list: an unrecognized failure mode is
+        # never silently treated as a clean exit (review gh-1646).
+        self._trial(
+            "t",
+            "t.1-of-1.shard-1",
+            ledger_items=[_item(status="fail")],
+            mode="some_future_mode",
+        )
+        self.assertIn(
+            "early-exit-with-unmet-ledger (gh-1646): 0/1 failures (0%)",
+            self._render(),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,14 +8,12 @@
 ///   `prompts/cli/finalize_gate.md`, rendered by the hosts into the system
 ///   prompt). Before any final summary the agent re-quotes every explicit
 ///   requirement as a checklist, verifies each item with a real command
-///   against the produced state, and fixes every unmet item. A final
-///   answer that still carries unmet items is budget-conditional (gh-1646):
-///   compliant only when the harness-reported wall clock is spent or
-///   every unmet item names a blocker the agent cannot change. Step
-///   2.5 (gh-1652) re-runs each produced entry point the way the grader
-///   will — neutral cwd, fresh subprocess, clean env — so the
-///   ledger's oracle is the verifier's own invocation, not the agent's
-///   checklist.
+///   against the produced state, and fixes every unmet item. The clock
+///   is the harness's
+///   (gh-1646): the contract says work to the wall — the time-left
+///   notices report the remaining budget, and while work remains the
+///   next compliant action is another approach, not a final answer
+///   (the run is interrupted automatically at the deadline).
 /// - **TaskLedger** — the checklist itself as a hidden session record
 ///   (`task_ledger` custom record, shaped like `model_request_summary`):
 ///   post-mortems see WHAT was self-checked, the bench summary reports

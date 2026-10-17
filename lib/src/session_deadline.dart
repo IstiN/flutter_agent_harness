@@ -91,7 +91,9 @@ final class DeadlineLadder {
   String text(DeadlineNoticeKind kind, String timeLeft) => switch (kind) {
     DeadlineNoticeKind.halfBudget =>
       'Half of your time budget has elapsed ($timeLeft remaining). '
-          'Stop widening the search: converge on the deliverables.',
+          'Stop widening the search: converge on the deliverables. '
+          'Do not stop while work remains: unfinished work is not a reason '
+          'to wrap up — you are interrupted at the deadline anyway.',
     DeadlineNoticeKind.wrapUp =>
       'Deadline in $timeLeft — stop exploring and finalize your outputs '
           'NOW: drain or kill background shell jobs (`bash_job stop <id>`) '

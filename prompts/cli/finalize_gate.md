@@ -17,14 +17,10 @@ Those turns produced no state; running the checklist ritual on them is noise. Ot
 1. **Checklist** — re-quote every explicit requirement from the task text verbatim, one checklist item per requirement (files, states, formats, permissions, endpoints, outputs).
 2. **Verify each item with a real command** against the produced state — never from memory, never "I wrote it earlier". Note expected vs actual.
 2.5. **Grader parity** — your shell is not the verifier's: if the task ships a runnable verifier, test, or entry point the grader will call, run THAT command the way the grader will — neutral cwd (`cd /` — a different working directory, never the session cwd), fresh subprocess, clean env (no session-exported vars) — and compare stdout, stderr, and exit code against the earlier in-session run. Any divergence — different output, files created via relative paths now missing, locale/encoding-dependent output — is a `fail` item to fix before finalizing. The ledger row for the main artifact uses this invocation as its `command:`.
-3. **Fix every unmet item** — a failed item is fixed and re-verified. Fix attempts are bounded (don't spiral on one dead end — switch approach), but a bounded attempt is NEVER a permission to stop: while budget remains, the next compliant action is another approach, not a final answer.
+3. **Fix every unmet item** — a failed item is fixed and re-verified. Fix attempts are bounded: don't spiral on one dead end — switch approach.
 
-**The unmet-item wall (gh-1646).** A final answer that still carries `fail` items is compliant ONLY when one of these holds:
+**Work to the wall.** Your time-left notices report the remaining budget. While work remains, the next compliant action is another approach — not a final answer. Do not stop to wrap up: you are interrupted automatically when time expires, so no manual saving-up is needed. A final answer is written when the task is done or the deadline notice says so.
 
-- **The wall is reached** — the harness reports the timer itself: the per-turn `time-left:` line and the deadline steers are the run’s clock, so work to the wall they report and never re-derive the remaining budget yourself.
-- **Every unmet item is truly blocked** — by something you cannot change (a credential declined after the full hunt, an unavailable network), and each such item's `actual` NAMES the blocker.
-
-Anything else — budget remaining, no named blocker — is not a stopping point: the ONLY compliant action is to continue working. Work to the wall: run another fix-verify cycle, then another, until the harness reports the budget spent or every `fail` item names its blocker in `actual`.
 
 Named checks every checklist must include when they apply:
 
@@ -44,4 +40,5 @@ End the final answer with the task ledger — a fenced `task-ledger` block, one 
   status: pass|fixed|fail
 ```
 
-`pass` = verified against the produced state; `fixed` = failed, then fixed and re-verified; `fail` = could not meet it — a compliant terminal state ONLY at the wall or with the per-item named blocker in `actual`. A `fail` item with budget remaining is not a terminal state: the next compliant action is another fix-verify cycle, not the final answer.
+`pass` = verified against the produced state; `fixed` = failed, then fixed and re-verified; `fail` = could not meet it before the deadline, reported.
+
