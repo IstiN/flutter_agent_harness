@@ -114,6 +114,10 @@ extension AgentCliLifecycle on AgentCli {
     await _flushJobBoardPersist();
     await _flushObligationsLedger();
     await _subagentManager.flushPersist();
+    // gh-1589 (REG-2): the REPL path seals with the SAME implementation
+    // and the SAME close order as headless — drain → usage fold → seal →
+    // exit. One invariant, both exits, no divergent variants.
+    _sealSessionForExit();
   }
 
   /// Warm the endpoint metadata (model list, dial features, reported
@@ -279,10 +283,19 @@ extension AgentCliLifecycle on AgentCli {
   /// racing the same wall budget: name the actual cause once (`_finish`
   /// threads [roundCapEnded]), then let the detach summary name the jobs
   /// — the documented degradation, never a silent hang.
+  ///
+  /// gh-1589: the fence goes up FIRST (I2/E1) — a settle landing in this
+  /// method's check-to-return window (the registry's settle listener
+  /// defers one event-loop turn) must classify as bookkeeping-only, not
+  /// start a reaction run nobody waits for. A reaction run ALREADY in
+  /// flight is unaffected: the `isBusy` leg below still awaits it, and
+  /// the seal in `runHeadless`' finally lands strictly after its
+  /// `_afterRun` (E3).
   Future<void> _finishHeadlessDrain(
     int drainMs, {
     required bool roundCapEnded,
   }) async {
+    _sealReactionRuns();
     if (isBusy) {
       await _settled;
       await _afterRun();
@@ -295,6 +308,30 @@ extension AgentCliLifecycle on AgentCli {
         ),
       );
     }
+  }
+
+  /// gh-1589 (I2): raises the settle→reaction fence — idempotent, called
+  /// from every headless terminal path (drain wrap-up, aborted branch,
+  /// error catch, the `runHeadless` finally). After this, settles do
+  /// bookkeeping only.
+  void _sealReactionRuns() {
+    _reactionRunsSealed = true;
+  }
+
+  /// gh-1589 (I1/REG-2): seals the session — the close boundary behind the
+  /// run. Called as the LAST session-writing step of both teardown paths
+  /// (`runHeadless`' finally, `_teardownAfterRepl`), strictly after the
+  /// usage fold and the job-board/obligations/subagent flushes (close
+  /// order: drain → usage fold → seal → exit). From here on every writer
+  /// observing the session appends nothing; late writes are dropped with
+  /// one stderr warning per writer class. The seal is per-run state: a
+  /// resume/wake opens the same file unsealed (I5).
+  void _sealSessionForExit() {
+    final session = _session;
+    if (session == null || session.isSealed) return;
+    session.seal(
+      onLateWrite: (message) => io.writeln(_style.dim(message)),
+    );
   }
 
   /// Whether any active shell job has an unconsumed quiet-threshold
@@ -390,7 +427,10 @@ extension AgentCliLifecycle on AgentCli {
     _tuiController?.sendOutput('$message\n');
     if (isBusy) {
       _agent.steer(UserMessage.text(message));
-    } else {
+    } else if (!_reactionRunsSealed) {
+      // gh-1589: the fence (raised in the drain wrap-up) forbids fresh
+      // runs — a liveness notice straggling past the wrap-up is dropped
+      // here just like a settle notice.
       _startRun(message);
     }
   }

@@ -869,7 +869,9 @@ extension ApprovalCommands on AgentCli {
         'agent://${job.id}',
       ),
     );
-    if (_exited) return;
+    // gh-1589: same settle→reaction fence as the shell-job settle — after
+    // the run's exit wrap-up, a task completion is bookkeeping only.
+    if (_exited || _reactionRunsSealed) return;
     final message = taskAsyncResultNotice(job);
     if (isBusy) {
       // Mid-run: the steering queue delivers it at the next step boundary

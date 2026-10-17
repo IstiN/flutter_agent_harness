@@ -1012,7 +1012,9 @@ extension AgentCliShellJobSettle on AgentCli {
     io.writeln(
       _style.dim('[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}'),
     );
-    if (_exited) return;
+    // gh-1589: after the run's exit wrap-up (or the REPL quit), the settle
+    // was bookkeeping-only — no model-facing notice, no reaction run.
+    if (_exited || _reactionRunsSealed) return;
     // The shared composer (gh-1604): the command rides the bounded
     // first/last ~120-char label, never the full body.
     final message = shellJobSettleNoticeText(job);

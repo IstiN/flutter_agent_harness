@@ -17,12 +17,11 @@
 /// of a stray job; the exit code stays the turn's terminal outcome
 /// (issue #413 semantics untouched).
 final class SessionSeal {
-  SessionSeal({void Function(String message)? onLateWrite})
-    : _onLateWrite = onLateWrite;
+  SessionSeal({this.onLateWrite});
 
   /// Where the one-per-class warnings go. The CLI wires its diagnostics
   /// channel (stderr on headless hosts); null degrades to a silent drop.
-  final void Function(String message)? _onLateWrite;
+  final void Function(String message)? onLateWrite;
 
   DateTime? _sealedAt;
 
@@ -45,7 +44,7 @@ final class SessionSeal {
   void rejectWrite(String writerClass) {
     if (!isSealed) return;
     if (!_warnedClasses.add(writerClass)) return;
-    final sink = _onLateWrite;
+    final sink = onLateWrite;
     if (sink == null) return;
     final at = _sealedAt;
     sink(
