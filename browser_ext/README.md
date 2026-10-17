@@ -68,7 +68,7 @@ provider fetches; everything flows over an extension-internal
 | Sessions (2) | `sessions_recent` `sessions_restore` | read / write |
 | History (1) | `history_search` | read |
 | Bookmarks (4) | `bookmarks_list` `bookmarks_add` `bookmarks_update` `bookmarks_remove` | list = read; rest = write |
-| Downloads (3) | `downloads_start` `downloads_search` `downloads_cancel` | search = read; rest = write |
+| Downloads (1) | `download` | write — the F2′ gated save (http/https, size cap, approval) |
 | Cookies (3) | `cookies_get` `cookies_set` `cookies_remove` | get = read; rest = write |
 | Injection & CDP (4) | `inject_js` `inject_css` `cdp_eval` `page_screenshot` | inject_js = exec and **always prompts** (MAIN world); inject_css = write; cdp_eval / page_screenshot = exec |
 | App & navigation (2) | `app_screenshot` `nav_wait` | read |
