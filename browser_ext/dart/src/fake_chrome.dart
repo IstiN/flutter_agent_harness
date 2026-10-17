@@ -240,6 +240,16 @@ final class FakeChrome implements ChromeApi {
     d.fileSize = fileSize;
   }
 
+  /// Test knob: reports an expected total size on an in-flight download
+  /// WITHOUT completing it — chrome.downloads exposes the total in
+  /// `fileSize` as soon as the response headers arrive, which is what the
+  /// `download` tool's in-flight cap enforcement polls (F2′).
+  void growDownload(int id, {required int fileSize}) {
+    final d = _downloads[id] ??
+        (throw StateError('no download with id $id'));
+    d.fileSize = fileSize;
+  }
+
   int _nextTabId = 1;
   int _nextWindowId = 1;
   int _nextGroupId = _groupIdBase;
@@ -1942,8 +1952,10 @@ final class _DlRec {
   String state;
   bool paused = false;
 
-  /// Bytes received (complete == on-disk size); 0 until completed via
-  /// [FakeChrome.completeDownload].
+  /// Expected TOTAL size of the download, mirroring chrome.downloads'
+  /// `fileSize` (`bytesReceived` is the received-so-far counter, a
+  /// different field) — 0 while unknown/uncompleted, == on-disk size
+  /// once completed via [FakeChrome.completeDownload].
   int fileSize = 0;
 }
 

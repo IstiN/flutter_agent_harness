@@ -1510,6 +1510,39 @@ void main() {
       expect(out['state'], 'in_progress');
       expect(out['id'], isNotNull);
     });
+
+    test('in-flight cap enforcement: unknown Content-Length, over-cap '
+        'expected size observed mid-flight → cancelled, download_too_large',
+        () async {
+      // The pre-check cannot see chunked/opaque responses (probe → null);
+      // the enforcement point is the expected total chrome.downloads
+      // reports once headers arrive. The poll must cancel + fail instead
+      // of letting an arbitrarily large download run on.
+      final (reg2, c2) = dlReg((url) async => null);
+      c2.onDownloadStarted =
+          (id) => c2.growDownload(id, fileSize: defaultMaxDownloadBytes + 1);
+      await expectLater(
+        _run(reg2, 'download', {'url': 'https://x.example/huge.bin'}),
+        throwsA(_errMsg('download_too_large', contains('cap'))),
+      );
+      final items = await c2.downloads.search();
+      expect(items.single.state, 'interrupted',
+          reason: 'the over-cap download must be cancelled, not left '
+              'running uncapped');
+    });
+
+    test('settled over-cap download surfaces download_too_large without '
+        'a cancel attempt', () async {
+      // A completed item cannot be cancelled; the honest surface is the
+      // same coded failure (the cap was exceeded either way).
+      final (reg2, c2) = dlReg((url) async => null);
+      c2.onDownloadStarted = (id) =>
+          c2.completeDownload(id, fileSize: defaultMaxDownloadBytes + 1);
+      await expectLater(
+        _run(reg2, 'download', {'url': 'https://x.example/big.bin'}),
+        throwsA(_errMsg('download_too_large', contains('cap'))),
+      );
+    });
   });
 }
 
