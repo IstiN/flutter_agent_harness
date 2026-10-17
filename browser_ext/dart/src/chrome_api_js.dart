@@ -314,6 +314,7 @@ DownloadItem _downloadItemOf(Object? raw) {
     filename: _s(m['filename']),
     state: _s(m['state']),
     paused: _b(m['paused']),
+    fileSize: _i(m['fileSize']) ?? 0,
   );
 }
 
