@@ -21,6 +21,9 @@ final class SessionSeal {
 
   /// Where the one-per-class warnings go. The CLI wires its diagnostics
   /// channel (stderr on headless hosts); null degrades to a silent drop.
+  /// The sink is invoked synchronously inside the rejecting writer's call
+  /// stack and is GUARDED: a throwing sink is swallowed (the drop already
+  /// happened) so I1's no-throw guarantee holds regardless of sink health.
   final void Function(String message)? onLateWrite;
 
   DateTime? _sealedAt;
@@ -47,10 +50,15 @@ final class SessionSeal {
     final sink = onLateWrite;
     if (sink == null) return;
     final at = _sealedAt;
-    sink(
-      'session sealed${at == null ? '' : ' at ${at.toIso8601String()}'} — '
-      'dropped late write ($writerClass): the session JSONL is immutable '
-      'for this process (gh-1589)',
-    );
+    try {
+      sink(
+        'session sealed${at == null ? '' : ' at ${at.toIso8601String()}'} — '
+        'dropped late write ($writerClass): the session JSONL is immutable '
+        'for this process (gh-1589)',
+      );
+    } on Object {
+      // The drop already happened; a sick sink must never replace it with
+      // a throw into the late-write caller's stack (I1).
+    }
   }
 }

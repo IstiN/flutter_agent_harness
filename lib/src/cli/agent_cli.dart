@@ -1571,7 +1571,12 @@ class AgentCli {
   /// model request, no message append: a post-drain reaction run nobody
   /// waits for is exactly the 65gGW7b late-write burst this card closes.
   /// REPL-only `_exited` deliberately stays untouched (different exit
-  /// semantics); the fence is headless wrap-up state.
+  /// semantics); the fence is headless wrap-up state. The fence is
+  /// per-RUN like the seal itself (I5): [runHeadless] resets it at entry
+  /// so a second headless run on the same instance (a wake/continuation
+  /// loop, a test harness reusing one CLI) never silently inherits a
+  /// permanently raised fence — mid-drain settles would do bookkeeping
+  /// only and the drain's reaction runs would never start.
   bool _reactionRunsSealed = false;
 
   /// Set when the user interrupts (Esc/Ctrl-C); the TUI drain loop discards
@@ -1971,6 +1976,13 @@ class AgentCli {
     StreamJsonWriter? streamJson,
   }) async {
     _hep = hep;
+    // gh-1589 (review): the settle→reaction fence is per-RUN state (I5 —
+    // the same per-run semantics as the seal). Reset it at entry, before
+    // the prompt drive, so a second runHeadless on this instance (a
+    // wake/continuation loop, a test harness reusing one CLI) starts
+    // unsealed: a fence inherited from the previous run's wrap-up would
+    // drop this run's mid-drain settles to bookkeeping only, silently.
+    _reactionRunsSealed = false;
     // The [net] retry voice reaches headless too (issue #1121): the bench
     // runs `fa -p`, and retries that stayed silent there made a
     // connect-stall death indistinguishable from a no-retry one in the

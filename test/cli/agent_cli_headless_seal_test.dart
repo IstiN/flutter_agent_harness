@@ -52,11 +52,7 @@ class _SealShell implements Shell, BackgroundShell {
 }
 
 final class _SealJob implements ShellJob {
-  _SealJob({
-    required this.id,
-    required this.command,
-    required this.logPath,
-  });
+  _SealJob({required this.id, required this.command, required this.logPath});
 
   @override
   final String id;
@@ -274,185 +270,175 @@ void main() {
         },
       );
 
-      test(
-        'the post-exit settle drops the registry snapshot with exactly one '
-        'warning, and the persist chain never poisons',
-        () async {
-          final exitCode = await cli.runHeadless('start a job');
-          expect(exitCode, 0);
+      test('the post-exit settle drops the registry snapshot with exactly one '
+          'warning, and the persist chain never poisons', () async {
+        final exitCode = await cli.runHeadless('start a job');
+        expect(exitCode, 0);
 
-          clock = clock.add(const Duration(seconds: 31));
-          shell.jobs.single.finish(0);
-          await _pump();
-          await _pump();
+        clock = clock.add(const Duration(seconds: 31));
+        shell.jobs.single.finish(0);
+        await _pump();
+        await _pump();
 
-          final warnings = io.out
-              .toString()
-              .split('\n')
-              .where((line) => line.contains('dropped late write'))
-              .toList();
-          expect(warnings, hasLength(1));
-          expect(warnings.single, contains('custom:shell_job_registry'));
-        },
-      );
+        final warnings = io.out
+            .toString()
+            .split('\n')
+            .where((line) => line.contains('dropped late write'))
+            .toList();
+        expect(warnings, hasLength(1));
+        expect(warnings.single, contains('custom:shell_job_registry'));
+      });
     });
   }
 
-  test(
-    'an honest drain (E7): settle lands mid-drain, the reaction run\'s '
-    'records are legal inside the boundary, and the file is byte-stable '
-    'after exit',
-    () async {      final io = FakeCliIO();
-      final shell = _SealShell();
-      final stream = _SealStream([
-        ...List.of(_leadScripts),
-        textTurn('Reaction handled.'),
-      ]);
-      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
-      final cli = _cli(
-        io: io,
-        env: env,
-        stream: stream,
-        drainMs: 2 * 60 * 1000,
-        ledgerClockValue: () => DateTime.now(),
-      );
+  test('an honest drain (E7): settle lands mid-drain, the reaction run\'s '
+      'records are legal inside the boundary, and the file is byte-stable '
+      'after exit', () async {
+    final io = FakeCliIO();
+    final shell = _SealShell();
+    final stream = _SealStream([
+      ...List.of(_leadScripts),
+      textTurn('Reaction handled.'),
+    ]);
+    final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+    final cli = _cli(
+      io: io,
+      env: env,
+      stream: stream,
+      drainMs: 2 * 60 * 1000,
+      ledgerClockValue: () => DateTime.now(),
+    );
 
-      final runFuture = cli.runHeadless('start a job');
-      await waitForIt(
-        () => shell.jobs.isNotEmpty,
-        reason: 'the background job registers',
-      );
-      // Settle while the drain waits: the settle notice steers a reaction
-      // run the drain awaits (E3 — inside the boundary).
-      shell.jobs.single.finish(0);
-      final exitCode = await runFuture;
-      expect(exitCode, 0);
+    final runFuture = cli.runHeadless('start a job');
+    await waitForIt(
+      () => shell.jobs.isNotEmpty,
+      reason: 'the background job registers',
+    );
+    // Settle while the drain waits: the settle notice steers a reaction
+    // run the drain awaits (E3 — inside the boundary).
+    shell.jobs.single.finish(0);
+    final exitCode = await runFuture;
+    expect(exitCode, 0);
 
-      // The reaction run happened — exactly one settle reaction (the
-      // lead run's tool continuation does not count).
-      final settleRuns = [
-        for (var i = 0; i < stream.contexts.length; i++)
-          if (!stream.continuations[i] &&
-              stream.lastUserTexts[i].contains(_settleMarker))
-            i,
-      ];
-      expect(settleRuns, hasLength(1));
+    // The reaction run happened — exactly one settle reaction (the
+    // lead run's tool continuation does not count).
+    final settleRuns = [
+      for (var i = 0; i < stream.contexts.length; i++)
+        if (!stream.continuations[i] &&
+            stream.lastUserTexts[i].contains(_settleMarker))
+          i,
+    ];
+    expect(settleRuns, hasLength(1));
 
-      final exitAt = DateTime.now();
-      final records = await _recordsOnDisk(env);
-      expect(records, isNotEmpty);
-      for (final record in records) {
-        expect(
-          record.timestamp.isBefore(exitAt),
-          isTrue,
-          reason: 'AC3: last record precedes process exit',
-        );
-      }
-      // REG-1-flavored watchdog: the file is byte-stable after exit.
-      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-      final path = (await repo.list(cwd: '/work')).single.path;
-      final snapshotA = (await env.readTextFile(path)).valueOrNull;
-      await _pump();
-      final snapshotB = (await env.readTextFile(path)).valueOrNull;
-      expect(snapshotB, snapshotA, reason: 'no write lands after exit');
-      io.close();
-    },
-  );
-
-  test(
-    'the settle→reaction fence is per-run: a second runHeadless on the '
-    'same CLI instance resets it (I5 fence twin)',
-    () async {
-      final io = FakeCliIO();
-      final shell = _SealShell();
-      final stream = _SealStream([
-        textTurn('run one answer.'),
-        ...List.of(_leadScripts),
-        textTurn('Reaction handled.'),
-      ]);
-      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
-      final cli = _cli(
-        io: io,
-        env: env,
-        stream: stream,
-        drainMs: 2 * 60 * 1000,
-        ledgerClockValue: () => DateTime.now(),
-      );
-
-      // Run 1: plain answer, no background jobs — completes, raises the
-      // fence in its wrap-up, and seals the session.
-      expect(await cli.runHeadless('first run'), 0);
-
-      // Run 2 on the SAME instance: an honest drain must still start the
-      // settle's reaction run — a permanently inherited fence would do
-      // bookkeeping only and the reaction run would never start.
-      final runFuture = cli.runHeadless('start a job');
-      await waitForIt(
-        () => shell.jobs.isNotEmpty,
-        reason: 'the background job registers',
-      );
-      shell.jobs.single.finish(0);
-      expect(await runFuture, 0);
-
-      final settleRuns = [
-        for (var i = 0; i < stream.contexts.length; i++)
-          if (!stream.continuations[i] &&
-              stream.lastUserTexts[i].contains(_settleMarker))
-            i,
-      ];
+    final exitAt = DateTime.now();
+    final records = await _recordsOnDisk(env);
+    expect(records, isNotEmpty);
+    for (final record in records) {
       expect(
-        settleRuns,
-        hasLength(1),
-        reason: 'the second run must not inherit the first run’s fence',
+        record.timestamp.isBefore(exitAt),
+        isTrue,
+        reason: 'AC3: last record precedes process exit',
       );
-      io.close();
-    },
-  );
+    }
+    // REG-1-flavored watchdog: the file is byte-stable after exit.
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final path = (await repo.list(cwd: '/work')).single.path;
+    final snapshotA = (await env.readTextFile(path)).valueOrNull;
+    await _pump();
+    final snapshotB = (await env.readTextFile(path)).valueOrNull;
+    expect(snapshotB, snapshotA, reason: 'no write lands after exit');
+    io.close();
+  });
 
-  test(
-    'REG-2: the REPL quit seals the session with the SAME implementation '
-    'and close order as headless',
-    () async {
-      final io = FakeCliIO();
-      final env = MemoryExecutionEnv(cwd: '/work');
-      final cli = AgentCli(
-        config: AgentCliConfig(
-          model: testModel,
-          apiKey: 'key',
-          env: env,
-          sessionRoot: '/sessions',
-          approvalMode: ApprovalMode.yolo,
-        ),
-        io: io,
-        streamFunction: FakeStreamFunction([textTurn('repl answer.')]).call,
-      );
-      final run = cli.run();
-      await waitForIt(
-        () => !cli.isBusy && io.out.toString().contains('fa>'),
-        reason: 'the REPL idles at the prompt',
-      );
-      // One driven turn: the session exists and has content (a sealed
-      // EMPTY session is deleted before the seal, not exercised here).
-      io.sendLine('hello');
-      await waitForIt(
-        () => io.out.toString().contains('repl answer.'),
-        reason: 'the turn completes',
-      );
-      io.sendLine('/exit');
-      await run;
+  test('the settle→reaction fence is per-run: a second runHeadless on the '
+      'same CLI instance resets it (I5 fence twin)', () async {
+    final io = FakeCliIO();
+    final shell = _SealShell();
+    final stream = _SealStream([
+      textTurn('run one answer.'),
+      ...List.of(_leadScripts),
+      textTurn('Reaction handled.'),
+    ]);
+    final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+    final cli = _cli(
+      io: io,
+      env: env,
+      stream: stream,
+      drainMs: 2 * 60 * 1000,
+      ledgerClockValue: () => DateTime.now(),
+    );
 
-      final session = cli.sessionForTest;
-      expect(session, isNotNull);
-      expect(session!.isSealed, isTrue);
-      // The seal is live in the REPL path too: a late append is dropped.
-      await session.appendMessage(UserMessage.text('late'));
-      expect(
-        io.out.toString().split('\n').where(
-          (line) => line.contains('dropped late write (message)'),
-        ),
-        hasLength(1),
-      );
-      io.close();
-    },
-  );
+    // Run 1: plain answer, no background jobs — completes, raises the
+    // fence in its wrap-up, and seals the session.
+    expect(await cli.runHeadless('first run'), 0);
+
+    // Run 2 on the SAME instance: an honest drain must still start the
+    // settle's reaction run — a permanently inherited fence would do
+    // bookkeeping only and the reaction run would never start.
+    final runFuture = cli.runHeadless('start a job');
+    await waitForIt(
+      () => shell.jobs.isNotEmpty,
+      reason: 'the background job registers',
+    );
+    shell.jobs.single.finish(0);
+    expect(await runFuture, 0);
+
+    final settleRuns = [
+      for (var i = 0; i < stream.contexts.length; i++)
+        if (!stream.continuations[i] &&
+            stream.lastUserTexts[i].contains(_settleMarker))
+          i,
+    ];
+    expect(
+      settleRuns,
+      hasLength(1),
+      reason: 'the second run must not inherit the first run’s fence',
+    );
+    io.close();
+  });
+
+  test('REG-2: the REPL quit seals the session with the SAME implementation '
+      'and close order as headless', () async {
+    final io = FakeCliIO();
+    final env = MemoryExecutionEnv(cwd: '/work');
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'key',
+        env: env,
+        sessionRoot: '/sessions',
+        approvalMode: ApprovalMode.yolo,
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([textTurn('repl answer.')]).call,
+    );
+    final run = cli.run();
+    await waitForIt(
+      () => !cli.isBusy && io.out.toString().contains('fa>'),
+      reason: 'the REPL idles at the prompt',
+    );
+    // One driven turn: the session exists and has content (a sealed
+    // EMPTY session is deleted before the seal, not exercised here).
+    io.sendLine('hello');
+    await waitForIt(
+      () => io.out.toString().contains('repl answer.'),
+      reason: 'the turn completes',
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final session = cli.sessionForTest;
+    expect(session, isNotNull);
+    expect(session!.isSealed, isTrue);
+    // The seal is live in the REPL path too: a late append is dropped.
+    await session.appendMessage(UserMessage.text('late'));
+    expect(
+      io.out
+          .toString()
+          .split('\n')
+          .where((line) => line.contains('dropped late write (message)')),
+      hasLength(1),
+    );
+    io.close();
+  });
 }

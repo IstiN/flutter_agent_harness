@@ -100,18 +100,20 @@ void main() {
       expect(customs, isEmpty);
     });
 
-    test('a sealed append never throws and resolves to a stable value',
-        () async {
-      final session = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work'),
-      );
-      session.seal();
-      // No sink wired: the default degrades to a silent drop, never a
-      // throw into an unhandled zone.
-      final id = await session.appendMessage(UserMessage.text('late'));
-      expect(id, isNotNull);
-      await session.appendCustomEntry(customType: 'x', data: 1);
-    });
+    test(
+      'a sealed append never throws and resolves to a stable value',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        session.seal();
+        // No sink wired: the default degrades to a silent drop, never a
+        // throw into an unhandled zone.
+        final id = await session.appendMessage(UserMessage.text('late'));
+        expect(id, isNotNull);
+        await session.appendCustomEntry(customType: 'x', data: 1);
+      },
+    );
 
     test('sealing is idempotent — the first sink stays the sink', () async {
       final session = await repo.create(
@@ -148,49 +150,53 @@ void main() {
   });
 
   group('UT-5: resume after seal', () {
-    test('a sealed session reopened by a new Session appends normally',
-        () async {
-      final session = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work'),
-      );
-      await session.appendMessage(UserMessage.text('first run'));
-      session.seal();
+    test(
+      'a sealed session reopened by a new Session appends normally',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        await session.appendMessage(UserMessage.text('first run'));
+        session.seal();
 
-      // E5: the seal is per-run, not per-file-forever — a new process (a
-      // resume, a wake loop) opens the SAME file unsealed and appends.
-      final meta = (await repo.list(cwd: '/work')).single;
-      final resumed = await repo.open(meta);
-      expect(resumed.isSealed, isFalse);
-      await resumed.appendMessage(UserMessage.text('resumed'));
+        // E5: the seal is per-run, not per-file-forever — a new process (a
+        // resume, a wake loop) opens the SAME file unsealed and appends.
+        final meta = (await repo.list(cwd: '/work')).single;
+        final resumed = await repo.open(meta);
+        expect(resumed.isSealed, isFalse);
+        await resumed.appendMessage(UserMessage.text('resumed'));
 
-      final texts = [
-        for (final record in await recordsOnDisk())
-          if (record is MessageRecord) _textOf(record.message),
-      ];
-      expect(texts, ['first run', 'resumed']);
-    });
+        final texts = [
+          for (final record in await recordsOnDisk())
+            if (record is MessageRecord) _textOf(record.message),
+        ];
+        expect(texts, ['first run', 'resumed']);
+      },
+    );
 
-    test('a sealed leaf move (moveTo) writes nothing and resolves null',
-        () async {
-      final session = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work'),
-      );
-      await session.appendMessage(UserMessage.text('only'));
-      final warnings = <String>[];
-      session.seal(onLateWrite: warnings.add);
+    test(
+      'a sealed leaf move (moveTo) writes nothing and resolves null',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        await session.appendMessage(UserMessage.text('only'));
+        final warnings = <String>[];
+        session.seal(onLateWrite: warnings.add);
 
-      final moved = await session.moveTo(null, summary: 'branch summary');
-      expect(moved, isNull);
-      expect(warnings, hasLength(1));
-      expect(warnings.single, contains('leaf_move'));
+        final moved = await session.moveTo(null, summary: 'branch summary');
+        expect(moved, isNull);
+        expect(warnings, hasLength(1));
+        expect(warnings.single, contains('leaf_move'));
 
-      // The file holds the message only — no leaf/branch_summary records.
-      final types = [
-        for (final record in await recordsOnDisk())
-          if (record is! MessageRecord) record.type,
-      ];
-      expect(types, isEmpty);
-    });
+        // The file holds the message only — no leaf/branch_summary records.
+        final types = [
+          for (final record in await recordsOnDisk())
+            if (record is! MessageRecord) record.type,
+        ];
+        expect(types, isEmpty);
+      },
+    );
 
     test('the seal does not touch the session file bytes', () async {
       final session = await repo.create(

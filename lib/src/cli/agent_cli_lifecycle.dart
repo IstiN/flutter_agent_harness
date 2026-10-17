@@ -329,9 +329,7 @@ extension AgentCliLifecycle on AgentCli {
   void _sealSessionForExit() {
     final session = _session;
     if (session == null || session.isSealed) return;
-    session.seal(
-      onLateWrite: (message) => io.writeln(_style.dim(message)),
-    );
+    session.seal(onLateWrite: (message) => io.writeln(_style.dim(message)));
   }
 
   /// Whether any active shell job has an unconsumed quiet-threshold
