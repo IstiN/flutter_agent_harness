@@ -39,6 +39,9 @@ import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/session_repair_command.dart';
 import 'package:flutter_agent_harness/src/cli/tui_key_hints.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
+import 'package:flutter_agent_harness/src/import/harness_adapter.dart';
+import 'package:flutter_agent_harness/src/import/import_runner.dart';
+import 'package:flutter_agent_harness/src/import/foreign_session.dart';
 import 'package:flutter_agent_harness/src/hub/hub_teardown_error.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
@@ -72,6 +75,7 @@ part 'fah_util.dart';
 part 'fah_model.dart';
 part 'fah_io.dart';
 part 'fah_trajectory.dart';
+part 'fah_import.dart';
 part 'fah_runapp.dart';
 part 'fah_wire_host.dart';
 

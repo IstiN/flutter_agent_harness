@@ -166,6 +166,7 @@ extension on AgentCli {
         onModelSelected: _tuiSelectModel,
         buildSlashMenu: _buildSlashMenu,
         buildModelMenu: _buildModelMenu,
+        buildImportSessionsMenu: _buildImportSessionMenu,
         statusLine: _statusLine,
         // The band composer (#806): the omp status line attaches as the
         // composer's top band unless the `tui.classic` kill switch pins
@@ -199,6 +200,7 @@ extension on AgentCli {
           '/approval',
           '/provider',
           '/settings',
+          '/import',
         }.contains(key),
         onPickerSelected: _tuiPickerSelected,
         onPickerCancelled: _tuiPickerCancelled,
