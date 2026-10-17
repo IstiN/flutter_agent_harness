@@ -4564,6 +4564,15 @@
       "total": 128057,
       "cacheRead": 4841152,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-17T09:18:52Z",
+      "prompt": 128264,
+      "completion": 60334,
+      "total": 188598,
+      "cacheRead": 10150400,
+      "model": "kimi-for-coding"
     }
   ],
   "issue-1658": [
