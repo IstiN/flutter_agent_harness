@@ -39,6 +39,15 @@ String read(String path) => File(path).readAsStringSync();
 YamlMap jobsOf(String workflowPath) =>
     loadYaml(read(workflowPath))['jobs'] as YamlMap;
 
+/// The `run` script of the named step in the named job of the workflow.
+String checkoutScriptOf(String workflowPath, String job, String stepName) {
+  final steps = (jobsOf(workflowPath)[job] as YamlMap)['steps'] as YamlList;
+  return steps
+      .whereType<YamlMap>()
+      .firstWhere((s) => (s['name']?.toString() ?? '') == stepName)['run']
+      .toString();
+}
+
 /// The macOS publish legs and the jobs that must run on fa-m5-1.
 const mobileMacosLegs = <String, List<String>>{
   '.github/workflows/build-mobile.yml': ['build-ios', 'submit-ios'],
@@ -164,74 +173,116 @@ void main() {
       );
     });
 
-    test('mirror-checkout is a shared composite action with log-and-prune clean', () {
-      final action = read('.github/actions/mirror-checkout/action.yml');
-      expect(
-        action,
-        contains(r'rm -rf "$GITHUB_WORKSPACE" || true'),
-        reason:
-            'the clean step must TOLERATE unremovable paths (bench '
-            'leftovers held by docker) — a bare rm -rf failing the checkout '
-            'was the gh-1600 trigger',
-      );
-      expect(
-        action,
-        contains('stale-workspace'),
-        reason:
-            'a still-blocked remainder must move aside into \$RUNNER_TEMP '
-            '(gh-1600 log-and-prune)',
-      );
-      expect(
-        action,
-        contains('git clone --reference'),
-        reason: 'the action keeps the local-mirror clone (gh-1600 kept shape)',
-      );
+    test('every mirror-checkout script is inline with a log-and-prune clean', () {
+      // The hardened clean lives INLINE in each checkout step, NOT in a
+      // composite action: local `uses: ./...` actions resolve against
+      // $GITHUB_WORKSPACE at step time, and on the persistent self-hosted box
+      // that workspace is the PREVIOUS run's tree (or nothing) — the action
+      // file would be missing on the first run and stale afterwards, because
+      // the checkout step IS the thing that materializes the tree.
+      final checkoutSteps = <String, String>{
+        '.github/workflows/build-mobile.yml': 'Checkout repository from local mirror',
+        '.github/workflows/build-macos.yml': 'Checkout repository from local mirrors',
+      };
+      for (final entry in checkoutSteps.entries) {
+        final jobs = jobsOf(entry.key);
+        final hits = <String>[];
+        for (final j in jobs.entries) {
+          final steps = (j.value as YamlMap)['steps'] as YamlList?;
+          if (steps == null) continue;
+          for (final s in steps.whereType<YamlMap>()) {
+            if ((s['name']?.toString() ?? '') == entry.value) {
+              hits.add((s['run'] ?? '').toString());
+            }
+          }
+        }
+        expect(
+          hits.length,
+          entry.key.contains('mobile') ? 2 : 1,
+          reason:
+              '${entry.key} must carry ${entry.value == 'Checkout repository from local mirror' ? 'two (build-ios + submit-ios)' : 'one (build-macos)'} '
+              'inline checkout step(s) named "${entry.value}" (gh-1600)',
+        );
+        for (final script in hits) {
+          expect(
+            script,
+            contains(r'rm -rf "$GITHUB_WORKSPACE" || true'),
+            reason:
+                'the clean must TOLERATE unremovable paths (bench leftovers '
+                'held by docker) — a bare rm -rf failing the checkout was the '
+                'gh-1600 trigger ($entry.key)',
+          );
+          expect(
+            script,
+            contains('stale-workspace'),
+            reason:
+                'a still-blocked remainder must move aside into \$RUNNER_TEMP '
+                '(gh-1600 log-and-prune, $entry.key)',
+          );
+          expect(
+            script,
+            contains('git clone --reference'),
+            reason: 'the local-mirror clone shape is kept (gh-1600, $entry.key)',
+          );
+          expect(
+            RegExp(r'^\s*rm -rf "\$GITHUB_WORKSPACE"\s*$', multiLine: true)
+                .hasMatch(script),
+            isFalse,
+            reason:
+                'no UNGUARDED workspace rm may remain — the bare failing form '
+                'was the gh-1600 checkout killer ($entry.key)',
+          );
+        }
+      }
     });
 
-    test('preserve-cache-dir expands a literal \$HOME at run time', () {
-      final action = read('.github/actions/mirror-checkout/action.yml');
-      // build-macos.yml passes '$HOME/actions-runner-yoloit/build-cache/...'
-      // — bash single quotes around '${{ inputs... }}' keep it literal, so
-      // the action must expand the token itself or the per-arch cache parks
-      // in a junk ./'$HOME'/ dir under the cwd instead of the runner home
-      // (the input's documented contract).
-      expect(
-        action,
-        contains(r'CACHE="${CACHE/\$HOME/$HOME}"'),
-        reason:
-            'preserve-cache-dir values carry a literal \$HOME token; the '
-            'action must expand it at run time (gh-1600 follow-up: '
-            'build-macos''s per-arch build cache would park under '
-            './\$HOME/... and never in \$HOME)',
-      );
-    });
-
-    test('the three mirror-checkout jobs use the hardened action', () {
+    test('no local-action checkout remained in either publish leg', () {
       final mobile = read('.github/workflows/build-mobile.yml');
       final macos = read('.github/workflows/build-macos.yml');
       expect(
-        'uses: ./.github/actions/mirror-checkout'.allMatches(mobile).length,
-        2,
-        reason:
-            'build-ios + submit-ios must run the hardened mirror-checkout '
-            '(gh-1600: their bare rm -rf died on bench leftovers)',
-      );
-      expect(
-        macos,
-        contains('uses: ./.github/actions/mirror-checkout'),
-        reason:
-            'build-macos carries the same bare rm -rf shape and must ride '
-            'the hardened action too (gh-1600 F-B audit)',
-      );
-      expect(
-        mobile.contains(r'rm -rf "$GITHUB_WORKSPACE"'),
+        mobile.contains('uses: ./.github/actions/mirror-checkout'),
         isFalse,
-        reason: 'no bare workspace rm may remain in build-mobile.yml (gh-1600)',
+        reason:
+            'a local composite action cannot be the checkout on the '
+            'persistent box — it resolves from the stale shared workspace '
+            '(gh-1600: inline scripts only)',
       );
       expect(
-        macos.contains(r'rm -rf "$GITHUB_WORKSPACE"'),
+        macos.contains('uses: ./.github/actions/mirror-checkout'),
         isFalse,
-        reason: 'no bare workspace rm may remain in build-macos.yml (gh-1600)',
+        reason: 'same as build-mobile (gh-1600: inline scripts only)',
+      );
+    });
+
+    test('build-macos parks its per-arch build cache outside the clean, expanded \$HOME', () {
+      final script = checkoutScriptOf(
+        '.github/workflows/build-macos.yml',
+        'build-macos',
+        'Checkout repository from local mirrors',
+      );
+      // bash double quotes expand $HOME natively here — the cache dir must
+      // be built at run time in the runner home (the gh-1600 round-1
+      // composite action assigned it single-quoted and would have parked a
+      // literal-\$HOME junk dir under the cwd).
+      expect(
+        script,
+        contains(r'BUILD_CACHE_DIR="$HOME/actions-runner-yoloit/build-cache/macos-$ARCH"'),
+        reason:
+            'the per-arch cache dir must expand \$HOME at run time '
+            '(gh-1600: a single-quoted assignment parks the cache in a junk '
+            'literal-\$HOME dir)',
+      );
+      expect(
+        script.indexOf('Preserving existing macOS build cache'),
+        lessThan(script.indexOf('rm -rf "$GITHUB_WORKSPACE" || true')),
+        reason:
+            'the cache must be parked BEFORE the workspace clean — the clean '
+            'removes everything else in the workspace (gh-1600)',
+      );
+      expect(
+        script,
+        contains('Restoring macOS build cache'),
+        reason: 'the parked cache must be restored after the clone (gh-1600 kept shape)',
       );
     });
   });
