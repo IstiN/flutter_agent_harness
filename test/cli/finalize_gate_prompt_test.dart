@@ -187,7 +187,7 @@ void main() {
   });
 
   test(
-    'gh-1668 C1: the no-teardown rule is numbered step 4 inside the loop',
+    'gh-1668 C2: the no-teardown rule is numbered step 4 inside the loop',
     () {
       // Skim-proof, mirroring the gh-1652 C1 placement guard: flash
       // executes numbered steps but skims the bullet list — the rule must
@@ -209,7 +209,7 @@ void main() {
     },
   );
 
-  test('gh-1668 C2: "Content, not existence" cross-references the '
+  test('gh-1668 C3: "Content, not existence" cross-references the '
       'no-teardown rule', () {
     // A file that existed mid-run but is deleted at finalization is a
     // fail — the cross-reference lives in the SAME bullet, not a
@@ -222,18 +222,67 @@ void main() {
     );
     expect(bulletAt, isNot(-1));
     expect(refAt, greaterThan(bulletAt));
-    expect(refAt, lessThan(bulletAt + 700));
+    // PRT_kwDOTXdlLc6tir-L: anchor the upper bound on structural
+    // markers instead of an arbitrary char window — a legitimate bullet
+    // extension or a generator re-wrap must not fail the test, and a
+    // move into the NEXT bullet (or past the section) must. The
+    // "Content, not existence" bullet is the last one in the named
+    // checks, so the bound is the nearest of the next bullet and the
+    // end of the current paragraph.
+    final nextBulletAt = finalizeGateContractPrompt.indexOf(
+      '\n- **',
+      bulletAt + 1,
+    );
+    final paragraphEndAt = finalizeGateContractPrompt.indexOf(
+      '\n\n',
+      bulletAt + 1,
+    );
+    final upperBound = [
+      if (nextBulletAt != -1) nextBulletAt,
+      if (paragraphEndAt != -1) paragraphEndAt,
+    ].fold(
+      finalizeGateContractPrompt.length,
+      (a, b) => a < b ? a : b,
+    );
+    expect(refAt, lessThan(upperBound));
     expect(finalizeGateContractPrompt, contains('(step 4)'));
   });
 
   test(
-    'gh-1668 C3: the composed headless prompt carries the no-teardown rule',
+    'gh-1668 C4: the composed headless prompt carries the no-teardown rule',
     () async {
       final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
       expect(prompt, contains('Final state is the deliverable'));
       expect(prompt, contains('verified, then reset'));
     },
   );
+
+  test('gh-1669: archive extraction completeness rides the contract as a '
+      'named check', () {
+    // CLEAN-WRONG regression (terminal-bench build-pov-ray, 2/2): the
+    // agent extracted the meaningful subtrees but dropped the archive's
+    // root-level `file_id.diz`, then marked the extraction step `pass`
+    // off an `ls` of the target. The contract now pins extraction
+    // completeness as a named check, next to "Canonical artifacts".
+    expect(
+      finalizeGateContractPrompt,
+      contains('- **Archive extraction is complete**'),
+    );
+    // The check names the verification command shape — an archive
+    // listing diffed against the extracted tree, not an aspirational
+    // "make sure everything extracted".
+    expect(finalizeGateContractPrompt, contains('unzip -l'));
+    expect(finalizeGateContractPrompt, contains('tar -tf'));
+    // Root-level marker/manifest files are called out explicitly.
+    expect(finalizeGateContractPrompt, contains('file_id.diz'));
+    // PR #1672 review threads PRRT_kwDOTXdlLc6thCGY / PRRT_kwDOTXdlLc6thIHv:
+    // plain `ls` of the target is non-recursive, so a literal diff of the
+    // archive's recursive listing against it degrades to "root-level
+    // entries match" for nested archives. The command shape must name a
+    // recursive counterpart.
+    expect(finalizeGateContractPrompt, contains('ls -R'));
+    expect(finalizeGateContractPrompt, contains('find <target> -type f'));
+  });
 
   test('interactive boots never carry the contract', () async {
     for (final mode in [
