@@ -1,0 +1,79 @@
+name: android-ndk-preinstall
+description: >-
+  Pre-install the Flutter-pinned Android NDK so Gradle configuration never
+  triggers an on-demand sdkmanager download mid-build. gh-1655: one
+  truncated android-ndk-r28c-linux download ("Error on ZipFile unknown
+  archive" at 33%) red'd the ci.yml build-android leg — and the aggregate
+  Quality gate with it — because AGP's in-configuration auto-install path
+  has NO retry. The NDK version is resolved from the pinned Flutter SDK's
+  own gradle plugin source (the exact value flutter.ndkVersion resolves
+  to — no second pin to drift), the install is skipped when the NDK is
+  already present, and the download itself is bounded-retried — the same
+  hardening the flutter_gemma Android seed carries (gh-1468). Companion
+  guard: test/ci_android_ndk_preinstall_guard_test.dart.
+runs:
+  using: composite
+  steps:
+    - name: Pre-install the Flutter-pinned Android NDK (bounded retry)
+      shell: bash
+      run: |
+        set -euo pipefail
+        # flutter.ndkVersion's single source of truth: the gradle plugin
+        # bundled with the SDK flutter-action installed. app/
+        # build.gradle.kts reads `ndkVersion = flutter.ndkVersion`, so
+        # resolving here can never skew from what AGP requests at
+        # configuration time (a literal pin on either side would break
+        # that coupling — the guard test pins both sides).
+        if [ -n "${FLUTTER_ROOT:-}" ]; then
+          FLUTTER_HOME="$FLUTTER_ROOT"
+        else
+          FLUTTER_BIN="$(command -v flutter || true)"
+          if [ -z "$FLUTTER_BIN" ]; then
+            echo "::error::cannot locate flutter (set FLUTTER_ROOT) — the NDK pre-install resolves the version from the SDK's gradle plugin source"
+            exit 1
+          fi
+          FLUTTER_HOME="$(dirname "$(dirname "$FLUTTER_BIN")")"
+        fi
+        GRADLE_SRC="$FLUTTER_HOME/packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt"
+        NDK_VERSION="$(grep -hoE 'val ndkVersion: String = "[0-9]+\.[0-9]+\.[0-9]+"' "$GRADLE_SRC" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+        if [ -z "$NDK_VERSION" ]; then
+          echo "::error::cannot resolve flutter.ndkVersion from $GRADLE_SRC — the Flutter gradle plugin layout moved; update the extraction in .github/actions/android-ndk-preinstall (and test/ci_android_ndk_preinstall_guard_test.dart) TOGETHER"
+          exit 1
+        fi
+        echo "resolved flutter.ndkVersion = $NDK_VERSION"
+        ANDROID_SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+        SDKMANAGER="$ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager"
+        if [ ! -x "$SDKMANAGER" ]; then
+          SDKMANAGER="$(command -v sdkmanager || true)"
+        fi
+        if [ -z "$SDKMANAGER" ]; then
+          echo "::error::sdkmanager not found (expected $ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager) — the NDK pre-install needs the Android cmdline-tools"
+          exit 1
+        fi
+        # Idempotence: AGP resolves `ndkVersion` against
+        # $ANDROID_HOME/ndk/<version> — source.properties present means
+        # the NDK is fully installed; skip the download entirely.
+        if [ -f "$ANDROID_SDK/ndk/$NDK_VERSION/source.properties" ]; then
+          echo "NDK $NDK_VERSION already installed — skipping pre-install"
+          exit 0
+        fi
+        # Accept any license the image has not pre-accepted so the
+        # installs below never prompt (|| true: `yes` dies of SIGPIPE by
+        # design once sdkmanager stops reading).
+        yes | "$SDKMANAGER" --licenses > /dev/null || true
+        # gh-1655: Gradle's own auto-install (the same sdkmanager call,
+        # run inside configuration) has no retry — one truncated download
+        # unzips as "Error on ZipFile unknown archive" and the build dies.
+        # Here the same download gets three attempts with backoff.
+        for attempt in 1 2 3; do
+          echo "installing NDK $NDK_VERSION (attempt $attempt/3)"
+          rm -rf "$ANDROID_SDK/ndk/$NDK_VERSION"
+          if "$SDKMANAGER" --install "ndk;$NDK_VERSION"; then
+            echo "NDK $NDK_VERSION installed"
+            exit 0
+          fi
+          echo "::warning::sdkmanager NDK install failed (attempt $attempt/3) — retrying in 10s"
+          sleep 10
+        done
+        echo "::error::NDK $NDK_VERSION install failed after 3 attempts — gh-1655 red'd the leg on a single truncated archive; inspect the sdkmanager output above"
+        exit 1
