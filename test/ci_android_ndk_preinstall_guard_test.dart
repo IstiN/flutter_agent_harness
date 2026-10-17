@@ -82,6 +82,26 @@ YamlList jobSteps(String workflowPath, String jobKey) {
   return job['steps'] as YamlList;
 }
 
+/// SDK roots to probe for the gradle plugin source, most-specific first:
+/// FLUTTER_ROOT, then any hostedtoolcache Flutter install carrying a
+/// bin/flutter. [hostedCache] is probed only when it exists — the CI
+/// test-core runners carry no /opt/hostedtoolcache/flutter at all, and an
+/// unguarded listSync there crashed AC5 with PathNotFoundException
+/// instead of degrading to the named skip (gh-1655 rework: both
+/// `Core tests shard 1/4` and `Hostile ambient env` red on 2026-10-17).
+List<String> flutterSdkCandidates(Directory? hostedCache) {
+  final envRoot = Platform.environment['FLUTTER_ROOT'];
+  return [
+    if (envRoot != null && envRoot.isNotEmpty) envRoot,
+    if (hostedCache != null && hostedCache.existsSync())
+      ...hostedCache
+          .listSync()
+          .whereType<Directory>()
+          .map((d) => d.path)
+          .where((p) => File('$p/flutter/bin/flutter').existsSync()),
+  ];
+}
+
 void main() {
   group('gh-1655 — Android builds pre-install the Flutter-pinned NDK', () {
     test('AC1: the pre-install action exists and is composite', () {
@@ -272,15 +292,9 @@ void main() {
       // Same named-skip posture as the gemma seed guard's AC3: the check
       // is env-dependent — it pins the extraction against a real SDK when
       // one is present, and says so out loud when none is resolvable.
-      final envRoot = Platform.environment['FLUTTER_ROOT'];
-      final candidates = <String>[
-        if (envRoot != null && envRoot.isNotEmpty) envRoot,
-        ...Directory('/opt/hostedtoolcache/flutter')
-            .listSync()
-            .whereType<Directory>()
-            .map((d) => d.path)
-            .where((p) => File('$p/flutter/bin/flutter').existsSync()),
-      ];
+      final candidates = flutterSdkCandidates(
+        Directory('/opt/hostedtoolcache/flutter'),
+      );
       if (candidates.isEmpty) {
         print(
           'SKIP (named): no locally resolvable Flutter SDK (set '
@@ -313,15 +327,29 @@ void main() {
             '(AC1) instead of pre-installing. Re-derive the pattern in '
             '$actionPath and this guard TOGETHER',
       );
-      final version = RegExp(r'\d+\.\d+\.\d+')
-          .firstMatch(match!.group(0)!)!
-          .group(0);
+      final version = RegExp(
+        r'\d+\.\d+\.\d+',
+      ).firstMatch(match!.group(0)!)!.group(0);
       expect(
         version,
         isNotEmpty,
         reason: 'the extracted NDK version must be a semver-like triple',
       );
       print('AC5: extraction matches — flutter.ndkVersion = $version');
+    });
+
+    test('AC5: an absent hostedtoolcache cache degrades to the named '
+        'skip, never a PathNotFoundException', () {
+      // gh-1655 CI: the test-core runners carry no
+      // /opt/hostedtoolcache/flutter at all — the unguarded listSync
+      // crashed AC5 (and the hostile-env leg with it, which runs the
+      // same file) with PathNotFoundException instead of degrading to
+      // the named skip. The probe must tolerate an absent cache.
+      final absent = Directory(
+        '/tmp/ci-ndk-guard-absent-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      expect(absent.existsSync(), isFalse);
+      expect(() => flutterSdkCandidates(absent), returnsNormally);
     });
   });
 }
