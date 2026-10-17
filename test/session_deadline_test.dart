@@ -131,6 +131,15 @@ void main() {
       expect(second.single.text, contains('background shell jobs'));
       expect(second.single.text, contains('bash_job stop'));
       expect(second.single.text, contains('finalize your outputs'));
+      // gh-1652 C3: the steer also carries the grader-parity clause —
+      // the last check before finalizing is the grader's own oracle,
+      // not the agent's checklist.
+      expect(
+        second.single.text,
+        contains('run each produced entry point the way the grader will'),
+      );
+      expect(second.single.text, contains('neutral cwd, clean env'));
+      expect(second.single.text, contains('fix what diverges'));
       expect(deadline.pollNotices(), isEmpty);
 
       // T-30s: write the final answer NOW.
@@ -144,6 +153,30 @@ void main() {
       nowMs += const Duration(minutes: 5).inMilliseconds;
       expect(deadline.pollNotices(), isEmpty);
       expect(deadline.budgetLine(), 'time-left: 0s');
+    });
+
+    test('gh-1652 C3: the wrap-up steer text carries the parity clause', () {
+      // Pinned on the ladder itself (not just a fired notice): the
+      // clause must survive any refactor of the notice plumbing.
+      final text = const DeadlineLadder().text(
+        DeadlineNoticeKind.wrapUp,
+        formatTimeLeft(3 * 60 * 1000),
+      );
+      expect(text, contains('before finalizing'));
+      expect(
+        text,
+        contains('the way the grader will (neutral cwd, clean env)'),
+      );
+      expect(text, contains('fix what diverges'));
+      // The other rungs stay parity-free — the steer is a T-3min matter.
+      expect(
+        const DeadlineLadder().text(DeadlineNoticeKind.halfBudget, '5min'),
+        isNot(contains('grader')),
+      );
+      expect(
+        const DeadlineLadder().text(DeadlineNoticeKind.finalAnswer, '30s'),
+        isNot(contains('grader')),
+      );
     });
 
     test('a jump across several crossings batches them in ladder order', () {
