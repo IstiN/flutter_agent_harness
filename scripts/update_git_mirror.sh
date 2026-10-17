@@ -16,10 +16,15 @@
 #   - each attempt aborts on a stalled connection (<1 KB/s for 60 s) so a
 #     wedged transfer engages the bounded retries instead of holding the
 #     step for an hour;
-#   - persistent fetch failure → recreate. The partial dir is removed
-#     before EVERY attempt (a killed clone leaves a non-repo dir that
-#     would fail the next attempt with "already exists"), and the
-#     recreation is a BLOBLESS mirror (`--filter=blob:none` — the gh-1477
+#   - persistent fetch failure → recreate. The clone lands in a SIBLING
+#     dir ("$mirror.recreate") and is swapped in ONLY on success — a
+#     recreate whose every attempt dies mid-transfer leaves the last
+#     good (stale-but-valid) mirror in place instead of nothing at all
+#     (gh-1665 review thread 3; the dependent checkouts pull tip blobs
+#     from origin anyway). The partial dir is removed before EVERY
+#     attempt (a killed clone leaves a non-repo dir that would fail the
+#     next attempt with "already exists"), and the recreation is a
+#     BLOBLESS mirror (`--filter=blob:none` — the gh-1477
 #     precedent in this repo): commits/trees only, ~90% less transfer,
 #     shrinking the recreate window from ~1 h to minutes. The dependent
 #     checkouts use `git clone --reference <mirror> --depth=1` and pull
@@ -28,7 +33,8 @@
 #     only recreations become blobless;
 #   - recreation retries MIRROR_CLONE_ATTEMPTS times (default 3);
 #   - every failure path exits nonzero with a ::error annotation and
-#     leaves NO partial mirror dir behind.
+#     leaves NO partial clone dir behind ("$mirror.recreate" is always
+#     cleaned up); the previous mirror survives a failed recreate.
 #
 # Usage: update_git_mirror.sh <url> <mirror-path>
 # Run from anywhere:  bash scripts/update_git_mirror.sh URL MIRROR
@@ -50,11 +56,15 @@ STALL_GUARD=(-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60)
 is_repo() { git -C "$1" rev-parse --git-dir >/dev/null 2>&1; }
 
 recreate_mirror() {
-  local attempt
+  # Clone into a sibling and swap on success: a failed recreate must not
+  # destroy the last good mirror (gh-1665 review thread 3).
+  local attempt tmp="$mirror.recreate"
   for ((attempt = 1; attempt <= clone_attempts; attempt++)); do
     echo "recreate attempt ${attempt}/${clone_attempts}: $mirror"
-    rm -rf "$mirror"
-    if git "${STALL_GUARD[@]}" clone --mirror --filter=blob:none "$url" "$mirror"; then
+    rm -rf "$tmp"
+    if git "${STALL_GUARD[@]}" clone --mirror --filter=blob:none "$url" "$tmp"; then
+      rm -rf "$mirror"
+      mv "$tmp" "$mirror"
       echo "mirror recreated: $mirror (blobless)"
       return 0
     fi
@@ -63,8 +73,8 @@ recreate_mirror() {
       sleep "$retry_sleep"
     fi
   done
-  rm -rf "$mirror"   # never leave a partial clone behind
-  echo "::error::update_git_mirror: recreating $mirror from $url failed after ${clone_attempts} attempt(s)" >&2
+  rm -rf "$tmp"   # never leave a partial clone behind
+  echo "::error::update_git_mirror: recreating $mirror from $url failed after ${clone_attempts} attempt(s) — last good mirror preserved" >&2
   return 1
 }
 

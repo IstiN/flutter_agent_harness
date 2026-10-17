@@ -278,11 +278,73 @@ t7() {
   fi
 }
 
+# ══ T8: failed recreate PRESERVES the last good mirror ══════════════════════
+# gh-1665 review (thread 3): recreate into a sibling and swap on success —
+# a recreate whose every attempt dies mid-transfer (the gh-1644 incident
+# shape) must not leave the runner with NO mirror at all.
+t8() {
+  if [ "$MODE" = "--legacy" ]; then return 0; fi
+  local d="$WORK/t8"; mkdir -p "$d"; make_fixture "$d"
+  update_mirror "file://$d/remote.git" "$d/mirror.git" >/dev/null 2>&1
+  local before
+  before=$(mirror_head "$d/mirror.git")
+  make_shim "$d/shim" 99 99   # every fetch AND every clone fails
+  use_shim "$d/shim"
+  local out rc
+  out=$(MIRROR_FETCH_ATTEMPTS=2 MIRROR_CLONE_ATTEMPTS=2 \
+        update_mirror "file://$d/remote.git" "$d/mirror.git" 2>&1); rc=$?
+  use_shim ""
+  if [ "$rc" -ne 0 ] \
+     && echo "$out" | grep -q "::error::" \
+     && [ "$(mirror_head "$d/mirror.git")" = "$before" ] \
+     && [ ! -e "$d/mirror.git.recreate" ]; then
+    ok "T8 failed recreate preserves the last good mirror (stale-but-valid beats none)"
+  else
+    bad "T8 last-good-mirror preservation broken: rc=$rc — $out"
+  fi
+}
+
+# ══ T9: workflow bootstrap — script extracted from the mirror must run ══════
+# gh-1665 review (threads 1+2): the mirror steps run BEFORE any checkout on
+# persistent self-hosted runners, so the updater is bootstrapped from
+# `git --git-dir=$MIRROR show main:scripts/update_git_mirror.sh` (or the
+# commit-pinned raw URL). The extracted copy must be a complete, runnable
+# script — never a workspace path.
+t9() {
+  if [ "$MODE" = "--legacy" ]; then return 0; fi
+  local d="$WORK/t9"; mkdir -p "$d"; make_fixture "$d"
+  mkdir -p "$d/work/scripts"
+  cp "$SCRIPT" "$d/work/scripts/update_git_mirror.sh"
+  git -C "$d/work" add scripts/update_git_mirror.sh
+  git -C "$d/work" commit -qm "add updater script"
+  git -C "$d/work" push -q "$d/remote.git" HEAD
+  update_mirror "file://$d/remote.git" "$d/mirror.git" >/dev/null 2>&1
+  local extracted rc branch
+  extracted="$d/extracted.sh"
+  branch=$(git --git-dir="$d/mirror.git" symbolic-ref --short HEAD 2>/dev/null || echo main)
+  git --git-dir="$d/mirror.git" show "$branch:scripts/update_git_mirror.sh" \
+      > "$extracted" 2>/dev/null
+  rc=$?
+  if [ "$rc" -eq 0 ] && [ -s "$extracted" ] && bash -n "$extracted" 2>/dev/null; then
+    ok "T9 mirror-extracted bootstrap is a complete, parseable script"
+  else
+    bad "T9 mirror extraction broken: rc=$rc" 
+    return
+  fi
+  local out r2
+  out=$(bash "$extracted" "file://$d/remote.git" "$d/mirror2.git" 2>&1); r2=$?
+  if [ "$r2" -eq 0 ] && [ -n "$(mirror_head "$d/mirror2.git")" ]; then
+    ok "T9 extracted script runs standalone against a fresh mirror path"
+  else
+    bad "T9 extracted script FAILED to run: rc=$r2 — $out"
+  fi
+}
+
 echo "── gh-1644 update_git_mirror self-test (mode: ${MODE:-script}) ──"
 if [ "$MODE" = "--legacy" ]; then
   t4; t5; t6
 else
-  t1; t2; t3; t4; t5; t6; t7
+  t1; t2; t3; t4; t5; t6; t7; t8; t9
 fi
 
 echo ""
