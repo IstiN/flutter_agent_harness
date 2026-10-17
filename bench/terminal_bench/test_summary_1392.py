@@ -6,7 +6,9 @@ gaps is a contradiction, never silent).
 
 Run: python3 -m unittest discover -s bench/terminal_bench
 """
+import contextlib
 import importlib.util
+import io
 import json
 import sys
 import tempfile
@@ -22,6 +24,24 @@ spec.loader.exec_module(summary)
 
 import bench_metrics
 from bench_metrics import summarize_trial
+
+
+FIXTURE_BANNER = "TEST FIXTURE — not a real run"
+
+
+@contextlib.contextmanager
+def _fixture_output():
+    """Mark stdout written inside the block as rendered test fixture.
+
+    gh-1677: the CI unit-test step runs unittest WITHOUT --buffer, so a
+    summary.main() call inside a test prints its report straight into
+    the step log — byte-shaped exactly like a production run summary
+    (that output was once quoted as proof a real run was a glm run).
+    The banner line makes any pasted/quoted chunk self-identify as a
+    fixture.
+    """
+    print(FIXTURE_BANNER)
+    yield
 
 
 def _results(run_dir, rows):
@@ -166,7 +186,7 @@ class ConcurrencyTagTest(unittest.TestCase):
             os.environ, {"BENCH_CONCURRENCY": "1"}
         ), mock.patch.object(
             summary.sys, "argv", ["summary.py", "--no-fail", str(self.runs)]
-        ):
+        ), _fixture_output():
             code = None
             try:
                 summary.main()
@@ -308,11 +328,15 @@ class ProviderLabelTest(unittest.TestCase):
         _results(self.runs / "shard-0", [_row("t1", "t1__t", mode="unset")])
 
     def test_render_tags_the_provider_label(self):
+        # gh-1677: the fixture label is deliberately synthetic
+        # (test-fixture-provider, never a production provider/model) —
+        # a production-shaped fixture once masqueraded as a real run in
+        # the CI step log.
         lines, _ = summary.render(
-            self.runs, run_label="kimi-for-coding"
+            self.runs, run_label="test-fixture-provider (fixture-model)"
         )
         self.assertEqual(
-            lines[2], "Provider: kimi-for-coding (gh-1471)."
+            lines[2], "Provider: test-fixture-provider (fixture-model) (gh-1471)."
         )
 
     def test_no_label_keeps_the_header_stock(self):
@@ -327,16 +351,34 @@ class ProviderLabelTest(unittest.TestCase):
         from unittest import mock
 
         with mock.patch.dict(
-            os.environ, {"BENCH_RUN_LABEL": "zai-glm-5.3-flash (glm-5.3-flash)"}
+            # gh-1677: synthetic fixture label — a production-shaped
+            # value here renders straight into the unbuffered CI step
+            # log and reads as a real run summary.
+            os.environ, {"BENCH_RUN_LABEL": "test-fixture-provider (fixture-model)"}
         ), mock.patch.object(
             summary.sys, "argv", ["summary.py", "--no-fail", str(self.runs)]
-        ):
+        ), _fixture_output():
             code = None
             try:
                 summary.main()
             except SystemExit as exc:
                 code = exc.code
             self.assertEqual(code, 0)
+
+
+class FixtureBannerTest(unittest.TestCase):
+    """gh-1677: any fixture render reaching the CI log carries the banner."""
+
+    def test_rendered_fixture_output_caries_the_banner(self):
+        # The unbuffered unittest step prints everything a test writes;
+        # the banner must be the FIRST line of any fixture render so a
+        # pasted chunk can never read as CI truth.
+        from unittest import mock
+
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf), _fixture_output():
+            print("### fa on terminal-bench")
+        self.assertEqual(buf.getvalue().splitlines()[0], FIXTURE_BANNER)
 
 
 if __name__ == "__main__":
