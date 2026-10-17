@@ -631,11 +631,37 @@ jobs:
           set -euo pipefail
           MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
           mkdir -p "$(dirname "$MIRROR")"
-          if [ ! -d "$MIRROR" ]; then
-            git clone --mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR"
-          else
-            git -C "$MIRROR" fetch origin
+          # gh-1644: shared resilient updater — fetch retries + blobless
+          # recreate with partial-dir cleanup (was single-shot; run
+          # 38855793382 died exit 128 on a mid-clone network drop).
+          # gh-1665 review: first step of the job, before any checkout —
+          # the workspace may hold a pre-merge tree, so bootstrap the
+          # script from the commit-pinned raw URL (mirror copy as the
+          # no-network fallback), never from $GITHUB_WORKSPACE.
+          SCRIPT="$RUNNER_TEMP/update_git_mirror.sh"
+          RAW="https://raw.githubusercontent.com/IstiN/flutter_agent_harness/${{ github.sha }}/scripts/update_git_mirror.sh"
+          if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "$RAW" -o "$SCRIPT" \
+             || [ ! -s "$SCRIPT" ]; then
+            echo "raw bootstrap failed — syncing the mirror and falling back to its copy" >&2
+            # gh-1665 review (returned IMPORTANT): in the one-run-wide
+            # first-post-merge window the persistent mirror is still a
+            # PRE-MERGE tree. Cheap single-shot ensure (bounded resilience
+            # stays owned by $SCRIPT below) so the extraction that follows
+            # succeeds on any runner that can reach github.com at all —
+            # raw.githubusercontent.com being down degrades to the
+            # fallback instead of a red leg.
+            if [ -d "$MIRROR" ] && git -C "$MIRROR" rev-parse --git-dir >/dev/null 2>&1; then
+              git -C "$MIRROR" fetch origin || true
+            else
+              rm -rf "$MIRROR"
+              git clone --mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR" || true
+            fi
+            BRANCH="$(git --git-dir="$MIRROR" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+            git --git-dir="$MIRROR" show "$BRANCH:scripts/update_git_mirror.sh" > "$SCRIPT" \
+              || { echo "::error::could not bootstrap update_git_mirror.sh (raw URL unreachable and mirror lacks the script)" >&2; exit 1; }
           fi
+          bash "$SCRIPT" \
+            https://github.com/IstiN/flutter_agent_harness.git "$MIRROR"
 
       - name: Checkout repository from local mirror
         run: |
@@ -1065,11 +1091,37 @@ jobs:
           set -euo pipefail
           MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
           mkdir -p "$(dirname "$MIRROR")"
-          if [ ! -d "$MIRROR" ]; then
-            git clone --mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR"
-          else
-            git -C "$MIRROR" fetch origin
+          # gh-1644: shared resilient updater — fetch retries + blobless
+          # recreate with partial-dir cleanup (was single-shot; run
+          # 38855793382 died exit 128 on a mid-clone network drop).
+          # gh-1665 review: first step of the job, before any checkout —
+          # the workspace may hold a pre-merge tree, so bootstrap the
+          # script from the commit-pinned raw URL (mirror copy as the
+          # no-network fallback), never from $GITHUB_WORKSPACE.
+          SCRIPT="$RUNNER_TEMP/update_git_mirror.sh"
+          RAW="https://raw.githubusercontent.com/IstiN/flutter_agent_harness/${{ github.sha }}/scripts/update_git_mirror.sh"
+          if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "$RAW" -o "$SCRIPT" \
+             || [ ! -s "$SCRIPT" ]; then
+            echo "raw bootstrap failed — syncing the mirror and falling back to its copy" >&2
+            # gh-1665 review (returned IMPORTANT): in the one-run-wide
+            # first-post-merge window the persistent mirror is still a
+            # PRE-MERGE tree. Cheap single-shot ensure (bounded resilience
+            # stays owned by $SCRIPT below) so the extraction that follows
+            # succeeds on any runner that can reach github.com at all —
+            # raw.githubusercontent.com being down degrades to the
+            # fallback instead of a red leg.
+            if [ -d "$MIRROR" ] && git -C "$MIRROR" rev-parse --git-dir >/dev/null 2>&1; then
+              git -C "$MIRROR" fetch origin || true
+            else
+              rm -rf "$MIRROR"
+              git clone --mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR" || true
+            fi
+            BRANCH="$(git --git-dir="$MIRROR" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+            git --git-dir="$MIRROR" show "$BRANCH:scripts/update_git_mirror.sh" > "$SCRIPT" \
+              || { echo "::error::could not bootstrap update_git_mirror.sh (raw URL unreachable and mirror lacks the script)" >&2; exit 1; }
           fi
+          bash "$SCRIPT" \
+            https://github.com/IstiN/flutter_agent_harness.git "$MIRROR"
 
       - name: Checkout repository from local mirror
         run: |
