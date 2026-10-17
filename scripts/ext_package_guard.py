@@ -190,11 +190,13 @@ def cmd_check(zip_path: str) -> int:
                         "requires 3",
                     )
                     failures += 1
-                # gh-1630 AC5: the five Purple-Potassium permissions are
-                # gone and stay gone — a manifest regression here means the
-                # extension requests capabilities its shipped code never
-                # calls (a hard CWS rejection).
-                dead = {"contentSettings", "downloads", "fontSettings",
+                # gh-1630 AC5 + F2′: the four Purple-Potassium permissions
+                # are gone and stay gone — a manifest regression here means
+                # the extension requests capabilities its shipped code
+                # never calls (a hard CWS rejection). `downloads` is
+                # RETAINED (F2′ owner decision): the `download` agent tool
+                # is its shipped static call site (browser_api_tools.dart).
+                dead = {"contentSettings", "fontSettings",
                         "identity", "desktopCapture"}
                 declared = set(manifest.get("permissions") or []) | set(
                     manifest.get("optional_permissions") or []

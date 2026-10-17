@@ -32,9 +32,11 @@ const OPTIONAL = [
 // gh-1630 Purple Potassium — CWS rejected these as requested-but-unused
 // (zero chrome.<perm> call sites in shipped JS). They come back only WITH
 // a real feature (never speculatively) — assert their absence forever.
+// gh-1630: the four Purple-Potassium permissions — requested-but-unused
+// is a hard CWS rejection. `downloads` is RETAINED (F2′ owner decision:
+// the `download` agent tool is its shipped static call site).
 const DEAD = [
-  'contentSettings', 'downloads', 'fontSettings', 'identity',
-  'desktopCapture',
+  'contentSettings', 'fontSettings', 'identity', 'desktopCapture',
 ];
 // Issue #137 Tier 3 — excluded with reasons, pinned in
 // browser_ext/dart/src/permission_matrix.dart (excluded rows).

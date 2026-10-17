@@ -12,10 +12,17 @@ user's OWN configured model provider.
 
 ## gh-1630 note (removed permissions)
 
-`contentSettings`, `downloads`, `fontSettings`, `identity`, and
-`desktopCapture` were REMOVED from the manifest (CWS review: requested-
-but-unused permissions). The extension neither requests nor calls them;
-the disclosures below cover only the retained set.
+`contentSettings`, `fontSettings`, `identity`, and `desktopCapture` were
+REMOVED from the manifest (CWS review: requested-but-unused permissions).
+The extension neither requests nor calls them; the disclosures below cover
+only the retained set.
+
+`downloads` is RETAINED by owner decision (gh-1630 F2′): the agent's
+`download` tool is the permission's shipped call site — the user asks the
+agent to save a file, the tool hands an http/https URL to
+`chrome.downloads.download` (size-capped, filename sanitized,
+approval-gated). Nothing is uploaded and no download history is read
+beyond the started item's id/state to report the save result.
 
 ## Single purpose description (already filled)
 
@@ -51,6 +58,14 @@ clipboard").
 **contextMenus** — Adds fa's right-click entries ("Ask fa about this
 selection/page/link") so the user can invoke the agent in context. One
 of the primary user entry points into the extension.
+
+**downloads** — The agent saves files the user explicitly asks for
+("download this report", "save that image"): the `download` tool hands
+the http/https URL to `chrome.downloads.download` with the user-chosen
+filename, a size cap, and the same outbound approval gate the other
+navigation tools use. The extension never reads, modifies, or deletes
+existing downloads beyond reporting the new item's id/state, and never
+starts a download the user did not request.
 
 **cookies** — Page automation on the user's instruction sometimes
 requires reading or setting cookies (logging into a flow the user

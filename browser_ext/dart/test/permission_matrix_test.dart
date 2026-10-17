@@ -204,10 +204,9 @@ void main() {
       expect(violations.single.detail, contains('unlisted.permission'));
     });
 
-    test('gh-1630: the five dead-permission rows are excluded, on the '
-        'record', () {
+    test('gh-1630: the four dead-permission rows are excluded, on the '
+        'record (`downloads` is F2′-retained)', () {
       for (final dead in const [
-        'downloads',
         'identity',
         'contentSettings',
         'fontSettings',
@@ -219,12 +218,16 @@ void main() {
         expect(row.rationale, isNotNull, reason: '$dead needs its rationale');
         expect(row.rationale, contains('gh-1630'));
       }
+      // gh-1630 F2′: `downloads` is the deliberate exception — a CORE row
+      // backed by the shipped `download` tool (its static call site).
+      final dl = manifestEntries().firstWhere((e) => e.tool == 'download');
+      expect(dl.permissions, contains('downloads'));
+      expect(dl.tier, MatrixTier.core, reason: dl.rationale);
       final everywhere = {
         ...corePermissions(),
         ...secondTierOptionalPermissions,
       };
       for (final dead in const [
-        'downloads',
         'identity',
         'contentSettings',
         'fontSettings',

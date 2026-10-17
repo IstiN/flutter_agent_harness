@@ -227,13 +227,14 @@ Safety kernel (`bridge_tools.dart`):
   only exact `chrome.<ns>.<method>` paths, no events (`on*`), no
   prototype tricks (`__proto__`/`constructor`/`prototype`). The raw
   `faAgentV2.bridgeCall` seam rides the same static kernel.
-- **Exfil gate on navigation methods**:
-  `tabs.create/update` and `windows.create/update` ride the SAME
-  visited-origins ExfilGate as the curated tabs_open tool — a URL to an
-  origin the user never visited asks once (allow seeds the visited
-  set); a deny returns `approval_required` as data. (`downloads.*`
-  left the bridge surface with the permission — gh-1630; the gate's
-  `download` kind stays as the re-add seam.)
+- **Exfil gate on navigation + download methods**:
+  `tabs.create/update`, `windows.create/update` and `downloads.download`
+  ride the SAME visited-origins ExfilGate as the curated tabs_open tool —
+  a URL to an origin the user never visited asks once (allow seeds the
+  visited set); a deny returns `approval_required` as data.
+  (gh-1630 F2′: `downloads` stayed — the curated `download` tool IS its
+  shipped call site, and the bridge's `download` kind gates the raw
+  `chrome.downloads.download` the same way.)
 - **Per-root risk map**: read/write roots (`tabs`, `windows`,
   `bookmarks`, `history`, `idle`, `system`, …) ride their tier;
   exec roots (`scripting`, `debugger`, `cookies`, `browsingData`,
@@ -312,7 +313,7 @@ two-way checker (`checkMatrix`) turns every drift into a typed
 |---|---|---|
 | **Core** | 41 — the 27 curated-tool roots (incl. `runtime`, which needs no permission) + 12 bridge-only roots (`search`, `readingList`, `tabCapture`, `browsingData`, `tts`, `declarativeNetRequest`, `privacy`, `proxy`, `management`, `clipboard`, `nativeMessaging`, `webRequest`) + `browser_api` + `browser_api_catalog` themselves | Registered and exposed; an unpacked manifest must carry the permission |
 | **Second tier** | 3 (`topSites`, `pageCapture`, `userScripts`) | Implemented but registered-hidden — a Settings gate turns them on; permissions ride `optional_permissions` |
-| **Excluded (gh-1630)** | `downloads`, `identity`, `contentSettings`, `fontSettings`, `desktopCapture` | CWS Purple Potassium: requested-but-unused is a hard rejection — removed with the tools/rows that backed them; re-add only WITH shipping code |
+| **Excluded (gh-1630)** | `identity`, `contentSettings`, `fontSettings`, `desktopCapture` | CWS Purple Potassium: requested-but-unused is a hard rejection — removed with the tools/rows that backed them; re-add only WITH shipping code. `downloads` is the F2′ exception: RETAINED, with the gated `download` tool as its shipped call site |
 | **Excluded** | 12 (`gcm`, `instanceID`, `devtools`, `fileBrowserHandler`, `printing`, `printingMetrics`, `fileSystemProvider`, `platformKeys`, `wallpaper`, `enterprise.deviceAttributes`, `enterprise.networkingAttributes`, `passwords`) | Absent from manifest AND registry; the table row records the rationale so absence is auditable |
 
 Issue #137 moved `browsingData`/`tts`/`declarativeNetRequest`/`privacy`/

@@ -193,8 +193,8 @@ typedef BridgeRiskAsk = Future<bool> Function(String path, ApprovalTier tier);
 
 /// One-time notice hook — the host uses it for the yolo-mode banner.
 typedef BridgeFirstCall = void Function(String path);
-/// The exfil ask: the SAME host surface the curated tabs_open /
-/// tabs_open ride (wired to the approval prompt + visited-set
+/// The exfil ask: the SAME host surface the curated tabs_open
+/// rides (wired to the approval prompt + visited-set
 /// seeding). Returns whether the outbound call may proceed.
 typedef BridgeExfilAsk = Future<bool> Function(
   OutboundKind kind,
@@ -218,8 +218,8 @@ const Map<String, (OutboundKind, List<int>)> bridgeOutboundMethods = {
 /// the curated family is untouched; REG pins the +2 contract).
 ///
 /// [visitedOrigins] wires the exfil gate for the navigation/download
-/// bridge methods — the SAME set + ask the curated tabs_open /
-/// equivalent would. Null (gate unwired) keeps calls ungated, the
+/// bridge methods — the SAME set + ask the curated tabs_open
+/// rides. Null (gate unwired) keeps calls ungated, the
 /// host's choice.
 Future<void> registerBridgeTools(
   ToolRegistry registry,

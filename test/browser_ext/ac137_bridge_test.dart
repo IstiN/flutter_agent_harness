@@ -184,13 +184,14 @@ void main() {
       isTrue,
       reason: 'missing Tier-2: ${tier2.difference(declared)}',
     );
-    // gh-1630 (CWS Purple Potassium): the five dead permissions stay out.
-    // Re-add ONLY together with the shipping code that calls the
-    // namespace — update this set, browser_ext/manifest.json and
+    // gh-1630 (CWS Purple Potassium): the four dead permissions stay out.
+    // `downloads` is RETAINED (F2′ owner decision — the `download` agent
+    // tool is its shipped call site). Re-add a dead one ONLY together
+    // with the shipping code that calls the namespace — update this set,
+    // browser_ext/manifest.json and
     // test/browser_ext/cws_compliance_test.dart in the same change.
     const deadPermissions = {
       'contentSettings',
-      'downloads',
       'fontSettings',
       'identity',
       'desktopCapture',

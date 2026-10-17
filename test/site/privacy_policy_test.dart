@@ -65,12 +65,14 @@ void main() {
             'the live, rendering URL');
   });
 
-  test('F2: the store privacy disclosures no longer justify the five '
-      'removed permissions', () {
+  test('F2: the store privacy disclosures no longer justify the four '
+      'removed permissions — and DO justify the retained `downloads`',
+      () {
     final privacy = File('browser_ext/store/privacy.md').readAsStringSync();
+    // gh-1630: a justification for a permission the extension no longer
+    // requests invites review questions — the four dead ones stay out.
     for (final dead in const [
       'contentSettings',
-      'downloads',
       'fontSettings',
       'identity',
       'desktopCapture',
@@ -80,6 +82,12 @@ void main() {
               'justification for a permission the extension no longer '
               'requests invites review questions');
     }
+    // gh-1630 F2′: `downloads` is RETAINED — an UNjustified requested
+    // permission is the opposite failure (CWS asks for the call site
+    // story), so its disclosure must stay.
+    expect(privacy, contains('**downloads**'),
+        reason: '`downloads` stays declared (F2′, shipped `download` tool '
+            'call site) — the store disclosure must justify it');
   });
 }
 

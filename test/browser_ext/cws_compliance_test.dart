@@ -18,12 +18,12 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
-/// The five permissions CWS flagged as requested-but-unused (Purple
-/// Potassium). `downloads` may come back ONLY with a real feature
-/// (gh-1630 F2 second tier) — never speculatively.
+/// The four permissions CWS flagged as requested-but-unused (Purple
+/// Potassium). `downloads` is NOT on the list: gh-1630 F2′ (owner
+/// decision) retains it — the `download` agent tool
+/// (browser_api_tools.dart) is its shipped static call site.
 const deadPermissions = {
   'contentSettings',
-  'downloads',
   'fontSettings',
   'identity',
   'desktopCapture',
@@ -79,7 +79,7 @@ List<String> manifestOptionalPermissions(Map<String, dynamic> m) =>
     (m['optional_permissions'] as List<dynamic>? ?? const []).cast<String>();
 
 void main() {
-  test('AC5: the five dead permissions are gone from the manifest', () {
+  test('AC5: the four dead permissions are gone from the manifest', () {
     final m = parseManifest();
     final all = [...manifestPermissions(m), ...manifestOptionalPermissions(m)];
     for (final dead in deadPermissions) {
@@ -88,6 +88,29 @@ void main() {
               'shipped JS — a requested-but-unused permission is a hard '
               'rejection ("Don\'t future-proof")');
     }
+  });
+
+  test('F2′: `downloads` stays declared — the `download` tool is its '
+      'shipped call site', () {
+    final m = parseManifest();
+    final all = [...manifestPermissions(m), ...manifestOptionalPermissions(m)];
+    expect(all, contains('downloads'),
+        reason: 'gh-1630 F2′ (owner decision) retains the capability: '
+            'silently dropping it would regress the user-facing download '
+            'feature and un-justify the manifest row');
+    // And the call site is real: the spec table registers a `download`
+    // tool riding the downloads permission (source-level pin — the
+    // browser_ext/dart package owns the live registry tests).
+    final tools = File(
+      'browser_ext/dart/src/browser_api_tools.dart',
+    ).readAsStringSync();
+    expect(RegExp(r"name: 'download',").hasMatch(tools), isTrue,
+        reason: 'the F2′ download tool must exist in the spec table');
+    expect(
+        RegExp(r"name: 'download',\s*\n\s*permissions: \{'downloads'\},")
+            .hasMatch(tools),
+        isTrue,
+        reason: 'the download tool must declare the downloads permission');
   });
 
   test('I5/AC5: CSP = self + wasm-unsafe-eval, no remote origins', () {

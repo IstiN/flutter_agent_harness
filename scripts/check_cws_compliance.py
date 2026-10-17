@@ -35,11 +35,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 DEAD_PERMISSIONS = {
     "contentSettings",
-    "downloads",
     "fontSettings",
     "identity",
     "desktopCapture",
 }
+# gh-1630 F2′: `downloads` is deliberately RETAINED — the `download`
+# agent tool (browser_api_tools.dart) is its shipped static call site.
+# The manifest pin asserts the four dead ones stay out.
 
 REMOTE_MARKER = re.compile(rb"jsdelivr|unpkg|cdnjs|https://cdn\.")
 
@@ -278,6 +280,22 @@ def main() -> int:
     failures += check_ac5_manifest()
     failures += check_ac6_privacy()
     failures += check_ac3_lock()
+    # gh-1630 drift guard (review): the compliance contract is hand-copied
+    # across the Python gate, ext_package_guard.py, v21_manifest_test.mjs
+    # and the two Dart suites — pin the sets' sizes so a one-sided edit
+    # (a fifth permission added here but nowhere else) fails loudly.
+    if len(DEAD_PERMISSIONS) != 4:
+        error(
+            "cws-compliance",
+            f"DEAD_PERMISSIONS has {len(DEAD_PERMISSIONS)} entries — the "
+            "gh-1630 contract pins exactly FOUR dead permissions "
+            "(downloads is F2′-retained); if you are consciously changing "
+            "the contract, sync scripts/ext_package_guard.py, "
+            "browser_ext/test/v21_manifest_test.mjs, "
+            "test/browser_ext/cws_compliance_test.dart and "
+            "test/site/privacy_policy_test.dart in the same change",
+        )
+        failures += 1
 
     if failures:
         error(
