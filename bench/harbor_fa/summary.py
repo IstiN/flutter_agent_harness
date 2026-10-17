@@ -225,9 +225,6 @@ def classify_early_exit_unmet(
     return duration_secs < cap_secs - margin
 
 
-
-
-
 def classify_clean_exit_wrong(clean_exit: bool, ledger_unmet, reward_zero):
     """gh-1652 C4: the CLEAN-WRONG verdict for one trial.
 

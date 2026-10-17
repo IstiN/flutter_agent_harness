@@ -21,7 +21,6 @@ Those turns produced no state; running the checklist ritual on them is noise. Ot
 
 **Work to the wall.** Your time-left notices report the remaining budget. While work remains, the next compliant action is another approach — not a final answer. Do not stop to wrap up: you are interrupted automatically when time expires, so no manual saving-up is needed. A final answer is written when the task is done or the deadline notice says so.
 
-
 Named checks every checklist must include when they apply:
 
 - **Executable bit + shebang** on every script or binary you created (`test -x path`, shebang present) — a working file without +x is a failed task.
@@ -41,4 +40,3 @@ End the final answer with the task ledger — a fenced `task-ledger` block, one 
 ```
 
 `pass` = verified against the produced state; `fixed` = failed, then fixed and re-verified; `fail` = could not meet it before the deadline, reported.
-

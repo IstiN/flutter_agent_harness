@@ -146,8 +146,9 @@ void main() {
     // invocation. Parity is a NUMBERED step, not a named-check bullet.
     expect(finalizeGateContractPrompt, contains('2.5. **Grader parity**'));
     expect(finalizeGateContractPrompt, isNot(contains('- **Grader parity**')));
-    final verifyAt =
-        finalizeGateContractPrompt.indexOf('2. **Verify each item');
+    final verifyAt = finalizeGateContractPrompt.indexOf(
+      '2. **Verify each item',
+    );
     final parityAt = finalizeGateContractPrompt.indexOf('2.5. **Grader');
     final fixAt = finalizeGateContractPrompt.indexOf('3. **Fix every unmet');
     expect(parityAt, greaterThan(verifyAt));
@@ -155,11 +156,13 @@ void main() {
     expect(finalizeGateContractPrompt, contains('neutral cwd'));
   });
 
-  test('gh-1652 C2: the composed headless prompt carries the parity step',
-      () async {
-    final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
-    expect(prompt, contains('2.5. **Grader parity**'));
-  });
+  test(
+    'gh-1652 C2: the composed headless prompt carries the parity step',
+    () async {
+      final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+      expect(prompt, contains('2.5. **Grader parity**'));
+    },
+  );
 
   test('interactive boots never carry the contract', () async {
     for (final mode in [
