@@ -341,14 +341,41 @@ final class _AnthropicStreamSession {
 
   /// Parses one raw SSE event and dispatches it to the per-type handler.
   void _handleSseEvent(ServerSentEvent sse) {
-    if (sse.event == 'error') {
+    final name = _sseEventName(sse);
+    if (name == 'error') {
       throw StateError(sse.data);
     }
-    if (!_anthropicMessageEvents.contains(sse.event)) {
+    if (!_anthropicMessageEvents.contains(name)) {
       return;
     }
     final event = _parseSseEvent(sse);
     _eventHandlers[event['type']]?.call(event);
+  }
+
+  /// The effective event name of [sse]. Anthropic sends `event: <type>`
+  /// lines, but some Anthropic-compatible proxies (e.g. Bedrock gateways)
+  /// stream bare `data: {"type": ...}` frames. When the `event:` field is
+  /// absent or the SSE default (`message`), the name falls back to the
+  /// `type` of the JSON payload; `[DONE]` sentinels and non-JSON data
+  /// yield `null` and are skipped.
+  String? _sseEventName(ServerSentEvent sse) {
+    final named = sse.event;
+    if (named != null && named.isNotEmpty && named != 'message') {
+      return named;
+    }
+    final data = sse.data.trimLeft();
+    if (!data.startsWith('{')) {
+      return null;
+    }
+    try {
+      final parsed = jsonDecode(data);
+      if (parsed is Map<String, dynamic> && parsed['type'] is String) {
+        return parsed['type'] as String;
+      }
+    } on FormatException {
+      return null;
+    }
+    return null;
   }
 
   /// Decodes the SSE `data` JSON into the event map, recording
@@ -1072,8 +1099,8 @@ Map<String, dynamic>? _convertThinkingBlock(
   }
   final signature =
       !foreignAuthor &&
-      block.thinkingSignature != null &&
-      block.thinkingSignature!.trim().isNotEmpty
+          block.thinkingSignature != null &&
+          block.thinkingSignature!.trim().isNotEmpty
       ? block.thinkingSignature
       : null;
   final hasSignature = signature != null && signature.trim().isNotEmpty;
