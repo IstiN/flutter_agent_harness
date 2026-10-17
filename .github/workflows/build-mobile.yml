@@ -631,7 +631,8 @@ jobs:
           if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "$RAW" -o "$SCRIPT" \
              || [ ! -s "$SCRIPT" ]; then
             echo "raw bootstrap failed — falling back to the mirror copy" >&2
-            git --git-dir="$MIRROR" show main:scripts/update_git_mirror.sh > "$SCRIPT" \
+            BRANCH="$(git --git-dir="$MIRROR" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+            git --git-dir="$MIRROR" show "$BRANCH:scripts/update_git_mirror.sh" > "$SCRIPT" \
               || { echo "::error::could not bootstrap update_git_mirror.sh (raw URL unreachable and mirror lacks the script)" >&2; exit 1; }
           fi
           bash "$SCRIPT" \
@@ -1077,7 +1078,8 @@ jobs:
           if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "$RAW" -o "$SCRIPT" \
              || [ ! -s "$SCRIPT" ]; then
             echo "raw bootstrap failed — falling back to the mirror copy" >&2
-            git --git-dir="$MIRROR" show main:scripts/update_git_mirror.sh > "$SCRIPT" \
+            BRANCH="$(git --git-dir="$MIRROR" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+            git --git-dir="$MIRROR" show "$BRANCH:scripts/update_git_mirror.sh" > "$SCRIPT" \
               || { echo "::error::could not bootstrap update_git_mirror.sh (raw URL unreachable and mirror lacks the script)" >&2; exit 1; }
           fi
           bash "$SCRIPT" \
