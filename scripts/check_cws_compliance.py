@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """gh-1630 — mechanical CWS resubmission compliance check (AC7/REG-1).
 
-Asserts the Chrome Web Store rejection fixes on the CURRENT tree (and, with
---zip, on the built package). Exit 0 = resubmission-safe; exit 1 with
-::error annotations = a violation that would fail store review again.
-Wired into .github/workflows/browser-ext.yml on every PR touching
-browser_ext/ or the engine loaders — red blocks merge.
+Asserts the Chrome Web Store rejection fixes on the CURRENT tree. Exit 0 =
+resubmission-safe; exit 1 with ::error annotations = a violation that would
+fail store review again. Wired into .github/workflows/browser-ext.yml on
+every PR touching browser_ext/ or the engine loaders — red blocks merge.
+
+The script takes NO arguments: any argv is a caller bug and fails (the
+built zip is scanned wholesale by scripts/ext_package_guard.py check —
+never duplicated here).
 
 Checks:
   AC1  no remote-code markers (jsdelivr/unpkg/cdns/https://cdn.) in any
        packaged-verbatim source under browser_ext/ (build artifacts
        excluded — the built zip is scanned wholesale by
-       scripts/ext_package_guard.py check, which this script does NOT
-       duplicate when --zip is passed);
-  AC5  manifest: the five dead permissions absent; CSP
-       'self' 'wasm-unsafe-eval', no remote origin; strict-JSON parseable
-       once // comments are stripped (the packaged copy is fully strict);
+       scripts/ext_package_guard.py check);
+  AC5  manifest: the four dead permissions absent (`downloads` is
+       RETAINED via gh-1630 F2′ — the `download` tool is its shipped call
+       site); CSP 'self' 'wasm-unsafe-eval', no remote origin;
+       strict-JSON parseable once // comments are stripped (the packaged
+       copy is fully strict);
   AC6  site/privacy.html carries all nine mandatory sections (data-sec
        anchors) in EN and RU; the store listing links the live URL;
   AC3  browser_ext/vendor.lock.json pins every artifact with sha256 and
@@ -259,6 +263,16 @@ def check_ac3_lock() -> int:
 
 
 def main() -> int:
+    # No flags, no modes: extra argv is a caller bug (the built zip is
+    # scanned wholesale by ext_package_guard.py check — never here).
+    if len(sys.argv) != 1:
+        error(
+            "cws-compliance",
+            "check_cws_compliance.py takes no arguments (got "
+            f"{sys.argv[1:]!r}) — the built zip is scanned by "
+            "ext_package_guard.py check, not this script",
+        )
+        return 2
     failures = 0
     failures += check_ac1_sources()
     failures += check_ac5_manifest()

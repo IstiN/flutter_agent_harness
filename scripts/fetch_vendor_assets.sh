@@ -13,7 +13,11 @@
 #                  stripped out of vendored bundles), verify the SHA-256
 #                  of the final bytes, fail loud on any mismatch;
 #   --verify-only  no network: verify the checksums of already-fetched
-#                  assets (CI cache mode, the E1 selftest);
+#                  assets (CI cache mode, the E1 selftest). The pins are
+#                  POST-transform sha256s, so this also proves the staged
+#                  tree carries the lock's replacements (a tree of raw
+#                  downloads fails loud — a fresh fetch must land the
+#                  transformed bytes, never the raw upstream payload);
 #   --dest D       target dir (default browser_ext/vendor — gitignored;
 #                  the PACKAGE carries the bytes, the repo the lock);
 #   --lock P       lock path (default browser_ext/vendor.lock.json).
