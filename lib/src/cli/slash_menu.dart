@@ -181,6 +181,8 @@ const builtinSlashCommands = <String, String>{
   '/session': '[name] — show current or switch/create a named session',
   '/session-new': '<name> — create a new named session',
   '/sessions': 'list all sessions across workspaces',
+  '/import':
+      'import omp/claude sessions recorded for this folder into fa',
   '/resume': 'switch to the most recent session',
   '/rename-session': '<name> — rename the current session',
   '/trajectory': '[view|cost|tail|inspect <n>] — session trajectory ledger',

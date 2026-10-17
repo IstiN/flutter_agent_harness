@@ -66,7 +66,11 @@ Future<void> _runApp(List<String> args) async {
       final CliArgs cliArgs => cliArgs,
     };
   } on CliArgsException catch (error) {
-    _fail(error.message);
+    stderr.writeln('fa: ${error.message}');
+    stderr.writeln('Run with --help for usage.');
+    // GOAL exit table (issue #1562): `fa import` usage errors exit 1, not
+    // the EX_USAGE 64 the rest of the CLI uses.
+    exit(args.isNotEmpty && args.first == 'import' ? 1 : 64);
   }
 
   // gh-1556: the ONE session deadline clock. The host env seeds it
@@ -106,6 +110,15 @@ Future<void> _runApp(List<String> args) async {
   final trajectory = parsed.trajectory;
   if (trajectory != null) {
     exit(await _runTrajectoryCommand(trajectory, parsed));
+  }
+
+  // `fa import --harness=... --all|--session=x` — cross-harness session
+  // import (issue #1562), intercepted like trajectory: no agent boot and
+  // ZERO provider/model/key wiring — imported content can never trigger a
+  // model call during import (GOAL F8).
+  final importCommand = parsed.importCmd;
+  if (importCommand != null) {
+    exit(await _runImportCommand(importCommand, parsed));
   }
 
   // `fa ext <verb> ...` — headless JS extension management, intercepted
