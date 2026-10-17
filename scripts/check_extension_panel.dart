@@ -186,10 +186,51 @@ Future<void> main(List<String> args) async {
   }, panelSession);
   stderr.writeln('=== probe: ${jsonEncode(probe)}');
 
+  // gh-1630 (review): the vendored on-device engines are the WHOLE point
+  // of the resubmission — assert they actually constructed, don't infer
+  // health from an empty console (a loader that dies before installing
+  // its global used to surface only as a silenced "… is not defined").
+  // vendor_loader_webllm/transformers install window.webllm /
+  // window.transformersjs synchronously after their import; litert rides
+  // the awaited window.litertLmReady handshake (which also installs
+  // window.Engine).
+  final engines = await send('Runtime.evaluate', {
+    'expression':
+        "JSON.stringify({webllm: typeof window.webllm !== 'undefined', "
+        "transformersjs: typeof window.transformersjs !== 'undefined', "
+        "litertHandshake: typeof window.litertLmReady !== 'undefined'})",
+    'returnByValue': true,
+  }, panelSession);
+  final engineState = () {
+    try {
+      final v = ((engines['result'] as Map)['value'] as String?) ?? '';
+      return Map<String, dynamic>.from(
+        jsonDecode(v) as Map<dynamic, dynamic>,
+      );
+    } catch (_) {
+      return <String, dynamic>{};
+    }
+  }();
+  stderr.writeln('=== engine constructs: ${jsonEncode(engineState)}');
+  // The awaited handshake must SETTLE — a hung import (404 wasm, CSP
+  // kill) must not read as healthy.
+  final litert = await send('Runtime.evaluate', {
+    'expression':
+        "window.litertLmReady ? Promise.race([window.litertLmReady.then(() => 'fulfilled').catch(e => 'rejected: ' + e), new Promise(r => setTimeout(() => r('timeout'), 10000))]) : 'missing'",
+    'returnByValue': true,
+    'awaitPromise': true,
+  }, panelSession);
+  final litertState =
+      (((litert['result'] as Map)['value'] ?? 'missing') as String);
+  stderr.writeln('=== litertLmReady: $litertState');
+
   // gh-1630: no remote-code allowlist — a CDN mention in the panel
-  // console is a REGRESSION (Blue Argon), and any vendored-asset load
-  // failure is exactly what this checker exists to catch.
-  final fatal = errors.where((e) => !e.contains('is not defined'));
+  // console is a REGRESSION (Blue Argon), and EVERY console error is
+  // fatal: the pre-gh-1630 "… is not defined" exemption excused the
+  // ondevice stub era (loaders that intentionally did not install their
+  // globals). The stub is gone; a missing engine global is exactly the
+  // failure this checker exists to catch.
+  final fatal = errors;
   stderr.writeln('=== panel console over $watchSecs s ===');
   for (final e in errors) {
     stderr.writeln(e.length > 600 ? '${e.substring(0, 600)}…' : e);
@@ -203,7 +244,20 @@ Future<void> main(List<String> args) async {
   errSub.cancel();
   proc.kill();
   await tmp.delete(recursive: true).catchError((_) => tmp);
-  exit(fatal.isEmpty ? 0 : 1);
+  final engineFailures = <String>[
+    if (engineState['webllm'] != true)
+      'window.webllm missing — vendor_loader_webllm.js did not construct the engine',
+    if (engineState['transformersjs'] != true)
+      'window.transformersjs missing — vendor_loader_transformers.js did not construct the engine',
+    if (engineState['litertHandshake'] != true)
+      'window.litertLmReady missing — vendor_loader_litert.js did not install the handshake',
+    if (engineState['litertHandshake'] == true && litertState != 'fulfilled')
+      'litertLmReady did not settle fulfilled ($litertState)',
+  ];
+  for (final f in engineFailures) {
+    stderr.writeln('ENGINE-FAIL $f');
+  }
+  exit(fatal.isEmpty && engineFailures.isEmpty ? 0 : 1);
 }
 
 /// The unpacked-extension id: SHA-256 of the manifest `key` (DER public
