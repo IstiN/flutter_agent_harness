@@ -75,7 +75,13 @@ const expectedUsesPerWorkflow = {
   // entry either: with the post-merge main CI run retired there are no
   // main-push events, and the tag-only release (gh-1522) cuts its tag
   // inside the ci.yml release job on schedule/dispatch arms.
-  '.github/workflows/ci.yml': 12,
+  // 13 + 1 (gh-1659): the office-addin-suite leg (moved from the
+  // standalone office-addin.yml) resolves flutter_app through the shared
+  // action before its chrome-platform test run — the PR-gate copy of the
+  // daily leg's pipeline must retry and enforce the lockfile the same way
+  // (the drift guard test/ci_1659_office_addin_matrix_test.dart pins the
+  // step parity).
+  '.github/workflows/ci.yml': 13,
   // gh-1538: nightly slimmed to builds + integration-only — the
   // full-quality / cli-visual / flutter-app-macos jobs (3 of the 4
   // pre-migration resolutions) are gone as pre-merge-gate duplication.
