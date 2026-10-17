@@ -321,8 +321,6 @@ def classify_early_exit_unmet(
     return duration_secs < cap_secs - margin
 
 
-
-
 def classify_clean_exit_wrong(clean_exit: bool, ledger_unmet, reward_zero):
     """gh-1652 C4: the CLEAN-WRONG verdict for one trial.
 
@@ -347,6 +345,8 @@ def classify_clean_exit_wrong(clean_exit: bool, ledger_unmet, reward_zero):
     if not clean_exit or ledger_unmet > 0 or not reward_zero:
         return False
     return True
+
+
 def _trial_session_texts(trial_dir: Path) -> list[str]:
     """The trial's synced fa session file texts, read ONCE per trial.
 
@@ -757,8 +757,11 @@ def render(runs_dir: Path, expected=None, model_override=None, concurrency=None,
     for row in all_failures:
         unmet = early_facts.get(row.trial, (None, None, None))[0]
         reward_zero = True if row.mark == "no" else None
+        # Clean exit = the SAME allow-list as the gh-1646 guard above
+        # (empty failure mode only): verifier timeouts and any future
+        # mode are never clean exits — mirrored, not `!= agent_timeout`.
         verdict = classify_clean_exit_wrong(
-            row.mode != "agent_timeout", unmet, reward_zero
+            row.mode == "", unmet, reward_zero
         )
         if verdict is None:
             clean_unclassified += 1
@@ -779,7 +782,6 @@ def render(runs_dir: Path, expected=None, model_override=None, concurrency=None,
                 " clean_exit_wrong — no ledger or verifier-reward data"
                 " (never counted)"
             )
-    lines.append("")
     lines.append("")
 
     # Token/cost totals (issue #1123): sums over exactly the rows above.

@@ -696,7 +696,6 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
                 " (never counted)"
             )
 
-
     # gh-1578: the errored class splits by OWNER. Verifier timeouts (the
     # in-container verifier hung executing agent-authored code) are the
     # agent's zero and get their own agent-attributed line — never the
