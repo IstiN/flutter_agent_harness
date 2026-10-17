@@ -1,0 +1,1 @@
+{"ts":"2026-10-17T00:29:46.203235Z","event":"scheduled","id":"1792196986202046_0000_xoqh7o","dueMs":1792198486202,"to":"01a14630-33bb-7ba9-89ad-0c1214c95386/main","text":"Collect the detached full-suite run for pr-1654 rework: read /tmp/full_suite_p1654.log (dart test --exclude-tags integration, pid 1804, launched against frozen tree 938f60583). Verify \"All tests passe"}
