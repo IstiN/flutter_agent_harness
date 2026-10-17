@@ -223,6 +223,12 @@ jobs:
       # release-asset CDN roulette without it.
       - uses: ./.github/actions/flutter-gemma-android-seed
 
+      # gh-1655: same NDK pre-install as ci.yml build-android — the
+      # release lane's Gradle configuration auto-installs the
+      # Flutter-pinned NDK mid-build with no retry; one truncated
+      # download reds the lane. Bounded-retry pre-install instead.
+      - uses: ./.github/actions/android-ndk-preinstall
+
       # The lane wraps `flutter build appbundle --release`; the upload
       # keystore rides the ANDROID_* env vars (issue #289) and is decoded
       # by app/build.gradle.kts into the (gitignored) build dir — no
@@ -443,6 +449,12 @@ jobs:
       # gh-1468: same seed as the ci.yml/ci AAB jobs — the flavor matrix
       # runs the same flutter_gemma_litertlm hook download per leg.
       - uses: ./.github/actions/flutter-gemma-android-seed
+
+      # gh-1655: same NDK pre-install as ci.yml build-android — the
+      # flavor matrix's Gradle configuration auto-installs the
+      # Flutter-pinned NDK mid-build with no retry; one truncated
+      # download reds the leg. Bounded-retry pre-install instead.
+      - uses: ./.github/actions/android-ndk-preinstall
 
       # Same release keystore as the AAB job (contract: store and god sign
       # with the SAME release key — only the applicationId differs), same

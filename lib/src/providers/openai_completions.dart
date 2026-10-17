@@ -575,12 +575,23 @@ final class _OpenAICompletionsSession {
   /// Applies one streamed `tool_calls` entry: late id/name assignment,
   /// arguments append, and the per-entry [ToolCallDeltaEvent].
   void _handleSingleToolCallDelta(Map<String, dynamic> rawToolCall) {
-    final block = _ensureToolCallBlock(rawToolCall);
+    final resend = _matchResentToolCallBlock(rawToolCall);
+    final block = _ensureToolCallBlock(rawToolCall, resend);
     _applyToolCallIdentity(block, rawToolCall);
     final function = rawToolCall['function'];
     var toolDelta = '';
     if (function is Map && function['arguments'] is String) {
       toolDelta = function['arguments'] as String;
+      if (resend != null) {
+        // The re-sent frame repeats what the block already accumulated —
+        // append only the non-overlapping suffix so the merged args stay
+        // exact instead of doubling.
+        final existing = block.partialArgs.toString();
+        if (toolDelta.startsWith(existing)) {
+          toolDelta = toolDelta.substring(existing.length);
+        }
+        if (toolDelta.isEmpty) return;
+      }
       block.partialArgs.write(toolDelta);
     }
     eventStream.push(
@@ -703,12 +714,15 @@ final class _OpenAICompletionsSession {
     }
   }
 
-  ToolCallStreamingBlock _ensureToolCallBlock(Map<String, dynamic> toolCall) {
+  ToolCallStreamingBlock _ensureToolCallBlock(
+    Map<String, dynamic> toolCall, [
+    ToolCallStreamingBlock? resent,
+  ]) {
     final streamIndex = toolCall['index'] is int
         ? toolCall['index'] as int
         : null;
     final id = toolCall['id'] as String?;
-    var block = _lookupToolCallBlock(streamIndex, id);
+    var block = resent ?? _lookupToolCallBlock(streamIndex, id);
     block ??= _createToolCallBlock(toolCall, streamIndex, id);
     if (streamIndex != null && block.streamIndex == null) {
       block.streamIndex = streamIndex;
@@ -719,6 +733,40 @@ final class _OpenAICompletionsSession {
     }
     _applyPendingReasoningDetail(block);
     return block;
+  }
+
+  /// Detects a relay re-send of an already-seen tool-call frame: the frame
+  /// carries a freshly generated id (gh-1655), so the id/index lookup
+  /// misses, but the LAST registered block of the current message holds the
+  /// same non-empty name and its partial arguments are empty or a prefix of
+  /// the incoming arguments. Merging into it keeps the stuttered frame from
+  /// spawning a second block that would execute the same call twice.
+  ToolCallStreamingBlock? _matchResentToolCallBlock(
+    Map<String, dynamic> toolCall,
+  ) {
+    final function = toolCall['function'];
+    final name = function is Map ? function['name'] as String? : null;
+    if (name == null || name.isEmpty) {
+      return null;
+    }
+    final args = function['arguments'] is String
+        ? function['arguments'] as String
+        : '';
+    ToolCallStreamingBlock? last;
+    for (final block in blocks.reversed) {
+      if (block is ToolCallStreamingBlock) {
+        last = block;
+        break;
+      }
+    }
+    if (last == null || last.name.isEmpty || last.name != name) {
+      return null;
+    }
+    final existing = last.partialArgs.toString();
+    if (existing.isNotEmpty && !args.startsWith(existing)) {
+      return null;
+    }
+    return last;
   }
 
   /// Finds an existing tool-call block by stream index first, then by id.
@@ -1560,8 +1608,10 @@ Object? _tryJsonDecode(String text) {
 /// of [current] (overlapping/sliding-window reasoning chunks and full
 /// snapshots-so-far both collapse to the new suffix only). Returns the part
 /// of [delta] that still needs appending. Overlap search is capped at 64
-/// chars and requires at least 2 — a single repeated character is almost
-/// always real text, not a window seam.
+/// chars. A 1-char overlap counts too — stuttering relays re-send a
+/// standalone punctuation token (gh-1655) — except when the same char
+/// repeats right after the leading one ("." following "." inside the delta
+/// builds a legit "..." continuation, not a seam).
 String _dedupeOverlap(StringBuffer current, String delta) {
   if (current.isEmpty || delta.isEmpty) return delta;
   final text = current.toString();
@@ -1569,10 +1619,16 @@ String _dedupeOverlap(StringBuffer current, String delta) {
   if (delta.startsWith(text)) return delta.substring(text.length);
   var maxK = text.length < delta.length ? text.length : delta.length;
   if (maxK > 64) maxK = 64;
-  for (var k = maxK; k >= 2; k--) {
-    if (text.endsWith(delta.substring(0, k))) {
-      return delta.substring(k);
+  for (var k = maxK; k >= 1; k--) {
+    if (!text.endsWith(delta.substring(0, k))) continue;
+    // Ellipsis guard: a leading char that the delta repeats immediately is
+    // real text ("..." split across deltas), never an overlap.
+    if (k == 1 &&
+        delta.length > 1 &&
+        delta.codeUnitAt(1) == delta.codeUnitAt(0)) {
+      return delta;
     }
+    return delta.substring(k);
   }
   return delta;
 }
