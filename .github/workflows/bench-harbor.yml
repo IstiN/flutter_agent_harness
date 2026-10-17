@@ -614,12 +614,15 @@ jobs:
               --job-name "$JOB_NAME" -o jobs \
               "${args[@]}"
           }
-          # The zero-trial gate counts result.json PRESENCE anywhere
-          # under the shard's job dir — the same presence rule the
-          # summary's completeness count uses.
+          # The zero-trial gate counts result.json PRESENCE at exactly
+          # the depth the summary's completeness count uses — the
+          # <job>/<trial>/result.json glob (gh-1556 AC3): deeper files
+          # (an extracted archive / cache dir) are skipped by _trial_rows
+          # and must be skipped here too, or the gate would report
+          # "trials started" while the summary still counts 0.
           trials_started() {
             [ -d "jobs/$JOB_NAME" ] || { echo 0; return 0; }
-            find "jobs/$JOB_NAME" -name result.json | wc -l
+            find "jobs/$JOB_NAME" -mindepth 2 -maxdepth 2 -name result.json | wc -l
           }
           if run_harbor; then
             :

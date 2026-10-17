@@ -727,6 +727,19 @@ case "${FAKE_HARBOR_MODE}" in
       exit 0
     fi
     exit 1 ;;
+  crash_then_ok_nested)
+    # Attempt 1 dies leaving a DEEPLY-nested result.json (an extracted
+    # archive / cache dir inside the job dir — deeper than
+    # <job>/<trial>/result.json). The summary's presence count
+    # (glob "<job>/*/result.json", gh-1556 AC3) ignores it, so the
+    # zero-trial gate must too — retry fires and proceeds on success.
+    if [ "$calls" -ge 2 ]; then
+      printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "jobs/$job/trial-0/result.json"
+      exit 0
+    fi
+    mkdir -p "jobs/$job/cache/trial-0"
+    printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "jobs/$job/cache/trial-0/result.json"
+    exit 1 ;;
   fail_with_trials)
     printf '{"exception_info":{"exception_type":"ContainerError"}}\\n' > "jobs/$job/trial-0/result.json"
     exit 1 ;;
@@ -871,12 +884,26 @@ class ZeroTrialRetryTest(unittest.TestCase):
         self.assertEqual(self._calls(), 1)
         self.assertFalse(self.summary.exists())
 
-    def test_retry_gate_counts_any_result_json_under_the_job_dir(self):
-        # The zero-trial gate keys on result.json PRESENCE anywhere under
-        # the shard's job dir (the same presence rule the summary's
-        # completeness count uses) — not on a particular layout.
-        self.assertIn('find "jobs/$JOB_NAME"', self.block)
-        self.assertIn("-name result.json", self.block)
+    def test_deeply_nested_result_json_does_not_count_as_trials(self):
+        # A crashed attempt that leaves a result.json deeper than
+        # <job>/<trial>/result.json (an extracted archive / cache dir)
+        # is a ZERO-trial crash for the gate: the summary's presence
+        # count (glob "<job>/*/result.json", gh-1556 AC3) skips deeper
+        # files, and the gate must mirror that rule exactly — otherwise
+        # the gate reports "trials started", skips the inline retry, and
+        # the shard is lost anyway with no retry chance.
+        proc = self._run_block("crash_then_ok_nested")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self._calls(), 2)  # retried exactly once
+        self.assertTrue((self.root / "jobs" / "fa-2.1-docker-cpu-3" / "trial-0" / "result.json").is_file())
+        self.assertFalse(self.summary.exists())
+
+    def test_retry_gate_mirrors_the_summary_presence_rule(self):
+        # The zero-trial gate keys on result.json presence at EXACTLY the
+        # summary's depth — <job>/<trial>/result.json (gh-1556 AC3) — not
+        # on presence anywhere under the job dir: a deeper file is
+        # skipped by _trial_rows and must be skipped by the gate too.
+        self.assertIn('find "jobs/$JOB_NAME" -mindepth 2 -maxdepth 2 -name result.json', self.block)
 
 
 @unittest.skipUnless(
