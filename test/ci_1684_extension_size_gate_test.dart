@@ -61,8 +61,7 @@ void main() {
   final llms = read('site/llms.txt');
 
   group('AC1 — Pages stops carrying the zip; site links move', () {
-    test('pages.yml no longer copies fa-extension.zip into the artifact',
-        () {
+    test('pages.yml no longer copies fa-extension.zip into the artifact', () {
       expect(
         pagesBody,
         isNot(contains('build/pages/root/extension')),
@@ -70,18 +69,28 @@ void main() {
             'AC1: the Pages artifact must not contain fa-extension.zip — '
             'the download channel is the GitHub release now',
       );
-      expect(pagesBody, isNot(contains('Build Chrome extension')),
-          reason: 'nothing extension-related ships from Pages anymore');
+      expect(
+        pagesBody,
+        isNot(contains('Build Chrome extension')),
+        reason: 'nothing extension-related ships from Pages anymore',
+      );
     });
 
     test('pages.yml runs no size gates at deploy time', () {
-      expect(pagesBody, isNot(contains('Size manifest + budget gate')),
-          reason:
-              'the deploy-time gate is the wrong layer (this bug) — the '
-              'extension gate lives at PR/review time and release time');
-      expect(pagesBody, isNot(contains('upload-artifact')),
-          reason: 'the seeded-baseline ride-along upload is obsolete with '
-              'the web-app/outlook-app notice-only legs removed (AC4)');
+      expect(
+        pagesBody,
+        isNot(contains('Size manifest + budget gate')),
+        reason:
+            'the deploy-time gate is the wrong layer (this bug) — the '
+            'extension gate lives at PR/review time and release time',
+      );
+      expect(
+        pagesBody,
+        isNot(contains('upload-artifact')),
+        reason:
+            'the seeded-baseline ride-along upload is obsolete with '
+            'the web-app/outlook-app notice-only legs removed (AC4)',
+      );
     });
 
     test('every site extension link points at the GitHub release', () {
@@ -98,23 +107,38 @@ void main() {
         reason: 'no fa1.dev extension-zip links may survive',
       );
       // The FAQ JSON-LD answer is a link too — it must carry the new URL.
-      expect(index, contains('Download fa-extension.zip from $releaseDownloadUrl'));
+      expect(
+        index,
+        contains('Download fa-extension.zip from $releaseDownloadUrl'),
+      );
     });
   });
 
   group('AC2 — the zip keeps riding the release', () {
     test('build-macos.yml build-extension gates then uploads the zip', () {
       final job = macosJobs['build-extension'] as YamlMap?;
-      expect(job, isNotNull,
-          reason: 'the release leg is the only release-time builder left');
-      final steps = ((job!['steps'] as YamlList).map((s) => s.toString()))
-          .join('\n');
-      expect(steps, contains(gateInvocation),
-          reason: 'gate BEFORE upload — a budget regression must not '
-              'reach the release assets');
-      expect(steps, contains(r'gh release upload "$RELEASE_TAG" "$asset"'),
-          reason: 'AC2: fa-extension.zip attached to releases, latest '
-              'tag onward (--clobber keeps the stable asset name)');
+      expect(
+        job,
+        isNotNull,
+        reason: 'the release leg is the only release-time builder left',
+      );
+      final steps = ((job!['steps'] as YamlList).map(
+        (s) => s.toString(),
+      )).join('\n');
+      expect(
+        steps,
+        contains(gateInvocation),
+        reason:
+            'gate BEFORE upload — a budget regression must not '
+            'reach the release assets',
+      );
+      expect(
+        steps,
+        contains(r'gh release upload "$RELEASE_TAG" "$asset"'),
+        reason:
+            'AC2: fa-extension.zip attached to releases, latest '
+            'tag onward (--clobber keeps the stable asset name)',
+      );
     });
   });
 
@@ -143,16 +167,24 @@ void main() {
     });
 
     test('the leg builds the full zip and gates against the baseline', () {
-      final steps = (((ciJobs[legId] as YamlMap)['steps'] as YamlList)
-              .map((s) => s.toString()))
-          .join('\n');
-      expect(steps, contains('bash scripts/build_browser_ext.sh --with-app'),
-          reason: 'the gate must measure the REAL artifact, not a '
-              'manifest-only stand-in');
+      final steps = (((ciJobs[legId] as YamlMap)['steps'] as YamlList).map(
+        (s) => s.toString(),
+      )).join('\n');
+      expect(
+        steps,
+        contains('bash scripts/build_browser_ext.sh --with-app'),
+        reason:
+            'the gate must measure the REAL artifact, not a '
+            'manifest-only stand-in',
+      );
       expect(steps, contains(gateInvocation));
-      expect(steps, isNot(contains('--init-if-missing')),
-          reason: 'the baseline is committed — self-seeding would wave '
-              'any regression through');
+      expect(
+        steps,
+        isNot(contains('--init-if-missing')),
+        reason:
+            'the baseline is committed — self-seeding would wave '
+            'any regression through',
+      );
     });
 
     test('the leg carries an explicit ceiling (#351 arithmetic)', () {
@@ -172,8 +204,7 @@ void main() {
     });
 
     test('the classifier keys on the extension-touching path set', () {
-      final run =
-          ciBody.split('\n  changes:')[1].split('\n  # ─')[0];
+      final run = ciBody.split('\n  changes:')[1].split('\n  # ─')[0];
       expect(run, contains(extsizeGrep));
       expect(
         ciBody.split(extsizeGrep).length - 1,
@@ -187,8 +218,7 @@ void main() {
     });
 
     test('the classifier failure arm runs the leg (fail-safe)', () {
-      final run =
-          ciBody.split('\n  changes:')[1].split('\n  # ─')[0];
+      final run = ciBody.split('\n  changes:')[1].split('\n  # ─')[0];
       expect(run, contains('echo "extsize=true"'));
       expect(
         run,
@@ -199,28 +229,34 @@ void main() {
     });
 
     test('the extsize arm classifies validation dispatches too', () {
-      final run =
-          ciBody.split('\n  changes:')[1].split('\n  # ─')[0];
+      final run = ciBody.split('\n  changes:')[1].split('\n  # ─')[0];
       final armAt = run.indexOf(extsizeGrep);
       final dispatchExitAt = run.indexOf('!= "pull_request"');
       expect(armAt, greaterThan(-1));
       expect(dispatchExitAt, greaterThan(-1));
-      expect(armAt < dispatchExitAt, isTrue,
-          reason:
-              'the arm must sit before the dispatch early-exit — the SM '
-              'validation dispatch IS the pre-merge gate (dispatch-only '
-              'CI); a classification after the exit is path-blind there');
+      expect(
+        armAt < dispatchExitAt,
+        isTrue,
+        reason:
+            'the arm must sit before the dispatch early-exit — the SM '
+            'validation dispatch IS the pre-merge gate (dispatch-only '
+            'CI); a classification after the exit is path-blind there',
+      );
     });
 
     test('quality-gate NEEDS the leg and consumes its result', () {
       final gate = ciJobs['quality-gate'] as YamlMap;
       final needs = gate['needs'];
-      final needsList =
-          needs is YamlList ? needs.map((n) => n.toString()) : [needs!];
-      expect(needsList, contains(legId),
-          reason:
-              'a leg outside the aggregate never blocks the merge — the '
-              'quality gate is the single required check');
+      final needsList = needs is YamlList
+          ? needs.map((n) => n.toString())
+          : [needs!];
+      expect(
+        needsList,
+        contains(legId),
+        reason:
+            'a leg outside the aggregate never blocks the merge — the '
+            'quality gate is the single required check',
+      );
       expect(
         ciBody,
         contains('R_EXT_SIZE: \${{ needs.extension-size-gate.result }}'),
@@ -235,10 +271,8 @@ void main() {
     });
 
     test('the leg is platform class (never holds the dart publish)', () {
-      final gateRun =
-          ciBody.split('\n  quality-gate:')[1].split('\n  # ─')[0];
-      final caseBody =
-          gateRun.split('case "\$name" in')[1].split('esac')[0];
+      final gateRun = ciBody.split('\n  quality-gate:')[1].split('\n  # ─')[0];
+      final caseBody = gateRun.split('case "\$name" in')[1].split('esac')[0];
       expect(
         caseBody,
         contains('extension-size-gate'),
@@ -254,10 +288,13 @@ void main() {
     test('pages.yml has no web-app/outlook-app gate legs left', () {
       expect(pagesBody, isNot(contains('web-app.tsv')));
       expect(pagesBody, isNot(contains('outlook-app.tsv')));
-      expect(pagesBody, isNot(contains('--init-if-missing')),
-          reason:
-              'the baselines were never committed — the legs were '
-              'notice-only since #1096; removed per gh-1684 decision 5');
+      expect(
+        pagesBody,
+        isNot(contains('--init-if-missing')),
+        reason:
+            'the baselines were never committed — the legs were '
+            'notice-only since #1096; removed per gh-1684 decision 5',
+      );
     });
   });
 
@@ -266,9 +303,13 @@ void main() {
       expect(macosBody, contains(gateInvocation));
       expect(ciBody, contains(gateInvocation));
       expect(macosBody.split(gateInvocation).length - 1, 1);
-      expect(ciBody.split(gateInvocation).length - 1, 1,
-          reason: 'single invocation per file — drift would resurrect '
-              'the two-legs-green-one-leg-red class');
+      expect(
+        ciBody.split(gateInvocation).length - 1,
+        1,
+        reason:
+            'single invocation per file — drift would resurrect '
+            'the two-legs-green-one-leg-red class',
+      );
     });
 
     test('the release leg builds on the same pinned Flutter', () {
@@ -280,13 +321,16 @@ void main() {
       final jobBody = macosBody
           .split('\n  build-extension:')[1]
           .split('\n  release-macos:')[0];
-      expect(jobBody, contains("flutter-version: '3.47.7'"),
-          reason:
-              'gh-1684 decision 4: the old unpinned channel: stable was '
-              'one of the two ways the release and Pages legs diverged');
-      final ciSteps = (((ciJobs[legId] as YamlMap)['steps'] as YamlList)
-              .map((s) => s.toString()))
-          .join('\n');
+      expect(
+        jobBody,
+        contains("flutter-version: '3.47.7'"),
+        reason:
+            'gh-1684 decision 4: the old unpinned channel: stable was '
+            'one of the two ways the release and Pages legs diverged',
+      );
+      final ciSteps = (((ciJobs[legId] as YamlMap)['steps'] as YamlList).map(
+        (s) => s.toString(),
+      )).join('\n');
       expect(ciSteps, contains('flutter-version: 3.47.7'));
     });
   });

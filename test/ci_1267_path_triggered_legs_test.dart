@@ -77,11 +77,13 @@ void main() {
       expect(
         run,
         contains(
-          'failing safe: exzone + locksmoke + installer + office_addin arms run',
+          'failing safe: exzone + locksmoke + installer + office_addin '
+          '+ extsize arms run',
         ),
       );
       expect(run, contains('echo "exzone=true"'));
       expect(run, contains('echo "locksmoke=true"'));
+      expect(run, contains('echo "extsize=true"'));
     });
 
     test('the dispatch arm exits before the PR-only stages logic', () {
@@ -199,7 +201,7 @@ void main() {
         body,
         contains(
           'install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke,'
-          ' office-addin-suite]',
+          ' office-addin-suite, extension-size-gate]',
         ),
         reason:
             'quality-gate must NEED the leg — a leg outside the '
@@ -213,7 +215,8 @@ void main() {
         body,
         contains(
           '"flutter-app-exzone:\$R_EXZONE" "flutter-app-lock-smoke:'
-          '\$R_LOCK_SMOKE" "office-addin-suite:\$R_OFFICE_ADDIN"; do',
+          '\$R_LOCK_SMOKE" "office-addin-suite:\$R_OFFICE_ADDIN" '
+          '"extension-size-gate:\$R_EXT_SIZE"; do',
         ),
         reason:
             'the verdict loop must consume the result — an unlisted '
@@ -223,7 +226,7 @@ void main() {
         body,
         contains(
           'pty-coverage-gate|pty-visual|flutter-app-lock-smoke'
-          '|installer-portability|office-addin-suite)',
+          '|installer-portability|office-addin-suite|extension-size-gate)',
         ),
         reason:
             'platform class (#1368): a red windows release build blocks '

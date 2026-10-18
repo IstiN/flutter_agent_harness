@@ -146,25 +146,22 @@ void main() {
     expect(llms, contains('dart pub global activate flutter_agent_harness'));
   });
 
-  test(
-    'landing page links both downloadable artifacts and names the hosts',
-    () {
-      expect(
-        index,
-        contains(
-          'https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip',
-        ),
-      );
-      expect(index, contains('./outlook/manifest.xml'));
-      expectMentioned(index, outlookTools, 'site/index.html');
-      expect(
-        index,
-        contains('id="addons"'),
-        reason: 'the add-ons section anchors the nav + hero links',
-      );
-      expect(index, contains('href="#addons"'));
-    },
-  );
+  test('landing page links both downloadable artifacts and names the hosts', () {
+    expect(
+      index,
+      contains(
+        'https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip',
+      ),
+    );
+    expect(index, contains('./outlook/manifest.xml'));
+    expectMentioned(index, outlookTools, 'site/index.html');
+    expect(
+      index,
+      contains('id="addons"'),
+      reason: 'the add-ons section anchors the nav + hero links',
+    );
+    expect(index, contains('href="#addons"'));
+  });
 
   test('robots.txt stays open and points at the sitemap', () {
     expect(robots, contains('User-agent: *'));

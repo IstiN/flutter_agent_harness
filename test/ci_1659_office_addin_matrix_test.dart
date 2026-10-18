@@ -49,9 +49,7 @@ final officeAddinGrep =
 /// Dart structures so two job step-lists can be deep-compared.
 Object? plain(Object? node) {
   if (node is YamlMap) {
-    return {
-      for (final e in node.entries) plain(e.key): plain(e.value),
-    };
+    return {for (final e in node.entries) plain(e.key): plain(e.value)};
   }
   if (node is YamlList) {
     return [for (final e in node) plain(e)];
@@ -118,16 +116,22 @@ void main() {
             'waits on this job — an empty workflow would break the daily '
             'train (test matrix: "the daily dispatch leg still works")',
       );
-      expect(job!['timeout-minutes'], 45,
-          reason: '#351 watcher budget arithmetic pins the 45m ceiling');
+      expect(
+        job!['timeout-minutes'],
+        45,
+        reason: '#351 watcher budget arithmetic pins the 45m ceiling',
+      );
       expect((job['permissions'] as YamlMap)['contents'], 'read');
     });
   });
 
   group('AC1 — the suite runs inside the ci.yml matrix', () {
     test('the office-addin-suite leg exists in ci.yml', () {
-      expect(ciJobs[legId], isNotNull,
-          reason: 'the leg must move INTO the shared matrix');
+      expect(
+        ciJobs[legId],
+        isNotNull,
+        reason: 'the leg must move INTO the shared matrix',
+      );
     });
 
     test('the leg is path-gated on the new office_addin output', () {
@@ -181,9 +185,7 @@ void main() {
     });
 
     test('the classifier failure arm runs the leg (fail-safe)', () {
-      final run = read(ci)
-          .split('\n  changes:')[1]
-          .split('\n  # ─')[0];
+      final run = read(ci).split('\n  changes:')[1].split('\n  # ─')[0];
       expect(
         run,
         contains('echo "office_addin=true"'),
@@ -194,19 +196,18 @@ void main() {
       // The warning must name EVERY output the fail-safe arm fires — it is
       // the first thing an investigator reads when merge-base resolution
       // fails on a dispatch checkout (gh-1596 added installer, gh-1659
-      // added office_addin).
+      // added office_addin, gh-1684 added extsize).
       expect(
         run,
         contains(
-          'failing safe: exzone + locksmoke + installer + office_addin arms run',
+          'failing safe: exzone + locksmoke + installer + office_addin '
+          '+ extsize arms run',
         ),
       );
     });
 
     test('the office_addin arm classifies validation dispatches too', () {
-      final run = read(ci)
-          .split('\n  changes:')[1]
-          .split('\n  # ─')[0];
+      final run = read(ci).split('\n  changes:')[1].split('\n  # ─')[0];
       final armAt = run.indexOf(officeAddinGrep);
       final dispatchExitAt = run.indexOf('!= "pull_request"');
       expect(armAt, greaterThan(-1));
@@ -225,10 +226,9 @@ void main() {
       final ciSteps = ((ciJobs[legId] as YamlMap)['steps'] as YamlList)
           .map(plain)
           .toList();
-      final addinSteps =
-          ((addinJobs[legId] as YamlMap)['steps'] as YamlList)
-              .map(plain)
-              .toList();
+      final addinSteps = ((addinJobs[legId] as YamlMap)['steps'] as YamlList)
+          .map(plain)
+          .toList();
       expect(
         ciSteps,
         equals(addinSteps),
@@ -242,13 +242,21 @@ void main() {
     test('runner/timeout/permissions parity with the retired job', () {
       final ciJob = ciJobs[legId] as YamlMap;
       final addinJob = addinJobs[legId] as YamlMap;
-      expect(ciJob['runs-on'], addinJob['runs-on'],
-          reason: 'same runner pool as today (ubuntu-latest, x64)');
-      expect(ciJob['timeout-minutes'], addinJob['timeout-minutes'],
-          reason: '#351 watcher budget arithmetic pins the 45m ceiling');
-      expect((ciJob['permissions'] as YamlMap)['contents'],
-          (addinJob['permissions'] as YamlMap)['contents'],
-          reason: 'SEC-08: the leg keeps its minimal contents: read');
+      expect(
+        ciJob['runs-on'],
+        addinJob['runs-on'],
+        reason: 'same runner pool as today (ubuntu-latest, x64)',
+      );
+      expect(
+        ciJob['timeout-minutes'],
+        addinJob['timeout-minutes'],
+        reason: '#351 watcher budget arithmetic pins the 45m ceiling',
+      );
+      expect(
+        (ciJob['permissions'] as YamlMap)['contents'],
+        (addinJob['permissions'] as YamlMap)['contents'],
+        reason: 'SEC-08: the leg keeps its minimal contents: read',
+      );
     });
   });
 
@@ -271,8 +279,9 @@ void main() {
     test('quality-gate NEEDS the leg', () {
       final gate = ciJobs['quality-gate'] as YamlMap;
       final needs = gate['needs'];
-      final needsList =
-          needs is YamlList ? needs.map((n) => n.toString()) : [needs!];
+      final needsList = needs is YamlList
+          ? needs.map((n) => n.toString())
+          : [needs!];
       expect(
         needsList,
         contains(legId),
@@ -297,11 +306,8 @@ void main() {
     });
 
     test('the leg is platform class (never holds the dart publish)', () {
-      final gateRun = ciBody
-          .split('\n  quality-gate:')[1]
-          .split('\n  # ─')[0];
-      final caseBody =
-          gateRun.split('case "\$name" in')[1].split('esac')[0];
+      final gateRun = ciBody.split('\n  quality-gate:')[1].split('\n  # ─')[0];
+      final caseBody = gateRun.split('case "\$name" in')[1].split('esac')[0];
       expect(
         caseBody,
         contains('office-addin-suite'),
