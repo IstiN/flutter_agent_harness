@@ -27,7 +27,7 @@ YamlMap jobsOf(String workflowPath) =>
     loadYaml(read(workflowPath))['jobs'] as YamlMap;
 
 List<YamlMap> stepsOf(String workflowPath, String job) =>
-    (jobsOf(workflowPath)[job] as YamlMap)['steps'] as YamlList
+    ((jobsOf(workflowPath)[job] as YamlMap)['steps'] as YamlList)
         .whereType<YamlMap>()
         .toList();
 
@@ -143,11 +143,20 @@ void main() {
               'wraps it, it does not replace it (gh-1692)',
         );
         expect(
-          RegExp(r'attempt.*[2-9]/').hasMatch(script),
-          isTrue,
+          script,
+          contains('CLONE_RETRIES=3'),
           reason:
-              'the retry must be BOUNDED and multi-attempt — a single '
-              'retry attempt is not a retry (gh-1692 AC3)',
+              'the retry must be BOUNDED and multi-attempt (3 tries) — '
+              'a single-shot transfer red the 10-16 submit leg '
+              '(gh-1692 AC3)',
+        );
+        expect(
+          script,
+          contains(r'[ "$attempt" -eq "$CLONE_RETRIES" ]'),
+          reason:
+              'retry exhaustion must hard-fail inside the loop — a loop '
+              'that falls through after the last failed attempt is not a '
+              'retry (gh-1692 AC3)',
         );
         expect(
           script,

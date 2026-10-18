@@ -69,6 +69,23 @@ def store_pubspec_version
   match ? match[1] : "1.0.0"
 end
 
+# gh-1692: xcpretty "can result in missing some build errors" (fastlane's
+# own warning) — the 10-17/10-18 daily runs printed `** ARCHIVE FAILED **`
+# with NO error line and the real xcodebuild error only lived in
+# ~/Library/Logs/gym/ on the runner. xcbeautify keeps error lines, and on
+# lane failure the newest gym log tail is dumped into the job log so the
+# failure is diagnosable from the GH run page without the artifact.
+def print_gym_log_tail(lines: 80)
+  log_dir = File.expand_path("~/Library/Logs/gym")
+  return unless Dir.exist?(log_dir)
+
+  newest = Dir.glob(File.join(log_dir, "**", "*.log")).max_by { |f| File.mtime(f) }
+  return if newest.nil?
+
+  UI.error("gh-1692: newest gym log tail (#{newest}) — the REAL xcodebuild error:")
+  File.readlines(newest).last(lines).each { |l| UI.error(l.chomp) }
+end
+
 # ── External TestFlight distribution (issue #239) ─────────────────────────
 # A missing repo variable is a LOUD named failure at lane start (AC1) —
 # never a fastlane stack trace mid-upload. The variables are set once as
@@ -486,29 +503,38 @@ platform :ios do
     sh("xcrun simctl boot 'iPhone 16' 2>/dev/null || xcrun simctl boot 'iPhone 15' 2>/dev/null || true")
     sh("flutter", "build", "ios", "--release", "--no-codesign", *build_name_args)
 
-    build_app(
-      workspace: "ios/Runner.xcworkspace",
-      scheme: "Runner",
-      export_method: "app-store",
-      output_directory: "build/ios/ipa",
-      output_name: "fa.ipa",
-      skip_build_archive: false,
-      clean: true,
-      sdk: "iphoneos",
-      export_options: {
-        method: "app-store",
-        provisioningProfiles: {
-          bundle_id => profile_name,
-          "#{bundle_id}.FaLiveActivity" => live_activity_profile_name
+    # gh-1692: xcbeautify, never xcpretty (xcpretty swallowed the archive
+    # error — silent `** ARCHIVE FAILED **`), and on failure the newest
+    # gym log tail lands in the job log via print_gym_log_tail.
+    begin
+      build_app(
+        workspace: "ios/Runner.xcworkspace",
+        scheme: "Runner",
+        export_method: "app-store",
+        output_directory: "build/ios/ipa",
+        output_name: "fa.ipa",
+        skip_build_archive: false,
+        clean: true,
+        sdk: "iphoneos",
+        xcodebuild_formatter: "xcbeautify",
+        export_options: {
+          method: "app-store",
+          provisioningProfiles: {
+            bundle_id => profile_name,
+            "#{bundle_id}.FaLiveActivity" => live_activity_profile_name
+          },
+          signingStyle: "manual",
+          teamID: team_id,
+          manageAppVersionAndBuildNumber: false,
+          uploadBitcode: false,
+          compileBitcode: false
         },
-        signingStyle: "manual",
-        teamID: team_id,
-        manageAppVersionAndBuildNumber: false,
-        uploadBitcode: false,
-        compileBitcode: false
-      },
-      export_xcargs: "-allowProvisioningUpdates"
-    )
+        export_xcargs: "-allowProvisioningUpdates"
+      )
+    rescue StandardError => e
+      print_gym_log_tail
+      raise e
+    end
   end
 
   desc "Upload the built IPA to TestFlight and distribute to the external group (no metadata/screenshots)"

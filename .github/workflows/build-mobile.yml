@@ -614,12 +614,16 @@ jobs:
   build-ios:
     name: Build iOS IPA
     needs: version
-    # gh-1600 F-A: pin the ONE self-hosted macOS runner (fa-m5-1) via its
-    # unique registration label. The old generic [self-hosted, macOS, ARM64]
-    # list also matched the Linux self-hosted box's labels, and this job ran
-    # there — no ruby/fastlane/Xcode (`bundle: command not found`, exit 127;
-    # later steps died on `security: command not found`).
-    runs-on: [self-hosted, macos-m5]
+    # gh-1600 F-A + gh-1692: pin the ONE self-hosted macOS runner (fa-m5-1)
+    # via its unique registration label PLUS its runner-name label. The old
+    # generic [self-hosted, macOS, ARM64] list also matched the Linux
+    # self-hosted box's labels, and this job ran on Linux (`bundle: command
+    # not found`, exit 127; later steps died on `security: command not
+    # found`). `macos-m5` alone was still a coin flip: it matches BOTH
+    # fa-m5-1 (proven good 10-16) AND fa-m5-2 (10-17/10-18 `** ARCHIVE
+    # FAILED **`, signing env unverified) — the runner-name label `fa-m5-1`
+    # resolves the job to the known-good box until fa-m5-2 is fixed.
+    runs-on: [self-hosted, macos-m5, fa-m5-1]
     # Issue #344: a wedged self-hosted worker (lost completion report)
     # otherwise holds the slot AND the in_progress status until the 300m
     # daily-publish watcher times out; a job-level timeout lets GitHub
@@ -719,8 +723,26 @@ jobs:
             CLONE_TARGET="$GITHUB_WORKSPACE.checkout"
             rm -rf "$CLONE_TARGET"
           fi
-          git clone --reference "$MIRROR" --depth=1 \
-            https://github.com/IstiN/flutter_agent_harness.git "$CLONE_TARGET"
+          # gh-1692 AC3: the depth-1 clone pulls tip blobs from origin over
+          # the runner's flaky link — the 10-16 submit leg died on "2876
+          # bytes of body are still expected" (exit 128) with NO retry and
+          # cost a whole TestFlight day. Bounded retry; a failed attempt
+          # leaves a partial dir at $CLONE_TARGET which git refuses to
+          # clone into, so it is removed before the next attempt.
+          CLONE_RETRIES=3
+          for attempt in $(seq 1 "$CLONE_RETRIES"); do
+            if git clone --reference "$MIRROR" --depth=1 \
+              https://github.com/IstiN/flutter_agent_harness.git "$CLONE_TARGET"; then
+              break
+            fi
+            echo "git clone attempt ${attempt}/${CLONE_RETRIES} failed" >&2
+            if [ "$attempt" -eq "$CLONE_RETRIES" ]; then
+              echo "::error::git clone from origin failed after ${CLONE_RETRIES} attempts (gh-1692 AC3)" >&2
+              exit 1
+            fi
+            rm -rf "$CLONE_TARGET"
+            sleep 10
+          done
           if [ "$CLONE_TARGET" != "$GITHUB_WORKSPACE" ]; then
             while IFS= read -r entry; do
               name="$(basename "$entry")"
@@ -765,6 +787,22 @@ jobs:
         run: |
           echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
+
+      # gh-1692 AC2: the iOS lane pins xcbeautify as the xcodebuild
+      # formatter (xcpretty "can result in missing some build errors" —
+      # the 10-17/10-18 archive failures printed NO error line). Homebrew
+      # keeps it a one-time install on this persistent runner; the step
+      # verifies the binary so a missing formatter can never silently
+      # re-introduce the xcpretty class.
+      - name: Install xcbeautify (xcodebuild formatter, gh-1692)
+        run: |
+          set -euo pipefail
+          if command -v xcbeautify >/dev/null 2>&1; then
+            echo "xcbeautify already installed: $(xcbeautify --version)"
+          else
+            brew install xcbeautify
+          fi
+          xcbeautify --version
 
       # gh-1275 AC3: fail fast before any build minute is spent — the full
       # gate rationale lives in .github/actions/assert-builtin-skills.
@@ -1001,6 +1039,20 @@ jobs:
           IOS_SIGNING_IDENTITY="iPhone Distribution" \
           bundle exec fastlane ios build_only
 
+      # gh-1692 AC2: the gym log holds the REAL xcodebuild error — without
+      # this artifact an archive failure was undiagnosable from GitHub (the
+      # log lived only ON the runner; xcpretty printed no error line). The
+      # lane also dumps the newest log tail into the job log on failure;
+      # this artifact is the full-fidelity copy. Failure-gated so green
+      # runs upload nothing.
+      - name: Upload gym logs on archive failure (gh-1692)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-gym-logs
+          path: ~/Library/Logs/gym/
+          retention-days: 14
+
       # #1331 size diet: the exported IPA ships ~99 MB (uncompressed) of
       # debug dSYMs under Symbols/. App Store Connect strips that directory
       # from device delivery anyway (TestFlight reports ~157 MB — the
@@ -1139,9 +1191,11 @@ jobs:
   submit-ios:
     name: Submit iOS to TestFlight
     needs: [build-ios]
-    # gh-1600 F-A: same unique-macos-label pin as build-ios above — the
-    # generic [self-hosted, macOS, ARM64] list also matched the Linux box.
-    runs-on: [self-hosted, macos-m5]
+    # gh-1600 F-A + gh-1692: same runner-name pin as build-ios above — the
+    # generic [self-hosted, macOS, ARM64] list also matched the Linux box,
+    # and `macos-m5` alone is a coin flip between fa-m5-1 (good) and
+    # fa-m5-2 (broken signing env).
+    runs-on: [self-hosted, macos-m5, fa-m5-1]
     # Issue #344 wedge bound + #351 arithmetic: the submit_only lane waits
     # for Apple processing (TESTFLIGHT_WAIT_TIMEOUT_SECONDS, default 5400s
     # = 90m — a healthy slow ASC processing is NOT a wedge); distribution
@@ -1238,8 +1292,26 @@ jobs:
             CLONE_TARGET="$GITHUB_WORKSPACE.checkout"
             rm -rf "$CLONE_TARGET"
           fi
-          git clone --reference "$MIRROR" --depth=1 \
-            https://github.com/IstiN/flutter_agent_harness.git "$CLONE_TARGET"
+          # gh-1692 AC3: the depth-1 clone pulls tip blobs from origin over
+          # the runner's flaky link — the 10-16 submit leg died on "2876
+          # bytes of body are still expected" (exit 128) with NO retry and
+          # cost a whole TestFlight day. Bounded retry; a failed attempt
+          # leaves a partial dir at $CLONE_TARGET which git refuses to
+          # clone into, so it is removed before the next attempt.
+          CLONE_RETRIES=3
+          for attempt in $(seq 1 "$CLONE_RETRIES"); do
+            if git clone --reference "$MIRROR" --depth=1 \
+              https://github.com/IstiN/flutter_agent_harness.git "$CLONE_TARGET"; then
+              break
+            fi
+            echo "git clone attempt ${attempt}/${CLONE_RETRIES} failed" >&2
+            if [ "$attempt" -eq "$CLONE_RETRIES" ]; then
+              echo "::error::git clone from origin failed after ${CLONE_RETRIES} attempts (gh-1692 AC3)" >&2
+              exit 1
+            fi
+            rm -rf "$CLONE_TARGET"
+            sleep 10
+          done
           if [ "$CLONE_TARGET" != "$GITHUB_WORKSPACE" ]; then
             while IFS= read -r entry; do
               name="$(basename "$entry")"
