@@ -21,7 +21,12 @@
 //        build-macos.yml) pins the UNIQUE macOS label `macos-m5` — the
 //        fa-m5-1 registration (gh-1005: the repo's ONE self-hosted macOS M5
 //        runner) — and never the generic `macOS`/`ARM64` labels that the
-//        Linux box also satisfies.
+//        Linux box also satisfies. gh-1692: the iOS legs (build-ios,
+//        submit-ios) must resolve to fa-m5-1 BY NAME (the runner-name
+//        label) — `macos-m5` also matches fa-m5-2, whose archive/signing
+//        environment is unverified (the 10-17/10-18 silent ARCHIVE FAILED
+//        runs), so the routing guard asserts the exact runner LABEL SET,
+//        not merely "a macOS M5 machine".
 //   AC2  a bench run immediately followed by a mobile build on the same box
 //        cannot break the checkout: bench-harbor writes its job output
 //        OUTSIDE $GITHUB_WORKSPACE ($RUNNER_TEMP/bench/jobs) and tears its
