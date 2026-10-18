@@ -137,7 +137,22 @@ void main() {
       ];
       final out = coalesceMessagesForCap(broken, targetMessageCount: 3);
       expect(validateToolPairing(out), isEmpty);
-      expect(out.last, same(broken.last));
+      // The orphan result is dropped by the pairing repair — never sent.
+      expect(
+        out.any(
+          (m) => m is ToolResultMessage && m.toolCallId == 'orphan',
+        ),
+        isFalse,
+      );
+      // The newest user message survives (it anchors the kept tail) — the
+      // pairing repair may merge it into a multi-block carrier, so match
+      // on the serialized form.
+      expect(
+        out.any(
+          (m) => m is UserMessage && m.toJson().toString().contains('newest'),
+        ),
+        isTrue,
+      );
     });
 
     test('text-only old turns merge too (not only tool pairs)', () {

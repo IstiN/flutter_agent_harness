@@ -1583,6 +1583,11 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
 
     AssistantMessageEventStream response;
 
+    // gh-1680: the refused payload's message count, captured BEFORE the
+    // stream starts — the streamed partial is appended to (and on an
+    // error replaces a slot of) the LIVE list, which requestContext may
+    // share, so reading the count at heal time would include it.
+    final requestMessageCount = requestContext.messages.length;
     await emit(_captureRequest(config, requestContext));
     try {
       response = streamFunction(
@@ -1624,7 +1629,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
         }
         await emit(
           MessageCapRepairEvent(
-            messageCount: requestContext.messages.length,
+            messageCount: requestMessageCount,
             learnedCap: learned,
             compacted: relieved != null,
             providerError: finished.errorMessage,

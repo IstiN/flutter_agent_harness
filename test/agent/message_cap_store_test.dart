@@ -150,7 +150,8 @@ void main() {
     });
 
     test('a custom margin is honored', () {
-      expect(messageCapTriggerReached(2040, 2048, margin: 8), isFalse);
+      expect(messageCapTriggerReached(2039, 2048, margin: 8), isFalse);
+      expect(messageCapTriggerReached(2040, 2048, margin: 8), isTrue);
       expect(messageCapTriggerReached(2040, 2048, margin: 16), isTrue);
     });
   });
