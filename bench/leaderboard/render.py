@@ -210,6 +210,34 @@ def splice_readme(text: str, section: str) -> str:
     return text[:anchor] + block + "\n" + text[anchor:]
 
 
+def _write_snapshot(version: str, doc: dict) -> None:
+    """Refresh the committed snapshot after a successful live fetch.
+
+    `fetched_at` is preserved when the board itself is unchanged, so a
+    refresh with identical rows stays byte-identical — the workflow's
+    commit step only picks up real changes.
+    """
+    import json
+
+    snap = SNAPSHOT_DIR / f"{version}.json"
+    new = dict(doc)
+    if snap.exists():
+        try:
+            old = json.loads(snap.read_text())
+        except json.JSONDecodeError:
+            old = None
+        if (
+            isinstance(old, dict)
+            and old.get("rows") == doc.get("rows")
+            and old.get("leaderboard") == doc.get("leaderboard")
+        ):
+            new["fetched_at"] = old.get("fetched_at")
+    text = json.dumps(new, indent=2) + "\n"
+    if not snap.exists() or snap.read_text() != text:
+        snap.parent.mkdir(parents=True, exist_ok=True)
+        snap.write_text(text)
+
+
 def _official_for_version(version: str, offline: bool) -> "tuple[dict | None, bool]":
     """-> (fetch doc or None, used_snapshot). None = no rows available."""
     import json
@@ -220,7 +248,9 @@ def _official_for_version(version: str, offline: bool) -> "tuple[dict | None, bo
             return json.loads(snap.read_text()), True
         return None, True
     try:
-        return fetch.fetch_official(version), False
+        doc = fetch.fetch_official(version)
+        _write_snapshot(version, doc)
+        return doc, False
     except Exception as exc:  # hub down / board gone — degrade to snapshot
         snap = SNAPSHOT_DIR / f"{version}.json"
         if snap.exists():
