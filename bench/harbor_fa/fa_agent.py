@@ -26,6 +26,16 @@ Host-side inputs (environment):
   trail lands in /logs/agent/fa-timeout-metadata.json, synced back with
   the other agent logs. No knobs set => today's single awaited exec.
 
+  ATIF trajectory (gh-1681 Gap 2): harbor does NOT convert installed
+  agents' logs itself — every shipped adapter writes its own ATIF
+  trajectory.json, and the leaderboard static analysis requires one on
+  every rewarded trial (hub trajectory_path). run() therefore exports
+  `fa trajectory export --format atif --output /logs/agent/trajectory.json`
+  as a bounded best-effort exec in a finally around the agent phase, so
+  the file syncs back with the other agent logs on every terminal path
+  (completion, self-kill, crash, external cancel). populate_context_post_run
+  records whether the file actually landed (metadata atif_trajectory).
+
   Round 3 (gh-1556, harbor parity for #1392/#1430): when a watch knob is
   set (FA_STALL_GAP_SEC / FA_AGENT_TIMEOUT_ABS_CEILING_SEC — bench-harbor.yml
   sets both on every shard, so progress-watch is the bench default), the
@@ -147,6 +157,13 @@ _AGENT_KILL_PATTERN = "[f]a --session-root"
 # Test seams: monkeypatch to shrink.
 _REAP_TIMEOUT_SEC = 60.0
 _REAP_ESCALATION_TIMEOUT_SEC = 10.0
+
+# gh-1681 Gap 2: the ATIF trajectory export exec's cap. Bench sessions are
+# a single task (a few MB of JSONL at most), and the export reads the
+# ledger through the same bounded chunked scan the trajectory views use —
+# seconds in practice; the cap only bounds a wedged container. Test seam:
+# monkeypatch to shrink.
+_ATIF_EXPORT_TIMEOUT_SEC = 180.0
 
 
 # ── gh-1576: external-kill audit trail (I2) — signal lifecycle ──────────
@@ -398,6 +415,23 @@ class FaAgent(BaseInstalledAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
+        """The harbor entry point — the agent phase plus, on EVERY terminal
+        path, the ATIF trajectory export (gh-1681 Gap 2). The export is a
+        bounded best-effort exec in a finally: a missing trajectory.json
+        must never mask or replace the trial's own outcome (the same rule
+        the kill paths follow), but a rewarded trial always ships one.
+        """
+        try:
+            await self._run_inner(instruction, environment, context)
+        finally:
+            await self._export_atif_trajectory(environment)
+
+    async def _run_inner(
+        self,
+        instruction: str,
+        environment: BaseEnvironment,
+        context: AgentContext,
+    ) -> None:
         knobs = _timeout.TimeoutKnobs.from_env()
         # gh-1576 cap resolution (I1): the effective cap is min(external
         # harness cap, adapter knobs); with NO known input the contract is
@@ -439,6 +473,63 @@ class FaAgent(BaseInstalledAgent):
             await self._run_external_cap_only(instruction, environment)
             return
         await self._run_with_deadline(knobs, instruction, environment)
+
+    # ── gh-1681 Gap 2: ATIF trajectory export ─────────────────────────────
+
+    async def _export_atif_trajectory(self, environment) -> None:
+        """Best-effort ATIF export to /logs/agent/trajectory.json.
+
+        Harbor's upload packager stores that file as the trial's
+        trajectory_path and the leaderboard static analysis rejects
+        rewarded trials without one; harbor does not build it for
+        installed agents. The export rides the in-container fa CLI (the
+        whole-snapshot exporter in lib/src/trajectory/atif_export.dart via
+        `fa trajectory export`), so the conversion logic lives in ONE
+        place (Dart) and the raw session JSONL stays the only input.
+
+        Never raises: a failed/wedged export degrades to a loud stderr
+        warning and populate_context_post_run's atif_trajectory metadata
+        records the miss — the trial's own outcome is untouched.
+        """
+        command = (
+            f"fa --session-root {_SESSION_ROOT} trajectory export "
+            "--format atif --output /logs/agent/trajectory.json"
+        )
+        try:
+            result = await asyncio.wait_for(
+                self.exec_as_agent(
+                    environment, command=command,
+                    timeout_sec=_ATIF_EXPORT_TIMEOUT_SEC,
+                ),
+                timeout=_ATIF_EXPORT_TIMEOUT_SEC + 15,
+            )
+            if result.return_code != 0:
+                # fa headless writes its diagnostics to stderr — stdout
+                # carries only the ATIF payload — so tail both channels or
+                # the warning says nothing about why the export failed.
+                tail = ((result.stdout or "") + (result.stderr or ""))[-200:]
+                print(
+                    f"[fa_agent] warning: ATIF trajectory export exited "
+                    f"{result.return_code} (leaderboard static analysis "
+                    f"needs agent/trajectory.json): {tail}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        except Exception as exc:
+            # The exec-failure exceptions (harbor's non-zero exit error
+            # and friends) usually carry the command's stderr payload —
+            # surface it for the same reason as the tail above.
+            detail = str(exc)
+            exc_stderr = getattr(exc, "stderr", None)
+            if exc_stderr:
+                detail = f"{detail} | stderr: {exc_stderr[-200:]}"
+            print(
+                f"[fa_agent] warning: ATIF trajectory export failed "
+                f"(leaderboard static analysis needs agent/trajectory.json): "
+                f"{detail}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def _agent_command(self, instruction: str) -> str:
         # shlex-quote the instruction: backticks/$()/markdown spans in task
@@ -1006,6 +1097,14 @@ class FaAgent(BaseInstalledAgent):
         metadata = {**(context.metadata or {})}
         metadata["failure_mode"] = getattr(self, "_run_outcome", None) or (
             "never_started"
+        )
+        # gh-1681 Gap 2: whether the ATIF export actually landed — the
+        # leaderboard static analysis requires agent/trajectory.json on
+        # every rewarded trial, so a trial summary can gate on this
+        # instead of filesystem archaeology.
+        metadata["atif_trajectory"] = (
+            "present" if (self.logs_dir / "trajectory.json").is_file()
+            else "missing"
         )
         if usage.usage_incomplete:
             metadata["usage_incomplete"] = True
