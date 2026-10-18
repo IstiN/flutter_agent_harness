@@ -60,10 +60,11 @@ void main() {
       'update',
       'uninstall',
       'Exit codes: 0 ok',
-      // Trajectory reader (fa trajectory + REPL /trajectory).
+      // Trajectory reader + ATIF exporter (fa trajectory + REPL /trajectory).
       'fa trajectory',
-      'trajectory <view|tail|cost|inspect>',
+      'trajectory <view|tail|cost|inspect|',
       '[--json] [--at N]',
+      '[--format atif] [--output path]',
       '/trajectory',
       // Session repair (gh-1073).
       'fa session repair',
