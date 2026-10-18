@@ -813,8 +813,16 @@ class HarborParityTest(unittest.TestCase):
             agent, "exec_as_agent", side_effect=fake_exec
         ):
             asyncio.run(agent.run("work", object(), object()))
-        self.assertEqual(len(calls), 1)
-        self.assertIn("fa --session-root", calls[0])
+        # gh-1681 Gap 2: the ATIF export rides a SECOND, best-effort exec
+        # (bounded, outcome-independent) — the launch exec itself stays
+        # today's single unsupervised await (same contract the harbor_fa
+        # AtifExportTest pins).
+        self.assertEqual(len(calls), 2)
+        launch = next(c for c in calls if "trajectory export" not in c)
+        export = next(c for c in calls if "trajectory export" in c)
+        self.assertIn("fa --session-root", launch)
+        self.assertIn("--format atif", export)
+        self.assertIn("/logs/agent/trajectory.json", export)
 
 
 @unittest.skipUnless(TB_AVAILABLE, "terminal_bench not installed")

@@ -949,5 +949,85 @@ class ShardGuardWiringTest(unittest.TestCase):
         self.assertIn("--expected-shards", run_block)
 
 
+@unittest.skipUnless(
+    _HARBOR_YML.exists(), "bench-harbor.yml not found (standalone bench checkout)"
+)
+class SubmissionPreflightWiringTest(unittest.TestCase):
+    """gh-1681: leaderboard submission readiness wiring.
+
+    - the `submission` dispatch input exists, boolean, OFF by default
+      (AC4: no change to default bench behavior);
+    - the setup job gains a submission preflight (full coverage, >=5
+      attempts/task, no agent-timeout override, pinned dataset) gated on
+      that input;
+    - each shard gains an ATIF presence gate before the hub upload
+      (warn-only normally, hard failure in submission mode);
+    - the hub upload step itself keeps its secret-gated always-skip
+      shape.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _HARBOR_YML.read_text()
+        setup_end = cls.text.index("\n  bench:")
+        cls.setup_job = cls.text[:setup_end]
+        cls.bench_job = cls.text[setup_end:cls.text.index("\n  summary:")]
+
+    def test_submission_input_is_boolean_off_by_default(self):
+        block = self.text.split("submission:", 1)[1].split("permissions:", 1)[0]
+        self.assertIn("type: boolean", block)
+        self.assertIn("default: false", block)
+
+    def test_setup_preflight_is_submission_gated(self):
+        self.assertIn("if: inputs.submission == true", self.setup_job)
+        self.assertIn("Leaderboard submission preflight", self.setup_job)
+        # The preflight must run BEFORE the bundle build / shard split
+        # (it is part of the setup job at all) and enforce every rule.
+        for rule in (
+            "full task coverage",
+            "attempts >= 5",
+            "timeout_multiplier 1.0",
+            "org/name@ref",
+        ):
+            self.assertIn(rule, self.setup_job)
+
+    def test_atif_gate_sits_before_the_hub_upload(self):
+        self.assertIn("Preflight ATIF trajectories", self.bench_job)
+        self.assertLess(
+            self.bench_job.index("Preflight ATIF trajectories"),
+            self.bench_job.index("Upload to Harbor Hub"),
+        )
+        gate = self.bench_job.split("Preflight ATIF trajectories", 1)[1]
+        gate = gate.split("Upload to Harbor Hub", 1)[0]
+        # Warn-only normally; submission mode fails hard; the scan covers
+        # agent/trajectory.json per trial dir with a result.json.
+        self.assertIn('SUBMISSION: ${{ inputs.submission }}', gate)
+        self.assertIn("agent/trajectory.json", gate)
+        self.assertIn("exit 1", gate)
+        # The gate carries an id so the hub-upload step can key on its
+        # outcome (a submission-mode gate failure must skip the upload).
+        self.assertIn("id: atif_gate", gate)
+
+    def test_hub_upload_stays_secret_gated_and_public(self):
+        upload = self.bench_job.split("Upload to Harbor Hub", 1)[1]
+        upload = upload.split("- name:", 1)[0]
+        # gh-1681 rework: in submission mode a failed ATIF gate must skip
+        # the upload (the job is un-submittable — no hub quota burn); in
+        # normal runs the warn-only gate never blocks the best-effort
+        # upload.
+        self.assertIn("if: always() && env.HARBOR_API_KEY != ''", upload)
+        self.assertIn("steps.atif_gate.outcome == 'success'", upload)
+        self.assertIn("inputs.submission != true", upload)
+        self.assertIn("harbor upload", upload)
+        self.assertIn("--public", upload)
+
+    def test_default_dispatch_has_no_submission_side_effects(self):
+        # AC4: without submission=true the only new behavior is the
+        # always-on warn-only ATIF scan; the preflight step must not run.
+        preflight = self.setup_job.split("Leaderboard submission preflight", 1)
+        self.assertEqual(len(preflight), 2)
+        self.assertIn("if: inputs.submission == true", preflight[1][:200])
+
+
 if __name__ == "__main__":
     unittest.main()
