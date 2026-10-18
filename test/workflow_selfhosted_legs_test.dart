@@ -48,36 +48,56 @@ String checkoutScriptOf(String workflowPath, String job, String stepName) {
       .toString();
 }
 
-/// The macOS publish legs and the jobs that must run on fa-m5-1.
-const mobileMacosLegs = <String, List<String>>{
-  '.github/workflows/build-mobile.yml': ['build-ios', 'submit-ios'],
-  '.github/workflows/build-macos.yml': ['build-macos'],
+/// The macOS publish legs, their jobs, and the exact runner-label set each
+/// job must pin. gh-1692: the iOS legs resolve to fa-m5-1 BY NAME (the
+/// runner-name label GitHub assigns to every self-hosted registration) —
+/// `macos-m5` alone also matches fa-m5-2, whose archive/signing
+/// environment is unverified (the 10-17/10-18 `** ARCHIVE FAILED **`
+/// runs), so a label-set pin without the runner name is a coin flip.
+/// build-macos stays on the shared `macos-m5` pool (mac builds are not
+/// the broken TestFlight path — gh-1692 scopes the name pin to iOS).
+const mobileMacosLegs = <String, Map<String, List<String>>>{
+  '.github/workflows/build-mobile.yml': {
+    'build-ios': ['self-hosted', 'macos-m5', 'fa-m5-1'],
+    'submit-ios': ['self-hosted', 'macos-m5', 'fa-m5-1'],
+  },
+  '.github/workflows/build-macos.yml': {
+    'build-macos': ['self-hosted', 'macos-m5'],
+  },
 };
 
 void main() {
-  group('AC1 — self-hosted macOS legs pin the macos-m5 label (gh-1600 F-A)', () {
+  group('AC1 — self-hosted macOS legs pin the runner LABEL SET (gh-1600 '
+      'F-A, gh-1692)', () {
     for (final entry in mobileMacosLegs.entries) {
       final jobs = jobsOf(entry.key);
-      for (final id in entry.value) {
-        test('${entry.key}::$id runs on fa-m5-1, never on Linux', () {
+      for (final jobEntry in entry.value.entries) {
+        final id = jobEntry.key;
+        test('${entry.key}::$id runs on ${jobEntry.value.join(' + ')}', () {
           final runsOn = (jobs[id] as YamlMap)['runs-on'].toString();
-          expect(
-            runsOn,
-            contains('macos-m5'),
-            reason:
-                '$entry.key job "$id" must pin the unique macOS label '
-                '`macos-m5` (the fa-m5-1 registration) — the generic '
-                '`[self-hosted, macOS, ARM64]` list also matches the Linux '
-                'self-hosted box, and the job ran there with no '
-                'ruby/fastlane/Xcode (gh-1600: exit 127 at Install fastlane)',
-          );
+          for (final label in jobEntry.value) {
+            expect(
+              runsOn,
+              contains(label),
+              reason:
+                  '$entry.key job "$id" must pin the runner-label set '
+                  '${jobEntry.value} — gh-1692: the iOS legs resolve to '
+                  'fa-m5-1 BY NAME, the runner-name label GitHub assigns '
+                  'to every self-hosted registration. `macos-m5` alone '
+                  'also matches fa-m5-2, whose archive/signing '
+                  'environment is unverified (the 10-17/10-18 '
+                  '`** ARCHIVE FAILED **` runs) — a name-less pin is a '
+                  'coin flip between a good and a broken runner.',
+            );
+          }
           expect(
             runsOn.contains('macOS') || runsOn.contains('ARM64'),
             isFalse,
             reason:
                 '$entry.key job "$id" must not carry the generic '
-                '`macOS`/`ARM64` labels — only the unambiguous `macos-m5` '
-                'pin routes to the M5 runner (gh-1600 F-A)',
+                '`macOS`/`ARM64` labels — only the unambiguous '
+                '`macos-m5` + runner-name pins route to the M5 runner '
+                '(gh-1600 F-A, gh-1692)',
           );
         });
       }
