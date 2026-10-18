@@ -48,6 +48,14 @@ name: Bench Harbor
 #   MODAL_TOKEN_ID/SECRET  — Modal token for the GPU shard (verified live)
 #   HARBOR_API_KEY         — Harbor Hub upload key; upload step skips (with a
 #                            warning) when absent, run artifacts keep results.
+#
+# gh-1681 (leaderboard submission readiness): when HARBOR_API_KEY is set,
+# every shard uploads its job to the hub (--public) after the run. The fa
+# adapter additionally exports an ATIF trajectory (agent/trajectory.json)
+# per trial — the leaderboard static analysis requires one on every
+# rewarded trial — and the `submission` input turns the submission rules
+# (leaderboard/SUBMIT.md of the pinned terminal-bench dataset repo) into
+# hard preflight gates. See docs/leaderboard-submission.md.
 
 run-name: fa bench-harbor · ${{ inputs.provider }} · ${{ inputs.tasks }}
 
@@ -108,6 +116,11 @@ on:
         description: 'Extend the agent cap while the agent output grows (idle window 120s, hard ceiling 4x base)'
         required: false
         default: ''
+      submission:
+        description: 'gh-1681: leaderboard submission mode — the setup preflight enforces the submission rules (full task coverage, >=5 attempts/task, no agent-timeout override, pinned dataset) and the per-shard ATIF gate fails hard when a trial lacks agent/trajectory.json. See docs/leaderboard-submission.md'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -379,6 +392,54 @@ jobs:
             echo "::error::Full run of Terminal-Bench ${{ steps.family.outputs.family }} (${{ steps.family.outputs.dataset }}, ~${{ steps.family.outputs.tasks }} tasks x $ATTEMPTS attempts) requires confirm-full-run: true. Smoke first: tasks=${{ steps.family.outputs.smoke }}, attempts=1 (docs/bench.md)."
             exit 1
           fi
+
+      # gh-1681: leaderboard submission mode — the submission rules from
+      # the pinned dataset repo's leaderboard/SUBMIT.md, enforced BEFORE
+      # any shard starts: a rule violation costs one setup minute, never
+      # shard-hours of un-submittable results. The ATIF half of the gate
+      # runs per shard after the trials (the adapter writes the
+      # trajectories during the run).
+      - name: Leaderboard submission preflight
+        if: inputs.submission == true
+        env:
+          DATASET: ${{ steps.family.outputs.dataset }}
+          TASKS: ${{ inputs.tasks }}
+          ATTEMPTS: ${{ inputs.attempts }}
+          AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
+        run: |
+          set -euo pipefail
+          # Full task coverage: the leaderboard CI re-derives every trial
+          # from the source jobs — a tasks-filtered run can never
+          # qualify. (Emptiness via the split_tasks.py normalization, same
+          # as the cost guard above.)
+          if [ -n "$(printf %s "$TASKS" | tr -d '[:space:],')" ]; then
+            echo "::error::submission mode requires full task coverage — dispatch without the tasks filter"
+            exit 1
+          fi
+          # At least 5 trials per task.
+          case "$ATTEMPTS" in
+            ''|*[!0-9]*)
+              echo "::error::submission mode: attempts must be an integer, got '$ATTEMPTS'"; exit 1 ;;
+          esac
+          if [ "$ATTEMPTS" -lt 5 ]; then
+            echo "::error::submission mode requires at least 5 trials per task (attempts >= 5), got $ATTEMPTS"
+            exit 1
+          fi
+          # timeout_multiplier 1.0: no agent-timeout override.
+          if [ -n "$AGENT_TIMEOUT" ]; then
+            echo "::error::submission mode requires timeout_multiplier 1.0 — clear the agent-timeout input"
+            exit 1
+          fi
+          # Exact pinned dataset: the resolved id must carry an explicit
+          # @ref (a bare name resolves latest silently — CI rejects it).
+          case "$DATASET" in
+            *@*) ;;
+            *) echo "::error::submission mode requires an explicitly pinned dataset id (org/name@ref), got '$DATASET'"; exit 1 ;;
+          esac
+          if [ "${DATASET##*@}" = "latest" ]; then
+            echo "::warning::submission mode: '$DATASET' resolves through the hub's mutable @latest tag — record the resolved content hash from the shard download logs into the lb metadata (docs/leaderboard-submission.md)"
+          fi
+          echo "submission preflight OK: $DATASET, attempts=$ATTEMPTS, full coverage, default timeouts"
 
       # Same bundle as bench/terminal_bench/run.sh: tar the bundle/ dir so
       # the adapter extracts bin/fah at the top level of /opt/fa.
@@ -671,6 +732,46 @@ jobs:
           # gh-1600: the harbor output moved outside the workspace
           # ($RUNNER_TEMP/bench/jobs — see the harbor run step).
           path: ${{ runner.temp }}/bench/jobs/
+
+      # gh-1681 Gap 2: the leaderboard static analysis requires an ATIF
+      # trajectory (agent/trajectory.json) on every rewarded trial — the
+      # fa adapter exports one per trial after the agent phase. Gate the
+      # upload on their presence: warn-only in normal runs (upload stays
+      # best-effort), hard failure in submission mode (an un-submittable
+      # job must not burn hub quota either). The scan covers this shard's
+      # pinned job dir only; the zero-trial retry's preserved attempt-1
+      # dir (_attempt1-*) is a sibling and never matches.
+      - name: Preflight ATIF trajectories
+        if: always()
+        env:
+          ENV_TYPE: ${{ matrix.env }}
+          KIND: ${{ matrix.kind }}
+          SHARD: ${{ matrix.i }}
+          SUBMISSION: ${{ inputs.submission }}
+          # FAMILY rides the bench job's env block (see the harbor run
+          # step's DATASET note — no steps.* refs across jobs).
+          JOB_NAME: fa-${{ needs.setup.outputs.family }}-${{ matrix.env }}-${{ matrix.kind }}-${{ matrix.i }}
+        run: |
+          shopt -s nullglob
+          total=0
+          missing=0
+          for result in "${RUNNER_TEMP:-/tmp}/bench/jobs/${JOB_NAME}"/*/result.json; do
+            total=$((total + 1))
+            trial_dir=$(dirname "$result")
+            if [ ! -f "$trial_dir/agent/trajectory.json" ]; then
+              missing=$((missing + 1))
+              echo "::warning::trial $(basename "$trial_dir") has result.json but no agent/trajectory.json (ATIF) — the leaderboard static analysis fails such trials (gh-1681)"
+            fi
+          done
+          {
+            echo "## ATIF trajectories (shard ${JOB_NAME})"
+            echo
+            echo "$((total - missing))/$total trials carry an ATIF trajectory."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          if [ "$SUBMISSION" = "true" ] && [ "$missing" -gt 0 ]; then
+            echo "::error::submission mode: $missing of $total trials lack agent/trajectory.json — a submission job must contain zero trials missing an ATIF trajectory"
+            exit 1
+          fi
 
       - name: Upload to Harbor Hub
         if: always() && env.HARBOR_API_KEY != ''
