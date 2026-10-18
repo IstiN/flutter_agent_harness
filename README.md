@@ -38,6 +38,67 @@ and the CLI installer below.
   token-based (never message-count-based) context management.
 - **Cancellation everywhere** via `CancelToken` — providers, loop, tools.
 
+<!-- leaderboard:begin (gh-1682) -->
+## Leaderboard: fa vs. the field
+
+fa's own Terminal-Bench results next to the official field. Official rows are read from the Harbor Hub leaderboard that backs [tbench.ai](https://www.tbench.ai/); rows marked ⭐ are **self-reported** — measured by our own bench-harbor runs, not submitted to the official board.
+
+<sub>Regenerated 2026-10-18 by `bench/leaderboard/render.py` (gh-1682).</sub>
+
+### Terminal-Bench 4.0 (official)
+
+| # | Agent | Model | Accuracy | Trials | Date |
+|---|---|---|---|---|---|
+| 1 | [Claude Code](https://claude.com/product/claude-code) | [Opus 5.5](https://www.anthropic.com/claude-opus-5-5) | 64.8% | 330 | 2026-09-22 |
+| 2 | [Claude Code](https://claude.com/product/claude-code) | [Sonnet 5.5](https://www.anthropic.com/claude-sonnet-5-5) | 61.8% | 330 | 2026-09-28 |
+| 3 | [Codex](https://openai.com/codex/) | [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 58.2% | 330 | 2026-09-03 |
+| 3 | [Codex](https://openai.com/codex/) | [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol) | 58.2% | 330 | 2026-09-29 |
+| 5 | [Claude Code](https://claude.com/product/claude-code) | [Fable 5.1](https://docs.anthropic.com/en/docs/about-claude/models/all-models) | 57.9% | 330 | 2026-09-01 |
+| 5 | [Codex](https://openai.com/codex/) | [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 57.9% | 330 | 2026-09-03 |
+| 5 | [Codex](https://openai.com/codex/) | [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 57.9% | 330 | 2026-09-03 |
+| 5 | [Claude Code](https://claude.com/product/claude-code) | [Fable 5.1](https://docs.anthropic.com/en/docs/about-claude/models/all-models) | 57.9% | 330 | 2026-09-01 |
+| 9 | [Claude Code](https://claude.com/product/claude-code) | [Fable 5.1](https://docs.anthropic.com/en/docs/about-claude/models/all-models) | 54.5% | 330 | 2026-09-01 |
+| 10 | [Codex](https://openai.com/codex/) | [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 54.2% | 330 | 2026-09-03 |
+| 11 | [Claude Code](https://claude.com/product/claude-code) | [Fable 5.1](https://docs.anthropic.com/en/docs/about-claude/models/all-models) | 53.9% | 330 | 2026-09-01 |
+| 11 | [Claude Code](https://claude.com/product/claude-code) | [Opus 5](https://www.anthropic.com/news/claude-opus-5) | 53.9% | 330 | 2026-07-24 |
+| 13 | [Claude Code](https://claude.com/product/claude-code) | [Opus 5](https://www.anthropic.com/news/claude-opus-5) | 51.8% | 330 | 2026-07-24 |
+| 14 | [Codex](https://openai.com/codex/) | [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 50.6% | 330 | 2026-09-03 |
+| 15 | [Claude Code](https://claude.com/product/claude-code) | [Opus 5](https://www.anthropic.com/news/claude-opus-5) | 50.3% | 330 | 2026-07-24 |
+
+<sub>Official rows: Harbor Hub leaderboard `terminal-bench/terminal-bench/4-0-0` — backing [tbench.ai](https://www.tbench.ai/), top 15 of 35, fetched 2026-10-18.</sub>
+
+### Terminal-Bench 2.1 (official)
+
+| # | Agent | Model | Accuracy | Trials | Date |
+|---|---|---|---|---|---|
+| 1 | [Codex](https://openai.com/codex/) | [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 87.4% | 445 | 2026-09-03 |
+| 2 | [Codex](https://openai.com/codex/) | [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 87.0% | 445 | 2026-09-03 |
+| 3 | [Codex](https://openai.com/codex/) | [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 86.7% | 445 | 2026-09-03 |
+| 3 | [Codex](https://openai.com/codex/) | [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 86.7% | 445 | 2026-09-03 |
+| 5 | [Codex](https://openai.com/codex/) | [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 85.8% | 445 | 2026-09-03 |
+| 6 | [Claude Code](https://claude.com/claude-code) | [Fable 5](https://www.anthropic.com/news/claude-fable-5-mythos-5) | 83.8% | 445 | 2026-06-09 |
+| 7 | [Codex](https://openai.com/codex/) | [GPT-5.5](https://openai.com/index/introducing-gpt-5-5/) | 83.2% | 445 | 2026-04-23 |
+| 8 | [Terminus 2](https://www.tbench.ai/news/terminus) | [Fable 5](https://www.anthropic.com/news/claude-fable-5-mythos-5) | 80.5% | 445 | 2026-06-09 |
+| 9 | [Cursor CLI](https://cursor.com/docs/cli/overview) | [Grok 4.5](https://docs.x.ai/developers/models/grok-4.5) | 79.3% | 445 | 2026-07-08 |
+| 10 | [Claude Code](https://claude.com/claude-code) | [Opus 4.8](https://www.anthropic.com/news/claude-opus-4-8) | 78.9% | 445 | 2026-05-28 |
+| 11 | [Codex](https://openai.com/codex/) | [GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra) | 78.4% | 445 | 2026-06-26 |
+| 12 | [Terminus 2](https://www.tbench.ai/news/terminus) | [GPT-5.5](https://openai.com/index/introducing-gpt-5-5/) | 78.0% | 445 | 2026-04-23 |
+| 13 | [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent) | [Muse Spark 1.1](https://ai.meta.com/blog/introducing-muse-spark-meta-model-api/) | 76.2% | 445 | 2026-07-09 |
+| 14 | [Codex](https://openai.com/codex/) | [GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) | 75.7% | 445 | 2026-06-26 |
+| 15 | [Claude Code](https://claude.com/claude-code) | [Sonnet 5](https://www.anthropic.com/news/claude-sonnet-5) | 74.6% | 445 | 2026-06-30 |
+
+<sub>Official rows: Harbor Hub leaderboard `terminal-bench/terminal-bench-2-1/main` — backing [tbench.ai](https://www.tbench.ai/), top 15 of 22, fetched 2026-10-18.</sub>
+
+#### fa on Terminal-Bench 2.1 — self-reported ⭐ (not on the official leaderboard)
+
+| Model | Accuracy | Trials | Date | fa | Runs |
+|---|---|---|---|---|---|
+| ⭐ kimi-for-coding | 67.4% | 300/445 | 2026-10-18 | `2fd100169e` | [39028127116](https://github.com/IstiN/flutter_agent_harness/actions/runs/39028127116) + [39052822079](https://github.com/IstiN/flutter_agent_harness/actions/runs/39052822079) + [39098996789](https://github.com/IstiN/flutter_agent_harness/actions/runs/39098996789) |
+| ⭐ glm-5.3-flash | 57.8% | 257/445 | 2026-10-15 | `9201d8b387` | [38823577512](https://github.com/IstiN/flutter_agent_harness/actions/runs/38823577512) |
+
+<sub>⭐ Self-reported: measured by our own `bench-harbor` runs on Terminal-Bench 2.1, **not** an official leaderboard submission (community submissions are closed — #1681). Every row links its GitHub Actions run(s); fa rows never blend into the official table above. Source: `bench/leaderboard/fa_results.json`.</sub>
+<!-- leaderboard:end (gh-1682) -->
+
 ## What's inside
 
 - **Agent core** (`lib/src/`): the async agent loop, steering + follow-up
