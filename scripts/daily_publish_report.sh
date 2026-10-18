@@ -190,6 +190,15 @@ fmt_elapsed() { # $1 = seconds -> "359m53s" / "1h2m3s" (unpadded components)
   if [ "$h" -gt 0 ]; then echo "${h}h${m}m${s}s"; else echo "${m}m${s}s"; fi
 }
 
+# ISO-UTC → epoch seconds: GNU date (Linux CI) and BSD date (local macOS)
+# — the same portable pair release_dedupe_check.sh uses. A bare GNU
+# `date -u -d` silently resolved nothing on dev hosts without GNU date and
+# degraded the cancelled digest to "killed after unknown elapsed" (gh-1649).
+iso_to_epoch() {
+  date -u -d "$1" +%s 2>/dev/null && return 0
+  date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null
+}
+
 # ── issue lifecycle ────────────────────────────────────────────────────────
 find_open_issue() { # $1 = exact title; echoes the issue number or nothing
   gh issue list --repo "$repo" --state open --label daily-publish \
@@ -232,8 +241,8 @@ file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url, $4 = leg
         IFS=$'\t' read -r cname cstart cend <<< "$cinfo"
         local celapsed="unknown"
         local cs="" ce=""
-        cs=$(date -u -d "$cstart" +%s 2>/dev/null || true)
-        ce=$(date -u -d "$cend" +%s 2>/dev/null || true)
+        cs=$(iso_to_epoch "$cstart" || true)
+        ce=$(iso_to_epoch "$cend" || true)
         if [ -n "$cs" ] && [ -n "$ce" ] && [ "$ce" -ge "$cs" ]; then
           celapsed=$(fmt_elapsed $((ce - cs)))
         fi

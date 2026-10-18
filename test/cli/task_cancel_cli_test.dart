@@ -509,19 +509,36 @@ void main() {
           streamFunction: _RoutingStreamFunction().call,
         );
 
-        // Boot #1: creates the session; after the run its manager can
-        // persist registry rows into that session.
+        // Boot #1: creates the session; the run's finally SEALS it
+        // (gh-1589) — from here every registry append through the dead
+        // run's writer is a dropped late write (I1), not a persisted
+        // row. Seeding through `seeder.subagentManager` after the run
+        // therefore models nothing real anymore.
         final seeder = cliFor();
         await seeder.runHeadless('seed');
-        await seeder.subagentManager.register(
-          id: 'Zombie-1',
-          name: 'Zombie-1',
-          agentType: 'task',
-          task: 'never settled',
-        );
-        await seeder.subagentManager.update(
-          'Zombie-1',
-          status: SubagentStatus.running,
+
+        // The zombie's rows land the way a previous process actually
+        // leaves them (I4/E2 shape): written DURING its run, before the
+        // kill/restart — not after its seal. A fresh Session over the
+        // same file is unsealed (E5), so appending the snapshot the
+        // previous run persisted is legal; the raw-scan rehydrate source
+        // reads it on the next boot.
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final meta = (await repo.list(cwd: '/work')).single;
+        final reopened = await repo.open(meta);
+        await reopened.appendCustomEntry(
+          customType: subagentRegistryRecordType,
+          data: [
+            {
+              'id': 'Zombie-1',
+              'name': 'Zombie-1',
+              'agentType': 'task',
+              'sessionId': '${meta.id}/Zombie-1',
+              'createdAt': '2026-10-17T10:00:00.000Z',
+              'task': 'never settled',
+              'status': 'running',
+            },
+          ],
         );
 
         // Boot #2 (the headless restart/wake shape): must rehydrate and

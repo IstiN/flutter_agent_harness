@@ -116,13 +116,13 @@ jobs:
           python3 scripts/junit_from_dart_json.py
           test-results/integration.json
           test-results/junit-integration.xml
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: integration-json
           path: test-results/integration.json
           retention-days: 14
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: junit-integration
@@ -185,6 +185,13 @@ jobs:
       # android matrix row (no-op elsewhere) — same release-asset CDN
       # roulette as the PR leg, same fix.
       - uses: ./.github/actions/flutter-gemma-android-seed
+        if: matrix.target == 'android'
+
+      # gh-1655: same NDK pre-install as ci.yml build-android, on the
+      # android matrix row only (no-op elsewhere) — Gradle configuration
+      # auto-installs the Flutter-pinned NDK mid-build with no retry;
+      # one truncated download reds the scheduled leg.
+      - uses: ./.github/actions/android-ndk-preinstall
         if: matrix.target == 'android'
 
       # Linux desktop toolchain + plugin native deps (gtk3 for the runner,

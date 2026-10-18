@@ -84,17 +84,29 @@ final class DeadlineLadder {
   /// The steering text for [kind], rendered with the current [timeLeft]
   /// (`formatTimeLeft` spelling). The T-3min steer names the
   /// shell-job/background-work drain explicitly — long-running operations
-  /// must get their chance to land instead of being SIGKILLed mid-write.
+  /// must get their chance to land instead of being SIGKILLed mid-write —
+  /// and the grader-parity clause (gh-1652): the LAST verification pass
+  /// before finalizing goes through the grader's own invocation path,
+  /// not the agent's checklist oracle — and the no-teardown clause
+  /// (gh-1668): leave the final state in place, finalizing never resets
+  /// what the run produced.
   String text(DeadlineNoticeKind kind, String timeLeft) => switch (kind) {
     DeadlineNoticeKind.halfBudget =>
       'Half of your time budget has elapsed ($timeLeft remaining). '
-          'Stop widening the search: converge on the deliverables.',
+          'Stop widening the search: converge on the deliverables. '
+          'Do not stop while work remains: unfinished work is not a reason '
+          'to wrap up — you are interrupted at the deadline anyway.',
     DeadlineNoticeKind.wrapUp =>
       'Deadline in $timeLeft — stop exploring and finalize your outputs '
           'NOW: drain or kill background shell jobs (`bash_job stop <id>`) '
           'and any in-flight subagents so long-running operations '
           '(compiles, uploads, file writes) get their chance to land, run '
-          'your final checks, and write your final answer.',
+          'your final checks, and before finalizing run each produced '
+          'entry point the way the grader will (neutral cwd, clean env) '
+          'and fix what diverges. Leave the final state in place: '
+          'finalizing never tears down what you produced — verification '
+          'is read-only or additive, never a teardown. Then write your '
+          'final answer.',
     DeadlineNoticeKind.finalAnswer =>
       '$timeLeft remaining — write your final answer NOW.',
   };
@@ -193,8 +205,10 @@ String formatTimeLeft(int remainingMs) {
 final class SessionDeadline {
   /// Creates a clock. [clock] defaults to [DateTime.now]; tests inject a
   /// fake. [ladder] defaults to the standard T-3min/T-30s windows.
-  SessionDeadline({DateTime Function()? clock, this.ladder = const DeadlineLadder()})
-    : _clock = clock ?? DateTime.now;
+  SessionDeadline({
+    DateTime Function()? clock,
+    this.ladder = const DeadlineLadder(),
+  }) : _clock = clock ?? DateTime.now;
 
   /// The injected wall clock.
   final DateTime Function() _clock;

@@ -109,18 +109,15 @@ void main() {
     }
   });
 
-  test('engine pin: ai-teammate passes a 40-hex factory_ref; sm/merge '
-      'carry none (AW resolves the engine from releases)', () {
-    final engineRef = RegExp(r"factory_ref:\s*\$\{\{\s*vars\.AGENTS_FACTORY_REF\s*\|\|\s*'([0-9a-f]{40})'\s*\}\}")
-        .firstMatch(teammate);
-    expect(
-      engineRef,
-      isNotNull,
-      reason:
-          'ai-teammate must pass factory_ref — the factory declares it '
-          'required and cannot derive its own engine commit',
-    );
+  test('engine pin: NO wrapper passes factory_ref (AW resolves the engine '
+      'from releases; the input is gone from the factory contract)', () {
+    // Absence-contract since fa#1657 (2026-10-16): the fa wrapper stopped
+    // passing factory_ref — the factory resolves the engine from
+    // dmtools-agents releases via vars (latest default), same as sm/merge.
+    // The historical 40-hex pin died with the factory_ref input removal
+    // (awf#41/#42); the optional no-op (awf#44) is transitional only.
     for (final entry in {
+      'ai-teammate.yml': teammate,
       'machine-sm.yml': sm,
       'machine-merge.yml': merge,
     }.entries) {
@@ -128,9 +125,9 @@ void main() {
         entry.value.contains('factory_ref:'),
         isFalse,
         reason:
-            '${entry.key}: AW factory-sm/merge have no factory_ref '
-            'input — the engine resolves from dmtools-agents releases '
-            'via vars (latest default)',
+            '${entry.key}: must not pass factory_ref — the engine '
+            'resolves from dmtools-agents releases via vars '
+            '(latest default)',
       );
     }
   });

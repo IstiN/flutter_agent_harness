@@ -45,7 +45,7 @@ const ptyJobId = 'pty-integration-linux';
 /// the same line test/release_hygiene_test.dart pins repo-wide (gh-995:
 /// the gate's download-artifact digest-validates every download).
 const artifactPin =
-    'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a';
+    'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9';
 
 bool isUploadStep(YamlMap step) =>
     (step['uses']?.toString() ?? '').startsWith('actions/upload-artifact@');

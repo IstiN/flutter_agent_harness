@@ -28,7 +28,12 @@ changelog="$stage/CHANGELOG.md"
 [ -f "$changelog" ] || { echo "::error::staged CHANGELOG missing: $changelog"; exit 1; }
 
 # ── 1. Stamp the version ────────────────────────────────────────────────────
-sed -i "s/^version: .*/version: $version/" "$pubspec"
+# `sed -i.bak` + rm: BSD sed (macOS dev hosts) has no suffix-less `-i` —
+# it consumes the program text as the backup suffix and dies before
+# stamping (gh-1649). Same portable form as package_web_spa.sh /
+# vendor_interpreters.sh.
+sed -i.bak "s/^version: .*/version: $version/" "$pubspec"
+rm -f "$pubspec.bak"
 
 # Guard (gh-1522 AC: staged version MUST equal the tag name, v1.0.550 →
 # 1.0.550) — the stamp above makes this self-evident, but the check is the

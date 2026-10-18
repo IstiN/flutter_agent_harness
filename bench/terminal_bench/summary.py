@@ -289,18 +289,95 @@ _LEDGER_VERIFIED = ("pass", "fixed")  # keep in lockstep with the Dart
 # (the two summary scripts are standalone-by-design — different layout
 # roots — so this parser is duplicated; change both together).
 
+# gh-1646 C3: the early-exit margin — a trial that ended ≥60s before the
+# effective cap had real budget left. Same value in the harbor sibling.
+_EARLY_EXIT_MARGIN_SEC = 60.0
 
-def _ledger_records(trial_dir: Path) -> list:
-    """Every hidden `task_ledger` custom record in the trial's synced fa
-    session logs, in file then line order."""
-    ledgers = []
+
+def classify_early_exit_unmet(
+    clean_exit: bool,
+    ledger_unmet,
+    duration_secs,
+    cap_secs,
+    margin: float = _EARLY_EXIT_MARGIN_SEC,
+):
+    """gh-1646 C3: the early-exit-with-unmet-ledger verdict for one trial.
+
+    True = "honest surrender": the trial ended on its own (no cap kill),
+    its FINAL task ledger still carries unmet items, and it ended at
+    least `margin` seconds before the effective cap — budget remained
+    and the gate wording licensed the stop. False = not in the class
+    (killed by the cap, fully verified ledger, or at/near the wall).
+    None = unclassifiable — a missing ledger, duration, or cap input
+    (legacy artifacts) never fabricates a classification.
+
+    Duplicated in bench/harbor_fa/summary.py (the summary scripts are
+    standalone-by-design) — change both together.
+    """
+    if ledger_unmet is None or duration_secs is None or cap_secs is None:
+        return None
+    if not clean_exit or ledger_unmet <= 0:
+        return False
+    return duration_secs < cap_secs - margin
+
+
+def classify_clean_exit_wrong(clean_exit: bool, ledger_unmet, reward_zero):
+    """gh-1652 C4: the CLEAN-WRONG verdict for one trial.
+
+    True = the trial ended on its own (no cap kill), its FINAL task
+    ledger carries ZERO unmet items (the agent believed it was done —
+    it validated through its own checklist oracle: file exists, move is
+    legal), and the verifier still scored reward 0 — the grader's own
+    invocation was never run. False = not in the class (killed, an
+    unmet ledger — that is the gh-1646 surrender class instead — or a
+    nonzero reward). None = unclassifiable — a missing ledger or
+    verifier-reward input (legacy artifacts) never fabricates the class.
+
+    DISJOINT from `classify_early_exit_unmet` by construction: the two
+    classes key on opposite sides of `ledger_unmet <= 0`, so a trial is
+    counted once.
+
+    Duplicated in bench/harbor_fa/summary.py (the summary scripts are
+    standalone-by-design) — change both together.
+    """
+    if ledger_unmet is None or reward_zero is None:
+        return None
+    if not clean_exit or ledger_unmet > 0 or not reward_zero:
+        return False
+    return True
+
+
+def _trial_session_texts(trial_dir: Path) -> list[str]:
+    """The trial's synced fa session file texts, read ONCE per trial.
+
+    gh-1646 review: the per-trial folds below (`_ledger_records` for the
+    checklist cell AND the unmet count, `_trial_agent_duration` for the
+    stamps) all walk the same `agent*/fah-sessions/*.jsonl` set — one
+    read here feeds all of them instead of re-reading per fold.
+    """
+    texts = []
     for sessions in sorted(trial_dir.glob("agent*/fah-sessions")):
         for path in sorted(sessions.glob("*.jsonl")):
             try:
-                text = path.read_text()
+                texts.append(path.read_text())
             except OSError:
                 continue
-            for line in text.splitlines():
+    return texts
+
+
+def _ledger_records(trial_dir: Path, texts=None) -> list:
+    """Every hidden `task_ledger` custom record in the trial's synced fa
+    session logs, in file then line order.
+
+    `texts` (gh-1646 review): pre-read session file texts from
+    `_trial_session_texts` — render reads each trial ONCE and shares the
+    texts across every fold; None (direct/test callers) reads from disk.
+    """
+    if texts is None:
+        texts = _trial_session_texts(trial_dir)
+    ledgers = []
+    for text in texts:
+        for line in text.splitlines():
                 line = line.strip()
                 if not line:
                     continue
@@ -317,7 +394,7 @@ def _ledger_records(trial_dir: Path) -> list:
     return ledgers
 
 
-def _ledger_cell(trial_dir: Path) -> str:
+def _ledger_cell(trial_dir: Path, texts=None) -> str:
     """gh-1412: the trial's checklist-coverage cell.
 
     The FinalizeGate contract makes the agent persist a hidden
@@ -333,10 +410,11 @@ def _ledger_cell(trial_dir: Path) -> str:
     `items` that is not a list, degrades to `checklist: none` — never an
     AttributeError. An items-less ledger is `none` too: it verifies
     nothing, and rendering 0/0 would count as fully verified downstream.
+    `texts` = pre-read session texts (gh-1646 review single-read fold).
     Duplicate of the sibling parser in bench/harbor_fa/summary.py (the
     scripts are standalone-by-design) — change both together.
     """
-    ledgers = _ledger_records(trial_dir)
+    ledgers = _ledger_records(trial_dir, texts)
     if not ledgers:
         return "checklist: none"
     data = ledgers[-1].get("data")
@@ -356,6 +434,84 @@ def _ledger_cell(trial_dir: Path) -> str:
     if unmet:
         cell += f" ({unmet} unmet)"
     return cell
+
+
+def _ledger_unmet_count(trial_dir: Path, texts=None):
+    """Unmet items in the trial's LAST `task_ledger` record (gh-1646 C3).
+
+    The FinalizeGate contract's honest-surrender telemetry: the agent
+    re-verifies after fixes, so the LAST ledger is the state it exited
+    with. None = the session carries no parseable ledger (legacy runs,
+    ledger-less tasks); an items-less ledger is None too — it verifies
+    nothing, and counting 0 unmet would read as fully verified.
+    Reuses the gh-1412 parse point (`_ledger_records`); `texts` = pre-read
+    session texts (gh-1646 review single-read fold).
+    """
+    ledgers = _ledger_records(trial_dir, texts)
+    if not ledgers:
+        return None
+    data = ledgers[-1].get("data")
+    rows = data.get("items") if isinstance(data, dict) else None
+    items = rows if isinstance(rows, list) else []
+    if not items:
+        return None
+    verified = sum(
+        1
+        for item in items
+        if isinstance(item, dict)
+        and str(item.get("status") or "").lower() in _LEDGER_VERIFIED
+    )
+    return len(items) - verified
+
+
+def _trial_agent_duration(trial_dir: Path, texts=None):
+    """(last − first) fa session record timestamp, in seconds (gh-1646).
+
+    The agent's own wall-clock from the synced session logs — the tb
+    results.json rows carry no duration field. None when the trial has
+    no timestamped session records. `texts` = pre-read session texts
+    (gh-1646 review single-read fold).
+    """
+    if texts is None:
+        texts = _trial_session_texts(trial_dir)
+    stamps = []
+    for text in texts:
+        stamps.extend(bench_metrics.session_record_stamps(text))
+    if not stamps:
+        return None
+    return max(stamps) - min(stamps)
+
+
+def _audit_cap_sec(trial_dir: Path):
+    """The trial's effective cap from its fa-agent-timeout.json audit
+    (the gh-1576 `cap_resolution` block); None when the audit is absent
+    or carries no cap (older/unsupervised runs — the trial is then
+    unclassifiable, never an early exit)."""
+    try:
+        data = json.loads((trial_dir / "fa-agent-timeout.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    cap = data.get("cap_resolution") if isinstance(data, dict) else None
+    value = cap.get("effective_cap_sec") if isinstance(cap, dict) else None
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    return None
+
+
+def _early_exit_facts(trial_dir: Path, texts=None):
+    """(ledger_unmet, duration_secs, cap_secs) for the gh-1646 guard.
+
+    Any None element leaves the trial unclassified (`classify_early_
+    exit_unmet` returns None) — missing data never fabricates the class.
+    Clean exit is NOT folded in here: it is a results.json fact (the
+    harness's failure_mode), not a trial-dir fact. `texts` = pre-read
+    session texts (gh-1646 review single-read fold).
+    """
+    return (
+        _ledger_unmet_count(trial_dir, texts),
+        _trial_agent_duration(trial_dir, texts),
+        _audit_cap_sec(trial_dir),
+    )
 
 
 def _score_honesty(runs_dir: Path, rows) -> list:
@@ -424,10 +580,22 @@ def render(runs_dir: Path, expected=None, model_override=None, concurrency=None,
 
     pricing = fa_usage.load_pricing(_PRICING_PATH)
     facts = _session_facts(runs_dir)
+    trial_dirs = _trial_dirs(runs_dir)
+    # gh-1646 review: read each trial's session files ONCE — the
+    # checklist fold and the early-exit guard share the same texts.
+    session_texts = {
+        trial: _trial_session_texts(trial_dir)
+        for trial, trial_dir in trial_dirs.items()
+    }
     # gh-1412: per-trial checklist coverage from the synced fa sessions.
     checklist_facts = {
-        trial: _ledger_cell(trial_dir)
-        for trial, trial_dir in _trial_dirs(runs_dir).items()
+        trial: _ledger_cell(trial_dir, session_texts[trial])
+        for trial, trial_dir in trial_dirs.items()
+    }
+    # gh-1646 C3: per-trial early-exit facts — (unmet, duration, cap).
+    early_facts = {
+        trial: _early_exit_facts(trial_dir, session_texts[trial])
+        for trial, trial_dir in trial_dirs.items()
     }
     rows = []
     unpriced_models = set()
@@ -527,6 +695,93 @@ def render(runs_dir: Path, expected=None, model_override=None, concurrency=None,
             f" from fa session logs),"
             f" {work} with real work (cap exhausted)"
         )
+
+    # gh-1646 C3: the early-exit-with-unmet-ledger guard — the
+    # FinalizeGate contract must never read as an early-exit license.
+    # A failure that ended on its own (empty failure mode — tb's default
+    # for a trial that ran to its own verdict), whose FINAL task ledger
+    # still carries unmet items, ending at least the margin before the
+    # cap is an "honest surrender": reported per run so the class is
+    # visible (and, post-wording-fix, collapsible). Denominator = scored
+    # failures: `pending` rows (lost/crashed shard, no verdict) stay out
+    # — the harbor sibling's scored_failures excludes its errored/
+    # compromised rows, and the gh-1646 share is compared across runs.
+    # Clean exit is an ALLOW-LIST (review gh-1646, conservative
+    # direction): an empty failure mode only — agent_timeout kills,
+    # verifier time-outs and any future mode are never clean exits.
+    failures = [
+        row
+        for row in rows
+        if row.mark != "yes" and not row.mark.startswith("pending")
+    ]
+    early_exits = []
+    unclassified = 0
+    for row in failures:
+        unmet, duration, cap = early_facts.get(row.trial, (None, None, None))
+        verdict = classify_early_exit_unmet(
+            row.mode == "", unmet, duration, cap
+        )
+        if verdict is None:
+            unclassified += 1
+        elif verdict:
+            early_exits.append((row, duration, cap))
+    if failures:
+        share = f"{len(early_exits) / len(failures):.0%}"
+        lines.append("")
+        lines.append(
+            f"**early-exit-with-unmet-ledger (gh-1646): {len(early_exits)}/"
+            f"{len(failures)} failures ({share})** — clean exit + unmet task"
+            f" ledger + ≥{_EARLY_EXIT_MARGIN_SEC:.0f}s budget left"
+        )
+        for row, duration, cap in early_exits:
+            lines.append(f"- {row.trial} ({duration:.0f}s/{cap:.0f}s)")
+        if unclassified:
+            lines.append(
+                f"{unclassified} failure(s) unclassifiable — no cap,"
+                " duration, or ledger data (never counted as early exits)"
+            )
+
+    # gh-1652 C4: the CLEAN-WRONG class — the mirror image of the
+    # surrender guard above. The agent exited cleanly BELIEVING it was
+    # done (zero-unmet ledger) and the verifier still scored reward 0:
+    # it validated through its own oracle (file exists, move is legal),
+    # never the grader's invocation. Disjoint from the guard above by
+    # construction (ledger_unmet <= 0 vs > 0) — a trial is counted once.
+    # gh-1652: denominator = every non-resolved row INCLUDING pending
+    # (a pending trial is never claimed clean-wrong, but stays visible
+    # in the share) — the branch's original semantics, kept for the
+    # clean_exit_wrong guard only.
+    all_failures = [row for row in rows if row.mark != "yes"]
+    clean_wrongs = []
+    clean_unclassified = 0
+    for row in all_failures:
+        unmet = early_facts.get(row.trial, (None, None, None))[0]
+        reward_zero = True if row.mark == "no" else None
+        # Clean exit = the SAME allow-list as the gh-1646 guard above
+        # (empty failure mode only): verifier timeouts and any future
+        # mode are never clean exits — mirrored, not `!= agent_timeout`.
+        verdict = classify_clean_exit_wrong(
+            row.mode == "", unmet, reward_zero
+        )
+        if verdict is None:
+            clean_unclassified += 1
+        elif verdict:
+            clean_wrongs.append(row)
+    if all_failures:
+        share = f"{len(clean_wrongs) / len(all_failures):.0%}"
+        lines.append(
+            f"**clean_exit_wrong (gh-1652): {len(clean_wrongs)}/"
+            f"{len(all_failures)} failures ({share})** — clean exit +"
+            " zero-unmet task ledger + verifier reward 0"
+        )
+        for row in clean_wrongs:
+            lines.append(f"- {row.trial}")
+        if clean_unclassified:
+            lines.append(
+                f"{clean_unclassified} failure(s) unclassifiable for"
+                " clean_exit_wrong — no ledger or verifier-reward data"
+                " (never counted)"
+            )
     lines.append("")
 
     # Token/cost totals (issue #1123): sums over exactly the rows above.

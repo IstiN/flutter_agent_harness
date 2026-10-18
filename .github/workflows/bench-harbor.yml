@@ -389,7 +389,7 @@ jobs:
           tar -czf fa-bundle.tar.gz -C "$bundle_dir/bundle" .
 
       - name: Upload fa bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fa-bundle
           path: fa-bundle.tar.gz
@@ -457,7 +457,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download fa bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: fa-bundle
 
@@ -536,6 +536,13 @@ jobs:
           FA_EXTERNAL_CAP_SEC: ${{ matrix.external_cap }}
           # shard task names: dataset dir names, no whitespace — safe to word-split.
           SHARD_TASKS: ${{ matrix.tasks }}
+          # gh-1658 C1: the matrix identity rides the step env so the run
+          # block stays pure shell — the retry REG
+          # (test_bench_harbor_workflow.py::ZeroTrialRetryTest) executes
+          # the block verbatim in a subprocess, where `${{ }}` would be a
+          # bash bad substitution.
+          SHARD_KIND: ${{ matrix.kind }}
+          SHARD_INDEX: ${{ matrix.i }}
         run: |
           set -euo pipefail
           # gh-1503 defense-in-depth behind the setup preflight: the
@@ -593,21 +600,77 @@ jobs:
             false|FALSE|False|no|off) unset FA_PROGRESS_EXTENSION;;
             1|true|TRUE|True|yes|on) export FA_PROGRESS_EXTENSION=1;;
           esac
-          # Pinned --job-name: one jobs/<name>/ dir per shard, so the summary
-          # job's downloads cannot collide on harbor's timestamped default.
-          # The family label keys results per dataset version (fa-4.0-*
-          # matches the historical 4.0 names exactly).
-          .bench-venv/bin/harbor run -d "$DATASET" -a fa_agent:FaAgent \
-            -e "$ENV_TYPE" -m "$MODEL" -k "$ATTEMPTS" -n "$NCONC" \
-            --job-name "fa-${FAMILY}-${ENV_TYPE}-${{ matrix.kind }}-${{ matrix.i }}" -o jobs \
-            "${args[@]}"
+          # gh-1658 C1: the harbor invocation + the zero-trial inline
+          # retry. The job name stays pinned (one jobs/<name>/ dir per
+          # shard, so the summary job's downloads cannot collide on
+          # harbor's timestamped default; the family label keys results
+          # per dataset version — fa-4.0-* matches the historical 4.0
+          # names exactly) and is built from step-env matrix values so
+          # the whole block remains pure shell.
+          # gh-1600 AC2: the output lives OUTSIDE $GITHUB_WORKSPACE — on
+          # the shared self-hosted runner a leftover jobs/<name>/ in the
+          # workspace (trial dirs bind-mounted into task containers) made
+          # the next mobile build's clean choke. RUNNER_TEMP is
+          # runner-managed scratch, never a workspace path (gh-1658's
+          # retry paths below follow the same out-of-workspace dir).
+          JOB_NAME="fa-${FAMILY}-${ENV_TYPE}-${SHARD_KIND}-${SHARD_INDEX}"
+          mkdir -p "${RUNNER_TEMP:-/tmp}/bench/jobs"
+          run_harbor() {
+            .bench-venv/bin/harbor run -d "$DATASET" -a fa_agent:FaAgent \
+              -e "$ENV_TYPE" -m "$MODEL" -k "$ATTEMPTS" -n "$NCONC" \
+              --job-name "$JOB_NAME" -o "${RUNNER_TEMP:-/tmp}/bench/jobs" \
+              "${args[@]}"
+          }
+          # The zero-trial gate counts result.json PRESENCE at exactly
+          # the depth the summary's completeness count uses — the
+          # <job>/<trial>/result.json glob (gh-1556 AC3): deeper files
+          # (an extracted archive / cache dir) are skipped by _trial_rows
+          # and must be skipped here too, or the gate would report
+          # "trials started" while the summary still counts 0.
+          trials_started() {
+            [ -d "${RUNNER_TEMP:-/tmp}/bench/jobs/$JOB_NAME" ] || { echo 0; return 0; }
+            find "${RUNNER_TEMP:-/tmp}/bench/jobs/$JOB_NAME" -mindepth 2 -maxdepth 2 -name result.json | wc -l
+          }
+          if run_harbor; then
+            :
+          else
+            harbor_status=$?
+            if [ "$(trials_started)" -gt 0 ]; then
+              # gh-1658 C1/AC2: a failure WITH trials is a real result —
+              # never retried (a retry would double-bill and mix attempts).
+              exit "$harbor_status"
+            fi
+            # gh-1658 C1/AC1: zero trials = a startup crash (docker /
+            # rate-limit / dataset-resolve transient). Retry ONCE with
+            # the same env/model/params; attempt 1's trial-less dir moves
+            # aside so the retry owns the pinned job name and the failed
+            # attempt's logs survive for RCA. The preserved dir never
+            # matches the fa-<family>-* export globs (Hub upload +
+            # summary family filter), so the merged export cannot
+            # double-count its trials.
+            mv "${RUNNER_TEMP:-/tmp}/bench/jobs/$JOB_NAME" "${RUNNER_TEMP:-/tmp}/bench/jobs/_attempt1-$JOB_NAME" 2>/dev/null || true
+            if run_harbor; then
+              echo "::warning::shard $JOB_NAME: zero-trial startup crash recovered by the inline retry (attempt 1 kept under ${RUNNER_TEMP:-/tmp}/bench/jobs/_attempt1-$JOB_NAME)"
+            else
+              # gh-1658 C2: the marker keeps the RCA independent of job
+              # logs surviving the rerun.
+              {
+                echo "## Shard $JOB_NAME"
+                echo
+                echo "zero-trial startup failure (retried once)"
+              } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+              exit 1
+            fi
+          fi
 
       - name: Upload harbor job (shard ${{ matrix.i }})
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harbor-job-shard-${{ matrix.i }}
-          path: jobs/
+          # gh-1600: the harbor output moved outside the workspace
+          # ($RUNNER_TEMP/bench/jobs — see the harbor run step).
+          path: ${{ runner.temp }}/bench/jobs/
 
       - name: Upload to Harbor Hub
         if: always() && env.HARBOR_API_KEY != ''
@@ -615,9 +678,63 @@ jobs:
           HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
         run: |
           shopt -s nullglob
-          for job_dir in jobs/fa-${FAMILY}-*; do
+          # gh-1600: iterate the out-of-workspace output dir (see the harbor
+          # run step).
+          for job_dir in "$RUNNER_TEMP/bench/jobs"/fa-${FAMILY}-*; do
             .bench-venv/bin/harbor upload "$job_dir" --public
           done
+
+      # gh-1600 AC2: a cancelled/interrupted shard can leave the trial
+      # containers (and their bind mounts over the output dir) alive on the
+      # persistent self-hosted box — those holds made the NEXT workflow's
+      # workspace clean fail. Tear the shard's containers down BEFORE
+      # removing the output dir; both are best-effort (the uploads above
+      # already ran) so cleanup can never mask the shard's verdict.
+      - name: Tear down bench containers + output dir (gh-1600)
+        if: always()
+        env:
+          # ENV_TYPE is scoped to the harbor-run step above — the cleanup
+          # needs its own copy or `set -u` kills it ("ENV_TYPE: unbound
+          # variable") and the always() step fails the job.
+          ENV_TYPE: ${{ matrix.env }}
+          KIND: ${{ matrix.kind }}
+          SHARD: ${{ matrix.i }}
+        run: |
+          set -euo pipefail
+          if command -v docker >/dev/null 2>&1; then
+            # gh-1600 rework round 2 (BLOCKING review thread, re-opened):
+            # harbor 0.23.0 never puts the job name in container names
+            # (compose project = `{task}__{ShortUUID(7)}__env`), AND the
+            # compose project directory lives in the shared task cache
+            # (~/.cache/harbor/tasks/packages/... — `--project-directory
+            # <task_cache>/environment`), never under $RUNNER_TEMP/bench.
+            # What IS under the bench output: the trial dirs (the -o
+            # job dir) bind-mounted into the containers as /logs/* — so
+            # the container's .Mounts[].Source is the only harbor-side
+            # path under this shard's bench output. Select by the
+            # compose project label, then precision-guard on the mount
+            # Sources; mount Sources embed the per-registration _temp
+            # path, so another workflow's or another registration's
+            # live containers are never touched.
+            ids=$(docker ps -aq --filter "label=com.docker.compose.project" 2>/dev/null || true)
+            torn=0
+            for c in $ids; do
+              srcs=$(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$c" 2>/dev/null || true)
+              for s in $srcs; do
+                case "$s" in
+                  "${RUNNER_TEMP:-/tmp}/bench"/*)
+                    docker rm -f "$c" >/dev/null 2>&1 || true
+                    torn=$((torn + 1))
+                    break ;;
+                esac
+              done
+            done
+            if [ "$torn" -gt 0 ]; then
+              echo "tore down $torn bench container(s) bound to ${RUNNER_TEMP:-/tmp}/bench"
+            fi
+          fi
+          rm -rf "${RUNNER_TEMP:-/tmp}/bench" 2>/dev/null \
+            || echo "::warning::${RUNNER_TEMP:-/tmp}/bench not fully removable — a container still holds it (gh-1600)"
 
   summary:
     name: Aggregate resolution rate
@@ -630,7 +747,7 @@ jobs:
 
       - name: Download shard results
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: harbor-job-shard-*
           merge-multiple: true
@@ -645,7 +762,7 @@ jobs:
       # artifact below is uploaded.
       - name: Upload merged harbor jobs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harbor-jobs-merged
           path: jobs/
@@ -665,9 +782,18 @@ jobs:
           BENCH_RUN_LABEL: ${{ needs.setup.outputs.run_label }}
           FA_REF: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # gh-1658 C3: the shard count the run fielded (the setup split's
+          # matrix) — the aggregate fails by name on any shard that
+          # contributed 0 trials to the merged export.
+          MATRIX_JSON: ${{ needs.setup.outputs.matrix }}
         run: |
           set -euo pipefail
           expected_trials=$((EXPECTED_TASKS * ATTEMPTS))
+          # gh-1658 C3: the expected shard set is derived from the setup
+          # split (never hardcoded) — summary.py fails the verdict when a
+          # shard index carries no trial in the merged export.
+          expected_shards=$(printf '%s' "$MATRIX_JSON" | jq '.include | length')
           python bench/harbor_fa/summary.py --family "$FAMILY" \
             --model "$MODEL" --fa-ref "$FA_REF" --run-url "$RUN_URL" \
-            --expected-trials "$expected_trials" jobs
+            --expected-trials "$expected_trials" \
+            --expected-shards "$expected_shards" jobs

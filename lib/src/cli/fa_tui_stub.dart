@@ -35,6 +35,7 @@ final class FaTuiCallbacks {
     required this.onModelSelected,
     required this.buildSlashMenu,
     required this.buildModelMenu,
+    this.buildImportSessionsMenu,
     required this.statusLine,
     required this.prompt,
     this.onInterrupt,
@@ -57,6 +58,12 @@ final class FaTuiCallbacks {
   final Future<void> Function(String modelId) onModelSelected;
   final List<MenuItem> Function(String prefix) buildSlashMenu;
   final List<MenuItem> Function(String filter, int width) buildModelMenu;
+
+  /// Rebuilds the `/import` session-search picker (issue #1562). Always
+  /// null here — the TUI never runs on web; mirrors fa_tui.dart so the
+  /// repl_boot call site compiles for BOTH targets.
+  final List<MenuItem> Function(String filter)? buildImportSessionsMenu;
+
   final String Function() statusLine;
   final String prompt;
 

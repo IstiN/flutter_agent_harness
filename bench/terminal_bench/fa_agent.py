@@ -716,6 +716,25 @@ class FaAgent(AbstractInstalledAgent):
             )
 
     @staticmethod
+    def _write_usage_guard(logging_dir, usage) -> None:
+        """gh-1643 usage-guard row (ExportGuard pattern): the trial ended
+        mid-request, so the folded totals are partial (estimated
+        request-side input, output unknown). Fail-soft by contract.
+        """
+        if logging_dir is None:
+            return
+        guard = {
+            "trial": Path(logging_dir).name,
+            "usage_incomplete": True,
+            "estimated_input_tokens": usage.estimated_input_tokens,
+            "estimated_output_tokens": usage.estimated_output_tokens,
+        }
+        try:
+            (Path(logging_dir) / "usage-guard.json").write_text(json.dumps(guard))
+        except OSError:
+            pass
+
+    @staticmethod
     def _guard_loud_empty(logging_dir, usage_tokens) -> None:
         """Issue #1406 loud-empty guard (ExportGuard pattern): a trial
         whose bench_metrics.json folded requests == [] while the usage
@@ -823,6 +842,14 @@ class FaAgent(AbstractInstalledAgent):
             result.total_output_tokens = (
                 usage.output_tokens + usage.estimated_output_tokens
             )
+            # gh-1643 AC1: a request killed before its assistant message
+            # finalized means the fold only PARTIALLY knows this trial's
+            # spend — the marker row makes that explicit next to the other
+            # trial guards (tb's closed TrialResults model cannot carry an
+            # extra field, so the non-zero totals above plus this row are
+            # the result-visible honesty signals).
+            if usage.usage_incomplete:
+                FaAgent._write_usage_guard(logging_dir, usage)
             # Issue #1406: with usage known, the loud-empty guard can name
             # a ConnTrace-dark trial instead of shipping an empty shell.
             FaAgent._guard_loud_empty(logging_dir, usage.total_tokens())
