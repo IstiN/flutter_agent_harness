@@ -89,6 +89,17 @@ Future<int> _runTrajectoryCommand(
             : lines,
       );
       break;
+    case 'export':
+      // gh-1681 Gap 2: the harbor adapter exports the trial's ATIF
+      // trajectory from here after the agent phase — the leaderboard
+      // static analysis requires <trial>/agent/trajectory.json.
+      exitCode = await _runTrajectoryExport(
+        io,
+        session,
+        baseSnapshot,
+        command,
+      );
+      break;
     case 'tail':
       // Never returns: follows until interrupted, so the render-stop and
       // timing print below are unreachable on this path (as before).
@@ -111,6 +122,45 @@ Future<int> _runTrajectoryCommand(
 int _printTrajectory(CliIO io, List<String> lines) {
   for (final line in lines) {
     io.write('$line\n');
+  }
+  return 0;
+}
+
+/// `fa trajectory export` (gh-1681 Gap 2): serializes the whole-ledger
+/// snapshot as an ATIF document — the format Harbor Hub stores as a
+/// trial's `trajectory_path` and the leaderboard static analysis requires
+/// on every rewarded trial. `--output` writes the file (the harbor
+/// adapter targets /logs/agent/trajectory.json inside the task
+/// container); without it the document goes to stdout. The agent identity
+/// rides the CLI's own name/version; the model derives from the first
+/// assistant record. An empty ledger is an honest error (ATIF requires
+/// at least one step), never a fabricated empty document.
+Future<int> _runTrajectoryExport(
+  CliIO io,
+  Session session,
+  TrajectorySnapshot snapshot,
+  TrajectoryCliCommand command,
+) async {
+  final json = exportAtifJson(
+    snapshot,
+    agentName: 'fa',
+    agentVersion: _packageVersion(),
+    sessionId: (await session.getMetadata()).id,
+  );
+  if (json == null) {
+    io.writeln('trajectory: nothing to export — the ledger has no records');
+    return 1;
+  }
+  final output = command.output;
+  if (output == null) {
+    io.write('$json\n');
+    return 0;
+  }
+  try {
+    File(output).writeAsStringSync('$json\n');
+  } on Object catch (error) {
+    io.writeln('trajectory: export write failed: $error');
+    return 1;
   }
   return 0;
 }
