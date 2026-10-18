@@ -403,18 +403,21 @@ jobs:
       # Pinned: the adapter targets the 0.23.0 BaseInstalledAgent contract.
       - run: pip install 'harbor[modal]==0.23.0'
 
-      # Same gate as bench.yml: stdlib-only bench script tests. Two
+      # Same gate as bench.yml: stdlib-only bench script tests. Three
       # discovery roots: bench/terminal_bench (legacy scripts + the
       # harbor parity suite from #1122 — terminal-bench is installed
-      # just for the legacy-adapter import surface) and bench/harbor_fa
+      # just for the legacy-adapter import surface), bench/harbor_fa
       # (the #1124 family/summary suites + the #1123 token/cost summary
-      # tests). Discovering bench/ itself would need __init__.py
-      # plumbing the bench dirs don't have.
+      # tests), and bench/leaderboard (the gh-1682 fetch/record/render
+      # suites — fixtures only, no network). Discovering bench/ itself
+      # would need __init__.py plumbing the bench dirs don't have.
+      # Keep the root list in sync with bench-tests.yml.
       - name: Unit-test bench scripts
         run: |
           pip install 'terminal-bench==0.2.18'
           python -m unittest discover -s bench/terminal_bench -v
           python -m unittest discover -s bench/harbor_fa -v
+          python -m unittest discover -s bench/leaderboard -v
 
       # Download the dataset once for classification; harbor re-fetches
       # into its own cache during the run. DATASET is the canonical id
@@ -742,6 +745,10 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # gh-1682: the leaderboard step commits the updated fa-results
+    # ledger + regenerated README table back to the repo.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -796,4 +803,35 @@ jobs:
           python bench/harbor_fa/summary.py --family "$FAMILY" \
             --model "$MODEL" --fa-ref "$FA_REF" --run-url "$RUN_URL" \
             --expected-trials "$expected_trials" \
-            --expected-shards "$expected_shards" jobs
+            --expected-shards "$expected_shards" \
+            --json-summary leaderboard-summary.json jobs
+
+      # gh-1682: auto-update the public leaderboard — append the run's
+      # result to bench/leaderboard/fa_results.json (idempotent: keyed by
+      # dataset version + model, run URLs union) and regenerate the
+      # README table. Runs only on a COMPLETE full run (the verdict step
+      # succeeded) — smoke/narrowed dispatches (non-empty tasks) never
+      # touch the ledger.
+      - name: Update leaderboard ledger & table
+        if: success() && inputs.tasks == ''
+        env:
+          FAMILY: ${{ needs.setup.outputs.family }}
+          MODEL: ${{ needs.setup.outputs.bench_model }}
+          FA_REF: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python bench/leaderboard/record.py --summary leaderboard-summary.json
+          # No --version: render every ledger version + the 4.0 field,
+          # so the marked README block is rewritten whole, never shrunk
+          # to the dispatch's single family.
+          python bench/leaderboard/render.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md bench/leaderboard
+          if git diff --cached --quiet; then
+            echo "leaderboard: ledger and table already up to date"
+          else
+            git commit -m "bench: leaderboard ledger update · ${FAMILY} · ${MODEL} (gh-1682)"
+            git push origin "HEAD:${GITHUB_REF#refs/heads/}"
+          fi
