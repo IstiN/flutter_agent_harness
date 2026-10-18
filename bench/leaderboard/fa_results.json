@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "results": [
+    {
+      "dataset_version": "2.1",
+      "model": "kimi-for-coding",
+      "resolved": 300,
+      "total": 445,
+      "date": "2026-10-18",
+      "run_urls": [
+        "https://github.com/IstiN/flutter_agent_harness/actions/runs/39028127116",
+        "https://github.com/IstiN/flutter_agent_harness/actions/runs/39052822079",
+        "https://github.com/IstiN/flutter_agent_harness/actions/runs/39098996789"
+      ],
+      "self_reported": true,
+      "fa_version": "2fd100169e"
+    },
+    {
+      "dataset_version": "2.1",
+      "model": "glm-5.3-flash",
+      "resolved": 257,
+      "total": 445,
+      "date": "2026-10-15",
+      "run_urls": [
+        "https://github.com/IstiN/flutter_agent_harness/actions/runs/38823577512"
+      ],
+      "self_reported": true,
+      "fa_version": "9201d8b387"
+    }
+  ]
+}
