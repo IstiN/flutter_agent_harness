@@ -171,7 +171,13 @@ factual: paths, commands, invariants — no essays.
   (gh-1646): the contract says work to the wall — the time-left notices
   report the remaining budget, and while work remains the next
   compliant action is another approach, not a final answer (the run is
-  interrupted automatically at the deadline). The loop parses
+  interrupted automatically at the deadline). Feasibility is checked at
+  commitment time (gh-1670): before any cost-dominating step (from-source
+  builds, large downloads, brute-force searches) the contract teaches
+  estimating the duration against the time-left notices and switching to
+  a cheaper satisfying strategy — or, when none fits, the next-best
+  partial — rather than gambling the window on a known-infeasible path.
+  The loop parses
   the final answer's `task-ledger` fenced block (`parseTaskLedger`,
   last block wins) and emits `TaskLedgerEvent`; hosts persist the hidden
   `task_ledger` custom record (CLI: `agent_event_handler.dart` →

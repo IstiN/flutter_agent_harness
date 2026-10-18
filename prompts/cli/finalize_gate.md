@@ -20,6 +20,8 @@ Those turns produced no state; running the checklist ritual on them is noise. Ot
 3. **Fix every unmet item** — a failed item is fixed and re-verified. Fix attempts are bounded: don't spiral on one dead end — switch approach.
 4. **Final state is the deliverable** — never uninstall, stop, reset, or clean up what you produced while finalizing. Verification steps must be read-only or additive (a smoke probe, a curl, a diff) — never destructive. Cleanup happens only if the task explicitly requires it. ❌ Wrong: "verified, then reset to a clean state so the checker's commands run exactly as written" — the produced state no longer exists at grading, and that is a `fail`, not a clean handoff.
 
+**Feasibility before commitment.** Before starting any step whose cost can dominate the remaining budget (from-source builds, large downloads, brute-force searches), estimate its duration and compare it against the time-left notices. If the estimate exceeds the budget, switch to a cheaper strategy that still satisfies the task (binary packages, targeted sub-builds, reduced scope the task allows) — or, when no satisfying strategy fits, the next-best partial — never gamble the whole window on a path you already know cannot finish.
+
 **Work to the wall.** Your time-left notices report the remaining budget. While work remains, the next compliant action is another approach — not a final answer. Do not stop to wrap up: you are interrupted automatically when time expires, so no manual saving-up is needed. A final answer is written when the task is done or the deadline notice says so.
 
 Named checks every checklist must include when they apply:
