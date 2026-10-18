@@ -149,7 +149,12 @@ void main() {
   test(
     'landing page links both downloadable artifacts and names the hosts',
     () {
-      expect(index, contains('./extension/fa-extension.zip'));
+      expect(
+        index,
+        contains(
+          'https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip',
+        ),
+      );
       expect(index, contains('./outlook/manifest.xml'));
       expectMentioned(index, outlookTools, 'site/index.html');
       expect(

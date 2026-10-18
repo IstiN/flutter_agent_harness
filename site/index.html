@@ -174,7 +174,7 @@
           "name": "How do I install the Chrome extension?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Download fa-extension.zip from https://fa1.dev/extension/fa-extension.zip, unzip it, open chrome://extensions, enable Developer mode, choose Load unpacked, and pick the unzipped folder. The side panel hosts the full Fa app, and the agent gains 34 browser tools — tabs, windows, history, bookmarks, downloads, cookies, screenshots, and approval-gated code injection."
+            "text": "Download fa-extension.zip from https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip, unzip it, open chrome://extensions, enable Developer mode, choose Load unpacked, and pick the unzipped folder. The side panel hosts the full Fa app, and the agent gains 34 browser tools — tabs, windows, history, bookmarks, downloads, cookies, screenshots, and approval-gated code injection."
           }
         },
         {
@@ -300,7 +300,7 @@
         <a class="btn" id="macos-download" href="https://github.com/IstiN/flutter_agent_harness/releases/latest" target="_blank" rel="noopener">
           Download for macOS (no sandbox)
         </a>
-        <a class="btn" id="extension-download" href="./extension/fa-extension.zip">
+        <a class="btn" id="extension-download" href="https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip">
           Chrome extension
         </a>
         <a class="btn" href="#addons">
@@ -407,7 +407,7 @@ flutter run</pre>
         <h3>Chrome extension</h3>
         <p>Fa lives in your browser: it reads the page, drives tabs, takes
         screenshots and answers with the full tool loop.
-        <a id="extension-download-alt" href="./extension/fa-extension.zip">Download the zip</a>,
+        <a id="extension-download-alt" href="https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip">Download the zip</a>,
         unzip it, then open <code>chrome://extensions</code>, enable
         <em>Developer mode</em>, <em>Load unpacked</em> → pick the unzipped
         folder and pin Fa from the puzzle-piece menu.</p>
@@ -630,7 +630,7 @@ flutter run</pre>
         quarantined as untrusted data; code injection prompts on every
         call by default — only an explicit yolo session drops that
         guard.</p>
-        <p><a href="./extension/fa-extension.zip">Download
+        <p><a href="https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip">Download
         fa-extension.zip</a> — install steps in <a href="#install">Install
         ↑</a>.</p>
       </article>
@@ -751,7 +751,7 @@ flutter run</pre>
       </details>
       <details class="faq-item" id="faq-extension">
         <summary>How do I install the Chrome extension?</summary>
-        <p>Download <a href="./extension/fa-extension.zip">fa-extension.zip</a>,
+        <p>Download <a href="https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip">fa-extension.zip</a>,
         unzip it, open <code>chrome://extensions</code>, enable
         <em>Developer mode</em>, <em>Load unpacked</em> → pick the unzipped
         folder, and pin Fa from the puzzle-piece menu. The side panel hosts
@@ -804,12 +804,9 @@ flutter run</pre>
       if (asset) {
         document.getElementById('macos-download').href = asset.browser_download_url;
       }
-      // The Chrome extension rides every release too; prefer the release
-      // asset (always the latest build) over the site-hosted copy.
-      const extAsset = release.assets.find(a => a.name === 'fa-extension.zip');
-      if (extAsset) {
-        document.getElementById('extension-download').href = extAsset.browser_download_url;
-      }
+      // gh-1684: the Chrome extension downloads straight from the GitHub
+      // release (releases/latest/download/fa-extension.zip is the static
+      // href above) — no per-release JS rewrite needed.
     } catch (_) {
       // Keep the fallback link to the releases page.
     }

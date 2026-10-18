@@ -52,7 +52,7 @@
   session to yolo drops that guard (the override is cleared, not
   bypassed silently).
 - Artifact (rebuilt on every deploy):
-  https://fa1.dev/extension/fa-extension.zip — unzip, then open
+  https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip — unzip, then open
   chrome://extensions, enable Developer mode, Load unpacked, pick the
   unzipped folder.
 - Architecture and operations: `docs/browser-extension.md` in the repository.
@@ -145,7 +145,7 @@
 - How to install the CLI? `curl -fsSL "https://fa1.dev/install.sh" | sh`
   (or `dart pub global activate flutter_agent_harness`), then run `fa`.
 - How do I install the Chrome extension? Download
-  https://fa1.dev/extension/fa-extension.zip, unzip it, then
+  https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip, unzip it, then
   chrome://extensions → Developer mode → Load unpacked.
 - Does Fa run in Outlook? Yes: download
   https://fa1.dev/outlook/manifest.xml, open https://aka.ms/olksideload

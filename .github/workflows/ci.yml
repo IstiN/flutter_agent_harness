@@ -331,6 +331,11 @@ jobs:
       # gated on pull_request + SM validation dispatches like
       # exzone/locksmoke (tags/schedule never ran the suite and skip it).
       office_addin: ${{ steps.paths.outputs.office_addin }}
+      # gh-1684 AC3: the fa-extension.zip size gate — any diff that can
+      # move the extension zip manifest (extension sources/vendor, the
+      # packaging scripts, the committed size baseline itself). Gated on
+      # pull_request + SM validation dispatches like exzone/locksmoke.
+      extsize: ${{ steps.paths.outputs.extsize }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -378,11 +383,12 @@ jobs:
             HEAD_REF="$(git rev-parse HEAD)"
             BASE_REF="$(git merge-base origin/main "$HEAD_REF" 2>/dev/null || true)"
             if [ -z "$BASE_REF" ]; then
-              echo "::warning::merge-base(origin/main, HEAD) failed on the dispatch checkout — failing safe: exzone + locksmoke + installer + office_addin arms run"
+              echo "::warning::merge-base(origin/main, HEAD) failed on the dispatch checkout — failing safe: exzone + locksmoke + installer + office_addin + extsize arms run"
               echo "exzone=true" >> "$GITHUB_OUTPUT"
               echo "locksmoke=true" >> "$GITHUB_OUTPUT"
               echo "installer=true" >> "$GITHUB_OUTPUT"
               echo "office_addin=true" >> "$GITHUB_OUTPUT"
+              echo "extsize=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
@@ -426,6 +432,18 @@ jobs:
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
               grep -qE '(^office_addin/|^flutter_app/|^packages/|^lib/|^pubspec\.lock$|^scripts/build_office_addin\.sh$|^\.github/workflows/office-addin\.yml$)'; then
             echo "office_addin=true" >> "$GITHUB_OUTPUT"
+          fi
+          # gh-1684 AC3: the extension size gate — extension sources and
+          # vendor supply-chain lock, the build/packaging scripts, the
+          # size baseline itself (a reseed PR must re-prove the floor)
+          # and everything that compiles INTO the zip (the panel app is
+          # the flutter_app web build; sw/agent.js compiles lib/ + the
+          # root package set). Gated on the SAME two events as
+          # exzone/locksmoke (pull_request + validation dispatch); the
+          # classifier failure arm above runs it fail-safe.
+          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
+              grep -qE '(^browser_ext/|^flutter_app/|^lib/|^packages/|^pubspec\.yaml$|^pubspec\.lock$|^scripts/(build_browser_ext|fetch_vendor_assets|stage_extension_panel|ext_package_guard|prune_flutter_assets)\.|^scripts/size_budget/fa-extension\.tsv$|^\.github/workflows/(ci|build-macos|pages)\.yml$)'; then
+            echo "extsize=true" >> "$GITHUB_OUTPUT"
           fi
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             # Dispatch done — the stages classifier below reads a
