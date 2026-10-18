@@ -5,7 +5,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 
 import 'package:fa_ui/fa_ui.dart' as fa_ui;
 import 'package:flutter/material.dart';
@@ -401,32 +401,52 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-/// Opens the system settings page for the given [permission] (calendar,
-/// contacts, home, health, microphone, notifications).
+/// Maps a [permission] name to the macOS Privacy & Security pane anchor.
+///
+/// `null` means the permission lives in the dedicated Notifications pane
+/// (no `com.apple.preference.security?` anchor exists for it). Unknown
+/// names fall back to the Calendars pane — any Privacy pane lands the
+/// user one click from the right toggle.
+@visibleForTesting
+String? macOsPrivacyPaneForPermission(String permission) {
+  return switch (permission.toLowerCase()) {
+    'notification' || 'notifications' => null,
+    'contacts' => 'Privacy_Contacts',
+    'home' || 'homekit' => 'Privacy_HomeKit',
+    'microphone' => 'Privacy_Microphone',
+    _ => 'Privacy_Calendars', // 'calendar' + fallback
+  };
+}
+
+/// Resolves the system-settings deep link for [permission].
 ///
 /// macOS uses `x-apple.systempreferences:` deep links to the specific
-/// Privacy & Security pane; iOS opens the app's settings page.
+/// Privacy & Security pane (or the dedicated Notifications pane when
+/// [macOsPrivacyPaneForPermission] returns null); every other platform
+/// (iOS) opens the app's own settings page — the user navigates to the
+/// permission from there.
+@visibleForTesting
+String systemSettingsUrlForPermission(
+  String permission, {
+  required bool isMacOS,
+}) {
+  if (!isMacOS) return 'app-settings:';
+  final pane = macOsPrivacyPaneForPermission(permission);
+  return pane != null
+      ? 'x-apple.systempreferences:com.apple.preference.security?$pane'
+      : 'x-apple.systempreferences:com.apple.preference.notifications';
+}
+
+/// Opens the system settings page for the given [permission] (calendar,
+/// contacts, home, health, microphone, notifications).
 void _openSystemSettings(String permission) {
   // No system privacy panes exist on the web (and dart:io Platform throws
   // there) — nothing to open.
   if (kIsWeb) return;
-  final String url;
-  if (Platform.isMacOS) {
-    final pane = switch (permission.toLowerCase()) {
-      'calendar' => 'Privacy_Calendars',
-      'contacts' => 'Privacy_Contacts',
-      'home' || 'homekit' => 'Privacy_HomeKit',
-      'microphone' => 'Privacy_Microphone',
-      'notification' || 'notifications' => null, // notifications pane
-      _ => 'Privacy_Calendars', // fallback
-    };
-    url = pane != null
-        ? 'x-apple.systempreferences:com.apple.preference.security?$pane'
-        : 'x-apple.systempreferences:com.apple.preference.notifications';
-  } else {
-    // iOS: open the app's settings page (user navigates to the permission).
-    url = 'app-settings:';
-  }
+  final url = systemSettingsUrlForPermission(
+    permission,
+    isMacOS: Platform.isMacOS,
+  );
   unawaited(
     url_launcher.launchUrl(
       Uri.parse(url),
