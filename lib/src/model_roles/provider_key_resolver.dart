@@ -217,7 +217,10 @@ final class HostKeyResolver {
   /// catalog facts — omit them (the defaults) and resolution is
   /// store-only, so the env-name leg can never hijack a custom endpoint.
   /// [activeCustomKeyName] is the active custom registry entry's own slot,
-  /// when the host tracks one.
+  /// when the host tracks one. [storeDegraded]/[lastStoreError] carry the
+  /// host's store-health signal (gh-1679 AC3): when a save degraded to
+  /// session-only, the missing-key hint distinguishes "slot empty" from
+  /// "store not writable" instead of claiming a bare "no key set".
   HostKeyResolution resolveKey({
     String? provider,
     required String baseUrl,
@@ -225,6 +228,8 @@ final class HostKeyResolver {
     List<String> envNames = const [],
     String? defaultBaseUrl,
     String? activeCustomKeyName,
+    bool storeDegraded = false,
+    String? lastStoreError,
   }) {
     // The HOST-scoped canonical (no provider-name suffix) — the same slot
     // resolveEndpointKeyName probes, so the drift comparison is
@@ -239,7 +244,14 @@ final class HostKeyResolver {
       activeCustomKeyName: activeCustomKeyName,
     );
     final name = _effectiveSlotName(canonical, chained);
-    return HostKeyResolution(
+      missingKeyHint: _missingKeyHint(
+        name,
+        provider,
+        baseUrl,
+        canonical,
+        storeDegraded: storeDegraded,
+        lastStoreError: lastStoreError,
+      ),
       slotName: name,
       fromEnv: _isEnvResolution(name, chained, envNames),
       canonicalName: canonical,
@@ -289,16 +301,28 @@ final class HostKeyResolver {
 
   /// The missing-key guidance, non-null when nothing resolved: names the
   /// slot a key should be stored into (mirrors the CLI's fallback hint).
+  /// A degraded store (gh-1679 AC3) renders the third state instead of
+  /// the bare "no key set": the slot may be empty because an earlier
+  /// paste never reached the durable store — the hint says so, names the
+  /// last write failure, and points at the same retry slot.
   String? _missingKeyHint(
     String? name,
     String? provider,
     String baseUrl,
-    String canonical,
-  ) {
+    String canonical, {
+    required bool storeDegraded,
+    String? lastStoreError,
+  }) {
     if (name != null) return null;
-    return 'no key resolved for '
-        '${provider == null ? baseUrl : 'provider "$provider"'} — set it '
-        'with /key set $canonical <value>';
+    final target = provider == null ? baseUrl : 'provider "$provider"';
+    if (storeDegraded) {
+      return 'no key resolved for $target — the secure store is not '
+          'writable (last write failed: ${lastStoreError ?? 'unknown'}) '
+          'and keys pasted earlier may not have persisted; fix the store, '
+          'then /key set $canonical <value>';
+    }
+    return 'no key resolved for $target — set it with '
+        '/key set $canonical <value>';
   }
 
   static bool _isGenuineEnv(

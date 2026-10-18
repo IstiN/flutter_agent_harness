@@ -356,6 +356,10 @@ final class KeyStatusRenderer {
   }
 
   /// The fallback hint when no key resolved (or the token was rejected).
+  /// A degraded secure store (gh-1679 AC3) replaces the bare "no key set"
+  /// with the store-health wording: an earlier paste may never have
+  /// reached the durable store, which is exactly the incident's
+  /// self-contradicting 401.
   String noKeyHint(
     String? entryKey,
     String baseUrl,
@@ -366,10 +370,30 @@ final class KeyStatusRenderer {
     final suggested =
         entryKey ??
         (baseUrl != spec?.defaultBaseUrl ? scopedName : names.first);
+    if (!explicitToken) {
+      final degraded = degradedStoreHint(suggested);
+      if (degraded != null) return degraded;
+    }
     return explicitToken
         ? ' — the /provider token was rejected; set a fresh one with '
               '/key set $suggested <value>'
         : ' — no key set; store one with /key set $suggested <value>';
+  }
+
+  /// The degraded-store variant of the no-key hint (gh-1679 AC3):
+  /// non-null when a save degraded to session-only since process start —
+  /// then "no key set" is practically a lie (the slot may be empty
+  /// because a paste never persisted), so the hint names the last write
+  /// failure and the persist caveat. Slots and diagnostics only, never
+  /// values.
+  String? degradedStoreHint(String suggested) {
+    final keys = secureKeys;
+    if (keys == null || keys.saveFailures == 0) return null;
+    final diagnostic = keys.lastSaveError ?? 'the write failed';
+    return ' — no key set; the secure store is not writable '
+        '($diagnostic) and keys pasted earlier may not have persisted — '
+        'fix the store, then /key set $suggested <value>';
+  }
   }
 
   /// The hint for a genuine environment key, or null when none is in play.
@@ -438,6 +462,11 @@ final class KeyStatusRenderer {
         entry?.keyName ?? CustomProviderRegistry.keyNameFor(baseUrl);
     final storedHint = storedKeyHint(keyName, baseUrl);
     if (storedHint != null) return storedHint;
+    // gh-1679 AC3: a degraded store gets the store-health wording here
+    // too (roles mode's custom-endpoint path), naming the slot it would
+    // write.
+    final degraded = degradedStoreHint(keyName);
+    if (degraded != null) return degraded;
     final target = entry != null ? 'provider "${entry.name}"' : baseUrl;
     final login = entry != null ? ' (or /provider ${entry.name})' : '';
     return ' — no key resolved for $target; set it with '

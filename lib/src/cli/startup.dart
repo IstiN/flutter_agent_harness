@@ -761,6 +761,42 @@ List<String> secureKeyBootDiagnostics({
   return lines;
 }
 
+/// The boot save-degradation lines (gh-1679 AC2): one line per slot whose
+/// key never reached the durable store — the in-process failed-save names
+/// the cache tracks, plus registry entries the wizard flagged
+/// (`keyNotPersisted`, the marker persisted across boots) while their slot
+/// still resolves nothing. Each line names the slot, the last diagnostic,
+/// and the retry command — slots and diagnostics only, never values.
+/// Empty when nothing is degraded, so a healthy boot prints nothing new.
+List<String> secureKeySaveDegradationLines({
+  required SecureKeyCache keys,
+  required List<CustomProviderEntry> customProviders,
+}) {
+  final degraded = <String, String>{};
+  for (final name in keys.failedSaveNames) {
+    degraded[name] = keys.saveFailureDiagnostic(name) ?? 'write failed';
+  }
+  for (final entry in customProviders) {
+    final keyName = entry.keyName;
+    if (keyName == null || !entry.keyNotPersisted) continue;
+    // The slot resolved since — the failure generation ended.
+    if (keys.read(keyName) != null) continue;
+    degraded.putIfAbsent(
+      keyName,
+      () => 'a previous save failed (the entry was recorded without its key)',
+    );
+  }
+  if (degraded.isEmpty) return const [];
+  final label = keys.label ?? 'secure store';
+  final names = degraded.keys.toList()..sort();
+  return [
+    for (final name in names)
+      'warning: key "$name" did not reach the $label '
+      '(${degraded[name]}) — the provider boots keyless for it; fix the '
+      'store, then /key set $name <value>',
+  ];
+}
+
 /// The key slots the registry leg (issue #1552) can consume: for every
 /// saved [customProviders] entry a roles chain actually names — a
 /// catalog-unknown `provider:` matched against the entry names, trim +

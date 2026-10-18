@@ -633,6 +633,18 @@ Future<void> _runApp(List<String> args) async {
     stderr.writeln(line);
   }
 
+  // gh-1679: slots whose key never reached the durable store must not
+  // masquerade as saved — the wizard's persisted `keyNotPersisted` marker
+  // (plus any in-process save degradations) renders one boot line per
+  // affected slot with the retry command, on stderr like every boot
+  // diagnostic (never stdout — the headless events channel rule).
+  for (final line in secureKeySaveDegradationLines(
+    keys: keyCache,
+    customProviders: saved.customProviders,
+  )) {
+    stderr.writeln(line);
+  }
+
   // gh-1570 incident REG: a key-slot derivation change must never strand
   // stored keys. Copy legacy cross-spelling slots onto the canonical slot
   // (non-destructive, keychain in scope) BEFORE any resolution runs, and
