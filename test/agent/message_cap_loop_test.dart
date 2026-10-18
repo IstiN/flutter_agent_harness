@@ -51,7 +51,10 @@ List<AssistantMessageEvent> _textTurn(String text) {
 
 List<AssistantMessageEvent> _capRefusalTurn(String error) {
   final msg = _assistant(stopReason: StopReason.error, errorMessage: error);
-  return [StartEvent(partial: msg), ErrorEvent(reason: StopReason.error, error: msg)];
+  return [
+    StartEvent(partial: msg),
+    ErrorEvent(reason: StopReason.error, error: msg),
+  ];
 }
 
 class _FakeStreamFunction {
@@ -87,9 +90,7 @@ List<Message> _history(int toolPairs) => [
   for (var i = 0; i < toolPairs; i++) ...[
     UserMessage.text('question $i'),
     AssistantMessage(
-      content: [
-        ToolCall(id: 'c$i', name: 'read', arguments: const {}),
-      ],
+      content: [ToolCall(id: 'c$i', name: 'read', arguments: const {})],
       api: 'test-api',
       provider: 'test-provider',
       model: 'test-model',
@@ -108,123 +109,139 @@ List<Message> _history(int toolPairs) => [
 ];
 
 void main() {
-  test('cap-400: learn + one compaction pass + one retry → success (AC3)', () async {
-    final fake = _FakeStreamFunction([
-      _capRefusalTurn(_incident),
-      _textTurn('recovered'),
-    ]);
-    final store = ModelCapsStore();
-    var reliefCalls = 0;
-    final events = <AgentEvent>[];
-    final messages = await runAgentLoop(
-      prompts: [UserMessage.text('go')],
-      context: Context(messages: _history(4)),
-      config: AgentLoopConfig(
-        model: _model,
-        messageCapPolicy: store,
-        messageCapRelief: (messages) async {
-          reliefCalls++;
-          // The host compaction pass: keep the newest half.
-          return messages.sublist(messages.length ~/ 2);
-        },
-      ),
-      streamFunction: fake.call,
-      toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
-      emit: events.add,
-    );
+  test(
+    'cap-400: learn + one compaction pass + one retry → success (AC3)',
+    () async {
+      final fake = _FakeStreamFunction([
+        _capRefusalTurn(_incident),
+        _textTurn('recovered'),
+      ]);
+      final store = ModelCapsStore();
+      var reliefCalls = 0;
+      final events = <AgentEvent>[];
+      final messages = await runAgentLoop(
+        prompts: [UserMessage.text('go')],
+        context: Context(messages: _history(4)),
+        config: AgentLoopConfig(
+          model: _model,
+          messageCapPolicy: store,
+          messageCapRelief: (messages) async {
+            reliefCalls++;
+            // The host compaction pass: keep the newest half.
+            return messages.sublist(messages.length ~/ 2);
+          },
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
+        emit: events.add,
+      );
 
-    expect(fake.calls, 2, reason: 'the refused request was retried once');
-    expect(reliefCalls, 1, reason: 'relief is bounded to one attempt');
-    expect(store.learnedCapFor(_model), 2048, reason: 'cap learned (AC2)');
-    final repair = events.whereType<MessageCapRepairEvent>().single;
-    expect(repair.learnedCap, 2048);
-    expect(repair.compacted, isTrue);
-    expect(
-      repair.messageCount,
-      fake.contexts.first.messages.length,
-      reason: 'the notice names the refused count',
-    );
-    final assistant = messages.whereType<AssistantMessage>().last;
-    expect(assistant.stopReason, StopReason.stop);
-    expect(assistant.errorMessage, isNull);
-  });
+      expect(fake.calls, 2, reason: 'the refused request was retried once');
+      expect(reliefCalls, 1, reason: 'relief is bounded to one attempt');
+      expect(store.learnedCapFor(_model), 2048, reason: 'cap learned (AC2)');
+      final repair = events.whereType<MessageCapRepairEvent>().single;
+      expect(repair.learnedCap, 2048);
+      expect(repair.compacted, isTrue);
+      expect(
+        repair.messageCount,
+        fake.contexts.first.messages.length,
+        reason: 'the notice names the refused count',
+      );
+      final assistant = messages.whereType<AssistantMessage>().last;
+      expect(assistant.stopReason, StopReason.stop);
+      expect(assistant.errorMessage, isNull);
+    },
+  );
 
-  test('a second cap-400 surfaces the terminal error — no infinite loop', () async {
-    final fake = _FakeStreamFunction([
-      _capRefusalTurn(_incident),
-      _capRefusalTurn(
-        '400 messages: array length 2051 exceeds limit 2048',
-      ),
-    ]);
-    final store = ModelCapsStore();
-    var reliefCalls = 0;
-    final messages = await runAgentLoop(
-      prompts: [UserMessage.text('go')],
-      context: Context(messages: _history(2)),
-      config: AgentLoopConfig(
-        model: _model,
-        messageCapPolicy: store,
-        messageCapRelief: (messages) async {
-          reliefCalls++;
-          return messages.sublist(1);
-        },
-      ),
-      streamFunction: fake.call,
-      toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
-      emit: (_) {},
-    );
-    expect(fake.calls, 2);
-    expect(reliefCalls, 1);
-    // The stale-cap re-learn path (E4): the second refusal re-teaches M.
-    expect(store.learnedCapFor(_model), 2048);
-    final assistant = messages.whereType<AssistantMessage>().last;
-    expect(assistant.stopReason, StopReason.error);
-    expect(assistant.errorMessage, contains('exceeds limit 2048'));
-  });
+  test(
+    'a second cap-400 surfaces the terminal error — no infinite loop',
+    () async {
+      final fake = _FakeStreamFunction([
+        _capRefusalTurn(_incident),
+        _capRefusalTurn('400 messages: array length 2051 exceeds limit 2048'),
+      ]);
+      final store = ModelCapsStore();
+      var reliefCalls = 0;
+      final messages = await runAgentLoop(
+        prompts: [UserMessage.text('go')],
+        context: Context(messages: _history(2)),
+        config: AgentLoopConfig(
+          model: _model,
+          messageCapPolicy: store,
+          messageCapRelief: (messages) async {
+            reliefCalls++;
+            return messages.sublist(1);
+          },
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
+        emit: (_) {},
+      );
+      expect(fake.calls, 2);
+      expect(reliefCalls, 1);
+      // The stale-cap re-learn path (E4): the second refusal re-teaches M.
+      expect(store.learnedCapFor(_model), 2048);
+      final assistant = messages.whereType<AssistantMessage>().last;
+      expect(assistant.stopReason, StopReason.error);
+      expect(assistant.errorMessage, contains('exceeds limit 2048'));
+    },
+  );
 
-  test('no policy: the cap-400 is terminal immediately (AC8, byte-identical)', () async {
-    final fake = _FakeStreamFunction([_capRefusalTurn(_incident)]);
-    final messages = await runAgentLoop(
-      prompts: [UserMessage.text('go')],
-      context: Context(messages: _history(2)),
-      config: AgentLoopConfig(model: _model),
-      streamFunction: fake.call,
-      toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
-      emit: (_) {},
-    );
-    expect(fake.calls, 1, reason: 'no policy — no repair, no retry');
-    final assistant = messages.whereType<AssistantMessage>().last;
-    expect(assistant.stopReason, StopReason.error);
-    expect(assistant.errorMessage, contains('exceeds limit 2048'));
-  });
+  test(
+    'no policy: the cap-400 is terminal immediately (AC8, byte-identical)',
+    () async {
+      final fake = _FakeStreamFunction([_capRefusalTurn(_incident)]);
+      final messages = await runAgentLoop(
+        prompts: [UserMessage.text('go')],
+        context: Context(messages: _history(2)),
+        config: AgentLoopConfig(model: _model),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
+        emit: (_) {},
+      );
+      expect(fake.calls, 1, reason: 'no policy — no repair, no retry');
+      final assistant = messages.whereType<AssistantMessage>().last;
+      expect(assistant.stopReason, StopReason.error);
+      expect(assistant.errorMessage, contains('exceeds limit 2048'));
+    },
+  );
 
-  test('cap-unknown refusal still heals once, with a null learned cap (E1)', () async {
-    final fake = _FakeStreamFunction([
-      _capRefusalTurn('400 messages: array length exceeds limit'),
-      _textTurn('recovered'),
-    ]);
-    final store = ModelCapsStore();
-    final events = <AgentEvent>[];
-    final messages = await runAgentLoop(
-      prompts: [UserMessage.text('go')],
-      context: Context(messages: _history(2)),
-      config: AgentLoopConfig(
-        model: _model,
-        messageCapPolicy: store,
-        messageCapRelief: (messages) async => messages.sublist(1),
-      ),
-      streamFunction: fake.call,
-      toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
-      emit: events.add,
-    );
-    expect(fake.calls, 2, reason: 'one coalesce+compact retry even cap-unknown');
-    expect(store.learnedCapFor(_model), isNull);
-    expect(store.isCapUnknown(_model.provider, _model.id), isTrue);
-    final repair = events.whereType<MessageCapRepairEvent>().single;
-    expect(repair.learnedCap, isNull);
-    expect(messages.whereType<AssistantMessage>().last.stopReason,
-        StopReason.stop);
-  });
+  test(
+    'cap-unknown refusal still heals once, with a null learned cap (E1)',
+    () async {
+      final fake = _FakeStreamFunction([
+        _capRefusalTurn('400 messages: array length exceeds limit'),
+        _textTurn('recovered'),
+      ]);
+      final store = ModelCapsStore();
+      final events = <AgentEvent>[];
+      final messages = await runAgentLoop(
+        prompts: [UserMessage.text('go')],
+        context: Context(messages: _history(2)),
+        config: AgentLoopConfig(
+          model: _model,
+          messageCapPolicy: store,
+          messageCapRelief: (messages) async => messages.sublist(1),
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
+        emit: events.add,
+      );
+      expect(
+        fake.calls,
+        2,
+        reason: 'one coalesce+compact retry even cap-unknown',
+      );
+      expect(store.learnedCapFor(_model), isNull);
+      expect(store.isCapUnknown(_model.provider, _model.id), isTrue);
+      final repair = events.whereType<MessageCapRepairEvent>().single;
+      expect(repair.learnedCap, isNull);
+      expect(
+        messages.whereType<AssistantMessage>().last.stopReason,
+        StopReason.stop,
+      );
+    },
+  );
 
   test('the retry rides a coalesced payload; the transcript is untouched '
       '(AC6/AC7)', () async {
@@ -285,7 +302,9 @@ void main() {
     expect(fake.calls, 2);
     final repair = events.whereType<MessageCapRepairEvent>().single;
     expect(repair.compacted, isFalse);
-    expect(messages.whereType<AssistantMessage>().last.stopReason,
-        StopReason.stop);
+    expect(
+      messages.whereType<AssistantMessage>().last.stopReason,
+      StopReason.stop,
+    );
   });
 }

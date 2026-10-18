@@ -148,7 +148,10 @@ final _messageCapLimitPattern = RegExp(
 /// gh-1680: the cap shape WITHOUT parseable numbers — still a cap refusal
 /// (the model is flagged cap-unknown), just with no limit to learn.
 final _messageCapShapePatterns = [
-  RegExp(r'\barray length\b(?:\s+\d[\d,]*)?\s+exceeds\s+limit\b', caseSensitive: false),
+  RegExp(
+    r'\barray length\b(?:\s+\d[\d,]*)?\s+exceeds\s+limit\b',
+    caseSensitive: false,
+  ),
   RegExp(r'\btoo many messages\b', caseSensitive: false),
   RegExp(r'\bmessages count exceeds\b', caseSensitive: false),
 ];

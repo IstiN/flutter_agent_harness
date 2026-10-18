@@ -105,9 +105,7 @@ final class _CapHealState {
   /// list). [ran] tells the caller to `continue` (retry once); [terminal]
   /// is the abort turn; [context] (non-null on relief) replaces the loop
   /// context for the retry.
-  Future<
-    ({bool ran, Context? context, (AssistantMessage, Context)? terminal})
-  >
+  Future<({bool ran, Context? context, (AssistantMessage, Context)? terminal})>
   healIfNeeded(
     AssistantMessage finished,
     Context context,
@@ -195,7 +193,9 @@ Future<_MessageCapHealStep> _messageCapHealTurn(
           ),
     // The coalesce arms toward `cap − margin`; a cap-unknown refusal
     // (E1) has no target — the retry rides the relief alone.
-    coalesceTarget: learned == null ? null : max(1, learned - kMessageCapDefaultMargin),
+    coalesceTarget: learned == null
+        ? null
+        : max(1, learned - kMessageCapDefaultMargin),
     terminal: null,
   );
 }

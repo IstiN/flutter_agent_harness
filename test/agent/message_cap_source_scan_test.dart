@@ -61,7 +61,8 @@ void main() {
           expect(
             text.contains(identity),
             isFalse,
-            reason: '$path must not hardcode "$identity" — the cap is '
+            reason:
+                '$path must not hardcode "$identity" — the cap is '
                 'learned from the error text, never tabulated (AC5)',
           );
         }
@@ -70,8 +71,9 @@ void main() {
 
     test('the new store/coalesce module carries no provider identity at '
         'all', () {
-      final text =
-          File('lib/src/agent/message_cap.dart').readAsStringSync().toLowerCase();
+      final text = File(
+        'lib/src/agent/message_cap.dart',
+      ).readAsStringSync().toLowerCase();
       for (final identity in bannedIdentities) {
         expect(
           text.contains(identity),
@@ -88,8 +90,11 @@ void main() {
       final text = File('lib/src/agent/message_cap.dart').readAsStringSync();
       expect(text.contains('2048'), isFalse);
       expect(text.contains('2049'), isFalse);
-      expect(RegExp(r'\b[2-9]\d{3,}\b').hasMatch(text), isFalse,
-          reason: 'no cap-sized constant may live in the store module');
+      expect(
+        RegExp(r'\b[2-9]\d{3,}\b').hasMatch(text),
+        isFalse,
+        reason: 'no cap-sized constant may live in the store module',
+      );
     });
 
     test('the classifier regex is the only built-in: overflow.dart parses '

@@ -160,9 +160,7 @@ final class ModelCapsStore implements MessageCapPolicy {
   /// so hosts layering pins should consult them BEFORE the learned value
   /// (see [learnedCapOr]).
   void pin(String provider, String modelId, int maxMessages) {
-    _caps[keyOf(provider, modelId)] = ModelCapRecord(
-      maxMessages: maxMessages,
-    );
+    _caps[keyOf(provider, modelId)] = ModelCapRecord(maxMessages: maxMessages);
   }
 
   /// Removes a pin/learned record for one model identity.
@@ -212,9 +210,11 @@ final class ModelCapsStore implements MessageCapPolicy {
 /// Whether the live [messageCount] is at/above the pre-emptive trigger for
 /// a learned cap: `count ≥ cap − margin` (AC4). A null/unknown cap never
 /// triggers (AC8); a margin of zero means "at the cap itself".
-bool messageCapTriggerReached(int messageCount, int? learnedCap,
-        {int margin = kMessageCapDefaultMargin}) =>
-    learnedCap != null && messageCount >= learnedCap - margin;
+bool messageCapTriggerReached(
+  int messageCount,
+  int? learnedCap, {
+  int margin = kMessageCapDefaultMargin,
+}) => learnedCap != null && messageCount >= learnedCap - margin;
 
 /// gh-1680 AC6/E2/E3: coalesces the OUTBOUND message list so its length
 /// approaches [targetMessageCount], merging whole tool-call/result pairs
@@ -251,7 +251,9 @@ List<Message> coalesceMessagesForCap(
       break;
     }
   }
-  final regionEnd = newestUserIndex >= 0 ? newestUserIndex : messages.length - 1;
+  final regionEnd = newestUserIndex >= 0
+      ? newestUserIndex
+      : messages.length - 1;
   if (regionEnd <= 0) return messages; // Nothing droppable (E2/E3).
 
   // Group the droppable region into pairing-safe units: a tool group is an

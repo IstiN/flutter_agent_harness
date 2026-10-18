@@ -314,7 +314,8 @@ final class AutoCompactor {
     try {
       if (window <= 0) return true;
       final initial = _requestTokens();
-      if (!force && !shouldCompact(initial, window, settings) &&
+      if (!force &&
+          !shouldCompact(initial, window, settings) &&
           !_overMessageCap()) {
         return true;
       }
@@ -396,7 +397,8 @@ final class AutoCompactor {
         hooks.onDone(pass, tokensAfter);
         return (
           done: true,
-          success: !shouldCompact(tokensAfter, window, settings) &&
+          success:
+              !shouldCompact(tokensAfter, window, settings) &&
               !_overMessageCap(),
         );
       }

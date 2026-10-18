@@ -331,17 +331,23 @@ void main() {
       expect(refusal!.maxMessages, 2048);
     });
 
-    test('generic shapes classify: too many messages / messages count exceeds', () {
-      expect(
-        classifyMessageCapError('400: too many messages in request'),
-        isNotNull,
-      );
-      expect(
-        classifyMessageCapError('400 messages count exceeds the limit'),
-        isNotNull,
-      );
-      expect(isContextOverflow(errorMessage('400: too many messages')), isTrue);
-    });
+    test(
+      'generic shapes classify: too many messages / messages count exceeds',
+      () {
+        expect(
+          classifyMessageCapError('400: too many messages in request'),
+          isNotNull,
+        );
+        expect(
+          classifyMessageCapError('400 messages count exceeds the limit'),
+          isNotNull,
+        );
+        expect(
+          isContextOverflow(errorMessage('400: too many messages')),
+          isTrue,
+        );
+      },
+    );
 
     test('cap shape without a number flags cap-unknown (E1)', () {
       final refusal = classifyMessageCapError(

@@ -116,9 +116,13 @@ void main() {
     final ok = await compactor.run();
 
     expect(ok, isTrue);
-    expect(fake.calls, greaterThanOrEqualTo(1),
-        reason: 'the cap trigger fired the pass with tokens far under the '
-            'token trigger');
+    expect(
+      fake.calls,
+      greaterThanOrEqualTo(1),
+      reason:
+          'the cap trigger fired the pass with tokens far under the '
+          'token trigger',
+    );
     // Bounded like the token dimension: passes repeat until the engine has
     // nothing hideable left (the keep-recent window bounds the tail), then
     // STOP — never spinning to maxPasses.
@@ -172,8 +176,13 @@ void main() {
     final ok = await compactor.run();
 
     expect(ok, isTrue);
-    expect(fake.calls, 0, reason: '40 small messages are far under the '
-        'token trigger; without a learned cap nothing fires');
+    expect(
+      fake.calls,
+      0,
+      reason:
+          '40 small messages are far under the '
+          'token trigger; without a learned cap nothing fires',
+    );
     expect(env.state.messages, hasLength(env.count));
   });
 }

@@ -31,8 +31,10 @@ void main() {
 
       final revived = ModelCapsStore.fromJson(store.toJson());
       expect(revived.learnedCapFor(_model), 2048);
-      expect(revived.recordFor('some-provider', 'some-model')!.maxMessages,
-          2048);
+      expect(
+        revived.recordFor('some-provider', 'some-model')!.maxMessages,
+        2048,
+      );
     });
 
     test('persist → load across restarts via the disk file', () {

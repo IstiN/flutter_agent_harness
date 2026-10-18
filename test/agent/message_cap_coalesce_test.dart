@@ -62,8 +62,10 @@ void main() {
       expect(out.length, lessThanOrEqualTo(4));
       // The newest user message is the LAST message, untouched.
       expect(out.last, same(input.last));
-      expect((out.last as UserMessage).content,
-          'newest question — must survive verbatim');
+      expect(
+        (out.last as UserMessage).content,
+        'newest question — must survive verbatim',
+      );
       // The input list itself is never mutated (AC7: the session JSONL
       // stays byte-identical — repair is outbound-only).
       expect(input, orderedEquals(before));
@@ -109,7 +111,10 @@ void main() {
     test('nothing droppable (only one message): returned unchanged (E3)', () {
       final single = [UserMessage.text('only turn')];
       expect(
-        identical(coalesceMessagesForCap(single, targetMessageCount: 1), single),
+        identical(
+          coalesceMessagesForCap(single, targetMessageCount: 1),
+          single,
+        ),
         isTrue,
       );
     });
@@ -139,9 +144,7 @@ void main() {
       expect(validateToolPairing(out), isEmpty);
       // The orphan result is dropped by the pairing repair — never sent.
       expect(
-        out.any(
-          (m) => m is ToolResultMessage && m.toolCallId == 'orphan',
-        ),
+        out.any((m) => m is ToolResultMessage && m.toolCallId == 'orphan'),
         isFalse,
       );
       // The newest user message survives (it anchors the kept tail) — the

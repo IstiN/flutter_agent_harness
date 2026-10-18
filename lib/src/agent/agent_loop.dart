@@ -1451,8 +1451,8 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
 ) async {
   var reliefUsed = false;
   var pairingHealed = false;
-  // gh-1680: one-shot message-cap heal state; when armed, the next rebuilt
-  // payload coalesces toward its target.
+  // gh-1680: one-shot message-cap heal state; when armed, the next
+  // rebuilt payload coalesces toward its target.
   final capState = _CapHealState();
   // Issue #862: drain the armed corrective note once per streamed response
   // (not per built context) so a mid-turn retry re-attaches it.
@@ -1514,9 +1514,9 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
 
     AssistantMessageEventStream response;
 
-    // gh-1680: capture the refused count BEFORE the stream — the streamed
-    // partial mutates the LIVE list requestContext may share.
+    // gh-1680: refused payload count, captured BEFORE the stream.
     final requestMessageCount = requestContext.messages.length;
+
     await emit(_captureRequest(config, requestContext));
     try {
       response = streamFunction(
@@ -1849,8 +1849,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       tools: requestContext.tools,
     );
   }
-  // gh-1680: an armed cap repair coalesces the outbound payload toward the
-  // target — payload-only, the transcript is never touched (AC7).
+  // gh-1680: armed cap repair coalesces the payload; AC7 keeps the transcript untouched.
   if (capCoalesceTarget != null) {
     requestContext = applyMessageCapCoalesce(requestContext, capCoalesceTarget);
   }
