@@ -153,7 +153,8 @@ class FakeAgent(fa_agent.FaAgent):
     """
 
     def __init__(self, fail_pkill=False, launch_delay=None, counter=None,
-                 launch_error=None, ignore_kill=False, pgrep_alive=False):
+                 launch_error=None, ignore_kill=False, pgrep_alive=False,
+                 export_error=None):
         self._version = None
         self.fail_pkill = fail_pkill
         self.launch_delay = launch_delay
@@ -163,8 +164,15 @@ class FakeAgent(fa_agent.FaAgent):
         # shape), and whether pgrep still reports the process alive.
         self.ignore_kill = ignore_kill
         self.pgrep_alive = pgrep_alive
+        # gh-1681 Gap 2: the ATIF export exec scripted to fail.
+        self.export_error = export_error
         self.launch_exited = False
         self.root_calls = []
+        self.agent_calls = []
+        # gh-1681: one unified, cross-channel order log (agent + root
+        # execs interleave in production; the per-channel lists alone
+        # cannot express "the export ran after the kill").
+        self.exec_log = []
         self.launch_env = None
         self.killed = None
         self.audit_payload = None
@@ -172,6 +180,7 @@ class FakeAgent(fa_agent.FaAgent):
 
     async def exec_as_root(self, environment, command=None, timeout_sec=None, env=None):
         self.root_calls.append(command)
+        self.exec_log.append(command)
         if "pkill" in command:
             if not self.ignore_kill:
                 self.killed.set()
@@ -190,6 +199,12 @@ class FakeAgent(fa_agent.FaAgent):
         return _ExecResult()
 
     async def exec_as_agent(self, environment, command=None, env=None, timeout_sec=None):
+        self.agent_calls.append(command)
+        self.exec_log.append(command)
+        if "trajectory export" in command:
+            if self.export_error is not None:
+                raise self.export_error
+            return _ExecResult()
         if _AGENT_LAUNCH_SNIPPET in command:
             self.launch_env = env
             self.killed = asyncio.Event()
@@ -437,8 +452,15 @@ class NoKnobsDelegationTest(unittest.TestCase):
 
         agent.exec_as_agent = fake_exec
         asyncio.run(agent.run("instruction", object(), {}))
-        self.assertEqual(len(calls), 1)
-        self.assertNotIn("FA_DEADLINE_EPOCH_MS", calls[0][1])
+        # gh-1681 Gap 2: the ATIF export rides a SECOND, best-effort exec
+        # (bounded, outcome-independent) — the launch exec itself stays
+        # today's single unsupervised await.
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(
+            len([c for c in calls if "trajectory export" not in c[0]]), 1
+        )
+        launch = next(c for c in calls if "trajectory export" not in c[0])
+        self.assertNotIn("FA_DEADLINE_EPOCH_MS", launch[1])
         self.assertIsNone(agent.audit_payload)
 
 
@@ -1001,6 +1023,152 @@ class AgentPhaseExitGuaranteeTest(unittest.TestCase):
         # I2: the audit flush still lands after the kill+reap.
         self.assertIsNotNone(agent.audit_payload)
         self.assertEqual(agent.audit_payload["outcome"], "external_kill")
+
+
+_EXPORT_SNIPPET = "trajectory export --format atif --output /logs/agent/trajectory.json"
+
+
+class AtifExportTest(unittest.TestCase):
+    """gh-1681 Gap 2: run() exports the ATIF trajectory on EVERY terminal
+    path (completion / self-kill / crash / external cancel) via a bounded
+    best-effort exec — the leaderboard static analysis requires
+    <trial>/agent/trajectory.json on every rewarded trial and harbor does
+    not build it for installed agents. Export failures degrade to a loud
+    warning and the atif_trajectory metadata, never masking the trial's
+    own outcome.
+    """
+
+    def _knob_env(self, **overrides):
+        env = _clean_env(
+            FA_AGENT_TIMEOUT_SEC="1",
+            FA_PROVIDER_CONFIG=json.dumps({"apiKeyEnvVar": "FA_KEY_FAKE"}),
+            FA_KEY_FAKE="secret",
+            **overrides,
+        )
+        env.start()
+        self.addCleanup(env.stop)
+
+    def _export_calls(self, agent):
+        return [c for c in agent.agent_calls if "trajectory export" in c]
+
+    def test_completion_path_exports_atif(self):
+        self._knob_env()
+        agent = FakeAgent(launch_delay=0.05)
+        with mock.patch.object(fa_agent, "_POLL_SEC", 0.05):
+            asyncio.run(agent.run("task", environment=object(), context=None))
+        self.assertEqual(agent._run_outcome, "completed")
+        exports = self._export_calls(agent)
+        self.assertEqual(len(exports), 1, agent.agent_calls)
+        self.assertIn(_EXPORT_SNIPPET, exports[0])
+        # The export names the session root the launch command uses.
+        self.assertIn("fa --session-root /logs/agent/fah-sessions", exports[0])
+
+    def test_self_kill_timeout_still_exports_atif(self):
+        self._knob_env()
+        agent = FakeAgent()
+        with mock.patch.object(
+            fa_agent._timeout, "ProgressWatch", _FastWatch
+        ), mock.patch.object(fa_agent._timeout, "ProgressLadder", _FastWatch):
+            with self.assertRaises(asyncio.TimeoutError):
+                asyncio.run(
+                    agent.run("task", environment=object(), context=None)
+                )
+        self.assertEqual(agent._run_outcome, "agent_timeout")
+        # The kill lands BEFORE the export (the trajectory must reflect
+        # the final ledger, not a live one). The unified exec_log records
+        # both channels in real interleaving order.
+        kill_idx = max(
+            i for i, c in enumerate(agent.exec_log) if "pkill" in c
+        )
+        export_idx = next(
+            i for i, c in enumerate(agent.exec_log)
+            if "trajectory export" in c
+        )
+        self.assertGreater(export_idx, kill_idx, agent.exec_log)
+
+    def test_external_cancel_still_exports_atif(self):
+        self._knob_env()
+        agent = FakeAgent()
+
+        async def scenario():
+            task = asyncio.create_task(
+                agent.run("task", environment=object(), context=None)
+            )
+            await asyncio.sleep(0.1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        asyncio.run(scenario())
+        self.assertEqual(agent._run_outcome, "external_kill")
+        self.assertEqual(len(self._export_calls(agent)), 1)
+
+    def test_export_failure_is_loud_but_never_fails_the_trial(self):
+        self._knob_env()
+        agent = FakeAgent(
+            launch_delay=0.05, export_error=RuntimeError("fa export wedged")
+        )
+        err = io.StringIO()
+        with mock.patch.object(fa_agent, "_POLL_SEC", 0.05):
+            with contextlib.redirect_stderr(err):
+                asyncio.run(
+                    agent.run("task", environment=object(), context=None)
+                )
+        self.assertEqual(agent._run_outcome, "completed")
+        self.assertIn("ATIF trajectory export failed", err.getvalue())
+        self.assertIn("leaderboard static analysis", err.getvalue())
+
+    def test_export_nonzero_exit_warns(self):
+        self._knob_env()
+
+        class _FailedResult:
+            return_code = 3
+            stdout = "boom"
+
+        agent = FakeAgent(launch_delay=0.05)
+        real_exec = agent.exec_as_agent
+
+        async def scripted(environment, command=None, env=None, timeout_sec=None):
+            if "trajectory export" in command:
+                return _FailedResult()
+            return await real_exec(environment, command=command, env=env,
+                                   timeout_sec=timeout_sec)
+
+        err = io.StringIO()
+        with mock.patch.object(fa_agent, "_POLL_SEC", 0.05):
+            with contextlib.redirect_stderr(err), mock.patch.object(
+                agent, "exec_as_agent", side_effect=scripted,
+                autospec=True,
+            ):
+                asyncio.run(
+                    agent.run("task", environment=object(), context=None)
+                )
+        self.assertEqual(agent._run_outcome, "completed")
+        self.assertIn("ATIF trajectory export exited 3", err.getvalue())
+
+    def test_populate_context_marks_atif_trajectory_presence(self):
+        import tempfile
+
+        self._knob_env()
+        agent = FakeAgent()
+        with tempfile.TemporaryDirectory() as tmp:
+            agent.logs_dir = Path(tmp)
+            (Path(tmp) / "fah-sessions").mkdir()
+            context = types.SimpleNamespace(metadata=None)
+            agent.populate_context_post_run(context)
+            self.assertEqual(
+                context.metadata["atif_trajectory"], "missing"
+            )
+            (Path(tmp) / "trajectory.json").write_text("{}")
+            context2 = types.SimpleNamespace(metadata=None)
+            agent.populate_context_post_run(context2)
+            self.assertEqual(
+                context2.metadata["atif_trajectory"], "present"
+            )
+            # The failure-mode fold is untouched by the new flag.
+            self.assertEqual(
+                context2.metadata["failure_mode"], "never_started"
+            )
 
 
 if __name__ == "__main__":
