@@ -1,0 +1,660 @@
+name: Bench ProgramBench
+
+# Runs the fa coding agent against ProgramBench
+# (facebookresearch/ProgramBench — "rebuild a complete codebase from a
+# compiled binary + its docs") and produces a SUBMISSION-READY artifact
+# set for the self-serve leaderboard (issue #1685): the aggregate job runs
+# `programbench submit package` and `programbench submit verify` (Tier-0)
+# over the merged run dir, so the uploaded artifact is exactly the folder
+# a maintainer PRs to ProgramBench/submissions (pointer.yaml +
+# submission.yaml + _stats/, per the registry README).
+#
+# Shape: same as bench-harbor.yml (gh-1124 family) — build the fa bundle
+# once in setup, shard the task set into a matrix, solve+eval per shard,
+# aggregate + verdict last. Tasks run in docker on GH hosted runners
+# (x86_64 images — the usage guide warns they will not run on arm hosts).
+#
+# Internet rule, enforced not honored: ProgramBench bans agent internet
+# access at inference (fetching the original source is disqualification).
+# fa's LLM calls originate INSIDE the task container (the harbor-proven
+# pattern, bench/harbor_fa/fa_agent.py), so each task container is moved
+# onto a docker `--internal` network (no external route) and gets exactly
+# ONE egress route: the selected provider's API endpoint, via a host-side
+# L4 forwarder (bench/programbench/llm_forwarder.py) bound to the network
+# gateway. TLS is end-to-end (SNI + cert stay the provider's real ones —
+# fa's baseUrl is byte-identical to a direct run). The agent cannot reach
+# anything else. CA roots + the fa bundle are installed BEFORE the
+# container leaves the internet-facing boot network (inference itself
+# must not download them).
+#
+# Scoring: pass@1, the leaderboard headline convention — one attempt per
+# instance (the official mini-swe-agent baseline's budget: 6h wall per
+# task, the agent-timeout default here). Trajectories + fa session logs
+# ride the run dir; summary.py turns them into the registry's optional
+# _stats/cost.json + _stats/calls.json (self-reported, the submission
+# guide's §3 convention) and renders the accuracy/cost/calls table.
+#
+# gh-1503: the provider is the same dispatch surface as bench.yml /
+# bench-harbor.yml — zai glm-5.3-flash (default), kimi-for-coding
+# (model id == plan name; FA_BENCH_KIMI_KEY), or `custom` (config JSON in
+# the input, key only from FA_BENCH_CUSTOM_KEY). The setup resolve step is
+# a byte-consistent copy of bench-harbor.yml's gh-1471 step, which is
+# itself a copy of bench.yml's — the cross-reference comment in all three
+# files is the sync contract (gh-1685 joins it). This copy additionally
+# derives the provider API host:port as outputs (the forwarder's upstream
+# and the containers' /etc/hosts mapping).
+#
+# Quota discipline (the tbench 2.1 kimi saga, gh-1674): shards run ≤3 in
+# parallel by default (max-parallel input — windowed-quota providers),
+# tasks run sequentially inside a shard, a provider 429 aborts the
+# remaining shard tasks immediately (exit 2, NEVER retried inline — the
+# owner reruns the dispatch), and only a zero-trial startup crash gets
+# the gh-1658-style single inline retry. No trial is started into a known
+# dead window: the resolve step preflights the secret, and the first 429
+# stops the shard instead of burning the rest.
+#
+# Smoke first: the default dispatch is tasks=smoke (the two
+# lexicographically-first instances — a pipeline proof, NOT a leaderboard
+# row: the package headline divides by the full official set, and
+# summary.py's table says so). tasks=lite is the deterministic
+# ~20-instance slice; tasks='' (full, ~200 instances × up to 6 LLM-hours)
+# requires confirm-full-run: true.
+#
+# Secrets (owner-provisioned; the workflow never hardcodes them):
+#   FA_BENCH_ZAI_KEY     — z.ai key for glm-5.3-flash (shared with bench.yml)
+#   FA_BENCH_KIMI_KEY    — kimi coding key (model id is the plan name)
+#   FA_BENCH_CUSTOM_KEY  — key for provider=custom → FA_KEY_BENCH_CUSTOM
+#
+# The registry PR itself is deliberately MANUAL (docs/bench.md): download
+# the programbench-submission artifact, fill in submission.yaml's
+# maintainer fields (package leaves TODOs), publish the fork, open the PR.
+
+run-name: fa bench-programbench · ${{ inputs.provider }} · ${{ inputs.tasks || 'full' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: 'smoke (2 instances, default) | lite (~20) | comma fnmatch globs | empty = full set (needs confirm-full-run)'
+        required: false
+        default: 'smoke'
+      provider:
+        description: 'LLM provider for this run (same contract as bench.yml gh-1471 / bench-harbor.yml gh-1503; kimi needs FA_BENCH_KIMI_KEY, custom needs FA_BENCH_CUSTOM_KEY + provider-config)'
+        required: false
+        default: 'zai-glm-5.3-flash'
+        type: choice
+        options:
+          - 'zai-glm-5.3-flash'
+          - 'kimi-for-coding'
+          - 'custom'
+      provider-config:
+        description: 'ONLY when provider=custom — provider config JSON {"baseUrl","model",...}. The API key NEVER rides this input (run metadata is visible) — it comes only from the FA_BENCH_CUSTOM_KEY secret'
+        required: false
+        default: ''
+      programbench-ref:
+        description: 'facebookresearch/ProgramBench ref pinning the official task set (task inventory is enumerated from this checkout)'
+        required: false
+        default: '895f65916bc5ba34a915d36da321fde0301125ad'
+      programbench-version:
+        description: 'PyPI programbench pin for eval + submit package (the submission guide requires >=1.2.0; _stats must come from one version)'
+        required: false
+        default: '1.2.5'
+      confirm-full-run:
+        description: 'Required true for the full (tasks-less) run — ~200 instances of LLM spend. Smoke/lite/globs are unaffected'
+        required: false
+        type: boolean
+        default: false
+      shards:
+        description: 'Shard count for the selected tasks (~4 instances/shard keeps each job inside the 6h runner window at the default agent-timeout)'
+        required: false
+        default: '50'
+      max-parallel:
+        description: 'Shards in flight (kimi saga: keep ≤3 for windowed-quota providers)'
+        required: false
+        default: '3'
+      agent-timeout:
+        description: 'Per-instance wall cap seconds (default 21600 = the official baseline budget; timeout kills are packed and evaluated as low scores, never silent)'
+        required: false
+        default: '21600'
+
+permissions:
+  contents: read
+
+# A full run holds runners for hours; queue a second dispatch instead of
+# stacking them.
+concurrency:
+  group: bench-programbench
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: Build bundle & shard ProgramBench
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.shards.outputs.matrix }}
+      count: ${{ steps.shards.outputs.count }}
+      total: ${{ steps.shards.outputs.total }}
+      mode: ${{ steps.shards.outputs.mode }}
+      provider_type: ${{ steps.provider.outputs.provider_type }}
+      provider_config: ${{ steps.provider.outputs.provider_config }}
+      provider_key_env: ${{ steps.provider.outputs.provider_key_env }}
+      bench_model: ${{ steps.provider.outputs.bench_model }}
+      run_label: ${{ steps.provider.outputs.run_label }}
+      api_host: ${{ steps.provider.outputs.api_host }}
+      api_port: ${{ steps.provider.outputs.api_port }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # gh-1685: byte-consistent copy of bench-harbor.yml's gh-1471/gh-1503
+      # resolve step (itself a copy of bench.yml's) — same run block, same
+      # outputs; the cross-reference comment in all three files is the sync
+      # contract. The single gh-1685 delta: api_host/api_port outputs
+      # derived from the resolved config's baseUrl — the run job forwards
+      # exactly this endpoint into the airgapped task containers. Maps the
+      # provider choice to the full provider triple (type/baseUrl/model/
+      # key env) and preflights the selected secret BEFORE the bundle
+      # builds or any shard starts — a missing FA_BENCH_KIMI_KEY must cost
+      # one setup minute, not shard-hours of 429s. Presence only: the
+      # value is never echoed (the ::add-mask line masks its base64 form,
+      # the transport into the task containers). An unmapped provider
+      # value fails hard — never a silent fallthrough to the zai default.
+      - name: Resolve provider
+        id: provider
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          PROVIDER_CONFIG: ${{ inputs.provider-config }}
+          BENCH_MODEL: glm-5.3-flash
+          FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          FA_BENCH_KIMI_KEY: ${{ secrets.FA_BENCH_KIMI_KEY }}
+          FA_BENCH_CUSTOM_KEY: ${{ secrets.FA_BENCH_CUSTOM_KEY }}
+        run: |
+          set -euo pipefail
+          case "$PROVIDER" in
+            ''|zai-glm-5.3-flash)
+              provider_type=zai
+              choice=zai-glm-5.3-flash
+              base_url='https://api.z.ai/api/coding/paas/v4'
+              model="$BENCH_MODEL"
+              key_env=FA_KEY_API_Z_AI_Z_AI
+              secret_name=FA_BENCH_ZAI_KEY
+              secret_value=$FA_BENCH_ZAI_KEY
+              # REG-1 (gh-1471): the default must resolve today's exact
+              # 3-field config — a zai run stays byte-identical.
+              provider_config=$(printf '{"baseUrl":"%s","model":"%s","apiKeyEnvVar":"%s"}' \
+                "$base_url" "$model" "$key_env")
+              # D5: one spelling everywhere — the label derives from the
+              # dispatch choice id, matching run-name.
+              run_label="$choice ($model)"
+              ;;
+            kimi-for-coding)
+              provider_type=kimi
+              base_url='https://api.kimi.com/coding/v1'
+              # The model id IS the plan name (owner correction, gh-1471
+              # follow-up): the coding endpoint serves it as
+              # 'kimi-for-coding', not k3-256k.
+              model='kimi-for-coding'
+              key_env=FA_KEY_API_KIMI_COM_BENCH
+              secret_name=FA_BENCH_KIMI_KEY
+              secret_value=$FA_BENCH_KIMI_KEY
+              # gh-1471 D4: kimi's capability fields ride the config
+              # explicitly — the env preconfig applies them to the booted
+              # model, so a catalog drift can never silently truncate.
+              provider_config=$(printf '{"baseUrl":"%s","model":"%s","apiKeyEnvVar":"%s","contextWindow":200000,"maxTokens":16384}' \
+                "$base_url" "$model" "$key_env")
+              # model == choice by construction — no doubled label.
+              run_label="kimi-for-coding"
+              ;;
+            custom)
+              # gh-1471 D1 / AC 2a: the custom escape hatch — a new
+              # provider tomorrow needs zero workflow edits. The key
+              # NEVER rides the dispatch input (inputs are visible in
+              # run metadata): it comes only from the FA_BENCH_CUSTOM_KEY
+              # secret, injected as the fixed apiKeyEnvVar below.
+              secret_name=FA_BENCH_CUSTOM_KEY
+              secret_value=$FA_BENCH_CUSTOM_KEY
+              key_env=FA_KEY_BENCH_CUSTOM
+              if [ -z "$PROVIDER_CONFIG" ]; then
+                echo "::error::provider custom selected but the provider-config input is empty — pass the provider JSON (at least baseUrl and model)"; exit 1
+              fi
+              # jq-level validation (AC 2a): every failure names the
+              # offending input and dies BEFORE any shard starts. From
+              # here down the checks mirror the Dart env preconfig's
+              # consumer contract (lib/src/cli/env_provider_preconfig.dart)
+              # so a bad dispatch burns one setup minute, never
+              # shard-hours failing loud inside every trial.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'type == "object"' >/dev/null 2>&1; then
+                echo "::error::provider-config must be a JSON object — the raw input is not echoed (it could carry key material)"; exit 1
+              fi
+              # `apiKeyEnvVar` is injected by this step (fixed
+              # FA_KEY_BENCH_CUSTOM), never accepted from the input — a
+              # user-supplied value would be silently overridden (checked
+              # before the key-like scan below, which would otherwise
+              # flag the field first with a less precise message).
+              if printf '%s' "$PROVIDER_CONFIG" | jq -e 'has("apiKeyEnvVar")' >/dev/null 2>&1; then
+                echo "::error::provider-config must not declare apiKeyEnvVar — the resolve step injects it as the fixed FA_KEY_BENCH_CUSTOM; the key comes only from the FA_BENCH_CUSTOM_KEY secret"; exit 1
+              fi
+              # Key-like fields hard-fail: a pasted key in a dispatch
+              # input would leak through run metadata. Whole-word match
+              # on the key's split words (camelCase/snake_case divided) —
+              # so the legitimate `maxTokens` capability key passes while
+              # `token`/`accessToken`/`api_key` are caught. The scan
+              # descends into nested objects: a key field name pasted
+              # inside a header map rides through a top-level-only scan
+              # exactly like a top-level one.
+              leaked=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '
+                def words: gsub("(?<l>[a-z0-9])(?<u>[A-Z])"; "\(.l)_\(.u)")
+                  | gsub("[ _-]+"; " ") | ascii_downcase | split(" ");
+                [.. | objects | keys[]
+                  | select(. | words
+                      | map(test("^(api.?key|apikey|key|token|secret)$"))
+                      | any)]
+                  | unique | join(", ")')
+              if [ -n "$leaked" ]; then
+                echo "::error::provider-config must not carry key material — dispatch inputs are visible in run metadata; offending field(s): $leaked. The key comes only from the FA_BENCH_CUSTOM_KEY secret"; exit 1
+              fi
+              # Closed key whitelist, mirroring the Dart _parseConfig
+              # consumer (baseUrl, model, apiKeyEnvVar, contextWindow,
+              # maxTokens, input, thinkingLevel): an unknown or typo'd
+              # key would otherwise fail loud at every trial's container
+              # boot after shards start. `type` is allowed here (it rides
+              # the FA_PROVIDER_TYPE output) but stripped from the
+              # emitted config below.
+              unsupported=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '
+                [. | keys[]
+                  | select(. as $k
+                      | ["baseUrl","model","contextWindow","maxTokens","input","thinkingLevel","type"]
+                      | index($k) | not)]
+                  | join(", ")')
+              if [ -n "$unsupported" ]; then
+                echo "::error::provider-config has unsupported key(s): $unsupported — supported keys: baseUrl, model, contextWindow, maxTokens, input, thinkingLevel (type selects FA_PROVIDER_TYPE and is not echoed into FA_PROVIDER_CONFIG)"; exit 1
+              fi
+              # `type` feeds the container's catalog lookup via
+              # FA_PROVIDER_TYPE: when declared it must be a non-empty
+              # string (jq's `//` treats "" as present, so an explicit
+              # check is required); undeclared/null defaults to the
+              # openai-compatible catalog entry.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("type") and .type != null then (.type | type == "string" and test("\\S")) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"type\" must be a non-empty string naming a catalog provider (e.g. \"openai\") when declared"; exit 1
+              fi
+              # The capability pair mirrors _parseCapabilityInt: JSON
+              # integers at or above the Dart resolver floors
+              # (minOverrideContextWindow 16384 / minOverrideMaxTokens
+              # 1024 — the same boundaries as the yaml overrides layer);
+              # blank string / null are ABSENT, like every other optional
+              # input; anything else throws at container boot today.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '
+                def capok(min): . as $v
+                  | $v == null or (($v | type) == "string" and ($v | test("^\\s*$")))
+                  or (($v | type) == "number" and ($v | floor) == $v and $v >= min);
+                (.contextWindow | capok(16384)) and (.maxTokens | capok(1024))
+              ' >/dev/null 2>&1; then
+                echo "::error::provider-config contextWindow/maxTokens must be integers at or above the Dart resolver floors (contextWindow >= 16384, maxTokens >= 1024) — a below-floor or non-integer declaration would fail loud at every trial's container boot"; exit 1
+              fi
+              # `input` mirrors _parseInputList: a non-empty list whose
+              # entries are exactly "text"/"image".
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("input") then (.input | type == "array" and length > 0 and all(.[]; . == "text" or . == "image")) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"input\" must be a non-empty list of \"text\"/\"image\" entries (the Dart preconfig's contract)"; exit 1
+              fi
+              # `thinkingLevel` mirrors _parseThinkingLevel: a blank
+              # string is absent; otherwise one of the
+              # configThinkingLevels ladder (xhigh/max fold to high
+              # Dart-side).
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("thinkingLevel") then (.thinkingLevel | if type == "string" then (test("^\\s*$") or (. as $l | ["minimal","low","medium","high","xhigh","max"] | index($l) != null)) else false end) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"thinkingLevel\" must be one of minimal, low, medium, high, xhigh, max (the Dart preconfig's ladder)"; exit 1
+              fi
+              # Required: a non-empty https:// baseUrl and a model — the
+              # plain-http ban keeps the bench key off a cleartext wire.
+              for field in baseUrl model; do
+                if ! printf '%s' "$PROVIDER_CONFIG" | jq -e --arg f "$field" '.[$f] | type == "string" and length > 0' >/dev/null 2>&1; then
+                  echo "::error::provider-config is missing a non-empty \"$field\" — required: baseUrl, model"; exit 1
+                fi
+              done
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '.baseUrl | startswith("https://")' >/dev/null 2>&1; then
+                echo "::error::provider-config baseUrl must start with https:// (a plaintext endpoint would expose the bench key) — got: $(printf '%s' "$PROVIDER_CONFIG" | jq -r '.baseUrl')"; exit 1
+              fi
+              # Passthrough: every declared field rides the config
+              # verbatim EXCEPT "type" — it already rides the dedicated
+              # FA_PROVIDER_TYPE output/env, and the Dart preconfig's
+              # FA_PROVIDER_CONFIG whitelist has no "type" key (it would
+              # throw at every trial's container boot). Blank/null
+              # capability fields are dropped (Dart-side they are
+              # ABSENT, like every other optional input — the emitted
+              # config declares only what is effective). Plus the fixed
+              # key-env injection; `type` defaults to the
+              # openai-compatible catalog entry.
+              provider_type=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.type // "openai"')
+              model=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.model')
+              provider_config=$(printf '%s' "$PROVIDER_CONFIG" | jq -c --arg k "$key_env" '
+                del(.type)
+                | del(.contextWindow | select(. == null or ((. | type) == "string" and (. | test("^\\s*$")))))
+                | del(.maxTokens | select(. == null or ((. | type) == "string" and (. | test("^\\s*$")))))
+                | . + {apiKeyEnvVar: $k}')
+              run_label="custom ($model)"
+              ;;
+            *)
+              echo "::error::unknown provider '$PROVIDER' — expected 'zai-glm-5.3-flash', 'kimi-for-coding' or 'custom'"; exit 1 ;;
+          esac
+          if [ -z "$secret_value" ]; then
+            echo "::error::provider $PROVIDER selected but secret $secret_name is not set"; exit 1
+          fi
+          # fa_agent.py ships the key into the container base64-encoded;
+          # GitHub auto-masks only the raw value, so mask the base64 form.
+          echo "::add-mask::$(printf %s "$secret_value" | base64 -w0)"
+          # gh-1685 delta (the ONLY one vs bench-harbor.yml's step): the
+          # airgapped inference egress needs the API endpoint's host:port —
+          # the run job forwards exactly this endpoint into the task
+          # containers' internal network. Port defaults to 443 (the checks
+          # above already guarantee https://); an explicit :port in a
+          # custom baseUrl passes through.
+          pbench_url=$(printf '%s' "$provider_config" | jq -r '.baseUrl')
+          api_host=$(printf '%s' "$pbench_url" | sed -E 's#^https://([^/:?]+)(:[0-9]+)?(/.*)?$#\1#')
+          api_port=$(printf '%s' "$pbench_url" | sed -nE 's#^https://[^/]*:([0-9]+)(/.*)?$#\1#p')
+          api_port=${api_port:-443}
+          if [ -z "$api_host" ]; then
+            echo "::error::could not derive the API host from the resolved baseUrl — this is a resolve-step bug, not a dispatch error"; exit 1
+          fi
+          {
+            echo "provider_type=$provider_type"
+            echo "provider_config=$provider_config"
+            echo "provider_key_env=$key_env"
+            echo "bench_model=$model"
+            echo "run_label=$run_label"
+            echo "api_host=$api_host"
+            echo "api_port=$api_port"
+          } >> "$GITHUB_OUTPUT"
+
+      # stable satisfies the repo SDK constraint (>=3.12.0 <4.0.0).
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      # Same bundle/env contract as bench-harbor.yml: `dart build cli`
+      # Linux bundle, extracted to /opt/fa inside every task container
+      # (run_shard.py mirrors harbor's install()).
+      - name: Build fa CLI bundle (Linux)
+        run: |
+          bundle_dir="$(mktemp -d)/fa-bundle"
+          dart build cli --target=bin/fah.dart --output="$bundle_dir"
+          tar -czf fa-bundle.tar.gz -C "$bundle_dir/bundle" .
+
+      - name: Upload fa bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fa-bundle
+          path: fa-bundle.tar.gz
+
+      # The official task set at the pinned ref — the inventory comes from
+      # THIS checkout (dir names under src/programbench/data/tasks), never
+      # from a PyPI package whose data could drift from the pin.
+      - name: Check out ProgramBench (pinned)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: facebookresearch/ProgramBench
+          ref: ${{ inputs.programbench-ref }}
+          path: programbench-src
+
+      # Cost guard: the full set is ~200 instances × up to the
+      # agent-timeout of LLM spend — require explicit confirmation. Smoke,
+      # lite, and glob selections are unaffected (the dispatch choice
+      # itself is their confirmation; the summary table labels a partial
+      # run a pipeline proof, never a leaderboard row).
+      - name: Confirm full run
+        if: inputs.confirm-full-run != true
+        env:
+          TASKS: ${{ inputs.tasks }}
+          AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
+        run: |
+          if [ -z "$(printf %s "$TASKS" | tr -d '[:space:]')" ]; then
+            echo "::error::A full ProgramBench run (~200 instances, up to ${AGENT_TIMEOUT}s LLM wall each) requires confirm-full-run: true. Smoke first: tasks=smoke (docs/bench.md)."
+            exit 1
+          fi
+
+      # Resolve the selector + chunk into shards. total is the FULL
+      # official set size — the summary's dilution guard.
+      - name: Shard task set
+        id: shards
+        env:
+          TASKS: ${{ inputs.tasks }}
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          python bench/programbench/tasks.py programbench-src/src/programbench/data/tasks \
+            --filter "$TASKS" --shards "$SHARDS"
+
+  bench:
+    name: fa on ProgramBench, shard ${{ matrix.i }} (${{ needs.setup.outputs.run_label }})
+    needs: setup
+    runs-on: ubuntu-latest
+    # ~4 instances/shard x agent-timeout (up to 6h each) + eval; hosted
+    # runner cap is 6h — the shards input default keeps ~4/shard.
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max-parallel) }}
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    env:
+      PB_VERSION: ${{ inputs.programbench-version }}
+      # gh-1503: the provider triple is resolved once in the setup job
+      # (preflighted secret + hard fail on an unmapped choice) — the shard
+      # only consumes it. All three bench keys are mapped here (custom's
+      # contract: key only from FA_BENCH_CUSTOM_KEY); run_shard.py picks
+      # the resolved one by the config's apiKeyEnvVar.
+      FA_PROVIDER_TYPE: ${{ needs.setup.outputs.provider_type }}
+      FA_PROVIDER_CONFIG: ${{ needs.setup.outputs.provider_config }}
+      FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
+      FA_KEY_API_KIMI_COM_BENCH: ${{ secrets.FA_BENCH_KIMI_KEY }}
+      FA_KEY_BENCH_CUSTOM: ${{ secrets.FA_BENCH_CUSTOM_KEY }}
+      FA_REF: ${{ github.sha }}
+      API_HOST: ${{ needs.setup.outputs.api_host }}
+      API_PORT: ${{ needs.setup.outputs.api_port }}
+      AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
+      # shard task names: dataset dir names, no whitespace — safe to word-split.
+      SHARD_TASKS: ${{ matrix.tasks }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download fa bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fa-bundle
+
+      # programbench 1.2.x drives eval + packaging; 3.13 dodges the
+      # typer-on-3.14 breakage (the harbor note) and satisfies the
+      # package's >=3.10 floor.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - run: pip install "programbench==${PB_VERSION}"
+
+      # The airgap plumbing: one internal network (no external route) per
+      # job, its gateway IP, and the single-endpoint L4 forwarder the task
+      # containers' provider hostname resolves to. The boot network is a
+      # NORMAL bridge (CA roots + bundle install happen while the container
+      # still has internet — inference must not download its own
+      # prerequisites, and the internal network must never carry them in).
+      - name: Set up airgapped egress (internal net + forwarder)
+        env:
+          FORWARDER_UPSTREAM: ${{ needs.setup.outputs.api_host }}:${{ needs.setup.outputs.api_port }}
+        run: |
+          set -euo pipefail
+          docker network create pbench-boot
+          docker network create --internal pbench-llm
+          GW=$(docker network inspect pbench-llm -f '{{(index .IPAM.Config 0).Gateway}}')
+          echo "PB_GATEWAY=$GW" >> "$GITHUB_ENV"
+          LOG="$RUNNER_TEMP/llm-forwarder.log"
+          if [ "$API_PORT" -lt 1024 ]; then
+            sudo python3 bench/programbench/llm_forwarder.py --listen "$GW:$API_PORT" --upstream "$FORWARDER_UPSTREAM" >"$LOG" 2>&1 &
+          else
+            python3 bench/programbench/llm_forwarder.py --listen "$GW:$API_PORT" --upstream "$FORWARDER_UPSTREAM" >"$LOG" 2>&1 &
+          fi
+          for _ in $(seq 1 20); do
+            grep -q "forwarder ready" "$LOG" && break
+            sleep 0.5
+          done
+          grep -q "forwarder ready" "$LOG" || { cat "$LOG"; echo "::error::llm_forwarder did not become ready"; exit 1; }
+          echo "forwarder: $GW:$API_PORT -> $FORWARDER_UPSTREAM"
+
+      # gh-1658 shape keyed on run_shard.py's exit contract: 3 = zero-trial
+      # startup crash (docker pull / airgap / resolve transient) → exactly
+      # ONE inline retry, with attempt 1's run dir moved aside so the RCA
+      # survives; 2 = rate-limited abort → never retried (gh-1674: no
+      # trial starts into a dead quota window — the owner reruns); any
+      # other nonzero = a failure WITH trials, a real result, never
+      # retried (a retry would double-bill and mix attempts). The status
+      # file lives OUTSIDE the run dir so the merged artifact carries task
+      # dirs only. gh-1600 lesson applied: the run dir lives in
+      # $RUNNER_TEMP, never the workspace.
+      - name: Run fa on shard ${{ matrix.i }}
+        env:
+          RUN_DIR: ${{ runner.temp }}/pbench-run/fa-${{ inputs.tasks || 'full' }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUN_DIR"
+          STATUS="$RUNNER_TEMP/pbench-status-${{ matrix.i }}.jsonl"
+          rm -f "$STATUS"
+          run_shard() {
+            python3 bench/programbench/run_shard.py "$RUN_DIR" \
+              --tasks "$SHARD_TASKS" \
+              --agent-timeout "$AGENT_TIMEOUT" \
+              --net-boot pbench-boot --net-llm pbench-llm \
+              --gateway "$PB_GATEWAY" --api-host "$API_HOST" \
+              --status "$STATUS"
+          }
+          if run_shard; then
+            :
+          else
+            rc=$?
+            if [ "$rc" -eq 2 ]; then
+              echo "::warning::shard ${{ matrix.i }}: provider rate limit — remaining tasks skipped (rerun the dispatch to resume)"
+              exit 2
+            fi
+            if [ "$rc" -ne 3 ]; then
+              exit "$rc"
+            fi
+            mv "$RUN_DIR" "${RUN_DIR}-attempt1" 2>/dev/null || true
+            mkdir -p "$RUN_DIR"
+            if run_shard; then
+              echo "::warning::shard ${{ matrix.i }}: zero-trial startup crash recovered by the inline retry (attempt 1 kept under ${RUN_DIR}-attempt1)"
+            else
+              {
+                echo "## Shard ${{ matrix.i }}"
+                echo
+                echo "zero-trial startup failure (retried once)"
+              } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+              exit 1
+            fi
+          fi
+
+      - name: Upload shard run dir (shard ${{ matrix.i }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pbench-shard-${{ matrix.i }}
+          path: ${{ runner.temp }}/pbench-run/
+
+      - name: Tear down network + forwarder
+        if: always()
+        run: |
+          # Containers first (network rm fails while containers attach).
+          docker ps -aq --filter "name=pbench-" | xargs -r docker rm -f 2>/dev/null || true
+          docker network rm pbench-boot pbench-llm 2>/dev/null || true
+          sudo pkill -f llm_forwarder.py 2>/dev/null || true
+
+  aggregate:
+    name: Package submission & verdict
+    needs: [setup, bench]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PB_VERSION: ${{ inputs.programbench-version }}
+      RUN_ID: fa-${{ inputs.tasks || 'full' }}-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download shard run dirs
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: pbench-shard-*
+          merge-multiple: true
+          path: pbench-merged
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      # The same pin that ran eval — _stats must come from one version.
+      - run: pip install "programbench==${PB_VERSION}"
+
+      # Fold every shard's task dirs into ONE run dir named <RUN_ID> (the
+      # package step derives submission_id from the dir name). The
+      # download merged the artifacts flat: every shard used the SAME run
+      # dir basename and the task subdirs are disjoint, so the merged
+      # tree is already the full run dir; attempt-1 leftovers (gh-1658
+      # RCA copies) are excluded from the fold.
+      - name: Merge shard run dirs
+        run: |
+          set -euo pipefail
+          RUN_DIR="pbench-run/$RUN_ID"
+          found=0
+          for d in pbench-merged/fa-*; do
+            [ -d "$d" ] || continue
+            case "$(basename "$d")" in *-attempt1) continue ;; esac
+            mkdir -p "$RUN_DIR"
+            cp -R "$d"/. "$RUN_DIR/"
+            found=1
+          done
+          [ "$found" = 1 ] || { echo "::error::no shard run dirs found in the merged artifact — every shard failed before its upload"; exit 1; }
+          count=$(find "$RUN_DIR" -mindepth 1 -maxdepth 1 -type d ! -name '_*' | wc -l)
+          echo "merged $count task dirs into $RUN_DIR"
+
+      # The registry submission generator: writes submission.yaml (with
+      # maintainer TODO fields), _stats/score.json (the ignored-test-
+      # filtered per-instance map), the checklist README, and splits each
+      # heavy eval log. Accepts a partial run (verified against 1.2.5).
+      - name: Package submission
+        run: |
+          set -euo pipefail
+          programbench submit package "pbench-run/$RUN_ID"
+
+      # Accuracy/cost/calls table (bench-harbor style) + the structural
+      # verdict: every expected instance packed, evaluated, and scored.
+      # Writes _stats/cost.json + _stats/calls.json (self-reported, from
+      # the fa session logs) — package preserves sibling _stats files
+      # (verified against 1.2.5).
+      - name: Summary & verdict
+        if: always()
+        env:
+          EXPECTED: ${{ needs.setup.outputs.count }}
+          TOTAL: ${{ needs.setup.outputs.total }}
+          MODE: ${{ needs.setup.outputs.mode }}
+          BENCH_RUN_LABEL: ${{ needs.setup.outputs.run_label }}
+          FA_REF: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python bench/programbench/summary.py "pbench-run/$RUN_ID" \
+            --expected "$EXPECTED" --total "$TOTAL" --mode "$MODE" \
+            --run-label "$BENCH_RUN_LABEL" --fa-ref "$FA_REF" --run-url "$RUN_URL" \
+            | tee "$GITHUB_STEP_SUMMARY"
+
+      # AC2's gate: the packaged folder must pass the registry's own
+      # Tier-0 check (headline recomputation from the artifacts — instant,
+      # no docker). A submission that cannot pass verify never leaves CI.
+      - name: Verify submission (Tier-0)
+        run: |
+          set -euo pipefail
+          programbench submit verify "pbench-run/$RUN_ID"
+
+      # The one-step handoff artifact: exactly the folder docs/bench.md
+      # tells a maintainer to publish + PR to ProgramBench/submissions.
+      - name: Upload submission folder
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: programbench-submission
+          path: pbench-run/
