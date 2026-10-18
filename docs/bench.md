@@ -6,6 +6,7 @@ fa runs two benchmark pipelines:
 |---|---|---|---|
 | `Bench` (`.github/workflows/bench.yml`) | terminal-bench-core 0.1.1 (LEGACY — board closed) | terminal-bench `tb` | ubuntu-latest |
 | `Bench Harbor` (`.github/workflows/bench-harbor.yml`) | the Terminal-Bench family — default `2.1`; `2.0` / `3.0` / `4.0` via the `dataset` input (issues #1124, #1316) | Harbor (`harbor` CLI) | ubuntu-latest (CPU/docker) + Modal (GPU) |
+| `Bench ProgramBench` (`.github/workflows/bench-programbench.yml`) | facebookresearch/ProgramBench (~200 reverse-engineering tasks; issue #1685) | `programbench` CLI + docker | ubuntu-latest |
 
 The official leaderboard (tbench.ai) reads Terminal-Bench 4.0 jobs from
 Harbor Hub — legacy submissions are closed, so 4.0 is the live
@@ -296,6 +297,126 @@ are flagged as clip-risk in the summary (not silently clipped).
 **Scores are pending the first full run** — the workflow and aggregation
 are live; ledger rows append per MLS dataset version per the ledger
 discipline above, with cost from `bench/pricing.json` (#1123).
+
+## ProgramBench
+
+`bench/programbench/` + `Bench ProgramBench` workflow — runs fa on
+[ProgramBench](https://github.com/facebookresearch/ProgramBench) (~200
+tasks: given only a compiled binary and its docs, rebuild a complete
+codebase whose behavior matches; issue #1685). Unlike the Harbor benches
+there is no shared framework: the workflow drives plain docker plus the
+official `programbench` CLI, and its output is SUBMISSION-READY — the
+aggregate job runs `programbench submit package` + `submit verify`
+(Tier-0) so the uploaded artifact is exactly the folder a registry PR
+needs (the leaderboard at programbench.com is self-serve via PRs to
+[ProgramBench/submissions](https://github.com/ProgramBench/submissions)).
+
+Files: `tasks.py` (task inventory + shard split from the pinned
+ProgramBench checkout), `run_shard.py` (per-shard docker/fa/eval driver),
+`llm_forwarder.py` (single-endpoint L4 forwarder), `summary.py`
+(accuracy/cost/calls table + structural verdict). Eval and packaging run
+the PyPI `programbench` at the pinned `programbench-version` input —
+`_stats` must come from one version (the submission guide requires
+≥1.2.0).
+
+### Inference airgap (the internet rule, enforced)
+
+ProgramBench bans agent internet access at inference — fetching the
+original source is disqualification — and fa's LLM calls originate inside
+the task container (the harbor pattern, `bench/harbor_fa/fa_agent.py`).
+So each task container is born on a normal bridge network (CA roots +
+the fa bundle are installed there — inference must not download its own
+prerequisites), then moved onto a docker `--internal` network (no
+external route) whose only egress is the host-side
+`llm_forwarder.py` bound to the network gateway, forwarding TCP to the
+selected provider's API endpoint exactly. TLS stays end-to-end (the
+container's /etc/hosts maps the provider hostname to the gateway; SNI and
+certificates are the provider's real ones — fa's baseUrl is
+byte-identical to a direct run). The agent cannot reach anything else.
+
+Per task (`run_shard.py`): pull
+`programbench/<iid __→_1776_>:task_cleanroom_v6` → install bundle to
+`/opt/fa` + autopilot approval (harbor's install() surface) → cut the
+internet → `fa -p` with the rebuild prompt (compile.sh deliverable, the
+official no-wrap/no-decompile rules) under the `agent-timeout` wall cap →
+tar `/workspace` to `submission.tar.gz` (produced even on kills — partial
+work evaluates honestly) → trajectory + session logs copied out. Eval
+runs once per shard: `programbench eval <run_dir>`.
+
+### Running
+
+Dispatch **Bench ProgramBench**. Inputs:
+
+- `tasks` — `smoke` (default: the two lexicographically-first instances;
+  a pipeline proof, NOT a leaderboard row), `lite` (deterministic
+  ~20-instance stride), comma fnmatch globs, or empty = the full ~200
+  instances (requires `confirm-full-run: true`).
+- `provider` / `provider-config` — the gh-1471/1503 dispatch surface,
+  byte-shared with `Bench` and `Bench Harbor` (zai glm-5.3-flash default,
+  kimi-for-coding, custom).
+- `programbench-ref` — git ref pinning the official task set (inventory
+  is enumerated from this checkout, never from PyPI data).
+- `programbench-version` — PyPI pin for eval + packaging (default 1.2.5).
+- `shards` / `max-parallel` — chunking and concurrency; defaults ~4
+  instances per 6h job, 3 shards in flight.
+- `agent-timeout` — per-instance wall cap; default 21600s = the official
+  mini-swe-agent baseline budget (the pass@1 comparability anchor — one
+  attempt per instance, no attempts input by design).
+
+### Quota discipline (kimi saga, gh-1674)
+
+Tasks run sequentially inside a shard; shards run ≤3 in parallel by
+default (`max-parallel`). A provider 429 aborts the shard's remaining
+tasks immediately (exit 2 — never retried inline: no trial starts into a
+dead quota window; rerun the dispatch to resume, remaining tasks are
+marked skipped). Only a zero-trial startup crash (docker pull / airgap /
+resolve transient) gets the gh-1658-style single inline retry; a failure
+with trials is a real result and never retried. The setup resolve step
+preflights the provider secret before any spend.
+
+### Results
+
+1. **Job summary** — the accuracy/cost/calls table per instance
+   (`bench/programbench/summary.py`), the solved ✅ column, and the
+   structural verdict (every attempted instance packed, evaluated, and
+   scored — a lost shard fails the run, never a silent score). A partial
+   run's headline is dilution-labeled in the table: `submit package`
+   divides by the full official set.
+2. **Artifacts** — per-shard run dirs (`pbench-shard-*`) and
+   `programbench-submission`: the packaged, Tier-0-verified folder with
+   `submission.yaml`, `_stats/score.json` (the tool's ignored-test-
+   filtered map — never recomputed harness-side), self-reported
+   `_stats/cost.json` + `_stats/calls.json` computed from the fa session
+   logs via `bench/fa_usage.py` + `bench/pricing.json`, per-instance
+   `submission.tar.gz` + `*.eval.json` + `*.traj.json`.
+3. **Verdict gate** — `programbench submit verify` (Tier-0) must pass in
+   CI; a submission that cannot pass the registry's own check never
+   leaves the run.
+
+### Opening the submission PR (manual, by design)
+
+The workflow stops at the verified artifact — publishing is a maintainer
+decision. Per the official submission guide:
+
+1. Download the `programbench-submission` artifact (one folder = one
+   submission; the run dir name is the `submission_id`).
+2. Fill in `submission.yaml`'s maintainer fields (package leaves `TODO`:
+   submitter, model/provider display names, `is_os_model` /
+   `is_os_scaffold` — fa is the scaffold, so `is_os_scaffold: true`) and
+   finish the generated `README.md` checklist.
+3. Push the folder to a public repo you own (e.g.
+   `programbench submit publish <dir> --owner <your-org>`, or by hand) —
+   this fork URL + pinned commit is what `pointer.yaml` carries.
+4. Open the PR to ProgramBench/submissions adding
+   `submissions/<id>/` (`programbench submit register <dir>` does it with
+   `gh`, or copy `pointer.yaml` + `submission.yaml` + `_stats/` by hand).
+   Registry CI recomputes the headline (Tier-0) on merge; Tier-1 re-runs
+   eval from the uploaded solutions.
+5. Only a full (`tasks: ''` + `confirm-full-run: true`) run is a
+   leaderboard row — smoke/lite artifacts are pipeline proofs.
+
+Task images are x86_64-only (dockerhub `programbench/*:task_cleanroom_v6`)
+— hosted ubuntu runners only, no arm/self-hosted-mac path.
 
 ## Legacy: terminal-bench-core 0.1.1
 
