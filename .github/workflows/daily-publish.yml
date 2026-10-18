@@ -25,8 +25,10 @@
 #                                 extension, attached to the next-tag
 #                                 release (version passed explicitly so
 #                                 mobile/desktop never mint diverging tags)
-#   website     pages.yml          fa1.dev (landing + web demo + extension
-#                                 + the /outlook add-in slice)
+#   website     pages.yml          fa1.dev (landing + web demo +
+#                                 the /outlook add-in slice; gh-1684:
+#                                 the extension zip moved to GitHub
+#                                 Releases and is no longer site-hosted)
 #   addin       office-addin.yml   manifest/taskpane acceptance suite; the
 #                                 fa1.dev publish itself rides the website
 #                                 leg (pages.yml assembles /outlook)

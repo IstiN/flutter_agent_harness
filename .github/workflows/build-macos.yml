@@ -1038,6 +1038,14 @@ jobs:
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          # gh-1684 decision 4 (gate symmetry): the SAME exact patch pin
+          # the pages.yml leg carried and the PR gate carries (#1431 —
+          # the rev normalization absorbs canvaskit rev-hash churn, the
+          # pin keeps every fa-extension.zip build comparable across
+          # legs). The old unpinned `channel: stable` floated the engine
+          # per run — one of the two ways the release and Pages legs
+          # diverged.
+          flutter-version: '3.47.7'
           channel: stable
 
       - name: dart pub get (root)
@@ -1056,8 +1064,11 @@ jobs:
         run: bash scripts/build_browser_ext.sh --with-app
 
       # AC1 (#1096): per-entry uncompressed size table + +5% budget gate
-      # against the committed v1.0.493 release baseline. Shrink passes;
-      # growth (e.g. a dropped interpreter re-added) fails the release.
+      # against the committed baseline (gh-1684: reseeded to the
+      # post-#1631 vendored-engines shape — litert/transformers/webllm are
+      # intentional CWS policy; growth beyond the floor fails the release).
+      # Identical invocation as the PR-time gate (ci.yml
+      # extension-size-gate): one baseline, one enforcement rule.
       - name: Size manifest + budget gate (fa-extension.zip)
         run: python3 scripts/size_manifest.py check build/fa-extension.zip --baseline scripts/size_budget/fa-extension.tsv
 

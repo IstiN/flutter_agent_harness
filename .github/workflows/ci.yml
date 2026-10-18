@@ -101,6 +101,12 @@ concurrency:
 #               pull_request + SM validation dispatches, same model as
 #               exzone/locksmoke; the daily-publish addin leg still
 #               dispatches office-addin.yml directly)
+#   extension-size-gate → gh-1684 AC3: the fa-extension.zip size budget
+#               gate at PR review time (was deploy-time-only in pages.yml,
+#               which is how #1631 blocked Pages for days). PATH-TRIGGERED
+#               on pull_request + SM validation dispatches; red blocks the
+#               merge via the quality-gate platform class; the release leg
+#               (build-macos.yml build-extension) keeps gating tags.
 #   test-faui → packages/fa_ui tests sharded ×3 by manifest   (app/core/shared;
 #               issue #283 — same template as test-core: manifest assert,
 #               per-shard coverage merged to ONE report, junit durations
@@ -2202,6 +2208,57 @@ jobs:
         with:
           name: office-addin
           path: build/pages/root/outlook/
+  # gh-1684 AC3: the fa-extension.zip size budget gate runs at PR review
+  # time — the Pages deploy went red for days because #1631's intentional
+  # vendor growth only surfaced in the DEPLOY leg, after merge. Any diff
+  # that can move the zip builds it here, exactly like the release leg
+  # (build_browser_ext.sh --with-app, Flutter 3.47.7 — the same exact
+  # patch pin pages.yml carried, #1431) and fails the PR against the
+  # committed baseline: a vendor-bump PR without a committed reseed goes
+  # red HERE, at review time, never at deployment. Skipped legs pass
+  # (same contract as office-addin-suite); tags/schedule are gated by
+  # the release leg in build-macos.yml build-extension instead.
+  extension-size-gate:
+    name: Extension size gate (fa-extension.zip)
+    runs-on: ubuntu-latest
+    needs: [release-pending, release-dedupe, changes]
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
+      needs.changes.outputs.extsize == 'true' &&
+      needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
+    # dart2js agent (~1m) + flutter web release build (~2m) + vendor
+    # fetch (~1m) — historically ~10m end to end.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          # gh-1684 decision 4: the SAME exact patch pin every other
+          # fa-extension.zip leg uses (#1431 — a wildcard pin
+          # re-resolves a new engine build on every 3.47.x patch drop;
+          # the rev normalization absorbs the path churn, the pin keeps
+          # the builds comparable across legs).
+          flutter-version: '3.47.7'
+          channel: stable
+
+      - name: dart pub get (root + browser_ext/dart)
+        run: |
+          dart pub get
+          cd browser_ext/dart && dart pub get
+
+      # Full artifact, release-identical: SW agent (dart2js) + the
+      # Flutter panel app embedded + the vendor.lock.json engines.
+      - name: Build extension zip
+        run: bash scripts/build_browser_ext.sh --with-app
+
+      # One baseline, one enforcement rule — the identical invocation
+      # the build-macos.yml release leg runs.
+      - name: Size manifest + budget gate (#1096 AC1, gh-1684 AC3)
+        run: python3 scripts/size_manifest.py check build/fa-extension.zip --baseline scripts/size_budget/fa-extension.tsv
+
   # Issue #433: flutter_app CRAP ratchet — the app's beasts were never
   # gated (the root crap4dart.yaml covers core lib/bin only). The 2
   # flutter-tests shards above now emit --coverage; this job merges them
@@ -3135,7 +3192,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite]
+    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]
     if: always() && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
@@ -3179,6 +3236,7 @@ jobs:
           echo "exzone      = ${{ needs.flutter-app-exzone.result }}"
           echo "lock-smoke  = ${{ needs.flutter-app-lock-smoke.result }}"
           echo "office-addin  = ${{ needs.office-addin-suite.result }}"
+          echo "ext-size-gate = ${{ needs.extension-size-gate.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
         id: gate
         env:
@@ -3213,6 +3271,7 @@ jobs:
           R_EXZONE: ${{ needs.flutter-app-exzone.result }}
           R_LOCK_SMOKE: ${{ needs.flutter-app-lock-smoke.result }}
           R_OFFICE_ADDIN: ${{ needs.office-addin-suite.result }}
+          R_EXT_SIZE: ${{ needs.extension-size-gate.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
           # Verdict pass collects blockers WITHOUT exiting, so dart_ok is
@@ -3255,10 +3314,10 @@ jobs:
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
                     "installer-portability:$R_INSTALLER_REG" \
                     "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE" \
-                    "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE" "office-addin-suite:$R_OFFICE_ADDIN"; do
+                    "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE" "office-addin-suite:$R_OFFICE_ADDIN" "extension-size-gate:$R_EXT_SIZE"; do
             name="${kv%%:*}"; r="${kv#*:}"
             case "$name" in
-              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual|flutter-app-lock-smoke|installer-portability|office-addin-suite)
+              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual|flutter-app-lock-smoke|installer-portability|office-addin-suite|extension-size-gate)
                 if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
                   platform_red=true
                 fi
