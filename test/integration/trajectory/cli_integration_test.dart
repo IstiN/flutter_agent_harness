@@ -227,4 +227,60 @@ void main() {
       }
     });
   });
+
+  group('fa trajectory export (gh-1681 Gap 2 — harbor ATIF)', () {
+    test('stdout export is an ATIF-v1.7 document with steps and metrics',
+        () async {
+      final run = await runFaTrajectory(['export', fixture.sessionId]);
+
+      expect(run.exitCode, 0, reason: run.output);
+      final doc = jsonDecode(run.stdout) as Map<String, dynamic>;
+      expect(doc['schema_version'], 'ATIF-v1.7');
+      expect(doc['session_id'], fixture.sessionId);
+      expect(doc['agent']['name'], 'fa');
+      expect(doc['agent']['version'], isNotNull);
+      expect(doc['agent']['model_name'], 'mock-model');
+      final steps = (doc['steps'] as List).cast<Map<String, dynamic>>();
+      expect(steps, isNotEmpty);
+      for (var i = 0; i < steps.length; i++) {
+        expect(steps[i]['step_id'], i + 1);
+      }
+      // The fixture's tooled turn: a user step, an agent step, and a
+      // deterministic-dispatch tool step with the observation.
+      expect(
+        steps.map((s) => s['source']),
+        containsAll(<String>['user', 'agent']),
+      );
+      final toolStep = steps.firstWhere((s) => s.containsKey('tool_calls'));
+      expect(toolStep['llm_call_count'], 0);
+      expect(toolStep['tool_calls'].single['function_name'], 'read');
+      expect(
+        toolStep['observation']['results'].single['content'],
+        isNotNull,
+      );
+      expect(doc['final_metrics']['total_steps'], steps.length);
+    });
+
+    test('--output writes the file and prints nothing to stdout', () async {
+      final outDir = Directory.systemTemp.createTempSync('fa_atif_out_');
+      final out = File('${outDir.path}/t.json');
+      try {
+        final run = await runFaTrajectory([
+          'export',
+          fixture.sessionId,
+          '--output',
+          out.path,
+        ]);
+
+        expect(run.exitCode, 0, reason: run.output);
+        expect(run.stdout, isEmpty);
+        final doc =
+            jsonDecode(out.readAsStringSync()) as Map<String, dynamic>;
+        expect(doc['schema_version'], 'ATIF-v1.7');
+        expect(doc['agent']['name'], 'fa');
+      } finally {
+        outDir.deleteSync(recursive: true);
+      }
+    });
+  });
 }

@@ -483,6 +483,7 @@ CliArgsResult _parseTrajectoryArgs(List<String> args) {
     operands.at,
     operands.json,
     operands.format,
+    operands.formatSet,
     operands.output,
   );
   return CliArgs(
@@ -508,6 +509,7 @@ typedef _TrajectoryOperands = ({
   String? cwd,
   String? sessionRoot,
   String format,
+  bool formatSet,
   String? output,
 });
 
@@ -520,6 +522,7 @@ _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
   String? cwd;
   String? sessionRoot;
   var format = 'atif';
+  var formatSet = false;
   String? output;
   for (var i = 1; i < args.length; i++) {
     final arg = args[i];
@@ -541,6 +544,7 @@ _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
         final value = _pathFlagValue(args, arg, i);
         if (arg == '--format') {
           format = value;
+          formatSet = true;
         } else {
           output = value;
         }
@@ -562,6 +566,7 @@ _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
     cwd: cwd,
     sessionRoot: sessionRoot,
     format: format,
+    formatSet: formatSet,
     output: output,
   );
 }
@@ -587,8 +592,18 @@ int _atFlagValue(List<String> args, int i) {
 }
 
 /// Rejects verb/operand mismatches: `inspect` needs a numeric record
-/// number and `--at` applies to `view` only.
-void _validateTrajectoryVerb(String verb, List<String> positionals, int? at) {
+/// number, `--at` applies to `view` only, and the export-only flags
+/// (`--format`/`--output`) plus the view-only `--json` are verb-gated so
+/// a flag typo never silently does the wrong thing on another verb.
+void _validateTrajectoryVerb(
+  String verb,
+  List<String> positionals,
+  int? at,
+  bool json,
+  String format,
+  bool formatSet,
+  String? output,
+) {
   if (verb == 'inspect') {
     if (positionals.isEmpty) {
       throw const CliArgsException(
@@ -603,6 +618,26 @@ void _validateTrajectoryVerb(String verb, List<String> positionals, int? at) {
   }
   if (at != null && verb != 'view') {
     throw const CliArgsException('--at only applies to fa trajectory view');
+  }
+  if (verb == 'export') {
+    if (format != 'atif') {
+      throw CliArgsException(
+        'unsupported trajectory export format: $format (only atif)',
+      );
+    }
+    if (json) {
+      throw const CliArgsException(
+        '--json does not apply to fa trajectory export (the ATIF document '
+        'is already JSON)',
+      );
+    }
+    return;
+  }
+  if (formatSet || output != null) {
+    throw CliArgsException(
+      '--format/--output only apply to fa trajectory export (got verb '
+      '$verb)',
+    );
   }
 }
 
