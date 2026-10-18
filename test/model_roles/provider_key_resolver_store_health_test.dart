@@ -6,7 +6,6 @@
 // KeyStatusRenderer.noKeyHint / customEndpointAuthHint.
 import 'package:flutter_agent_harness/src/cli/custom_providers.dart';
 import 'package:flutter_agent_harness/src/cli/key_status.dart';
-import 'package:flutter_agent_harness/src/model.dart';
 import 'package:flutter_agent_harness/src/model_roles/provider_key_resolver.dart';
 import 'package:flutter_agent_harness/src/secrets/secure_key_store.dart';
 import 'package:test/test.dart';
@@ -72,15 +71,6 @@ void main() {
   group('KeyStatusRenderer no-key hint store-health states (gh-1679 AC3)',
       () {
     const customUrl = 'https://api.kimi.com/coding/v1';
-
-    Model customModel() => Model(
-      id: 'k2',
-      api: 'openai-completions',
-      provider: 'openai',
-      baseUrl: customUrl,
-      contextWindow: 200000,
-      maxTokens: 16384,
-    );
 
     Future<KeyStatusRenderer> rendererWith({
       required FakeSecureKeyStore store,

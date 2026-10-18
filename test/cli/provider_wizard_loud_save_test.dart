@@ -9,8 +9,6 @@ import 'agent_cli_test_support.dart';
 /// error: the generic keychain failure, or the macOS "no default keychain"
 /// preflight shape (gh-1679).
 final class _FlakyStore implements SecureKeyStore {
-  _FlakyStore({this.writeError});
-
   Object? writeError;
   final map = <String, String>{};
 
