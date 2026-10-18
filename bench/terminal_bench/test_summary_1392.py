@@ -6,8 +6,11 @@ gaps is a contradiction, never silent).
 
 Run: python3 -m unittest discover -s bench/terminal_bench
 """
+import contextlib
 import importlib.util
+import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -22,6 +25,39 @@ spec.loader.exec_module(summary)
 
 import bench_metrics
 from bench_metrics import summarize_trial
+
+
+FIXTURE_BANNER = "TEST FIXTURE — not a real run"
+
+
+@contextlib.contextmanager
+def _fixture_output():
+    """Mark stdout written inside the block as rendered test fixture.
+
+    gh-1677: the CI unit-test step runs unittest WITHOUT --buffer, so a
+    summary.main() call inside a test prints its report straight into
+    the step log — byte-shaped exactly like a production run summary
+    (that output was once quoted as proof a real run was a glm run).
+    The banner line makes any pasted/quoted chunk self-identify as a
+    fixture.
+
+    The manager also pops GITHUB_STEP_SUMMARY for the block (restoring
+    it on exit): Actions CI exports that sink for EVERY step and
+    summary.py prefers it over stdout — without the pop the banner
+    would land on the step log while the unbannered report lands on
+    the step-summary page (the exact surface gh-1677 quotes), and the
+    tests would keep appending fake run reports to the real step-
+    summary file. Same hermetic contract as bench/harbor_fa/
+    test_summary.py's setUp, co-located with the banner so the two
+    can never drift apart.
+    """
+    sink = os.environ.pop("GITHUB_STEP_SUMMARY", None)
+    print(FIXTURE_BANNER)
+    try:
+        yield
+    finally:
+        if sink is not None:
+            os.environ["GITHUB_STEP_SUMMARY"] = sink
 
 
 def _results(run_dir, rows):
@@ -166,7 +202,7 @@ class ConcurrencyTagTest(unittest.TestCase):
             os.environ, {"BENCH_CONCURRENCY": "1"}
         ), mock.patch.object(
             summary.sys, "argv", ["summary.py", "--no-fail", str(self.runs)]
-        ):
+        ), _fixture_output():
             code = None
             try:
                 summary.main()
@@ -308,11 +344,15 @@ class ProviderLabelTest(unittest.TestCase):
         _results(self.runs / "shard-0", [_row("t1", "t1__t", mode="unset")])
 
     def test_render_tags_the_provider_label(self):
+        # gh-1677: the fixture label is deliberately synthetic
+        # (test-fixture-provider, never a production provider/model) —
+        # a production-shaped fixture once masqueraded as a real run in
+        # the CI step log.
         lines, _ = summary.render(
-            self.runs, run_label="kimi-for-coding"
+            self.runs, run_label="test-fixture-provider (fixture-model)"
         )
         self.assertEqual(
-            lines[2], "Provider: kimi-for-coding (gh-1471)."
+            lines[2], "Provider: test-fixture-provider (fixture-model) (gh-1471)."
         )
 
     def test_no_label_keeps_the_header_stock(self):
@@ -327,16 +367,69 @@ class ProviderLabelTest(unittest.TestCase):
         from unittest import mock
 
         with mock.patch.dict(
-            os.environ, {"BENCH_RUN_LABEL": "zai-glm-5.3-flash (glm-5.3-flash)"}
+            # gh-1677: synthetic fixture label — a production-shaped
+            # value here renders straight into the unbuffered CI step
+            # log and reads as a real run summary.
+            os.environ, {"BENCH_RUN_LABEL": "test-fixture-provider (fixture-model)"}
         ), mock.patch.object(
             summary.sys, "argv", ["summary.py", "--no-fail", str(self.runs)]
-        ):
+        ), _fixture_output():
             code = None
             try:
                 summary.main()
             except SystemExit as exc:
                 code = exc.code
             self.assertEqual(code, 0)
+
+
+class FixtureBannerTest(unittest.TestCase):
+    """gh-1677: any fixture render reaching the CI log carries the banner."""
+
+    def test_rendered_fixture_output_carries_the_banner(self):
+        # The unbuffered unittest step prints everything a test writes;
+        # the banner must be the FIRST line of any fixture render so a
+        # pasted chunk can never read as CI truth.
+        from unittest import mock
+
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf), _fixture_output():
+            print("### fa on terminal-bench")
+        self.assertEqual(buf.getvalue().splitlines()[0], FIXTURE_BANNER)
+
+    def test_main_render_stays_on_the_banner_surface(self):
+        # Review thread 1 (BLOCKING): Actions CI exports
+        # GITHUB_STEP_SUMMARY for EVERY step and summary.main() prefers
+        # that sink over stdout — without the hermetic pop the banner
+        # lands on the step log while the unbannered fixture report
+        # lands on the step-summary page (the exact surface gh-1677
+        # quotes as the false-alarm source), and the test keeps
+        # appending fake run reports to the real step-summary file.
+        # Reproduces the reviewer's repro: sink env set, main() inside
+        # _fixture_output() — the report must print to stdout, under
+        # the banner, and the sink must stay untouched.
+        import os
+        from unittest import mock
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        runs = Path(tmp.name) / "runs"
+        _results(runs / "shard-0", [_row("t1", "t1__t", mode="unset")])
+        sink = Path(tmp.name) / "step-summary.md"
+        os.environ["GITHUB_STEP_SUMMARY"] = str(sink)
+        self.addCleanup(os.environ.pop, "GITHUB_STEP_SUMMARY", None)
+
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf), mock.patch.object(
+            summary.sys, "argv", ["summary.py", "--no-fail", str(runs)]
+        ), _fixture_output():
+            try:
+                summary.main()
+            except SystemExit:
+                pass
+        out = buf.getvalue()
+        self.assertTrue(out.startswith(FIXTURE_BANNER), out)
+        self.assertIn("### fa on terminal-bench", out)
+        self.assertFalse(sink.exists(), f"fixture report leaked to {sink}")
 
 
 if __name__ == "__main__":

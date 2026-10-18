@@ -89,7 +89,11 @@ jobs:
   build-macos:
     name: Build macOS ${{ matrix.arch }}
     needs: version
-    runs-on: [self-hosted, macOS, ARM64]
+    # gh-1600 F-A: pin the ONE self-hosted macOS runner (fa-m5-1) via its
+    # unique registration label — the generic [self-hosted, macOS, ARM64]
+    # list also matched the Linux self-hosted box's labels (same routing
+    # bug that sent the build-mobile iOS jobs to Linux, gh-1600).
+    runs-on: [self-hosted, macos-m5]
     # Issue #239: TestFlight submit now waits for Apple processing (bounded,
     # default 90 min) + a ~1-min one-shot appearance probe AFTER the
     # build/notarize work (gh-1041: the blocking distribution wait moved to
@@ -110,43 +114,61 @@ jobs:
 
     steps:
       # ── Prepare persistent local git mirrors ────────────────────────────────
+      # gh-1644: the old inline single-shot logic died on the first network
+      # hiccup — the recreate fell through to a full `git clone --mirror`
+      # whose ~1 h transfer ended in "error: 2931 bytes of body are still
+      # expected" (run 38855793382, exit 128). The shared script retries the
+      # fetch with VISIBLE stderr, aborts stalled attempts, and recreates
+      # BLOBLESS (--filter=blob:none, the gh-1477 precedent) with retries and
+      # partial-dir cleanup. Contract: scripts/update_git_mirror_selftest.sh
+      # gh-1665 review: this step runs BEFORE any checkout on persistent
+      # self-hosted runners — the workspace may hold a pre-merge tree (or be
+      # wiped), so the script is bootstrapped from the commit-pinned raw URL
+      # (workflow_dispatch-only workflows ⇒ ${{ github.sha }} is always a
+      # pushed commit) with the mirror copy as the no-network fallback.
       - name: Update local git mirrors
         run: |
           set -euo pipefail
-
           MIRROR_BASE="$HOME/actions-runner-yoloit/mirror"
           mkdir -p "$MIRROR_BASE"
-
-          update_mirror() {
-            local url="$1"
-            local mirror="$2"
-            local extra_args="${3:-}"
-            if [ ! -d "$mirror" ]; then
-              echo "Creating mirror: $mirror"
-              if [ -n "$extra_args" ]; then
-                # --mirror conflicts with --single-branch/--branch; use --bare
-                # for branch-specific mirrors (e.g. flutter_code_editor).
-                git clone --bare $extra_args "$url" "$mirror"
-              else
-                git clone --mirror "$url" "$mirror"
-              fi
+          MIRROR="$MIRROR_BASE/flutter_agent_harness.git"
+          SCRIPT="$RUNNER_TEMP/update_git_mirror.sh"
+          RAW="https://raw.githubusercontent.com/IstiN/flutter_agent_harness/${{ github.sha }}/scripts/update_git_mirror.sh"
+          if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "$RAW" -o "$SCRIPT" \
+             || [ ! -s "$SCRIPT" ]; then
+            echo "raw bootstrap failed — syncing the mirror and falling back to its copy" >&2
+            # gh-1665 review (returned IMPORTANT): in the one-run-wide
+            # first-post-merge window the persistent mirror is still a
+            # PRE-MERGE tree. Cheap single-shot ensure (bounded resilience
+            # stays owned by $SCRIPT below) so the extraction that follows
+            # succeeds on any runner that can reach github.com at all —
+            # raw.githubusercontent.com being down degrades to the
+            # fallback instead of a red leg.
+            if [ -d "$MIRROR" ] && git -C "$MIRROR" rev-parse --git-dir >/dev/null 2>&1; then
+              git -C "$MIRROR" fetch origin || true
             else
-              echo "Updating mirror: $mirror"
-              if ! git -C "$mirror" fetch origin 2>/dev/null; then
-                echo "Fetch failed — recreating mirror: $mirror"
-                rm -rf "$mirror"
-                if [ -n "$extra_args" ]; then
-                  git clone --bare $extra_args "$url" "$mirror"
-                else
-                  git clone --mirror "$url" "$mirror"
-                fi
-              fi
+              rm -rf "$MIRROR"
+              git clone --mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR" || true
             fi
-          }
-
-          update_mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR_BASE/flutter_agent_harness.git"
+            BRANCH="$(git --git-dir="$MIRROR" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+            git --git-dir="$MIRROR" show "$BRANCH:scripts/update_git_mirror.sh" > "$SCRIPT" \
+              || { echo "::error::could not bootstrap update_git_mirror.sh (raw URL unreachable and mirror lacks the script)" >&2; exit 1; }
+          fi
+          bash "$SCRIPT" \
+            https://github.com/IstiN/flutter_agent_harness.git \
+            "$MIRROR"
 
       # ── Checkout ────────────────────────────────────────────────────────────
+      # gh-1600 AC2: hardened mirror-checkout — the bare `rm -rf
+      # "$GITHUB_WORKSPACE"` used to fail the whole checkout on stale
+      # unremovable leftovers in the persistent shared workspace (bench
+      # docker leftovers, jobs/fa-2.1-docker-cpu-14/). Log-and-prune clean +
+      # clone-around-stub; the per-arch build cache is parked outside the
+      # workspace before the clean and restored after the clone (best-effort:
+      # a lost cache re-builds from scratch, it never fails the checkout).
+      # INLINE (not a composite action) on purpose: local `uses: ./...`
+      # actions resolve against $GITHUB_WORKSPACE at step time — on this box
+      # that is the PREVIOUS run's tree, and this step IS the checkout.
       - name: Checkout repository from local mirrors
         run: |
           set -euo pipefail
@@ -165,23 +187,76 @@ jobs:
             echo "Preserving existing macOS build cache for $ARCH..."
             rm -rf "$BUILD_CACHE_DIR"
             mkdir -p "$BUILD_CACHE_DIR"
-            mv "$GITHUB_WORKSPACE/build/macos" "$BUILD_CACHE_DIR/"
+            mv "$GITHUB_WORKSPACE/build/macos" "$BUILD_CACHE_DIR/" \
+              || echo "::warning::could not park the $ARCH build cache — it will be rebuilt from scratch (gh-1600)"
           fi
 
           cd /tmp
-          rm -rf "$GITHUB_WORKSPACE"
+
+          # gh-1600 AC2: tolerate stale unremovable paths in the persistent
+          # shared workspace — log-and-prune, never fail the checkout.
+          if ! rm -rf "$GITHUB_WORKSPACE" 2>/dev/null; then
+            echo "::warning::$GITHUB_WORKSPACE not fully removable — stale paths held by another process (gh-1600); pruning what is removable"
+            rm -rf "$GITHUB_WORKSPACE" || true
+          fi
+          if [ -d "$GITHUB_WORKSPACE" ] && [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+            # gh-1600 rework (review thread): best-effort prune of previous
+            # sidecars BEFORE creating a new one — the containers that held
+            # them may have died since, so the retry often succeeds. On
+            # this persistent box the runner's own _temp cleanup cannot
+            # remove mount-held content either; without the prune every
+            # degraded checkout would leave another timestamped dir behind
+            # (unbounded growth until manual cleanup).
+            rm -rf "${RUNNER_TEMP:-/tmp}"/stale-workspace-* 2>/dev/null || true
+            STALE="${RUNNER_TEMP:-/tmp}/stale-workspace-$(date +%Y%m%d-%H%M%S)"
+            echo "::warning::$GITHUB_WORKSPACE still non-empty after prune — moving the remainder to $STALE (gh-1600)"
+            mkdir -p "$(dirname "$STALE")" 2>/dev/null || true
+            if ! mv "$GITHUB_WORKSPACE" "$STALE" 2>/dev/null; then
+              echo "::warning::$GITHUB_WORKSPACE could not be moved aside either — cloning around the stub (gh-1600)"
+            fi
+          fi
           mkdir -p "$GITHUB_WORKSPACE"
 
-          echo "Cloning main repo with mirror reference..."
+          CLONE_TARGET="$GITHUB_WORKSPACE"
+          if [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+            CLONE_TARGET="$GITHUB_WORKSPACE.checkout"
+            rm -rf "$CLONE_TARGET"
+          fi
           git clone --reference "$MAIN_MIRROR" --depth=1 \
-            https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
+            https://github.com/IstiN/flutter_agent_harness.git "$CLONE_TARGET"
+          if [ "$CLONE_TARGET" != "$GITHUB_WORKSPACE" ]; then
+            while IFS= read -r entry; do
+              name="$(basename "$entry")"
+              if [ -e "$GITHUB_WORKSPACE/$name" ]; then
+                # gh-1600 rework (review thread): fresh content must win —
+                # park the stale stub in the same $STALE sidecar and move
+                # the fresh entry in. The old path skipped the fresh entry
+                # (warning-only) and the trailing rm -rf "$CLONE_TARGET"
+                # then DELETED it, silently keeping the stale leftover at
+                # that repo path. Skip-with-warning remains only as the
+                # last-resort fallback when even parking the stub fails.
+                STALE_DIR="${STALE:-${RUNNER_TEMP:-/tmp}/stale-workspace-sidecar}"
+                if mkdir -p "$STALE_DIR" 2>/dev/null && mv "$GITHUB_WORKSPACE/$name" "$STALE_DIR/" 2>/dev/null; then
+                  mv "$entry" "$GITHUB_WORKSPACE/"
+                else
+                  echo "::warning::stub collision on '$name' — left in $CLONE_TARGET (gh-1600)"
+                fi
+              else
+                mv "$entry" "$GITHUB_WORKSPACE/"
+              fi
+            done < <(find "$CLONE_TARGET" -mindepth 1 -maxdepth 1)
+            rm -rf "$CLONE_TARGET"
+          fi
+          echo "Checked out: $(git -C "$GITHUB_WORKSPACE" log -1 --oneline)"
 
           cd "$GITHUB_WORKSPACE"
 
           if [ -d "$BUILD_CACHE_DIR/macos" ]; then
             echo "Restoring macOS build cache for $ARCH..."
+            rm -rf build/macos 2>/dev/null || true
             mkdir -p build
-            mv "$BUILD_CACHE_DIR/macos" build/
+            mv "$BUILD_CACHE_DIR/macos" build/ \
+              || echo "::warning::could not restore the $ARCH build cache — it will be rebuilt from scratch (gh-1600)"
           fi
 
       # Persistent pinned SDK (issue #354): same rationale as

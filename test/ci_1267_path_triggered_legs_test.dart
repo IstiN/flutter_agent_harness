@@ -74,7 +74,12 @@ void main() {
 
     test('a failed classification fails SAFE — both rare-path arms run', () {
       final run = stepById(changes, 'paths')['run'] as String;
-      expect(run, contains('failing safe: exzone + locksmoke arms run'));
+      expect(
+        run,
+        contains(
+          'failing safe: exzone + locksmoke + installer + office_addin arms run',
+        ),
+      );
       expect(run, contains('echo "exzone=true"'));
       expect(run, contains('echo "locksmoke=true"'));
     });
@@ -193,7 +198,8 @@ void main() {
       expect(
         body,
         contains(
-          'install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke]',
+          'install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke,'
+          ' office-addin-suite]',
         ),
         reason:
             'quality-gate must NEED the leg — a leg outside the '
@@ -206,7 +212,8 @@ void main() {
       expect(
         body,
         contains(
-          '"flutter-app-exzone:\$R_EXZONE" "flutter-app-lock-smoke:\$R_LOCK_SMOKE"; do',
+          '"flutter-app-exzone:\$R_EXZONE" "flutter-app-lock-smoke:'
+          '\$R_LOCK_SMOKE" "office-addin-suite:\$R_OFFICE_ADDIN"; do',
         ),
         reason:
             'the verdict loop must consume the result — an unlisted '
@@ -216,7 +223,7 @@ void main() {
         body,
         contains(
           'pty-coverage-gate|pty-visual|flutter-app-lock-smoke'
-          '|installer-portability)',
+          '|installer-portability|office-addin-suite)',
         ),
         reason:
             'platform class (#1368): a red windows release build blocks '

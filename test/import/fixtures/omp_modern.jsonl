@@ -1,0 +1,21 @@
+{"type":"title","v":1,"title":"Fix the login flow","source":"user","updatedAt":"2026-10-10T10:00:00.000Z","pad":""}
+{"type":"session","version":3,"id":"1f9d2a6b-9c0d-4f34-a111-000000000001","timestamp":"2026-10-10T10:00:00.000Z","cwd":"__CWD__"}
+{"type":"message","id":"m1","parentId":null,"timestamp":"2026-10-10T10:01:00.000Z","message":{"role":"user","content":"please fix the login flow","timestamp":1760000000000}}
+{"type":"model_change","id":"mc1","parentId":"m1","timestamp":"2026-10-10T10:01:05.000Z","model":"zai/glm-5.3"}
+{"type":"thinking_level_change","id":"tl1","parentId":"mc1","timestamp":"2026-10-10T10:01:06.000Z","thinkingLevel":"high"}
+{"type":"message","id":"m2","parentId":"tl1","timestamp":"2026-10-10T10:02:00.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"let me look at the auth module","thinkingSignature":"sig1"},{"type":"toolCall","id":"call-1","name":"bash","arguments":{"command":"ls src"}},{"type":"text","text":"Running ls"}],"model":"zai/glm-5.3","provider":"zai","api":"openai-completions","usage":{"input":100,"output":20,"cacheRead":0,"cacheWrite":0,"totalTokens":120,"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}},"stopReason":"toolUse","timestamp":1760000000000}}
+{"type":"custom","id":"c1","parentId":"m2","timestamp":"2026-10-10T10:02:01.000Z","customType":"tool_execution_start","data":{"toolCallId":"call-1","toolName":"bash"}}
+{"type":"message","id":"m3","parentId":"c1","timestamp":"2026-10-10T10:02:10.000Z","message":{"role":"toolResult","toolCallId":"call-1","toolName":"bash","content":[{"type":"text","text":"main.dart"}],"isError":false,"timestamp":1760000000000}}
+{"type":"session_init","id":"si1","parentId":"m3","timestamp":"2026-10-10T10:02:20.000Z","systemPrompt":"be nice","tools":["read"]}
+{"type":"model_usage","id":"mu1","parentId":"si1","timestamp":"2026-10-10T10:02:21.000Z","tokens":5}
+{"type":"branch_summary","id":"bs1","parentId":"mu1","timestamp":"2026-10-10T10:02:22.000Z","fromId":"m1","summary":"abandoned path"}
+{"type":"reset_boundary","id":"rb1","parentId":"bs1","timestamp":"2026-10-10T10:02:23.000Z"}
+{"type":"credential_pin","id":"cp1","parentId":"rb1","timestamp":"2026-10-10T10:02:24.000Z","provider":"zai","hash":"deadbeef"}
+{"type":"label","id":"lb1","parentId":"cp1","timestamp":"2026-10-10T10:02:25.000Z","targetId":"m1","label":"checkpoint"}
+{"type":"message","id":"m2b","parentId":"lb1","timestamp":"2026-10-10T10:02:30.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-partial","name":"edit","partialArgs":"{\"pa"}],"stopReason":"aborted","timestamp":1760000000000}}
+{"type":"title_change","id":"tc1","parentId":"m2b","timestamp":"2026-10-10T10:03:00.000Z","title":"Fix the login flow (renamed)","source":"user"}
+{"type":"message","id":"m4","parentId":"tc1","timestamp":"2026-10-10T10:03:30.000Z","message":{"role":"assistant","content":[],"stopReason":"aborted","timestamp":1760000000000}}
+{"type":"message","id":"m5","parentId":"m4","timestamp":"2026-10-10T10:04:00.000Z","message":{"role":"user","content":[{"type":"text","text":"with a screenshot"},{"type":"image","data":"blob:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mimeType":"image/png"}],"timestamp":1760000000000}}
+{"type":"message","id":"m6","parentId":"m5","timestamp":"2026-10-10T10:04:10.000Z","message":{"role":"bashExecution","content":"echo hi","timestamp":1760000000000}}
+{"type":"compaction","id":"comp1","parentId":"m6","timestamp":"2026-10-10T10:05:00.000Z","summary":"The conversation so far fixed the login flow","shortSummary":"login fixed","firstKeptEntryId":"m4","tokensBefore":42000}
+{"type":"message","id":"m7","parentId":"comp1","timestamp":"2026-10-10T10:06:00.000Z","message":{"role":"user","content":"continue after compaction","timestamp":1760000000000}}

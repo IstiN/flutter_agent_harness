@@ -71,16 +71,19 @@ class SummaryTest(unittest.TestCase):
         # gh-1503: the report names the provider+model (BENCH_RUN_LABEL,
         # set by bench-harbor.yml's resolve step) — glm and kimi runs
         # never blend in the ledger/cost views. Same env contract as
-        # bench.yml's gh-1471 summary.
+        # bench.yml's gh-1471 summary. gh-1677: the fixture label is
+        # deliberately synthetic — this test's stdout lands in the
+        # unbuffered CI step log, and a production-shaped label there
+        # once masqueraded as a real run summary.
         make_jobs(self.jobs, "fa-2.1-modal-cpu-0", [{"resolved": True}])
-        os.environ["BENCH_RUN_LABEL"] = "kimi-for-coding"
+        os.environ["BENCH_RUN_LABEL"] = "test-fixture-provider (fixture-model)"
         self.addCleanup(os.environ.pop, "BENCH_RUN_LABEL", None)
         rc, out = self._run(
             str(self.jobs), "--family", "2.1", "--model", "kimi-for-coding",
             "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
         )
         self.assertEqual(rc, 0)
-        self.assertIn("Provider: kimi-for-coding (gh-1503).", out)
+        self.assertIn("Provider: test-fixture-provider (fixture-model) (gh-1503).", out)
 
     def test_run_label_absent_stays_silent(self):
         # Runs without the env (CLI/manual invocations) keep the
@@ -292,6 +295,104 @@ class PresenceCompletenessTest(unittest.TestCase):
         self.assertIn("AgentTimeoutError ×1", report)
         self.assertIn("### Ledger row — append to docs/bench.md", report)
         self.assertIn("**Attempted: 2 trials produced a result.json", report)
+
+
+class ShardCompletenessGuardTest(unittest.TestCase):
+    """gh-1658 C3 — the aggregate fails loudly on a zero-trial shard.
+
+    A shard that vanished from the merged artifacts (startup crash, lost
+    upload) must not silently shrink the resolution denominator: for every
+    expected shard (the workflow passes `--expected-shards N`, N = the
+    setup matrix length) the merged export must carry >= 1 readable
+    result.json keyed to that shard's index (the job-name suffix). The
+    guard is additive: without `--expected-shards` the legacy shape is
+    byte-identical.
+    """
+
+    def setUp(self):
+        self._summary_bak = os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        self._label_bak = os.environ.pop("BENCH_RUN_LABEL", None)
+        self.addCleanup(self._restore_env)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.jobs = Path(tmp.name)
+
+    def _restore_env(self):
+        if self._summary_bak is not None:
+            os.environ["GITHUB_STEP_SUMMARY"] = self._summary_bak
+        if self._label_bak is not None:
+            os.environ["BENCH_RUN_LABEL"] = self._label_bak
+
+    def _run(self, *argv) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = main(list(argv))
+        return rc, out.getvalue()
+
+    def test_all_shards_contributing_passes(self):
+        make_jobs(self.jobs, "fa-2.1-docker-cpu-0", [{"resolved": True}, {"resolved": False}])
+        make_jobs(self.jobs, "fa-2.1-docker-cpu-1", [{"resolved": True}])
+        rc, out = self._run(str(self.jobs), "--family", "2.1", "--expected-shards", "2")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("contributed 0 trials", out)
+
+    def test_vanished_shard_fails_named(self):
+        # Shard 1 uploaded nothing: no dir at all in the merged export.
+        make_jobs(self.jobs, "fa-2.1-docker-cpu-0", [{"resolved": True}])
+        rc, out = self._run(str(self.jobs), "--family", "2.1", "--expected-shards", "2")
+        self.assertEqual(rc, 1)
+        self.assertIn("- shard 1: 0 trials", out)
+        self.assertIn("contributed 0 trials to the merged export", out)
+
+    def test_present_but_empty_shard_fails_named(self):
+        # The dir survived the artifact merge but carries no readable
+        # result.json — it contributes 0 trials all the same.
+        make_jobs(self.jobs, "fa-2.1-docker-cpu-0", [{"resolved": True}])
+        (self.jobs / "fa-2.1-docker-cpu-1").mkdir()
+        (self.jobs / "fa-2.1-docker-cpu-1" / "trial-0").mkdir()
+        rc, out = self._run(str(self.jobs), "--family", "2.1", "--expected-shards", "2")
+        self.assertEqual(rc, 1)
+        self.assertIn("- shard 1: 0 trials", out)
+
+    def test_shard_index_parse_is_exact_not_a_suffix_match(self):
+        # `shard 11` must never satisfy `shard 1`: the index is the
+        # job-name's trailing dash-segment, not a string suffix.
+        make_jobs(self.jobs, "fa-2.1-docker-cpu-0", [{"resolved": True}])
+        make_jobs(self.jobs, "fa-2.1-docker-cpu-11", [{"resolved": True}])
+        rc, out = self._run(str(self.jobs), "--family", "2.1", "--expected-shards", "12")
+        self.assertEqual(rc, 1)
+        self.assertIn("- shard 1: 0 trials", out)
+        self.assertIn("- shard 10: 0 trials", out)
+        self.assertNotIn("- shard 11: 0 trials", out)
+
+    def test_guard_is_additive_without_the_flag(self):
+        # Legacy invocations (no --expected-shards) keep their verdict:
+        # a missing shard only shrinks the report, never fails it.
+        make_jobs(self.jobs, "fa-2.1-docker-cpu-0", [{"resolved": True}])
+        rc, out = self._run(str(self.jobs), "--family", "2.1")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("0 trials", out)
+
+    def test_ledger_row_caveat_names_the_lost_denominator(self):
+        # The paste-ready docs/bench.md row must not ride a shrunken
+        # denominator silently — same discipline as the gh-1579 caveat.
+        make_jobs(self.jobs, "fa-2.1-docker-cpu-0", [{"resolved": True}])
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1", "--model", "glm-5.3-flash",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
+            "--expected-shards", "2",
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("gh-1658: 1 shard contributed 0 trials", out)
+        self.assertIn("do not paste", out)
+
+    def test_gpu_shard_index_is_guarded_too(self):
+        # The modal leg rides the same matrix (split_tasks numbers it
+        # after the CPU shards): a vanished GPU shard is equally named.
+        make_jobs(self.jobs, "fa-2.1-docker-cpu-0", [{"resolved": True}])
+        rc, out = self._run(str(self.jobs), "--family", "2.1", "--expected-shards", "2")
+        self.assertEqual(rc, 1)
+        self.assertIn("- shard 1: 0 trials", out)
 
 
 def _write_ledger(trial_dir: Path, items: list[dict]) -> None:
