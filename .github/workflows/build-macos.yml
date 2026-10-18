@@ -114,41 +114,49 @@ jobs:
 
     steps:
       # ── Prepare persistent local git mirrors ────────────────────────────────
+      # gh-1644: the old inline single-shot logic died on the first network
+      # hiccup — the recreate fell through to a full `git clone --mirror`
+      # whose ~1 h transfer ended in "error: 2931 bytes of body are still
+      # expected" (run 38855793382, exit 128). The shared script retries the
+      # fetch with VISIBLE stderr, aborts stalled attempts, and recreates
+      # BLOBLESS (--filter=blob:none, the gh-1477 precedent) with retries and
+      # partial-dir cleanup. Contract: scripts/update_git_mirror_selftest.sh
+      # gh-1665 review: this step runs BEFORE any checkout on persistent
+      # self-hosted runners — the workspace may hold a pre-merge tree (or be
+      # wiped), so the script is bootstrapped from the commit-pinned raw URL
+      # (workflow_dispatch-only workflows ⇒ ${{ github.sha }} is always a
+      # pushed commit) with the mirror copy as the no-network fallback.
       - name: Update local git mirrors
         run: |
           set -euo pipefail
-
           MIRROR_BASE="$HOME/actions-runner-yoloit/mirror"
           mkdir -p "$MIRROR_BASE"
-
-          update_mirror() {
-            local url="$1"
-            local mirror="$2"
-            local extra_args="${3:-}"
-            if [ ! -d "$mirror" ]; then
-              echo "Creating mirror: $mirror"
-              if [ -n "$extra_args" ]; then
-                # --mirror conflicts with --single-branch/--branch; use --bare
-                # for branch-specific mirrors (e.g. flutter_code_editor).
-                git clone --bare $extra_args "$url" "$mirror"
-              else
-                git clone --mirror "$url" "$mirror"
-              fi
+          MIRROR="$MIRROR_BASE/flutter_agent_harness.git"
+          SCRIPT="$RUNNER_TEMP/update_git_mirror.sh"
+          RAW="https://raw.githubusercontent.com/IstiN/flutter_agent_harness/${{ github.sha }}/scripts/update_git_mirror.sh"
+          if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "$RAW" -o "$SCRIPT" \
+             || [ ! -s "$SCRIPT" ]; then
+            echo "raw bootstrap failed — syncing the mirror and falling back to its copy" >&2
+            # gh-1665 review (returned IMPORTANT): in the one-run-wide
+            # first-post-merge window the persistent mirror is still a
+            # PRE-MERGE tree. Cheap single-shot ensure (bounded resilience
+            # stays owned by $SCRIPT below) so the extraction that follows
+            # succeeds on any runner that can reach github.com at all —
+            # raw.githubusercontent.com being down degrades to the
+            # fallback instead of a red leg.
+            if [ -d "$MIRROR" ] && git -C "$MIRROR" rev-parse --git-dir >/dev/null 2>&1; then
+              git -C "$MIRROR" fetch origin || true
             else
-              echo "Updating mirror: $mirror"
-              if ! git -C "$mirror" fetch origin 2>/dev/null; then
-                echo "Fetch failed — recreating mirror: $mirror"
-                rm -rf "$mirror"
-                if [ -n "$extra_args" ]; then
-                  git clone --bare $extra_args "$url" "$mirror"
-                else
-                  git clone --mirror "$url" "$mirror"
-                fi
-              fi
+              rm -rf "$MIRROR"
+              git clone --mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR" || true
             fi
-          }
-
-          update_mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR_BASE/flutter_agent_harness.git"
+            BRANCH="$(git --git-dir="$MIRROR" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+            git --git-dir="$MIRROR" show "$BRANCH:scripts/update_git_mirror.sh" > "$SCRIPT" \
+              || { echo "::error::could not bootstrap update_git_mirror.sh (raw URL unreachable and mirror lacks the script)" >&2; exit 1; }
+          fi
+          bash "$SCRIPT" \
+            https://github.com/IstiN/flutter_agent_harness.git \
+            "$MIRROR"
 
       # ── Checkout ────────────────────────────────────────────────────────────
       # gh-1600 AC2: hardened mirror-checkout — the bare `rm -rf
