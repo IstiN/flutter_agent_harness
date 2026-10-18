@@ -473,10 +473,27 @@ extension AgentCliHubDriver on AgentCli {
           // copy, not an encode.
           final records = _jobBoard.toRecords();
           if (records.isEmpty) return;
-          // gh-1590: the window gate NEXT — a refused mutation reserves
-          // the trailing flush (which re-enters here unforced) and skips
-          // the encode entirely.
-          if (!force && !_jobBoardPersistThrottle.shouldPersistNow()) return;
+          // gh-1622: the persist window may only coalesce TERMINAL churn.
+          // A live-set GROWTH (a job started) must reach the file
+          // immediately — a hard kill inside the window never runs the
+          // trailing flush nor the shutdown flush, and the resume would
+          // demote only the last persisted snapshot's jobs (observed:
+          // "1 background task lost" for 5 live jobs). Settles keep
+          // riding the window: an unpersisted settle overcounts `lost`
+          // on a crash (conservative — still never "running"), an
+          // unpersisted start loses the task silently.
+          final liveIds = <String>{
+            for (final r in records)
+              if (r['state'] == TaskBlockState.running.name) '${r['id']}',
+          };
+          final grewLive =
+              _jobBoardPersistedLiveIds != null &&
+              liveIds.any((id) => !_jobBoardPersistedLiveIds!.contains(id));
+          if (!force &&
+              !grewLive &&
+              !_jobBoardPersistThrottle.shouldPersistNow()) {
+            return;
+          }
           // Serialize ONCE — the dedupe key must be the exact payload
           // that gets appended, not a second encoding of the same board.
           final json = jsonEncode(records);
@@ -488,6 +505,7 @@ extension AgentCliHubDriver on AgentCli {
             );
             _jobBoardPersistDeduper.confirmPersisted();
             _jobBoardPersistThrottle.confirmPersisted();
+            _jobBoardPersistedLiveIds = liveIds;
           } on Object {
             // The chain swallows below by design; roll the deduper back
             // first so the retried identical snapshot is NOT skipped.
@@ -518,6 +536,7 @@ extension AgentCliHubDriver on AgentCli {
     // Fresh session file content: the next persist is a new snapshot, not
     // a repeat of whatever the previous session last wrote (gh-1073).
     _jobBoardPersistDeduper.reset();
+    _jobBoardPersistedLiveIds = null;
     _printBoardLines(
       _jobBoard.takeTranscriptLines(width: _hubBlockWidth, fit: _cardTextFit),
     );
