@@ -73,6 +73,24 @@ String secureKeyDiagnosticLine(String text) {
   return flat.length > 200 ? flat.substring(flat.length - 200) : flat;
 }
 
+/// Whether [diagnostic] is the macOS "no default keychain" write failure
+/// (gh-1679): the platform store's write preflight throws exactly this
+/// shape when `security default-keychain` does not resolve. Reads still
+/// succeed via the search list on such a host, so only writes fail — the
+/// state worth a dedicated remedy.
+bool isMissingDefaultKeychainError(String diagnostic) =>
+    diagnostic.contains('no default keychain');
+
+/// The advisory remedy line for a missing macOS default keychain
+/// (gh-1679 AC6): names the system remedy WITHOUT executing anything —
+/// fa reports and advises, never modifies system keychain settings on
+/// its own initiative.
+String missingDefaultKeychainAdvisory() =>
+    'note: macOS has no default keychain, so secure-store writes cannot '
+    'land — restore it with: security default-keychain -s '
+    '~/Library/Keychains/login.keychain-db (or Keychain Access → Settings '
+    '→ "Set as default"), then retry the save';
+
 /// The summary of one [SecureKeyCache.preload] run. The executable turns
 /// it into per-name debug lines and the zero-resolved boot warning — the
 /// cache itself never prints (a keychain must never break startup, and
@@ -127,6 +145,7 @@ final class SecureKeyCache {
 
   final SecureKeyStore? _store;
   final Map<String, String> _snapshot = {};
+  final Map<String, String> _failedSaveNames = {};
   var _available = false;
   var _saveFailures = 0;
   String? _lastSaveError;
@@ -210,22 +229,34 @@ final class SecureKeyCache {
   /// The last save degradation's diagnostic, when any.
   String? get lastSaveError => _lastSaveError;
 
+  /// The names whose most recent save degraded to session-only, sorted
+  /// (gh-1679): the boot note and the store-health hint key on NAMES,
+  /// not just the aggregate count. A successful [save] of a name clears
+  /// it from this set.
+  List<String> get failedSaveNames => _failedSaveNames.keys.toList()..sort();
+
+  /// The last degradation diagnostic for [name], or null when [name]'s
+  /// most recent save succeeded (or never ran). Never contains a secret —
+  /// diagnostics are exit codes / stderr tails only.
+  String? saveFailureDiagnostic(String name) => _failedSaveNames[name];
+
   /// Writes [value] through to the store and updates the snapshot. Returns
   /// false when the store is unavailable OR the write fails (locked or
   /// MDM-managed keychain, missing Secret Service provider) — a failing
   /// backend must degrade to session-only, never crash the CLI.
   Future<bool> save(String name, String value) async {
     if (!available) {
-      _recordSaveFailure('secure store unavailable');
+      _recordSaveFailure(name, 'secure store unavailable');
       return false;
     }
     try {
       await _store!.write(name, value);
     } on Object catch (error) {
-      _recordSaveFailure(secureKeyDiagnosticLine(error.toString()));
+      _recordSaveFailure(name, secureKeyDiagnosticLine(error.toString()));
       return false;
     }
     _snapshot[name] = value;
+    _failedSaveNames.remove(name);
     return true;
   }
 
@@ -244,10 +275,13 @@ final class SecureKeyCache {
   }
 
   /// Records a degraded save for the `/key` status summary (the per-save
-  /// print at the call site stays).
-  void _recordSaveFailure(String message) {
+  /// print at the call site stays). [name] joins the degraded set so the
+  /// boot note / the store-health hint can name the slot; a later
+  /// successful save of the same name clears it.
+  void _recordSaveFailure(String name, String message) {
     _saveFailures++;
     _lastSaveError = message;
+    _failedSaveNames[name] = message;
   }
 
   /// Classifies one read off a plain [SecureKeyStore] (no diagnostics
