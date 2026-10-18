@@ -707,23 +707,25 @@ else
 fi
 echo "$calls" > "$FAKE_HARBOR_CALLS"
 job=""
+out="jobs"
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--job-name" ]; then job="$a"; fi
+  if [ "$prev" = "-o" ]; then out="$a"; fi
   prev="$a"
 done
 echo "call=$calls job=$job" >> "$FAKE_HARBOR_LOG"
-mkdir -p "jobs/$job/trial-0"
+mkdir -p "$out/$job/trial-0"
 case "${FAKE_HARBOR_MODE}" in
   ok)
-    printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "jobs/$job/trial-0/result.json"
+    printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "$out/$job/trial-0/result.json"
     exit 0 ;;
   crash_zero)
-    rm -f "jobs/$job/trial-0/result.json"
+    rm -f "$out/$job/trial-0/result.json"
     exit 1 ;;
   crash_then_ok)
     if [ "$calls" -ge 2 ]; then
-      printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "jobs/$job/trial-0/result.json"
+      printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "$out/$job/trial-0/result.json"
       exit 0
     fi
     exit 1 ;;
@@ -734,14 +736,14 @@ case "${FAKE_HARBOR_MODE}" in
     # (glob "<job>/*/result.json", gh-1556 AC3) ignores it, so the
     # zero-trial gate must too — retry fires and proceeds on success.
     if [ "$calls" -ge 2 ]; then
-      printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "jobs/$job/trial-0/result.json"
+      printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "$out/$job/trial-0/result.json"
       exit 0
     fi
-    mkdir -p "jobs/$job/cache/trial-0"
-    printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "jobs/$job/cache/trial-0/result.json"
+    mkdir -p "$out/$job/cache/trial-0"
+    printf '{"verifier_result":{"rewards":{"r":1.0}}}\\n' > "$out/$job/cache/trial-0/result.json"
     exit 1 ;;
   fail_with_trials)
-    printf '{"exception_info":{"exception_type":"ContainerError"}}\\n' > "jobs/$job/trial-0/result.json"
+    printf '{"exception_info":{"exception_type":"ContainerError"}}\\n' > "$out/$job/trial-0/result.json"
     exit 1 ;;
 esac
 exit 99
@@ -805,6 +807,10 @@ class ZeroTrialRetryTest(unittest.TestCase):
             "FAKE_HARBOR_CALLS": str(self.calls),
             "FAKE_HARBOR_LOG": str(self.log),
             "GITHUB_STEP_SUMMARY": str(self.summary),
+            # gh-1600 AC2: the workflow output lives under $RUNNER_TEMP
+            # (out-of-workspace) — pin it to the temp root so the
+            # extracted block writes inside the test sandbox.
+            "RUNNER_TEMP": str(self.root),
         }
 
     def _run_block(self, mode: str) -> subprocess.CompletedProcess:
@@ -845,9 +851,9 @@ class ZeroTrialRetryTest(unittest.TestCase):
         proc = self._run_block("ok")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self._calls(), 1)
-        self.assertEqual(self._jobs("jobs/fa-2.1-docker-cpu-3"), ["fa-2.1-docker-cpu-3"])
+        self.assertEqual(self._jobs("bench/jobs/fa-2.1-docker-cpu-3"), ["fa-2.1-docker-cpu-3"])
         self.assertFalse(self.summary.exists())
-        self.assertFalse(self._jobs("jobs/_attempt1-*"))
+        self.assertFalse(self._jobs("bench/jobs/_attempt1-*"))
 
     def test_zero_trial_crash_retries_once_and_proceeds(self):
         # AC1: a zero-trial startup failure retries once inside the same
@@ -859,9 +865,9 @@ class ZeroTrialRetryTest(unittest.TestCase):
         self.assertEqual(job_names, ["fa-2.1-docker-cpu-3", "fa-2.1-docker-cpu-3"])
         # The retried job owns the pinned name; attempt 1's (trial-less)
         # dir is preserved aside for RCA.
-        self.assertEqual(self._jobs("jobs/fa-2.1-docker-cpu-3"), ["fa-2.1-docker-cpu-3"])
+        self.assertEqual(self._jobs("bench/jobs/fa-2.1-docker-cpu-3"), ["fa-2.1-docker-cpu-3"])
         self.assertTrue(
-            (self.root / "jobs" / "_attempt1-fa-2.1-docker-cpu-3").is_dir()
+            (self.root / "bench" / "jobs" / "_attempt1-fa-2.1-docker-cpu-3").is_dir()
         )
         self.assertFalse(self.summary.exists())
 
@@ -895,7 +901,7 @@ class ZeroTrialRetryTest(unittest.TestCase):
         proc = self._run_block("crash_then_ok_nested")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self._calls(), 2)  # retried exactly once
-        self.assertTrue((self.root / "jobs" / "fa-2.1-docker-cpu-3" / "trial-0" / "result.json").is_file())
+        self.assertTrue((self.root / "bench" / "jobs" / "fa-2.1-docker-cpu-3" / "trial-0" / "result.json").is_file())
         self.assertFalse(self.summary.exists())
 
     def test_retry_gate_mirrors_the_summary_presence_rule(self):
@@ -903,7 +909,10 @@ class ZeroTrialRetryTest(unittest.TestCase):
         # summary's depth — <job>/<trial>/result.json (gh-1556 AC3) — not
         # on presence anywhere under the job dir: a deeper file is
         # skipped by _trial_rows and must be skipped by the gate too.
-        self.assertIn('find "jobs/$JOB_NAME" -mindepth 2 -maxdepth 2 -name result.json', self.block)
+        # gh-1600 AC2 merged shape: the gate (like the harbor -o output
+        # and the attempt move-aside) works on the out-of-workspace
+        # "$RUNNER_TEMP/bench/jobs" dir, with the `set -u` fallback.
+        self.assertIn('find "${RUNNER_TEMP:-/tmp}/bench/jobs/$JOB_NAME" -mindepth 2 -maxdepth 2 -name result.json', self.block)
 
 
 @unittest.skipUnless(
