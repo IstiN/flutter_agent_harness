@@ -24,7 +24,7 @@ extension on AgentCli {
     String? editName,
   ) async {
     final registry = config.customProviders;
-    String? editName,
+    final token = setup.token;
     if (token == null) {
       return (
         keyName: editName != null ? registry?.find(editName)?.keyName : null,
