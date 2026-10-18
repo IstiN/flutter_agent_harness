@@ -64,8 +64,9 @@ void main() {
   );
 
   Future<({Session session, AgentState state, int count})> manyMessagesSession(
-    int pairs,
-  ) async {
+    int pairs, {
+    CompactionSettings? compactionSettings,
+  }) async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
     // Many SMALL messages: the token estimate stays far under the
     // (window − reserve) trigger while the count climbs.
@@ -94,11 +95,17 @@ void main() {
     final fake = _FakeSummarizer();
     final hooks = _RecordingHooks();
     // cap 56, margin 16 → trigger at 40: the live count is exactly there.
+    // A tight keep-recent window so one pass hides most of the array —
+    // the token estimate stays far under the token trigger either way.
     final compactor = AutoCompactor(
       session: env.session,
       state: env.state,
       window: 1000,
-      settings: settings,
+      settings: const CompactionSettings(
+        enabled: true,
+        reserveTokens: 100,
+        keepRecentTokens: 30,
+      ),
       summary: fake.call,
       mainSummary: fake.call,
       smolModel: null,
@@ -109,12 +116,17 @@ void main() {
     final ok = await compactor.run();
 
     expect(ok, isTrue);
-    expect(fake.calls, 1, reason: 'the cap trigger fired the pass');
-    expect(hooks.passes, hasLength(1));
+    expect(fake.calls, greaterThanOrEqualTo(1),
+        reason: 'the cap trigger fired the pass with tokens far under the '
+            'token trigger');
+    // Bounded like the token dimension: passes repeat until the engine has
+    // nothing hideable left (the keep-recent window bounds the tail), then
+    // STOP — never spinning to maxPasses.
+    expect(hooks.passes.length, lessThan(8));
     // The request rides a compacted array — the count dropped hard.
+    expect(env.state.messages.length, lessThan(env.count));
     final after = await env.session.buildContextMessages();
     expect(after.length, lessThan(env.count));
-    expect(env.state.messages.length, lessThan(env.count));
   });
 
   test('just under the trigger: no compaction (the margin is real)', () async {

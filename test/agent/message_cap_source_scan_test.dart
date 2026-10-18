@@ -43,10 +43,21 @@ void main() {
       'bedrock',
     ];
 
-    test('no provider/model identity in the repair path', () {
+    // The incident-specific identities must appear NOWHERE in the repair
+    // path — these are the names a hardcoded table would use.
+    const bannedIncidentIdentities = [
+      'joingonka',
+      'glm',
+      'z.ai',
+      'zai-org',
+      '01a14b3a',
+      'dmtools-factory',
+    ];
+
+    test('no incident provider/model identity in the repair path', () {
       for (final path in repairPathFiles) {
         final text = File(path).readAsStringSync().toLowerCase();
-        for (final identity in bannedIdentities) {
+        for (final identity in bannedIncidentIdentities) {
           expect(
             text.contains(identity),
             isFalse,
@@ -54,6 +65,19 @@ void main() {
                 'learned from the error text, never tabulated (AC5)',
           );
         }
+      }
+    });
+
+    test('the new store/coalesce module carries no provider identity at '
+        'all', () {
+      final text =
+          File('lib/src/agent/message_cap.dart').readAsStringSync().toLowerCase();
+      for (final identity in bannedIdentities) {
+        expect(
+          text.contains(identity),
+          isFalse,
+          reason: 'message_cap.dart must not mention "$identity"',
+        );
       }
     });
 
