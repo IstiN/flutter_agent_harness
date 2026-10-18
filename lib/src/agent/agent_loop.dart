@@ -755,22 +755,6 @@ final class ModelRequestEvent extends AgentEvent {
   final String? rawWireDump;
 }
 
-/// Emitted when the outbound request context needed tool-pairing surgery
-/// (issue #85): orphaned tool results dropped, missing results synthesized,
-/// or duplicate ids renamed. Repairs are never silent — [report] carries
-/// the counts and affected ids, and [providerError] is set when the pass
-/// ran in response to a provider pairing error (the self-healing retry).
-final class ToolPairingRepairEvent extends AgentEvent {
-  const ToolPairingRepairEvent({required this.report, this.providerError});
-
-  /// What the repair changed (empty report = detection only).
-  final ToolPairingRepairReport report;
-
-  /// Raw provider error that triggered this pass, when it ran on the
-  /// retry path; null for the pre-request repair.
-  final String? providerError;
-}
-
 /// The FinalizeGate task ledger parsed from the run's final assistant
 /// message (gh-1412). Emitted once per run, right before [AgentEndEvent],
 /// when [AgentLoopConfig.finalizeGate] is on and the answer carries a
@@ -1467,10 +1451,9 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
 ) async {
   var reliefUsed = false;
   var pairingHealed = false;
-  // gh-1680: the cap self-heal fires at most once per response; when armed,
-  // the next rebuilt payload is coalesced down toward this count.
-  var capHealed = false;
-  int? capCoalesceTarget;
+  // gh-1680: one-shot message-cap heal state; when armed, the next rebuilt
+  // payload coalesces toward its target.
+  final capState = _CapHealState();
   // Issue #862: drain the armed corrective note once per streamed response
   // (not per built context) so a mid-turn retry re-attaches it.
   final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
@@ -1485,7 +1468,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       config,
       cancelToken,
       misuseNote: misuseNote,
-      capCoalesceTarget: capCoalesceTarget,
+      capCoalesceTarget: capState.coalesceTarget,
     );
     // Pairing repairs are always surfaced (issue #85): hosts see exactly
     // what was dropped/synthesized/renamed before the request went out.
@@ -1548,22 +1531,20 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
     final streamed = await _consumeResponseStream(response, context, emit);
     final finished = streamed.finished;
     if (finished != null) {
-      // gh-1680 self-healing retry: a message-cap 400 means the ARRAY (not
-      // the tokens) passed the model's per-request cap. Learn, compact +
-      // coalesce, retry ONCE — a second refusal is terminal (no loop).
-      if (_needsCapHeal(capHealed, finished, config)) {
-        capHealed = true;
-        final heal = await _messageCapHealTurn(
-          finished,
-          context,
-          config,
-          emit,
-          cancelToken,
-          requestMessageCount,
-        );
-        if (heal.terminal != null) return heal.terminal!;
-        capCoalesceTarget = heal.coalesceTarget;
-        if (heal.context != null) context = heal.context!;
+      // gh-1680 self-healing retry: a message-cap 400 means the message
+      // ARRAY passed the model's per-request cap — learn, compact +
+      // coalesce, retry ONCE (a second refusal is terminal; see the part).
+      final capHeal = await capState.healIfNeeded(
+        finished,
+        context,
+        config,
+        emit,
+        cancelToken,
+        requestMessageCount,
+      );
+      if (capHeal.terminal != null) return capHeal.terminal!;
+      if (capHeal.ran) {
+        if (capHeal.context != null) context = capHeal.context!;
         continue;
       }
       // Self-healing retry (issue #85): a provider pairing 400 means the
@@ -1759,13 +1740,6 @@ Future<(AssistantMessage, Context)> _providerErrorTurn(
   );
 }
 
-/// Whether a finished turn needs the one-shot pairing self-heal (issue
-/// #85): a provider pairing 400 on an error stop, before it was used.
-bool _needsPairingHeal(bool pairingHealed, AssistantMessage finished) =>
-    !pairingHealed &&
-    finished.stopReason == StopReason.error &&
-    isToolPairingProviderError(finished.errorMessage);
-
 /// Builds the synthetic error turn for a provider stream that closed
 /// without any terminal event (provider bug): keep the streamed partial
 /// when one landed, otherwise synthesize an empty error message.
@@ -1875,8 +1849,8 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       tools: requestContext.tools,
     );
   }
-  // gh-1680: an armed cap repair coalesces the outbound payload toward
-  // the target — payload-only, the transcript is never touched (AC7).
+  // gh-1680: an armed cap repair coalesces the outbound payload toward the
+  // target — payload-only, the transcript is never touched (AC7).
   if (capCoalesceTarget != null) {
     requestContext = applyMessageCapCoalesce(requestContext, capCoalesceTarget);
   }

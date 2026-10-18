@@ -1,10 +1,10 @@
-/// The gh-1680 message-cap self-heal: the host relief typedef, the repair
-/// event, and the one-shot heal turn the loop's response stream runs when
-/// a provider refuses the request because the message ARRAY exceeded its
-/// per-request cap (`array length N exceeds limit M`). Split out of
-/// `agent_loop.dart` to keep it under the repo's 2800-line size gate. Same
-/// library (a `part of`), so the helpers keep their access to the loop's
-/// private members.
+/// The one-shot self-heal repairs of the response stream: the gh-1680
+/// message-cap heal (learn the cap from the provider's refusal, compact +
+/// coalesce, retry once) and the issue #85 pairing heal's detection
+/// helper plus the [ToolPairingRepairEvent] it emits. Split out of
+/// `agent_loop.dart` to keep it under the repo's 2800-line size gate.
+/// Same library (a `part of`), so the helpers keep their access to the
+/// loop's private members.
 part of 'agent_loop.dart';
 
 /// gh-1680: emergency relief for the message-cap self-heal. Called at most
@@ -21,6 +21,22 @@ part of 'agent_loop.dart';
 /// the coalesced payload (then the refusal is terminal).
 typedef MessageCapRelief =
     Future<List<Message>?> Function(List<Message> overCapMessages);
+
+/// Emitted when the outbound request context needed tool-pairing surgery
+/// (issue #85): orphaned tool results dropped, missing results synthesized,
+/// or duplicate ids renamed. Repairs are never silent — [report] carries
+/// the counts and affected ids, and [providerError] is set when the pass
+/// ran in response to a provider pairing error (the self-healing retry).
+final class ToolPairingRepairEvent extends AgentEvent {
+  const ToolPairingRepairEvent({required this.report, this.providerError});
+
+  /// What the repair changed (empty report = detection only).
+  final ToolPairingRepairReport report;
+
+  /// Raw provider error that triggered this pass, when it ran on the
+  /// retry path; null for the pre-request repair.
+  final String? providerError;
+}
 
 /// Emitted when the gh-1680 message-cap self-heal ran: the provider refused
 /// the request because the message ARRAY exceeded its per-request cap
@@ -52,6 +68,13 @@ final class MessageCapRepairEvent extends AgentEvent {
   final String? providerError;
 }
 
+/// Whether a finished turn needs the one-shot pairing self-heal (issue
+/// #85): a provider pairing 400 on an error stop, before it was used.
+bool _needsPairingHeal(bool pairingHealed, AssistantMessage finished) =>
+    !pairingHealed &&
+    finished.stopReason == StopReason.error &&
+    isToolPairingProviderError(finished.errorMessage);
+
 /// Whether a finished turn needs the one-shot message-cap self-heal
 /// (gh-1680): a classified cap refusal on an error stop, with a policy
 /// configured, before it was used.
@@ -64,6 +87,55 @@ bool _needsCapHeal(
     finished.stopReason == StopReason.error &&
     config.messageCapPolicy != null &&
     classifyMessageCapError(finished.errorMessage) != null;
+
+/// The mutable gh-1680 heal state of one streamed response: whether the
+/// one-shot heal already ran, and the coalesce target the next rebuilt
+/// payload rides toward (armed by the heal, null when the cap is
+/// unknown). Mirrors how `reliefUsed`/`pairingHealed` stay loop-local.
+final class _CapHealState {
+  bool healed = false;
+
+  /// The coalesce target for `_buildRequestContext` (learned cap −
+  /// margin); null = nothing armed / cap unknown.
+  int? coalesceTarget;
+
+  /// Runs the one-shot heal when [finished] is a classified cap refusal.
+  /// [refusedCount] is the refused payload's message count, captured by
+  /// the caller BEFORE the stream (the streamed partial mutates the live
+  /// list). [ran] tells the caller to `continue` (retry once); [terminal]
+  /// is the abort turn; [context] (non-null on relief) replaces the loop
+  /// context for the retry.
+  Future<
+    ({bool ran, Context? context, (AssistantMessage, Context)? terminal})
+  >
+  healIfNeeded(
+    AssistantMessage finished,
+    Context context,
+    AgentLoopConfig config,
+    AgentEventSink emit,
+    CancelToken? cancelToken,
+    int refusedCount,
+  ) async {
+    if (!_needsCapHeal(healed, finished, config)) {
+      return (ran: false, context: null, terminal: null);
+    }
+    healed = true;
+    final step = await _messageCapHealTurn(
+      finished,
+      context,
+      config,
+      emit,
+      cancelToken,
+      refusedCount,
+    );
+    coalesceTarget = step.coalesceTarget;
+    return (
+      ran: step.terminal == null,
+      context: step.context,
+      terminal: step.terminal,
+    );
+  }
+}
 
 /// One message-cap heal step's outcome (mirrors [_OverWindowGuardStep]'s
 /// shape): the relieved context to adopt (null = keep the current one),
