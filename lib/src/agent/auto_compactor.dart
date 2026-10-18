@@ -31,6 +31,8 @@ import '../compaction/structured/judge.dart';
 import '../context.dart';
 import '../model.dart';
 import '../session/session_tree.dart' show Session;
+import 'message_cap.dart'
+    show kMessageCapDefaultMargin, messageCapTriggerReached;
 import '../skills/operative_pins.dart'
     show SkillOperativePins, pinnedOperativePromptBlock;
 import '../skills/skills.dart' show Skill;
@@ -146,6 +148,8 @@ final class AutoCompactor {
     this.attemptBudget = const Duration(seconds: 300),
     this.totalBudget = const Duration(minutes: 15),
     this.runToken,
+    this.messageCap,
+    this.messageCapMargin = kMessageCapDefaultMargin,
   });
 
   /// The session to compact and to read the projected transcript from.
@@ -251,6 +255,17 @@ final class AutoCompactor {
   /// relief. `null` = not linked (standalone compaction).
   final CancelToken? runToken;
 
+  /// gh-1680: the learned per-model per-request message cap. When the
+  /// live message count reaches `cap − margin` the compactor fires even
+  /// if the TOKEN trigger is untouched — the message-count dimension is
+  /// additive, never a replacement for the token trigger (AC4/AC8). Null
+  /// = no learned cap: token-only behavior, byte-identical to today.
+  final int? messageCap;
+
+  /// The margin below [messageCap] at which the pre-emptive trigger
+  /// fires (see [messageCapTriggerReached]).
+  final int messageCapMargin;
+
   /// Transient error markers worth retrying: 5xx HTTP, aborted /
   /// reset / closed sockets. Hard refusals (rate limit, 429, content
   /// filter, auth) fail fast.
@@ -282,6 +297,16 @@ final class AutoCompactor {
     tools: state.tools,
   );
 
+  /// gh-1680: whether the live message count reached the learned cap's
+  /// pre-emptive trigger (`count ≥ cap − margin`). The additive
+  /// message-count dimension: fires BEFORE the provider refuses, so the
+  /// request rides a compacted array instead of a doomed round-trip.
+  bool _overMessageCap() => messageCapTriggerReached(
+    state.messages.length,
+    messageCap,
+    margin: messageCapMargin,
+  );
+
   /// Drives the multi-pass loop. Returns `true` on success (the
   /// transcript fits in [window]), `false` when the loop gave up or
   /// every summarizer failed.
@@ -289,7 +314,10 @@ final class AutoCompactor {
     try {
       if (window <= 0) return true;
       final initial = _requestTokens();
-      if (!force && !shouldCompact(initial, window, settings)) return true;
+      if (!force && !shouldCompact(initial, window, settings) &&
+          !_overMessageCap()) {
+        return true;
+      }
 
       final runFallback = _shouldRunFallback();
       final clock = Stopwatch()..start();
@@ -368,7 +396,8 @@ final class AutoCompactor {
         hooks.onDone(pass, tokensAfter);
         return (
           done: true,
-          success: !shouldCompact(tokensAfter, window, settings),
+          success: !shouldCompact(tokensAfter, window, settings) &&
+              !_overMessageCap(),
         );
       }
       hooks.onBothRolesFailed(attempt.error!);
@@ -428,7 +457,7 @@ final class AutoCompactor {
         summarizedMessages: attempt.summarizedMessages,
       ),
     );
-    if (!shouldCompact(tokensAfter, window, settings)) {
+    if (!shouldCompact(tokensAfter, window, settings) && !_overMessageCap()) {
       hooks.onDone(pass, tokensAfter);
       return (done: true, success: true);
     }
@@ -855,6 +884,8 @@ class AutoCompactorFactory {
     this.engine = CompactionEngine.structured,
     this.runToken,
     this.operativeSkills = const [],
+    this.messageCap,
+    this.messageCapMargin = kMessageCapDefaultMargin,
   });
 
   final Session session;
@@ -887,6 +918,16 @@ class AutoCompactorFactory {
   /// [AutoCompactor] — their `operative:` lines ride every summarization
   /// prompt as the verbatim-preserve pinned block.
   final List<Skill> operativeSkills;
+
+  /// gh-1680: the learned per-model per-request message cap, forwarded to
+  /// the built [AutoCompactor]: `count ≥ cap − margin` fires the
+  /// pre-emptive trigger even when the token trigger is untouched (AC4).
+  /// Null = token-only behavior, byte-identical to today (AC8).
+  final int? messageCap;
+
+  /// The margin below [messageCap] at which the pre-emptive trigger
+  /// fires (see [messageCapTriggerReached]).
+  final int messageCapMargin;
 
   /// The pinned-operative payload derived from [operativeSkills] (null
   /// when the skills declare no operative lines).
@@ -995,7 +1036,15 @@ class AutoCompactorFactory {
           'role=smol, model=${smolModel.id} @ '
           '${Uri.parse(smolModel.baseUrl).host}',
     );
-    final running = compactor.run(force: force);
+    // gh-1680: a reached message-cap trigger forces the pass exactly like
+    // `force` — the structured engine's internal gate is token-only, so
+    // the additive message-count dimension must bypass it here (AC4).
+    final capTriggered = messageCapTriggerReached(
+      state.messages.length,
+      messageCap,
+      margin: messageCapMargin,
+    );
+    final running = compactor.run(force: force || capTriggered);
     try {
       final ok = await running.timeout(
         totalBudget,
@@ -1061,6 +1110,8 @@ class AutoCompactorFactory {
       totalBudget: totalBudget,
       runToken: runToken,
       operativeSkills: operativeSkills,
+      messageCap: messageCap,
+      messageCapMargin: messageCapMargin,
     );
   }
 }

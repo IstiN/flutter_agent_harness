@@ -23,12 +23,12 @@
 library;
 
 import 'dart:convert';
-import 'dart:io' show Directory, File;
+import 'dart:io' show File;
 
 import '../context.dart';
 import '../model.dart' show Model;
 import '../overflow.dart' show MessageCapRefusal;
-import '../types.dart' show ToolCall;
+import '../types.dart' show AssistantMessage, Message, ToolCall;
 import 'tool_pairing.dart' show repairToolPairing;
 
 /// The default margin between the live message count and the learned cap

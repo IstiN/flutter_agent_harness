@@ -469,6 +469,18 @@ class AgentWireProtocol {
         'report': _encodeRepairReport(report),
         'providerError': ?providerError,
       },
+      MessageCapRepairEvent(
+        :final messageCount,
+        :final learnedCap,
+        :final compacted,
+        :final providerError,
+      ) =>
+        {
+          'messageCount': messageCount,
+          'learnedCap': ?learnedCap,
+          'compacted': compacted,
+          'providerError': ?providerError,
+        },
       TaskLedgerEvent(:final ledger) => {'ledger': ledger.toJson()},
       // gh-1054 liveness: heartbeats and stuck-call follow-ups ride the
       // wire so external hosts see alive-busy vs dead mid-run, same as

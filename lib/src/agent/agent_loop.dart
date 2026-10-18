@@ -1537,6 +1537,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       config,
       cancelToken,
       misuseNote: misuseNote,
+      capCoalesceTarget: capCoalesceTarget,
     );
     // Pairing repairs are always surfaced (issue #85): hosts see exactly
     // what was dropped/synthesized/renamed before the request went out.
@@ -1596,6 +1597,50 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
     final streamed = await _consumeResponseStream(response, context, emit);
     final finished = streamed.finished;
     if (finished != null) {
+      // gh-1680 self-healing retry: a provider message-cap 400 means the
+      // message ARRAY (not the tokens) exceeded the model's per-request
+      // cap. Learn the cap from the error text, arm the payload coalesce,
+      // run ONE host compaction pass when configured, and retry ONCE — a
+      // wedged session recovers here instead of re-failing every
+      // heartbeat. A second refusal surfaces normally (no infinite loop).
+      if (_needsCapHeal(capHealed, finished, config)) {
+        capHealed = true;
+        final refusal = classifyMessageCapError(finished.errorMessage)!;
+        config.messageCapPolicy!.learnFromRefusal(config.model, refusal);
+        final learned = config.messageCapPolicy!.learnedCapFor(config.model);
+        capCoalesceTarget = learned == null
+            ? null
+            : max(1, learned - kMessageCapDefaultMargin);
+        List<Message>? relieved;
+        try {
+          relieved = await config.messageCapRelief?.call(context.messages);
+        } on Object {
+          // A failed relief = no relief; the coalesce-only retry still
+          // gets its one shot below.
+          relieved = null;
+        }
+        if (_isCancelRequested(cancelToken)) {
+          return await _abortedTurn(context, config, emit);
+        }
+        await emit(
+          MessageCapRepairEvent(
+            messageCount: requestContext.messages.length,
+            learnedCap: learned,
+            compacted: relieved != null,
+            providerError: finished.errorMessage,
+          ),
+        );
+        if (relieved != null) {
+          // The relieved transcript becomes the loop's live context, same
+          // adoption rule as the over-window relief (issue #387).
+          context = Context(
+            systemPrompt: context.systemPrompt,
+            messages: relieved,
+            tools: context.tools,
+          );
+        }
+        continue;
+      }
       // Self-healing retry (issue #85): a provider pairing 400 means the
       // context was corrupted in a shape this repairer missed. Log the
       // detection, re-run the repair over the rebuilt request, retry ONCE —
@@ -1796,6 +1841,19 @@ bool _needsPairingHeal(bool pairingHealed, AssistantMessage finished) =>
     finished.stopReason == StopReason.error &&
     isToolPairingProviderError(finished.errorMessage);
 
+/// Whether a finished turn needs the one-shot message-cap self-heal
+/// (gh-1680): a classified cap refusal on an error stop, with a policy
+/// configured, before it was used.
+bool _needsCapHeal(
+  bool capHealed,
+  AssistantMessage finished,
+  AgentLoopConfig config,
+) =>
+    !capHealed &&
+    finished.stopReason == StopReason.error &&
+    config.messageCapPolicy != null &&
+    classifyMessageCapError(finished.errorMessage) != null;
+
 /// Builds the synthetic error turn for a provider stream that closed
 /// without any terminal event (provider bug): keep the streamed partial
 /// when one landed, otherwise synthesize an empty error message.
@@ -1818,6 +1876,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   AgentLoopConfig config,
   CancelToken? cancelToken, {
   String? misuseNote,
+  int? capCoalesceTarget,
 }) async {
   // pi applies transformContext (then convertToLlm) before each provider
   // call; only the request payload is rewritten, never the transcript.
@@ -1903,6 +1962,24 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       messages: repaired.messages,
       tools: requestContext.tools,
     );
+  }
+  // gh-1680: an armed cap repair coalesces the outbound payload (whole
+  // tool-call/result pairs and old turns older than the newest user
+  // message merge into compact carriers) so the retried request rides
+  // fewer messages. Payload-only — the transcript is never touched, so
+  // the session JSONL stays byte-identical (AC7).
+  if (capCoalesceTarget != null) {
+    final coalesced = coalesceMessagesForCap(
+      requestContext.messages,
+      targetMessageCount: capCoalesceTarget,
+    );
+    if (!identical(coalesced, requestContext.messages)) {
+      requestContext = Context(
+        systemPrompt: requestContext.systemPrompt,
+        messages: coalesced,
+        tools: requestContext.tools,
+      );
+    }
   }
   // gh-1556: an armed session deadline rides every request payload as a
   // trailing `time-left:` line — a standalone user message, so it can

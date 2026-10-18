@@ -29,6 +29,7 @@ import '../skills/skills.dart' show Skill;
 import '../types.dart';
 import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
+import 'message_cap.dart' show MessageCapPolicy;
 import 'misuse_breaker.dart';
 import 'stuck_tool.dart';
 import 'tool_registry.dart';
@@ -213,6 +214,8 @@ class Agent {
     this.contextWindowCap,
     this.wireDump = false,
     this.overWindowRelief,
+    this.messageCapPolicy,
+    this.messageCapRelief,
     this.toolMisuseBreaker,
     this.stuckTool,
     this.finalizeGate = false,
@@ -360,6 +363,16 @@ class Agent {
   /// service exists (the app's pre-constructed-agent constructor) attach
   /// the relief right after (gh-1077).
   OverWindowRelief? overWindowRelief;
+
+  /// gh-1680: the learned per-model message-cap policy threaded into every
+  /// [AgentLoopConfig]. `null` = the loop keeps the pre-gh-1680 behavior
+  /// (a cap-400 refusal is terminal). Mutable like [overWindowRelief].
+  MessageCapPolicy? messageCapPolicy;
+
+  /// gh-1680: the host compaction pass for the message-cap self-heal
+  /// (see [MessageCapRelief]), threaded into every [AgentLoopConfig].
+  /// Only fires when [messageCapPolicy] classified the refusal.
+  MessageCapRelief? messageCapRelief;
 
   /// Stuck-call supervision (gh-1054), threaded into every
   /// [AgentLoopConfig]: liveness heartbeats for long-running tool calls
@@ -631,6 +644,8 @@ class Agent {
                 }
               }
             },
+      messageCapPolicy: messageCapPolicy,
+      messageCapRelief: messageCapRelief,
       stuckTool: stuckTool,
       toolExecution: toolExecution,
       finalizeGate: finalizeGate,
