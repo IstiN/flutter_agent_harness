@@ -16,6 +16,16 @@ square WITH an X). The issue measured what that means for this repo:
     - yellow "25:00" digits on the dark timer card: glyph edges pass
       the stripe heuristic (panel_dark).
 
+Version expectations of the regression fixture (measured; re-check
+after every upstream bump — `regression_note` defers here instead of
+hardcoding a version-pinned fraction in its print):
+  0.9.5:    0/40 pre-font goldens detected — the solid-Ahem-rectangle
+            blind spot; this is why broken_goldens stays `warning`.
+  >=0.14.2: 30/40 detected; the residual 10 carry only sub-20 px
+            hollow boxes (deliberately not flagged: indistinguishable
+            from rounded 16-18 px checkboxes), the fa_mark logo (a
+            real image) and sub-glyph-scale text.
+
 The detector fixes belong to upstream (IstiN/crap4dart). This harness
 pins the truth HERE, as synthetic pixel fixtures — one per class — so
 re-verification after every upstream release is one command:
@@ -35,6 +45,7 @@ Self-test: python3 scripts/check_golden_detector.py --self-test
 """
 
 import argparse
+import json
 import shutil
 import struct
 import subprocess
@@ -265,6 +276,41 @@ def self_test() -> int:
                 greens = sum(1 for row in px for p in row if p == GREEN)
                 if whites < 64 * 64 * 2 or greens < 20 * 20:
                     failures.append(f"{name}: tile/V geometry wrong")
+
+    # 3. the dual-mode violation parser: BOTH fields read defensively —
+    #    a partial violation entry must be skipped, never raise (a raise
+    #    here kills the harness after the JSON already parsed, so the
+    #    console fallback never gets a chance to run)
+    try:
+        js = json.dumps({"gates": [{"violations": [
+            {"file": "goldens/x_boxed.png", "message": "box with an X"},
+            {"file": "", "message": "empty path"},
+            {"message": "missing file key"},
+            {"file": "goldens/no_msg.png"},
+        ]}]})
+        got = parse_detector_output(js)
+        want = {"x_boxed.png": "box with an X", "no_msg.png": ""}
+        if got != want:
+            failures.append(f"parser JSON mode: got {got}, want {want}")
+    except Exception as e:  # the raise IS the defect under test
+        failures.append(f"parser JSON mode raised on partial entry: {e!r}")
+    try:
+        con = parse_detector_output(
+            "goldens/x_boxed.png: box with an X\n"
+            "scan: 12 files ok\n"
+            "goldens/stripes.png: overflow stripes\n")
+        wantc = {"x_boxed.png": "box with an X",
+                 "stripes.png": "overflow stripes"}
+        if con != wantc:
+            failures.append(f"parser console mode: got {con}, want {wantc}")
+    except Exception as e:
+        failures.append(f"parser console mode raised: {e!r}")
+    # 4. rot guard: the --regression footnote prints MEASURED counts
+    #    only — version-pinned expectations (30/40, residual-10 make-up)
+    #    live in the module docstring, never back in the print
+    note = regression_note(30, 40)
+    if "residual" in note or "crap4dart" in note:
+        failures.append(f"regression note embeds version-pinned prose: {note}")
     for f in failures:
         print(f"SELF-TEST FAIL: {f}")
     print("self-test:", "FAILED" if failures else "OK", f"({len(FIXTURES)} fixtures)")
@@ -272,6 +318,44 @@ def self_test() -> int:
 
 
 # ── Detector invocation ──────────────────────────────────────────────────
+
+def parse_detector_output(stdout: str) -> dict[str, str]:
+    """Parses `crap4dart check --only broken_goldens` output into
+    {png basename: message}.
+
+    JSON output carries the FULL violation list (the console report
+    truncates at 20 with "... and N more", which silently halved the
+    regression count); console lines are the fallback for pins that
+    predate --format json. BOTH fields are read defensively: a future
+    schema change must degrade to skip-and-continue — a raise here would
+    kill the harness after the JSON already parsed, before the console
+    fallback ever gets a chance to run.
+    """
+    violations: dict[str, str] = {}
+    try:
+        report = json.loads(stdout)
+    except json.JSONDecodeError:
+        report = None
+    if isinstance(report, dict):
+        for gate in report.get("gates", []):
+            for v in gate.get("violations", []):
+                if not isinstance(v, dict):
+                    continue
+                # defensive on BOTH fields (message was already .get);
+                # index by basename so callers look fixtures up by name
+                path = v.get("file", "")
+                if path:
+                    violations.setdefault(Path(path).name,
+                                          str(v.get("message", "")))
+    else:
+        for raw in stdout.splitlines():
+            s = raw.strip()
+            # violation lines: "<dir>/<name>.png: <message>"
+            if ": " in s and s.partition(":")[0].strip().endswith(".png"):
+                path, _, msg = s.partition(":")
+                violations.setdefault(Path(path.strip()).name, msg.strip())
+    return violations
+
 
 def run_detector(scan_dir: Path, workdir: Path) -> dict[str, str]:
     """Runs the pinned broken_goldens gate over scan_dir; returns
@@ -291,22 +375,13 @@ def run_detector(scan_dir: Path, workdir: Path) -> dict[str, str]:
         raise SystemExit("dart not on PATH — cannot run the pinned detector")
     proc = subprocess.run(
         ["dart", "pub", "global", "run", "crap4dart", "check",
-         "--only", "broken_goldens"],
+         "--only", "broken_goldens", "--format", "json"],
         cwd=workdir,
         capture_output=True,
         text=True,
         timeout=DETECTOR_TIMEOUT,
     )
-    violations = {}
-    for raw in proc.stdout.splitlines():
-        s = raw.strip()
-        # violation lines: "<dir>/<name>.png: <message>" — match on the
-        # path head, not the message tail
-        if ": " in s and s.partition(":")[0].strip().endswith(".png"):
-            path, _, msg = s.partition(":")
-            # reporter keys carry the scan dir ("goldens/x.png") — index
-            # by basename so callers look fixtures up by name
-            violations.setdefault(Path(path.strip()).name, msg.strip())
+    violations = parse_detector_output(proc.stdout)
     if not violations and proc.returncode not in (0, 2):
         raise SystemExit(
             f"detector run failed rc={proc.returncode}:\n{proc.stdout[-800:]}\n{proc.stderr[-800:]}"
@@ -319,6 +394,12 @@ def classify(violations: dict[str, str], name: str) -> str:
     if not msg:
         return "clean"
     return "stripes" if "overflow stripes" in msg else "tofu"
+
+
+def bucket(got: str) -> str:
+    """The verdict class the FIXTURES table speaks: any detection is
+    'detect' — the artifact word (stripes/tofu) is display detail."""
+    return "detect" if got in ("tofu", "stripes") else got
 
 
 def extract_regression(workdir: Path) -> Path:
@@ -337,6 +418,20 @@ def extract_regression(workdir: Path) -> Path:
         raise SystemExit(f"git archive {REGRESSION_REF} failed: {proc.stderr.decode()[-300:]}")
     subprocess.run(["tar", "-x", "-C", str(dest)], input=proc.stdout, check=True)
     return dest
+
+
+def regression_note(detected: int, total: int) -> str:
+    """The --regression footnote line.
+
+    Measured counts only: the per-version expectations (0/40 on the
+    0.9.5 detector, 30/40 on >=0.14.2, and the residual-10 make-up)
+    live in the module docstring. Hardcoding a version-pinned fraction
+    here makes the line lie the moment the detector bumps — the number
+    printed IS the measurement, the docstring carries the interpretation.
+    """
+    return (f"  detected: {detected}/{total}"
+            f" (0/40 = the 0.9.5 blind spot; expectations per detector"
+            f" version live in the module docstring)")
 
 
 def main() -> int:
@@ -369,7 +464,7 @@ def main() -> int:
         rows, all_fixed = [], True
         for name, (_, today, target) in FIXTURES.items():
             got = classify(violations, name)
-            ok_today, ok_target = got == today, got == target
+            ok_today, ok_target = bucket(got) == today, bucket(got) == target
             all_fixed &= ok_target
             print(f"{name:32} {today:8} {target:8} {got:8}"
                   f"{' (matches measured #447 behaviour)' if ok_today else ' <-- CHANGED'}")
@@ -378,8 +473,7 @@ def main() -> int:
             reg_violations = run_detector(reg, workdir)
             total = len(list(reg.glob('*.png')))
             print(f"\nregression fixture: {REGRESSION_REF} — {total} pre-font goldens")
-            print(f"  detected: {len({*reg_violations}) & len(list(reg.glob('*.png'))) and len(reg_violations)}/{total}"
-                  f" (0/40 = the measured blind spot; 40/40 after the upstream fixes)")
+            print(regression_note(len(reg_violations), total))
         print()
         if args.expect_fixed:
             print("expect-fixed:", "MET — upstream fixes landed" if all_fixed

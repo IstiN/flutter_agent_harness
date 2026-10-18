@@ -156,13 +156,16 @@ void main() {
     final declared = _manifestPermissions();
     // Tier 1 (issue #137): `commands` and `omnibox` are manifest KEYS, not
     // permission entries — checked as JSON keys below.
+    // gh-1630: `contentSettings` and `fontSettings` left the Tier-1 set —
+    // they had NO call site in the shipped JS and CWS Purple Potassium
+    // rejects requested-but-unused permissions (the gh-1630 removal is
+    // the newer contract; AC2's both-ways catalog check below proves the
+    // namespaces never materialized from them).
     const tier1 = {
       'browsingData',
       'clipboardRead',
       'clipboardWrite',
-      'contentSettings',
       'declarativeNetRequest',
-      'fontSettings',
       'privacy',
       'readingList',
       'search',
@@ -180,6 +183,26 @@ void main() {
       declared.containsAll(tier2),
       isTrue,
       reason: 'missing Tier-2: ${tier2.difference(declared)}',
+    );
+    // gh-1630 (CWS Purple Potassium): the four dead permissions stay out.
+    // `downloads` is RETAINED (F2′ owner decision — the `download` agent
+    // tool is its shipped call site). Re-add a dead one ONLY together
+    // with the shipping code that calls the namespace — update this set,
+    // browser_ext/manifest.json and
+    // test/browser_ext/cws_compliance_test.dart in the same change.
+    const deadPermissions = {
+      'contentSettings',
+      'fontSettings',
+      'identity',
+      'desktopCapture',
+    };
+    expect(
+      declared.intersection(deadPermissions),
+      isEmpty,
+      reason:
+          'gh-1630 removed ${declared.intersection(deadPermissions)} '
+          'as requested-but-unused (hard CWS rejection); resurrecting one '
+          'requires its shipping call site in the same change',
     );
     final manifest =
         jsonDecode(

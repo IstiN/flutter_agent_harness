@@ -101,7 +101,6 @@ const String _composerGutter = '╰─ ';
 /// `tuiTextWidth('╰─ ')` — narrow-cell box glyphs + one space.
 const int _composerGutterWidth = 3;
 
-
 /// Memoized markdown+wrap pass over [FaTuiModel.outputLines]. Formatting is
 /// O(transcript) (regex-heavy markdown plus ANSI-safe wrapping) and used to
 /// run two to four times PER event (update handler, `_echoEndRow`, view),
@@ -1625,17 +1624,25 @@ final class FaTuiModel extends Model {
       'ctrl+u' => const PromptCtrlU(),
       'esc' => const PromptEscape(),
       'tab' => const PromptTab(),
-      'up' => const PromptArrowUp(),
-      'down' => const PromptArrowDown(),
-      'left' => const PromptArrowLeft(),
-      'right' => const PromptArrowRight(),
       'backspace' => const PromptBackspace(),
-      _ =>
-        !_isCommandKeystroke(msg.key) && msg.keyEvent.text.length == 1
-            ? PromptChar(msg.keyEvent.text)
-            : null,
+      _ => _promptNavKey(msg) ?? _promptChar(msg),
     };
   }
+
+  /// The arrow-key subset of the prompt keys.
+  PromptKey? _promptNavKey(KeyMsg msg) => switch (msg.key) {
+    'up' => const PromptArrowUp(),
+    'down' => const PromptArrowDown(),
+    'left' => const PromptArrowLeft(),
+    'right' => const PromptArrowRight(),
+    _ => null,
+  };
+
+  /// A printable character keystroke, unless it is a command chord.
+  PromptKey? _promptChar(KeyMsg msg) =>
+      !_isCommandKeystroke(msg.key) && msg.keyEvent.text.length == 1
+      ? PromptChar(msg.keyEvent.text)
+      : null;
 
   static bool _isWordBreak(String ch) => ch == ' ' || ch == '\n' || ch == '\t';
 

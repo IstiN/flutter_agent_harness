@@ -2371,8 +2371,8 @@ gh release create "v9.9.9" \
   // ── gh-995 — artifact action pins + PTY shard pipeline coherence ────────
   // 2026-09-27 outage: the PTY legs were the only jobs still uploading
   // artifacts with the stale upload-artifact@ea165f8d (v4 line) pin while
-  // the rest of the repo had moved to 043fb46d (v7.0.1). The gate downloads
-  // with download-artifact@3e5f45b2 (v8.0.1), which digest-validates every
+  // the rest of the repo had moved to cf430e03 (v7.0.2). The gate downloads
+  // with download-artifact@9000827c (v8.0.2), which digest-validates every
   // download — the stale uploads stopped verifying (digest-mismatch), the
   // shard merge saw < 3 reports and pty-coverage-gate wedged every run.
   // check_action_pins.sh cannot see this class (both forms are valid
@@ -2404,7 +2404,7 @@ gh release create "v9.9.9" \
       () {
         expect(
           usesByAction()['actions/upload-artifact'],
-          {'043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'},
+          {'cf430e030ddbb5b0abf93d22962f4752f3646cd9'},
           reason:
               'pty-coverage-gate downloads with download-artifact v8 '
               '(strict SHA256 digest validation); every upload must come '

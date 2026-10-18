@@ -28,6 +28,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/redact': (cli, rest) async => cli._handleRedactCommand(rest),
   '/theme': (cli, rest) async => cli._themeSlash(rest),
   '/trajectory': (cli, rest) async => cli._handleTrajectoryCommand(rest),
+  '/import': (cli, rest) async => cli._handleImportCommand(rest),
   '/usage': (cli, rest) async => cli._handleUsageCommand(rest),
   '/mail': (cli, rest) async => cli.handleMailCommand(rest),
   '/reply': (cli, rest) async => cli.handleReplyCommand(rest),
@@ -735,33 +736,66 @@ extension ProviderQueueEditor on AgentCli {
     switch (sub) {
       case '':
         _printProviderQueue();
-      case 'add' when parts.length >= 4:
-        await _providerQueueAdd(
-          parts[2],
-          parts[3],
-          parts.length >= 5 ? parts[4] : null,
-          parts.length >= 6 ? parts[5] : null,
-        );
-      case 'remove' when parts.length == 3:
-        await _providerQueueEdit(
-          (entries) => providerQueueRemoveAt(entries, int.parse(parts[2])),
-        );
-      case 'move' when parts.length == 4:
-        await _providerQueueEdit(
-          (entries) => providerQueueMove(
-            entries,
-            int.parse(parts[2]),
-            int.parse(parts[3]),
-          ),
-        );
-      case 'test' when parts.length == 3:
-        await _providerQueueTest(int.parse(parts[2]));
+      case 'add':
+        await _providerQueueAddRest(parts);
+      case 'remove':
+        await _providerQueueRemoveRest(parts);
+      case 'move':
+        await _providerQueueMoveRest(parts);
+      case 'test':
+        await _providerQueueTestRest(parts);
       default:
-        io.writeln(
-          'usage: /providers queue [add <kind> <model> <apiKeyEnv> [baseUrl] | '
-          'remove <n> | move <from> <to> | test <n>]',
-        );
+        _providersUsage();
     }
+  }
+
+  void _providersUsage() {
+    io.writeln(
+      'usage: /providers queue [add <kind> <model> <apiKeyEnv> [baseUrl] | '
+      'remove <n> | move <from> <to> | test <n>]',
+    );
+  }
+
+  Future<void> _providerQueueAddRest(List<String> parts) async {
+    if (parts.length < 4) {
+      _providersUsage();
+      return;
+    }
+    await _providerQueueAdd(
+      parts[2],
+      parts[3],
+      parts.length >= 5 ? parts[4] : null,
+      parts.length >= 6 ? parts[5] : null,
+    );
+  }
+
+  Future<void> _providerQueueRemoveRest(List<String> parts) async {
+    if (parts.length != 3) {
+      _providersUsage();
+      return;
+    }
+    await _providerQueueEdit(
+      (entries) => providerQueueRemoveAt(entries, int.parse(parts[2])),
+    );
+  }
+
+  Future<void> _providerQueueMoveRest(List<String> parts) async {
+    if (parts.length != 4) {
+      _providersUsage();
+      return;
+    }
+    await _providerQueueEdit(
+      (entries) =>
+          providerQueueMove(entries, int.parse(parts[2]), int.parse(parts[3])),
+    );
+  }
+
+  Future<void> _providerQueueTestRest(List<String> parts) async {
+    if (parts.length != 3) {
+      _providersUsage();
+      return;
+    }
+    await _providerQueueTest(int.parse(parts[2]));
   }
 
   /// The live queue with per-entry health badges (current / healthy /
@@ -824,38 +858,20 @@ extension ProviderQueueEditor on AgentCli {
       io.writeln('not applied: $error');
       return;
     }
-    // Same env view the boot resolved through (issue #675): the config's
-    // queue env when the host injected one, else the process environment.
-    final scope = resolveProviderQueueAtBoot(
-      projectDir: config.env.cwd,
-      homeDir: config.homeDir ?? config.env.cwd,
-      env: config.providerQueueEnv,
-    );
-    if (scope.scope == ProviderQueueScope.env) {
-      io.writeln(
-        'FA_PROVIDERS_QUEUE env wins over any file queue — edit the env '
-        'value or unset it; nothing written',
-      );
-      return;
-    }
+    await _persistProviderQueue(next);
+  }
+
+  /// Validates the edited queue against the winning scope's file and
+  /// persists it there: editing a project-defined queue never silently
+  /// creates a shadowing user file, and vice versa (env wins are refused
+  /// by [_queuePersistPath]).
+  Future<void> _persistProviderQueue(List<ProviderQueueEntry> next) async {
+    final path = await _queuePersistPath();
+    if (path == null) return;
     final body = const JsonEncoder.withIndent(
       '  ',
     ).convert([for (final entry in next) entry.toJson()]);
-    // The edit persists to the winning scope's own file: editing a
-    // project-defined queue never silently creates a shadowing user
-    // file, and vice versa (env wins are refused above).
-    final path = switch (scope.scope) {
-      ProviderQueueScope.project => '${config.env.cwd}/.fah/config.yaml',
-      ProviderQueueScope.user =>
-        '${config.homeDir ?? config.env.cwd}/.fah/config.yaml',
-      // Refused above; exhaustiveness keeps the switch total.
-      ProviderQueueScope.env => throw StateError('env scope unreachable'),
-    };
-    final source = switch (await config.env.readTextFile(path)) {
-      Ok(:final value) => value,
-      Err(:final error) when error.code == FileErrorCode.notFound => '',
-      Err(:final error) => _queueEditFail('cannot read $path: $error'),
-    };
+    final source = await _readQueueYaml(path);
     final edited = upsertYamlPath(source, const [
       'providersQueue',
     ], configLeafLines(body, depth: 0));
@@ -876,6 +892,40 @@ extension ProviderQueueEditor on AgentCli {
       'live from the next turn',
     );
   }
+
+  /// The queue file the edit must land in, or null when the edit is
+  /// refused (an FA_PROVIDERS_QUEUE env queue is not file-backed).
+  Future<String?> _queuePersistPath() async {
+    // Same env view the boot resolved through (issue #675): the config's
+    // queue env when the host injected one, else the process environment.
+    final scope = resolveProviderQueueAtBoot(
+      projectDir: config.env.cwd,
+      homeDir: config.homeDir ?? config.env.cwd,
+      env: config.providerQueueEnv,
+    );
+    if (scope.scope == ProviderQueueScope.env) {
+      io.writeln(
+        'FA_PROVIDERS_QUEUE env wins over any file queue — edit the env '
+        'value or unset it; nothing written',
+      );
+      return null;
+    }
+    return switch (scope.scope) {
+      ProviderQueueScope.project => '${config.env.cwd}/.fah/config.yaml',
+      ProviderQueueScope.user =>
+        '${config.homeDir ?? config.env.cwd}/.fah/config.yaml',
+      // Refused above; exhaustiveness keeps the switch total.
+      ProviderQueueScope.env => throw StateError('env scope unreachable'),
+    };
+  }
+
+  /// The queue file's current YAML body; '' when not created yet.
+  Future<String> _readQueueYaml(String path) async =>
+      switch (await config.env.readTextFile(path)) {
+        Ok(:final value) => value,
+        Err(:final error) when error.code == FileErrorCode.notFound => '',
+        Err(:final error) => _queueEditFail('cannot read $path: $error'),
+      };
 
   String _queueEditFail(String message) {
     io.writeln(message);

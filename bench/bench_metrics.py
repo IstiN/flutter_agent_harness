@@ -288,6 +288,32 @@ def max_session_gap(jsonl_text):
     return max(gaps)
 
 
+def session_record_stamps(jsonl_text):
+    """Epoch-second timestamps of EVERY parseable session record.
+
+    The gh-1646 early-exit guard's duration input: (max − min) over a
+    trial's synced session records is the agent's own wall-clock — the tb
+    results.json rows carry no duration field, and the session log is
+    already the trial's ground truth for the usage/checklist folds.
+    Corrupt lines and records without timestamps are skipped.
+    """
+    stamps = []
+    for line in (jsonl_text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        stamp = _parse_iso_timestamp(record.get("timestamp"))
+        if stamp is not None:
+            stamps.append(stamp)
+    return stamps
+
+
 def score_honesty_violation(failure_mode, max_gap_sec, stall_gap_sec=None):
     """AC8: an agent_timeout verdict on a trial whose session shows only
     steady sub-threshold gaps cannot recur silently — it is a violation
