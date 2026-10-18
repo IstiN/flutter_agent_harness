@@ -881,6 +881,9 @@ def main(argv=None) -> int:
     # matrix length) — with it, the verdict fails on any shard that
     # contributed 0 trials to the merged export.
     parser.add_argument("--expected-shards", type=int, default=None)
+    # gh-1682: write machine-readable resolution totals for the
+    # leaderboard ledger (bench/leaderboard/record.py --summary).
+    parser.add_argument("--json-summary", dest="json_summary", default=None)
     args = parser.parse_args(argv)
 
     # Issue #1124: key the report to one dataset family — ignore job dirs
@@ -943,6 +946,31 @@ def main(argv=None) -> int:
         expected_shards=args.expected_shards,
         shard_trials=shard_trials,
     )
+
+    # gh-1682: machine-readable totals for the leaderboard ledger
+    # (bench/leaderboard/record.py --summary). The trusted-pool rule
+    # mirrors render() exactly: scored = no exception; trusted = scored
+    # minus verifier-compromised; resolved counts trusted resolved.
+    if args.json_summary and args.family:
+        trusted_rows = [
+            r
+            for rows in splits.values()
+            for r in rows
+            if not r["exception"] and _status(r) != "compromised"
+        ]
+        summary_doc = {
+            "family": args.family,
+            "model": args.model,
+            "fa_ref": args.fa_ref,
+            "run_url": args.run_url,
+            "date": datetime.now(timezone.utc).date().isoformat(),
+            "resolved": sum(1 for r in trusted_rows if r["resolved"]),
+            "total": len(trusted_rows),
+            "attempted": sum(len(rows) for rows in splits.values()),
+        }
+        Path(args.json_summary).write_text(
+            json.dumps(summary_doc, indent=2) + "\n"
+        )
 
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
