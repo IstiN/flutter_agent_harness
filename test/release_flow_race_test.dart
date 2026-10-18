@@ -1028,7 +1028,7 @@ void main() {
             'installer-verify|install-pin-gate|cube-kernel-live|'
             'cli-visual-settings|pty-integration-linux|pty-coverage-gate|'
             'pty-visual|flutter-app-lock-smoke|installer-portability|'
-            'office-addin-suite)',
+            'office-addin-suite|extension-size-gate)',
           ),
           reason:
               'every platform/native/PTY leg must be publish-exempt — '
@@ -1036,7 +1036,8 @@ void main() {
               'smoke release build blocks the merge via the aggregate, '
               'never the publish), gh-1596 adds installer-portability '
               'and gh-1659 the office-addin suite to the same '
-              'publish-exempt class',
+              'publish-exempt class, gh-1684 AC3 the extension size gate '
+              '(a zip-size red blocks the merge, never the publish)',
         );
       },
     );
