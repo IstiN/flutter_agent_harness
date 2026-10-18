@@ -86,6 +86,9 @@ const _nonSettingsCommands = <String, String>{
   '/compact': 'manual compaction (no persisted setting)',
   '/trajectory': 'read-only ledger views',
   '/sessions': 'read-only session listing',
+  '/import':
+      'imports foreign-harness sessions into the fa store as new '
+      'standalone sessions — writes no config.yaml setting',
   '/session': 'session switching',
   '/resume': 'session switching',
   '/rename-session': 'session rename',

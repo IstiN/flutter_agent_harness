@@ -123,6 +123,8 @@ void main() {
       'agentAction',
       'modelProvider',
       'theme',
+      'import-harness',
+      'import-sessions',
     });
 
     io.sendLine('/exit');

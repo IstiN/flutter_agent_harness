@@ -13,6 +13,7 @@ import '../compaction/structured/projection.dart';
 import '../compaction/summary_sanitizer.dart';
 import '../context.dart';
 import '../exceptions.dart';
+import '../session_seal.dart';
 import '../types.dart';
 import 'obligations_ledger.dart';
 import 'session_record.dart';
@@ -95,6 +96,28 @@ final class Session {
   Session(this._storage, {this.customRecordScan});
 
   final SessionStorage _storage;
+
+  /// gh-1589: the run-lifecycle seal (null while the session is open for
+  /// writing). Set by the run teardown paths (`runHeadless`' finally, the
+  /// REPL teardown) AFTER every deliberate close flush has landed; from
+  /// then on every append through this instance is dropped with one
+  /// warning per writer class — the session JSONL is immutable for this
+  /// process. Per-INSTANCE state: a resume/wake opens the same file as a
+  /// fresh, unsealed Session (I5).
+  SessionSeal? _seal;
+
+  /// Seals this session instance: every later append is dropped with one
+  /// warning per writer class through [onLateWrite]. Idempotent — the
+  /// first seal and its sink win. Sealing touches no file bytes; a NEW
+  /// Session over the same storage appends normally (the seal is per-run,
+  /// not per-file-forever).
+  void seal({void Function(String message)? onLateWrite}) {
+    (_seal ??= SessionSeal(onLateWrite: onLateWrite)).seal();
+  }
+
+  /// Whether this session instance is sealed (gh-1589): the settle fence
+  /// reads it to classify a post-completion settle as bookkeeping-only.
+  bool get isSealed => _seal?.isSealed ?? false;
 
   /// Raw `custom`-record scan over the full session file chain, keyed by
   /// record type. Null when the session was built without a repo behind
@@ -257,8 +280,18 @@ final class Session {
   }
 
   Future<String> _append(
-    SessionRecord Function(String id, String? parentId) build,
-  ) async {
+    SessionRecord Function(String id, String? parentId) build, {
+    String? sealClass,
+  }) async {
+    // gh-1589: the seal is observed BEFORE anything is built — a sealed
+    // session appends nothing, consumes no entry id, and resolves with the
+    // untouched leaf id (the caller's "last record" handle). One warning
+    // per writer class, never a throw into an unhandled zone.
+    final seal = _seal;
+    if (seal != null && seal.isSealed) {
+      seal.rejectWrite(sealClass ?? 'record');
+      return await _storage.getLeafId() ?? '';
+    }
     final record = build(
       await _storage.createEntryId(),
       await _storage.getLeafId(),
@@ -277,6 +310,7 @@ final class Session {
         timestamp: DateTime.now(),
         message: message,
       ),
+      sealClass: 'message',
     );
   }
 
@@ -292,6 +326,7 @@ final class Session {
         timestamp: DateTime.now(),
         recordIds: recordIds,
       ),
+      sealClass: 'compaction',
     );
   }
 
@@ -318,6 +353,7 @@ final class Session {
         coversRecordIds: coversRecordIds,
         flattenedRecordIds: flattenedRecordIds,
       ),
+      sealClass: 'compaction',
     );
   }
 
@@ -337,6 +373,7 @@ final class Session {
         recordIds: recordIds,
         pinned: pinned,
       ),
+      sealClass: 'segment_pin',
     );
   }
 
@@ -372,6 +409,7 @@ final class Session {
         baseUrl: baseUrl,
         customProvider: customProvider,
       ),
+      sealClass: 'model_change',
     );
   }
 
@@ -384,6 +422,7 @@ final class Session {
         timestamp: DateTime.now(),
         activeToolNames: [...activeToolNames],
       ),
+      sealClass: 'active_tools',
     );
   }
 
@@ -408,11 +447,14 @@ final class Session {
         details: details,
         fromHook: fromHook,
       ),
+      sealClass: 'compaction',
     );
   }
 
   /// Appends an application-defined record that stays out of model context.
-  /// Returns the new record id.
+  /// Returns the new record id. The seal's writer class is the custom type
+  /// itself (`custom:<type>`) — the shell-job registry, the obligations
+  /// ledger, and steering each warn separately (gh-1589 UT-1).
   Future<String> appendCustomEntry({required String customType, Object? data}) {
     return _append(
       (id, parentId) => CustomRecord(
@@ -422,6 +464,7 @@ final class Session {
         customType: customType,
         data: data,
       ),
+      sealClass: 'custom:$customType',
     );
   }
 
@@ -437,6 +480,7 @@ final class Session {
         messageCount: messageCount,
         goal: goal,
       ),
+      sealClass: 'checkpoint',
     );
   }
 
@@ -459,6 +503,7 @@ final class Session {
         display: display,
         details: details,
       ),
+      sealClass: 'custom_message:$customType',
     );
   }
 
@@ -479,6 +524,7 @@ final class Session {
         targetId: targetId,
         label: label,
       ),
+      sealClass: 'label',
     );
   }
 
@@ -492,6 +538,7 @@ final class Session {
         timestamp: DateTime.now(),
         name: sanitized,
       ),
+      sealClass: 'session_name',
     );
   }
 
@@ -506,6 +553,15 @@ final class Session {
     Object? details,
     bool? fromHook,
   }) async {
+    // gh-1589: the seal fences the leaf move too — a sealed session must
+    // not write leaf/branch_summary records any more than message appends
+    // (the straggler that calls this post-teardown loses nothing that was
+    // owed: branch navigation is a live-session affordance).
+    final seal = _seal;
+    if (seal != null && seal.isSealed) {
+      seal.rejectWrite('leaf_move');
+      return null;
+    }
     if (entryId != null && await _storage.getEntry(entryId) == null) {
       throw SessionException(
         'Entry $entryId not found',

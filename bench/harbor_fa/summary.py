@@ -225,6 +225,31 @@ def classify_early_exit_unmet(
     return duration_secs < cap_secs - margin
 
 
+def classify_clean_exit_wrong(clean_exit: bool, ledger_unmet, reward_zero):
+    """gh-1652 C4: the CLEAN-WRONG verdict for one trial.
+
+    True = the trial ended on its own (clean `__FA_EXIT=0`), its FINAL
+    task ledger carries ZERO unmet items (the agent believed it was
+    done — it validated through its own checklist oracle), and every
+    verifier reward is 0 — the grader's own invocation was never run.
+    False = not in the class (killed, an unmet ledger — that is the
+    gh-1646 surrender class instead — or a nonzero reward). None =
+    unclassifiable — a missing ledger or verifier-reward input (legacy
+    artifacts) never fabricates the class.
+
+    DISJOINT from `classify_early_exit_unmet` by construction: the two
+    classes key on opposite sides of `ledger_unmet <= 0`, so a trial is
+    counted once.
+
+    Duplicated in bench/terminal_bench/summary.py (the summary scripts
+    are standalone-by-design) — change both together.
+    """
+    if ledger_unmet is None or reward_zero is None:
+        return None
+    if not clean_exit or ledger_unmet > 0 or not reward_zero:
+        return False
+    return True
+
 def _ledger_cell(trial_dir: Path) -> str:
     """gh-1412: the trial's checklist-coverage cell from its last hidden
     `task_ledger` record — "checklist: V/T [(N unmet)]", "checklist: none"
@@ -417,6 +442,9 @@ def _trial_rows(job_dir: Path) -> list[dict]:
         )
         cap_secs = _audit_cap_secs(trial_dir)
         ledger_unmet = _ledger_unmet_count(trial_dir)
+        # gh-1652 C4: reward-0 evidence — every verifier reward is zero
+        # (no partial credit). No scores = no verdict = unclassifiable.
+        reward_zero = (not any(v > 0.0 for v in scores)) if scores else None
         rows.append({
             "resolved": resolved,
             "exception": exception,
@@ -431,6 +459,12 @@ def _trial_rows(job_dir: Path) -> list[dict]:
             "trial": f"{job_dir.name}/{trial_dir.name}",
             "integrity": verdict,
             "integrity_note": note,
+            # gh-1652 C4: reward-0 evidence — every verifier reward is
+            # zero (no partial credit). No scores = no verdict.
+            "reward_zero": reward_zero,
+            "clean_exit_wrong": classify_clean_exit_wrong(
+                clean_exit, ledger_unmet, reward_zero
+            ),
             "early_exit_unmet": classify_early_exit_unmet(
                 clean_exit, ledger_unmet, duration_secs, cap_secs
             ),
@@ -440,7 +474,21 @@ def _trial_rows(job_dir: Path) -> list[dict]:
     return rows
 
 
-def render(splits: dict, expected=None, title=None, ledger=None, run_label=None):
+def _shard_index(job_name: str) -> "int | None":
+    """The shard index in a workflow job dir name (gh-1658 C3).
+
+    bench-harbor.yml pins `--job-name fa-<family>-<env>-<kind>-<shard>`
+    (legacy names: `fa-4.0-<env>-<shard>`), so the trailing dash-segment
+    is the matrix shard index. Exact segment match — `...-cpu-11` is
+    shard 11, never shard 1. None when the dir carries no numeric suffix
+    (not a shard job; never guarded).
+    """
+    match = re.search(r"-(\d+)$", job_name)
+    return int(match.group(1)) if match else None
+
+
+def render(splits: dict, expected=None, title=None, ledger=None, run_label=None,
+           expected_shards=None, shard_trials=None):
     """Build the summary (lines, problems) — pure, testable.
 
     title: report heading (family mode, issue #1124); defaults to the
@@ -449,6 +497,11 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
     with the real cost totals computed below (issue #1124 + #1123).
     run_label: provider+model tag (gh-1503, BENCH_RUN_LABEL env) so glm
     and kimi runs never blend in the ledger/cost views.
+    expected_shards + shard_trials (gh-1658 C3): when the workflow passes
+    --expected-shards N and the per-shard readable-trial counts, every
+    expected shard index must contribute >= 1 trial to the merged export
+    — a shard that vanished from the artifacts fails the verdict by name
+    instead of silently shrinking the resolution denominator.
     """
     lines = [title or "### fa on Terminal-Bench 4.0", ""]
     problems: list[str] = []
@@ -630,6 +683,35 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
                 " duration, or ledger data (never counted as early exits)"
             )
 
+    # gh-1652 C4: the CLEAN-WRONG class — the mirror image of the
+    # surrender guard above. The agent exited cleanly BELIEVING it was
+    # done (zero-unmet ledger) and the verifier still scored reward 0:
+    # it validated through its own oracle, never the grader's
+    # invocation. Disjoint from the guard above by construction
+    # (ledger_unmet <= 0 vs > 0) — a trial is counted once.
+    clean_wrongs = [
+        r for r in scored_failures if r.get("clean_exit_wrong") is True
+    ]
+    clean_unclassified = sum(
+        1 for r in scored_failures if r.get("clean_exit_wrong") is None
+    )
+    if scored_failures:
+        share = f"{len(clean_wrongs) / len(scored_failures):.0%}"
+        lines.append("")
+        lines.append(
+            f"**clean_exit_wrong (gh-1652): {len(clean_wrongs)}/"
+            f"{len(scored_failures)} failures ({share})** — clean exit +"
+            " zero-unmet task ledger + verifier reward 0"
+        )
+        for r in clean_wrongs:
+            lines.append(f"- {r['trial']}")
+        if clean_unclassified:
+            lines.append(
+                f"{clean_unclassified} failure(s) unclassifiable for"
+                " clean_exit_wrong — no ledger or verifier-reward data"
+                " (never counted)"
+            )
+
     # gh-1578: the errored class splits by OWNER. Verifier timeouts (the
     # in-container verifier hung executing agent-authored code) are the
     # agent's zero and get their own agent-attributed line — never the
@@ -710,6 +792,29 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
             + f" ×{len(unreadable_entries)}"
         )
 
+    # gh-1658 C3: the per-shard completeness guard. A shard that
+    # contributed 0 trials to the merged export (vanished artifact, or a
+    # startup crash that survived the shard step's one inline retry) must
+    # fail the verdict BY NAME — the aggregate's denominator is
+    # incomplete and the silently-shrunk resolution rate would lie.
+    zero_trial_shards: list[int] = []
+    if expected_shards is not None and shard_trials is not None:
+        contributing = {i for i, n in shard_trials.items() if n > 0}
+        zero_trial_shards = sorted(set(range(expected_shards)) - contributing)
+        if zero_trial_shards:
+            lines.append("")
+            lines.append(
+                f"**Lost capacity (gh-1658): {len(zero_trial_shards)} of"
+                f" {expected_shards} expected shard(s) contributed 0 trials"
+                " to the merged export — the resolution denominator is"
+                " incomplete:**"
+            )
+            for i in zero_trial_shards:
+                lines.append(f"- shard {i}: 0 trials")
+                problems.append(
+                    f"shard {i} contributed 0 trials to the merged export"
+                )
+
     if expected is not None and total_attempted < expected:
         lines.append("")
         lines.append(
@@ -749,6 +854,18 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
                 f"{verb} excluded from the resolution above — do not paste "
                 "without the caveat."
             )
+        if zero_trial_shards:
+            # gh-1658 C3: the same paste discipline for a shrunken
+            # denominator — the row above must never travel without it.
+            n = len(zero_trial_shards)
+            noun = "shard" if n == 1 else "shards"
+            lines.append("")
+            lines.append(
+                f"gh-1658: {n} {noun} contributed 0 trials to the merged"
+                " export (zero-trial startup failure or lost artifacts) —"
+                " do not paste the row above: the resolution rides an"
+                " incomplete denominator."
+            )
     return lines, problems
 
 
@@ -760,6 +877,10 @@ def main(argv=None) -> int:
     parser.add_argument("--model", default=None)
     parser.add_argument("--fa-ref", dest="fa_ref", default=None)
     parser.add_argument("--run-url", dest="run_url", default=None)
+    # gh-1658 C3: the number of shards the run fielded (the setup job's
+    # matrix length) — with it, the verdict fails on any shard that
+    # contributed 0 trials to the merged export.
+    parser.add_argument("--expected-shards", type=int, default=None)
     args = parser.parse_args(argv)
 
     # Issue #1124: key the report to one dataset family — ignore job dirs
@@ -769,6 +890,9 @@ def main(argv=None) -> int:
         job_dirs = [d for d in job_dirs if d.name.startswith(f"fa-{args.family}-")]
 
     splits: dict[str, list[dict]] = {"cpu": [], "gpu": []}
+    # gh-1658 C3: readable result.json count per shard index (the job
+    # name's trailing dash-segment) — the zero-trial guard's input.
+    shard_trials: dict[int, int] = {}
     for job_dir in job_dirs:
         name = job_dir.name
         if "-gpu-" in name:
@@ -778,7 +902,11 @@ def main(argv=None) -> int:
         else:
             # legacy scheme: docker shards were CPU, modal was the GPU leg
             split = "gpu" if "modal" in name else "cpu"
-        splits[split].extend(_trial_rows(job_dir))
+        rows = _trial_rows(job_dir)
+        splits[split].extend(rows)
+        index = _shard_index(name)
+        if index is not None:
+            shard_trials[index] = shard_trials.get(index, 0) + len(rows)
 
     # Lazy: only the family path needs the manifest, and importlib-based
     # test harnesses load this module without the dir on sys.path.
@@ -812,6 +940,8 @@ def main(argv=None) -> int:
         title=title,
         ledger=ledger,
         run_label=os.environ.get("BENCH_RUN_LABEL", "").strip() or None,
+        expected_shards=args.expected_shards,
+        shard_trials=shard_trials,
     )
 
     if os.environ.get("GITHUB_STEP_SUMMARY"):

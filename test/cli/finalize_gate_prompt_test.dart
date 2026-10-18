@@ -139,6 +139,200 @@ void main() {
     },
   );
 
+  test('gh-1652 C1: grader parity is numbered step 2.5 between verify '
+      'and fix', () {
+    // The CLEAN-WRONG regression (41% of bench failures): the agent
+    // validated through its own oracle and never ran the grader's
+    // invocation. Parity is a NUMBERED step, not a named-check bullet.
+    expect(finalizeGateContractPrompt, contains('2.5. **Grader parity**'));
+    expect(finalizeGateContractPrompt, isNot(contains('- **Grader parity**')));
+    final verifyAt = finalizeGateContractPrompt.indexOf(
+      '2. **Verify each item',
+    );
+    final parityAt = finalizeGateContractPrompt.indexOf('2.5. **Grader');
+    final fixAt = finalizeGateContractPrompt.indexOf('3. **Fix every unmet');
+    expect(parityAt, greaterThan(verifyAt));
+    expect(fixAt, greaterThan(parityAt));
+    expect(finalizeGateContractPrompt, contains('neutral cwd'));
+  });
+
+  test(
+    'gh-1652 C2: the composed headless prompt carries the parity step',
+    () async {
+      final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+      expect(prompt, contains('2.5. **Grader parity**'));
+    },
+  );
+
+  test('gh-1670 C1: feasibility before commitment — the contract names the '
+      'long-pole classes and the cheaper-strategy fallback', () {
+    // The regression (compile-compcert / crack-7z-hash transcripts): the
+    // agent committed to a from-source build / brute-force crack without
+    // estimating whether the path fit the remaining budget, and learned
+    // infeasibility only at the wall. The gate must teach the comparison
+    // at COMMITMENT time.
+    expect(
+      finalizeGateContractPrompt,
+      contains('Feasibility before commitment'),
+    );
+    // The two concrete long-pole classes.
+    expect(finalizeGateContractPrompt, contains('from-source builds'));
+    expect(finalizeGateContractPrompt, contains('large downloads'));
+    expect(finalizeGateContractPrompt, contains('brute-force searches'));
+    // The comparison target is the harness's clock (the time-left
+    // notices), not the agent's own bookkeeping.
+    expect(finalizeGateContractPrompt, contains('time-left notices'));
+    // The fallback: a cheaper strategy, never a gamble on a known-
+    // infeasible path.
+    expect(finalizeGateContractPrompt, contains('cheaper strategy'));
+    expect(
+      finalizeGateContractPrompt,
+      contains('never gamble the whole window on a path you already know'),
+    );
+    // The ticket's "(or the next-best partial)" leg (PR #1673 review
+    // thread): "reduced scope the task allows" only covers tasks whose
+    // text explicitly permits reduced scope — the compcert /
+    // crack-7z-hash transcripts are exactly the cases where even the
+    // cheapest satisfying strategy may not exist and the best move is
+    // a partial artifact plus an honest ledger row. That leg must be
+    // explicit in the contract.
+    expect(
+      finalizeGateContractPrompt,
+      contains('when no satisfying strategy fits, the next-best partial'),
+    );
+    // No internal issue refs ride the model-facing prompt (owner review).
+    expect(finalizeGateContractPrompt, isNot(contains('gh-1670')));
+  });
+
+  test(
+    'gh-1670 C2: the composed headless prompt carries the feasibility gate',
+    () async {
+      final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+      expect(prompt, contains('Feasibility before commitment'));
+      expect(prompt, contains('brute-force searches'));
+    },
+  );
+
+  test('gh-1668 C1: the no-teardown rule — final state is the deliverable', () {
+    // The observed antipattern (terminal-bench configure-git-webserver,
+    // 2/2): the agent verified end-to-end, then RESET its own setup
+    // "so the checker's commands run exactly as written" — the produced
+    // state no longer existed at grading.
+    expect(
+      finalizeGateContractPrompt,
+      contains('Final state is the deliverable'),
+    );
+    expect(
+      finalizeGateContractPrompt,
+      contains('never uninstall, stop, reset'),
+    );
+    expect(finalizeGateContractPrompt, contains('read-only or additive'));
+    expect(
+      finalizeGateContractPrompt,
+      contains('only if the task explicitly requires it'),
+    );
+    // The negative example pins the wrong pattern by name.
+    expect(finalizeGateContractPrompt, contains('verified, then reset'));
+  });
+
+  test(
+    'gh-1668 C2: the no-teardown rule is numbered step 4 inside the loop',
+    () {
+      // Skim-proof, mirroring the gh-1652 C1 placement guard: flash
+      // executes numbered steps but skims the bullet list — the rule must
+      // ride the numbered loop, not the named-checks section or a
+      // floating paragraph after the ledger spec.
+      final fixAt = finalizeGateContractPrompt.indexOf('3. **Fix every unmet');
+      final ruleAt = finalizeGateContractPrompt.indexOf(
+        '4. **Final state is the deliverable**',
+      );
+      final wallAt = finalizeGateContractPrompt.indexOf(
+        '**Work to the wall.**',
+      );
+      expect(ruleAt, greaterThan(fixAt));
+      expect(wallAt, greaterThan(ruleAt));
+      expect(
+        finalizeGateContractPrompt,
+        isNot(contains('- **Final state is the deliverable**')),
+      );
+    },
+  );
+
+  test('gh-1668 C3: "Content, not existence" cross-references the '
+      'no-teardown rule', () {
+    // A file that existed mid-run but is deleted at finalization is a
+    // fail — the cross-reference lives in the SAME bullet, not a
+    // distant section the model may never connect.
+    final bulletAt = finalizeGateContractPrompt.indexOf(
+      '- **Content, not existence**',
+    );
+    final refAt = finalizeGateContractPrompt.indexOf(
+      'deleted at finalization is a `fail`',
+    );
+    expect(bulletAt, isNot(-1));
+    expect(refAt, greaterThan(bulletAt));
+    // PRT_kwDOTXdlLc6tir-L: anchor the upper bound on structural
+    // markers instead of an arbitrary char window — a legitimate bullet
+    // extension or a generator re-wrap must not fail the test, and a
+    // move into the NEXT bullet (or past the section) must. The
+    // "Content, not existence" bullet is the last one in the named
+    // checks, so the bound is the nearest of the next bullet and the
+    // end of the current paragraph.
+    final nextBulletAt = finalizeGateContractPrompt.indexOf(
+      '\n- **',
+      bulletAt + 1,
+    );
+    final paragraphEndAt = finalizeGateContractPrompt.indexOf(
+      '\n\n',
+      bulletAt + 1,
+    );
+    final upperBound = [
+      if (nextBulletAt != -1) nextBulletAt,
+      if (paragraphEndAt != -1) paragraphEndAt,
+    ].fold(
+      finalizeGateContractPrompt.length,
+      (a, b) => a < b ? a : b,
+    );
+    expect(refAt, lessThan(upperBound));
+    expect(finalizeGateContractPrompt, contains('(step 4)'));
+  });
+
+  test(
+    'gh-1668 C4: the composed headless prompt carries the no-teardown rule',
+    () async {
+      final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+      expect(prompt, contains('Final state is the deliverable'));
+      expect(prompt, contains('verified, then reset'));
+    },
+  );
+
+  test('gh-1669: archive extraction completeness rides the contract as a '
+      'named check', () {
+    // CLEAN-WRONG regression (terminal-bench build-pov-ray, 2/2): the
+    // agent extracted the meaningful subtrees but dropped the archive's
+    // root-level `file_id.diz`, then marked the extraction step `pass`
+    // off an `ls` of the target. The contract now pins extraction
+    // completeness as a named check, next to "Canonical artifacts".
+    expect(
+      finalizeGateContractPrompt,
+      contains('- **Archive extraction is complete**'),
+    );
+    // The check names the verification command shape — an archive
+    // listing diffed against the extracted tree, not an aspirational
+    // "make sure everything extracted".
+    expect(finalizeGateContractPrompt, contains('unzip -l'));
+    expect(finalizeGateContractPrompt, contains('tar -tf'));
+    // Root-level marker/manifest files are called out explicitly.
+    expect(finalizeGateContractPrompt, contains('file_id.diz'));
+    // PR #1672 review threads PRRT_kwDOTXdlLc6thCGY / PRRT_kwDOTXdlLc6thIHv:
+    // plain `ls` of the target is non-recursive, so a literal diff of the
+    // archive's recursive listing against it degrades to "root-level
+    // entries match" for nested archives. The command shape must name a
+    // recursive counterpart.
+    expect(finalizeGateContractPrompt, contains('ls -R'));
+    expect(finalizeGateContractPrompt, contains('find <target> -type f'));
+  });
+
   test('interactive boots never carry the contract', () async {
     for (final mode in [
       ApprovalMode.alwaysAsk,
