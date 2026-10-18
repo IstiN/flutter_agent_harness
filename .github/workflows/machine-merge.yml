@@ -30,11 +30,22 @@ jobs:
   merge:
     # Label events only matter for the machine latches; other PR events
     # (synchronize/edited) always run — cheap and idempotent.
+    # Fork guard: pull_request events from forks run WITHOUT secrets
+    # (GitHub withholds them) — the reusable call then mints an empty
+    # GH_TOKEN and the job dies with gh exit 4 (live: PR #1615 guest
+    # synchronize, run 39127517548, 2026-10-18). Guest merges flow through
+    # workflow_run (CI completed — base-repo context, secrets present);
+    # a fork pull_request event itself has nothing for the bot to do.
     if: >-
       github.event_name != 'pull_request' ||
-      github.event.action != 'labeled' ||
-      contains(github.event.label.name, 'ai_') ||
-      contains(github.event.label.name, 'pr_approved')
+      (
+        github.event.pull_request.head.repo.fork == false &&
+        (
+          github.event.action != 'labeled' ||
+          contains(github.event.label.name, 'ai_') ||
+          contains(github.event.label.name, 'pr_approved')
+        )
+      )
     uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-merge.yml@main
     with:
       ci_workflow: ci.yml
