@@ -210,6 +210,7 @@ overrides:
           maxTokens: 65536,
           thinkingLevel: 'high',
           omitMaxOutputTokens: true,
+          messageCap: 2048,
         ),
       );
       final doc = _yaml(models.toYaml());
@@ -219,6 +220,7 @@ overrides:
       expect(roundTripped?.maxTokens, 65536);
       expect(roundTripped?.thinkingLevel, 'high');
       expect(roundTripped?.omitMaxOutputTokens, isTrue);
+      expect(roundTripped?.messageCap, 2048);
     });
 
     test('toYaml omits the overrides block when empty', () {
