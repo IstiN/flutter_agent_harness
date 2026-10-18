@@ -102,6 +102,29 @@ if [ -f "\$GH_STUB_DIR/curl-fail" ]; then
   echo "curl: simulated pub.dev API failure" >&2
   exit 1
 fi
+# gh-1561 rework seam (review thread 8): fail every read AFTER N total
+# reads — the shape of the pub.dev API going down MID-LEG (the top-of-leg
+# reads serve the stale replica fine, a later re-read hits the outage).
+# (2026-10-16 operator note: comment-only re-trigger — resets the
+# validation_failed park (#633) for a fresh SM dispatch; no behavior
+# change, the head was locally green: 92/92 in this suite.)
+if [ -f "\$GH_STUB_DIR/curl-fail-after" ]; then
+  c="\$GH_STUB_DIR/curl-fail-count"; n=\$(cat "\$c" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "\$c"
+  if [ "\$n" -gt "\$(cat "\$GH_STUB_DIR/curl-fail-after")" ]; then
+    echo "curl: simulated pub.dev API failure" >&2
+    exit 1
+  fi
+fi
+# gh-1561 seam: flip to the NEW version after N total reads — the shape of
+# a push run completing DURING the leg (the start-of-leg reads serve the
+# stale replica; the post-run re-read catches up). Absent = legacy behavior.
+if [ -f "\$GH_STUB_DIR/pubdev-switch-after" ]; then
+  c="\$GH_STUB_DIR/curl-count"; n=\$(cat "\$c" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "\$c"
+  if [ "\$n" -gt "\$(cat "\$GH_STUB_DIR/pubdev-switch-after")" ]; then
+    cat "\$GH_STUB_DIR/pubdev-new.json"
+    exit 0
+  fi
+fi
 if [ -f "\$GH_STUB_DIR/rerun-done" ] && [ -f "\$GH_STUB_DIR/pubdev-new.json" ]; then
   cat "\$GH_STUB_DIR/pubdev-new.json"
 else
@@ -131,6 +154,15 @@ case "$cmd" in
         # thread 2) plants a run on the SECOND read.
         cf="$GH_STUB_DIR/list-count-$branch"
         n=$(cat "$cf" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$cf"
+        # gh-1561 rework seam (review thread 9): a transient gh failure on
+        # the Nth read of a branch — exit 1 with empty stdout. The
+        # registration wait must read it as «still pending» (#1370
+        # doctrine), never die under set -e.
+        if [ -f "$GH_STUB_DIR/gh-list-fail-on" ] \
+            && [ "$n" -eq "$(cat "$GH_STUB_DIR/gh-list-fail-on")" ]; then
+          echo "gh: simulated transient run-list failure" >&2
+          exit 1
+        fi
         f="$GH_STUB_DIR/runs-$branch.$n.json"
         [ -f "$f" ] || f="$GH_STUB_DIR/runs-$branch.json"
         [ -f "$f" ] || f="$GH_STUB_DIR/runs.json"
@@ -197,12 +229,19 @@ Map<String, String> _parseOutputs(String path) {
 }
 
 class VerifyRun {
-  VerifyRun(this.exitCode, this.output, this.outputs, this.ghLog);
+  VerifyRun(
+    this.exitCode,
+    this.output,
+    this.outputs,
+    this.ghLog,
+    this.origin,
+  );
 
   final int exitCode;
   final String output; // stdout+stderr
   final Map<String, String> outputs; // GITHUB_OUTPUT key=values
   final List<String> ghLog; // stubbed gh invocations
+  final String origin; // the bare origin repo (re-arm assertions read it)
 
   String get status => outputs['status'] ?? '';
   bool get errored => output.contains('::error::');
@@ -240,6 +279,23 @@ VerifyRun runVerify(
   bool publishToNone = false,
   String? runsJson = '[]',
   String? secondReadJson,
+  String? thirdReadJson,
+  // gh-1561: flip the curl fixture to the NEW version after N total reads —
+  // the shape of a push run completing during the leg (the top-of-leg reads
+  // serve the stale replica, the post-success re-read catches up).
+  int? pubdevSwitchAfterReads,
+  // gh-1561: the re-arm's push destination override — 'origin' pushes to
+  // this sandbox's bare remote (production derives the App-token URL).
+  String? rearmPushTo,
+  // gh-1561 rework seams (review threads 8/9): [pubdevApiDown] makes EVERY
+  // pub.dev read fail (a full API outage at the top of the leg);
+  // [curlFailAfterReads] fails every read AFTER N total reads (an outage
+  // that starts MID-LEG, at the success-branch re-read); [ghListFailOnRead]
+  // makes the Nth `gh run list` read of the tag branch fail transiently
+  // (the registration wait must survive it).
+  bool pubdevApiDown = false,
+  int? curlFailAfterReads,
+  int? ghListFailOnRead,
   String conclusion = 'success',
   bool rerunToSuccess = false,
   // #1368 fixture seams: the run-view Nth-read override (run-<id>.1.json)
@@ -302,8 +358,27 @@ VerifyRun runVerify(
   if (secondReadJson != null) {
     File('${dir.path}/runs-v$version.2.json').writeAsStringSync(secondReadJson);
   }
+  if (thirdReadJson != null) {
+    File('${dir.path}/runs-v$version.3.json').writeAsStringSync(thirdReadJson);
+  }
+  if (pubdevSwitchAfterReads != null) {
+    File(
+      '${dir.path}/pubdev-switch-after',
+    ).writeAsStringSync('$pubdevSwitchAfterReads');
+  }
   if (lsremoteFailFirst) {
     File('${dir.path}/lsremote-fail-first').writeAsStringSync('');
+  }
+  if (pubdevApiDown) File('${dir.path}/curl-fail').writeAsStringSync('');
+  if (curlFailAfterReads != null) {
+    File(
+      '${dir.path}/curl-fail-after',
+    ).writeAsStringSync('$curlFailAfterReads');
+  }
+  if (ghListFailOnRead != null) {
+    File(
+      '${dir.path}/gh-list-fail-on',
+    ).writeAsStringSync('$ghListFailOnRead');
   }
 
   // The run-view fixture mirrors EVERY listed run's status: a queued/
@@ -342,6 +417,7 @@ VerifyRun runVerify(
 
   if (runsJson != null) plantRun(runsJson);
   if (secondReadJson != null) plantRun(secondReadJson);
+  if (thirdReadJson != null) plantRun(thirdReadJson);
 
   final outPath = '${dir.path}/github_output';
   final res = Process.runSync(
@@ -359,6 +435,7 @@ VerifyRun runVerify(
       // Test seams — production defaults live in the script.
       'PUBDEV_READ_SLEEP_SECS': '0',
       'PUBDEV_POLL_SLEEP_SECS': '0',
+      'RELEASE_APP_PUSH_URL': ?rearmPushTo,
       ...extraEnv,
     },
   );
@@ -369,6 +446,7 @@ VerifyRun runVerify(
     File('${dir.path}/gh.log').existsSync()
         ? File('${dir.path}/gh.log').readAsLinesSync()
         : <String>[],
+    origin,
   );
 }
 
@@ -703,6 +781,310 @@ void main() {
         );
       },
     );
+  });
+
+  // ── gh-1561 — never-triggered self-heal: App-token tag re-arm ────────────
+  // The 2026-10-12 v1.0.557 class: the tag landed (App-token push + GitHub
+  // Release) but its PUSH twin never registered, and the daily's never-
+  // triggered alarm is manual-only. The leg must first try to re-arm the
+  // tag (same commit, fresh annotated tag object — a new tag-push event),
+  // and only alarm when that cannot produce a run.
+  group('gh-1561 — never-triggered arms re-arm the tag, then alarm', () {
+    test(
+      're-arm registers the fresh push run -> the leg continues with it (neutral skip)',
+      () {
+        final r = runVerify(
+          'rearm-registers',
+          tagAge: const Duration(hours: 2),
+          runsJson: '[]',
+          secondReadJson: '[]',
+          thirdReadJson:
+              '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+          rearmPushTo: 'origin',
+          extraEnv: const {
+            'RELEASE_APP_TOKEN': 'stub-token',
+            'PUBDEV_MAX_POLLS': '2',
+          },
+        );
+        expect(r.exitCode, 0, reason: r.output);
+        expect(r.inFlight, isTrue, reason: r.output);
+        expect(r.errored, isFalse, reason: 'no alarm when the re-arm heals');
+        expect(r.output, contains('re-armed'));
+        expect(
+          r.outputs['run_url'],
+          'https://github.com/OWNER/REPO/actions/runs/4242',
+        );
+        // The re-arm must NEVER move the commit: only the tagger date moves.
+        // Two directions pinned: the fresh object is cut ~now, and the
+        // seeded 2h-backdated object is gone (a no-op same-oid push would
+        // have left the backdate in place — not a re-arm).
+        final taggerDate = int.parse(
+          _gitOut([
+            'for-each-ref',
+            'refs/tags/v0.1.497',
+            '--format=%(creatordate:unix)',
+          ], cwd: r.origin),
+        );
+        final actual = DateTime.fromMillisecondsSinceEpoch(
+          taggerDate * 1000,
+          isUtc: true,
+        );
+        final now = DateTime.now().toUtc();
+        expect(
+          now.difference(actual).inMinutes.abs(),
+          lessThan(10),
+          reason: 'the re-arm re-cut the tag object (tagger date ~now)',
+        );
+        expect(
+          actual.isBefore(now.subtract(const Duration(minutes: 90))),
+          isFalse,
+          reason: 'the seeded 2h-backdated tag object must have been replaced',
+        );
+      },
+    );
+
+    test(
+      're-armed run completes during the leg and pub.dev caught up -> green',
+      () {
+        final r = runVerify(
+          'rearm-completes-green',
+          tagAge: const Duration(hours: 2),
+          runsJson: '[]',
+          secondReadJson: '[]',
+          thirdReadJson:
+              '[{"databaseId":4242,"status":"completed","conclusion":"success","event":"push"}]',
+          pubdevSwitchAfterReads: 3,
+          rearmPushTo: 'origin',
+          extraEnv: const {'RELEASE_APP_TOKEN': 'stub-token'},
+        );
+        expect(r.exitCode, 0, reason: r.output);
+        expect(r.errored, isFalse, reason: r.output);
+        expect(r.status, 'up-to-date', reason: r.output);
+        expect(r.outputs['published'], '0.1.497');
+        expect(
+          r.output,
+          contains('pub.dev now serves 0.1.497'),
+          reason: 'the fresh run green + caught-up pub.dev is NOT an alarm',
+        );
+      },
+    );
+
+    test('re-arm push fails -> the exact manual-fix alarm, unchanged', () {
+      final r = runVerify(
+        'rearm-push-fails',
+        tagAge: const Duration(hours: 2),
+        runsJson:
+            '[{"databaseId":777,"status":"completed","conclusion":"success","event":"release"}]',
+        extraEnv: const {
+          'RELEASE_APP_TOKEN': 'stub-token',
+          'RELEASE_APP_PUSH_URL': '/nonexistent-rearm-target',
+        },
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.errored, isTrue);
+      expect(
+        r.output,
+        contains(
+          'only non-push run(s) exist — the publish job fires on push-event tag runs only',
+        ),
+      );
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        hasLength(2),
+        reason: 'a failed re-arm must not read the run list again',
+      );
+    });
+
+    test('re-arm pushed but the fresh run is not registered yet -> neutral '
+        'skip (the next daily re-verifies)', () {
+      final r = runVerify(
+        'rearm-not-registered',
+        tagAge: const Duration(hours: 2),
+        runsJson: '[]',
+        secondReadJson: '[]',
+        rearmPushTo: 'origin',
+        extraEnv: const {'RELEASE_APP_TOKEN': 'stub-token'},
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(
+        r.errored,
+        isFalse,
+        reason: 'an unregistered fresh run is unobserved, never failed (#1370)',
+      );
+      expect(r.output, contains('was re-armed by this leg'));
+      expect(
+        r.outputs['run_url'] ?? '',
+        isEmpty,
+        reason: 'no run exists to link yet',
+      );
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        hasLength(8),
+        reason: 'initial + grace re-read + 6 registration reads (default)',
+      );
+    });
+  });
+
+  // ── gh-1561 rework — review threads 8/9/10 ─────────────────────────────
+  // Thread 8: read_published_version() must PROPAGATE failure — a command-
+  // substitution call site drops set -e (inherit_errexit is off), so an
+  // API outage used to read as published="" and could drive classification
+  // (worst case: the re-arm force-push) on NO data at all. Thread 9: the
+  // registration wait's fetch_runs is guarded like the terminal-wait loop
+  // (#1370 doctrine). Thread 10: the mint's least-privilege ceiling must
+  // ride an input the pinned action actually honors.
+  group('gh-1561 rework — pub.dev outage semantics + guarded registration wait', () {
+    test('pub.dev API down at the top of the leg -> loud classify failure', () {
+      // Pre-PR semantics restored (thread 8): the top-of-leg read ran in
+      // the main shell under set -e and one failed read exited loudly. The
+      // extracted helper must reproduce that — an outage must never read
+      // as published="" and slip into the behind-classification.
+      final r = runVerify('api-down-top', pubdevApiDown: true);
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.errored, isTrue, reason: r.output);
+      expect(
+        r.output,
+        contains('::error::pub.dev API unreachable — cannot classify'),
+      );
+      expect(
+        r.status,
+        isNot('release-in-flight'),
+        reason: 'no data must never masquerade as a neutral skip',
+      );
+      expect(
+        r.ghLog,
+        isEmpty,
+        reason: 'the leg dies at the top read — no classification or '
+            'recovery reads on empty data',
+      );
+    });
+
+    test('API outage must never fire the re-arm (no recovery on empty data)', () {
+      // The headline consequence from review thread 8: with published=""
+      // the old code classified «behind», reached the never-triggered arm
+      // and FORCE-PUSHED the tag purely because the API was unreachable.
+      final r = runVerify(
+        'api-down-no-rearm',
+        tagAge: const Duration(hours: 2),
+        runsJson:
+            '[{"databaseId":777,"status":"completed","conclusion":"success","event":"release"}]',
+        rearmPushTo: 'origin',
+        pubdevApiDown: true,
+        extraEnv: const {'RELEASE_APP_TOKEN': 'stub-token'},
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(
+        r.output,
+        contains('::error::pub.dev API unreachable — cannot classify'),
+      );
+      expect(r.output, isNot(contains('re-armed')), reason: r.output);
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        isEmpty,
+        reason: 'no run-list reads -> no re-arm decision, ever',
+      );
+      // The seeded 2h-backdated tag object is UNTOUCHED — the re-arm (a
+      // state-changing force-push + full ci.yml cascade) never fired.
+      final taggerDate = int.parse(
+        _gitOut([
+          'for-each-ref',
+          'refs/tags/v0.1.497',
+          '--format=%(creatordate:unix)',
+        ], cwd: r.origin),
+      );
+      final actual = DateTime.fromMillisecondsSinceEpoch(
+        taggerDate * 1000,
+        isUtc: true,
+      );
+      expect(
+        actual.isBefore(
+          DateTime.now().toUtc().subtract(const Duration(minutes: 90)),
+        ),
+        isTrue,
+        reason: 'the seeded backdate survives — the re-arm never fired',
+      );
+    });
+
+    test('pub.dev goes down mid-leg at the success re-read -> neutral skip', () {
+      // The second call site (thread 8): the top-of-leg reads serve the
+      // stale replica, the push run is green, then the API drops before the
+      // success-branch re-read — outcome UNOBSERVED, never a false
+      // «publish did not upload» and never a false green.
+      final r = runVerify(
+        'api-down-success-reread',
+        runsJson:
+            '[{"databaseId":4242,"status":"completed","conclusion":"success","event":"push"}]',
+        curlFailAfterReads: 3,
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: r.output);
+      expect(r.output, contains('outcome unobserved'));
+      expect(r.output, isNot(contains('publish did not upload')));
+    });
+
+    test('transient gh failure inside the registration wait -> still-pending, '
+        'never a dead leg (thread 9)', () {
+      // The 4th branch-list read (the 2nd registration read) fails
+      // transiently — under set -e the unguarded assignment used to kill
+      // the leg exactly when the self-heal was mid-flight.
+      final r = runVerify(
+        'rearm-gh-blip',
+        tagAge: const Duration(hours: 2),
+        runsJson: '[]',
+        secondReadJson: '[]',
+        rearmPushTo: 'origin',
+        ghListFailOnRead: 4,
+        extraEnv: const {'RELEASE_APP_TOKEN': 'stub-token'},
+      );
+      expect(r.exitCode, 0, reason: 'a gh blip must not kill the leg: ${r.output}');
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: r.output);
+      expect(r.output, contains('was re-armed by this leg'));
+      expect(
+        r.output,
+        contains('transient gh failure reading the run list (attempt 2/6)'),
+        reason: r.output,
+      );
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        hasLength(8),
+        reason: 'the failed read still consumed its registration attempt',
+      );
+    });
+
+    test('wiring: the pubdev mint ceiling rides the WORKING granular input '
+        '(thread 10)', () {
+      // Verified against the pinned action (v3.2.0, bcd2ba49): action.yml
+      // defines NO composite `permissions` input (GitHub warns `Unexpected
+      // input(s) 'permissions'` and the action never reads it — the
+      // round-1 author reply was right), but it DOES define the generated
+      // `permission-*` inputs, which the action turns into the mint
+      // request's permissions map. The ceiling must ride the honored input.
+      final daily = read('.github/workflows/daily-publish.yml');
+      final mintAt = daily.indexOf('actions/create-github-app-token@');
+      expect(
+        mintAt,
+        greaterThan(-1),
+        reason: 'the pubdev leg mints the re-arm token',
+      );
+      final mintEnd = daily.indexOf('- name: Verify pub.dev', mintAt);
+      expect(mintEnd, greaterThan(mintAt));
+      final mintBlock = daily.substring(mintAt, mintEnd);
+      expect(
+        mintBlock,
+        contains('permission-contents: write'),
+        reason: 'the least-privilege ceiling (contents:write — the tag '
+            're-push) must come from the honored input',
+      );
+      expect(
+        mintBlock,
+        isNot(contains(RegExp(r'^\s*permissions:', multiLine: true))),
+        reason: 'the composite `permissions` key is dead at this pin — '
+            'keeping it would overclaim a ceiling that does not exist',
+      );
+    });
   });
 
   // ── #1368 — twin-run selection, bounded waits, true-state errors ─────────
