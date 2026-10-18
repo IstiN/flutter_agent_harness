@@ -296,16 +296,30 @@ class FixtureBannerTest(unittest.TestCase):
     """gh-1677: a fixture render reaching CI output carries the banner
     and never the step-summary sink."""
 
+    def _restore_sink(self):
+        # Save/restore, never pop-and-discard: in Actions the sink is
+        # exported for EVERY step, and a plain pop cleanup would remove
+        # a pre-existing value for the rest of the process. When there
+        # was NO pre-existing value the test-added one must be removed
+        # instead (stricter than the bench/harbor_fa setUp restore,
+        # which leaves the var set in that case — pinned by the
+        # prior=None branch of test_banner_test_does_not_leak_the_sink_env).
+        if self._sink_bak is not None:
+            os.environ["GITHUB_STEP_SUMMARY"] = self._sink_bak
+        else:
+            os.environ.pop("GITHUB_STEP_SUMMARY", None)
+
     def test_main_render_stays_bannered_on_stdout(self):
         # Same surface split as terminal_bench (review thread 1): with
-        # GITHUB_STEP_SUMMARY exported (every Actions step), an
+        # GITHUB_STEP_SUMARY exported (every Actions step), an
         # unbannered main() render would land on the step-summary page.
         # run_main must pin the render to stdout, under the banner.
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         sink = Path(tmp.name) / "step-summary.md"
+        self._sink_bak = os.environ.pop("GITHUB_STEP_SUMMARY", None)
         os.environ["GITHUB_STEP_SUMMARY"] = str(sink)
-        self.addCleanup(os.environ.pop, "GITHUB_STEP_SUMMARY", None)
+        self.addCleanup(self._restore_sink)
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -321,19 +335,36 @@ class FixtureBannerTest(unittest.TestCase):
         self.assertFalse(sink.exists(), f"fixture report leaked to {sink}")
 
     def test_banner_test_does_not_leak_the_sink_env(self):
-        # Regression: test_main_render_stays_bannered_on_stdout's
-        # addCleanup once popped "GITHUB_STEP_SUMARY" (typo, missing
-        # final M) — os.environ.pop's default made it a silent no-op, leaving
-        # GITHUB_STEP_SUMMARY set for every later test in the process
-        # (the exact env-pollution class the hermetic pattern exists
-        # to prevent). Run the whole banner test and check the env
-        # after its teardown.
-        case = FixtureBannerTest("test_main_render_stays_bannered_on_stdout")
-        result = unittest.TestResult()
-        with contextlib.redirect_stdout(io.StringIO()):
-            case.run(result)
-        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
-        self.assertNotIn("GITHUB_STEP_SUMMARY", os.environ)
+        # Regression (gh-1677 rework): the sink env must be restored
+        # to its PRE-TEST value after the banner test's teardown —
+        # neither leaked (a typo'd cleanup once popped "GITHUB_STEP_
+        # SUMARY", a silent no-op leaving the var set for every later
+        # test) nor popped away permanently (the old addCleanup removed
+        # a pre-exported var for the rest of the process). Run the
+        # whole banner test both with and without a pre-existing value
+        # and compare against the pre-test state.
+        for prior in ("/tmp/pre-existing-step-summary.md", None):
+            with self.subTest(prior=prior):
+                if prior is None:
+                    os.environ.pop("GITHUB_STEP_SUMMARY", None)
+                else:
+                    os.environ["GITHUB_STEP_SUMMARY"] = prior
+                try:
+                    case = FixtureBannerTest(
+                        "test_main_render_stays_bannered_on_stdout"
+                    )
+                    result = unittest.TestResult()
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        case.run(result)
+                    self.assertTrue(
+                        result.wasSuccessful(),
+                        result.errors + result.failures,
+                    )
+                    self.assertEqual(
+                        os.environ.get("GITHUB_STEP_SUMMARY"), prior
+                    )
+                finally:
+                    os.environ.pop("GITHUB_STEP_SUMMARY", None)
 
 
 if __name__ == "__main__":
