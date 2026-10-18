@@ -47,6 +47,15 @@
 # has a fresh run the moment it is visible, so the classification reads the
 # run, never the stale tag age, and a completed fresh run verifies normally.
 #
+# gh-1561: the never-triggered arms first try to RE-ARM — the tag is
+# force-re-pushed (SAME commit, fresh annotated tag object: a new tag-push
+# event the leg could not otherwise produce) with the fa-release-bot App
+# token (RELEASE_APP_TOKEN — the only credential class whose pushes
+# cascade, gh-1172), and the fresh push run re-enters this flow. A push run
+# that completes during the leg re-reads pub.dev before any «did not
+# upload» verdict — the start-of-leg read is stale for it. Without the
+# token the manual-re-push alarms stay exactly as they were.
+#
 # E2: only the LATEST tag is evaluated; stale older tags are out of scope.
 set -euo pipefail
 
@@ -107,14 +116,33 @@ fi
 
 # pub.dev API reads lag minutes behind a fresh publish (CDN replicas) — a
 # single stale read must not send us into recovery. Three spaced reads, take
-# the newest by version.
-published=""
-for attempt in 1 2 3; do
-  v=$(curl -fsS --retry 3 \
-    https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version')
-  published=$(printf '%s\n%s\n' "$published" "$v" | sed '/^$/d' | sort -V | tail -1)
-  [ "$attempt" = 3 ] || sleep "$read_sleep"
-done
+# the newest by version. Fails (non-zero) when the API is unreachable —
+# callers decide whether that is fatal.
+read_published_version() {
+  local acc="" v attempt ok=1
+  for attempt in 1 2 3; do
+    if v=$(curl -fsS --retry 3 \
+      https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version'); then
+      ok=0
+    fi
+    acc=$(printf '%s\n%s\n' "$acc" "$v" | sed '/^$/d' | sort -V | tail -1)
+    [ "$attempt" = 3 ] || sleep "$read_sleep"
+  done
+  # gh-1561 rework (review thread 8): a command-substitution subshell does
+  # NOT inherit set -e (inherit_errexit is off), so a failing loop would
+  # silently fall through to the printf — propagating an empty read into
+  # the classification. Return the failure explicitly; callers decide.
+  [ "$ok" -eq 0 ] || return 1
+  printf '%s' "$acc"
+}
+
+# Top of the leg — the pre-PR inline loop ran in the main shell under
+# set -e: one failed read exited the leg loudly. Preserve that (thread 8):
+# NO data must never classify, and never drive rerun/re-arm recovery.
+published=$(read_published_version) || {
+  echo "::error::pub.dev API unreachable — cannot classify"
+  exit 1
+}
 emit "published=$published"
 echo "pubspec=$pubspec published=$published"
 newest=$(printf '%s\n%s\n' "$pubspec" "$published" | sort -V | tail -1)
@@ -136,6 +164,32 @@ in_flight() { # $1 = human reason — the outcome is UNOBSERVED, never an alarm
 never_triggered() { # $1 = which state — nothing publishable is in flight
   echo "::error::$tag has no ci.yml run — the tag-publish never triggered ($1). Manual fix: re-push the tag (git push origin $tag --force) or run ci.yml on the tag ref."
   exit 1
+}
+
+# gh-1561: re-arm a tag whose push twin never fired. Recreate the annotated
+# tag object on the SAME commit (new tagger date -> new oid -> the ref
+# update fires a real tag-push event, which a same-oid push never would)
+# and force-push it with the App token. The commit is read from the remote
+# tag and pushed back unchanged — the re-arm never moves what the tag
+# points at, only re-announces it. RELEASE_APP_PUSH_URL overrides the push
+# destination (test seam; production derives it from RELEASE_APP_TOKEN).
+rearm_tag() {
+  if [ -z "${RELEASE_APP_TOKEN:-}" ]; then
+    echo "RELEASE_APP_TOKEN not set — cannot re-arm $tag automatically (a GITHUB_TOKEN push cannot cascade); manual re-push required"
+    return 1
+  fi
+  local commit
+  commit=$(git rev-parse "$tag^{commit}" 2>/dev/null) || return 1
+  git -c user.name='fa-release-bot[bot]' \
+      -c user.email='fa-release-bot[bot]@users.noreply.github.com' \
+      tag -a -f "$tag" "$commit" \
+      -m "Release $tag (re-armed: the original push never triggered a ci.yml run)" \
+    || return 1
+  git push --force \
+    "${RELEASE_APP_PUSH_URL:-https://x-access-token:${RELEASE_APP_TOKEN}@github.com/${repo}.git}" \
+    "refs/tags/$tag" \
+    || return 1
+  echo "re-armed $tag at ${commit:0:12} (same commit, fresh tag object) — waiting for the fresh push run to register"
 }
 
 # The tag's ci.yml runs. Only PUSH-event runs can publish in THIS repo: the
@@ -202,14 +256,54 @@ if [ -z "$tag_run" ]; then
 fi
 if [ -z "$tag_run" ]; then
   # Past the grace window and both reads saw no push run.
+  reason="no run registered past the ${grace}s grace window"
   if [ -n "$(any_run_of "$runs_json")" ]; then
     # Non-push run(s) only: the publish job fires on push-event tag runs
     # (#1368) and a rerun keeps the original event — re-running these can
     # never publish either.
-    never_triggered "only non-push run(s) exist — the publish job fires on push-event tag runs only"
+    reason="only non-push run(s) exist — the publish job fires on push-event tag runs only"
   fi
-  # AC2 — no run at all (e.g. a GITHUB_TOKEN push cannot cascade).
-  never_triggered "no run registered past the ${grace}s grace window"
+  # gh-1561 (the 2026-10-12 v1.0.557 class): the App-token tag push from
+  # ci.yml's release job LANDED (tag + release both registered) but its
+  # push twin never fired, and a release-API tag (server-side creation)
+  # never fires a push event at all. Re-arm before alarming (see above).
+  if rearm_tag; then
+    # A fresh tag-push run takes tens of seconds to register — one 10s
+    # re-read would alarm (and self-file a «re-push the tag» issue!)
+    # exactly when the self-heal worked. Bounded registration wait instead;
+    # past it the outcome is UNOBSERVED, never failed (#1370 doctrine):
+    # neutral skip — the next daily re-verifies the run the re-arm left
+    # behind (E4: a completed fresh run verifies normally).
+    registration_reads="${REARM_REG_READS:-6}"
+    attempt=1
+    while [ "$attempt" -le "$registration_reads" ]; do
+      sleep "$read_sleep"
+      # Same doctrine as the terminal-wait loop below (#1370 review —
+      # gh-1561 rework, thread 9): a transient gh/network failure reads as
+      # «still pending», never kills the leg under set -e mid-self-heal.
+      # The failed read still consumes the attempt.
+      if ! runs_json=$(fetch_runs); then
+        echo "transient gh failure reading the run list (attempt $attempt/$registration_reads)"
+        attempt=$(( attempt + 1 ))
+        continue
+      fi
+      tag_run=$(push_run_of "$runs_json")
+      [ -n "$tag_run" ] && break
+      attempt=$(( attempt + 1 ))
+    done
+    if [ -n "$tag_run" ]; then
+      echo "::notice::$tag re-armed — its fresh push ci.yml run registered, continuing with it"
+    fi
+    if [ -z "$tag_run" ]; then
+      in_flight "$tag was re-armed by this leg but its fresh push run has not registered yet — outcome unobserved, the next daily re-verifies"
+    fi
+  fi
+  if [ -z "$tag_run" ]; then
+    # AC2 — no push run (e.g. a GITHUB_TOKEN push cannot cascade) and the
+    # re-arm could not run or push (no token, push rejected): the manual
+    # alarm, text unchanged.
+    never_triggered "$reason"
+  fi
 fi
 run_id=$(jq -r '.databaseId' <<<"$tag_run")
 emit "run_url=https://github.com/$repo/actions/runs/$run_id"
@@ -244,9 +338,24 @@ fi
 conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion 2>/dev/null || echo unknown)
 
 if [ "$conclusion" = "success" ]; then
-  # Push run went green but pub.dev still serves $published — not
+  # The run may have completed DURING this leg (a re-armed tag, or the E4
+  # operator re-push): its publish job verifies pub.dev itself before going
+  # green, so the start-of-leg read is stale — re-read before any verdict
+  # (gh-1561). A blipping API yields an empty read: outcome UNOBSERVED —
+  # neutral skip, never a false green and never a false «did not upload».
+  fresh=$(read_published_version) || fresh=""
+  if [ -z "$fresh" ]; then
+    in_flight "the $tag push run succeeded but the pub.dev API is unreachable — outcome unobserved, the next daily re-verifies"
+  fi
+  if [ "$fresh" = "$pubspec" ]; then
+    emit "published=$fresh"
+    emit "status=up-to-date"
+    echo "::notice::the $tag push run completed and pub.dev now serves $fresh"
+    exit 0
+  fi
+  # Push run went green but pub.dev still serves $fresh — not
   # recoverable by rerunning.
-  echo "::error::tag run for $tag succeeded but pub.dev still serves $published — publish did not upload. Manual publish needed (see issue)."
+  echo "::error::tag run for $tag succeeded but pub.dev still serves $fresh (was $published) — publish did not upload. Manual publish needed (see issue)."
   exit 1
 fi
 
