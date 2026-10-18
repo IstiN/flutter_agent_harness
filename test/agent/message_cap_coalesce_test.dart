@@ -168,4 +168,91 @@ void main() {
       expect(out.last, same(input.last));
     });
   });
+
+  group('steering interleave across the newest-user cut (PR #1695)', () {
+    test('a tool call whose result rides the kept tail stays verbatim — '
+        'the pairing repair hoists the result back, content survives', () {
+      // The review probe: a steering user message sits BETWEEN the call
+      // and its result, and that steering message is the newest user
+      // message — so the call is in the droppable region while its
+      // result rides the kept tail.
+      final input = [
+        UserMessage.text('older turn'),
+        _assistantCall('c1', 'read'),
+        UserMessage.text('newest steering'),
+        _result('c1', 'read'),
+      ];
+      final out = coalesceMessagesForCap(input, targetMessageCount: 2);
+
+      expect(validateToolPairing(out), isEmpty);
+      // The pair is WHOLE on the wire: both the call and its result
+      // survived (the result content was previously dropped as an
+      // orphan — the call merged into a carrier while the result
+      // stayed in the tail).
+      expect(
+        out.any(
+          (m) =>
+              m is AssistantMessage &&
+              m.content.whereType<ToolCall>().any((c) => c.id == 'c1'),
+        ),
+        isTrue,
+      );
+      expect(
+        out.any(
+          (m) => m is ToolResultMessage && m.toolCallId == 'c1',
+        ),
+        isTrue,
+      );
+      // The result CONTENT made it onto the wire (not a synthesized
+      // placeholder, not a note).
+      expect(
+        out.any(
+          (m) =>
+              m is ToolResultMessage &&
+              m.toolCallId == 'c1' &&
+              m.toJson().toString().contains('result of read'),
+        ),
+        isTrue,
+      );
+      // The steering user message still anchors the tail verbatim.
+      expect(out.last, same(input[2]));
+      // The input list is never mutated (AC7).
+      expect(input, hasLength(4));
+    });
+
+    test('a mid-region steering interleave keeps the pair verbatim too', () {
+      // The steering user message is NOT the newest — the result
+      // answering the call sits inside the droppable region, displaced
+      // from it. Both must survive verbatim (nothing of the pair may
+      // merge into a carrier).
+      final input = [
+        UserMessage.text('older turn'),
+        _assistantCall('c1', 'read'),
+        UserMessage.text('mid steering'),
+        _result('c1', 'read'),
+        UserMessage.text('newest question — must survive verbatim'),
+      ];
+      final out = coalesceMessagesForCap(input, targetMessageCount: 3);
+
+      expect(validateToolPairing(out), isEmpty);
+      expect(
+        out.any(
+          (m) =>
+              m is AssistantMessage &&
+              m.content.whereType<ToolCall>().any((c) => c.id == 'c1'),
+        ),
+        isTrue,
+      );
+      expect(
+        out.any(
+          (m) =>
+              m is ToolResultMessage &&
+              m.toolCallId == 'c1' &&
+              m.toJson().toString().contains('result of read'),
+        ),
+        isTrue,
+      );
+      expect(out.last, same(input.last));
+    });
+  });
 }

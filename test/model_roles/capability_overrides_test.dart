@@ -17,12 +17,14 @@ contextWindow: 400000
 maxTokens: 65536
 thinkingLevel: high
 omitMaxOutputTokens: true
+messageCap: 2048
 '''),
       );
       expect(override.contextWindow, 400000);
       expect(override.maxTokens, 65536);
       expect(override.thinkingLevel, 'high');
       expect(override.omitMaxOutputTokens, isTrue);
+      expect(override.messageCap, 2048);
     });
 
     test('parses the empty shape (every field optional)', () {
@@ -41,6 +43,24 @@ omitMaxOutputTokens: true
         _yaml('thinkingLevel: max'),
       );
       expect(override.thinkingLevel, 'high');
+    });
+
+    test('rejects a sub-1 messageCap naming the key (PR #1695: the '
+        'gh-1680 second tier)', () {
+      expect(
+        () => ModelCapabilityOverride.fromYaml(
+          'zai',
+          'glm-5.3-flash',
+          _yaml('messageCap: 0'),
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('models.overrides.zai.glm-5.3-flash.messageCap'),
+          ),
+        ),
+      );
     });
 
     test('rejects unknown fields naming the key', () {

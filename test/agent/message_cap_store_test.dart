@@ -122,16 +122,72 @@ void main() {
       expect(store.learnedCapFor(_model), 4096);
     });
 
-    test('second-tier pin overrides the learned value', () {
+    test('second-tier: learnedCapOr consults the pinned override first', () {
       final store = ModelCapsStore();
       store.learnFromRefusal(
         _model,
         const MessageCapRefusal(maxMessages: 2048),
       );
-      store.pin(_model.provider, _model.id, 3000);
-      expect(store.capFor(_model.provider, _model.id), 3000);
-      store.remove(_model.provider, _model.id);
-      expect(store.learnedCapFor(_model), isNull);
+      final learned = store.recordFor(_model.provider, _model.id);
+      // No pin → the learned record wins.
+      expect(ModelCapsStore.learnedCapOr(learned, null), 2048);
+      // A config pin wins over the learned value.
+      expect(ModelCapsStore.learnedCapOr(learned, 3000), 3000);
+      // No learned record, a pin → the pin; nothing anywhere → null.
+      expect(ModelCapsStore.learnedCapOr(null, 3000), 3000);
+      expect(ModelCapsStore.learnedCapOr(null, null), isNull);
+    });
+
+    test('a cap-unknown refusal arms exactly one pre-emptive pass (E1)', () {
+      final store = ModelCapsStore();
+      expect(
+        store.isPremptivePassPending(_model.provider, _model.id),
+        isFalse,
+      );
+      store.learnFromRefusal(_model, const MessageCapRefusal());
+      expect(
+        store.isPremptivePassPending(_model.provider, _model.id),
+        isTrue,
+        reason: 'E1: the next request gets the one pre-emptive pass',
+      );
+      expect(store.takePremptivePass(_model.provider, _model.id), isTrue);
+      // Consumed: exactly ONE pass per refusal, never a permanent trigger.
+      expect(
+        store.isPremptivePassPending(_model.provider, _model.id),
+        isFalse,
+      );
+      expect(store.takePremptivePass(_model.provider, _model.id), isFalse);
+    });
+
+    test('a numeric refusal does not arm the pre-emptive pass', () {
+      final store = ModelCapsStore();
+      store.learnFromRefusal(
+        _model,
+        const MessageCapRefusal(maxMessages: 2048),
+      );
+      expect(
+        store.isPremptivePassPending(_model.provider, _model.id),
+        isFalse,
+      );
+    });
+
+    test('learning a numeric cap disarms a pending pre-emptive pass', () {
+      final store = ModelCapsStore();
+      store.learnFromRefusal(_model, const MessageCapRefusal());
+      store.learnFromRefusal(
+        _model,
+        const MessageCapRefusal(maxMessages: 2048),
+      );
+      expect(store.takePremptivePass(_model.provider, _model.id), isFalse);
+    });
+
+    test('the pending pass is session state — never serialized (AC2)', () {
+      final store = ModelCapsStore();
+      store.learnFromRefusal(_model, const MessageCapRefusal());
+      final revived = ModelCapsStore.fromJson(store.toJson());
+      expect(revived.takePremptivePass(_model.provider, _model.id), isFalse);
+      // The cap-unknown FLAG itself persists; only the pass is transient.
+      expect(revived.isCapUnknown(_model.provider, _model.id), isTrue);
     });
 
     test('an empty store serializes to an empty map — nothing hardcoded '
@@ -155,6 +211,21 @@ void main() {
       expect(messageCapTriggerReached(2039, 2048, margin: 8), isFalse);
       expect(messageCapTriggerReached(2040, 2048, margin: 8), isTrue);
       expect(messageCapTriggerReached(2040, 2048, margin: 16), isTrue);
+    });
+
+    test('a cap at or below the margin never triggers (PR #1695: the '
+        'unclamped `cap − margin` ≤ 0 made the trigger permanently '
+        'true)', () {
+      // Pathological small caps (a tiny per-request array cap, or a
+      // misparse): the pre-emptive gate stands down — the reactive
+      // heal's coalesce already rides its own `max(1, cap − margin)`
+      // clamp toward the smallest pairing-safe payload.
+      expect(messageCapTriggerReached(1, 16), isFalse, reason: 'cap == margin');
+      expect(messageCapTriggerReached(100, 16), isFalse);
+      expect(messageCapTriggerReached(100, 8), isFalse);
+      expect(messageCapTriggerReached(100000, 1), isFalse);
+      // Just above the margin the trigger fires at `cap − margin`.
+      expect(messageCapTriggerReached(1, 17), isTrue, reason: 'cap − margin = 1');
     });
   });
 }
