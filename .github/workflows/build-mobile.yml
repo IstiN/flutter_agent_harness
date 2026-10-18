@@ -614,7 +614,12 @@ jobs:
   build-ios:
     name: Build iOS IPA
     needs: version
-    runs-on: [self-hosted, macOS, ARM64]
+    # gh-1600 F-A: pin the ONE self-hosted macOS runner (fa-m5-1) via its
+    # unique registration label. The old generic [self-hosted, macOS, ARM64]
+    # list also matched the Linux self-hosted box's labels, and this job ran
+    # there — no ruby/fastlane/Xcode (`bundle: command not found`, exit 127;
+    # later steps died on `security: command not found`).
+    runs-on: [self-hosted, macos-m5]
     # Issue #344: a wedged self-hosted worker (lost completion report)
     # otherwise holds the slot AND the in_progress status until the 300m
     # daily-publish watcher times out; a job-level timeout lets GitHub
@@ -663,16 +668,83 @@ jobs:
           bash "$SCRIPT" \
             https://github.com/IstiN/flutter_agent_harness.git "$MIRROR"
 
+      # gh-1600 AC2: the workspace on this persistent box is SHARED across
+      # workflow runs — the old bare workspace rm -rf failed the checkout on
+      # stale unremovable bench leftovers
+      # (jobs/fa-2.1-docker-cpu-14/, docker-held trial mounts). Log-and-prune:
+      # remove what is removable, move a still-blocked remainder into
+      # RUNNER_TEMP, and clone around a surviving mount stub — a stale
+      # unremovable path can never fail the checkout. INLINE (not a composite
+      # action) on purpose: local `uses: ./...` actions resolve against
+      # $GITHUB_WORKSPACE at step time, and on this box the workspace is the
+      # PREVIOUS run's tree — the action file would be missing (first run) or
+      # stale, since this step IS the checkout.
       - name: Checkout repository from local mirror
         run: |
           set -euo pipefail
           MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
           cd /tmp
-          rm -rf "$GITHUB_WORKSPACE"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "MIRROR=$MIRROR"
+
+          if ! rm -rf "$GITHUB_WORKSPACE" 2>/dev/null; then
+            echo "::warning::$GITHUB_WORKSPACE not fully removable — stale paths held by another process (gh-1600); pruning what is removable"
+            rm -rf "$GITHUB_WORKSPACE" || true
+          fi
+          if [ -d "$GITHUB_WORKSPACE" ] && [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+            # gh-1600 rework (review thread): best-effort prune of previous
+            # sidecars BEFORE creating a new one — the containers that held
+            # them may have died since, so the retry often succeeds. On
+            # this persistent box the runner's own _temp cleanup cannot
+            # remove mount-held content either; without the prune every
+            # degraded checkout would leave another timestamped dir behind
+            # (unbounded growth until manual cleanup).
+            rm -rf "${RUNNER_TEMP:-/tmp}"/stale-workspace-* 2>/dev/null || true
+            STALE="${RUNNER_TEMP:-/tmp}/stale-workspace-$(date +%Y%m%d-%H%M%S)"
+            echo "::warning::$GITHUB_WORKSPACE still non-empty after prune — moving the remainder to $STALE (gh-1600)"
+            mkdir -p "$(dirname "$STALE")" 2>/dev/null || true
+            if ! mv "$GITHUB_WORKSPACE" "$STALE" 2>/dev/null; then
+              echo "::warning::$GITHUB_WORKSPACE could not be moved aside either — cloning around the stub (gh-1600)"
+            fi
+          fi
           mkdir -p "$GITHUB_WORKSPACE"
+
+          CLONE_TARGET="$GITHUB_WORKSPACE"
+          if [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+            # A mount-point stub survived the prune AND the move-aside (a
+            # live bind mount). git clone refuses a non-empty target — build
+            # the checkout in a sibling and move it in around the stub. A
+            # bench leftover path (e.g. jobs/<run-id>/) is not a repo path;
+            # if one ever collides, the move below skips it with a note.
+            CLONE_TARGET="$GITHUB_WORKSPACE.checkout"
+            rm -rf "$CLONE_TARGET"
+          fi
           git clone --reference "$MIRROR" --depth=1 \
-            https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
-          echo "Checked out: $(git -C $GITHUB_WORKSPACE log -1 --oneline)"
+            https://github.com/IstiN/flutter_agent_harness.git "$CLONE_TARGET"
+          if [ "$CLONE_TARGET" != "$GITHUB_WORKSPACE" ]; then
+            while IFS= read -r entry; do
+              name="$(basename "$entry")"
+              if [ -e "$GITHUB_WORKSPACE/$name" ]; then
+                # gh-1600 rework (review thread): fresh content must win —
+                # park the stale stub in the same $STALE sidecar and move
+                # the fresh entry in. The old path skipped the fresh entry
+                # (warning-only) and the trailing rm -rf "$CLONE_TARGET"
+                # then DELETED it, silently keeping the stale leftover at
+                # that repo path. Skip-with-warning remains only as the
+                # last-resort fallback when even parking the stub fails.
+                STALE_DIR="${STALE:-${RUNNER_TEMP:-/tmp}/stale-workspace-sidecar}"
+                if mkdir -p "$STALE_DIR" 2>/dev/null && mv "$GITHUB_WORKSPACE/$name" "$STALE_DIR/" 2>/dev/null; then
+                  mv "$entry" "$GITHUB_WORKSPACE/"
+                else
+                  echo "::warning::stub collision on '$name' — left in $CLONE_TARGET (gh-1600)"
+                fi
+              else
+                mv "$entry" "$GITHUB_WORKSPACE/"
+              fi
+            done < <(find "$CLONE_TARGET" -mindepth 1 -maxdepth 1)
+            rm -rf "$CLONE_TARGET"
+          fi
+          echo "Checked out: $(git -C "$GITHUB_WORKSPACE" log -1 --oneline)"
 
       # Persistent pinned SDK (issue #354): subosito/flutter-action with
       # cache: true on this PERSISTENT runner cost 5m39s setup (untar ~1GB
@@ -1067,7 +1139,9 @@ jobs:
   submit-ios:
     name: Submit iOS to TestFlight
     needs: [build-ios]
-    runs-on: [self-hosted, macOS, ARM64]
+    # gh-1600 F-A: same unique-macos-label pin as build-ios above — the
+    # generic [self-hosted, macOS, ARM64] list also matched the Linux box.
+    runs-on: [self-hosted, macos-m5]
     # Issue #344 wedge bound + #351 arithmetic: the submit_only lane waits
     # for Apple processing (TESTFLIGHT_WAIT_TIMEOUT_SECONDS, default 5400s
     # = 90m — a healthy slow ASC processing is NOT a wedge); distribution
@@ -1123,15 +1197,73 @@ jobs:
           bash "$SCRIPT" \
             https://github.com/IstiN/flutter_agent_harness.git "$MIRROR"
 
+      # gh-1600 AC2: hardened mirror-checkout (see build-ios) — the bare
+      # workspace rm -rf must never fail this checkout on stale unremovable
+      # leftovers in the persistent shared workspace. INLINE (not a composite
+      # action) on purpose: local `uses: ./...` actions resolve against
+      # $GITHUB_WORKSPACE at step time — on this box that is the PREVIOUS
+      # run's tree, and this step IS the checkout.
       - name: Checkout repository from local mirror
         run: |
           set -euo pipefail
           MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
           cd /tmp
-          rm -rf "$GITHUB_WORKSPACE"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "MIRROR=$MIRROR"
+
+          if ! rm -rf "$GITHUB_WORKSPACE" 2>/dev/null; then
+            echo "::warning::$GITHUB_WORKSPACE not fully removable — stale paths held by another process (gh-1600); pruning what is removable"
+            rm -rf "$GITHUB_WORKSPACE" || true
+          fi
+          if [ -d "$GITHUB_WORKSPACE" ] && [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+            # gh-1600 rework (review thread): best-effort prune of previous
+            # sidecars BEFORE creating a new one — the containers that held
+            # them may have died since, so the retry often succeeds. On
+            # this persistent box the runner's own _temp cleanup cannot
+            # remove mount-held content either; without the prune every
+            # degraded checkout would leave another timestamped dir behind
+            # (unbounded growth until manual cleanup).
+            rm -rf "${RUNNER_TEMP:-/tmp}"/stale-workspace-* 2>/dev/null || true
+            STALE="${RUNNER_TEMP:-/tmp}/stale-workspace-$(date +%Y%m%d-%H%M%S)"
+            echo "::warning::$GITHUB_WORKSPACE still non-empty after prune — moving the remainder to $STALE (gh-1600)"
+            mkdir -p "$(dirname "$STALE")" 2>/dev/null || true
+            if ! mv "$GITHUB_WORKSPACE" "$STALE" 2>/dev/null; then
+              echo "::warning::$GITHUB_WORKSPACE could not be moved aside either — cloning around the stub (gh-1600)"
+            fi
+          fi
           mkdir -p "$GITHUB_WORKSPACE"
+
+          CLONE_TARGET="$GITHUB_WORKSPACE"
+          if [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+            CLONE_TARGET="$GITHUB_WORKSPACE.checkout"
+            rm -rf "$CLONE_TARGET"
+          fi
           git clone --reference "$MIRROR" --depth=1 \
-            https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
+            https://github.com/IstiN/flutter_agent_harness.git "$CLONE_TARGET"
+          if [ "$CLONE_TARGET" != "$GITHUB_WORKSPACE" ]; then
+            while IFS= read -r entry; do
+              name="$(basename "$entry")"
+              if [ -e "$GITHUB_WORKSPACE/$name" ]; then
+                # gh-1600 rework (review thread): fresh content must win —
+                # park the stale stub in the same $STALE sidecar and move
+                # the fresh entry in. The old path skipped the fresh entry
+                # (warning-only) and the trailing rm -rf "$CLONE_TARGET"
+                # then DELETED it, silently keeping the stale leftover at
+                # that repo path. Skip-with-warning remains only as the
+                # last-resort fallback when even parking the stub fails.
+                STALE_DIR="${STALE:-${RUNNER_TEMP:-/tmp}/stale-workspace-sidecar}"
+                if mkdir -p "$STALE_DIR" 2>/dev/null && mv "$GITHUB_WORKSPACE/$name" "$STALE_DIR/" 2>/dev/null; then
+                  mv "$entry" "$GITHUB_WORKSPACE/"
+                else
+                  echo "::warning::stub collision on '$name' — left in $CLONE_TARGET (gh-1600)"
+                fi
+              else
+                mv "$entry" "$GITHUB_WORKSPACE/"
+              fi
+            done < <(find "$CLONE_TARGET" -mindepth 1 -maxdepth 1)
+            rm -rf "$CLONE_TARGET"
+          fi
+          echo "Checked out: $(git -C "$GITHUB_WORKSPACE" log -1 --oneline)"
 
       - name: Setup environment (self-hosted)
         run: |
