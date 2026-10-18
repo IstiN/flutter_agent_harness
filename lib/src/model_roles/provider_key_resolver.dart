@@ -244,6 +244,11 @@ final class HostKeyResolver {
       activeCustomKeyName: activeCustomKeyName,
     );
     final name = _effectiveSlotName(canonical, chained);
+    return HostKeyResolution(
+      slotName: name,
+      fromEnv: _isEnvResolution(name, chained, envNames),
+      canonicalName: canonical,
+      driftHint: _driftHint(name, canonical),
       missingKeyHint: _missingKeyHint(
         name,
         provider,
@@ -252,11 +257,6 @@ final class HostKeyResolver {
         storeDegraded: storeDegraded,
         lastStoreError: lastStoreError,
       ),
-      slotName: name,
-      fromEnv: _isEnvResolution(name, chained, envNames),
-      canonicalName: canonical,
-      driftHint: _driftHint(name, canonical),
-      missingKeyHint: _missingKeyHint(name, provider, baseUrl, canonical),
     );
   }
 

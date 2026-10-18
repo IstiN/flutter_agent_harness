@@ -460,7 +460,7 @@ extension on AgentCli {
       );
       if (isMissingDefaultKeychainError(diagnostic)) {
         io.writeln(missingDefaultKeychainAdvisory());
-        final repaired = await _offerDefaultKeychainRepair(keys);
+        final repaired = await _offerDefaultKeychainRepair();
         if (repaired && await keys.save(keyName, token)) {
           config.onSecretStored?.call(keyName, token);
           io.writeln('saved $keyName to ${keys.label}');
@@ -485,7 +485,7 @@ extension on AgentCli {
   /// keychain settings on its own — then reports the outcome. Returns true
   /// when the repair command exited 0 and the caller should retry the
   /// save; false on `n`/cancel, a failed repair, or an unavailable shell.
-  Future<bool> _offerDefaultKeychainRepair(SecureKeyCache keys) async {
+  Future<bool> _offerDefaultKeychainRepair() async {
     const repairCommand =
         'security default-keychain -s ~/Library/Keychains/login.keychain-db';
     io.writeln('repair the default keychain now? runs: $repairCommand [y/N]');

@@ -394,7 +394,6 @@ final class KeyStatusRenderer {
         '($diagnostic) and keys pasted earlier may not have persisted — '
         'fix the store, then /key set $suggested <value>';
   }
-  }
 
   /// The hint for a genuine environment key, or null when none is in play.
   String? envActiveHint(List<String> names, String baseUrl) {
