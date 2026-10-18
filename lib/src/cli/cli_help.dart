@@ -170,17 +170,21 @@ QUICK COMMANDS
   uninstall                    Remove the binary and its PATH entry after a
                                y/N confirmation; ~/.fah (sessions, config)
                                is kept unless a second confirmation says yes
-  trajectory                   fa trajectory <view|tail|cost|inspect>
-                               [sessionId] [--json] [--at N]: read-only
+  trajectory                   fa trajectory <view|tail|cost|inspect|
+                               export> [sessionId] [--json] [--at N]
+                               [--format atif] [--output path]: read-only
                                views over a stored session's trajectory
                                ledger — view renders the rows (--at N
                                pins the snapshot to record N), cost the
                                per-request token/cost table, tail
                                follows the live session, inspect <n>
                                prints full detail for one record; --json
-                               emits one JSON object per row. An unknown
-                               session or out-of-range record exits 1
-                               with a message on stderr.
+                               emits one JSON object per row. export
+                               writes the whole snapshot as an ATIF
+                               document (gh-1681: harbor/leaderboard
+                               trajectory.json) to --output (or stdout).
+                               An unknown session or out-of-range record
+                               exits 1 with a message on stderr.
   session                      fa session list [--json] [--flat]: the
                                tree-grouped session listing (agents
                                nested under parents). fa session repair

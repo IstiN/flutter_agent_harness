@@ -1,0 +1,97 @@
+{
+  "schema_version": "ATIF-v1.7",
+  "session_id": "sess-1",
+  "agent": {
+    "name": "fa",
+    "version": "1.2.3",
+    "model_name": "claude-test"
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "timestamp": "2026-01-01T12:00:00.000Z",
+      "source": "user",
+      "message": "list files"
+    },
+    {
+      "step_id": 2,
+      "timestamp": "2026-01-01T12:00:00.500Z",
+      "source": "agent",
+      "model_name": "claude-test",
+      "message": "The answer",
+      "reasoning_content": "let me think",
+      "metrics": {
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "cached_tokens": 30,
+        "cost_usd": 0.5
+      }
+    },
+    {
+      "step_id": 3,
+      "timestamp": "2026-01-01T12:00:02.000Z",
+      "source": "agent",
+      "message": "",
+      "llm_call_count": 0,
+      "tool_calls": [
+        {
+          "tool_call_id": "c1",
+          "function_name": "bash",
+          "arguments": {
+            "cmd": "ls"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "c1",
+            "content": "files listing result"
+          }
+        ]
+      }
+    },
+    {
+      "step_id": 4,
+      "timestamp": "2026-01-01T12:00:03.000Z",
+      "source": "agent",
+      "message": "",
+      "llm_call_count": 0,
+      "tool_calls": [
+        {
+          "tool_call_id": "c2",
+          "function_name": "read",
+          "arguments": {},
+          "extra": {
+            "raw_arguments": "not json"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": 5,
+      "timestamp": "2026-01-01T12:00:05.000Z",
+      "source": "system",
+      "message": "project instructions"
+    },
+    {
+      "step_id": 6,
+      "timestamp": "2026-01-01T12:00:06.000Z",
+      "source": "system",
+      "message": "summary of everything before"
+    },
+    {
+      "step_id": 7,
+      "timestamp": "2026-01-01T12:00:07.000Z",
+      "source": "system",
+      "message": "anthropic/claude-test"
+    }
+  ],
+  "final_metrics": {
+    "total_prompt_tokens": 100,
+    "total_completion_tokens": 20,
+    "total_cached_tokens": 30,
+    "total_cost_usd": 0.5,
+    "total_steps": 7
+  }
+}
