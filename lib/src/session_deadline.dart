@@ -87,7 +87,9 @@ final class DeadlineLadder {
   /// must get their chance to land instead of being SIGKILLed mid-write —
   /// and the grader-parity clause (gh-1652): the LAST verification pass
   /// before finalizing goes through the grader's own invocation path,
-  /// not the agent's checklist oracle.
+  /// not the agent's checklist oracle — and the no-teardown clause
+  /// (gh-1668): leave the final state in place, finalizing never resets
+  /// what the run produced.
   String text(DeadlineNoticeKind kind, String timeLeft) => switch (kind) {
     DeadlineNoticeKind.halfBudget =>
       'Half of your time budget has elapsed ($timeLeft remaining). '
@@ -101,7 +103,10 @@ final class DeadlineLadder {
           '(compiles, uploads, file writes) get their chance to land, run '
           'your final checks, and before finalizing run each produced '
           'entry point the way the grader will (neutral cwd, clean env) '
-          'and fix what diverges. Then write your final answer.',
+          'and fix what diverges. Leave the final state in place: '
+          'finalizing never tears down what you produced — verification '
+          'is read-only or additive, never a teardown. Then write your '
+          'final answer.',
     DeadlineNoticeKind.finalAnswer =>
       '$timeLeft remaining — write your final answer NOW.',
   };

@@ -22,6 +22,9 @@ import 'package:meta/meta.dart';
 import 'package:yaml/yaml.dart';
 
 import '../hashline/hashline.dart';
+import '../import/foreign_session.dart';
+import '../import/harness_adapter.dart';
+import '../import/import_runner.dart';
 
 import '../agent/agent.dart';
 import '../agent/misuse_breaker.dart';
@@ -1080,6 +1083,34 @@ class AgentCli {
   @visibleForTesting
   Future<void> tuiPickSessionForTest(String key) => _tuiPickSession(key);
 
+  /// Test seam: opens the /import harness picker; the items it opened with
+  /// land in [importHarnessItemsForTest] (the sessionPickerItemsForTest
+  /// pattern).
+  @visibleForTesting
+  Future<void> openImportHarnessPickerForTest() async {
+    _openImportHarnessPicker();
+  }
+
+  /// The items the most recent /import harness picker opened with.
+  @visibleForTesting
+  List<MenuItem>? importHarnessItemsForTest;
+
+  /// Test seam: routes an import-harness-picker selection.
+  @visibleForTesting
+  Future<void> tuiPickImportHarnessForTest(String key) =>
+      _tuiPickImportHarness(key);
+
+  /// Test seam: builds the import-sessions picker rows for [filter]
+  /// without a TUI (keyword search over title + indexed content).
+  @visibleForTesting
+  List<MenuItem> importSessionMenuForTest(String filter) =>
+      _importSessionMenuItems(filter);
+
+  /// Test seam: routes an import-sessions-picker selection.
+  @visibleForTesting
+  Future<void> tuiPickImportSessionForTest(String key) =>
+      _tuiPickImportSession(key);
+
   /// Test seam: swaps the active session so command paths can be driven
   /// over a session shape the real repo never produces (e.g. empty
   /// metadata path — the usage-ledger command guards).
@@ -1949,7 +1980,17 @@ class AgentCli {
     // Step 2 of the two-step model pick: rows are keyed `provider|model`,
     // the same shape the flat model menu selects.
     'modelProvider': _tuiSelectModel,
+    // The /import flow (issue #1562): harness choice, then the
+    // session-search list. A missing entry here is a dead picker — the
+    // exact-id dispatch test pins both ids.
+    'import-harness': _tuiPickImportHarness,
+    'import-sessions': _tuiPickImportSession,
   };
+
+  /// The `/import` flow state: the chosen harness and its discovered
+  /// (preview-enriched) current-folder sessions.
+  String? _importHarness;
+  List<ForeignSessionSummary> _importSummaries = const [];
 
   /// Same-named matches pending a startup choice: set when `--session X`
   /// resolved ambiguously, consumed by [_runTuiRepl] to offer the sessions
