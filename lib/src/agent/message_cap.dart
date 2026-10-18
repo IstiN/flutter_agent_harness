@@ -2,8 +2,8 @@
 ///
 /// Some providers enforce a hard per-request cap on the number of messages
 /// in one request, independent of token count (incident: a session wedged
-/// forever on `400 messages: array length 2049 exceeds limit 2048` while
-/// token-healthy). This module is the repair path:
+/// forever on the provider's `array length N exceeds limit M` refusal
+/// while token-healthy). This module is the repair path:
 ///
 /// - **Discovery** — the classifier lives in `overflow.dart`
 ///   ([classifyMessageCapError]); these classes only CARRY its verdict.

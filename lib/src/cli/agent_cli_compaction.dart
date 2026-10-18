@@ -773,7 +773,7 @@ extension OverWindowGuardRelief on AgentCli {
 /// retry, or null when the count could not be reduced (nothing hideable —
 /// the retry then rides the coalesced payload alone, and a second refusal
 /// surfaces the terminal error).
-extension MessageCapRelief on AgentCli {
+extension AgentCliMessageCapRelief on AgentCli {
   Future<List<Message>?> _relieveMessageCap(List<Message> overCap) async {
     if (_session == null) return null;
     _logDiagnostic(

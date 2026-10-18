@@ -62,6 +62,7 @@ import '../trajectory/trajectory_blobs.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
 import '../agent/message_cap.dart';
+import '../overflow.dart' show MessageCapRefusal;
 import '../agent/stuck_tool.dart';
 import '../agent/tool_pairing.dart';
 import '../providers/models_for_endpoint.dart';

@@ -296,4 +296,83 @@ void main() {
       );
     });
   });
+
+  group('gh-1680 message-cap classifier (AC1)', () {
+    test('the exact incident string is overflow and yields M=2048', () {
+      const incident =
+          '400: {"error":{"message":"400 messages: array length 2049 '
+          'exceeds limit 2048","type":"api_error"}}';
+      expect(isContextOverflow(errorMessage(incident)), isTrue);
+      final refusal = classifyMessageCapError(incident);
+      expect(refusal, isNotNull);
+      expect(refusal!.maxMessages, 2048);
+      expect(refusal.isUnknown, isFalse);
+    });
+
+    test('heartbeat variants classify with the same parsed cap', () {
+      for (final count in [2051, 2053, 2059]) {
+        final error = '400 messages: array length $count exceeds limit 2048';
+        expect(isContextOverflow(errorMessage(error)), isTrue);
+        expect(classifyMessageCapError(error)!.maxMessages, 2048);
+      }
+    });
+
+    test('plain array-length shape with other numbers classifies', () {
+      final refusal = classifyMessageCapError(
+        'array length 128 exceeds limit 64',
+      );
+      expect(refusal!.maxMessages, 64);
+    });
+
+    test('comma-grouped numbers parse', () {
+      final refusal = classifyMessageCapError(
+        'messages: array length 2,049 exceeds limit 2,048',
+      );
+      expect(refusal!.maxMessages, 2048);
+    });
+
+    test('generic shapes classify: too many messages / messages count exceeds', () {
+      expect(
+        classifyMessageCapError('400: too many messages in request'),
+        isNotNull,
+      );
+      expect(
+        classifyMessageCapError('400 messages count exceeds the limit'),
+        isNotNull,
+      );
+      expect(isContextOverflow(errorMessage('400: too many messages')), isTrue);
+    });
+
+    test('cap shape without a number flags cap-unknown (E1)', () {
+      final refusal = classifyMessageCapError(
+        '400 messages: array length exceeds limit',
+      );
+      expect(refusal, isNotNull);
+      expect(refusal!.isUnknown, isTrue);
+      expect(refusal.maxMessages, isNull);
+    });
+
+    test('non-overflow 400s do not classify', () {
+      for (final error in [
+        '400 invalid api key',
+        '400 {"error":{"message":"authentication failed","type":"auth"}}',
+        '400 bad request: unknown parameter',
+        '400 invalid JSON payload',
+      ]) {
+        expect(classifyMessageCapError(error), isNull, reason: error);
+        expect(isContextOverflow(errorMessage(error)), isFalse, reason: error);
+      }
+    });
+
+    test('rate-limit shaped messages stay non-overflow', () {
+      const error = '429: rate limit exceeded, too many requests';
+      expect(classifyMessageCapError(error), isNull);
+      expect(isContextOverflow(errorMessage(error)), isFalse);
+    });
+
+    test('null/empty errors do not classify', () {
+      expect(classifyMessageCapError(null), isNull);
+      expect(classifyMessageCapError(''), isNull);
+    });
+  });
 }
