@@ -614,11 +614,11 @@ jobs:
           # runner-managed scratch, never a workspace path (gh-1658's
           # retry paths below follow the same out-of-workspace dir).
           JOB_NAME="fa-${FAMILY}-${ENV_TYPE}-${SHARD_KIND}-${SHARD_INDEX}"
-          mkdir -p "$RUNNER_TEMP/bench/jobs"
+          mkdir -p "${RUNNER_TEMP:-/tmp}/bench/jobs"
           run_harbor() {
             .bench-venv/bin/harbor run -d "$DATASET" -a fa_agent:FaAgent \
               -e "$ENV_TYPE" -m "$MODEL" -k "$ATTEMPTS" -n "$NCONC" \
-              --job-name "$JOB_NAME" -o "$RUNNER_TEMP/bench/jobs" \
+              --job-name "$JOB_NAME" -o "${RUNNER_TEMP:-/tmp}/bench/jobs" \
               "${args[@]}"
           }
           # The zero-trial gate counts result.json PRESENCE at exactly
@@ -628,8 +628,8 @@ jobs:
           # and must be skipped here too, or the gate would report
           # "trials started" while the summary still counts 0.
           trials_started() {
-            [ -d "$RUNNER_TEMP/bench/jobs/$JOB_NAME" ] || { echo 0; return 0; }
-            find "$RUNNER_TEMP/bench/jobs/$JOB_NAME" -mindepth 2 -maxdepth 2 -name result.json | wc -l
+            [ -d "${RUNNER_TEMP:-/tmp}/bench/jobs/$JOB_NAME" ] || { echo 0; return 0; }
+            find "${RUNNER_TEMP:-/tmp}/bench/jobs/$JOB_NAME" -mindepth 2 -maxdepth 2 -name result.json | wc -l
           }
           if run_harbor; then
             :
@@ -648,9 +648,9 @@ jobs:
             # matches the fa-<family>-* export globs (Hub upload +
             # summary family filter), so the merged export cannot
             # double-count its trials.
-            mv "$RUNNER_TEMP/bench/jobs/$JOB_NAME" "$RUNNER_TEMP/bench/jobs/_attempt1-$JOB_NAME" 2>/dev/null || true
+            mv "${RUNNER_TEMP:-/tmp}/bench/jobs/$JOB_NAME" "${RUNNER_TEMP:-/tmp}/bench/jobs/_attempt1-$JOB_NAME" 2>/dev/null || true
             if run_harbor; then
-              echo "::warning::shard $JOB_NAME: zero-trial startup crash recovered by the inline retry (attempt 1 kept under $RUNNER_TEMP/bench/jobs/_attempt1-$JOB_NAME)"
+              echo "::warning::shard $JOB_NAME: zero-trial startup crash recovered by the inline retry (attempt 1 kept under ${RUNNER_TEMP:-/tmp}/bench/jobs/_attempt1-$JOB_NAME)"
             else
               # gh-1658 C2: the marker keeps the RCA independent of job
               # logs surviving the rerun.

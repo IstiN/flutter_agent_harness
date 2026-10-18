@@ -205,17 +205,47 @@ void main() {
       final script = harborRun['run'].toString();
       expect(
         script,
-        contains(r'-o "$RUNNER_TEMP/bench/jobs"'),
+        contains(r'-o "${RUNNER_TEMP:-/tmp}/bench/jobs"'),
         reason:
             'the harbor output dir must live OUTSIDE \$GITHUB_WORKSPACE — '
             '`-o jobs` parked jobs/fa-<family>-<env>-<kind>-<shard>/ in the '
             'persistent shared workspace and the next mobile build\'s clean '
-            'choked on the docker-held leftovers (gh-1600)',
+            'choked on the docker-held leftovers (gh-1600). The '
+            '`\${RUNNER_TEMP:-/tmp}` fallback form keeps the step alive '
+            'under `set -u` when the var is absent (same hardening as the '
+            'teardown step).',
       );
       expect(
         script.contains('-o jobs'),
         isFalse,
         reason: 'no bare workspace-relative `-o jobs` may remain (gh-1600)',
+      );
+      // gh-1600 × gh-1658 merge invariant: the zero-trial retry gate and
+      // the attempt move-aside operate on the SAME out-of-workspace dir
+      // as the harbor -o output — a workspace-relative retry path would
+      // reintroduce the docker-held leftovers class.
+      expect(
+        script,
+        contains(r'trials_started()'),
+        reason:
+            'the gh-1658 zero-trial inline retry must survive the merge '
+            '(gh-1600 AC2 keeps its paths out-of-workspace)',
+      );
+      expect(
+        script.contains(r'"jobs/$JOB_NAME"'),
+        isFalse,
+        reason:
+            'no workspace-relative retry path (`jobs/\$JOB_NAME`) may '
+            'remain — the gate and the move-aside must work on the '
+            'out-of-workspace bench output (gh-1600 AC2)',
+      );
+      expect(
+        script,
+        contains(r'mv "${RUNNER_TEMP:-/tmp}/bench/jobs/$JOB_NAME"'),
+        reason:
+            'the zero-trial attempt move-aside must park the failed '
+            'attempt under the same out-of-workspace dir (gh-1600 AC2 '
+            '× gh-1658 C1)',
       );
     });
 
