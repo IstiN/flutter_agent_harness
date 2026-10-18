@@ -50,14 +50,14 @@ String? exportAtifJson(
   final model = modelName ?? _derivedModel(snapshot);
   return const JsonEncoder.withIndent('  ').convert({
     'schema_version': 'ATIF-v1.7',
-    if (sessionId != null) 'session_id': sessionId,
+    'session_id': ?sessionId,
     'agent': {
       'name': agentName,
       'version': agentVersion,
-      if (model != null) 'model_name': model,
+      'model_name': ?model,
     },
     'steps': steps,
-    if (notes != null) 'notes': notes,
+    'notes': ?notes,
     'final_metrics': _finalMetrics(steps),
   });
 }
@@ -109,7 +109,7 @@ Map<String, dynamic> _step(
   DateTime? timestamp,
 }) => {
   'step_id': record.index,
-  if (timestamp != null) 'timestamp': timestamp.toIso8601String(),
+  'timestamp': ?timestamp?.toIso8601String(),
   'source': source,
   'message': message,
 };
@@ -118,16 +118,14 @@ Map<String, dynamic> _assistantStep(TrajectoryAssistantRecord record) {
   final metrics = _metrics(record);
   return {
     'step_id': record.index,
-    if (record.stepStartTime ?? record.completedTime
-        case final time?) ...{
-      'timestamp': time.toIso8601String(),
-    },
+    'timestamp': ?(record.stepStartTime ?? record.completedTime)
+        ?.toIso8601String(),
     'source': 'agent',
-    if (record.model != null) 'model_name': record.model,
+    'model_name': ?record.model,
     'message': _assistantMessage(record),
-    if (record.thinkingDetail != null && record.thinkingDetail!.isNotEmpty)
+    if (record.thinkingDetail?.isNotEmpty ?? false)
       'reasoning_content': record.thinkingDetail,
-    if (metrics != null) 'metrics': metrics,
+    'metrics': ?metrics,
   };
 }
 
@@ -151,30 +149,32 @@ Map<String, dynamic>? _metrics(TrajectoryAssistantRecord record) {
     return null;
   }
   return {
-    if (prompt != null) 'prompt_tokens': prompt,
-    if (completion != null) 'completion_tokens': completion,
-    if (cached != null) 'cached_tokens': cached,
+    'prompt_tokens': ?prompt,
+    'completion_tokens': ?completion,
+    'cached_tokens': ?cached,
     if (cost > 0) 'cost_usd': cost,
   };
 }
 
 Map<String, dynamic> _toolStep(TrajectoryToolRecord record) {
   final arguments = _toolArguments(record.argsRaw);
+  final call = <String, dynamic>{
+    'tool_call_id': record.callId,
+    'function_name': record.name,
+    'arguments': arguments.$1,
+  };
+  final raw = arguments.$2;
+  if (raw != null) call['extra'] = {'raw_arguments': raw};
   final result = record.result;
   return {
     'step_id': record.index,
-    if (record.startedAt != null)
-      'timestamp': record.startedAt!.toIso8601String(),
+    'timestamp': ?record.startedAt?.toIso8601String(),
     'source': 'agent',
+    // ATIF requires message on every step; the call itself is the content
+    // here (claude-code's adapter uses the same empty-string shape).
+    'message': '',
     'llm_call_count': 0,
-    'tool_calls': [
-      {
-        'tool_call_id': record.callId,
-        'function_name': record.name,
-        'arguments': arguments.$1,
-        if (arguments.$2 != null) 'extra': {'raw_arguments': arguments.$2},
-      },
-    ],
+    'tool_calls': [call],
     // A call whose result never arrived (killed mid-flight) exports no
     // observation rather than an empty one.
     if (result.isNotEmpty)

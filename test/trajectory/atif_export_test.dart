@@ -8,6 +8,7 @@
 // side by bench/harbor_fa/test_atif_contract.py against the SAME checked-in
 // golden fixture (bench/harbor_fa/fixtures/atif_sample.json).
 import 'dart:convert';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
