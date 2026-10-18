@@ -120,6 +120,30 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("| 2/3 trials (66.7%) |", out)
         self.assertIn("| n/a | https://ci/run/1 |", out)
 
+    def test_json_summary_feeds_leaderboard_ledger(self):
+        # gh-1682: --json-summary emits the machine-readable totals
+        # bench/leaderboard/record.py consumes (trusted pool only —
+        # errored trials are attempted, never resolved/denominator).
+        make_jobs(self.jobs, "fa-2.1-modal-cpu-0",
+                  [{"resolved": True}, {"resolved": False},
+                   {"exception": "TimeoutError"}])
+        doc_path = self.jobs / "summary.json"
+        rc, _ = self._run(
+            str(self.jobs), "--family", "2.1", "--model", "glm-5.3-flash",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
+            "--json-summary", str(doc_path),
+        )
+        self.assertEqual(rc, 0)
+        doc = json.loads(doc_path.read_text())
+        self.assertEqual(doc["family"], "2.1")
+        self.assertEqual(doc["model"], "glm-5.3-flash")
+        self.assertEqual(doc["fa_ref"], "abc1234")
+        self.assertEqual(doc["run_url"], "https://ci/run/1")
+        self.assertEqual(doc["resolved"], 1)
+        self.assertEqual(doc["total"], 2)  # trusted only, errored out
+        self.assertEqual(doc["attempted"], 3)
+        self.assertTrue(doc["date"])
+
     def test_ledger_row_carries_real_cost(self):
         # Composition #1123 + #1124: priced trials flow their cost total
         # into the ledger row's cost cell.
