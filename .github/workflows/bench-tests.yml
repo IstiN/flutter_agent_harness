@@ -50,10 +50,12 @@ jobs:
       - run: pip install 'harbor[modal]==0.23.0' 'terminal-bench==0.2.18'
 
       # Same gate as bench.yml / bench-harbor.yml "Unit-test bench scripts"
-      # (plus the bench-mls.yml root — all three bench discovery roots);
-      # keep the step bodies in sync with those workflows.
+      # (plus the bench-mls.yml and bench/leaderboard roots — all the
+      # bench discovery roots); keep the step bodies in sync with those
+      # workflows.
       - name: Unit-test bench scripts
         run: |
           python -m unittest discover -s bench/terminal_bench -v
           python -m unittest discover -s bench/harbor_fa -v
           python -m unittest discover -s bench/mls_bench -v
+          python -m unittest discover -s bench/leaderboard -v
