@@ -1040,6 +1040,18 @@ extension ApprovalCommands on AgentCli {
     } else {
       _waiting.reasoningProgress(event);
     }
+    // gh-1680 cap notice: a repair fired by the provider's message cap
+    // names the cap and the refused count — never a silent surgery.
+    if (event is MessageCapRepairEvent) {
+      io.writeln(
+        _style.dim(
+          '[message cap] provider refused the request at '
+          '${event.messageCount} messages'
+          '${event.learnedCap == null ? '' : ' (cap ${event.learnedCap})'}'
+          '${event.compacted ? ' — context compacted, retrying once' : ' — coalescing the request, retrying once'}',
+        ),
+      );
+    }
     await handleAgentEvent(
       event,
       onMessageLifecycle: _onMessageLifecycle,
@@ -1073,6 +1085,7 @@ extension ApprovalCommands on AgentCli {
       case ToolCallHeartbeatEvent():
       case ToolCallStuckEvent():
       case ToolPairingRepairEvent():
+      case MessageCapRepairEvent():
         // Persisting cases: logged where the record is written (see
         // [_persistEventLiveness]); nothing extra here.
         break;
@@ -1146,6 +1159,13 @@ extension ApprovalCommands on AgentCli {
             orphanReportRecordData(report.notedOrphanKeys.toSet()),
           );
         }
+      case MessageCapRepairEvent(:final messageCount, :final learnedCap):
+        // gh-1680: the cap repair is a loop-side (not session) event; the
+        // fa.log line is its durable trace.
+        _logDiagnostic(
+          'message-cap repair sid=$_logSid messages=$messageCount '
+          'cap=$learnedCap',
+        );
       default:
     }
   }

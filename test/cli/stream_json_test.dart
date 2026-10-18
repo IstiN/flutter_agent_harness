@@ -472,6 +472,7 @@ void main() {
         ),
         const ModelRequestEvent(detail: detail),
         const ToolPairingRepairEvent(report: ToolPairingRepairReport()),
+        const MessageCapRepairEvent(messageCount: 2049, learnedCap: 2048),
         ToolCallHeartbeatEvent(
           toolCallId: 't1',
           toolName: 'bash',
@@ -497,10 +498,13 @@ void main() {
       // AgentEvent subtype must be added above (and classified in
       // `filtered` or mapped) — this count is what makes the omission
       // visible.
-      expect(samples, hasLength(16));
+      expect(samples, hasLength(17));
       const filtered = {
         'ModelRequestEvent',
         'ToolPairingRepairEvent',
+        // gh-1680 the cap repair is loop-internal: the CLI prints the
+        // notice, the wire/serve path carries it — never the pi stream.
+        'MessageCapRepairEvent',
         // gh-1054 liveness records ride the session ledger only.
         'ToolCallHeartbeatEvent',
         'ToolCallStuckEvent',

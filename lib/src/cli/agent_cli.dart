@@ -61,6 +61,7 @@ import '../trajectory/trajectory_record.dart' show TrajectoryCompactedRecord;
 import '../trajectory/trajectory_blobs.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
+import '../agent/message_cap.dart';
 import '../agent/stuck_tool.dart';
 import '../agent/tool_pairing.dart';
 import '../providers/models_for_endpoint.dart';
@@ -690,6 +691,13 @@ class AgentCli {
         // Issue #387: the loop's over-window guard hands the transcript to
         // this relief before refusing — one synchronous compaction pass.
         overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
+        // gh-1680: adaptive per-model message-cap handling — the learned
+        // cap store (persisted per (provider, modelId)) classifies a
+        // provider cap-400, and the relief compacts the transcript before
+        // the single retry; later runs compact pre-emptively at
+        // `cap − margin` (the auto-compactor's additive message trigger).
+        messageCapPolicy: _messageCapPolicy,
+        messageCapRelief: (overCap) => _relieveMessageCap(overCap),
         // Issue #862: tool-misuse circuit breaker (off switch:
         // `agent.misuseBreaker: false`).
         toolMisuseBreaker: config.misuseBreaker ? ToolMisuseBreaker() : null,
@@ -1781,6 +1789,35 @@ class AgentCli {
   final Set<String> _modelCacheFresh = {};
   bool _modelCacheDiskLoaded = false;
 
+  /// gh-1680: the learned per-model message-cap store. Loaded lazily from
+  /// `<homeDir>/.fah/model_caps.json` (a sibling of the per-provider
+  /// `model_cache.json`); an in-memory empty store when the host has no
+  /// home directory. The ONLY built-in knowledge anywhere in the repair
+  /// path is the error-text classifier — no provider/model table lives in
+  /// source.
+  ModelCapsStore? _modelCapsStore;
+  ModelCapsStore get _modelCaps => _modelCapsStore ??= _loadModelCaps();
+
+  ModelCapsStore _loadModelCaps() {
+    final home = config.homeDir;
+    if (home == null || home.isEmpty) return ModelCapsStore();
+    return ModelCapsStore.load('$home/.fah/model_caps.json');
+  }
+
+  /// The loop-facing policy wrapping [_modelCaps] with persistence on
+  /// learn (see [_CliMessageCapPolicy]).
+  MessageCapPolicy? _messageCapPolicyInstance;
+  MessageCapPolicy get _messageCapPolicy =>
+      _messageCapPolicyInstance ??= _CliMessageCapPolicy(this);
+
+  /// Persists the learned-cap store after a refusal was recorded (the
+  /// next process boots with the cap — AC2). Best-effort.
+  void _persistModelCaps() {
+    final home = config.homeDir;
+    if (home == null || home.isEmpty) return;
+    _modelCaps.persist('$home/.fah/model_caps.json');
+  }
+
   /// Context windows reported by the endpoint's `/models` payload (see
   /// [parseModelsResponse] in provider_commands.dart); empty when the
   /// fetcher is replaced (tests) or the endpoint reports none. Drives
@@ -2383,6 +2420,24 @@ class AgentCli {
 
   String? _activeCustomName;
   Completer<String?>? _wizardPickerAnswer;
+}
+
+/// gh-1680: the CLI's [MessageCapPolicy] — delegates to the learned store
+/// and persists after every learned refusal, so the cap the provider
+/// taught this process is boot-loaded by the next one (AC2). Kept out of
+/// [AgentCli]'s fields so the store can stay lazily loaded.
+final class _CliMessageCapPolicy implements MessageCapPolicy {
+  _CliMessageCapPolicy(this._cli);
+
+  final AgentCli _cli;
+  @override
+  int? learnedCapFor(Model model) => _cli._modelCaps.learnedCapFor(model);
+
+  @override
+  void learnFromRefusal(Model model, MessageCapRefusal refusal) {
+    _cli._modelCaps.learnFromRefusal(model, refusal);
+    _cli._persistModelCaps();
+  }
 }
 
 /// One AC3 post-tool narration segment (gh-1433): the text deltas that

@@ -611,6 +611,7 @@ class AgentWireProtocol {
     'tool_execution_end': _decodeToolExecutionEnd,
     'model_request': _decodeModelRequest,
     'tool_pairing_repair': _decodeToolPairingRepair,
+    'message_cap_repair': _decodeMessageCapRepair,
     'task_ledger': _decodeTaskLedger,
     'tool_call_heartbeat': _decodeToolCallHeartbeat,
     'tool_call_stuck': _decodeToolCallStuck,
@@ -868,6 +869,21 @@ class AgentWireProtocol {
     return KnownWireEvent(
       ToolPairingRepairEvent(
         report: _decodeRepairReport(_requireMap(frame['report'], 'report')),
+        providerError: frame['providerError'] as String?,
+      ),
+      frame,
+    );
+  }
+
+  static KnownWireEvent _decodeMessageCapRepair(Map<String, dynamic> frame) {
+    _requireKind(frame, 'message_cap_repair');
+    return KnownWireEvent(
+      MessageCapRepairEvent(
+        messageCount: _requireInt(frame['messageCount'], 'messageCount'),
+        learnedCap: frame['learnedCap'] is int
+            ? frame['learnedCap'] as int
+            : null,
+        compacted: frame['compacted'] == true,
         providerError: frame['providerError'] as String?,
       ),
       frame,
@@ -1191,6 +1207,7 @@ class AgentWireProtocol {
     ToolExecutionEndEvent() => 'tool_execution_end',
     ModelRequestEvent() => 'model_request',
     ToolPairingRepairEvent() => 'tool_pairing_repair',
+    MessageCapRepairEvent() => 'message_cap_repair',
     TaskLedgerEvent() => 'task_ledger',
     ToolCallHeartbeatEvent() => 'tool_call_heartbeat',
     ToolCallStuckEvent() => 'tool_call_stuck',
