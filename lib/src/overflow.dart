@@ -112,6 +112,15 @@ final _overflowPatterns = [
     r'^4(?:00|13)\s*(?:status code)?\s*\(no body\)',
     caseSensitive: false,
   ), // Cerebras: 400/413 with no body
+  // gh-1680: per-request MESSAGE-ARRAY caps (independent of token count).
+  // Provider-agnostic: any model emitting this shape is handled, and the
+  // limit itself is learned from the error text, never hardcoded.
+  RegExp(
+    r'array length \d+ exceeds limit \d+',
+    caseSensitive: false,
+  ), // "400 messages: array length 2049 exceeds limit 2048"
+  RegExp(r'\btoo many messages\b', caseSensitive: false), // Generic cap 400
+  RegExp(r'\bmessages count exceeds\b', caseSensitive: false), // Cap 400
 ];
 
 /// Patterns that indicate non-overflow errors (rate limiting, server errors).
@@ -127,6 +136,71 @@ final _nonOverflowPatterns = [
   RegExp(r'rate limit', caseSensitive: false), // Generic rate limiting
   RegExp(r'too many requests', caseSensitive: false), // Generic HTTP 429
 ];
+
+/// gh-1680: parses the cap limit out of a message-array refusal, e.g.
+/// `array length 2049 exceeds limit 2048` → `2048`. Null when no parseable
+/// pair is present (the cap-unknown shape).
+final _messageCapLimitPattern = RegExp(
+  r'\barray length\s+(\d[\d,]*)\s+exceeds\s+limit\s+(\d[\d,]*)\b',
+  caseSensitive: false,
+);
+
+/// gh-1680: the cap shape WITHOUT parseable numbers — still a cap refusal
+/// (the model is flagged cap-unknown), just with no limit to learn.
+final _messageCapShapePatterns = [
+  RegExp(r'\barray length\b(?:\s+\d[\d,]*)?\s+exceeds\s+limit\b', caseSensitive: false),
+  RegExp(r'\btoo many messages\b', caseSensitive: false),
+  RegExp(r'\bmessages count exceeds\b', caseSensitive: false),
+];
+
+/// The outcome of classifying a provider error as a per-request
+/// message-array cap refusal (gh-1680).
+///
+/// Some providers enforce a hard cap on the number of messages in one
+/// request, independent of token count. The refusal names the offending
+/// count and the limit (`array length 2049 exceeds limit 2048`); the
+/// learned limit rides [maxMessages]. When the shape matches but no
+/// number is parseable, [maxMessages] is null: the model is flagged
+/// cap-unknown and the repair falls back to one compaction pass per
+/// refusal instead of a learned pre-emptive trigger.
+final class MessageCapRefusal {
+  const MessageCapRefusal({this.maxMessages});
+
+  /// The provider's per-request message cap parsed from the error text,
+  /// or null when the cap is unknown (unparseable error).
+  final int? maxMessages;
+
+  /// Whether the cap shape matched without a parseable limit.
+  bool get isUnknown => maxMessages == null;
+}
+
+/// gh-1680: whether [errorMessage] is a per-request message-array cap
+/// refusal, and — when it is — the cap limit parsed from it.
+///
+/// Provider-agnostic: the regexes above are the ONLY built-in knowledge;
+/// no provider or model name appears here (AC5). Returns null for
+/// non-cap errors (auth 400s, bad requests, rate limits). A cap-shaped
+/// error WITHOUT a parseable number still classifies, with
+/// [MessageCapRefusal.isUnknown] true (edge E1: never a wedge, the model
+/// just gets the one-pass-per-refusal fallback).
+MessageCapRefusal? classifyMessageCapError(String? errorMessage) {
+  if (errorMessage == null || errorMessage.isEmpty) return null;
+  final isNonOverflow = _nonOverflowPatterns.any(
+    (pattern) => pattern.hasMatch(errorMessage),
+  );
+  if (isNonOverflow) return null;
+  final limitMatch = _messageCapLimitPattern.firstMatch(errorMessage);
+  if (limitMatch != null) {
+    final limit = int.tryParse(limitMatch.group(2)!.replaceAll(',', ''));
+    if (limit != null && limit > 0) {
+      return MessageCapRefusal(maxMessages: limit);
+    }
+  }
+  for (final pattern in _messageCapShapePatterns) {
+    if (pattern.hasMatch(errorMessage)) return const MessageCapRefusal();
+  }
+  return null;
+}
 
 /// Whether [message] represents a context overflow.
 ///
