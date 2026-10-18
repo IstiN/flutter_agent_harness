@@ -745,6 +745,7 @@ jobs:
       # pinned job dir only; the zero-trial retry's preserved attempt-1
       # dir (_attempt1-*) is a sibling and never matches.
       - name: Preflight ATIF trajectories
+        id: atif_gate
         if: always()
         env:
           ENV_TYPE: ${{ matrix.env }}
@@ -777,7 +778,11 @@ jobs:
           fi
 
       - name: Upload to Harbor Hub
-        if: always() && env.HARBOR_API_KEY != ''
+        # gh-1681 rework: in submission mode a failed ATIF gate must skip
+        # the upload (the job is un-submittable — no hub quota burn); in
+        # normal runs the warn-only gate never blocks the best-effort
+        # upload.
+        if: always() && env.HARBOR_API_KEY != '' && (inputs.submission != true || steps.atif_gate.outcome == 'success')
         env:
           HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
         run: |

@@ -14,8 +14,6 @@ box).
 Run: python3 -m unittest discover -s bench/harbor_fa
 """
 import json
-import shutil
-import sys
 import unittest
 from pathlib import Path
 

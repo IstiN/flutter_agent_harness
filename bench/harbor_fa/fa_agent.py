@@ -504,7 +504,10 @@ class FaAgent(BaseInstalledAgent):
                 timeout=_ATIF_EXPORT_TIMEOUT_SEC + 15,
             )
             if result.return_code != 0:
-                tail = (result.stdout or "")[-200:]
+                # fa headless writes its diagnostics to stderr — stdout
+                # carries only the ATIF payload — so tail both channels or
+                # the warning says nothing about why the export failed.
+                tail = ((result.stdout or "") + (result.stderr or ""))[-200:]
                 print(
                     f"[fa_agent] warning: ATIF trajectory export exited "
                     f"{result.return_code} (leaderboard static analysis "
@@ -513,10 +516,17 @@ class FaAgent(BaseInstalledAgent):
                     flush=True,
                 )
         except Exception as exc:
+            # The exec-failure exceptions (harbor's non-zero exit error
+            # and friends) usually carry the command's stderr payload —
+            # surface it for the same reason as the tail above.
+            detail = str(exc)
+            exc_stderr = getattr(exc, "stderr", None)
+            if exc_stderr:
+                detail = f"{detail} | stderr: {exc_stderr[-200:]}"
             print(
                 f"[fa_agent] warning: ATIF trajectory export failed "
                 f"(leaderboard static analysis needs agent/trajectory.json): "
-                f"{exc}",
+                f"{detail}",
                 file=sys.stderr,
                 flush=True,
             )

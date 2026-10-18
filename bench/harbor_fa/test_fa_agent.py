@@ -1124,6 +1124,9 @@ class AtifExportTest(unittest.TestCase):
         class _FailedResult:
             return_code = 3
             stdout = "boom"
+            # fa headless writes its diagnostics to stderr (stdout carries
+            # only the ATIF payload) — the warning tail must surface them.
+            stderr = "fatal: session store corrupt"
 
         agent = FakeAgent(launch_delay=0.05)
         real_exec = agent.exec_as_agent
@@ -1145,6 +1148,26 @@ class AtifExportTest(unittest.TestCase):
                 )
         self.assertEqual(agent._run_outcome, "completed")
         self.assertIn("ATIF trajectory export exited 3", err.getvalue())
+        self.assertIn("fatal: session store corrupt", err.getvalue())
+
+    def test_export_failure_warning_includes_exception_stderr(self):
+        # The except branch: when the raised failure carries a stderr
+        # payload (harbor's exec errors do), the warning must surface it —
+        # a bare exception string leaves the shard log blind to why the
+        # leaderboard-critical trajectory is missing.
+        self._knob_env()
+        exc = RuntimeError("Command failed (exit 1)")
+        exc.stderr = "stack trace from fa"
+        agent = FakeAgent(launch_delay=0.05, export_error=exc)
+        err = io.StringIO()
+        with mock.patch.object(fa_agent, "_POLL_SEC", 0.05):
+            with contextlib.redirect_stderr(err):
+                asyncio.run(
+                    agent.run("task", environment=object(), context=None)
+                )
+        self.assertEqual(agent._run_outcome, "completed")
+        self.assertIn("ATIF trajectory export failed", err.getvalue())
+        self.assertIn("stack trace from fa", err.getvalue())
 
     def test_populate_context_marks_atif_trajectory_presence(self):
         import tempfile

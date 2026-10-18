@@ -1004,11 +1004,20 @@ class SubmissionPreflightWiringTest(unittest.TestCase):
         self.assertIn('SUBMISSION: ${{ inputs.submission }}', gate)
         self.assertIn("agent/trajectory.json", gate)
         self.assertIn("exit 1", gate)
+        # The gate carries an id so the hub-upload step can key on its
+        # outcome (a submission-mode gate failure must skip the upload).
+        self.assertIn("id: atif_gate", gate)
 
     def test_hub_upload_stays_secret_gated_and_public(self):
         upload = self.bench_job.split("Upload to Harbor Hub", 1)[1]
         upload = upload.split("- name:", 1)[0]
+        # gh-1681 rework: in submission mode a failed ATIF gate must skip
+        # the upload (the job is un-submittable — no hub quota burn); in
+        # normal runs the warn-only gate never blocks the best-effort
+        # upload.
         self.assertIn("if: always() && env.HARBOR_API_KEY != ''", upload)
+        self.assertIn("steps.atif_gate.outcome == 'success'", upload)
+        self.assertIn("inputs.submission != true", upload)
         self.assertIn("harbor upload", upload)
         self.assertIn("--public", upload)
 
