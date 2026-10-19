@@ -200,6 +200,87 @@ Future<_MessageCapHealStep> _messageCapHealTurn(
   );
 }
 
+/// One iteration of the response-stream retry loop's outcome: either the
+/// turn to RETURN to the caller, or an instruction to RETRY the loop
+/// with the (possibly adopted) context. The self-heal repairs (gh-1680
+/// cap heal, issue #85 pairing heal) and the over-window guard both
+/// resolve to this shape, so the loop body stays flat (the CRAP ratchet
+/// reads complexity per method — the branching lives in the helpers).
+sealed class _AttemptResult {
+  const _AttemptResult();
+}
+
+/// The terminal turn of the attempt: return it from the loop.
+final class _AttemptReturn extends _AttemptResult {
+  const _AttemptReturn(this.turn);
+
+  final (AssistantMessage, Context) turn;
+}
+
+/// Retry the loop once: adopt [nextContext], updating the cross-attempt
+/// one-shot flags that a heal consumed.
+final class _AttemptRetry extends _AttemptResult {
+  const _AttemptRetry(this.nextContext, {this.reliefUsed, this.pairingHealed});
+
+  final Context nextContext;
+
+  /// The over-window guard's relief flag when the retry came from the
+  /// guard; null = unchanged.
+  final bool? reliefUsed;
+
+  /// The issue #85 pairing heal's one-shot flag when the retry came from
+  /// the pairing self-heal; null = unchanged.
+  final bool? pairingHealed;
+}
+
+/// The finished-turn self-heals of one streamed attempt: the gh-1680
+/// message-cap heal runs FIRST (it may replace the context via the
+/// host's relief pass), then the issue #85 pairing heal. Returns null
+/// when no heal applied (the caller surfaces the finished turn), else
+/// the retry/terminal instruction to act on. Extracted from
+/// [_streamAttempt] so the branch handling does not ride in the loop.
+Future<_AttemptResult?> _finishedTurnResult(
+  AssistantMessage finished,
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+  CancelToken? cancelToken,
+  _CapHealState capState,
+  bool pairingHealed,
+  int refusedCount,
+) async {
+  // gh-1680 self-healing retry: a message-cap 400 means the message
+  // ARRAY passed the model's per-request cap — learn, compact +
+  // coalesce, retry ONCE (a second refusal is terminal; see the part).
+  final capHeal = await capState.healIfNeeded(
+    finished,
+    context,
+    config,
+    emit,
+    cancelToken,
+    refusedCount,
+  );
+  if (capHeal.terminal != null) return _AttemptReturn(capHeal.terminal!);
+  if (capHeal.ran) {
+    return _AttemptRetry(capHeal.context ?? context);
+  }
+  // Self-healing retry (issue #85): a provider pairing 400 means the
+  // context was corrupted in a shape this repairer missed. Log the
+  // detection, re-run the repair over the rebuilt request, retry ONCE —
+  // a wedged session recovers here instead of never. A second failure
+  // surfaces normally (no infinite loop).
+  if (_needsPairingHeal(pairingHealed, finished)) {
+    await emit(
+      ToolPairingRepairEvent(
+        report: const ToolPairingRepairReport(),
+        providerError: finished.errorMessage,
+      ),
+    );
+    return _AttemptRetry(context, pairingHealed: true);
+  }
+  return null;
+}
+
 /// gh-1680: applies the armed cap coalesce to the request payload. Merges
 /// whole tool-call/result pairs and old turns older than the newest user
 /// message into compact carriers so the retried request rides fewer
