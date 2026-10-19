@@ -1271,17 +1271,31 @@ extension on AgentCli {
     _activeCustomName = entryName;
   }
 
-  /// The `/provider chatgpt oauth [headless] [--no-browser]` branch:
-  /// authenticates the user with their ChatGPT account via PKCE (the Codex
-  /// CLI client id) and stores the resulting OAuth credentials — access +
-  /// refresh tokens as one JSON blob in the account's own secure-store
-  /// slot. Returns true when the command targeted the OAuth flow.
+  /// The `/provider chatgpt oauth [headless] [--no-browser]` and
+  /// `/provider chatgpt import [path]` branches: OAuth authenticates the
+  /// user with their ChatGPT account via PKCE (the Codex CLI client id);
+  /// import reads an existing `codex login` session file (`~/.codex/
+  /// auth.json` by default) and lands it in the same secure-store slot —
+  /// no browser round-trip (issue #1704). Both store access + refresh
+  /// tokens as one JSON blob in the account's own secure-store slot.
+  /// Returns true when the command targeted either flow.
   /// [noBrowser] skips the interactive flow's automatic browser launch —
   /// the URL prints prominently instead (gh-1450).
   bool _startChatGptOAuthArg(List<String> args) {
     if (args.first != 'chatgpt') return false;
-    if (args.length < 2 || args[1] != 'oauth') {
+    if (args.length < 2 || (args[1] != 'oauth' && args[1] != 'import')) {
       return false;
+    }
+    if (args[1] == 'import') {
+      final operands = args.skip(2).toList();
+      if (operands.length > 1 || operands.any((o) => o.startsWith('-'))) {
+        io.writeln('usage: /provider chatgpt import [path]');
+        return true;
+      }
+      unawaited(
+        _handleChatGptImportCommand(operands.isEmpty ? null : operands.first),
+      );
+      return true;
     }
     final options = args.skip(2).toList();
     final headless = options.contains('headless');
@@ -1309,6 +1323,60 @@ extension on AgentCli {
       _providerFlowActive = false;
       _promptLineBuffer.clear();
     }
+  }
+
+  /// `/provider chatgpt import [path]`: reads a `codex login` session file
+  /// (default `~/.codex/auth.json`) and applies it through the SAME
+  /// storage/registry/switch path the OAuth flow uses — the imported blob
+  /// lands in the entry's own secure-store slot and the session switches
+  /// to the Codex backend at once (issue #1704).
+  Future<void> _handleChatGptImportCommand(String? pathOption) async {
+    if (_providerFlowActive) return;
+    _providerFlowActive = true;
+    try {
+      final home = config.homeDir ?? config.env.cwd;
+      final path = _expandHomePath(
+        pathOption ?? '$home/.codex/auth.json',
+        home,
+      );
+      final String body;
+      switch (await config.env.readTextFile(path)) {
+        case Ok(:final value):
+          body = value;
+        case Err(:final error) when error.code == FileErrorCode.notFound:
+          io.writeln(
+            'codex CLI session not found at $path — run `codex login` '
+            'first (or pass the path: /provider chatgpt import <path>)',
+          );
+          return;
+        case Err(:final error):
+          io.writeln('cannot read $path: $error');
+          return;
+      }
+      final credentials = parseCodexAuthJson(body);
+      if (credentials == null) {
+        io.writeln(
+          '$path is not a codex auth.json session (expected '
+          '{"tokens": {access_token, refresh_token, id_token, ...}})',
+        );
+        return;
+      }
+      io.writeln('imported codex CLI session from $path');
+      await _applyChatGptOAuthCredentials(
+        providerCatalog['chatgpt']!,
+        credentials,
+      );
+    } finally {
+      _providerFlowActive = false;
+      _promptLineBuffer.clear();
+    }
+  }
+
+  /// Expands a leading `~` to [home] (the import path operand).
+  String _expandHomePath(String path, String home) {
+    if (path == '~') return home;
+    if (path.startsWith('~/')) return '$home${path.substring(1)}';
+    return path;
   }
 
   Future<void> _runChatGptOAuthCommand({

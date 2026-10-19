@@ -100,6 +100,7 @@ final class CliArgs extends CliArgsResult {
     this.redact,
     this.trajectory,
     this.config,
+    this.providerCmd,
     this.ext,
     this.jsr,
     this.sessionList,
@@ -232,6 +233,11 @@ final class CliArgs extends CliArgsResult {
   /// prompt run.
   final ConfigCliCommand? config;
 
+  /// The `fa provider` subcommand (issue #1704: `provider export NAME
+  /// [--check]`), when the invocation routed to the headless credential
+  /// exporter instead of a prompt run.
+  final ProviderCliCommand? providerCmd;
+
   /// The `fa ext <verb>` subcommand, when the invocation routed to the JS
   /// extension manager instead of a prompt run.
   final ExtCliCommand? ext;
@@ -332,6 +338,7 @@ final class CliArgs extends CliArgsResult {
 const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
   'trajectory': _parseTrajectoryArgs,
   'config': _parseConfigArgs,
+  'provider': _parseProviderArgs,
   'ext': _parseExtArgs,
   'jsr': _parseJsrArgs,
   'session': _parseSessionArgs,
@@ -811,6 +818,79 @@ void _validateConfigFlagOwnership(String verb, _ConfigOperands operands) {
       '--project/--global only apply to set\n$_configUsage',
     );
   }
+}
+
+/// The `fa provider` subcommand (issue #1704): headless ChatGPT/Codex
+/// credential export. `export <name>` resolves the saved login's OAuth
+/// blob from its secure-store slot, refreshes it when stale, and prints
+/// the shell `export` lines external tools eval; `--check` reports
+/// credential health and prints no secrets.
+final class ProviderCliCommand {
+  /// Creates a [ProviderCliCommand].
+  const ProviderCliCommand({required this.verb, this.name, this.check = false});
+
+  /// One of [providerVerbs].
+  final String verb;
+
+  /// The saved provider entry name (the export target).
+  final String? name;
+
+  /// `--check`: report credential health, never a secret.
+  final bool check;
+}
+
+/// The verbs accepted by `fa provider`.
+const providerVerbs = {'export'};
+
+const _providerUsage =
+    'usage: fa provider export <name> [--check]\n'
+    '       export the saved ChatGPT/Codex login <name> as shell export\n'
+    '       lines (OPENAI_API_KEY + OPENAI_BASE_URL); --check reports\n'
+    '       credential health without printing any secret';
+
+/// Parses the `provider` subcommand operands. Unknown verbs and flags are
+/// usage errors so a typo never becomes a prompt sent to a model.
+CliArgsResult _parseProviderArgs(List<String> args) {
+  if (args.contains('--help') || args.contains('-h')) {
+    return const CliArgsHelp();
+  }
+  if (args.isEmpty) {
+    throw CliArgsException(_providerUsage);
+  }
+  final verb = args.first;
+  if (!providerVerbs.contains(verb)) {
+    throw CliArgsException(
+      'unknown provider verb: $verb '
+      '(expected one of ${providerVerbs.join('|')})\n$_providerUsage',
+    );
+  }
+  final operands = args.skip(1).toList();
+  var check = false;
+  final positionals = <String>[];
+  for (final arg in operands) {
+    switch (arg) {
+      case '--check':
+        check = true;
+      default:
+        if (arg.startsWith('-')) {
+          throw CliArgsException('unknown argument: $arg\n$_providerUsage');
+        }
+        positionals.add(arg);
+    }
+  }
+  if (positionals.length != 1) {
+    throw CliArgsException(
+      'fa provider export requires exactly one provider name\n'
+      '$_providerUsage',
+    );
+  }
+  return CliArgs(
+    providerCmd: ProviderCliCommand(
+      verb: verb,
+      name: positionals.single,
+      check: check,
+    ),
+  );
 }
 
 /// The `fa ext` subcommand: headless management of JS extensions.
