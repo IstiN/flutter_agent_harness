@@ -71,6 +71,7 @@ final class ModelCapabilityOverride {
     this.maxTokens,
     this.thinkingLevel,
     this.omitMaxOutputTokens,
+    this.messageCap,
   });
 
   /// Parses one `models.overrides.<provider>.<modelId>` entry, strictly:
@@ -91,6 +92,7 @@ final class ModelCapabilityOverride {
       'maxTokens',
       'thinkingLevel',
       'omitMaxOutputTokens',
+      'messageCap',
     ];
     for (final key in node.keys) {
       if (!knownFields.contains(key)) {
@@ -149,6 +151,7 @@ final class ModelCapabilityOverride {
           '$where.omitMaxOutputTokens must be a boolean, got: $other',
         ),
       },
+      messageCap: boundedInt('messageCap', 2, 'the message-cap margin'),
     );
   }
 
@@ -165,12 +168,21 @@ final class ModelCapabilityOverride {
   /// omp/codex compat lesson): the OpenAI-completions adapter omits it.
   final bool? omitMaxOutputTokens;
 
+  /// Pinned per-request message cap for gh-1680 (PR #1695): the
+  /// second-tier override — when present it wins over the learned cap
+  /// (see `ModelCapsStore.learnedCapOr`), so a user who KNOWS their
+  /// gateway's limit never has to burn one refusal learning it. Must be
+  /// at least 2: a request is system + user, and the pre-emptive margin
+  /// needs headroom below the cap.
+  final int? messageCap;
+
   /// True when the entry pins nothing (the config file then omits it).
   bool get isEmpty =>
       contextWindow == null &&
       maxTokens == null &&
       thinkingLevel == null &&
-      omitMaxOutputTokens == null;
+      omitMaxOutputTokens == null &&
+      messageCap == null;
 
   /// Serializes to yaml lines at [indent] (round-trips with [fromYaml]).
   void writeYaml(StringBuffer buffer, String indent) {
@@ -183,6 +195,9 @@ final class ModelCapabilityOverride {
     }
     if (omitMaxOutputTokens != null) {
       buffer.write('${indent}omitMaxOutputTokens: $omitMaxOutputTokens\n');
+    }
+    if (messageCap != null) {
+      buffer.write('${indent}messageCap: $messageCap\n');
     }
   }
 }

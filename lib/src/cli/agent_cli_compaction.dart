@@ -371,7 +371,24 @@ extension AgentCliCompactionRun on AgentCli {
     // one-shot resume budget was burned on a transcript that still could
     // not be sent.
     final after = _liveRequestTokens();
-    return after <= _effectiveContextWindow;
+    // PR #1695: success needs BOTH dimensions — a pass that only shrinks
+    // tokens while the message count still trips the cap gate is not a
+    // success; the caller retries relief and the funnel reports
+    // exhaustion instead of silently re-arming a pass every turn.
+    return after <= _effectiveContextWindow && !overCap;
+  }
+
+  /// The gh-1680 message-count gate shared by the loop and boot-cap
+  /// passes: the known-cap pre-emptive trigger, or the one-shot E1 pass a
+  /// cap-unknown refusal armed (consumed here so it fires exactly once
+  /// per refusal).
+  bool _messageCapGateReached() {
+    final model = _agent.state.model;
+    return messageCapTriggerReached(
+          _agent.state.messages.length,
+          _modelCaps.learnedCapFor(model),
+        ) ||
+        _modelCaps.takePremptivePass(model.provider, model.id);
   }
 
   /// The shared request-size estimate for compaction decisions (see
@@ -408,11 +425,10 @@ extension AgentCliCompactionRun on AgentCli {
     final tokens = _liveRequestTokens();
     // gh-1680 AC4: the message-count trigger gates the boot cap too — a
     // resumed session riding at `cap − margin` compacts before its first
-    // request instead of re-learning the refusal the hard way.
-    final overCap = messageCapTriggerReached(
-      _agent.state.messages.length,
-      _modelCaps.learnedCapFor(_agent.state.model),
-    );
+    // request instead of re-learning the refusal the hard way. The gate
+    // also consumes the one-shot E1 pass a cap-unknown refusal armed
+    // (PR #1695).
+    final overCap = _messageCapGateReached();
     if (!shouldCompact(
           tokens,
           _effectiveContextWindow,
