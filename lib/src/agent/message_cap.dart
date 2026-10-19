@@ -269,29 +269,50 @@ List<Message> coalesceMessagesForCap(
   // region is [0, newestUserIndex). With no user message at all (a pure
   // tool-call transcript), the LAST message is kept instead — a request
   // must never end up empty (E3).
-  var newestUserIndex = -1;
-  for (var i = messages.length - 1; i >= 0; i--) {
-    if (messages[i] is UserMessage) {
-      newestUserIndex = i;
-      break;
-    }
-  }
-  final regionEnd = newestUserIndex >= 0
-      ? newestUserIndex
-      : messages.length - 1;
+  final regionEnd = _coalesceRegionEnd(messages);
   if (regionEnd <= 0) return messages; // Nothing droppable (E2/E3).
+  final grouped = _groupCoalesceUnits(messages, regionEnd);
+  // Over target with a single carrier left: nothing more is droppable
+  // without touching the newest turn (E2/E3) — the wire gets the smallest
+  // pairing-safe shape we have.
+  final merged = _mergeCarriersToTarget(
+    grouped.units,
+    grouped.verbatim,
+    messages,
+    regionEnd,
+    targetMessageCount,
+  );
+  // Pairing belt-and-suspenders: the kept tail may carry pre-broken
+  // pairing in the input; the request must never propagate it.
+  return repairToolPairing(merged).messages;
+}
 
-  // Group the droppable region into pairing-safe units: a tool group is an
-  // assistant message carrying tool calls plus the ToolResultMessages
-  // answering them; every other message is its own unit.
+/// The cut index for [coalesceMessagesForCap]: the newest user message's
+/// index, or the last message's index when no user message exists (E3).
+int _coalesceRegionEnd(List<Message> messages) {
+  for (var i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] is UserMessage) return i;
+  }
+  return messages.length - 1;
+}
+
+/// Groups the droppable region [0, [regionEnd]) into pairing-safe units:
+/// a tool group is an assistant message carrying tool calls plus the
+/// ToolResultMessages answering them; every other message is its own
+/// unit.
+///
+/// PR #1695: a tool group split by a steering user message (call and its
+/// result on opposite sides of an interleave/cut) never merges — the
+/// call, the results already paired with it, and the displaced results
+/// found inside the region ride the payload VERBATIM (in [verbatim]),
+/// and the pairing repair hoists whatever still floats back next to the
+/// call. Merging a half-group would orphan the far-side result (repair
+/// drops orphans — the tool content silently disappears).
+({List<List<Message>> units, List<Message> verbatim}) _groupCoalesceUnits(
+  List<Message> messages,
+  int regionEnd,
+) {
   final units = <List<Message>>[];
-  // PR #1695: a tool group split by a steering user message (call and its
-  // result on opposite sides of an interleave/cut) never merges — the
-  // call, the results already paired with it, and the displaced results
-  // found inside the region ride the payload VERBATIM, and the pairing
-  // repair hoists whatever still floats back next to the call. Merging a
-  // half-group would orphan the far-side result (repair drops orphans —
-  // the tool content silently disappears).
   final verbatim = <Message>[];
   final consumed = <int>{};
   var i = 0;
@@ -301,51 +322,83 @@ List<Message> coalesceMessagesForCap(
       continue;
     }
     final message = messages[i];
-    final calls = message is AssistantMessage
-        ? message.content.whereType<ToolCall>().toList()
-        : const <ToolCall>[];
-    if (calls.isEmpty) {
+    final isToolCall =
+        message is AssistantMessage &&
+        message.content.whereType<ToolCall>().isNotEmpty;
+    if (!isToolCall) {
       units.add([message]);
       i++;
       continue;
     }
-    final answered = calls.map((call) => call.id).toSet();
-    final group = <Message>[message];
-    var j = i + 1;
-    while (j < messages.length && answered.isNotEmpty) {
-      final next = messages[j];
-      if (next is ToolResultMessage && answered.remove(next.toolCallId)) {
-        group.add(next);
-        j++;
-      } else {
-        break;
-      }
-    }
-    if (answered.isNotEmpty) {
-      // The group hit a non-matching message before every call was
-      // answered — some result answers from beyond the cut (or beyond a
-      // mid-region interleave). Keep the whole group verbatim and pull
-      // the displaced results out of the droppable region so no carrier
-      // can swallow them; results beyond the cut stay in the kept tail
-      // for the pairing repair to hoist back.
-      verbatim.addAll(group);
-      consumed.addAll([for (var k = i + 1; k < j; k++) k]);
-      verbatim.addAll(
-        _displacedResults(messages, answered, j, regionEnd, consumed),
-      );
-      i = j;
-      continue;
-    }
-    units.add(group);
-    i = j;
+    final group = _collectToolGroup(messages, i, regionEnd, consumed, verbatim);
+    i = group.nextIndex;
+    final merged = group.unit;
+    if (merged != null) units.add(merged);
   }
+  return (units: units, verbatim: verbatim);
+}
 
-  // Merge each unit into one user-role carrier; carriers still over the
-  // target then merge together (oldest first) until one remains or the
-  // count fits.
+/// Collects ONE tool-call group starting at [start] (an assistant message
+/// carrying tool calls): the message plus the ToolResultMessages that
+/// directly answer its calls. When every call is answered inside the
+/// scan, the whole group is one mergeable unit; when the scan hits a
+/// non-matching message first (a steering interleave — some result
+/// answers from beyond the cut), the group rides [verbatim] instead and
+/// the displaced in-region results are hoisted into [verbatim] too (see
+/// [_displacedResults]).
+({int nextIndex, List<Message>? unit}) _collectToolGroup(
+  List<Message> messages,
+  int start,
+  int regionEnd,
+  Set<int> consumed,
+  List<Message> verbatim,
+) {
+  final message = messages[start] as AssistantMessage;
+  final answered = message.content
+      .whereType<ToolCall>()
+      .map((call) => call.id)
+      .toSet();
+  final group = <Message>[message];
+  var j = start + 1;
+  while (j < messages.length && answered.isNotEmpty) {
+    final next = messages[j];
+    if (next is ToolResultMessage && answered.remove(next.toolCallId)) {
+      group.add(next);
+      j++;
+    } else {
+      break;
+    }
+  }
+  if (answered.isNotEmpty) {
+    // The group hit a non-matching message before every call was
+    // answered — some result answers from beyond the cut (or beyond a
+    // mid-region interleave). Keep the whole group verbatim and pull
+    // the displaced results out of the droppable region so no carrier
+    // can swallow them; results beyond the cut stay in the kept tail
+    // for the pairing repair to hoist back.
+    verbatim.addAll(group);
+    consumed.addAll([for (var k = start + 1; k < j; k++) k]);
+    verbatim.addAll(
+      _displacedResults(messages, answered, j, regionEnd, consumed),
+    );
+    return (nextIndex: j, unit: null);
+  }
+  return (nextIndex: j, unit: group);
+}
+
+/// Merges each unit into one user-role carrier; carriers still over the
+/// [target] then merge together (oldest first) until one remains or the
+/// count fits.
+List<Message> _mergeCarriersToTarget(
+  List<List<Message>> units,
+  List<Message> verbatim,
+  List<Message> messages,
+  int regionEnd,
+  int target,
+) {
   final carriers = [for (final unit in units) _carrierOf(unit)];
   var merged = [...verbatim, ...carriers, ...messages.sublist(regionEnd)];
-  while (merged.length > targetMessageCount && carriers.length > 1) {
+  while (merged.length > target && carriers.length > 1) {
     final first = carriers.removeAt(0);
     final second = carriers.removeAt(0);
     carriers.insert(
@@ -354,12 +407,7 @@ List<Message> coalesceMessagesForCap(
     );
     merged = [...verbatim, ...carriers, ...messages.sublist(regionEnd)];
   }
-  // Over target with a single carrier left: nothing more is droppable
-  // without touching the newest turn (E2/E3) — the wire gets the smallest
-  // pairing-safe shape we have.
-  // Pairing belt-and-suspenders: the kept tail may carry pre-broken
-  // pairing in the input; the request must never propagate it.
-  return repairToolPairing(merged).messages;
+  return merged;
 }
 
 /// PR #1695: the results answering [unanswered] (a split tool group's
