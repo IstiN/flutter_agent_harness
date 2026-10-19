@@ -329,16 +329,10 @@ List<Message> coalesceMessagesForCap(
       // can swallow them; results beyond the cut stay in the kept tail
       // for the pairing repair to hoist back.
       verbatim.addAll(group);
-      consumed.addAll(
-        [for (var k = i + 1; k < j; k++) k],
+      consumed.addAll([for (var k = i + 1; k < j; k++) k]);
+      verbatim.addAll(
+        _displacedResults(messages, answered, j, regionEnd, consumed),
       );
-      for (var k = j; k < regionEnd && answered.isNotEmpty; k++) {
-        final next = messages[k];
-        if (next is ToolResultMessage && answered.remove(next.toolCallId)) {
-          verbatim.add(next);
-          consumed.add(k);
-        }
-      }
       i = j;
       continue;
     }
@@ -366,6 +360,29 @@ List<Message> coalesceMessagesForCap(
   // Pairing belt-and-suspenders: the kept tail may carry pre-broken
   // pairing in the input; the request must never propagate it.
   return repairToolPairing(merged).messages;
+}
+
+/// PR #1695: the results answering [unanswered] (a split tool group's
+/// still-open call ids) found inside the droppable region
+/// [[from], [regionEnd)) — hoisted out so no carrier can merge them away
+/// from their verbatim call. Matched indexes land in [consumed] so the
+/// grouping loop skips them.
+List<Message> _displacedResults(
+  List<Message> messages,
+  Set<String> unanswered,
+  int from,
+  int regionEnd,
+  Set<int> consumed,
+) {
+  final found = <Message>[];
+  for (var k = from; k < regionEnd && unanswered.isNotEmpty; k++) {
+    final next = messages[k];
+    if (next is ToolResultMessage && unanswered.remove(next.toolCallId)) {
+      found.add(next);
+      consumed.add(k);
+    }
+  }
+  return found;
 }
 
 /// The compact user-role carrier for one coalesced unit.

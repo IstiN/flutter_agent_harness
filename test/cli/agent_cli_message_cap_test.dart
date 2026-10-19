@@ -17,18 +17,20 @@ import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
+const _model = Model(
+  id: 'm',
+  api: 'test-api',
+  provider: 'fake',
+  baseUrl: 'https://example.test',
+  contextWindow: 100000,
+  maxTokens: 4096,
+);
+
 void main() {
   group('PR #1695: cap-unknown refusals arm one pre-emptive pass (E1)', () {
     test('the pass is pending after a cap-unknown refusal', () {
       final store = ModelCapsStore();
-      final model = const Model(
-        id: 'm',
-        api: 'test-api',
-        provider: 'fake',
-        baseUrl: 'https://example.test',
-        contextWindow: 100000,
-        maxTokens: 4096,
-      );
+      const model = _model;
       expect(store.isPremptivePassPending('fake', 'm'), isFalse);
       store.learnFromRefusal(model, const MessageCapRefusal());
       expect(store.isPremptivePassPending('fake', 'm'), isTrue);
@@ -36,14 +38,7 @@ void main() {
 
     test('the pass is one-shot — a second gate check finds nothing', () {
       final store = ModelCapsStore();
-      final model = const Model(
-        id: 'm',
-        api: 'test-api',
-        provider: 'fake',
-        baseUrl: 'https://example.test',
-        contextWindow: 100000,
-        maxTokens: 4096,
-      );
+      const model = _model;
       store.learnFromRefusal(model, const MessageCapRefusal());
       expect(store.takePremptivePass('fake', 'm'), isTrue);
       expect(store.isPremptivePassPending('fake', 'm'), isFalse);
@@ -52,14 +47,7 @@ void main() {
 
     test('a new cap-unknown refusal re-arms the pass', () {
       final store = ModelCapsStore();
-      final model = const Model(
-        id: 'm',
-        api: 'test-api',
-        provider: 'fake',
-        baseUrl: 'https://example.test',
-        contextWindow: 100000,
-        maxTokens: 4096,
-      );
+      const model = _model;
       store.learnFromRefusal(model, const MessageCapRefusal());
       store.takePremptivePass('fake', 'm');
       store.learnFromRefusal(model, const MessageCapRefusal());
@@ -68,14 +56,7 @@ void main() {
 
     test('learning a numeric cap disarms the pending pass', () {
       final store = ModelCapsStore();
-      final model = const Model(
-        id: 'm',
-        api: 'test-api',
-        provider: 'fake',
-        baseUrl: 'https://example.test',
-        contextWindow: 100000,
-        maxTokens: 4096,
-      );
+      const model = _model;
       store.learnFromRefusal(model, const MessageCapRefusal());
       store.learnFromRefusal(model, const MessageCapRefusal(maxMessages: 25));
       expect(store.takePremptivePass('fake', 'm'), isFalse);
@@ -85,14 +66,7 @@ void main() {
       final dir = Directory.systemTemp.createTempSync('fah-msgcap-e1');
       addTearDown(() => dir.deleteSync(recursive: true));
       final store = ModelCapsStore();
-      final model = const Model(
-        id: 'm',
-        api: 'test-api',
-        provider: 'fake',
-        baseUrl: 'https://example.test',
-        contextWindow: 100000,
-        maxTokens: 4096,
-      );
+      const model = _model;
       store.learnFromRefusal(model, const MessageCapRefusal());
       final path = '${dir.path}/model_caps.json';
       store.persist(path);
@@ -126,18 +100,15 @@ void main() {
 
     test('a messageCap below the margin floor is rejected', () {
       expect(
-        () => ModelCapabilityOverride.fromYaml('fake', 'm', {
-          'messageCap': 1,
-        }),
+        () => ModelCapabilityOverride.fromYaml('fake', 'm', {'messageCap': 1}),
         throwsA(isA<ConfigException>()),
       );
     });
 
     test('unknown override fields stay rejected (pin is no exception)', () {
       expect(
-        () => ModelCapabilityOverride.fromYaml('fake', 'm', {
-          'message_cap': 30,
-        }),
+        () =>
+            ModelCapabilityOverride.fromYaml('fake', 'm', {'message_cap': 30}),
         throwsA(isA<ConfigException>()),
       );
     });
@@ -149,21 +120,17 @@ void main() {
 
     test('the CLI policy resolves the pin over the learned record', () {
       final store = ModelCapsStore();
-      final model = const Model(
-        id: 'm',
-        api: 'test-api',
-        provider: 'fake',
-        baseUrl: 'https://example.test',
-        contextWindow: 100000,
-        maxTokens: 4096,
-      );
+      const model = _model;
       // A learned cap of 8 exists; the pin of 30 must win.
       store.learnFromRefusal(model, const MessageCapRefusal(maxMessages: 8));
       const pinned = ModelCapabilityOverride(messageCap: 30);
       expect(ModelCapsStore.learnedCapOr(store.recordFor('fake', 'm'), 30), 30);
       expect(pinned.messageCap, 30);
       // Unpinned: the learned record stands.
-      expect(ModelCapsStore.learnedCapOr(store.recordFor('fake', 'm'), null), 8);
+      expect(
+        ModelCapsStore.learnedCapOr(store.recordFor('fake', 'm'), null),
+        8,
+      );
     });
   });
 }
