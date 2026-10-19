@@ -202,13 +202,10 @@ List<ChainEntry> buildProviderQueueChain(
   final factory = streamFactory ?? providerStreamFunction;
   final chain = <ChainEntry>[];
   for (final entry in entries) {
-    if (entry.refreshTokenEnv != null &&
-        entry.providerType != 'chatgpt-codex') {
-      throw ConfigException(
-        'queue entry ${entry.label}: refreshTokenEnv applies only to '
-        'chatgpt-codex entries',
-      );
-    }
+    final (refreshName, refreshValue) = _chatGptRefreshCredential(
+      entry,
+      secrets,
+    );
     final keyEnv =
         entry.apiKeyEnv ??
         (entry.providerType == 'chatgpt-codex'
@@ -245,23 +242,9 @@ List<ChainEntry> buildProviderQueueChain(
     for (final warning in binding.warnings) {
       warnings?.add('warning: binding — ${entry.label}: $warning');
     }
-    final refreshEnv = entry.refreshTokenEnv;
-    final (refreshName, refreshValue) = refreshEnv == null
-        ? ('', '')
-        : (refreshEnv, secrets[refreshEnv] ?? '');
     final stack = collectKeyStack(secrets, keyEnv);
     if (stack.isEmpty && refreshValue.isEmpty) {
-      skipped_.add(
-        refreshName.isNotEmpty
-            ? '${entry.label} (missing refresh token: set $refreshName)'
-            : keyEnv == entry.apiKeyEnv
-            ? '${entry.label} (missing API key: set $keyEnv)'
-            // A chatgpt-codex entry that named no apiKeyEnv says what the
-            // DEFAULT slot needs (what to set / where to log in), not the
-            // synthetic name.
-            : '${entry.label} (no ChatGPT login: set $keyEnv or run '
-                  '`/provider chatgpt oauth`)',
-      );
+      skipped_.add(_queueSkipLine(entry, keyEnv, refreshName));
       continue;
     }
     final spec = catalogProvider(binding.catalogRecord)!;
@@ -310,6 +293,47 @@ List<ChainEntry> buildProviderQueueChain(
     );
   }
   return chain;
+}
+
+/// The `(envName, value)` refresh-token pair a `chatgpt-codex` entry
+/// carries, or `('', '')` when it names no `refreshTokenEnv` (or the env
+/// is unset — an empty value is indistinguishable from absent here; both
+/// mean "no refresh bootstrap"). A `refreshTokenEnv` on a NON-chatgpt
+/// kind is a hard error: the mint path is chatgpt-codex-only (issue
+/// #1704).
+(String, String) _chatGptRefreshCredential(
+  ProviderQueueEntry entry,
+  Map<String, String> secrets,
+) {
+  final refreshEnv = entry.refreshTokenEnv;
+  if (refreshEnv == null) return ('', '');
+  if (entry.providerType != 'chatgpt-codex') {
+    throw ConfigException(
+      'queue entry ${entry.label}: refreshTokenEnv applies only to '
+      'chatgpt-codex entries',
+    );
+  }
+  return (refreshEnv, secrets[refreshEnv] ?? '');
+}
+
+/// The skip line for an entry with no resolvable credential: names the
+/// missing refresh env for a mint entry, the named key env for a plain
+/// entry, and the DEFAULT slot + login path for a chatgpt-codex entry
+/// that named no `apiKeyEnv` (what to set / where to log in) — never the
+/// secret value.
+String _queueSkipLine(
+  ProviderQueueEntry entry,
+  String keyEnv,
+  String refreshName,
+) {
+  if (refreshName.isNotEmpty) {
+    return '${entry.label} (missing refresh token: set $refreshName)';
+  }
+  if (keyEnv == entry.apiKeyEnv) {
+    return '${entry.label} (missing API key: set $keyEnv)';
+  }
+  return '${entry.label} (no ChatGPT login: set $keyEnv or run '
+      '`/provider chatgpt oauth`)';
 }
 
 /// The default refresh-token minter: the real OAuth refresh against

@@ -876,6 +876,24 @@ void main() {
       );
     });
 
+    test('a non-chatgpt entry that names no key is a hard error', () {
+      // The default ChatGPT slot is chatgpt-codex-only: other kinds must
+      // name their key env (the chain has no identity without one).
+      expect(
+        () => buildProviderQueueChain(
+          [_entry('openai-completions', 'm-1', apiKeyEnv: null)],
+          secrets: {'CHATGPT_OAUTH_CREDENTIALS': 'blob'},
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('has no apiKeyEnv'),
+          ),
+        ),
+      );
+    });
+
     test('an apiKeyEnv raw bearer token passes through to the adapter', () {
       // The blob-to-Bearer tolerance lives in the adapter; the chain's
       // contract is passing the value through untouched (UT at the
