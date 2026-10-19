@@ -1487,115 +1487,6 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
   }
 }
 
-/// One attempt of [_streamAssistantResponse]'s retry loop: builds the
-/// request context (pairing repair + armed notes + cap coalesce), runs
-/// the mid-turn over-window guard, streams the response, and applies the
-/// finished-turn self-heals. Returns the turn to surface to the caller,
-/// or a retry instruction for the loop to adopt.
-Future<_AttemptResult> _streamAttempt(
-  Context context,
-  AgentLoopConfig config,
-  AgentEventSink emit,
-  StreamFunction streamFunction,
-  CancelToken? cancelToken, {
-  required String? misuseNote,
-  required _CapHealState capState,
-  required bool reliefUsed,
-  required bool pairingHealed,
-}) async {
-  final (requestContext, repairReport) = await _buildRequestContext(
-    context,
-    config,
-    cancelToken,
-    misuseNote: misuseNote,
-    capCoalesceTarget: capState.coalesceTarget,
-  );
-  // Pairing repairs are always surfaced (issue #85): hosts see exactly
-  // what was dropped/synthesized/renamed before the request went out.
-  if (repairReport.isNotEmpty) {
-    await emit(ToolPairingRepairEvent(report: repairReport));
-  }
-
-  // Mid-turn over-window guard (issue #387): tool outputs can balloon one
-  // turn far past the model window. The cheap window check runs
-  // SYNCHRONOUSLY and only an actual overflow awaits
-  // [_overWindowGuardTurn] — an unconditional await here yields a
-  // microtask on EVERY turn, which reshuffles host event-listener
-  // interleaving downstream (issue #1085 CI: the flutter service's
-  // persist passes lost the final assistant append). Same shape, no
-  // yield on the normal path.
-  final window = effectiveContextWindow(
-    config.model.contextWindow,
-    config.contextWindowCap,
-  );
-  final tokens = estimateRequestTokens(
-    requestContext.messages,
-    systemPrompt: requestContext.systemPrompt,
-    tools: requestContext.tools ?? const [],
-  );
-  if (window > 0 && tokens > window) {
-    final guard = await _overWindowGuardTurn(
-      context,
-      requestContext,
-      config,
-      emit,
-      reliefUsed,
-      cancelToken,
-      window,
-      tokens,
-    );
-    if (guard.terminal != null) return _AttemptReturn(guard.terminal!);
-    if (guard.retried) {
-      return _AttemptRetry(guard.context, reliefUsed: guard.reliefUsed);
-    }
-  }
-
-  // gh-1680: refused payload count, captured BEFORE the stream.
-  final requestMessageCount = requestContext.messages.length;
-
-  await emit(_captureRequest(config, requestContext));
-  final AssistantMessageEventStream response;
-  try {
-    response = streamFunction(
-      config.model,
-      requestContext,
-      cancelToken: cancelToken,
-    );
-  } catch (error) {
-    return _AttemptReturn(
-      await _providerErrorTurn(context, config, emit, error),
-    );
-  }
-
-  final streamed = await _consumeResponseStream(response, context, emit);
-  final finished = streamed.finished;
-  if (finished != null) {
-    final healed = await _finishedTurnResult(
-      finished,
-      context,
-      config,
-      emit,
-      cancelToken,
-      capState,
-      pairingHealed,
-      requestMessageCount,
-    );
-    if (healed != null) return healed;
-    return _AttemptReturn((finished, context));
-  }
-
-  // The provider stream closed without a terminal event (provider bug).
-  return _AttemptReturn((
-    await _finishWithoutStream(
-      context,
-      emit,
-      _streamEndedWithoutTerminal(config, streamed.partial),
-      replaceLast: streamed.addedPartial,
-    ),
-    context,
-  ));
-}
-
 /// The mid-turn over-window guard (issue #387): tool outputs can balloon
 /// one turn far past the model window (a 287k-token live context on a
 /// 200k model was seen in the wild because compaction only runs at turn
@@ -1868,9 +1759,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
     );
   }
   // gh-1680: armed cap repair coalesces the payload; AC7 keeps the transcript untouched.
-  if (capCoalesceTarget != null) {
-    requestContext = applyMessageCapCoalesce(requestContext, capCoalesceTarget);
-  }
+  requestContext = _applyMessageCapCoalesce(requestContext, capCoalesceTarget);
   // gh-1556: an armed session deadline rides every request payload as a
   // trailing `time-left:` line — a standalone user message, so it can
   // never break a call/result run (same seat as the misuse note below).

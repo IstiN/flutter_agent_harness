@@ -1,10 +1,13 @@
 /// The one-shot self-heal repairs of the response stream: the gh-1680
 /// message-cap heal (learn the cap from the provider's refusal, compact +
 /// coalesce, retry once) and the issue #85 pairing heal's detection
-/// helper plus the [ToolPairingRepairEvent] it emits. Split out of
-/// `agent_loop.dart` to keep it under the repo's 2800-line size gate.
-/// Same library (a `part of`), so the helpers keep their access to the
-/// loop's private members.
+/// helper plus the [ToolPairingRepairEvent] it emits. Also hosts the
+/// loop's per-attempt body ([_streamAttempt]) and the retry/terminal
+/// verdict types both heals resolve to ([_AttemptResult]) — splitting
+/// the attempt body out of `_streamAssistantResponse` keeps every unit
+/// under the CRAP ceiling, and this file keeps `agent_loop.dart` under
+/// the repo's 2800-line size gate. Same library (a `part of`), so the
+/// helpers keep their access to the loop's private members.
 part of 'agent_loop.dart';
 
 /// gh-1680: emergency relief for the message-cap self-heal. Called at most
@@ -280,6 +283,125 @@ Future<_AttemptResult?> _finishedTurnResult(
   }
   return null;
 }
+
+/// One attempt of [_streamAssistantResponse]'s retry loop: builds the
+/// request context (pairing repair + armed notes + cap coalesce), runs
+/// the mid-turn over-window guard, streams the response, and applies the
+/// finished-turn self-heals. Returns the turn to surface to the caller,
+/// or a retry instruction for the loop to adopt.
+Future<_AttemptResult> _streamAttempt(
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+  StreamFunction streamFunction,
+  CancelToken? cancelToken, {
+  required String? misuseNote,
+  required _CapHealState capState,
+  required bool reliefUsed,
+  required bool pairingHealed,
+}) async {
+  final (requestContext, repairReport) = await _buildRequestContext(
+    context,
+    config,
+    cancelToken,
+    misuseNote: misuseNote,
+    capCoalesceTarget: capState.coalesceTarget,
+  );
+  // Pairing repairs are always surfaced (issue #85): hosts see exactly
+  // what was dropped/synthesized/renamed before the request went out.
+  if (repairReport.isNotEmpty) {
+    await emit(ToolPairingRepairEvent(report: repairReport));
+  }
+
+  // Mid-turn over-window guard (issue #387): tool outputs can balloon one
+  // turn far past the model window. The cheap window check runs
+  // SYNCHRONOUSLY and only an actual overflow awaits
+  // [_overWindowGuardTurn] — an unconditional await here yields a
+  // microtask on EVERY turn, which reshuffles host event-listener
+  // interleaving downstream (issue #1085 CI: the flutter service's
+  // persist passes lost the final assistant append). Same shape, no
+  // yield on the normal path.
+  final window = effectiveContextWindow(
+    config.model.contextWindow,
+    config.contextWindowCap,
+  );
+  final tokens = estimateRequestTokens(
+    requestContext.messages,
+    systemPrompt: requestContext.systemPrompt,
+    tools: requestContext.tools ?? const [],
+  );
+  if (window > 0 && tokens > window) {
+    final guard = await _overWindowGuardTurn(
+      context,
+      requestContext,
+      config,
+      emit,
+      reliefUsed,
+      cancelToken,
+      window,
+      tokens,
+    );
+    if (guard.terminal != null) return _AttemptReturn(guard.terminal!);
+    if (guard.retried) {
+      return _AttemptRetry(guard.context, reliefUsed: guard.reliefUsed);
+    }
+  }
+
+  // gh-1680: refused payload count, captured BEFORE the stream.
+  final requestMessageCount = requestContext.messages.length;
+
+  await emit(_captureRequest(config, requestContext));
+  final AssistantMessageEventStream response;
+  try {
+    response = streamFunction(
+      config.model,
+      requestContext,
+      cancelToken: cancelToken,
+    );
+  } catch (error) {
+    return _AttemptReturn(
+      await _providerErrorTurn(context, config, emit, error),
+    );
+  }
+
+  final streamed = await _consumeResponseStream(response, context, emit);
+  final finished = streamed.finished;
+  if (finished != null) {
+    final healed = await _finishedTurnResult(
+      finished,
+      context,
+      config,
+      emit,
+      cancelToken,
+      capState,
+      pairingHealed,
+      requestMessageCount,
+    );
+    if (healed != null) return healed;
+    return _AttemptReturn((finished, context));
+  }
+
+  // The provider stream closed without a terminal event (provider bug).
+  return _AttemptReturn((
+    await _finishWithoutStream(
+      context,
+      emit,
+      _streamEndedWithoutTerminal(config, streamed.partial),
+      replaceLast: streamed.addedPartial,
+    ),
+    context,
+  ));
+}
+
+/// gh-1680: applies the armed cap coalesce to the request payload, when a
+/// target is armed; [target] null = nothing armed, the context rides
+/// verbatim. The null check lives here (not at the call site in
+/// `_buildRequestContext`) so the request-builder's branch count stays
+/// under the CRAP ceiling.
+Context _applyMessageCapCoalesce(Context requestContext, int? target) =>
+    target == null
+    ? requestContext
+    : applyMessageCapCoalesce(requestContext, target);
 
 /// gh-1680: applies the armed cap coalesce to the request payload. Merges
 /// whole tool-call/result pairs and old turns older than the newest user
