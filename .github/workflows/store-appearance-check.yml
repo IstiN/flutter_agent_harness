@@ -82,6 +82,8 @@ jobs:
       STORE_APPEARANCE_HORIZON_MINUTES: ${{ inputs.horizon_minutes || '120' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-tags: true
 
       - name: Check all stores (read-only)
         if: inputs.stores == '' || inputs.stores == 'all'

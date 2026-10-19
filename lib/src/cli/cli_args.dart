@@ -428,6 +428,8 @@ final class TrajectoryCliCommand {
     this.positionals = const [],
     this.json = false,
     this.at,
+    this.format = 'atif',
+    this.output,
   });
 
   /// One of [trajectoryVerbs].
@@ -439,12 +441,20 @@ final class TrajectoryCliCommand {
   /// `--json`: one compact JSON record per line.
   final bool json;
 
+  /// `--format` (export only): the export format — 'atif' is the only
+  /// supported value today (gh-1681 Gap 2).
+  final String format;
+
+  /// `--output <path>` (export only): where the export is written;
+  /// stdout when null.
+  final String? output;
+
   /// `--at N` (view only): the snapshot as it stood at record N.
   final int? at;
 }
 
 /// The verbs accepted by `fa trajectory`.
-const trajectoryVerbs = {'view', 'tail', 'cost', 'inspect'};
+const trajectoryVerbs = {'view', 'tail', 'cost', 'inspect', 'export'};
 
 /// Parses the `trajectory` subcommand operands (everything after the
 /// `trajectory` word). Unknown verbs and flags are usage errors so a typo
@@ -455,19 +465,27 @@ CliArgsResult _parseTrajectoryArgs(List<String> args) {
   }
   if (args.isEmpty) {
     throw const CliArgsException(
-      'usage: fa trajectory <view|tail|cost|inspect> [sessionId] '
-      '[--json] [--at N]',
+      'usage: fa trajectory <view|tail|cost|inspect|export> [sessionId] '
+      '[--json] [--at N] [--format atif] [--output path]',
     );
   }
   final verb = args.first;
   if (!trajectoryVerbs.contains(verb)) {
     throw CliArgsException(
       'unknown trajectory verb: $verb '
-      '(expected view|tail|cost|inspect)',
+      '(expected view|tail|cost|inspect|export)',
     );
   }
   final operands = _parseTrajectoryOperands(args);
-  _validateTrajectoryVerb(verb, operands.positionals, operands.at);
+  _validateTrajectoryVerb(
+    verb,
+    operands.positionals,
+    operands.at,
+    operands.json,
+    operands.format,
+    operands.formatSet,
+    operands.output,
+  );
   return CliArgs(
     cwd: operands.cwd,
     sessionRoot: operands.sessionRoot,
@@ -476,6 +494,8 @@ CliArgsResult _parseTrajectoryArgs(List<String> args) {
       positionals: operands.positionals,
       json: operands.json,
       at: operands.at,
+      format: operands.format,
+      output: operands.output,
     ),
   );
 }
@@ -488,16 +508,22 @@ typedef _TrajectoryOperands = ({
   int? at,
   String? cwd,
   String? sessionRoot,
+  String format,
+  bool formatSet,
+  String? output,
 });
 
 /// Walks the arguments after the verb, collecting positionals and the
-/// `--json`/`--at`/`--cwd`/`--session-root` flags.
+/// `--json`/`--at`/`--cwd`/`--session-root`/`--format`/`--output` flags.
 _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
   final positionals = <String>[];
   var json = false;
   int? at;
   String? cwd;
   String? sessionRoot;
+  var format = 'atif';
+  var formatSet = false;
+  String? output;
   for (var i = 1; i < args.length; i++) {
     final arg = args[i];
     switch (arg) {
@@ -513,6 +539,15 @@ _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
         i++;
       case '--at':
         at = _atFlagValue(args, i);
+        i++;
+      case '--format' || '--output':
+        final value = _pathFlagValue(args, arg, i);
+        if (arg == '--format') {
+          format = value;
+          formatSet = true;
+        } else {
+          output = value;
+        }
         i++;
       default:
         if (arg.startsWith('-')) {
@@ -530,6 +565,9 @@ _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
     at: at,
     cwd: cwd,
     sessionRoot: sessionRoot,
+    format: format,
+    formatSet: formatSet,
+    output: output,
   );
 }
 
@@ -554,8 +592,18 @@ int _atFlagValue(List<String> args, int i) {
 }
 
 /// Rejects verb/operand mismatches: `inspect` needs a numeric record
-/// number and `--at` applies to `view` only.
-void _validateTrajectoryVerb(String verb, List<String> positionals, int? at) {
+/// number, `--at` applies to `view` only, and the export-only flags
+/// (`--format`/`--output`) plus the view-only `--json` are verb-gated so
+/// a flag typo never silently does the wrong thing on another verb.
+void _validateTrajectoryVerb(
+  String verb,
+  List<String> positionals,
+  int? at,
+  bool json,
+  String format,
+  bool formatSet,
+  String? output,
+) {
   if (verb == 'inspect') {
     if (positionals.isEmpty) {
       throw const CliArgsException(
@@ -570,6 +618,26 @@ void _validateTrajectoryVerb(String verb, List<String> positionals, int? at) {
   }
   if (at != null && verb != 'view') {
     throw const CliArgsException('--at only applies to fa trajectory view');
+  }
+  if (verb == 'export') {
+    if (format != 'atif') {
+      throw CliArgsException(
+        'unsupported trajectory export format: $format (only atif)',
+      );
+    }
+    if (json) {
+      throw const CliArgsException(
+        '--json does not apply to fa trajectory export (the ATIF document '
+        'is already JSON)',
+      );
+    }
+    return;
+  }
+  if (formatSet || output != null) {
+    throw CliArgsException(
+      '--format/--output only apply to fa trajectory export (got verb '
+      '$verb)',
+    );
   }
 }
 

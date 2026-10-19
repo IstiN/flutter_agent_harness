@@ -187,7 +187,13 @@ is never auto-retried (a retry would double-bill and mix attempts).
 1. **Harbor Hub** — each shard is uploaded
    (`harbor upload jobs/fa-<family>-*`, public) when `HARBOR_API_KEY` is
    set; the job links land in the workflow logs and this is what
-   tbench.ai's leaderboard reads.
+   tbench.ai's leaderboard reads. Before uploading, the shard checks
+   that every trial with a `result.json` also carries
+   `agent/trajectory.json` (the ATIF trajectory, gh-1681) — warn-only in
+   normal runs, a hard gate with `submission: true`. See
+   [docs/leaderboard-submission.md](leaderboard-submission.md) for the
+   submission runbook (pinned dataset, quota-window runner policy, lb
+   CLI steps).
 2. **Job summary** — the `Aggregate resolution rate` step writes the
    resolution table (resolved/scored per split + overall) to the
    GitHub job summary (`bench/harbor_fa/summary.py`, gh-1556 AC4 — TB1
