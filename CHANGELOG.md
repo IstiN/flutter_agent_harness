@@ -13,6 +13,26 @@ block a release again.
 
 ## Unreleased
 
+- feat(bench): gh-1681 — leaderboard submission readiness. ATIF
+  trajectories: new `exportAtifJson` whole-snapshot exporter
+  (`lib/src/trajectory/atif_export.dart`, ATIF-v1.7 — the schema harbor
+  0.23.0's flagship adapters emit) behind a headless `fa trajectory
+  export [--format atif] [--output path]` verb; the harbor adapter runs
+  it as a bounded best-effort exec after the agent phase on every
+  terminal path, so `<trial>/agent/trajectory.json` reaches the hub with
+  the other agent logs (the leaderboard static analysis requires one per
+  rewarded trial) and `result.json` metadata carries an
+  `atif_trajectory` present/missing marker. The golden fixture
+  (`bench/harbor_fa/fixtures/atif_sample.json`) is pinned Dart-side and
+  cross-validated against harbor's pydantic `Trajectory` +
+  `validate_trajectory` in `test_atif_contract.py`. Workflow: a
+  `submission: true` dispatch input turns the submission rules into hard
+  setup preflights (full task coverage, ≥5 attempts/task, no
+  agent-timeout override, pinned dataset) and makes the new per-shard
+  ATIF presence gate fail hard; default runs gain only a warn-only scan
+  (artifact flow unchanged). Runbook: docs/leaderboard-submission.md
+  (pinned dataset + @latest content-hash recording, quota-window runner
+  policy, lb CLI steps).
 - fix(headless): gh-1589 — the headless session becomes a SEALED artifact:
   no session-JSONL writes land after the run's agent phase ends. New
   `Session.seal()` (state in the writer, no file-format change): raised in
