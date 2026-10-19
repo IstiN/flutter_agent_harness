@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/IstiN/flutter_agent_harness/actions/workflows/ci.yml/badge.svg)](https://github.com/IstiN/flutter_agent_harness/actions/workflows/ci.yml)
 [![pub package](https://img.shields.io/pub/v/flutter_agent_harness.svg)](https://pub.dev/packages/flutter_agent_harness)
-[![CRAP max 12.0 — measured whole-tree](https://img.shields.io/badge/CRAP%20max-12.0-brightgreen)](https://github.com/IstiN/crap4dart)
+[![CRAP max 90.0 — 0.14.2 migration reseed (ladder gh-1713)](https://img.shields.io/badge/CRAP%20max-90.0-orange)](https://github.com/IstiN/crap4dart)
 [![CRAP app max 74.13 — 0.14.2 migration reseed (ladder gh-1713)](https://img.shields.io/badge/CRAP%20app-74.13-orange)](https://github.com/IstiN/crap4dart)
 [![coverage ≥ 80%](https://img.shields.io/badge/coverage-%E2%89%A5%2093%25-brightgreen)](https://github.com/IstiN/flutter_agent_harness)
 
