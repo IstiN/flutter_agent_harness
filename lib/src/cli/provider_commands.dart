@@ -1315,11 +1315,12 @@ extension on AgentCli {
   }) async {
     final spec = providerCatalog['chatgpt']!;
 
-    // Existing ChatGPT accounts first: pick one, or add another —
-    // multi-account is first-class, like copilot. The headless variant
-    // skips the picker: it is the scripted sign-in form (its stdin
-    // carries the redirect URL); saved accounts switch via
-    // `/provider <name>`.
+    // Existing ChatGPT accounts first: pick one to switch to, or sign in
+    // again. One identity per auth domain (#1706): the sign-in re-auths
+    // THE domain record (a typed name renames it) — it never mints a
+    // second entry. The headless variant skips the picker: it is the
+    // scripted sign-in form (its stdin carries the redirect URL);
+    // saved accounts switch via `/provider <name>`.
     if (!headless) {
       final registry = config.customProviders;
       final accounts = [
@@ -1330,11 +1331,7 @@ extension on AgentCli {
         final choice = await _pickOption('ChatGPT account', [
           for (final entry in accounts)
             (entry.name, entry.name, '${entry.baseUrl} · ${entry.modelId}'),
-          (
-            'add',
-            'add another account',
-            'sign in with a ChatGPT account (OAuth)',
-          ),
+          ('add', 'sign in again (re-auth)', 're-run the OAuth sign-in'),
         ]);
         if (choice == null) {
           io.writeln('ChatGPT connect cancelled');
@@ -1435,11 +1432,14 @@ extension on AgentCli {
   /// backend so the session is usable at once. The account also lands in
   /// the provider registry (name prompt included) like every other
   /// connected provider — without the entry it never showed in `/provider`.
-  /// The name prompt doubles as the multi-account boundary (CodeMie's
-  /// sameAccount rule): Enter re-auths the existing entry and keeps its
-  /// model, a new name saves a separate entry whose credentials live in
-  /// their own name-scoped key slot — a refresh-token rotation then never
-  /// overwrites a sibling account's blob.
+  /// ONE identity per auth domain (issue #1706): the entry is resolved by
+  /// base URL / canonical name BEFORE the prompt, and the login lands on
+  /// it — Enter re-auths the existing entry and keeps its model, a typed
+  /// new name RENAMES it (the base-URL convention: rename keeps the
+  /// entry) and re-runs the guided model pick. The registry never grows a
+  /// custom-named twin of the chatgpt record; the renamed entry's
+  /// credentials live in its own name-scoped key slot, so a refresh-token
+  /// rotation never writes a slot another record reads.
   Future<void> _applyChatGptOAuthCredentials(
     ProviderSpec spec,
     ChatGptOAuthCredentials credentials,
@@ -1479,7 +1479,14 @@ extension on AgentCli {
               ))) ??
         fallback;
     // Re-auth stores into the entry's own slot (a legacy entry keeps its
-    // env-name slot); a new account scopes its slot by name.
+    // env-name slot); a new account scopes its slot by name. A typed name
+    // that differs from the resolved record is a RENAME (#1706): the old
+    // record is dropped first so the domain keeps exactly one entry —
+    // the edit wizard's rename shape (drop old, save under the new name).
+    final renamed = existing != null && name != existing.name;
+    if (renamed) {
+      registry!.entries.removeWhere((e) => e.name == existing.name);
+    }
     final keyName =
         registry?.find(name)?.keyName ??
         CustomProviderRegistry.keyNameFor(
@@ -1493,7 +1500,8 @@ extension on AgentCli {
       keyName: keyName,
     );
 
-    // Guided model pick for a NEW account only: the live Codex /models
+    // Guided model pick for a NEW account or a RENAME (a new name is a
+    // fresh setup of the one domain entry): the live Codex /models
     // answer under the fresh credentials; cancel (or a failed/empty
     // fetch) keeps the bundled default. A re-login to the SAME entry
     // keeps its last-used model.
@@ -1503,9 +1511,10 @@ extension on AgentCli {
         : (await _pickChatGptModel(spec, encoded) ?? chatGptCodexDefaultModel);
 
     if (registry != null) {
-      // Re-auth lands ON the existing record (in place — `add` both
-      // re-orders and rejects reserved-named domain ghosts, #706); a new
-      // account name saves a fresh entry.
+      // The login lands on the ONE domain record (in place — `add` both
+      // re-orders and rejects reserved-named domain ghosts, #706); a
+      // rename already dropped the old spelling above, so `add` saves
+      // the entry under its new name (#1706 — never a second record).
       final target = registry.find(name);
       if (target == null) {
         registry.add(
