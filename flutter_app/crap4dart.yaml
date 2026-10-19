@@ -77,7 +77,18 @@ crap:
   # channel_rail/chat_page call-site suites, 72 focused tests; re-measured
   # on the full local flutter lcov (3292 green): max CRAP 30.0, the
   # threshold follows back down 75.0 → 30.0. Only down.
-  threshold: 30.0
+  # TEMP raise (crap4dart 0.11.0 -> 0.14.2 migration, PR #1637, mirrors the
+  # core repin in gh-1234): the new analyzer counts pattern-matching/switch
+  # complexity higher, re-measuring the sandbox cluster above the old 30.0
+  # line. Measured on the CI pipeline (app-crap-gate, run 39295865454
+  # crap_report artifact): max CRAP 74.13 (`MemoryShell._runCommand`, CC 74
+  # @ 97% cov), then 43.59 (`WasiSandboxShell._runBuiltin`, CC 43 @ 93%),
+  # 42.0 (`WasmSshCommands.builtinsFor`, CC 6 @ 0%), 40.58
+  # (_connectionDisplayName, CC 12 @ 42%), 39.0 (detectLanguage, CC 39 @
+  # 100%), 33.58 (_interpretEchoEscapes, CC 11 @ 43%). Restore to 30.0 by
+  # decomposing the cluster under 0.14.2.
+  # raise-issue: gh-1713
+  threshold: 74.13
 
 coverage:
   # The CI app-crap-gate job merges the two flutter-tests shard reports
