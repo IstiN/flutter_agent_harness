@@ -127,16 +127,16 @@ def check_testflight(now, expected)
   app_id = S.parse_asc_app_id(apps)
   raise "ASC has no app for bundleId #{bundle_id}" if app_id.nil?
 
-  code, groups, raw = json_response("Get", "#{base}/v1/betaGroups?#{URI.encode_www_form('filter[app]' => app_id, 'page[limit]' => 200)}", headers: headers)
+  code, groups, raw = json_response("Get", "#{base}/v1/betaGroups?#{URI.encode_www_form('filter[app]' => app_id, 'limit' => 200)}", headers: headers)
   raise "ASC /v1/betaGroups answered #{code}: #{raw[0, 160]}" unless code == 200
 
   group_id = S.parse_asc_group_id(groups, group_name)
   raise "ASC external group '#{group_name}' not found (repo variable drift)" if group_id.nil?
 
-  code, group_builds, raw = json_response("Get", "#{base}/v1/betaGroups/#{group_id}/builds?#{URI.encode_www_form('page[limit]' => 200)}", headers: headers)
+  code, group_builds, raw = json_response("Get", "#{base}/v1/betaGroups/#{group_id}/builds?#{URI.encode_www_form('limit' => 200)}", headers: headers)
   raise "ASC group builds answered #{code}: #{raw[0, 160]}" unless code == 200
 
-  code, app_builds, raw = json_response("Get", "#{base}/v1/builds?#{URI.encode_www_form('filter[app]' => app_id, 'filter[processingState]' => 'VALID', 'include' => 'preReleaseVersion', 'page[limit]' => 200, 'sort' => '-uploadedDate')}", headers: headers)
+  code, app_builds, raw = json_response("Get", "#{base}/v1/builds?#{URI.encode_www_form('filter[app]' => app_id, 'filter[processingState]' => 'VALID', 'include' => 'preReleaseVersion', 'limit' => 200, 'sort' => '-uploadedDate')}", headers: headers)
   raise "ASC /v1/builds answered #{code}: #{raw[0, 160]}" unless code == 200
 
   # #855 semantics: a build is "appeared" only when group membership and the
