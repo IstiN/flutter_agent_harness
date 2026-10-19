@@ -848,6 +848,31 @@ const _providerUsage =
     '       lines (OPENAI_API_KEY + OPENAI_BASE_URL); --check reports\n'
     '       credential health without printing any secret';
 
+/// The operands collected while walking a provider subcommand's arguments.
+typedef _ProviderOperands = ({String? name, bool check});
+
+/// Walks the arguments after the verb, collecting the positional provider
+/// name and the `--check` flag. Unknown flags are usage errors so a typo
+/// never becomes a prompt sent to a model; zero or several names surface
+/// as `(name: null)` for the caller's arity error.
+_ProviderOperands _parseProviderOperands(List<String> args) {
+  var check = false;
+  final positionals = <String>[];
+  for (final arg in args) {
+    if (arg == '--check') {
+      check = true;
+    } else if (arg.startsWith('-')) {
+      throw CliArgsException('unknown argument: $arg\n$_providerUsage');
+    } else {
+      positionals.add(arg);
+    }
+  }
+  return (
+    name: positionals.length == 1 ? positionals.single : null,
+    check: check,
+  );
+}
+
 /// Parses the `provider` subcommand operands. Unknown verbs and flags are
 /// usage errors so a typo never becomes a prompt sent to a model.
 CliArgsResult _parseProviderArgs(List<String> args) {
@@ -864,21 +889,8 @@ CliArgsResult _parseProviderArgs(List<String> args) {
       '(expected one of ${providerVerbs.join('|')})\n$_providerUsage',
     );
   }
-  final operands = args.skip(1).toList();
-  var check = false;
-  final positionals = <String>[];
-  for (final arg in operands) {
-    switch (arg) {
-      case '--check':
-        check = true;
-      default:
-        if (arg.startsWith('-')) {
-          throw CliArgsException('unknown argument: $arg\n$_providerUsage');
-        }
-        positionals.add(arg);
-    }
-  }
-  if (positionals.length != 1) {
+  final operands = _parseProviderOperands(args.skip(1).toList());
+  if (operands.name == null) {
     throw CliArgsException(
       'fa provider export requires exactly one provider name\n'
       '$_providerUsage',
@@ -887,8 +899,8 @@ CliArgsResult _parseProviderArgs(List<String> args) {
   return CliArgs(
     providerCmd: ProviderCliCommand(
       verb: verb,
-      name: positionals.single,
-      check: check,
+      name: operands.name,
+      check: operands.check,
     ),
   );
 }
