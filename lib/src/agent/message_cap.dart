@@ -111,6 +111,12 @@ final class ModelCapsStore implements MessageCapPolicy {
 
   final Map<String, ModelCapRecord> _caps;
 
+  /// E1 (PR #1695): model identities whose cap-unknown refusal armed
+  /// exactly ONE pre-emptive pass on the next request. Session state
+  /// only — never serialized (see [toJson]) and never persisted: each
+  /// new refusal re-arms the pass, and learning a numeric cap disarms it.
+  final Set<String> _premptivePending = {};
+
   /// The compound key: one identity per (provider, modelId) so caps never
   /// collide across providers serving the same model id (E5).
   static String keyOf(String provider, String modelId) =>
@@ -137,38 +143,45 @@ final class ModelCapsStore implements MessageCapPolicy {
   @override
   int? learnedCapFor(Model model) => capFor(model.provider, model.id);
 
+  /// Whether the E1 pre-emptive pass is armed for one model identity —
+  /// set by [learnFromRefusal] on a cap-unknown refusal, cleared by
+  /// [takePremptivePass] when the pass fires or by a numeric learn.
+  bool isPremptivePassPending(String provider, String modelId) =>
+      _premptivePending.contains(keyOf(provider, modelId));
+
+  /// Consumes the E1 pre-emptive pass for one model identity: true when a
+  /// pass was pending (the caller then runs exactly one pre-emptive
+  /// compaction). Never re-fires on its own — only a new cap-unknown
+  /// refusal re-arms it.
+  bool takePremptivePass(String provider, String modelId) =>
+      _premptivePending.remove(keyOf(provider, modelId));
+
   @override
   void learnFromRefusal(Model model, MessageCapRefusal refusal) {
     final key = keyOf(model.provider, model.id);
     final existing = _caps[key];
     if (refusal.maxMessages != null) {
       // (Re-)learn the numeric cap — also the stale-cap refresh path (E4:
-      // a provider that changed its limit re-teaches the new M).
+      // a provider that changed its limit re-teaches the new M). A known
+      // cap needs no E1 fallback pass.
       _caps[key] = ModelCapRecord(maxMessages: refusal.maxMessages);
+      _premptivePending.remove(key);
       return;
     }
     // Cap-unknown refusal: flag it ONLY when no numeric cap is on record —
-    // never unlearn a numeric cap from a differently-shaped retry.
+    // never unlearn a numeric cap from a differently-shaped retry — and
+    // arm the E1 one-shot pre-emptive pass for the next request.
     if (existing == null || existing.maxMessages == null) {
       _caps[key] = const ModelCapRecord(capUnknown: true);
+      _premptivePending.add(key);
     }
   }
 
-  /// Second tier (config override): pins a cap for one model identity,
-  /// overriding any learned value. A pinned cap survives learned refusals
-  /// only until the pin is removed — [learnFromRefusal] overwrites records,
-  /// so hosts layering pins should consult them BEFORE the learned value
-  /// (see [learnedCapOr]).
-  void pin(String provider, String modelId, int maxMessages) {
-    _caps[keyOf(provider, modelId)] = ModelCapRecord(maxMessages: maxMessages);
-  }
-
-  /// Removes a pin/learned record for one model identity.
-  void remove(String provider, String modelId) =>
-      _caps.remove(keyOf(provider, modelId));
-
-  /// The effective cap for one model identity: [pinned] (config override)
-  /// wins, then the learned record.
+  /// Second tier (config override): the effective cap consult — a pinned
+  /// override wins over the learned record. Hosts pin caps in their own
+  /// config surface (the CLI reads `models.overrides.<provider>.<model>.messageCap`
+  /// — see `ModelCapabilityOverride.messageCap`) and pass the value here;
+  /// the store itself keeps only learned state.
   static int? learnedCapOr(ModelCapRecord? learned, int? pinned) =>
       pinned ?? learned?.maxMessages;
 
@@ -209,12 +222,20 @@ final class ModelCapsStore implements MessageCapPolicy {
 
 /// Whether the live [messageCount] is at/above the pre-emptive trigger for
 /// a learned cap: `count ≥ cap − margin` (AC4). A null/unknown cap never
-/// triggers (AC8); a margin of zero means "at the cap itself".
+/// triggers (AC8); a margin of zero means "at the cap itself". A cap at or
+/// below the [margin] stands down: `cap − margin` is not a meaningful
+/// threshold inside the fixed request overhead, and an always-true trigger
+/// would wedge the session into a compact-every-turn state (PR #1695
+/// review) — the reactive heal still coalesces with its own
+/// `max(1, cap − margin)` clamp per refusal.
 bool messageCapTriggerReached(
   int messageCount,
   int? learnedCap, {
   int margin = kMessageCapDefaultMargin,
-}) => learnedCap != null && messageCount >= learnedCap - margin;
+}) =>
+    learnedCap != null &&
+    learnedCap > margin &&
+    messageCount >= learnedCap - margin;
 
 /// gh-1680 AC6/E2/E3: coalesces the OUTBOUND message list so its length
 /// approaches [targetMessageCount], merging whole tool-call/result pairs
@@ -227,9 +248,13 @@ bool messageCapTriggerReached(
 ///   dropped, and nothing after it is touched.
 /// - Only WHOLE tool-call/result groups go: an assistant message with
 ///   tool calls and every result answering those calls merge together, so
-///   no orphaned result or unanswered call can appear on the wire. The
-///   result is still run through [repairToolPairing] as the belt on the
-///   suspenders (pre-broken input pairing is repaired, never propagated).
+///   no orphaned result or unanswered call can appear on the wire. A group
+///   SPLIT by a steering interleave (a result answering from the kept
+///   tail or beyond a mid-region user message) never merges at all — the
+///   call rides verbatim and the pairing repair hoists the far-side
+///   result back (PR #1695). The result is still run through
+///   [repairToolPairing] as the belt on the suspenders (pre-broken input
+///   pairing is repaired, never propagated).
 /// - The input list is never mutated (outbound-only; the session JSONL
 ///   stays byte-identical, AC7).
 ///
@@ -260,8 +285,21 @@ List<Message> coalesceMessagesForCap(
   // assistant message carrying tool calls plus the ToolResultMessages
   // answering them; every other message is its own unit.
   final units = <List<Message>>[];
+  // PR #1695: a tool group split by a steering user message (call and its
+  // result on opposite sides of an interleave/cut) never merges — the
+  // call, the results already paired with it, and the displaced results
+  // found inside the region ride the payload VERBATIM, and the pairing
+  // repair hoists whatever still floats back next to the call. Merging a
+  // half-group would orphan the far-side result (repair drops orphans —
+  // the tool content silently disappears).
+  final verbatim = <Message>[];
+  final consumed = <int>{};
   var i = 0;
   while (i < regionEnd) {
+    if (consumed.contains(i)) {
+      i++;
+      continue;
+    }
     final message = messages[i];
     final calls = message is AssistantMessage
         ? message.content.whereType<ToolCall>().toList()
@@ -283,6 +321,27 @@ List<Message> coalesceMessagesForCap(
         break;
       }
     }
+    if (answered.isNotEmpty) {
+      // The group hit a non-matching message before every call was
+      // answered — some result answers from beyond the cut (or beyond a
+      // mid-region interleave). Keep the whole group verbatim and pull
+      // the displaced results out of the droppable region so no carrier
+      // can swallow them; results beyond the cut stay in the kept tail
+      // for the pairing repair to hoist back.
+      verbatim.addAll(group);
+      consumed.addAll(
+        [for (var k = i + 1; k < j; k++) k],
+      );
+      for (var k = j; k < regionEnd && answered.isNotEmpty; k++) {
+        final next = messages[k];
+        if (next is ToolResultMessage && answered.remove(next.toolCallId)) {
+          verbatim.add(next);
+          consumed.add(k);
+        }
+      }
+      i = j;
+      continue;
+    }
     units.add(group);
     i = j;
   }
@@ -291,7 +350,7 @@ List<Message> coalesceMessagesForCap(
   // target then merge together (oldest first) until one remains or the
   // count fits.
   final carriers = [for (final unit in units) _carrierOf(unit)];
-  var merged = [...carriers, ...messages.sublist(regionEnd)];
+  var merged = [...verbatim, ...carriers, ...messages.sublist(regionEnd)];
   while (merged.length > targetMessageCount && carriers.length > 1) {
     final first = carriers.removeAt(0);
     final second = carriers.removeAt(0);
@@ -299,7 +358,7 @@ List<Message> coalesceMessagesForCap(
       0,
       UserMessage.text('${_carrierTextOf(first)}\n${_carrierTextOf(second)}'),
     );
-    merged = [...carriers, ...messages.sublist(regionEnd)];
+    merged = [...verbatim, ...carriers, ...messages.sublist(regionEnd)];
   }
   // Over target with a single carrier left: nothing more is droppable
   // without touching the newest turn (E2/E3) — the wire gets the smallest

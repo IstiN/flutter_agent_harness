@@ -341,11 +341,10 @@ extension AgentCliCompactionRun on AgentCli {
     final tokens = _liveRequestTokens();
     // gh-1680 AC4: the additive message-count trigger — a model with a
     // learned cap compacts when the live count reaches `cap − margin`,
-    // BEFORE the request, even when the token trigger is untouched.
-    final overCap = messageCapTriggerReached(
-      _agent.state.messages.length,
-      _modelCaps.learnedCapFor(_agent.state.model),
-    );
+    // BEFORE the request, even when the token trigger is untouched. The
+    // gate also consumes the one-shot E1 pass a cap-unknown refusal
+    // armed (PR #1695).
+    final overCap = _messageCapGateReached();
     if (!shouldCompact(
           tokens,
           _effectiveContextWindow,
