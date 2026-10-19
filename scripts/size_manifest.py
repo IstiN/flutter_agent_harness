@@ -90,6 +90,20 @@ REV_PLACEHOLDER = "<rev>"
 # webparagraph, chromium variant included). First-party paths —
 # including our own shipped vendor/interpreters payload — keep the
 # full rule.
+# The gh-1630 lock-pinned on-device AI engines (vendor/litert,
+# vendor/transformers, vendor/webllm — ~82 MB in fa-extension.zip)
+# are deliberately NOT carved out (gh-1699 rework decision): they
+# ship under version-per-bump paths, so each engine bump enters the
+# manifest as a NEW line and hard-fails until the floor is consciously
+# reseeded (`check --reseed` + commit) — the documented
+# intentional-growth escape hatch. A blanket `(^|/)vendor/` carve-out
+# would also de-gate vendor/interpreters (kept first-party above) and
+# shrink the NEW_LINE_SHARE base ~3.3x (5% of 117.9 MB -> 5% of
+# 35.7 MB), tightening the first-party gate invisibly. If maintainers
+# ever want engine churn to warn instead of fail, scope the extra
+# --vendored regex to the engine dirs only, e.g.
+# r"(^|/)vendor/(litert|transformers|webllm)/", as its own reviewed
+# change — not as a side effect of a ratchet reseed.
 VENDORED_DEFAULTS = [r"(^|/)canvaskit/"]
 
 
