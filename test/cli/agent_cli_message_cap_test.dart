@@ -8,12 +8,10 @@
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/agent/message_cap.dart';
-import 'package:flutter_agent_harness/src/cli/cli_config.dart';
 import 'package:flutter_agent_harness/src/exceptions.dart';
 import 'package:flutter_agent_harness/src/model.dart';
 import 'package:flutter_agent_harness/src/overflow.dart';
 import 'package:flutter_agent_harness/src/model_roles/capability_resolver.dart';
-import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
