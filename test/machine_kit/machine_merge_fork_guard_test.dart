@@ -46,13 +46,13 @@ class GhExpr {
   void expectEnd() {
     final rest = src.substring(pos).trim();
     if (rest.isNotEmpty) {
-      throw FormatException('trailing input at ${pos}: "$rest"');
+      throw FormatException('trailing input at $pos: "$rest"');
     }
   }
 
   bool parseOr() {
     var left = parseAnd();
-    while (_peekWord('||')) {
+    while (_match('||')) {
       final right = parseAnd();
       left = left || right;
     }
@@ -61,7 +61,7 @@ class GhExpr {
 
   bool parseAnd() {
     var left = parseUnary();
-    while (_peekWord('&&')) {
+    while (_match('&&')) {
       final right = parseUnary();
       left = left && right;
     }
@@ -117,8 +117,9 @@ class GhExpr {
       return haystack is String && haystack.contains(needle);
     }
     // Dotted context path.
-    final match = RegExp(r'[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_*]+)*')
-        .firstMatch(src.substring(pos));
+    final match = RegExp(
+      r'[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_*]+)*',
+    ).firstMatch(src.substring(pos));
     if (match == null || match.start != 0) {
       throw FormatException('cannot parse operand at $pos in "$src"');
     }
@@ -130,7 +131,7 @@ class GhExpr {
   // context paths resolve to null (`null == false` is false, `contains()`
   // on null is false) instead of throwing mid-expression.
   Object? ctxLookup(String path) {
-    Object? node = ctx['github'];
+    Object? node = ctx; // paths are rooted at the context: github.event...
     for (final part in path.split('.')) {
       if (node is Map && node.containsKey(part)) {
         node = node[part];
@@ -185,84 +186,99 @@ Map<String, Object?> prEvent({
   required bool fork,
   String action = 'synchronize',
   String label = '',
-}) =>
-    {
-      'github': {
-        'event_name': 'pull_request',
-        'event': {
-          'action': action,
-          'pull_request': {
-            'head': {
-              'repo': {'fork': fork},
-            },
-          },
-          'label': {'name': label},
+}) => {
+  'github': {
+    'event_name': 'pull_request',
+    'event': {
+      'action': action,
+      'pull_request': {
+        'head': {
+          'repo': {'fork': fork},
         },
       },
-    };
+      'label': {'name': label},
+    },
+  },
+};
 
 Map<String, Object?> namedEvent(String name) => {
-      'github': {'event_name': name, 'event': const {}},
-    };
+  'github': {'event_name': name, 'event': const {}},
+};
 
 void main() {
   group('machine-merge fork guard (gh-1689): merge job `if` evaluates', () {
-    test('FALSE for a fork pull_request synchronize — the red-run scenario',
-        () {
-      expect(GhExpr.eval(mergeJobIf(), prEvent(fork: true)), isFalse,
+    test(
+      'FALSE for a fork pull_request synchronize — the red-run scenario',
+      () {
+        expect(
+          GhExpr.eval(mergeJobIf(), prEvent(fork: true)),
+          isFalse,
           reason:
               'fork pull_request events carry NO secrets — running the '
               'factory with an empty SOURCE_GITHUB_TOKEN mints an empty '
-              'GH_TOKEN and dies (gh exit 4): a red check on every guest PR');
+              'GH_TOKEN and dies (gh exit 4): a red check on every guest PR',
+        );
+      },
+    );
+
+    test('FALSE for fork pull_request events generally (labeled, edited)', () {
+      expect(
+        GhExpr.eval(
+          mergeJobIf(),
+          prEvent(fork: true, action: 'labeled', label: 'ai_task'),
+        ),
+        isFalse,
+      );
+      expect(
+        GhExpr.eval(mergeJobIf(), prEvent(fork: true, action: 'edited')),
+        isFalse,
+      );
     });
 
-    test('FALSE for fork pull_request events generally (labeled, edited)',
-        () {
-      expect(
-          GhExpr.eval(
-              mergeJobIf(),
-              prEvent(fork: true, action: 'labeled', label: 'ai_task')),
-          isFalse);
-      expect(
-          GhExpr.eval(mergeJobIf(), prEvent(fork: true, action: 'edited')), isFalse);
-    });
-
-    test('TRUE for same-repo synchronize / edited (always run — idempotent)',
-        () {
-      expect(
-          GhExpr.eval(mergeJobIf(), prEvent(fork: false)), isTrue);
-      expect(
-          GhExpr.eval(mergeJobIf(), prEvent(fork: false, action: 'edited')), isTrue);
-    });
+    test(
+      'TRUE for same-repo synchronize / edited (always run — idempotent)',
+      () {
+        expect(GhExpr.eval(mergeJobIf(), prEvent(fork: false)), isTrue);
+        expect(
+          GhExpr.eval(mergeJobIf(), prEvent(fork: false, action: 'edited')),
+          isTrue,
+        );
+      },
+    );
 
     test('TRUE for same-repo labeled ai_* / pr_approved, FALSE otherwise '
         '(machine-latch preserved)', () {
       expect(
-          GhExpr.eval(
-              mergeJobIf(),
-              prEvent(fork: false, action: 'labeled', label: 'ai_task')),
-          isTrue);
+        GhExpr.eval(
+          mergeJobIf(),
+          prEvent(fork: false, action: 'labeled', label: 'ai_task'),
+        ),
+        isTrue,
+      );
       expect(
-          
-          GhExpr.eval(mergeJobIf(),
-              prEvent(fork: false, action: 'labeled', label: 'pr_approved')),
-          isTrue);
+        GhExpr.eval(
+          mergeJobIf(),
+          prEvent(fork: false, action: 'labeled', label: 'pr_approved'),
+        ),
+        isTrue,
+      );
       expect(
-          GhExpr.eval(
-              mergeJobIf(),
-              prEvent(fork: false, action: 'labeled', label: 'bug')),
-          isFalse);
+        GhExpr.eval(
+          mergeJobIf(),
+          prEvent(fork: false, action: 'labeled', label: 'bug'),
+        ),
+        isFalse,
+      );
     });
 
     test('TRUE for every base-context event name — the real merge path '
-        '(workflow_run / check_run keep full bot behavior for guest PRs)',
-        () {
+        '(workflow_run / check_run keep full bot behavior for guest PRs)', () {
+      expect(GhExpr.eval(mergeJobIf(), namedEvent('workflow_run')), isTrue);
+      expect(GhExpr.eval(mergeJobIf(), namedEvent('check_run')), isTrue);
       expect(
-          GhExpr.eval(mergeJobIf(), namedEvent('workflow_run')), isTrue);
-      expect(
-          GhExpr.eval(mergeJobIf(), namedEvent('check_run')), isTrue);
-      expect(
-          GhExpr.eval(mergeJobIf(), namedEvent('workflow_dispatch')), isTrue);
+        GhExpr.eval(mergeJobIf(), namedEvent('workflow_dispatch')),
+        isTrue,
+      );
     });
   });
 
@@ -273,8 +289,12 @@ void main() {
         "github.event.action != 'labeled' || "
         "contains(github.event.label.name, 'ai_') || "
         "contains(github.event.label.name, 'pr_approved')";
-    expect(GhExpr.eval(preGuard, prEvent(fork: true)), isTrue,
-        reason: 'without the fork arm a fork synchronize evaluated TRUE and '
-            'started the doomed run');
+    expect(
+      GhExpr.eval(preGuard, prEvent(fork: true)),
+      isTrue,
+      reason:
+          'without the fork arm a fork synchronize evaluated TRUE and '
+          'started the doomed run',
+    );
   });
 }
