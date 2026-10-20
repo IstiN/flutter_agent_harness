@@ -27,18 +27,24 @@ final class IoDapHubService implements DapHubService {
     String? home,
     this.probeTimeout = const Duration(seconds: 5),
   }) : environment = environment ?? Platform.environment,
-       _home = home;
+       _injectedHome = home;
 
   /// Injected environment (defaults to `Platform.environment`; test seam —
   /// pointing `HOME` at a temp dir keeps tests off the real `~/.dap`).
   final Map<String, String> environment;
 
-  final String? _home;
+  /// The constructor's `home:` argument (the test seam). Not an
+  /// initializing formal on purpose: the named parameter must stay the
+  /// public `home:` (private named parameters are not allowed), and the
+  /// effective home is [resolveDapHome]'s precedence over it — naming the
+  /// field `_home` would trip `prefer_initializing_formals` (gh-1730
+  /// review).
+  final String? _injectedHome;
 
   /// Home directory for the `~/.dap` layout: the injected test seam, else the
   /// mobile sandbox ([dapHomeOverride] — `/` is read-only on Android/iOS),
   /// else null (the package's `$HOME`).
-  String? get home => resolveDapHome(_home);
+  String? get home => resolveDapHome(_injectedHome);
 
   /// How long the live probe waits for the hub's welcome before reporting
   /// unreachable — the client keeps reconnecting forever otherwise.

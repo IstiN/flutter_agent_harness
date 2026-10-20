@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/backup_exclusion.dart';
 import 'package:fa/services/dap_home.dart';
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
@@ -74,6 +75,15 @@ Future<ExecutionEnv> createMobileSandboxEnv({
   // Android/iOS have no HOME and a read-only `/`: keep the `~/.dap` hub
   // config inside the sandbox so Settings → Agent network survives restarts.
   dapHomeOverride = sandbox.path;
+  // gh-1730 review: `.dap` holds the hub clientSecret (usable directly as a
+  // credential) plus the identity/channel keys — on iOS Documents/ rides the
+  // default iCloud backup. Create the hub tree eagerly and mark it excluded
+  // BEFORE the hub client can write a credential into it (issue #329 E4
+  // precedent: key material never leaves the device). Only `.dap` is
+  // excluded — sessions and the rest of the sandbox stay restorable.
+  final dapDir = Directory('${sandbox.path}/.dap');
+  await dapDir.create(recursive: true);
+  await excludePathFromBackup(dapDir.path);
 
   // Both Android and iOS run the WASI sandbox shell; on iOS the wasm_run
   // library is statically linked into the app binary (see setUpWasmRuntime).

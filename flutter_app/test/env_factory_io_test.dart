@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:fa/sandbox/env_factory_io.dart' as app_env;
 import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/backup_exclusion.dart' as backup;
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -260,7 +261,7 @@ void main() {
     });
 
     tearDown(() {
-      app_env.excludePathFromBackupOverride = null;
+      backup.excludePathFromBackupOverride = null;
       for (final dir in [appSupport, documents]) {
         if (dir.existsSync()) dir.deleteSync(recursive: true);
       }
@@ -268,7 +269,7 @@ void main() {
 
     test('marks the sandbox .dap tree excluded from cloud backups', () async {
       final excluded = <String>[];
-      app_env.excludePathFromBackupOverride = (path) async {
+      backup.excludePathFromBackupOverride = (path) async {
         excluded.add(path);
       };
 
@@ -289,7 +290,7 @@ void main() {
       // Ordering pin: the exclusion happens BEFORE the shell loads, so the
       // issue-#640 MemoryShell fallback never skips it.
       final excluded = <String>[];
-      app_env.excludePathFromBackupOverride = (path) async {
+      backup.excludePathFromBackupOverride = (path) async {
         excluded.add(path);
       };
 
