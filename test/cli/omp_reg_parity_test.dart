@@ -119,7 +119,7 @@ void main() {
     for (final png in refDir.listSync().whereType<File>().where(
       (f) => f.path.endsWith('.png'),
     )) {
-      final decoded = img.decodePng(png.readAsBytesSync())!;
+      final decoded = _decodeFixture(png);
       expect(
         decoded.width,
         renderWidth,
@@ -144,10 +144,12 @@ void main() {
     // per-pixel comparison at the same row lives in the flutter parity
     // leg where BOTH renders exist.
     const bg = [0x12, 0x12, 0x12];
-    final png = refDir.listSync().whereType<File>().firstWhere(
+    final png = refDir.listSync().whereType<File>().where(
+      (f) => f.path.endsWith('.png'),
+    ).firstWhere(
       (f) => _stem(f.path) == '02_status_bar_default',
     );
-    final decoded = img.decodePng(png.readAsBytesSync())!;
+    final decoded = _decodeFixture(png);
     var hits = 0;
     for (final pixel in decoded.data!) {
       if ((pixel.r - bg[0]).abs() <= 2 &&
@@ -259,6 +261,38 @@ String renderFaDefaultBar({required int columns}) {
   // preset alone keeps fa on the font-safe fallbacks).
   final spec = resolveStatusLineSpec(const StatusLineConfig(nerdSymbols: true));
   return renderStatusLine(snapshot, spec, columns).join('\n');
+}
+
+/// CI hardening (issue #1714): the committed PNGs are immutable, but the
+/// shards observed 3 consecutive `decodePng -> null` failures on an
+/// unchanged fixture set (CI-only, not reproducible locally) — consistent
+/// with a transient partial read. Decode with a bounded retry and a named
+/// error carrying the path + byte size, never a bare null-check crash.
+img.Image _decodeFixture(File f) {
+  Object? lastError;
+  for (var attempt = 0; attempt < 3; attempt++) {
+    final bytes = f.readAsBytesSync();
+    if (bytes.isNotEmpty) {
+      try {
+        final decoded = img.decodePng(bytes);
+        if (decoded != null) return decoded;
+        lastError = StateError(
+          'decodePng returned null for ${f.path} '
+          '(${bytes.length} bytes, attempt ${attempt + 1})',
+        );
+      } catch (e) {
+        lastError = e;
+      }
+    } else {
+      lastError = StateError(
+        '${f.path}: read returned 0 bytes (attempt ${attempt + 1})',
+      );
+    }
+    sleep(const Duration(milliseconds: 250));
+  }
+  throw StateError(
+    'fixture decode failed after 3 attempts: $lastError',
+  );
 }
 
 String _stem(String path) => path
