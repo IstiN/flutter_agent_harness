@@ -134,6 +134,66 @@ void main() {
     });
 
     test(
+      '#1706: a custom-named codex record folds onto the chatgpt domain',
+      () {
+        // The owner repro: codex auth added twice — once under a custom
+        // name, once under the derived `chatgpt.com` — left TWO /provider
+        // rows for one ChatGPT account. The domain IS the identity for the
+        // chatgpt-codex backend: both records load as one.
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'my-codex',
+            apiType: 'chatgpt',
+            baseUrl: 'https://chatgpt.com/backend-api/codex',
+            modelId: 'gpt-5.4',
+            keyName: 'FA_KEY_CHATGPT_COM_MY_CODEX',
+          ),
+          CustomProviderEntry(
+            name: 'chatgpt.com',
+            apiType: 'chatgpt',
+            baseUrl: 'https://chatgpt.com/backend-api/codex',
+            modelId: 'gpt-5.6-sol',
+            keyName: 'FA_KEY_CHATGPT_COM_CHATGPT_COM',
+          ),
+        ]);
+        expect(registry.entries, hasLength(1));
+        final survivor = registry.entries.single;
+        expect(survivor.name, 'my-codex');
+        // Union: nothing dropped — the survivor inherits the twin's key
+        // slot (it had none missing... its own wins) and keeps its model.
+        expect(survivor.keyName, 'FA_KEY_CHATGPT_COM_MY_CODEX');
+        expect(survivor.modelId, 'gpt-5.4');
+        expect(registry.mergeNotes, [
+          'merged duplicate provider record "chatgpt.com" onto "my-codex" '
+              '(same auth domain)',
+        ]);
+      },
+    );
+
+    test('#1706: different-endpoint providers keep their own identities', () {
+      // The fold is chatgpt-codex-specific: a kimi and an openai entry
+      // on one host stay separate records (multi-account is their
+      // contract), and two chatgpt records on different endpoints never
+      // merge (endpointLocked makes that unserveable, not duplicate).
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'lab',
+          apiType: 'openai',
+          baseUrl: 'http://localhost:9000/v1',
+          modelId: 'm1',
+        ),
+        CustomProviderEntry(
+          name: 'lab-2',
+          apiType: 'openai',
+          baseUrl: 'http://localhost:9000/v1',
+          modelId: 'm2',
+        ),
+      ]);
+      expect(registry.entries, hasLength(2));
+      expect(registry.mergeNotes, isEmpty);
+    });
+
+    test(
       'the picker shows one chatgpt identity with one current marker',
       () async {
         // The owner screenshot repro: after ChatGPT OAuth the registry
@@ -377,7 +437,10 @@ void main() {
       expect(cli.providerKind, 'chatgpt-codex');
       expect(cli.agent.state.model.provider, 'chatgpt');
       expect(cli.agent.state.model.api, 'responses');
-      expect(cli.agent.state.model.baseUrl, 'https://chatgpt.com/backend-api/codex');
+      expect(
+        cli.agent.state.model.baseUrl,
+        'https://chatgpt.com/backend-api/codex',
+      );
       expect(changes, hasLength(1));
       expect(changes.single.$1, 'chatgpt-codex');
     });
@@ -437,23 +500,25 @@ void main() {
       expect(output, contains('supported providers: openai'));
     });
 
-    test('unknown /provider ids get the kinds hint (issue #772 review)',
-        () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(fake.call, envVarValue: (_) => null);
-      final run = cli.run();
+    test(
+      'unknown /provider ids get the kinds hint (issue #772 review)',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, envVarValue: (_) => null);
+        final run = cli.run();
 
-      io.sendLine('/provider from-the-future');
-      await waitForIt(
-        () => io.out.toString().contains('unknown provider: from-the-future'),
-      );
-      io.sendLine('/exit');
-      await run;
+        io.sendLine('/provider from-the-future');
+        await waitForIt(
+          () => io.out.toString().contains('unknown provider: from-the-future'),
+        );
+        io.sendLine('/exit');
+        await run;
 
-      expect(
-        io.out.toString(),
-        contains('kinds accepted too: chatgpt-codex'),
-      );
-    });
+        expect(
+          io.out.toString(),
+          contains('kinds accepted too: chatgpt-codex'),
+        );
+      },
+    );
   });
 }
