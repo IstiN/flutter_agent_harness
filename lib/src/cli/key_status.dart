@@ -386,12 +386,31 @@ final class KeyStatusRenderer {
   /// because a paste never persisted), so the hint names the last write
   /// failure and the persist caveat. Slots and diagnostics only, never
   /// values.
+  ///
+  /// Slot/diagnostic honesty (gh-1679 review): the diagnostic belongs to
+  /// a SLOT, never blindly to [suggested]. With exactly one degraded
+  /// slot the hint names it when it differs from [suggested] ("last
+  /// failure: NAME — diag"); when [suggested] IS the degraded slot the
+  /// plain diagnostic stays. Several degraded slots keep the aggregate
+  /// wording, explicitly labeled "last write failure" so it never
+  /// implies the diagnostic is [suggested]'s.
   String? degradedStoreHint(String suggested) {
     final keys = secureKeys;
     if (keys == null || keys.saveFailures == 0) return null;
-    final diagnostic = keys.lastSaveError ?? 'the write failed';
+    final failed = keys.failedSaveNames;
+    final String detail;
+    if (failed.length == 1) {
+      final diagnostic =
+          keys.saveFailureDiagnostic(failed.single) ?? 'the write failed';
+      detail = failed.single == suggested
+          ? diagnostic
+          : 'last failure: ${failed.single} — $diagnostic';
+    } else {
+      detail =
+          'last write failure: ${keys.lastSaveError ?? 'the write failed'}';
+    }
     return ' — no key set; the secure store is not writable '
-        '($diagnostic) and keys pasted earlier may not have persisted — '
+        '($detail) and keys pasted earlier may not have persisted — '
         'fix the store, then /key set $suggested <value>';
   }
 

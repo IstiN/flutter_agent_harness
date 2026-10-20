@@ -361,6 +361,134 @@ void main() {
       expect(registry.find('kimi_ira')!.keyNotPersisted, isFalse);
       expect(io.out.toString(), isNot(contains('sk-ira-secret-789')));
     });
+
+    test('the canceled-authorization failure shape also gets the repair '
+        'offer (gh-1679 review: the incident second live shape)', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = _FlakyStore()
+        ..writeError = StateError(
+          'security add-generic-password failed (exit 154): '
+          'SecKeychainItemCreateFromContent (<default>): The authorization '
+          'was canceled by the user',
+        );
+      final shell = _RepairShell(store);
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry(const []);
+      final cli = cliFor(
+        fake.call,
+        secureKeys: cache,
+        customProviders: registry,
+        env: env,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider custom');
+      await waitForIt(() => io.out.toString().contains('type a number:'));
+      io.sendLine('1');
+      await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+      io.sendLine('https://api.kimi.com/coding/v1');
+      await waitForIt(
+        () => io.out.toString().contains('provider name (empty ='),
+      );
+      io.sendLine('kimi_ira');
+      await waitForIt(
+        () => io.out.toString().contains('API key (empty for none):'),
+      );
+      io.sendLine('sk-ira-secret-789');
+      await waitForIt(
+        () => io.out.toString().contains('no model list from the endpoint'),
+      );
+      io.sendLine('proxy-model');
+      // The loud failure names the canceled authorization, the advisory
+      // and the [y/N] offer follow (the same host defect, same remedy).
+      await waitForIt(
+        () => io.out.toString().contains('authorization was canceled'),
+      );
+      await waitForIt(
+        () => io.out.toString().contains('[y/N]'),
+      );
+      io.sendLine('n');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to openai'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('security default-keychain -s'));
+      // Nothing ran without the explicit yes.
+      expect(shell.commands, isEmpty);
+      expect(registry.find('kimi_ira')!.keyNotPersisted, isTrue);
+      expect(output, isNot(contains('sk-ira-secret-789')));
+    });
+
+    test('a repaired keychain whose retried save fails again prints the '
+        'loud line again (gh-1679 review: the retry is never mute)',
+        () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = _FlakyStore()
+        ..writeError = StateError('no default keychain (exit 1)');
+      final shell = _RepairShell(store, fixesStore: false);
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry(const []);
+      final cli = cliFor(
+        fake.call,
+        secureKeys: cache,
+        customProviders: registry,
+        env: env,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider custom');
+      await waitForIt(() => io.out.toString().contains('type a number:'));
+      io.sendLine('1');
+      await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+      io.sendLine('https://api.kimi.com/coding/v1');
+      await waitForIt(
+        () => io.out.toString().contains('provider name (empty ='),
+      );
+      io.sendLine('kimi_ira');
+      await waitForIt(
+        () => io.out.toString().contains('API key (empty for none):'),
+      );
+      io.sendLine('sk-ira-secret-789');
+      await waitForIt(
+        () => io.out.toString().contains('no model list from the endpoint'),
+      );
+      io.sendLine('proxy-model');
+      await waitForIt(() => io.out.toString().contains('[y/N]'));
+      io.sendLine('y');
+      await waitForIt(
+        () => io.out.toString().contains('retrying the save'),
+      );
+      // The retried save fails too — a SECOND loud line must follow the
+      // retry notice (the old flow fell through silently here).
+      await waitForIt(
+        () =>
+            io.out
+                .toString()
+                .split('could not save FA_KEY_API_KIMI_COM_KIMI_IRA')
+                .length >=
+            3,
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      final secondFailure = output
+          .split('\n')
+          .lastWhere((l) => l.contains('could not save FA_KEY_API'));
+      expect(secondFailure, contains('no default keychain (exit 1)'));
+      expect(secondFailure, contains('/key set FA_KEY_API_KIMI_COM_KIMI_IRA'));
+      // The entry stays flagged; the store stayed empty.
+      expect(registry.find('kimi_ira')!.keyNotPersisted, isTrue);
+      expect(store.map, isEmpty);
+      expect(output, isNot(contains('sk-ira-secret-789')));
+    });
   });
 
   group('no-token edit keeps the keyNotPersisted marker (gh-1679 review)', () {

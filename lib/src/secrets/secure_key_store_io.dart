@@ -293,9 +293,17 @@ final class _MacosKeychainStore
       '-U',
     ]);
     if (result.exitCode != 0) {
+      // The stderr tail rides the diagnostic (gh-1679 review, same rule as
+      // the read ladder's `_errorTail`): the live failure shapes — e.g.
+      // `SecKeychainItemCreateFromContent (<default>): The authorization
+      // was canceled by the user` (exit 154, the user canceling the
+      // system keychain dialog) — live in the tail, and the caller's
+      // missing-default-keychain remedy classification needs it.
       throw StateError(
-        'security add-generic-password failed '
-        '(exit ${result.exitCode})',
+        _errorTail(
+          result,
+          'security add-generic-password failed (exit ${result.exitCode})',
+        ),
       );
     }
   }

@@ -50,20 +50,22 @@ extension on AgentCli {
       // rides this session's switch) but carries the `keyNotPersisted`
       // flag so the next boot surfaces the degradation. Slots and
       // diagnostics only — no byte of the key ever renders.
-      final diagnostic = keys.lastSaveError ?? 'the write failed';
-      io.writeln(
-        'could not save $keyName to ${keys.label}: the write failed '
-        '($diagnostic) — the key applies to this session only and is not '
-        'saved with the provider; fix the store, then /key set $keyName '
-        '<value>',
-      );
-      if (isMissingDefaultKeychainError(diagnostic)) {
+      _printLoudSaveFailure(keyName, keys);
+      if (isMissingDefaultKeychainError(
+        keys.lastSaveError ?? 'the write failed',
+      )) {
         io.writeln(missingDefaultKeychainAdvisory());
-        final repaired = await _offerDefaultKeychainRepair();
-        if (repaired && await keys.save(keyName, token)) {
-          config.onSecretStored?.call(keyName, token);
-          io.writeln('saved $keyName to ${keys.label}');
-          return (keyName: keyName, keyNotPersisted: false);
+        if (await _offerDefaultKeychainRepair()) {
+          if (await keys.save(keyName, token)) {
+            config.onSecretStored?.call(keyName, token);
+            io.writeln('saved $keyName to ${keys.label}');
+            return (keyName: keyName, keyNotPersisted: false);
+          }
+          // The retry failed after the repair — never mute (gh-1679
+          // review): "retrying the save" followed by silence would read
+          // as success. The same loud line as the first failure, with
+          // the fresh diagnostic.
+          _printLoudSaveFailure(keyName, keys);
         }
       }
       return (keyName: keyName, keyNotPersisted: true);
@@ -76,6 +78,20 @@ extension on AgentCli {
       'with the provider',
     );
     return (keyName: null, keyNotPersisted: false);
+  }
+
+  /// The loud save-failure line shared by the first failure and the
+  /// post-repair retry (gh-1679): slot + store label + diagnostic + retry
+  /// command, `/key set`-parity wording. Slots and diagnostics only —
+  /// never a byte of the key.
+  void _printLoudSaveFailure(String keyName, SecureKeyCache keys) {
+    final diagnostic = keys.lastSaveError ?? 'the write failed';
+    io.writeln(
+      'could not save $keyName to ${keys.label}: the write failed '
+      '($diagnostic) — the key applies to this session only and is not '
+      'saved with the provider; fix the store, then /key set $keyName '
+      '<value>',
+    );
   }
 
   /// The macOS default-keychain repair offer (gh-1679 AC7): offered after

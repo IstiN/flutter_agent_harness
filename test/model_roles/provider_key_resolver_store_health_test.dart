@@ -75,12 +75,15 @@ void main() {
     Future<KeyStatusRenderer> rendererWith({
       required FakeSecureKeyStore store,
       bool seedSaveFailure = false,
+      List<String> failedNames = const ['FA_KEY_SEED'],
     }) async {
       final keys = SecureKeyCache(store);
       await keys.probe();
       if (seedSaveFailure) {
         store.failWrites = true;
-        await keys.save('FA_KEY_SEED', 'sk-seed-value');
+        for (final name in failedNames) {
+          await keys.save(name, 'sk-seed-value');
+        }
         store.failWrites = false;
       }
       return KeyStatusRenderer(
@@ -135,6 +138,52 @@ void main() {
       expect(line, contains('secure store is not writable'));
       expect(line, contains('/key set FA_KEY_API_KIMI_COM <value>'));
       expect(line, isNot(contains('sk-seed-value')));
+    });
+
+    test('one degraded slot that differs from the suggested one names '
+        'itself (gh-1679 review: the diagnostic belongs to a slot)',
+        () async {
+      final renderer = await rendererWith(
+        store: FakeSecureKeyStore(),
+        seedSaveFailure: true, // fails FA_KEY_SEED, suggested is kimi's slot
+      );
+      final hint = renderer.customEndpointAuthHint(customUrl);
+      expect(hint, contains('last failure: FA_KEY_SEED —'));
+      expect(hint, contains('keychain write failed (exit 45)'));
+      expect(hint, contains('/key set FA_KEY_API_KIMI_COM <value>'));
+      expect(hint, isNot(contains('sk-seed-value')));
+    });
+
+    test('the degraded slot that IS the suggested one keeps the plain '
+        'diagnostic', () async {
+      final renderer = await rendererWith(
+        store: FakeSecureKeyStore(),
+        seedSaveFailure: true,
+        failedNames: ['FA_KEY_API_KIMI_COM'],
+      );
+      final hint = renderer.customEndpointAuthHint(customUrl);
+      expect(
+        hint,
+        contains('not writable (Bad state: keychain write failed (exit 45))'),
+      );
+      expect(hint, isNot(contains('last failure:')));
+      expect(hint, contains('/key set FA_KEY_API_KIMI_COM <value>'));
+    });
+
+    test('several degraded slots keep the aggregate wording, labeled as '
+        'the last write failure (never implied to be the suggested slot)',
+        () async {
+      final renderer = await rendererWith(
+        store: FakeSecureKeyStore(),
+        seedSaveFailure: true,
+        failedNames: const ['FA_KEY_SEED', 'FA_KEY_OTHER'],
+      );
+      final hint = renderer.customEndpointAuthHint(customUrl);
+      expect(hint, contains('last write failure:'));
+      expect(hint, contains('keychain write failed (exit 45)'));
+      expect(hint, isNot(contains('last failure: FA_KEY_')));
+      expect(hint, contains('/key set FA_KEY_API_KIMI_COM <value>'));
+      expect(hint, isNot(contains('sk-seed-value')));
     });
   });
 }

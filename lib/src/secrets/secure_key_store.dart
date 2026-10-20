@@ -73,13 +73,19 @@ String secureKeyDiagnosticLine(String text) {
   return flat.length > 200 ? flat.substring(flat.length - 200) : flat;
 }
 
-/// Whether [diagnostic] is the macOS "no default keychain" write failure
-/// (gh-1679): the platform store's write preflight throws exactly this
-/// shape when `security default-keychain` does not resolve. Reads still
+/// Whether [diagnostic] is one of the macOS "no default keychain" write
+/// failures (gh-1679): the platform store's write preflight throws the
+/// first shape when `security default-keychain` does not resolve, and the
+/// actual `add-generic-password` surfaces the second — `The authorization
+/// was canceled by the user` (exit 154, the user canceling the system
+/// "reset to default" dialog; the incident RCA's live evidence #2). Both
+/// share the same root cause (no default keychain pointer) and the same
+/// remedy, so both get the advisory + `[y/N]` repair offer. Reads still
 /// succeed via the search list on such a host, so only writes fail — the
 /// state worth a dedicated remedy.
 bool isMissingDefaultKeychainError(String diagnostic) =>
-    diagnostic.contains('no default keychain');
+    diagnostic.contains('no default keychain') ||
+    diagnostic.contains('authorization was canceled');
 
 /// The advisory remedy line for a missing macOS default keychain
 /// (gh-1679 AC6): names the system remedy WITHOUT executing anything —
