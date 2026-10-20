@@ -4,10 +4,11 @@
 /// gh-1724 follow-up: end-to-end CLI coverage for the gh-1680 message-cap
 /// repair wiring (PR #1695). The loop/store/coalesce logic has unit suites
 /// (test/agent/message_cap_*), but the CLI-side wiring — the learned-cap
-/// store boot/persist in `agent_cli.dart`, the relief pass in
-/// `agent_cli_compaction.dart`, and the `MessageCapRepairEvent` surfaces in
-/// `approval_commands.dart` — is only executed when a REAL [AgentCli] run
-/// rides a classified cap refusal. These suites drive it in-process:
+/// store boot/persist in `agent_cli.dart`, the relief pass and the
+/// pre-emptive gate in `agent_cli_compaction.dart`, and the
+/// `MessageCapRepairEvent` surfaces in `approval_commands.dart` — is only
+/// executed when a REAL [AgentCli] run rides a classified cap refusal.
+/// These suites drive it in-process:
 ///
 /// - learned-cap refusal (parseable limit): the heal learns the cap,
 ///   persists it to `<home>/.fah/model_caps.json`, compacts the transcript
@@ -32,9 +33,17 @@ const _model = Model(
   api: 'test-api',
   provider: 'test-provider',
   baseUrl: 'https://example.test',
+  // 1M window: the token trigger (window − reserve) can never fire — every
+  // compaction below is driven by the gh-1680 message-count path alone.
   contextWindow: 1000000,
   maxTokens: 4096,
 );
+
+/// ~2.2k estimated tokens per `read` result: enough hideable mass that a
+/// classic pass with a 200-token keep region actually shrinks the
+/// transcript (a tiny transcript has nothing hideable and the relief
+/// correctly reports a no-op).
+final String _bigNote = List.filled(200, 'x' * 45).join('\n');
 
 List<AssistantMessageEvent> _capRefusalTurn(String error) {
   final msg = testAssistant(stopReason: StopReason.error, errorMessage: error);
@@ -44,6 +53,10 @@ List<AssistantMessageEvent> _capRefusalTurn(String error) {
   ];
 }
 
+List<AssistantMessageEvent> _readTurn(int n) => toolTurn([
+  ToolCall(id: 't$n', name: 'read', arguments: {'path': 'note.txt'}),
+]);
+
 AgentCli _bootCli({
   required MemoryExecutionEnv env,
   required FakeCliIO io,
@@ -52,7 +65,7 @@ AgentCli _bootCli({
 }) => AgentCli(
   config: AgentCliConfig(
     model: _model,
-    apiKey: '[REDACTED:Sensitive Value]',
+    apiKey: 'test-key',
     env: env,
     homeDir: homeDir,
     sessionRoot: '/sessions',
@@ -76,7 +89,7 @@ void main() {
   setUp(() {
     tempHome = Directory.systemTemp.createTempSync('fa_msgcap_cli_');
     env = MemoryExecutionEnv(cwd: '/work');
-    env.writeFile('note.txt', 'small note\n');
+    env.writeFile('note.txt', _bigNote);
     io = FakeCliIO();
   });
 
@@ -90,19 +103,13 @@ void main() {
       'learned-cap refusal heals: persist, compact via relief, retry once',
       timeout: const Timeout(Duration(seconds: 120)),
       () async {
-        // One prompt, 8 sequential tool delegations (~18 transcript
-        // messages — below the cap-24 pre-emptive trigger at 8 but plenty
-        // of hideable turns for the relief pass), then the provider's cap
-        // refusal, the relief's summarizer, and the retried request.
+        // One prompt, 8 sequential tool delegations (17 transcript
+        // messages — below the cap-24 pre-emptive trigger at 8 only in
+        // COUNT; the relief pass hides the bulky old pairs), then the
+        // provider's cap refusal, the relief's summarizer, and the
+        // retried request.
         final turns = <List<AssistantMessageEvent>>[
-          for (var i = 1; i <= 8; i++)
-            toolTurn([
-              ToolCall(
-                id: 't$i',
-                name: 'read',
-                arguments: {'path': 'note.txt'},
-              ),
-            ]),
+          for (var i = 1; i <= 8; i++) _readTurn(i),
           _capRefusalTurn('400 messages: array length 25 exceeds limit 24'),
           textTurn('summary of the earlier notes'),
           textTurn('recovered — task complete'),
@@ -146,12 +153,14 @@ void main() {
         );
         expect(output, contains('recovered — task complete'));
 
-        // AC2: the learned cap persists for the NEXT process.
+        // AC2: the learned cap persists for the NEXT process (the store
+        // keys records by `provider<US>modelId`).
         final capsFile = File('${tempHome.path}/.fah/model_caps.json');
         expect(capsFile.existsSync(), isTrue);
+        final decoded =
+            jsonDecode(capsFile.readAsStringSync()) as Map<String, dynamic>;
         final record =
-            (jsonDecode(capsFile.readAsStringSync())
-                    as Map<String, dynamic>)['test-provider']['cap-model']
+            decoded[ModelCapsStore.keyOf('test-provider', 'cap-model')]
                 as Map<String, dynamic>;
         expect(record['maxMessages'], 24);
       },
@@ -166,28 +175,22 @@ void main() {
           ..createSync(recursive: true);
         File('${capsDir.path}/model_caps.json').writeAsStringSync(
           jsonEncode({
-            'test-provider': {
-              'cap-model': {'maxMessages': 24},
+            ModelCapsStore.keyOf('test-provider', 'cap-model'): {
+              'maxMessages': 24,
             },
           }),
         );
 
-        // REPL prompts, each answered by one tool delegation: after three
-        // prompts the live transcript reaches cap − margin (24 − 16 = 8)
-        // and the FOURTH prompt's pre-flight gate must compact BEFORE the
-        // request rides out — the additive gh-1680 trigger, token-healthy
-        // (the 1M window never trips the token threshold).
+        // REPL prompts, each answered by one tool delegation. After four
+        // prompts the live transcript reaches 9 messages — past the
+        // cap − margin trigger (24 − 16 = 8) — so the FIFTH prompt's
+        // pre-flight gate must compact BEFORE the request rides out: the
+        // additive gh-1680 trigger, token-healthy (the 1M window never
+        // trips the token threshold).
         final turns = <List<AssistantMessageEvent>>[
-          for (var i = 1; i <= 3; i++)
-            toolTurn([
-              ToolCall(
-                id: 't$i',
-                name: 'read',
-                arguments: {'path': 'note.txt'},
-              ),
-            ]),
+          for (var i = 1; i <= 4; i++) _readTurn(i),
           textTurn('pre-emptive summary'),
-          textTurn('prompt four answered after the gate'),
+          textTurn('prompt five answered after the gate'),
         ];
         final fake = FakeStreamFunction(turns);
         final cli = _bootCli(
@@ -198,36 +201,27 @@ void main() {
         );
 
         final run = cli.run();
-        io.sendLine('prompt one');
-        await io.settleAfter('prompt two');
-        io.sendLine('prompt two');
-        await io.settleAfter('prompt three');
-        io.sendLine('prompt three');
-        await io.settleAfter('prompt four');
-        io.sendLine('prompt four');
-        await io.settleAfter('prompt four answered after the gate');
+        for (var n = 1; n <= 5; n++) {
+          io.sendLine('prompt $n');
+          await settleUntil(() => fake.calls >= n);
+        }
+        await settleUntil(() => fake.calls >= 6);
         io.sendLine('/exit');
         await run;
         await io.close();
 
-        // The gate fired BEFORE prompt four's request: the summarizer ran
-        // (request 4) and the retried request (5) rode fewer messages than
-        // prompt three's request (3).
-        expect(fake.calls, 5, reason: '3 tool prompts + summarizer + prompt 4');
-        expect(
-          fake.contexts[3].messages,
-          everyElement(isA<Message>()),
-          reason: 'the summarizer request is a normal model call',
-        );
-        final beforeGate = fake.contexts[2].messages.length;
-        final afterGate = fake.contexts[4].messages.length;
+        // Calls: 4 tool prompts + the gate's summarizer + prompt five.
+        expect(fake.calls, 6, reason: 'the pre-emptive pass adds one call');
+        final beforeGate = fake.contexts[3].messages.length;
+        final afterGate = fake.contexts[5].messages.length;
         expect(
           afterGate,
           lessThan(beforeGate),
           reason: 'the pre-emptive pass must shrink the transcript',
         );
         final output = io.out.toString();
-        expect(output, contains('prompt four answered after the gate'));
+        expect(output, contains('auto-compacted'));
+        expect(output, contains('prompt five answered after the gate'));
       },
     );
 
@@ -261,13 +255,12 @@ void main() {
   });
 }
 
-extension _FakeCliIoSettle on FakeCliIO {
-  /// Polls until [expected] appears in the captured output.
-  Future<void> settleAfter(String expected) async {
-    for (var i = 0; i < 300; i++) {
-      if (out.toString().contains(expected)) return;
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-    fail('timed out waiting for: $expected');
+/// Polls until [condition] holds (the REPL surfaces no per-turn marker
+/// text; the stream call count is the observable turn boundary).
+Future<void> settleUntil(bool Function() condition) async {
+  for (var i = 0; i < 300; i++) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
   }
+  fail('timed out waiting for the turn to settle');
 }
