@@ -271,7 +271,8 @@ extension on AgentCli {
         ? setup.modelId
         : _agent.state.model.id;
     final token = setup.token;
-    final keyName = await _persistSetupKey(setup, editName);
+    final persisted = await _persistSetupKey(setup, editName);
+    final keyName = persisted.keyName;
     // Edit mode keeps the existing entry's auth method (SSO/JWT routing
     // is the more precise signal than key format — set explicitly by the
     // connect flows). New entries default to api-key.
@@ -283,6 +284,7 @@ extension on AgentCli {
       registry,
       modelId: modelId,
       keyName: keyName,
+      keyNotPersisted: persisted.keyNotPersisted,
       editName: editName,
       existingEntry: existingEntry,
     );
@@ -350,11 +352,15 @@ extension on AgentCli {
 
   /// The registry step of [_applyCustomProviderSetup]: writes (or renames
   /// on edit) the entry and returns it, or null without a registry.
+  /// [keyNotPersisted] carries the gh-1679 degradation marker onto the
+  /// recorded entry (a typed token that never reached the durable store),
+  /// or clears it after a successful persist.
   Future<CustomProviderEntry?> _recordSetupEntry(
     CustomProviderSetup setup,
     CustomProviderRegistry? registry, {
     required String modelId,
     required String? keyName,
+    required bool keyNotPersisted,
     required String? editName,
     required CustomProviderEntry? existingEntry,
   }) async {
@@ -382,6 +388,7 @@ extension on AgentCli {
         updated: entry,
       );
     }
+    entry.keyNotPersisted = keyNotPersisted;
     // The wizard persists via its own switch-time fire (below); only the
     // extension flows use the persisting variant of the shared helper.
     await _saveCustomProviderEntry(entry, persist: false);
@@ -408,37 +415,6 @@ extension on AgentCli {
     if (persist) {
       await config.onProviderChanged?.call(_providerKind, _apiKey);
     }
-  }
-
-  /// The key-name/persistence step of [_applyCustomProviderSetup]: returns
-  /// the secure-store key name the entry should carry, or null when no key
-  /// persists (keyless, session-only, or a failed/unavailable store).
-  /// Without a fresh token the edit keeps the entry's existing key name.
-  Future<String?> _persistSetupKey(
-    CustomProviderSetup setup,
-    String? editName,
-  ) async {
-    final registry = config.customProviders;
-    final token = setup.token;
-    if (token == null) {
-      return editName != null ? registry?.find(editName)?.keyName : null;
-    }
-    final keyName = _setupKeyName(setup, editName);
-    final keys = config.secureKeys;
-    if (keys != null && keys.available) {
-      await keys.save(keyName, token);
-      config.onSecretStored?.call(keyName, token);
-      return keyName;
-    }
-    // No secure store OR the write failed (locked/managed keychain):
-    // the key still applies to this session via the switch below, but
-    // cannot persist with the entry.
-    io.writeln(
-      'could not save the key to the secure store (unavailable, locked, '
-      'or managed) — it applies to this session only and is not saved '
-      'with the provider',
-    );
-    return null;
   }
 
   /// The secure-store key name a setup entry should carry: a same-name edit

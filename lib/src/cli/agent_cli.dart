@@ -279,6 +279,7 @@ export 'model_presets.dart' show bundledCatalogModelIds, knownModelPresets;
 
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
+part 'provider_key_persist.dart';
 part 'provider_export_command.dart';
 part 'chatgpt_import_command.dart';
 part 'agent_cli_compaction.dart';
@@ -2298,6 +2299,24 @@ class AgentCli {
 
   /// Idle-wake guard: one inbox-triggered run at a time.
   var _inboxWakeRunning = false;
+
+  /// Session-load in-flight counter (the goal_builder boot race): a
+  /// wake run that fires while `_loadSession`/`_createSession` is still
+  /// walking a marathon file operates on a half-loaded agent — `_session`
+  /// is null, the over-window guard has no relief (`_maybeAutoCompact`
+  /// bails at the null session), and the wake's scheduled task dies with
+  /// a terminal "compaction did not run" error BEFORE the boot cap even
+  /// runs. The inbox watcher defers while the counter is positive (mail
+  /// stays pending; the 2s tick retries after boot).
+  var _sessionLoadsInFlight = 0;
+
+  /// Test seam: drive one inbox-watcher wake tick deterministically.
+  @visibleForTesting
+  Future<void> inboxWakeTickForTest() => _wakeOnInboxMail();
+
+  /// Test seam: simulate a mid-boot session load for the wake gate.
+  @visibleForTesting
+  set sessionLoadsInFlightForTest(int value) => _sessionLoadsInFlight = value;
 
   /// Test seam: observe/reset the inbox-wake streak without driving ten
   /// real runs (the cap is exactly [InboxWakePolicy.defaultMaxInboxWakeStreak]).

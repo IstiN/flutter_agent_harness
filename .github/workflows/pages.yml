@@ -14,8 +14,6 @@ on:
       - 'packages/**'
       - 'lib/**'
       - 'vendor/**'
-      - 'browser_ext/**'
-      - 'scripts/build_browser_ext.sh'
       - 'office_addin/**'
       - 'scripts/build_office_addin.sh'
       - 'scripts/build_site.dart'
@@ -38,7 +36,7 @@ jobs:
     name: Build landing + web demo
     runs-on: ubuntu-latest
     # Ceiling for the daily website watcher's budget arithmetic (#351):
-    # flutter web build + extension dart2js + add-in build + a Playwright
+    # flutter web build + add-in build + a Playwright
     # chromium boot smoke; historically ~15m, 45m is the slow-day bound.
     timeout-minutes: 45
     steps:
@@ -104,14 +102,12 @@ jobs:
           bash scripts/prune_flutter_assets.sh build/pages/app/assets \
             assets/wasm packages/js_widget_runtime/test
 
-      # The Chrome extension ships on the site too (download + load
-      # unpacked): dart2js the SW agent and zip it — flutter is already on
-      # PATH here and the script's --with-app embeds the same web build.
-      - name: Build Chrome extension
-        run: |
-          dart pub get
-          cd browser_ext/dart && dart pub get && cd ../..
-          bash scripts/build_browser_ext.sh --with-app
+      # gh-1684: the Chrome extension no longer ships on the site — the
+      # zip moved to GitHub Releases (releases/latest/download/
+      # fa-extension.zip, what site/index.html links). It is built and
+      # size-gated at PR review time (ci.yml extension-size-gate) and on
+      # the release leg (build-macos.yml build-extension), so nothing
+      # extension-related happens in this deploy anymore.
 
       # The Office add-in ships on the site too (sideload from
       # fa1.dev/outlook/manifest.xml): the script validates the manifest,
@@ -154,11 +150,8 @@ jobs:
           if [ -d build/pages/app ]; then
             cp -R build/pages/app build/pages/root/app
           fi
-          # The extension zip lives under /extension/ on fa1.dev.
-          if [ -f build/fa-extension.zip ]; then
-            mkdir -p build/pages/root/extension
-            cp build/fa-extension.zip build/pages/root/extension/fa-extension.zip
-          fi
+          # gh-1684: fa-extension.zip is NOT copied into the Pages artifact
+          # anymore — it downloads from the GitHub release (AC1).
 
       - name: Cache-bust static assets
         if: steps.web_build.outcome == 'success'
@@ -174,36 +167,13 @@ jobs:
           sed -i -E 's|src="\./app/"|src="./app/index.html?v='"${BUILD_ID}"'"|g' build/pages/root/index.html
           sed -i -E 's|href="\./app/" target="_blank"|href="./app/index.html?v='"${BUILD_ID}"'" target="_blank"|g' build/pages/root/index.html
 
-      - name: Size manifest + budget gate (#1096 AC1)
-        run: |
-          # Per-entry uncompressed size table + +5% budget per line (issue
-          # inventory format). First run seeds web-app.tsv/outlook-app.tsv
-          # in the workspace (--init-if-missing) — the step below uploads
-          # them as a ride-along artifact; commit them to arm the web
-          # gates. The extension zip is gated against the committed
-          # cut-shape baseline (same file the release gate in
-          # build-macos.yml uses).
-          python3 scripts/size_manifest.py check build/pages/app \
-            --baseline scripts/size_budget/web-app.tsv --init-if-missing
-          if [ -d build/pages/root/outlook/app ]; then
-            python3 scripts/size_manifest.py check build/pages/root/outlook/app \
-              --baseline scripts/size_budget/outlook-app.tsv --init-if-missing
-          fi
-          if [ -f build/fa-extension.zip ]; then
-            python3 scripts/size_manifest.py check build/fa-extension.zip \
-              --baseline scripts/size_budget/fa-extension.tsv
-          fi
-
-      # The self-seeded baselines live only in this runner's workspace —
-      # upload them so "commit it to arm the gate" is actually recoverable
-      # (grab the artifact, commit the two TSVs).
-      - name: Upload seeded size baselines (#1096 ratchet)
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: size-baselines
-          path: scripts/size_budget/*.tsv
-          if-no-files-found: ignore
+      # gh-1684: NO size gates run at deploy time anymore. The
+      # fa-extension.zip gate moved to PR review time (ci.yml
+      # extension-size-gate) and the release leg (build-macos.yml
+      # build-extension); the web-app/outlook-app gates were notice-only
+      # since #1096 (baselines never committed — gh-1684 decision 5) and
+      # are removed rather than armed: a size regression must fail the PR,
+      # not the deploy.
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
