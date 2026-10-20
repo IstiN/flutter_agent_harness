@@ -13,13 +13,18 @@ import 'stream_trace.dart';
 /// A buffered line sink over [file]: truncates whatever a previous run
 /// left (ONE trace per file — each armed run replaces the last trail;
 /// collect across runs by copying the file between runs), then appends
-/// lines in batches. Batching keeps the per-mark cost off the hot
-/// stream path (a sync fsync per SSE chunk would perturb the very
-/// cadence being measured): lines flush on a [flushInterval] timer,
-/// when the buffer crosses [_kFlushThresholdBytes], or on
-/// [flush]/[dispose]. The trade is explicit — up to one interval of
-/// buffered lines is lost on a hard kill. Diagnostics contract: an IO
-/// failure degrades to silence, never throws into the caller.
+/// lines in batches. Concurrent armed runs share that one file: any
+/// second armed `fa` boot — another terminal, or a detached child that
+/// inherited `FA_STREAM_TRACE` (e.g. `fa dap start` spawning
+/// `hub serve`) — truncates the live trail at its install. Copy the
+/// file between runs when history matters. Batching keeps the per-mark
+/// cost off the hot stream path (a sync fsync per SSE chunk would
+/// perturb the very cadence being measured): lines flush on a
+/// [flushInterval] timer, when the buffer crosses
+/// [_kFlushThresholdBytes], or on [flush]/[dispose]. The trade is
+/// explicit — up to one interval of buffered lines is lost on a hard
+/// kill. Diagnostics contract: an IO failure degrades to silence, never
+/// throws into the caller.
 final class FileStreamTraceSink implements StreamTraceSink {
   /// Truncates [file] for a fresh trace and arms the flush timer.
   FileStreamTraceSink(

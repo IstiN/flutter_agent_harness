@@ -7,7 +7,8 @@
 /// - `emit` — a provider adapter pushed a delta event into the
 ///   [AssistantMessageEventStream];
 /// - `render` — the host wrote the delta to its live surface
-///   (the CLI's `_TuiCliIO.write`).
+///   (the CLI's `_TuiCliIO.write` in TUI mode, `_TerminalCliIO.write`
+///   in headless and line-mode runs).
 ///
 /// Every line carries `t=<elapsed>ms +<delta>ms #<seq> <mark> <detail>`:
 /// elapsed ms since the trace started, the gap since the PREVIOUS mark,
@@ -36,7 +37,12 @@ enum StreamTraceMark {
 }
 
 /// Where trace lines go. Implementations must not throw — diagnostics
-/// never break the host.
+/// never break the host. Sinks must also tolerate being ABANDONED:
+/// [StreamTrace.start] replaces the active trace and [StreamTrace.stop]
+/// clears it WITHOUT releasing the sink (this interface has no
+/// dispose/close hook), so a sink holding resources —
+/// `FileStreamTraceSink`'s flush timer, a file handle — must clean up
+/// on its own (process exit, or an owner calling its `dispose`).
 abstract interface class StreamTraceSink {
   /// Receives one formatted trace body (no trailing newline).
   void writeLine(String line);

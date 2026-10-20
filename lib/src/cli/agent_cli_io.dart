@@ -96,12 +96,15 @@ final class _TuiCliIO implements CliIO {
 
   @override
   void write(String text) {
-    // StreamTrace render mark (diagnostic, no-op unless active): text
-    // and thinking deltas both reach the screen through this seam in
-    // TUI mode — the emit→render gap names the loop/UI cost.
-    StreamTrace.mark(StreamTraceMark.render, '+${text.length}ch');
     final tui = _tui;
     if (tui != null) {
+      // StreamTrace render mark (diagnostic, no-op unless active): text
+      // and thinking deltas both reach the screen through this seam in
+      // TUI mode — the emit→render gap names the loop/UI cost. Only the
+      // sendOutput branch marks: when the TUI is not attached yet this
+      // write delegates to the raw terminal IO, whose own write carries
+      // the mark — a surface write is never double-counted.
+      StreamTrace.mark(StreamTraceMark.render, '+${text.length}ch');
       tui.sendOutput(text);
     } else {
       _delegate.write(text);
