@@ -221,6 +221,14 @@ QUICK COMMANDS
                                .fahx file — the fallback sync tier when
                                browser pairing is unavailable; import
                                lands with the extension half
+  provider                     fa provider export <name> [--check]:
+                               print the shell export lines
+                               (OPENAI_API_KEY + OPENAI_BASE_URL) for
+                               the saved ChatGPT/Codex login <name> —
+                               the access token is refreshed when
+                               stale; the refresh token never prints.
+                               --check reports credential health
+                               without any secret
 
   ext                          fa ext <list|install|remove|update|audit|
                                enable|disable> [--json]: manage JS
@@ -625,6 +633,9 @@ SKILLS AND CONTEXT FILES
                      OAuth credentials blob in that account's own
                      secure-store slot — access tokens refresh
                      automatically and the rotated blob is re-persisted;
+                     chatgpt import [path] adopts an existing `codex
+                     login` session (~/.codex/auth.json by default) into
+                     the same slot — no browser round-trip (issue #1704);
                      codemie sso [orgUrl] signs in to a CodeMie organization
                      via browser SSO (localhost callback) and saves it as a
                      custom provider — the session JWT rides the standard
