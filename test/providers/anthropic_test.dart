@@ -156,6 +156,73 @@ void main() {
       expect(await stream.result, same(done.message));
     });
 
+    group('proxy streams without `event:` lines', () {
+      /// Bare `data:` frames, as streamed by Bedrock-style Anthropic proxies,
+      /// optionally followed by a `[DONE]` sentinel.
+      String bareBody(List<Map<String, dynamic>> parts, {bool done = true}) {
+        final frames = parts.map((p) => 'data: ${jsonEncode(p)}\n\n').join();
+        return done ? '${frames}data: [DONE]\n\n' : frames;
+      }
+
+      test('streams text, falling back to the payload type', () async {
+        final client = sseClient(
+          bareBody([
+            messageStart(),
+            blockStart(0, {'type': 'text', 'text': ''}),
+            blockDelta(0, {'type': 'text_delta', 'text': 'Pong!'}),
+            blockStop(0),
+            messageDelta('end_turn', usage: {'output_tokens': 2}),
+            messageStop,
+          ]),
+        );
+
+        final events = await streamAnthropic(
+          testModel,
+          simpleContext(),
+          const AnthropicOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          client,
+        ).toList();
+
+        expect(events.whereType<TextEndEvent>().single.content, 'Pong!');
+        final done = events.last as DoneEvent;
+        expect(done.reason, StopReason.stop);
+        expect(done.message.responseId, 'msg_1');
+      });
+
+      test('streams tool_use arguments', () async {
+        final client = sseClient(
+          bareBody([
+            messageStart(),
+            blockStart(0, {
+              'type': 'tool_use',
+              'id': 'toolu_1',
+              'name': 'get_weather',
+              'input': <String, dynamic>{},
+            }),
+            blockDelta(0, {
+              'type': 'input_json_delta',
+              'partial_json': '{"location":"Paris"}',
+            }),
+            blockStop(0),
+            messageDelta('tool_use'),
+            messageStop,
+          ]),
+        );
+
+        final events = await streamAnthropic(
+          testModel,
+          simpleContext(),
+          const AnthropicOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          client,
+        ).toList();
+
+        expect(events.whereType<ToolCallEndEvent>().single.toolCall.arguments, {
+          'location': 'Paris',
+        });
+        expect((events.last as DoneEvent).reason, StopReason.toolUse);
+      });
+    });
+
     test('streams thinking deltas and accumulates the signature', () async {
       final client = sseClient(
         sseBody([
@@ -509,8 +576,10 @@ void main() {
       expect(message, contains('429'));
       expect(message, contains('Rate limit reached'));
       expect(message.contains('{'), isFalse);
-      expect(error.error.rateLimit?.rawBody,
-          '{"error":{"message":"Rate limit exceeded"}}');
+      expect(
+        error.error.rateLimit?.rawBody,
+        '{"error":{"message":"Rate limit exceeded"}}',
+      );
       expect(error.retryAfter, isNull);
       expect(await stream.result, same(error.error));
     });
@@ -1468,43 +1537,44 @@ void main() {
       return capturedBody!;
     }
 
-    test(
-      'thinking authored by another provider degrades to text, never '
-      'replays its foreign signature',
-      () async {
-        final body = await captureBody(
-          Context(
-            messages: [
-              UserMessage.text('hi', timestamp: DateTime.utc(2026)),
-              assistantFrom('responses', 'chatgpt', 'gpt-5-codex', const [
-                ThinkingContent(
-                  thinking: 'responses reasoning',
-                  thinkingSignature: 'resp_encrypted',
-                ),
-              ]),
-              assistantFrom('anthropic-messages', 'anthropic',
-                  'claude-sonnet-4-5', const [
+    test('thinking authored by another provider degrades to text, never '
+        'replays its foreign signature', () async {
+      final body = await captureBody(
+        Context(
+          messages: [
+            UserMessage.text('hi', timestamp: DateTime.utc(2026)),
+            assistantFrom('responses', 'chatgpt', 'gpt-5-codex', const [
+              ThinkingContent(
+                thinking: 'responses reasoning',
+                thinkingSignature: 'resp_encrypted',
+              ),
+            ]),
+            assistantFrom(
+              'anthropic-messages',
+              'anthropic',
+              'claude-sonnet-4-5',
+              const [
                 ThinkingContent(
                   thinking: 'native reasoning',
                   thinkingSignature: 'native-sig',
                 ),
-              ]),
-            ],
-          ),
-        );
+              ],
+            ),
+          ],
+        ),
+      );
 
-        final messages = body['messages'] as List;
-        // The foreign record's thinking degrades to plain text: its
-        // signature is an OpenAI token Anthropic would hard-400 on.
-        final foreign = (messages[1] as Map)['content'] as List;
-        expect((foreign.single as Map)['type'], 'text');
-        expect((foreign.single as Map)['text'], 'responses reasoning');
-        // The native record keeps its signed thinking block untouched.
-        final native = (messages[2] as Map)['content'] as List;
-        expect((native.single as Map)['type'], 'thinking');
-        expect((native.single as Map)['signature'], 'native-sig');
-      },
-    );
+      final messages = body['messages'] as List;
+      // The foreign record's thinking degrades to plain text: its
+      // signature is an OpenAI token Anthropic would hard-400 on.
+      final foreign = (messages[1] as Map)['content'] as List;
+      expect((foreign.single as Map)['type'], 'text');
+      expect((foreign.single as Map)['text'], 'responses reasoning');
+      // The native record keeps its signed thinking block untouched.
+      final native = (messages[2] as Map)['content'] as List;
+      expect((native.single as Map)['type'], 'thinking');
+      expect((native.single as Map)['signature'], 'native-sig');
+    });
 
     test('redacted thinking from another provider degrades to text', () async {
       final body = await captureBody(

@@ -244,9 +244,9 @@ extension on AgentCli {
   /// together: a folded row carries the union of its identities' models.
   int _providerModelCount(String name) {
     final id = canonicalProviderName(name);
-    return _crossProviderCandidates('')
-        .where((e) => canonicalProviderName(e.$1) == id)
-        .length;
+    return _crossProviderCandidates(
+      '',
+    ).where((e) => canonicalProviderName(e.$1) == id).length;
   }
 
   /// Step 2 of the two-step model pick: the chosen provider's model list
@@ -452,6 +452,19 @@ extension on AgentCli {
     if (entry.spec.kind == 'copilot') {
       return _fetchCopilotModelsAndLimits(entry.baseUrl, apiKey: cookieOrKey);
     }
+    if (entry.spec.kind == 'chatgpt-codex') {
+      // The Codex backend's /models — the list call codex-rs'
+      // models-manager makes (GET {base}/models under the account's
+      // OAuth blob). The bundled synced catalog answers when the
+      // endpoint can't, so the picker lists the full codex catalog
+      // instead of collapsing to the entry's one saved model (#1706).
+      final (ids, _, _) = await fetchModelsForEndpoint(
+        entry.baseUrl,
+        apiKey: cookieOrKey,
+        provider: chatgptCodexDispatchHint,
+      );
+      return ids;
+    }
     return _fetchOpenAiShapeIds(entry, cookieOrKey);
   }
 
@@ -461,8 +474,8 @@ extension on AgentCli {
   /// first-class provider so `--provider minimax` and the parity
   /// guards treat it as such) still speak the openai-completions API
   /// and DO answer `/v1/models`. Other api dialects (anthropic,
-  /// google, chatgpt-codex) have no /models endpoint here and answer
-  /// an empty list.
+  /// google) have no /models endpoint here and answer an empty list;
+  /// the chatgpt-codex kind is dispatched above.
   Future<List<String>> _fetchOpenAiShapeIds(
     CustomProviderEntry entry,
     String cookieOrKey,

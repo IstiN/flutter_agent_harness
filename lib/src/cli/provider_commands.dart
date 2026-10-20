@@ -55,19 +55,21 @@ extension on AgentCli {
   }
 
   /// Fresh-install gate (issue #969): the executable flagged a REPL boot
-  /// with nothing configured and no key anywhere — open the same guided
-  /// add-provider wizard `/provider custom` opens, before the first
-  /// prompt, so the user adds a provider instead of staring at the
-  /// default provider's "no key set" noise. Fire-and-forget like every
+  /// with nothing configured and no key anywhere — open the add-provider
+  /// choice before the first prompt, so the user adds a provider instead
+  /// of staring at the default provider's "no key set" noise. Issue #1705:
+  /// the choice comes FIRST — the same list the `/add-provider` picker
+  /// shows; only `Custom` continues into the api-type wizard
+  /// `/provider custom` opens. Fire-and-forget like every
   /// flow start: the REPL loop answers the prompts. Piped input (and
   /// headless, which never gets the flag) never enters the wizard.
-  /// Returns the wizard's future (null when the boot is not fresh) so the
+  /// Returns the flow's future (null when the boot is not fresh) so the
   /// line-mode entry can redraw the idle prompt when it settles — the flow
   /// completes outside `_handleLine`, when the loop is parked reading the
   /// next line.
   Future<void>? _maybeStartFreshInstallProviderFlow() {
     if (!config.freshInstallProviderFlow || !io.isInteractive) return null;
-    return _startProviderFlow();
+    return _handleFreshInstallProviderChoice();
   }
 
   /// The Edit/Delete picker for a custom provider entry.
@@ -1245,17 +1247,31 @@ extension on AgentCli {
     _activeCustomName = entryName;
   }
 
-  /// The `/provider chatgpt oauth [headless] [--no-browser]` branch:
-  /// authenticates the user with their ChatGPT account via PKCE (the Codex
-  /// CLI client id) and stores the resulting OAuth credentials — access +
-  /// refresh tokens as one JSON blob in the account's own secure-store
-  /// slot. Returns true when the command targeted the OAuth flow.
+  /// The `/provider chatgpt oauth [headless] [--no-browser]` and
+  /// `/provider chatgpt import [path]` branches: OAuth authenticates the
+  /// user with their ChatGPT account via PKCE (the Codex CLI client id);
+  /// import reads an existing `codex login` session file (`~/.codex/
+  /// auth.json` by default) and lands it in the same secure-store slot —
+  /// no browser round-trip (issue #1704). Both store access + refresh
+  /// tokens as one JSON blob in the account's own secure-store slot.
+  /// Returns true when the command targeted either flow.
   /// [noBrowser] skips the interactive flow's automatic browser launch —
   /// the URL prints prominently instead (gh-1450).
   bool _startChatGptOAuthArg(List<String> args) {
     if (args.first != 'chatgpt') return false;
-    if (args.length < 2 || args[1] != 'oauth') {
+    if (args.length < 2 || (args[1] != 'oauth' && args[1] != 'import')) {
       return false;
+    }
+    if (args[1] == 'import') {
+      final operands = args.skip(2).toList();
+      if (operands.length > 1 || operands.any((o) => o.startsWith('-'))) {
+        io.writeln('usage: /provider chatgpt import [path]');
+        return true;
+      }
+      unawaited(
+        _handleChatGptImportCommand(operands.isEmpty ? null : operands.first),
+      );
+      return true;
     }
     final options = args.skip(2).toList();
     final headless = options.contains('headless');
@@ -1291,11 +1307,12 @@ extension on AgentCli {
   }) async {
     final spec = providerCatalog['chatgpt']!;
 
-    // Existing ChatGPT accounts first: pick one, or add another —
-    // multi-account is first-class, like copilot. The headless variant
-    // skips the picker: it is the scripted sign-in form (its stdin
-    // carries the redirect URL); saved accounts switch via
-    // `/provider <name>`.
+    // Existing ChatGPT accounts first: pick one to switch to, or sign in
+    // again. One identity per auth domain (#1706): the sign-in re-auths
+    // THE domain record (a typed name renames it) — it never mints a
+    // second entry. The headless variant skips the picker: it is the
+    // scripted sign-in form (its stdin carries the redirect URL);
+    // saved accounts switch via `/provider <name>`.
     if (!headless) {
       final registry = config.customProviders;
       final accounts = [
@@ -1306,11 +1323,7 @@ extension on AgentCli {
         final choice = await _pickOption('ChatGPT account', [
           for (final entry in accounts)
             (entry.name, entry.name, '${entry.baseUrl} · ${entry.modelId}'),
-          (
-            'add',
-            'add another account',
-            'sign in with a ChatGPT account (OAuth)',
-          ),
+          ('add', 'sign in again (re-auth)', 're-run the OAuth sign-in'),
         ]);
         if (choice == null) {
           io.writeln('ChatGPT connect cancelled');
@@ -1411,11 +1424,14 @@ extension on AgentCli {
   /// backend so the session is usable at once. The account also lands in
   /// the provider registry (name prompt included) like every other
   /// connected provider — without the entry it never showed in `/provider`.
-  /// The name prompt doubles as the multi-account boundary (CodeMie's
-  /// sameAccount rule): Enter re-auths the existing entry and keeps its
-  /// model, a new name saves a separate entry whose credentials live in
-  /// their own name-scoped key slot — a refresh-token rotation then never
-  /// overwrites a sibling account's blob.
+  /// ONE identity per auth domain (issue #1706): the entry is resolved by
+  /// base URL / canonical name BEFORE the prompt, and the login lands on
+  /// it — Enter re-auths the existing entry and keeps its model, a typed
+  /// new name RENAMES it (the base-URL convention: rename keeps the
+  /// entry) and re-runs the guided model pick. The registry never grows a
+  /// custom-named twin of the chatgpt record; the renamed entry's
+  /// credentials live in its own name-scoped key slot, so a refresh-token
+  /// rotation never writes a slot another record reads.
   Future<void> _applyChatGptOAuthCredentials(
     ProviderSpec spec,
     ChatGptOAuthCredentials credentials,
@@ -1455,7 +1471,14 @@ extension on AgentCli {
               ))) ??
         fallback;
     // Re-auth stores into the entry's own slot (a legacy entry keeps its
-    // env-name slot); a new account scopes its slot by name.
+    // env-name slot); a new account scopes its slot by name. A typed name
+    // that differs from the resolved record is a RENAME (#1706): the old
+    // record is dropped first so the domain keeps exactly one entry —
+    // the edit wizard's rename shape (drop old, save under the new name).
+    final renamed = existing != null && name != existing.name;
+    if (renamed) {
+      registry!.entries.removeWhere((e) => e.name == existing.name);
+    }
     final keyName =
         registry?.find(name)?.keyName ??
         CustomProviderRegistry.keyNameFor(
@@ -1469,7 +1492,8 @@ extension on AgentCli {
       keyName: keyName,
     );
 
-    // Guided model pick for a NEW account only: the live Codex /models
+    // Guided model pick for a NEW account or a RENAME (a new name is a
+    // fresh setup of the one domain entry): the live Codex /models
     // answer under the fresh credentials; cancel (or a failed/empty
     // fetch) keeps the bundled default. A re-login to the SAME entry
     // keeps its last-used model.
@@ -1479,9 +1503,10 @@ extension on AgentCli {
         : (await _pickChatGptModel(spec, encoded) ?? chatGptCodexDefaultModel);
 
     if (registry != null) {
-      // Re-auth lands ON the existing record (in place — `add` both
-      // re-orders and rejects reserved-named domain ghosts, #706); a new
-      // account name saves a fresh entry.
+      // The login lands on the ONE domain record (in place — `add` both
+      // re-orders and rejects reserved-named domain ghosts, #706); a
+      // rename already dropped the old spelling above, so `add` saves
+      // the entry under its new name (#1706 — never a second record).
       final target = registry.find(name);
       if (target == null) {
         registry.add(

@@ -20,6 +20,7 @@ import '../model_roles/provider_catalog.dart';
 import '../model_roles/provider_model_binding.dart';
 import '../model_roles/providers_queue.dart';
 import '../model_roles/roles_config.dart';
+import '../providers/chatgpt_oauth.dart' show chatGptOAuthCredentialsEnvName;
 import '../secrets/secrets_store.dart';
 import '../secrets/secure_key_store.dart';
 import '../secrets/secret_redactor.dart';
@@ -1117,7 +1118,10 @@ ProviderQueueScopeInput? _queueScopeFromFile(
 
 /// Collects the secrets snapshot for the queue: each entry's `apiKeyEnv`
 /// resolves from the environment, else the secure store (env wins — the
-/// same precedence as the roles snapshot).
+/// same precedence as the roles snapshot). A `chatgpt-codex` entry that
+/// named no `apiKeyEnv` resolves its DEFAULT Keychain slot
+/// ([chatGptOAuthCredentialsEnvName]) under the same rule, and a
+/// `refreshTokenEnv` name resolves the same way (issue #1704).
 Map<String, String> collectQueueSecrets(
   List<ProviderQueueEntry> entries,
   SecureKeyCache keys, {
@@ -1126,15 +1130,22 @@ Map<String, String> collectQueueSecrets(
   final environment = env ?? Platform.environment;
   final secrets = <String, String>{};
   for (final entry in entries) {
-    final name = entry.apiKeyEnv;
-    if (name == null || secrets.containsKey(name)) continue;
-    final fromEnv = environment[name];
-    if (fromEnv != null && fromEnv.isNotEmpty) {
-      secrets[name] = fromEnv;
-      continue;
+    final names = [
+      ?entry.apiKeyEnv,
+      ?entry.refreshTokenEnv,
+      if (entry.apiKeyEnv == null && entry.providerType == 'chatgpt-codex')
+        chatGptOAuthCredentialsEnvName,
+    ];
+    for (final name in names) {
+      if (secrets.containsKey(name)) continue;
+      final fromEnv = environment[name];
+      if (fromEnv != null && fromEnv.isNotEmpty) {
+        secrets[name] = fromEnv;
+        continue;
+      }
+      final stored = keys.read(name);
+      if (stored != null) secrets[name] = stored;
     }
-    final stored = keys.read(name);
-    if (stored != null) secrets[name] = stored;
   }
   return secrets;
 }

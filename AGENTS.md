@@ -756,7 +756,12 @@ factual: paths, commands, invariants — no essays.
   `tokenKeyName`), Kimi (a typed key becomes a named
   entry with a name-scoped key; a resolved key offers "use it / add a
   second account"), OpenRouter OAuth + API-key, ChatGPT OAuth (lands a
-  registry entry too, `apiType: chatgpt`), CodeMie SSO/JWT (the
+  registry entry too, `apiType: chatgpt`; ONE identity per auth domain —
+  issue #1706: a second codex/chatgpt auth lands ON the resolved
+  same-domain record, a typed new name RENAMES it instead of minting a
+  twin, and the load merge folds any codex records that already exist —
+  so `/provider` lists the ChatGPT account exactly once, however it is
+  named), CodeMie SSO/JWT (the
   SSO name step only from the explicit add flows: `offerName` — automatic
   re-authorizations on startup/switch/mid-stream expiry stay silent; a
   NEW account name re-runs the guided project → model pick, a re-login
@@ -802,8 +807,14 @@ factual: paths, commands, invariants — no essays.
   tests can drive them line-mode (see `test/cli/settings_flow_test.dart`).
   The model-list fetch dispatches per dialect
   (`_fetchProviderModelIds`: CodeMie `/llm_models` by URL marker, DIAL
-  deployments when the spec is `dial`, else OpenAI `/models`; the saved
-  entry's own key authenticates; failures fall back to manual entry).
+  deployments when the spec is `dial`, the Codex backend `/models` for
+  the chatgpt-codex kind — the same call codex-rs' models-manager makes,
+  with the bundled synced catalog (`chatGptCodexModels`,
+  `scripts/sync_codex_models.dart`) answering offline — else OpenAI
+  `/models`; the saved entry's own key authenticates; failures fall back
+  to manual entry; the `/model` picker's per-entry cache refresh
+  (`_fetchIdsForProvider`) shares the same dispatch so a saved codex
+  entry lists the whole catalog, not just its last-used model).
   `startAgentModelFlow` pins the `smol`/`subagent` role chains through
   `ModelRolesResolver.setRoleChain`/`clearRoleChain` (the resolver is
   created on demand when the config had no `roles:` section —

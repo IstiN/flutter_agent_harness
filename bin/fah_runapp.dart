@@ -396,6 +396,22 @@ Future<void> _runApp(List<String> args) async {
     );
   }
 
+  // `fa provider export <name> [--check]` (issue #1704) — same config +
+  // keychain needs as export-providers; not a session boot either.
+  final providerCmd = parsed.providerCmd;
+  if (providerCmd != null) {
+    final exportKeys = SecureKeyCache(platformSecureKeyStore());
+    await exportKeys.preload(secureKeyPreloadNames(saved, baseUrl: null));
+    exit(
+      await runProviderCredentialExportCommand(
+        providerCmd,
+        io: _TerminalCliIO(headless: true),
+        entries: saved.customProviders,
+        secureRead: exportKeys.read,
+      ),
+    );
+  }
+
   late final ({
     CliArgs args,
     String provider,

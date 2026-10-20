@@ -131,8 +131,12 @@ void main() {
     final run = cli.run();
 
     // The wizard is the FIRST interactive thing: it opens at boot, before
-    // any input — the api-type picker is its first question.
+    // any input — and its first question is the provider choice (issue
+    // #1705), not the api type. Custom is the last option; the api-type
+    // picker only follows it.
     await waitForIt(() => io.out.toString().contains('type a number:'));
+    io.sendLine('13'); // Custom → the guided api-type wizard
+    await waitForIt(() => io.out.toString().contains('api type'));
     io.sendLine('1'); // openai-like
     await waitForIt(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine('https://proxy.example.com/v1');
@@ -167,6 +171,12 @@ void main() {
     expect(store.map['FA_KEY_PROXY_EXAMPLE_COM_WORK'], 'sk-fresh-key-1');
     expect(io.out.toString(), isNot(contains('sk-fresh-key-1')));
     expect(changes, hasLength(1));
+    // Issue #1705: the provider choice precedes the api-type question.
+    final transcript = io.out.toString();
+    expect(
+      transcript.indexOf('choose provider'),
+      lessThan(transcript.indexOf('api type')),
+    );
   });
 
   test('cancelling the boot wizard (Ctrl-C) keeps the default boot usable '
@@ -185,10 +195,13 @@ void main() {
     final run = cli.run();
 
     await waitForIt(() => io.out.toString().contains('type a number:'));
-    io.interrupt(); // Ctrl-C on the first question
+    io.interrupt(); // Ctrl-C on the first question (the provider choice)
     await waitForIt(
-      () => io.out.toString().contains('custom provider setup cancelled'),
+      () => io.out.toString().contains('provider setup cancelled'),
     );
+    // The cancel happened at the provider pick — the api-type wizard the
+    // Custom branch opens was never reached.
+    expect(io.out.toString(), isNot(contains('custom provider setup')));
     // The cancel path restores the prompt too — without the redraw the
     // REPL looks dead until the user submits a line blind.
     await waitForIt(() => io.out.toString().contains('fa>'));
@@ -197,6 +210,35 @@ void main() {
     // still usable — /exit goes through the normal path.
     expect(changes, isEmpty);
     expect(store.map, isEmpty);
+    io.sendLine('/exit');
+    await run;
+    expect(io.out.toString(), isNot(contains('switched provider')));
+  });
+
+  test('boarding provider choice first: a preset opens the wizard with its '
+      'api type preselected (issue #1705)', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call, freshInstallProviderFlow: true);
+    final run = cli.run();
+
+    await waitForIt(() => io.out.toString().contains('type a number:'));
+    io.sendLine('10'); // OpenAI preset → the wizard, api type preselected
+    await waitForIt(() => io.out.toString().contains('api type'));
+    final transcript = io.out.toString();
+    // The provider pick preceded the api-type question, and the preset
+    // prefills it ('(current)') — the user is never cold-asked the api
+    // type before naming a provider.
+    expect(
+      transcript.indexOf('choose provider'),
+      lessThan(transcript.indexOf('api type')),
+    );
+    expect(transcript, contains('openai-like'));
+    expect(transcript, contains('(current)'));
+    io.interrupt(); // Ctrl-C: nothing applied
+    await waitForIt(
+      () => io.out.toString().contains('custom provider setup cancelled'),
+    );
+    await waitForIt(() => io.out.toString().contains('fa>'));
     io.sendLine('/exit');
     await run;
     expect(io.out.toString(), isNot(contains('switched provider')));
