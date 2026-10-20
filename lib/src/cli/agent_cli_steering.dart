@@ -524,7 +524,8 @@ extension AgentCliSteering on AgentCli {
         session == null ||
         _exited ||
         isBusy ||
-        _steeringWakeRunning) {
+        _steeringWakeRunning ||
+        _sessionLoadsInFlight > 0) {
       return;
     }
     _recoveredSteering = null;

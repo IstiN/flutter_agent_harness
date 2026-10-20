@@ -97,6 +97,38 @@ void main() {
   }
 
   test(
+    'goal_builder boot race: the inbox wake defers while a session load '
+    'is in flight — the half-loaded agent never starts a run (the '
+    'over-window guard would kill the scheduled task before the boot cap)',
+    () async {
+      final fake = FakeStreamFunction([
+        textTurn('woken after load settled'),
+        textTurn('done'),
+      ]);
+      final cli = buildCli(fake);
+      final run = cli.run();
+      final (id, baseline) = await boot(fake, cli);
+
+      // Simulate the marathon-file load window: the watcher tick fires
+      // mid-load.
+      cli.sessionLoadsInFlightForTest = 1;
+      await sendScheduledSelfMail(id, 'night-watch sweep');
+      await cli.inboxWakeTickForTest();
+      expect(fake.calls, baseline, reason: 'no run may start mid-load');
+      expect(cli.isBusy, isFalse);
+
+      // The load settles — the next tick drains the pending mail.
+      cli.sessionLoadsInFlightForTest = 0;
+      await cli.inboxWakeTickForTest();
+      await waitForTrue(() async => fake.calls == baseline + 1 && !cli.isBusy);
+
+      io.sendLine('/exit');
+      await run;
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
+
+  test(
     'gh-1180 AC1: scheduled self-mail wakes the CLI even with the chatter '
     'streak capped, and the exempt wake never counts against the cap',
     () async {
