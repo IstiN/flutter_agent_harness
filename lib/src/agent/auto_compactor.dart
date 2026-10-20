@@ -807,7 +807,6 @@ String _modelLabel(Model m) => '${m.provider}/${m.id}';
 /// Either source may be `null` when no smol is configured; in that case
 /// [AutoCompactor.fromSources] falls back to [mainStream] for both
 /// summarizers and skips the smol→main fallback (one attempt only —
-
 /// retrying the same call wouldn't help).
 class AutoCompactorSources {
   const AutoCompactorSources({

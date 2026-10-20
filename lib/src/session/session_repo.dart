@@ -817,7 +817,10 @@ final class JsonlSessionRepo implements SessionRepo {
     SessionMetadata metadata,
     Set<String> types, {
     bool lastSegmentOnly = false,
-    int? tailCapBytes,
+    // Non-null default so an EXPLICIT `null` is distinguishable from
+    // omitting the parameter (review: `?? cap` here made the documented
+    // unbounded opt-out a silent no-op — null coalesced to the default).
+    int? tailCapBytes = kSessionSegmentHardCapBytes,
   }) async {
     // Rotated sessions (gh-1077) keep older records in `.part-NN`
     // segments: scan the whole chain in order or registry snapshots
@@ -837,9 +840,10 @@ final class JsonlSessionRepo implements SessionRepo {
     // entirely beyond the cap cancels itself), so the default bounds
     // each FILE to the tail region a properly rotated primary promised
     // ([kSessionSegmentHardCapBytes]); rotated `.part-NN` files are
-    // smaller than that and scan in full. Deep-history callers pass
-    // `tailCapBytes: null`.
-    final cap = tailCapBytes ?? kSessionSegmentHardCapBytes;
+    // smaller than that and scan in full. Deep-history callers pass an
+    // EXPLICIT `tailCapBytes: null` (the parameter defaults to the cap,
+    // so only an explicit null is unbounded).
+    final cap = tailCapBytes;
     final paths = await listSessionSegmentPaths(_fs, metadata.path);
     final scanned = lastSegmentOnly ? paths.sublist(paths.length - 1) : paths;
     final records = <CustomRecord>[];
@@ -918,9 +922,7 @@ final class JsonlSessionRepo implements SessionRepo {
     // Start inside the tail region: a line torn at the boundary simply
     // fails the field-shaped gate (or jsonDecode) and is skipped — the
     // cap trades deep history, never correctness.
-    var offset = tailCapBytes == null
-        ? 0
-        : math.max(0, size - tailCapBytes);
+    var offset = tailCapBytes == null ? 0 : math.max(0, size - tailCapBytes);
     while (offset < size) {
       final end = (offset + blockBytes).clamp(0, size);
       final read = await ranged.readRange(path, offset, end);
