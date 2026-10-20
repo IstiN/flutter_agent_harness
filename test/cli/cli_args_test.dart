@@ -512,18 +512,124 @@ void main() {
       );
     });
   });
+  group('parseCliArgs provider', () {
+    test('no verb is a usage error', () {
+      expect(
+        () => parseCliArgs(const ['provider']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('usage: fa provider export'),
+          ),
+        ),
+      );
+    });
+
+    test('--help and -h request usage', () {
+      expect(parseCliArgs(const ['provider', '--help']), isA<CliArgsHelp>());
+      expect(parseCliArgs(const ['provider', '-h']), isA<CliArgsHelp>());
+      expect(
+        parseCliArgs(const ['provider', 'export', '--help']),
+        isA<CliArgsHelp>(),
+      );
+    });
+
+    test('export parses the provider name with check off by default', () {
+      final args =
+          parseCliArgs(const ['provider', 'export', 'my-chatgpt']) as CliArgs;
+      expect(args.providerCmd!.verb, 'export');
+      expect(args.providerCmd!.name, 'my-chatgpt');
+      expect(args.providerCmd!.check, isFalse);
+      // The subcommand never becomes a prompt run.
+      expect(args.positionals, isEmpty);
+      expect(args.prompt, isNull);
+    });
+
+    test('--check parses before or after the name', () {
+      expect(
+        (parseCliArgs(const ['provider', 'export', '--check', 'acct'])
+                as CliArgs)
+            .providerCmd!
+            .check,
+        isTrue,
+      );
+      expect(
+        (parseCliArgs(const ['provider', 'export', 'acct', '--check'])
+                as CliArgs)
+            .providerCmd!
+            .check,
+        isTrue,
+      );
+    });
+
+    test('an unknown verb is an error', () {
+      expect(
+        () => parseCliArgs(const ['provider', 'import', 'x']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('unknown provider verb: import'),
+              contains('export'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('an unknown flag is an error', () {
+      expect(
+        () => parseCliArgs(const ['provider', 'export', 'acct', '--out', 'f']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown argument: --out'),
+          ),
+        ),
+      );
+    });
+
+    test('a missing provider name is an arity error', () {
+      expect(
+        () => parseCliArgs(const ['provider', 'export']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('requires exactly one provider name'),
+          ),
+        ),
+      );
+    });
+
+    test('two provider names are an arity error', () {
+      expect(
+        () => parseCliArgs(const ['provider', 'export', 'a', 'b']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('requires exactly one provider name'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('parseCliArgs --output (backend agent mode, issue #155)', () {
     test('--output events parses', () {
-      final args = parseCliArgs(
-        const ['--output', 'events', '-p', 'hi'],
-      ) as CliArgs;
+      final args =
+          parseCliArgs(const ['--output', 'events', '-p', 'hi']) as CliArgs;
       expect(args.output, 'events');
     });
 
     test('--output events=full parses', () {
-      final args = parseCliArgs(
-        const ['--output', 'events=full', '-p', 'hi'],
-      ) as CliArgs;
+      final args =
+          parseCliArgs(const ['--output', 'events=full', '-p', 'hi'])
+              as CliArgs;
       expect(args.output, 'events=full');
     });
 
@@ -567,16 +673,16 @@ void main() {
     });
 
     test('--version --output json carries the output mode', () {
-      final result = parseCliArgs(
-        const ['--version', '--output', 'json'],
-      ) as CliArgsVersion;
+      final result =
+          parseCliArgs(const ['--version', '--output', 'json'])
+              as CliArgsVersion;
       expect(result.output, 'json');
     });
 
     test('--output json --version carries the output mode (flag order)', () {
-      final result = parseCliArgs(
-        const ['--output', 'json', '--version'],
-      ) as CliArgsVersion;
+      final result =
+          parseCliArgs(const ['--output', 'json', '--version'])
+              as CliArgsVersion;
       expect(result.output, 'json');
     });
 
@@ -588,14 +694,16 @@ void main() {
 
   group('parseCliArgs --attach (backend agent mode, issue #155)', () {
     test('--attach parses and repeats', () {
-      final args = parseCliArgs(const [
-        '--attach',
-        '/tmp/a.jpg',
-        '--attach',
-        '/tmp/b.png',
-        '-p',
-        'compare',
-      ]) as CliArgs;
+      final args =
+          parseCliArgs(const [
+                '--attach',
+                '/tmp/a.jpg',
+                '--attach',
+                '/tmp/b.png',
+                '-p',
+                'compare',
+              ])
+              as CliArgs;
       expect(args.attachments, ['/tmp/a.jpg', '/tmp/b.png']);
     });
 
@@ -661,24 +769,15 @@ void main() {
 
   group('resolveStreamThinking (gh-1198 AC6)', () {
     test('the flag wins for the run', () {
-      expect(
-        resolveStreamThinking(flag: true, configValue: false),
-        isTrue,
-      );
+      expect(resolveStreamThinking(flag: true, configValue: false), isTrue);
     });
 
     test('the config default enables it without the flag', () {
-      expect(
-        resolveStreamThinking(flag: false, configValue: true),
-        isTrue,
-      );
+      expect(resolveStreamThinking(flag: false, configValue: true), isTrue);
     });
 
     test('both off stays off (the byte-identical legacy default)', () {
-      expect(
-        resolveStreamThinking(flag: false, configValue: false),
-        isFalse,
-      );
+      expect(resolveStreamThinking(flag: false, configValue: false), isFalse);
     });
   });
 
@@ -698,9 +797,12 @@ void main() {
 
     test('rejects the combination with --stream-thinking', () {
       expect(
-        () => parseCliArgs(
-          const ['--stream-thinking', '--no-stream-thinking', '-p', 'hi'],
-        ),
+        () => parseCliArgs(const [
+          '--stream-thinking',
+          '--no-stream-thinking',
+          '-p',
+          'hi',
+        ]),
         throwsA(
           isA<CliArgsException>().having(
             (e) => e.message,

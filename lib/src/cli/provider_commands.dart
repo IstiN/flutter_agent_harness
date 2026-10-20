@@ -1271,17 +1271,31 @@ extension on AgentCli {
     _activeCustomName = entryName;
   }
 
-  /// The `/provider chatgpt oauth [headless] [--no-browser]` branch:
-  /// authenticates the user with their ChatGPT account via PKCE (the Codex
-  /// CLI client id) and stores the resulting OAuth credentials — access +
-  /// refresh tokens as one JSON blob in the account's own secure-store
-  /// slot. Returns true when the command targeted the OAuth flow.
+  /// The `/provider chatgpt oauth [headless] [--no-browser]` and
+  /// `/provider chatgpt import [path]` branches: OAuth authenticates the
+  /// user with their ChatGPT account via PKCE (the Codex CLI client id);
+  /// import reads an existing `codex login` session file (`~/.codex/
+  /// auth.json` by default) and lands it in the same secure-store slot —
+  /// no browser round-trip (issue #1704). Both store access + refresh
+  /// tokens as one JSON blob in the account's own secure-store slot.
+  /// Returns true when the command targeted either flow.
   /// [noBrowser] skips the interactive flow's automatic browser launch —
   /// the URL prints prominently instead (gh-1450).
   bool _startChatGptOAuthArg(List<String> args) {
     if (args.first != 'chatgpt') return false;
-    if (args.length < 2 || args[1] != 'oauth') {
+    if (args.length < 2 || (args[1] != 'oauth' && args[1] != 'import')) {
       return false;
+    }
+    if (args[1] == 'import') {
+      final operands = args.skip(2).toList();
+      if (operands.length > 1 || operands.any((o) => o.startsWith('-'))) {
+        io.writeln('usage: /provider chatgpt import [path]');
+        return true;
+      }
+      unawaited(
+        _handleChatGptImportCommand(operands.isEmpty ? null : operands.first),
+      );
+      return true;
     }
     final options = args.skip(2).toList();
     final headless = options.contains('headless');

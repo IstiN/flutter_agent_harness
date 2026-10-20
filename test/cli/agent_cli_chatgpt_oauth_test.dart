@@ -495,4 +495,144 @@ void main() {
       await run;
     });
   });
+
+  // Issue #1704: `/provider chatgpt import [path]` adopts a `codex login`
+  // session file into the same secure-store slot the OAuth flow writes —
+  // no browser round-trip.
+  group('ChatGPT codex import', () {
+    /// A three-segment JWT whose payload carries [claims].
+    String jwt(Map<String, dynamic> claims) {
+      String part(Map<String, dynamic> json) =>
+          base64Url.encode(utf8.encode(jsonEncode(json))).replaceAll('=', '');
+      return '${part({'alg': 'none'})}.${part(claims)}.sig';
+    }
+
+    test(
+      'imports the default ~/.codex/auth.json into the account slot',
+      () async {
+        final exp =
+            DateTime.utc(2026, 10, 19, 14).millisecondsSinceEpoch ~/ 1000;
+        final authJson = jsonEncode({
+          'tokens': {
+            'access_token': jwt({
+              'exp': exp,
+              'https://api.openai.com/auth': {
+                'chatgpt_account_id': 'acc-codex',
+              },
+            }),
+            'refresh_token': 'rt-codex',
+            'id_token': jwt({'email': 'dev@example.com'}),
+            'account_id': 'acc-codex',
+          },
+          'last_refresh': 1760000000,
+        });
+        // cliFor pins no homeDir → the default path resolves against the
+        // env cwd (/work).
+        await env.writeFile('/work/.codex/auth.json', authJson);
+
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final registry = CustomProviderRegistry([]);
+        final run = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+        ).run();
+
+        io.sendLine('/provider chatgpt import');
+        await waitForIt(
+          () => io.out.toString().contains('provider name [chatgpt.com]'),
+        );
+        io.sendLine('imported-acct');
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to chatgpt'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        expect(output, contains('imported codex CLI session'));
+        final stored = store.map['FA_KEY_CHATGPT_COM_IMPORTED_ACCT'];
+        expect(stored, isNotNull);
+        // The slot shape ROUND-TRIPS with the runtime decode/refresh path.
+        final credentials = ChatGptOAuthCredentials.decode(stored!);
+        expect(credentials.accessToken, contains('.'));
+        expect(credentials.refreshToken, 'rt-codex');
+        expect(credentials.accountId, 'acc-codex');
+        expect(credentials.expiresAt, DateTime.utc(2026, 10, 19, 14));
+        expect(registry.find('imported-acct'), isNotNull);
+      },
+    );
+
+    test('a missing codex session names the path and the fix', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider chatgpt import');
+      await waitForIt(
+        () => io.out.toString().contains('codex CLI session not found'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('an explicit path operand is honored', () async {
+      await env.writeFile(
+        '/work/other-auth.json',
+        jsonEncode({
+          'tokens': {
+            'access_token': 'at-explicit',
+            'refresh_token': 'rt-explicit',
+            'id_token': 'it-explicit',
+          },
+        }),
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      final run = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+      ).run();
+
+      io.sendLine('/provider chatgpt import /work/other-auth.json');
+      await waitForIt(
+        () => io.out.toString().contains('provider name [chatgpt.com]'),
+      );
+      io.sendLine('explicit');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to chatgpt'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final stored = store.map['FA_KEY_CHATGPT_COM_EXPLICIT'];
+      expect(stored, isNotNull);
+      expect(stored, contains('"refresh_token":"rt-explicit"'));
+    });
+
+    test('a non-auth.json shape is refused', () async {
+      await env.writeFile('/work/junk.json', '{"user_id": "x"}');
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider chatgpt import /work/junk.json');
+      await waitForIt(
+        () => io.out.toString().contains('not a codex auth.json session'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+  });
 }
