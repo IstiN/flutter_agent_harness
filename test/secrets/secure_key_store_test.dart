@@ -160,6 +160,36 @@ void main() {
       );
     });
 
+    test('write surfaces the helper stderr tail on a failing add (gh-1679 '
+        'review: the canceled-authorization shape must be classifiable)',
+        () async {
+      final runner = _FakeRunner()
+        ..queue.add(const SecureKeyRunResult(0, ''))
+        ..queue.add(
+          const SecureKeyRunResult(
+            154,
+            '',
+            stderr: 'SecKeychainItemCreateFromContent (<default>): The '
+                'authorization was canceled by the user',
+          ),
+        );
+      final store = platformSecureKeyStore(
+        runner: runner.call,
+        platform: 'macos',
+      );
+
+      await expectLater(
+        store.write('OPENAI_API_KEY', 'sk-secret-123'),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('authorization was canceled'),
+          ),
+        ),
+      );
+    });
+
     test('write without a default keychain fails before the add (no system '
         'dialog)', () async {
       final runner = _FakeRunner()..queue.add(const SecureKeyRunResult(1, ''));
