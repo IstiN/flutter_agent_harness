@@ -1,0 +1,2 @@
+{"ts":"2026-10-20T14:48:04.563466Z","event":"scheduled","id":"1792507684562722_0000_u4z0pn","dueMs":1792508044562,"to":"main","text":"Resume gh-1722 rework finalization: background job sh-30-hne2j7sm8e1cngvyj (`dart test --exclude-tags integration`, full suite) should be finished by now — collect it via `bash_job output sh-30-hne2j7"}
+{"ts":"2026-10-20T14:54:04.565480Z","event":"delivered","id":"1792507684562722_0000_u4z0pn","to":"main","dueMs":1792508044562,"lagMs":3}
