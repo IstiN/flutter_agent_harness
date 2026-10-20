@@ -619,7 +619,7 @@ void main() {
         );
         final scaledDw = runDw(
           'stall-default-scaled',
-          ['pages.yml', '--budget-seconds', '16000'], // 16000/8 = 200s
+          ['pages.yml', '--budget-seconds', '16000'], // 16000/8 = 2000s
           {
             'runs.json': runJson([run(556, 'Deploy to GitHub Pages', iso(-2))]),
             'view-556.txt': 'completed success\n',
@@ -628,7 +628,7 @@ void main() {
         expect(scaledDw.exitCode, 0);
         expect(
           scaledDw.out,
-          contains('queue-stall window 200s'),
+          contains('queue-stall window 2000s'),
           reason:
               'long-budget legs wait out realistic sibling-leg occupancy '
               'before wedging a quiet-but-alive child',

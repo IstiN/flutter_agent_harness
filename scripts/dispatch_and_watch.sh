@@ -158,7 +158,7 @@ while :; do
     # call) counts as progress: never cancel a possibly-healthy run on a
     # polling blip.
     observed="$(gh run view "$run_id" --repo "$repo" --json status,conclusion,jobs \
-      --jq '"\(.status)/" + (.conclusion // "-") + " + ([.jobs[] | select(.status == "in_progress")] | length | tostring)' 2>/dev/null)" || observed=""
+      --jq '"\(.status)/" + (.conclusion // "-") + " " + ([.jobs[] | select(.status == "in_progress")] | length | tostring)' 2>/dev/null)" || observed=""
     status="${observed%% *}"
     running="${observed##* }"
     if [ -z "$observed" ] || [ "$status" = "$observed" ]; then
