@@ -163,7 +163,8 @@ void main() {
       await run;
     });
 
-    test('two ChatGPT accounts keep separate credential slots', () async {
+    test('a second codex auth re-auths the same identity (#1706: rename, '
+        'never a twin entry)', () async {
       final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
       final store = FakeSecureKeyStore();
       final cache = SecureKeyCache(store);
@@ -232,18 +233,20 @@ void main() {
       io.sendLine('/exit');
       await run;
 
-      // Each account landed in its own name-scoped slot — the second
-      // grant did not overwrite the first account's blob.
-      expect(registry.find('work')!.keyName, 'FA_KEY_CHATGPT_COM_WORK');
-      expect(registry.find('personal')!.keyName, 'FA_KEY_CHATGPT_COM_PERSONAL');
-      expect(
-        store.map['FA_KEY_CHATGPT_COM_WORK'],
-        contains('"access_token":"at-1"'),
-      );
+      // ONE identity per auth domain (#1706): the second grant landed
+      // ON the domain record under its new name — the registry never
+      // grew a twin, and the fresh blob lives in the renamed entry's
+      // own name-scoped slot.
+      expect(registry.entries, hasLength(1));
+      final entry = registry.entries.single;
+      expect(entry.name, 'personal');
+      expect(entry.apiType, 'chatgpt');
+      expect(entry.keyName, 'FA_KEY_CHATGPT_COM_PERSONAL');
       expect(
         store.map['FA_KEY_CHATGPT_COM_PERSONAL'],
         contains('"access_token":"at-2"'),
       );
+      expect(registry.find('work'), isNull);
     });
 
     test('/provider chatgpt oauth offers the saved accounts first', () async {
@@ -356,7 +359,8 @@ void main() {
       expect(store.map['FA_KEY_CHATGPT_COM_WORK'], contains('"at-2"'));
     });
 
-    test('a NEW account picks its model from the live list', () async {
+    test('a new name on a second auth renames the entry and re-picks its '
+        'model (#1706)', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final store = FakeSecureKeyStore();
       final cache = SecureKeyCache(store);
@@ -403,7 +407,9 @@ void main() {
         'http://127.0.0.1:1455/auth/callback?code=code-3&state=$state',
       );
       await waitForIt(() => io.out.toString().contains('provider name [work]'));
-      io.sendLine('personal'); // A different name = a second account.
+      // #1706: a different name RENAMES the one domain entry (fresh
+      // setup — the guided model pick re-runs).
+      io.sendLine('personal');
       await waitForIt(() => io.out.toString().contains('ChatGPT model'));
       io.sendLine('2'); // gpt-5.6-mini
       await waitForIt(
@@ -412,15 +418,14 @@ void main() {
       io.sendLine('/exit');
       await run;
 
-      // The pick landed on the NEW entry only; the sibling kept its own
-      // model and blob.
+      // The rename landed the pick on the ONE domain record under its
+      // new name; the old spelling is gone and the blob moved to the
+      // new name-scoped slot.
+      expect(registry.entries, hasLength(1));
+      expect(registry.entries.single.name, 'personal');
       expect(registry.find('personal')!.modelId, 'gpt-5.6-mini');
-      expect(registry.find('work')!.modelId, 'my-pick');
-      expect(
-        store.map['FA_KEY_CHATGPT_COM_WORK'],
-        isNull,
-        reason: 'the second account never touched the first slot',
-      );
+      expect(registry.find('work'), isNull);
+      expect(store.map['FA_KEY_CHATGPT_COM_WORK'], isNull);
       expect(store.map['FA_KEY_CHATGPT_COM_PERSONAL'], contains('"at-3"'));
     });
 

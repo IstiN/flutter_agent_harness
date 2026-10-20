@@ -371,11 +371,12 @@ final class CustomProviderRegistry {
     return notes;
   }
 
-  /// The load-time merge result: one record per canonical identity; a
-  /// reserved-named ghost (e.g. `chatgpt`, which would shadow
-  /// `/provider` routing) yields to a non-reserved twin of the same
-  /// domain even when the ghost came first. The merge and its notes are
-  /// ONE pass over the source, so every note names the record that
+  /// The load-time merge result: one record per identity (canonical
+  /// provider name; for the chatgpt-codex backend the auth DOMAIN itself
+  /// — issue #1706); a reserved-named ghost (e.g. `chatgpt`, which would
+  /// shadow `/provider` routing) yields to a non-reserved twin of the
+  /// same domain even when the ghost came first. The merge and its notes
+  /// are ONE pass over the source, so every note names the record that
   /// actually survives — a ghost-first load keeps `chatgpt.com` and the
   /// note must say so, not the ghost it displaced.
   static ({List<CustomProviderEntry> entries, List<String> notes}) _mergeOnLoad(
@@ -385,7 +386,7 @@ final class CustomProviderRegistry {
     final order = <String>[];
     final notes = <String>[];
     for (final entry in source) {
-      final id = canonicalProviderName(entry.name);
+      final id = _recordIdentity(entry);
       final existing = survivors[id];
       if (existing == null) {
         survivors[id] = entry;
@@ -408,6 +409,21 @@ final class CustomProviderRegistry {
       );
     }
     return (entries: [for (final id in order) survivors[id]!], notes: notes);
+  }
+
+  /// The load-merge identity of one record: the canonical provider name —
+  /// except the chatgpt-codex backend (issue #1706), where the AUTH
+  /// DOMAIN is the identity. One ChatGPT account is one `/provider` row:
+  /// a record saved under a custom name and the derived `chatgpt.com`
+  /// spelling are the same account, so they fold onto a single entry at
+  /// load instead of listing twice. Every other provider keeps
+  /// name-based identities (kimi/dial legitimately host several
+  /// same-endpoint accounts).
+  static String _recordIdentity(CustomProviderEntry entry) {
+    final kind = resolveCliProviderSpec(entry.apiType)?.kind;
+    return kind == 'chatgpt-codex'
+        ? 'chatgpt-codex:${entry.baseUrl.replaceAll(RegExp(r'/+$'), '')}'
+        : canonicalProviderName(entry.name);
   }
 
   /// Folds [twin]'s missing fields into [survivor] (union; survivor's
