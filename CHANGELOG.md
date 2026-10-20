@@ -13,6 +13,13 @@ block a release again.
 
 ## Unreleased
 
+- fix(#1705): CLI fresh-install boarding asks the provider choice FIRST —
+  the same list the `/add-provider` picker shows (presets, `Custom` last) —
+  and only `Custom` continues into the api-type wizard; a preset opens its
+  own flow with the api type prefilled. Previously boarding opened the
+  custom wizard directly, cold-asking "api type" before any provider was
+  chosen.
+
 - feat(bench): gh-1681 — leaderboard submission readiness. ATIF
   trajectories: new `exportAtifJson` whole-snapshot exporter
   (`lib/src/trajectory/atif_export.dart`, ATIF-v1.7 — the schema harbor

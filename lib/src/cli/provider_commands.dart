@@ -55,19 +55,21 @@ extension on AgentCli {
   }
 
   /// Fresh-install gate (issue #969): the executable flagged a REPL boot
-  /// with nothing configured and no key anywhere — open the same guided
-  /// add-provider wizard `/provider custom` opens, before the first
-  /// prompt, so the user adds a provider instead of staring at the
-  /// default provider's "no key set" noise. Fire-and-forget like every
+  /// with nothing configured and no key anywhere — open the add-provider
+  /// choice before the first prompt, so the user adds a provider instead
+  /// of staring at the default provider's "no key set" noise. Issue #1705:
+  /// the choice comes FIRST — the same list the `/add-provider` picker
+  /// shows; only `Custom` continues into the api-type wizard
+  /// `/provider custom` opens. Fire-and-forget like every
   /// flow start: the REPL loop answers the prompts. Piped input (and
   /// headless, which never gets the flag) never enters the wizard.
-  /// Returns the wizard's future (null when the boot is not fresh) so the
+  /// Returns the flow's future (null when the boot is not fresh) so the
   /// line-mode entry can redraw the idle prompt when it settles — the flow
   /// completes outside `_handleLine`, when the loop is parked reading the
   /// next line.
   Future<void>? _maybeStartFreshInstallProviderFlow() {
     if (!config.freshInstallProviderFlow || !io.isInteractive) return null;
-    return _startProviderFlow();
+    return _handleFreshInstallProviderChoice();
   }
 
   /// The Edit/Delete picker for a custom provider entry.
