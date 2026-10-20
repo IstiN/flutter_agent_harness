@@ -154,12 +154,14 @@ void main() {
       expect(
         body,
         contains(
-          'flutter-app-lock-smoke|installer-portability|office-addin-suite)',
+          'flutter-app-lock-smoke|installer-portability|office-addin-suite|'
+          'extension-size-gate)',
         ),
         reason:
             'platform class (#1368): a red macOS leg blocks the MERGE '
             'via the aggregate but never holds the pure-Dart publish '
-            'hostage (gh-1659 grew the class with the office-addin suite)',
+            'hostage (gh-1659 grew the class with the office-addin '
+            'suite, gh-1684 AC3 the extension size gate)',
       );
     });
 
