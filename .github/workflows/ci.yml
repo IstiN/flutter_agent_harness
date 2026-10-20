@@ -1956,11 +1956,25 @@ jobs:
           # sources [lib] exactly.
           flutter test --exclude-tags integration --coverage $(cat shard-files.txt)
 
+      # gh-1724 review follow-up: same gh-1412 one-shot retry as the other
+      # sharded evidence legs — app-crap-gate hard-fails its merge on
+      # `count != 2`, so one transient blob-storage finalize error must
+      # not red a `v*` tag run through this leg either. Guarded by
+      # test/ci_shard_evidence_upload_retry_guard_test.dart.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload_app_coverage
         with:
           name: app-coverage-shard-${{ matrix.shard }}
           path: flutter_app/coverage/lcov.info
           retention-days: 2
+      - name: Retry coverage upload (transient blob-storage reset, gh-1412)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.upload_app_coverage.outcome == 'failure'
+        with:
+          name: app-coverage-shard-${{ matrix.shard }}
+          path: flutter_app/coverage/lcov.info
+          retention-days: 2
+          overwrite: true
 
       # Issue #239 AC3: the App Store submission pre-flight matrix is plain
       # ruby over flutter_app/fastlane/appstore_preflight.rb — no gems,
@@ -2374,19 +2388,48 @@ jobs:
             test-results/flutter-shard-${{ matrix.shard }}.json \
             test-results/junit-faui-shard-${{ matrix.shard }}.xml
 
+      # gh-1724 review follow-up: the faui shard evidence uploads ride the
+      # same gh-1412 one-shot retry as the pty/core shards — one transient
+      # `Failed to FinalizeArtifact` from GitHub's blob storage must not red
+      # a `v*` tag run through this leg either (faui-coverage hard-fails on
+      # `count != 3`, exactly how run 39432336443 red'd test-core). The
+      # retry re-runs the SAME pinned action with overwrite:true (a failed
+      # attempt leaves the artifact half-registered — without overwrite the
+      # retry dies on "already exists"); a genuinely dead endpoint still
+      # fails the shard loudly. The job-level if (app/core/shared scope +
+      # release pending/dedupe) gates the retries exactly like the
+      # primaries. Guarded by test/ci_shard_evidence_upload_retry_guard_test.dart.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload_faui_coverage
         with:
           name: faui-coverage-shard-${{ matrix.shard }}
           path: packages/fa_ui/coverage/lcov.info
           retention-days: 2
+      - name: Retry coverage upload (transient blob-storage reset, gh-1412)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.upload_faui_coverage.outcome == 'failure'
+        with:
+          name: faui-coverage-shard-${{ matrix.shard }}
+          path: packages/fa_ui/coverage/lcov.info
+          retention-days: 2
+          overwrite: true
 
       # junit durations for the weekly shard-rebalance.yml (AC3), same
       # contract as the core shards.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload_faui_junit
         with:
           name: junit-faui-shard-${{ matrix.shard }}
           path: packages/fa_ui/test-results/junit-faui-shard-${{ matrix.shard }}.xml
           retention-days: 7
+      - name: Retry junit upload (transient blob-storage reset, gh-1412)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.upload_faui_junit.outcome == 'failure'
+        with:
+          name: junit-faui-shard-${{ matrix.shard }}
+          path: packages/fa_ui/test-results/junit-faui-shard-${{ matrix.shard }}.xml
+          retention-days: 7
+          overwrite: true
 
   # E3/AC6: the 3 shard reports merge into ONE lcov (union DA hits, never
   # cat — no triple-counting). fa_ui coverage is NOT fed into the 80%
