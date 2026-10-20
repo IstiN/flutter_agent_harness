@@ -118,13 +118,16 @@ void main() {
       );
     });
 
-    test('the llms.txt artifact lead-in matches the release channel (rework)', () {
-      // AC1 moved the zip channel to Releases: build-macos builds it
-      // per release, ci.yml extension-size-gate per PR — deploys no
-      // longer touch it, so "(rebuilt on every deploy)" is stale.
-      expect(llms, contains('- Artifact (attached to every release):'));
-      expect(llms, isNot(contains('rebuilt on every deploy')));
-    });
+    test(
+      'the llms.txt artifact lead-in matches the release channel (rework)',
+      () {
+        // AC1 moved the zip channel to Releases: build-macos builds it
+        // per release, ci.yml extension-size-gate per PR — deploys no
+        // longer touch it, so "(rebuilt on every deploy)" is stale.
+        expect(llms, contains('- Artifact (attached to every release):'));
+        expect(llms, isNot(contains('rebuilt on every deploy')));
+      },
+    );
   });
 
   group('AC2 — the zip keeps riding the release', () {
