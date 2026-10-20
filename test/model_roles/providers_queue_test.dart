@@ -726,6 +726,206 @@ void main() {
     });
   });
 
+  // Issue #1704: chatgpt-codex entries resolve their credential on a
+  // ladder — apiKeyEnv (full OAuth blob or a raw Bearer token), then
+  // refreshTokenEnv (mint on first activation, memoized in memory), then
+  // the default Keychain slot name.
+  group('buildProviderQueueChain — chatgpt-codex credential ladder', () {
+    final blob = const ChatGptOAuthCredentials(
+      accessToken: 'at-1',
+      refreshToken: 'rt-1',
+      idToken: 'it-1',
+    ).encode();
+
+    test('an omitted apiKeyEnv resolves the default Keychain slot', () {
+      final skipped = <String>[];
+      final chain = buildProviderQueueChain(
+        [_entry('chatgpt-codex', 'gpt-5-codex', apiKeyEnv: null)],
+        secrets: {'CHATGPT_OAUTH_CREDENTIALS': blob, ..._secrets()},
+        skipped: skipped,
+      );
+      expect(chain, hasLength(1));
+      expect(skipped, isEmpty);
+      expect(chain.single.model.provider, 'chatgpt');
+    });
+
+    test('an omitted apiKeyEnv with no stored login is skipped with a '
+        'login hint', () {
+      final skipped = <String>[];
+      buildProviderQueueChain(
+        [
+          _entry('chatgpt-codex', 'gpt-5-codex', apiKeyEnv: null),
+          _entry('anthropic', 'm2', apiKeyEnv: 'K2_API_KEY'),
+        ],
+        secrets: _secrets(),
+        skipped: skipped,
+      );
+      expect(skipped, hasLength(1));
+      expect(skipped.single, contains('no ChatGPT login'));
+      expect(skipped.single, contains('/provider chatgpt oauth'));
+      expect(skipped.single, contains('CHATGPT_OAUTH_CREDENTIALS'));
+    });
+
+    test('a refreshTokenEnv entry mints once, then reuses the blob', () async {
+      final probe = _Probe({
+        'minted-blob': [
+          _okTurn(_model('chatgpt', 'gpt-5-codex'), 'from-mint'),
+          _okTurn(_model('chatgpt', 'gpt-5-codex'), 'again'),
+        ],
+      });
+      var mints = 0;
+      final chain = buildProviderQueueChain(
+        [
+          ProviderQueueEntry(
+            providerType: 'chatgpt-codex',
+            model: 'gpt-5-codex',
+            refreshTokenEnv: 'CHATGPT_REFRESH_TOKEN',
+          ),
+        ],
+        secrets: {'CHATGPT_REFRESH_TOKEN': 'rt-secret'},
+        streamFactory: (kind, apiKey) => probe.streamForKey(apiKey),
+        mintChatGptCredentials: (refreshToken) async {
+          mints++;
+          expect(refreshToken, 'rt-secret');
+          return 'minted-blob';
+        },
+      );
+      // The mint is LAZY: building the chain touches nothing.
+      expect(mints, 0);
+      expect(probe.calls, isEmpty);
+
+      // First activation mints; the second reuses the memoized blob.
+      for (var i = 0; i < 2; i++) {
+        final events = await chain.single
+            .streamForKey('rt-secret')(
+              _model('chatgpt', 'gpt-5-codex'),
+              const Context(messages: []),
+            )
+            .toList();
+        expect(events.whereType<DoneEvent>(), hasLength(1));
+      }
+      expect(mints, 1);
+      expect(probe.calls, hasLength(2));
+      expect(probe.calls.every((c) => c.endsWith(':minted-blob')), isTrue);
+    });
+
+    test('a mint failure surfaces as the terminal error event', () async {
+      final chain = buildProviderQueueChain(
+        [
+          ProviderQueueEntry(
+            providerType: 'chatgpt-codex',
+            model: 'gpt-5-codex',
+            refreshTokenEnv: 'CHATGPT_REFRESH_TOKEN',
+          ),
+        ],
+        secrets: {'CHATGPT_REFRESH_TOKEN': 'rt-secret'},
+        streamFactory: (kind, apiKey) =>
+            throw StateError('factory must not run'),
+        mintChatGptCredentials: (refreshToken) async =>
+            throw const ConfigException('invalid_grant: token revoked'),
+      );
+      final events = await chain.single
+          .streamForKey('rt-secret')(
+            _model('chatgpt', 'gpt-5-codex'),
+            const Context(messages: []),
+          )
+          .toList();
+      final error = events.whereType<ErrorEvent>().single;
+      expect(error.error.errorMessage, contains('credential bootstrap'));
+      expect(error.error.errorMessage, contains('invalid_grant'));
+      expect(error.error.errorMessage, isNot(contains('rt-secret')));
+    });
+
+    test('a missing refresh token env skips the entry with the env name', () {
+      final skipped = <String>[];
+      buildProviderQueueChain(
+        [
+          ProviderQueueEntry(
+            providerType: 'chatgpt-codex',
+            model: 'gpt-5-codex',
+            refreshTokenEnv: 'CHATGPT_REFRESH_TOKEN',
+          ),
+          _entry('anthropic', 'm2', apiKeyEnv: 'K2_API_KEY'),
+        ],
+        secrets: _secrets(),
+        skipped: skipped,
+      );
+      expect(skipped.single, contains('missing refresh token'));
+      expect(skipped.single, contains('CHATGPT_REFRESH_TOKEN'));
+    });
+
+    test('refreshTokenEnv on a non-chatgpt kind is a hard error', () {
+      expect(
+        () => buildProviderQueueChain(
+          [
+            ProviderQueueEntry(
+              providerType: 'anthropic',
+              model: 'm-1',
+              refreshTokenEnv: 'CHATGPT_REFRESH_TOKEN',
+            ),
+          ],
+          secrets: {'CHATGPT_REFRESH_TOKEN': 'rt'},
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('only to chatgpt-codex'),
+          ),
+        ),
+      );
+    });
+
+    test('a non-chatgpt entry that names no key is a hard error', () {
+      // The default ChatGPT slot is chatgpt-codex-only: other kinds must
+      // name their key env (the chain has no identity without one).
+      expect(
+        () => buildProviderQueueChain(
+          [_entry('openai-completions', 'm-1', apiKeyEnv: null)],
+          secrets: {'CHATGPT_OAUTH_CREDENTIALS': 'blob'},
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('has no apiKeyEnv'),
+          ),
+        ),
+      );
+    });
+
+    test('an apiKeyEnv raw bearer token passes through to the adapter', () {
+      // The blob-to-Bearer tolerance lives in the adapter; the chain's
+      // contract is passing the value through untouched (UT at the
+      // seam: the factory receives exactly the env value).
+      final probe = _Probe({
+        'raw-bearer-at': [_okTurn(_model('chatgpt', 'gpt-5-codex'), 'ok')],
+      });
+      final chain = buildProviderQueueChain(
+        [_entry('chatgpt-codex', 'gpt-5-codex', apiKeyEnv: 'CHATGPT_API_KEY')],
+        secrets: {'CHATGPT_API_KEY': 'raw-bearer-at'},
+        streamFactory: (kind, apiKey) => probe.streamForKey(apiKey),
+      );
+      expect(chain, hasLength(1));
+    });
+
+    test('refreshTokenEnv round-trips through toJson/fromJsonMap', () {
+      final entry = ProviderQueueEntry.fromJsonMap({
+        'provider_type': 'chatgpt-codex',
+        'provider_config': {
+          'model': 'gpt-5-codex',
+          'refreshTokenEnv': 'CHATGPT_REFRESH_TOKEN',
+        },
+      }, position: 1);
+      expect(entry.refreshTokenEnv, 'CHATGPT_REFRESH_TOKEN');
+      final restored = ProviderQueueEntry.fromJsonMap(
+        entry.toJson(),
+        position: 1,
+      );
+      expect(restored.refreshTokenEnv, entry.refreshTokenEnv);
+    });
+  });
+
   // gh-1624 review r2: the runtime build forwards the chain's binding
   // warnings so hosts (boot, REPL queue reload) can render them — the
   // queue lane's mismatch never rides silently.
@@ -970,6 +1170,49 @@ void main() {
           'm1:key-head',
           'm2:key-two',
         ]);
+      },
+    );
+
+    test(
+      'a refreshTokenEnv mint entry fails over like any other (issue #1704)',
+      () async {
+        final probe = _Probe({
+          // The minted blob is the factory key the adapter would see.
+          'minted-blob': [
+            _deathTurn(_model('chatgpt', 'm1'), '401 Unauthorized'),
+          ],
+          'key-two': [_okTurn(_model('anthropic', 'm2'), 'b')],
+        });
+        final rt = ProviderQueueRuntime.build(
+          ProviderQueueResolution(
+            scope: ProviderQueueScope.env,
+            entries: [
+              ProviderQueueEntry(
+                providerType: 'chatgpt-codex',
+                model: 'm1',
+                refreshTokenEnv: 'CHATGPT_REFRESH_TOKEN',
+              ),
+              _entry('anthropic', 'm2', apiKeyEnv: 'K2_API_KEY'),
+            ],
+            notices: const [],
+          ),
+          secrets: {'CHATGPT_REFRESH_TOKEN': 'rt-secret', ..._secrets()},
+          policy: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+          now: () => now,
+          jitterFraction: () => 1.0,
+          sleeper: (delay, token) async {
+            sleeps.add(delay);
+            now = now.add(delay);
+            return true;
+          },
+          onNotice: notices.add,
+          streamFactory: (kind, apiKey) => probe.streamForKey(apiKey),
+          mintChatGptCredentials: (refreshToken) async => 'minted-blob',
+        );
+        await drive(rt.streamFunction);
+        // The mint entry's auth death advanced the cursor to entry 1.
+        expect(rt.state.currentIndex, 1);
+        expect(probe.calls, ['m1:minted-blob', 'm2:key-two']);
       },
     );
 

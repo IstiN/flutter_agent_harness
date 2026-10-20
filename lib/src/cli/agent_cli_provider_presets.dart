@@ -92,6 +92,44 @@ extension _AgentCliProviderPresets on AgentCli {
     await _addProviderHandlers[key.substring('preset:'.length)]?.call();
   }
 
+  /// The fresh-install boarding pick (issue #1705): before any other
+  /// question, offer the SAME provider list the `/add-provider` picker
+  /// shows — presets, `Custom` last — and route the choice like
+  /// [_tuiPickAddProvider]. Only `Custom` lands in the api-type wizard; a
+  /// preset opens its own flow (which prefills or never asks the api
+  /// type). Gate convention mirrors [_handleOpenRouterAuthMethodChoice]:
+  /// hold [_providerFlowActive] across the pick, release before handing
+  /// off — every sub-flow takes the gate itself.
+  Future<void> _handleFreshInstallProviderChoice() async {
+    if (_providerFlowActive) return;
+    _providerFlowActive = true;
+    try {
+      io.writeln('choose a provider to set up (Ctrl-C to skip)');
+      final choice = await _pickOption('choose provider', [
+        for (final item in _addProviderItems())
+          (
+            item.key.startsWith('preset:')
+                ? item.key.substring('preset:'.length)
+                : item.key,
+            item.label,
+            item.description,
+          ),
+      ]);
+      // Release the flow gate so the sub-flow can take its own lock.
+      _providerFlowActive = false;
+      if (choice == null) {
+        io.writeln('provider setup cancelled');
+      } else if (choice == 'custom') {
+        await _startProviderFlow();
+      } else {
+        await _addProviderHandlers[choice]?.call();
+      }
+    } finally {
+      _providerFlowActive = false;
+      _promptLineBuffer.clear();
+    }
+  }
+
   /// Switches to the catalog Kimi provider (Kimi Code API). The key step
   /// depends on what already resolves for the endpoint:
   ///

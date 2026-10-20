@@ -63,6 +63,7 @@ final class ProviderQueueEntry {
     required this.model,
     this.baseUrl,
     this.apiKeyEnv,
+    this.refreshTokenEnv,
     this.contextWindow,
     this.maxTokens,
     this.ref,
@@ -93,6 +94,12 @@ final class ProviderQueueEntry {
   /// Env var NAME holding the API key. Null inherits the resolved custom
   /// provider's key name (ref entries) — keys never ride in the blob.
   final String? apiKeyEnv;
+
+  /// Env var NAME holding a ChatGPT refresh token (`chatgpt-codex` entries,
+  /// issue #1704): when the slot is selected the runtime mints the initial
+  /// access token via OAuth refresh on the fly — headless runners/CI where
+  /// no Keychain login exists. The name, never the value.
+  final String? refreshTokenEnv;
 
   /// Context-window override (tokens).
   final int? contextWindow;
@@ -164,6 +171,7 @@ final class ProviderQueueEntry {
               'model',
               'baseUrl',
               'apiKeyEnv',
+              'refreshTokenEnv',
               'contextWindow',
               'maxTokens',
               'connectTimeoutMs',
@@ -182,6 +190,7 @@ final class ProviderQueueEntry {
       model: model.trim(),
       baseUrl: _optionalString(config, 'baseUrl', where),
       apiKeyEnv: _optionalString(config, 'apiKeyEnv', where),
+      refreshTokenEnv: _optionalString(config, 'refreshTokenEnv', where),
       contextWindow: _optionalInt(config, 'contextWindow', where),
       maxTokens: _optionalInt(config, 'maxTokens', where),
       connectTimeout: _optionalTimeout(config, 'connectTimeoutMs', where),
@@ -241,6 +250,7 @@ final class ProviderQueueEntry {
       'model': model,
       if (baseUrl != null) 'baseUrl': baseUrl,
       if (apiKeyEnv != null) 'apiKeyEnv': apiKeyEnv,
+      if (refreshTokenEnv != null) 'refreshTokenEnv': refreshTokenEnv,
       if (contextWindow != null) 'contextWindow': contextWindow,
       if (maxTokens != null) 'maxTokens': maxTokens,
       if (connectTimeout != null)
@@ -615,6 +625,9 @@ String providersQueueYamlBody(List<ProviderQueueEntry> entries) {
     if (entry.baseUrl != null) buffer.writeln('    baseUrl: ${entry.baseUrl}');
     if (entry.apiKeyEnv != null) {
       buffer.writeln('    apiKeyEnv: ${entry.apiKeyEnv}');
+    }
+    if (entry.refreshTokenEnv != null) {
+      buffer.writeln('    refreshTokenEnv: ${entry.refreshTokenEnv}');
     }
     if (entry.contextWindow != null) {
       buffer.writeln('    contextWindow: ${entry.contextWindow}');

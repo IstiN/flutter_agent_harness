@@ -96,6 +96,14 @@ jobs:
       # NOTE: github.token CANNOT ride this block — GitHub delivers an
       # empty value when it is mapped through a reusable call's secrets
       # (live-verified); it rides the silent-token INPUT below instead.
+      # gh-1106: github.token CANNOT push workflow-file changes (no
+      # 'workflows' permission exists for GITHUB_TOKEN; fork PR updates
+      # were rejected — "refusing to allow a GitHub App to create or
+      # update workflow ..."). The dedicated silent-update PAT rides the
+      # SILENT_GH_TOKEN secret of the reusable workflow (the with-input
+      # channel cannot reference secrets — HTTP 422 "Unrecognized
+      # named-value: 'secrets'", live #1718 follow-up).
+      SILENT_GH_TOKEN: ${{ secrets.PAT_TOKEN }}
       SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
       # App auth (awf#52): minted installation token wins over the PAT
       # inside the factory when both secrets are present.
