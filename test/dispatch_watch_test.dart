@@ -65,8 +65,8 @@ String iso(int seconds) {
 ///   `view-<id>.txt`    — one `<status> <conclusion>` line per
 ///                        `gh run view <id>` poll; the last line repeats
 ///                        once exhausted
-///   `jobs-<id>.txt`    — one running-job COUNT per `gh run view <id>
-///                        --json jobs` poll; the last line repeats;
+///   `jobs-<id>.txt`    — one running-job COUNT per `gh run view <id>`
+///                        poll (with --json jobs); the last line repeats;
 ///                        absent file = 1 job always running
 ///   `cancelled-<id>`   — marker created by `gh run cancel`
 ///   `list-calls`       — internal counter
@@ -471,6 +471,13 @@ void main() {
             'the second wedge must point at the pool (issue #344), not just time out',
       );
       expect(dw.out, contains('222'));
+      expect(
+        dw.log.any((l) => l.contains('run cancel 222 --repo OWNER/REPO')),
+        isTrue,
+        reason:
+            'gh-172 containment: the wedged child is cancelled on the fail '
+            'path too — left alive it publishes unattended when the pool revives',
+      );
     });
   });
 

@@ -169,6 +169,18 @@ jobs:
   # timeout instead of the watcher's fail-fast; both children carry
   # per-job server-side timeouts (#344) so a wedged job self-fails even
   # without the watcher.
+  #
+  # gh-172 (run 39374894901, 2026-10-20): the re-dispatched testflight
+  # child sat queued FOREVER on the zombie self-hosted worker (a job-level
+  # timeout is enforced BY the runner, so a hung worker outlives its own
+  # 90m ceiling and never processes the run cancel either) — the leg burned
+  # its remaining ~107m watching a child that could never start and died as
+  # a bare 360m ceiling kill. The watcher now also treats "not completed
+  # but NO job in_progress for DW_QUEUE_STALL_SECONDS (600s)" as a wedge
+  # riding the same one self-heal, and cancels the child on the fail path
+  # so an orphaned queued run can't publish unattended when the pool
+  # revives. Second wedge now ends in a diagnostic inside the leg
+  # (testflight ≈ 250m + 13m + 10m stall = 273m < 360m).
 
   testflight:
     name: 'Leg: TestFlight'

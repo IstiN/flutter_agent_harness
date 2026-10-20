@@ -26,6 +26,9 @@
 # (≈2x historical duration) is CANCELLED and re-dispatched exactly once;
 # if the retry also wedges we fail fast naming both runs, so the pool
 # problem surfaces in the leg log instead of silently eating 5 hours.
+# gh-172 refines the wedge detection: budget expiry alone misses the
+# pool-held zombie (run alive, nothing running) — a not-completed run with
+# no in_progress job for DW_QUEUE_STALL_SECONDS wedges the same way.
 #
 # Usage:
 #   dispatch_and_watch.sh WORKFLOW.yml --repo OWNER/REPO --ref main \
