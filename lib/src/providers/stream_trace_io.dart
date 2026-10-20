@@ -27,6 +27,12 @@ final class FileStreamTraceSink implements StreamTraceSink {
     Duration flushInterval = const Duration(milliseconds: 250),
   }) {
     try {
+      // Best-effort parent creation (pr-1727 review): bin/fah.dart arms
+      // the trace before anything in the CLI boot has created
+      // ~/.fah/logs/ — without this the armed trail is void on fresh
+      // installs, fresh HOMEs, and ephemeral containers. Same pattern as
+      // FileAgentTelemetrySink.record.
+      _file.parent.createSync(recursive: true);
       _file.writeAsStringSync('', flush: true);
     } catch (_) {
       // A broken trace path never breaks the host.
