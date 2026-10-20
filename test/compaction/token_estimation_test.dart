@@ -479,6 +479,92 @@ void main() {
     });
   });
 
+  group('hidden-checkpoint parity (the goal_builder resume class)', () {
+    MessageRecord msg(String id, String? parent, String text) => MessageRecord(
+      id: id,
+      parentId: parent,
+      timestamp: DateTime.utc(2026),
+      message: UserMessage.text(text),
+    );
+
+    // The production shape: a checkpoint covering a span, then a judge
+    // hide that targets the CHECKPOINT ITSELF. The real projection
+    // unfolds the whole span (projection.dart `_coverAt`: a hidden
+    // checkpoint covers nothing) — the estimator must agree, or the
+    // resume walk budgets a window the request can never fit.
+    List<SessionRecord> hiddenCheckpointBranch() => [
+      msg('e0', null, 'a' * 100), // 25 tokens, always visible
+      msg('e1', 'e0', 'x' * 40000), // covered by k0 — but k0 is hidden
+      msg('e2', 'e1', 'y' * 40000), // covered by k0 — but k0 is hidden
+      CompactCheckpointRecord(
+        id: 'k0',
+        parentId: 'e2',
+        timestamp: DateTime.utc(2026),
+        firstRecordId: 'e1',
+        lastRecordId: 'e2',
+        text: 's' * 200, // 50 tokens
+        coversRecordIds: const ['e1', 'e2'],
+        flattenedRecordIds: const [],
+      ),
+      HiddenRangeRecord(
+        id: 'h0',
+        parentId: 'k0',
+        timestamp: DateTime.utc(2026),
+        recordIds: const ['k0'], // the judge hid the checkpoint itself
+      ),
+    ];
+
+    test('a hidden checkpoint covers NOTHING - its span prices full', () {
+      // Real render: e1/e2 FULL (2x10000), k0 nothing, e0 25.
+      expect(estimateProjectedBranchTokens(hiddenCheckpointBranch()), 20025);
+    });
+
+    test('a healthy (non-hidden) checkpoint still covers - unchanged', () {
+      final branch = [
+        msg('e0', null, 'a' * 100),
+        msg('e1', 'e0', 'x' * 40000),
+        CompactCheckpointRecord(
+          id: 'k0',
+          parentId: 'e1',
+          timestamp: DateTime.utc(2026),
+          firstRecordId: 'e1',
+          lastRecordId: 'e1',
+          text: 's' * 200,
+          coversRecordIds: const ['e1'],
+          flattenedRecordIds: const [],
+        ),
+      ];
+      expect(estimateProjectedBranchTokens(branch), 25 + 50);
+    });
+
+    test(
+      'projectedBranchBudgetCut prices the hidden span full (the cut must respect it)',
+      () {
+        final branch = hiddenCheckpointBranch();
+        // Old logic: e1/e2 covered -> 0 -> a 500-token budget "fits" the
+        // whole branch (null cut) while the real request carries 20k+.
+        // New: e2 alone (10000) crosses 500 -> keep the tail from k0 on.
+        expect(projectedBranchBudgetCut(branch, 500), 3);
+        // And the healthy branch still fits a 500-token budget at the tail.
+        final healthy = [
+          msg('e0', null, 'a' * 100),
+          msg('e1', 'e0', 'x' * 40000),
+          CompactCheckpointRecord(
+            id: 'k0',
+            parentId: 'e1',
+            timestamp: DateTime.utc(2026),
+            firstRecordId: 'e1',
+            lastRecordId: 'e1',
+            text: 's' * 200,
+            coversRecordIds: const ['e1'],
+            flattenedRecordIds: const [],
+          ),
+        ];
+        expect(projectedBranchBudgetCut(healthy, 500), isNull);
+      },
+    );
+  });
+
   group('resetLoadedUsageAnchors', () {
     test('zeroes assistant usage; user/tool messages pass through', () {
       final stale = _assistant(
