@@ -62,12 +62,16 @@ String iso(int seconds) {
 /// Installs a stub `gh` that logs every invocation and answers from canned
 /// files in [dir]:
 ///   `runs.json`        — raw `gh run list --json` array
-///   `view-<id>.txt`    — one `<status> <conclusion>` line per
-///                        `gh run view <id>` poll; the last line repeats
-///                        once exhausted
-///   `jobs-<id>.txt`    — one running-job COUNT per `gh run view <id>`
-///                        poll (with --json jobs); the last line repeats;
-///                        absent file = 1 job always running
+///   `view-<id>.txt`    — one `<status> <conclusion>` line per watch
+///                        poll; the last line repeats once exhausted
+///   `jobs-<id>.txt`    — one running-job COUNT per watch poll; the last
+///                        line repeats; absent file = 1 job always running
+///   `served-jobs-<id>.log` — the running-job counts the stub ACTUALLY
+///                        served, one per poll — lets tests prove the
+///                        fixture modeled a running job (gh-172 review
+///                        BLOCKING regression: `seq -f '<literal>'` has no
+///                        % directive and always errored, so every poll
+///                        answered `{"jobs":[]}` whatever the fixture said)
 ///   `cancelled-<id>`   — marker created by `gh run cancel`
 ///   `list-calls`       — internal counter
 /// GH_STUB_LIST_EMPTY_FIRST=N makes the first N `run list` calls return [].
@@ -159,12 +163,22 @@ exit 0
 }
 
 class DwRun {
-  DwRun(this.exitCode, this.out, this.log, this.runIdFile);
+  DwRun(this.exitCode, this.out, this.log, this.runIdFile, this.dir);
 
   final int exitCode;
   final String out;
   final List<String> log;
   final String? runIdFile; // content of --out-run-id, when requested
+  final Directory dir; // stub fixture dir — served-jobs logs live here
+
+  /// The running-job counts the stub actually SERVED for run [id]. The
+  /// gh-172 review BLOCKING bug made every `--json jobs` poll answer 0
+  /// running jobs no matter what the fixture said; asserting on served
+  /// counts means an inert stub can never fake a "job is running" scenario.
+  List<String> servedJobs(String id) {
+    final f = File('${dir.path}/served-jobs-$id.log');
+    return f.existsSync() ? f.readAsLinesSync() : <String>[];
+  }
 }
 
 /// Runs scripts/dispatch_and_watch.sh with [args]; [stubFiles] seed the
@@ -212,6 +226,7 @@ DwRun runDw(
     '${res.stdout}${res.stderr}',
     File('${dir.path}/log').readAsLinesSync(),
     runIdFile && f.existsSync() ? f.readAsStringSync().trim() : null,
+    dir,
   );
 }
 
@@ -547,6 +562,13 @@ void main() {
           reason: 'the leg log must carry the queue-stall signature',
         );
         expect(
+          dw.log.any((l) => l.contains('--json status,conclusion,jobs')),
+          isTrue,
+          reason:
+              'ONE gh call per poll (gh-172 review) — status and the jobs '
+              'count come from the same snapshot, no between-call race',
+        );
+        expect(
           dw.log.any((l) => l.contains('run cancel 222 --repo OWNER/REPO')),
           isTrue,
           reason:
@@ -557,6 +579,14 @@ void main() {
     );
 
     test('a transient between-jobs pickup gap does not trip the guard', () {
+      // REAL timing (poll=2s): polls 1–2 see a job running (the stall
+      // clock refreshes); poll 3 sees the between-jobs gap — then only
+      // 2s old, inside the 3s window; poll 4 completes. A broken refresh
+      // (`last_running` never updated) trips the guard at poll 3 (4s
+      // since start > 3s window) and cancels this healthy child; an
+      // INERT fixture (the gh-172 review BLOCKING bug — a stub that
+      // always serves 0 running jobs) trips it the same way. Both
+      // regressions turn this test red instead of passing vacuously.
       final dw = runDw(
         'queue-transient',
         [
@@ -564,18 +594,20 @@ void main() {
           '--title',
           playTitle,
           '--budget-seconds',
-          '3',
+          '30', // must never fire — the stall window is what is under test
           '-f',
           'android_content=all',
         ],
         {
           'runs.json': runJson([run(111, playTitle, iso(-10))]),
-          // Poll 1: between jobs (version done, build-ios not yet picked
-          // up); from poll 2 a job is running; then the run completes.
-          'jobs-111.txt': '0\n1\n',
-          'view-111.txt': 'in_progress -\nin_progress -\ncompleted success\n',
+          // Poll 1: job running; poll 2: job running; poll 3: between
+          // jobs (version done, build-ios not yet picked up); poll 4:
+          // completed. Last line repeats once exhausted.
+          'jobs-111.txt': '1\n1\n0\n',
+          'view-111.txt':
+              'in_progress -\nin_progress -\nin_progress -\ncompleted success\n',
         },
-        env: {'DW_QUEUE_STALL_SECONDS': '2'},
+        env: {'DW_QUEUE_STALL_SECONDS': '3', 'DW_POLL_SECONDS': '2'},
       );
       expect(dw.exitCode, 0);
       expect(
@@ -583,7 +615,113 @@ void main() {
         1,
         reason: 'a healthy inter-job gap must never cancel a child',
       );
+      // The stub must have ACTUALLY served a running job before the gap
+      // — fixture-honesty regression guard (gh-172 review BLOCKING: the
+      // inert `seq -f` stub served 0 on every poll and this test passed
+      // vacuously, even with `last_running="$now"` disabled).
+      expect(
+        dw.servedJobs('111'),
+        contains('1'),
+        reason:
+            'the fixture must model a running job before the gap — a stub '
+            'that always serves 0 makes the refresh path untestable',
+      );
     });
+
+    test(
+      'an absent jobs fixture = healthy running child: the #34 budget self-heal fires, never the stall guard',
+      () {
+        // Pins both contracts the gh-172 review found broken:
+        //  * absent jobs-<id>.txt = 1 job always running (the documented
+        //    stub contract) → the stall clock keeps refreshing → the 1s
+        //    stall guard must NEVER fire even though the run outlives it;
+        //  * the #34 budget self-heal stays live WHILE a job is running:
+        //    the original #34 zombie (a SUCCEEDED job held in_progress
+        //    forever) shows running>0 on every poll and only ever trips
+        //    the budget — so the budget check must not be chained behind
+        //    the stall-clock refresh.
+        final dw = runDw(
+          'absent-jobs-budget',
+          [
+            'build-mobile.yml',
+            '--title',
+            testflightTitle,
+            '--budget-seconds',
+            '2',
+            '-f',
+            'ios_content=all',
+          ],
+          {
+            // NO jobs-*.txt — exercises the absent-file contract.
+            'runs.json': runJson([run(111, testflightTitle, iso(-10))]),
+            'runs2.json': runJson([
+              run(111, testflightTitle, iso(-10)),
+              run(222, testflightTitle, iso(-1)),
+            ]),
+            'view-111.txt': 'in_progress -\n',
+            'view-222.txt': 'in_progress -\n',
+          },
+          env: {'DW_QUEUE_STALL_SECONDS': '1'},
+        );
+        expect(dw.exitCode, 1);
+        expect(
+          dw.log.where((l) => l.startsWith('workflow run')).length,
+          2,
+          reason: 'the budget self-heal (#34) must still fire exactly once',
+        );
+        expect(
+          dw.out,
+          contains('still unfinished after 2s'),
+          reason:
+              'with a job running, the #34 budget — not the gh-172 stall '
+              'guard — is what must wedge the run',
+        );
+        expect(
+          dw.out,
+          isNot(contains('no running job')),
+          reason:
+              'a running child must never carry the no-running-job '
+              'signature — absent fixture = 1 job always running',
+        );
+        expect(dw.out, contains('runner pool suspect'));
+      },
+    );
+
+    test(
+      'stall window defaults to max(600, budget/8) — scaled off the leg budget',
+      () {
+        // gh-172 review IMPORTANT: a fixed 600s window cannot tell a
+        // zombie-held pool from a legitimately busy one — a healthy child
+        // queued behind a sibling leg's job on the shared single-runner
+        // pool shows the same "nothing running" signature for hours (the
+        // cli build-macos matrix serializes on the one fa-m5-1 runner).
+        // The default now scales off the leg budget with a 600s floor.
+        final scaled = runDw(
+          'knobs-scaled',
+          ['pages.yml', '--budget-seconds', '800'],
+          {'runs.json': '[]'},
+          env: {'DW_DUMP_KNOBS': '1'},
+        );
+        expect(scaled.exitCode, 0);
+        expect(
+          scaled.out,
+          contains('budget=800 queue_stall=100'),
+          reason: 'budget/8 = 100s once it clears the 600s floor',
+        );
+        final floored = runDw(
+          'knobs-floored',
+          ['pages.yml', '--budget-seconds', '800'],
+          {'runs.json': '[]'},
+          env: {'DW_DUMP_KNOBS': '1'},
+        );
+        expect(floored.exitCode, 0);
+        expect(
+          floored.out,
+          contains('budget=800 queue_stall=600'),
+          reason: 'the 600s floor holds when budget/8 drops below it',
+        );
+      },
+    );
   });
 
   // ── workflow structural lint ───────────────────────────────────────────

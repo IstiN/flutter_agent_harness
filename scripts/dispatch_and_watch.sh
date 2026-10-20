@@ -28,7 +28,13 @@
 # problem surfaces in the leg log instead of silently eating 5 hours.
 # gh-172 refines the wedge detection: budget expiry alone misses the
 # pool-held zombie (run alive, nothing running) — a not-completed run with
-# no in_progress job for DW_QUEUE_STALL_SECONDS wedges the same way.
+# no in_progress job for DW_QUEUE_STALL_SECONDS wedges the same way, and
+# the child is cancelled on the fail path so an orphaned queued run can
+# never publish unattended when the pool revives. gh-172 review: the
+# window is NOT a fixed 600s — it defaults to max(600, budget/8) because
+# a healthy child queued behind a sibling leg's job on the shared
+# single-runner pool shows the same "nothing running" signature for hours
+# (the cli build-macos matrix serializes on the one fa-m5-1 runner).
 #
 # Usage:
 #   dispatch_and_watch.sh WORKFLOW.yml --repo OWNER/REPO --ref main \
@@ -39,8 +45,11 @@
 # (BEFORE the watch), so callers can export the run URL even when the
 # child run later fails. Env knobs (test shims): DW_POLL_SECONDS (60),
 # DW_APPEAR_POLL_SECONDS (10), DW_APPEAR_ATTEMPTS (60),
-# DW_CANCEL_WAIT_SECONDS (180), DW_QUEUE_STALL_SECONDS (600 — gh-172:
-# no-running-job wedge window).
+# DW_CANCEL_WAIT_SECONDS (180), DW_QUEUE_STALL_SECONDS (default
+# max(600, budget/8) — gh-172 no-running-job wedge window, scaled off the
+# leg budget so a busy shared pool is not mistaken for a zombie; gh-172
+# review), DW_DUMP_KNOBS (1 = print the effective knobs and exit — test
+# shim).
 set -euo pipefail
 
 workflow=""
@@ -79,12 +88,30 @@ appear_attempts="${DW_APPEAR_ATTEMPTS:-60}"
 cancel_wait="${DW_CANCEL_WAIT_SECONDS:-180}"
 # gh-172: how long a not-completed run may sit with NO job in_progress
 # (everything queued or already done) before it is treated as a wedge.
-# A healthy child assigns and starts its first job in seconds; the signature
-# means the run is waiting on a pool that will never free — the 2026-10-20
-# TestFlight leg (run 39374894901) burned ~107m of leg time watching a
-# re-dispatched child queued forever on a zombie self-hosted worker and then
-# died as a bare 360m ceiling kill with no diagnostic.
-queue_stall="${DW_QUEUE_STALL_SECONDS:-600}"
+# gh-172 review: a FIXED window cannot tell a zombie-held pool from a
+# legitimately busy one — the same "nothing in_progress" signature is
+# produced by a HEALTHY child queued behind a sibling leg's job on the
+# shared single-runner pool (the cli build-macos matrix serializes on
+# fa-m5-1 and can hold it for hours; a testflight child legitimately
+# shows nothing running all that time). The default therefore scales off
+# the leg budget: max(600, budget/8). Accepted residual class: contention
+# outliving the window but not the budget still self-heals (cancel + one
+# re-dispatch into a possibly-busy pool) — the second-wedge arithmetic
+# (2×(~10m version + window) + cancel wait) fits every leg ceiling with
+# the scaled windows, and the budget itself remains the backstop for long
+# legitimate waits.
+queue_stall="${DW_QUEUE_STALL_SECONDS:-}"
+if [ -z "$queue_stall" ]; then
+  queue_stall=$((budget / 8))
+  if [ "$queue_stall" -lt 600 ]; then queue_stall=600; fi
+fi
+
+# Test shim (dispatch_watch_test.dart): print the effective knobs and exit
+# without dispatching anything.
+if [ "${DW_DUMP_KNOBS:-0}" = "1" ]; then
+  echo "budget=$budget queue_stall=$queue_stall poll=$poll cancel_wait=$cancel_wait"
+  exit 0
+fi
 
 # jq selector: optional exact displayTitle match (#343).
 title_select=""
