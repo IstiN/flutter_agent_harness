@@ -17,6 +17,13 @@ const chatGptOAuthClientId = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const chatGptOAuthScope =
     'openid profile email offline_access api.connectors.read api.connectors.invoke';
 
+/// The env/store NAME holding the encoded ChatGPT OAuth blob (issue #1704):
+/// the `chatgpt` catalog spec's key name, the queue's default Keychain slot
+/// for a `chatgpt-codex` entry that names no `apiKeyEnv`, and the legacy
+/// fallback slot the CLI's credential persist writes when no account entry
+/// is active. A NAME, never a value.
+const chatGptOAuthCredentialsEnvName = 'CHATGPT_OAUTH_CREDENTIALS';
+
 /// OAuth credentials issued for a ChatGPT account.
 final class ChatGptOAuthCredentials {
   const ChatGptOAuthCredentials({
@@ -79,6 +86,74 @@ final class ChatGptOAuthCredentials {
     final expiresAt = this.expiresAt;
     return expiresAt != null && !now.isBefore(expiresAt.subtract(skew));
   }
+}
+
+/// Decodes [value] into [ChatGptOAuthCredentials], or null when it is not
+/// credential-shaped at all — a plain Bearer access token (issue #1704), a
+/// partial JSON object, or garbage. A partial JSON object that at least
+/// names its `access_token` degrades to that bearer (no refresh); a plain
+/// string is used verbatim. Callers treat null as raw-bearer use (no
+/// proactive/reactive refresh) instead of failing the turn.
+ChatGptOAuthCredentials? tryDecodeChatGptCredentials(String value) {
+  try {
+    return ChatGptOAuthCredentials.decode(value);
+  } on FormatException {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(value);
+    } on Object {
+      return null;
+    }
+    if (decoded is Map) {
+      final accessToken = decoded['access_token'];
+      if (accessToken is String && accessToken.isNotEmpty) {
+        return ChatGptOAuthCredentials(
+          accessToken: accessToken,
+          refreshToken: '',
+          idToken: '',
+        );
+      }
+    }
+    return null;
+  }
+}
+
+/// Parses the `codex` CLI's `~/.codex/auth.json` session file (issue
+/// #1704): `{"tokens": {access_token, refresh_token, id_token,
+/// account_id?}, "last_refresh": epochSeconds}` — the shape a `codex
+/// login` (SSO tenants included) leaves behind. The expiry comes from the
+/// access token's own `exp` claim (the file carries none); a missing claim
+/// means unknown, and the runtime's reactive refresh covers it. Null when
+/// the shape is not a codex session.
+ChatGptOAuthCredentials? parseCodexAuthJson(String contents) {
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(contents);
+  } on Object {
+    return null;
+  }
+  if (decoded is! Map) return null;
+  final tokens = decoded['tokens'];
+  if (tokens is! Map) return null;
+  String? field(String name) {
+    final value = tokens[name];
+    return value is String && value.isNotEmpty ? value : null;
+  }
+
+  final accessToken = field('access_token');
+  final refreshToken = field('refresh_token');
+  final idToken = field('id_token');
+  if (accessToken == null || refreshToken == null || idToken == null) {
+    return null;
+  }
+  final accountId = field('account_id');
+  return ChatGptOAuthCredentials(
+    accessToken: accessToken,
+    refreshToken: refreshToken,
+    idToken: idToken,
+    accountId: accountId ?? _accountIdFromJwt(idToken),
+    expiresAt: jwtExpClaim(accessToken),
+  );
 }
 
 /// Parses the persisted `expires_at`: an epoch-millisecond string (what
@@ -247,14 +322,12 @@ Map<String, dynamic> _jsonObject(String body) {
   }
 }
 
-/// The `email` claim of a JWT payload's middle segment, or null when the
-/// token is not a three-segment JWT, the payload is not a JSON object, or
-/// the claim is absent/empty/non-string. The ONE claim reader behind the
-/// account-identity entry naming (ChatGPT hosts via [ChatGptOAuthCredentials.idToken],
-/// AIIN via `aiinJwtEmail`, fa_ui's SSO bundle) — a single parser so the
-/// copies cannot drift (issue #1326 review, thread 10).
-String? jwtEmailClaim(String idToken) {
-  final parts = idToken.split('.');
+/// The JWT payload segment of [jwt] as a map, or null when the token is not
+/// a three-segment JWT, the payload is not JSON, or it is not an object.
+/// The ONE base64/JSON decoder behind every claim reader here
+/// (issue #1326 review, thread 10) so the copies cannot drift.
+Map<String, dynamic>? jwtPayloadClaims(String jwt) {
+  final parts = jwt.split('.');
   if (parts.length != 3) return null;
   final Object? claims;
   try {
@@ -266,9 +339,28 @@ String? jwtEmailClaim(String idToken) {
   } on ArgumentError {
     return null;
   }
-  if (claims is! Map) return null;
-  final email = claims['email'];
+  return claims is Map ? claims.cast<String, dynamic>() : null;
+}
+
+/// The `email` claim of a JWT payload's middle segment, or null when the
+/// token is not a three-segment JWT, the payload is not a JSON object, or
+/// the claim is absent/empty/non-string. The ONE claim reader behind the
+/// account-identity entry naming (ChatGPT hosts via [ChatGptOAuthCredentials.idToken],
+/// AIIN via `aiinJwtEmail`, fa_ui's SSO bundle) — a single parser so the
+/// copies cannot drift (issue #1326 review, thread 10).
+String? jwtEmailClaim(String idToken) {
+  final email = jwtPayloadClaims(idToken)?['email'];
   return email is String && email.isNotEmpty ? email : null;
+}
+
+/// The `exp` claim of a JWT payload (epoch seconds), or null when absent or
+/// malformed — an unknown expiry just means "no proactive refresh" (issue
+/// #1704: the codex CLI's auth.json carries no expiry field, so the access
+/// token's own claim is the only honest source).
+DateTime? jwtExpClaim(String jwt) {
+  final exp = jwtPayloadClaims(jwt)?['exp'];
+  if (exp is! int || exp <= 0) return null;
+  return DateTime.fromMillisecondsSinceEpoch(exp * 1000, isUtc: true);
 }
 
 String? _accountIdFromJwt(String jwt) {

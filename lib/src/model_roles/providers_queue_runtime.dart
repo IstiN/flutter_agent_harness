@@ -9,8 +9,14 @@
 /// restart builds a fresh wrapper and the queue restarts at its head (AC6).
 library;
 
+import 'dart:async';
+
 import '../agent/agent_loop.dart';
 import '../cancel_token.dart';
+import '../context.dart';
+import '../event_stream.dart';
+import '../model.dart';
+import '../providers/chatgpt_oauth.dart';
 import '../providers/quota.dart';
 // gh-1308: the zero-byte stall tag — the transient ladder's wedged-endpoint
 // verdict, classified as an immediate queue advance.
@@ -168,6 +174,15 @@ final _timeoutPatterns = [
 /// entry from its `apiKeyEnv` (the `_2`/`_3` stack convention rides along
 /// free), and the catalog stream factory bound per key.
 ///
+/// `chatgpt-codex` entries resolve their credential on a ladder (issue
+/// #1704): the `apiKeyEnv` value (the full OAuth blob, or a plain Bearer
+/// token — the adapter tolerates both), else the entry's `refreshTokenEnv`
+/// (the initial access token is minted by [mintChatGptCredentials] on the
+/// entry's first activation, memoized in memory), else the default Keychain
+/// slot name [chatGptOAuthCredentialsEnvName] (`apiKeyEnv` omitted — the
+/// saved-login slot the secure store holds). Refreshed credentials stay
+/// in memory: the queue lane does not persist back to the Keychain.
+///
 /// Entries with no configured key are SKIPPED (the roles precedent) and
 /// reported in [skipped]; a queue that skips everything throws
 /// [ConfigException]. Entries whose binding resolves with WARNINGS
@@ -179,6 +194,7 @@ List<ChainEntry> buildProviderQueueChain(
   List<ProviderQueueEntry> entries, {
   required Map<String, String> secrets,
   StreamFunction Function(String kind, String apiKey)? streamFactory,
+  Future<String> Function(String refreshToken)? mintChatGptCredentials,
   List<String>? skipped,
   List<String>? warnings,
 }) {
@@ -186,7 +202,15 @@ List<ChainEntry> buildProviderQueueChain(
   final factory = streamFactory ?? providerStreamFunction;
   final chain = <ChainEntry>[];
   for (final entry in entries) {
-    final keyEnv = entry.apiKeyEnv;
+    final (refreshName, refreshValue) = _chatGptRefreshCredential(
+      entry,
+      secrets,
+    );
+    final keyEnv =
+        entry.apiKeyEnv ??
+        (entry.providerType == 'chatgpt-codex'
+            ? chatGptOAuthCredentialsEnvName
+            : null);
     if (keyEnv == null) {
       throw ConfigException(
         'queue entry ${entry.label} has no apiKeyEnv — keys never ride in '
@@ -219,23 +243,45 @@ List<ChainEntry> buildProviderQueueChain(
       warnings?.add('warning: binding — ${entry.label}: $warning');
     }
     final stack = collectKeyStack(secrets, keyEnv);
-    if (stack.isEmpty) {
-      skipped_.add('${entry.label} (missing API key: set $keyEnv)');
+    if (stack.isEmpty && refreshValue.isEmpty) {
+      skipped_.add(_queueSkipLine(entry, keyEnv, refreshName));
       continue;
     }
-    final ring = ApiKeyRing(baseName: keyEnv, credentials: stack);
     final spec = catalogProvider(binding.catalogRecord)!;
+    final model = buildCatalogModel(
+      spec.name,
+      entry.model,
+      baseUrl: entry.baseUrl,
+      contextWindow: entry.contextWindow,
+      maxTokens: entry.maxTokens,
+    );
+    if (stack.isEmpty) {
+      // refreshTokenEnv-only entry (issue #1704): the ring carries the
+      // refresh token's env name (rotation/backoff bookkeeping); the
+      // adapter never sees the raw refresh token — the stream mints the
+      // initial access token on first activation.
+      chain.add(
+        ChainEntry(
+          model: model,
+          keyRing: ApiKeyRing(
+            baseName: keyEnv,
+            credentials: [ApiKeyCredential(refreshName, refreshValue)],
+          ),
+          streamForKey: _mintingStreamForKey(
+            factory,
+            spec.kind,
+            refreshValue,
+            mintChatGptCredentials ?? _defaultChatGptMint,
+          ),
+        ),
+      );
+      continue;
+    }
     final inner = factory(spec.kind, stack.first.value);
     chain.add(
       ChainEntry(
-        model: buildCatalogModel(
-          spec.name,
-          entry.model,
-          baseUrl: entry.baseUrl,
-          contextWindow: entry.contextWindow,
-          maxTokens: entry.maxTokens,
-        ),
-        keyRing: ring,
+        model: model,
+        keyRing: ApiKeyRing(baseName: keyEnv, credentials: stack),
         streamForKey: (apiKey) =>
             inner, // single entry-bound adapter; the key is baked in
       ),
@@ -247,6 +293,111 @@ List<ChainEntry> buildProviderQueueChain(
     );
   }
   return chain;
+}
+
+/// The `(envName, value)` refresh-token pair a `chatgpt-codex` entry
+/// carries, or `('', '')` when it names no `refreshTokenEnv` (or the env
+/// is unset — an empty value is indistinguishable from absent here; both
+/// mean "no refresh bootstrap"). A `refreshTokenEnv` on a NON-chatgpt
+/// kind is a hard error: the mint path is chatgpt-codex-only (issue
+/// #1704).
+(String, String) _chatGptRefreshCredential(
+  ProviderQueueEntry entry,
+  Map<String, String> secrets,
+) {
+  final refreshEnv = entry.refreshTokenEnv;
+  if (refreshEnv == null) return ('', '');
+  if (entry.providerType != 'chatgpt-codex') {
+    throw ConfigException(
+      'queue entry ${entry.label}: refreshTokenEnv applies only to '
+      'chatgpt-codex entries',
+    );
+  }
+  return (refreshEnv, secrets[refreshEnv] ?? '');
+}
+
+/// The skip line for an entry with no resolvable credential: names the
+/// missing refresh env for a mint entry, the named key env for a plain
+/// entry, and the DEFAULT slot + login path for a chatgpt-codex entry
+/// that named no `apiKeyEnv` (what to set / where to log in) — never the
+/// secret value.
+String _queueSkipLine(
+  ProviderQueueEntry entry,
+  String keyEnv,
+  String refreshName,
+) {
+  if (refreshName.isNotEmpty) {
+    return '${entry.label} (missing refresh token: set $refreshName)';
+  }
+  if (keyEnv == entry.apiKeyEnv) {
+    return '${entry.label} (missing API key: set $keyEnv)';
+  }
+  return '${entry.label} (no ChatGPT login: set $keyEnv or run '
+      '`/provider chatgpt oauth`)';
+}
+
+/// The default refresh-token minter: the real OAuth refresh against
+/// auth.openai.com (issue #1704). Tests inject a fake through
+/// [buildProviderQueueChain]/[ProviderQueueRuntime.build] — the chain
+/// itself never touches the network at build time.
+Future<String> _defaultChatGptMint(String refreshToken) async =>
+    refreshChatGptCredentials(
+      ChatGptOAuthCredentials(
+        accessToken: '',
+        refreshToken: refreshToken,
+        idToken: '',
+      ),
+    ).then((credentials) => credentials.encode());
+
+/// The stream factory for a `refreshTokenEnv` entry: mints the initial
+/// access token on the FIRST call (cursor activation), memoizes the blob
+/// in memory for the entry's lifetime, then forwards the minted
+/// credential's stream. A mint failure surfaces as the terminal error
+/// event (providers-never-throw) the queue classifier advances on.
+StreamFunction Function(String apiKey) _mintingStreamForKey(
+  StreamFunction Function(String kind, String apiKey) factory,
+  String kind,
+  String refreshToken,
+  Future<String> Function(String refreshToken) mint,
+) {
+  Future<String>? minted;
+  return (apiKey) =>
+      (Model model, Context context, {CancelToken? cancelToken}) {
+        final out = AssistantMessageEventStream();
+        unawaited(() async {
+          try {
+            minted ??= mint(refreshToken);
+            final credentials = await minted!;
+            await for (final event in factory(kind, credentials)(
+              model,
+              context,
+              cancelToken: cancelToken,
+            )) {
+              out.push(event);
+            }
+          } catch (error) {
+            out.push(
+              ErrorEvent(
+                reason: StopReason.error,
+                error: AssistantMessage(
+                  content: const [],
+                  api: model.api,
+                  provider: model.provider,
+                  model: model.id,
+                  usage: Usage.zero,
+                  stopReason: StopReason.error,
+                  errorMessage:
+                      'chatgpt-codex credential bootstrap failed: $error',
+                  timestamp: DateTime.now(),
+                ),
+              ),
+            );
+          } finally {
+            out.end();
+          }
+        }());
+        return out;
+      };
 }
 
 /// The wired queue: the sticky RAM state, the driven stream function, and
@@ -271,6 +422,7 @@ final class ProviderQueueRuntime {
     ProviderQueueResolution resolution, {
     required Map<String, String> secrets,
     StreamFunction Function(String kind, String apiKey)? streamFactory,
+    Future<String> Function(String refreshToken)? mintChatGptCredentials,
     ModelRolesRetryPolicy policy = const ModelRolesRetryPolicy(),
     DateTime Function()? now,
     double Function()? jitterFraction,
@@ -289,6 +441,7 @@ final class ProviderQueueRuntime {
       entries,
       secrets: secrets,
       streamFactory: streamFactory,
+      mintChatGptCredentials: mintChatGptCredentials,
       warnings: bindingWarnings,
     );
     // gh-1617 review r2: the boot-time [onNotice] is often absent — the

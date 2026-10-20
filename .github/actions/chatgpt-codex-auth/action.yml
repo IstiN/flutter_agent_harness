@@ -1,0 +1,58 @@
+name: 'ChatGPT Codex auth'
+description: >-
+  Mint a fresh ChatGPT/Codex access token from a stored refresh token
+  (issue #1704). Exports OPENAI_API_KEY (the fresh Bearer) and
+  OPENAI_BASE_URL (the Codex backend — these tokens serve ONLY
+  chatgpt.com/backend-api/codex, never api.openai.com) for downstream
+  steps. invalid_grant / revoked refresh tokens fail the job fast and
+  loudly — a bench pipeline must never park on a dead credential.
+
+# Direct curl against auth.openai.com — the same issuer + client id fa's
+# own OAuth uses (lib/src/providers/chatgpt_oauth.dart). No third-party
+# action; the refresh token arrives only through the `refresh-token` input.
+inputs:
+  refresh-token:
+    description: 'ChatGPT OAuth refresh token (offline_access grant)'
+    required: true
+  base-url:
+    description: 'Codex backend base URL to export'
+    required: false
+    default: 'https://chatgpt.com/backend-api/codex'
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CHATGPT_REFRESH_TOKEN: ${{ inputs.refresh-token }}
+        CHATGPT_CODEX_BASE_URL: ${{ inputs.base-url }}
+      run: |
+        set -euo pipefail
+        client_id='app_EMoamEEZ73f0CkXaXp7hrann'
+        body_file="$(mktemp)"
+        trap 'rm -f "$body_file"' EXIT
+        http_code=$(curl -sS -o "$body_file" -w '%{http_code}' \
+          https://auth.openai.com/oauth/token \
+          -H 'Content-Type: application/json' \
+          -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$CHATGPT_REFRESH_TOKEN\",\"client_id\":\"$client_id\"}") || {
+          echo '::error::ChatGPT token endpoint unreachable (curl failed) — check runner network/egress'
+          exit 1
+        }
+        error=$(jq -r '.error // empty' "$body_file" 2>/dev/null || true)
+        if [ "$http_code" != "200" ]; then
+          if [ "$error" = "invalid_grant" ] || [ "$error" = "invalid_request" ]; then
+            echo '::error::ChatGPT refresh token rejected (error='"$error"') — the stored refresh token is expired or revoked. Re-authenticate once with `fa /provider chatgpt oauth` (or `codex login`), then update the CHATGPT_REFRESH_TOKEN secret. SSO/corporate session policies can revoke refresh tokens at any time.'
+          else
+            echo '::error::ChatGPT token refresh failed (HTTP '"$http_code"'): '"$(cat "$body_file")"
+          fi
+          exit 1
+        fi
+        access_token=$(jq -er '.access_token // empty' "$body_file") || {
+          echo '::error::ChatGPT token response carried no access_token'
+          exit 1
+        }
+        {
+          echo "OPENAI_API_KEY=$access_token"
+          echo "OPENAI_BASE_URL=$CHATGPT_CODEX_BASE_URL"
+        } >> "$GITHUB_ENV"
+        echo 'ChatGPT Codex credential minted: OPENAI_API_KEY + OPENAI_BASE_URL exported (account quotas are per-account; a 401/403 in a bench step means the window is exhausted or the token was revoked — fail fast, never park).'
