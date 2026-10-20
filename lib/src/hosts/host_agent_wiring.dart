@@ -36,8 +36,10 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../agent/agent.dart';
-import '../agent/agent_loop.dart' show OverWindowRelief, StreamFunction;
+import '../agent/agent_loop.dart'
+    show MessageCapRelief, OverWindowRelief, StreamFunction;
 import '../agent/agent_tool.dart';
+import '../agent/message_cap.dart' show MessageCapPolicy;
 import '../agent/misuse_breaker.dart';
 import '../agent/stuck_tool.dart' show StuckToolConfig;
 import '../agent/tool_registry.dart';
@@ -483,6 +485,8 @@ final class AgentWiringSpec {
   final bool wireDump;
   final OverWindowRelief? overWindowRelief;
   final ToolMisuseBreaker? toolMisuseBreaker;
+  final MessageCapPolicy? messageCapPolicy;
+  final MessageCapRelief? messageCapRelief;
 
   const AgentWiringSpec({
     required this.model,
@@ -498,6 +502,8 @@ final class AgentWiringSpec {
     this.wireDump = false,
     this.overWindowRelief,
     this.toolMisuseBreaker,
+    this.messageCapPolicy,
+    this.messageCapRelief,
   });
 }
 
@@ -649,6 +655,8 @@ final class WiredAgentCore {
       wireDump: spec.wireDump,
       overWindowRelief: spec.overWindowRelief,
       toolMisuseBreaker: spec.toolMisuseBreaker,
+      messageCapPolicy: spec.messageCapPolicy,
+      messageCapRelief: spec.messageCapRelief,
     );
     telemetryAdapter?.attach(agent);
     return WiredAgentStack(registry: registry, agent: agent);
