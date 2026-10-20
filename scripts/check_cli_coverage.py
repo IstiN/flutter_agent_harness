@@ -13,6 +13,14 @@ Usage:
   check_cli_coverage.py [--lcov coverage/lcov.info] [--min-from BASELINE_FILE]
   check_cli_coverage.py --print   # just print the measured percentage
 Exit 1 when below baseline.
+
+Note: the baseline value is the pty-integration-linux CI leg's measurement,
+taken with FA_PTY_BUDGET_SCALE=2 (the leg's 2x PTY budget stretch). On x64
+without that scale the same tree measures ~18.37% — below the committed
+floor — so a plain local run fails the gate spuriously. Reproduce the CI
+measurement with FA_PTY_BUDGET_SCALE=2 before suspecting a regression.
+The baseline file itself must stay a bare number: both this script and
+coverage-gardener.yml parse it with float().
 """
 import argparse
 import os
