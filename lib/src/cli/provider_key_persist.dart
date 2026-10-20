@@ -26,9 +26,15 @@ extension on AgentCli {
     final registry = config.customProviders;
     final token = setup.token;
     if (token == null) {
+      // No fresh token: no save is attempted, so the entry's degradation
+      // marker must CARRY OVER (gh-1679 review) — only a later successful
+      // save of the slot may clear it. An unconditional `false` here let a
+      // model-only (or rename) edit silently un-flag an entry whose key
+      // never reached the store, re-hiding the boot degradation note.
+      final existing = editName != null ? registry?.find(editName) : null;
       return (
-        keyName: editName != null ? registry?.find(editName)?.keyName : null,
-        keyNotPersisted: false,
+        keyName: existing?.keyName,
+        keyNotPersisted: existing?.keyNotPersisted ?? false,
       );
     }
     final keyName = _setupKeyName(setup, editName);
