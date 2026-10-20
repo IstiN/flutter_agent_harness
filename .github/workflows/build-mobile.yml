@@ -138,7 +138,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Java
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -210,7 +210,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@e81a8fa391b11a595c1b7ed84177cc0fe02faf83 # v1.328.0 (branch head; v1 moves)
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.328.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -294,7 +294,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Java
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -314,7 +314,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@e81a8fa391b11a595c1b7ed84177cc0fe02faf83 # v1.328.0 (branch head; v1 moves)
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.328.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -394,7 +394,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Java
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -565,7 +565,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Java
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: 'temurin'
           java-version: '17'
