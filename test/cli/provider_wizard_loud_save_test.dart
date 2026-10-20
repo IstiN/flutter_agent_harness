@@ -360,4 +360,114 @@ void main() {
       expect(io.out.toString(), isNot(contains('sk-ira-secret-789')));
     });
   });
+
+  group('no-token edit keeps the keyNotPersisted marker (gh-1679 review)', () {
+    /// Drives the edit wizard opened for [entry]: api type → keep (1),
+    /// base URL → keep, name → [nameAnswer], key → EMPTY (no save
+    /// attempt), model → keep.
+    Future<void> runEditWizard({
+      required String entryName,
+      required String entryBaseUrl,
+      String nameAnswer = '',
+    }) async {
+      await waitForIt(
+        () => io.out.toString().contains('editing provider $entryName'),
+      );
+      await waitForIt(() => io.out.toString().contains('type a number:'));
+      io.sendLine('1'); // openai-like (keep)
+      await waitForIt(
+        () => io.out.toString().contains('base URL (empty = $entryBaseUrl'),
+      );
+      io.sendLine('');
+      await waitForIt(
+        () => io.out.toString().contains('provider name (empty ='),
+      );
+      io.sendLine(nameAnswer);
+      await waitForIt(
+        () => io.out.toString().contains('API key (empty for none):'),
+      );
+      io.sendLine(''); // no fresh token — the store-independent edit
+      await waitForIt(
+        () => io.out.toString().contains('model id (empty keeps'),
+      );
+      io.sendLine('');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to openai'),
+      );
+    }
+
+    test('a store-independent edit (model-only, no fresh token) does not '
+        'clear the flag', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = _FlakyStore()
+        ..writeError = StateError('keychain write failed (exit 45)');
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry(const []);
+      final cli = cliFor(
+        fake.call,
+        secureKeys: cache,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      await runWizard(
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        name: 'kimi_ira',
+        key: 'sk-ira-secret-789',
+      );
+      expect(registry.find('kimi_ira')!.keyNotPersisted, isTrue);
+
+      // The normal, store-independent edit: no new token typed.
+      cli.startProviderEditWizardForTest(registry.find('kimi_ira'));
+      await runEditWizard(
+        entryName: 'kimi_ira',
+        entryBaseUrl: 'https://api.kimi.com/coding/v1',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      // The marker survives: no save was attempted, let alone successful —
+      // only a later SUCCESSFUL save may clear it (the field's contract).
+      expect(registry.find('kimi_ira')!.keyNotPersisted, isTrue);
+      expect(store.map, isEmpty, reason: 'the edit never touched the store');
+    });
+
+    test('a no-token RENAME carries the flag onto the rebuilt entry',
+        () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = _FlakyStore()
+        ..writeError = StateError('keychain write failed (exit 45)');
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry(const []);
+      final cli = cliFor(
+        fake.call,
+        secureKeys: cache,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      await runWizard(
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        name: 'kimi_ira',
+        key: 'sk-ira-secret-789',
+      );
+      expect(registry.find('kimi_ira')!.keyNotPersisted, isTrue);
+
+      cli.startProviderEditWizardForTest(registry.find('kimi_ira'));
+      await runEditWizard(
+        entryName: 'kimi_ira',
+        entryBaseUrl: 'https://api.kimi.com/coding/v1',
+        nameAnswer: 'kimi_ira_renamed',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(registry.find('kimi_ira'), isNull, reason: 'old entry dropped');
+      // mergeEditedCustomProviderEntry rebuilds the entry from scratch;
+      // the carried-over marker must ride the rebuild too.
+      expect(registry.find('kimi_ira_renamed')!.keyNotPersisted, isTrue);
+    });
+  });
 }
