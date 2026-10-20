@@ -411,6 +411,17 @@ extension on AgentCli {
   }
 
   Future<Session> _createSession({String? name}) async {
+    // The wake gate (see [_sessionLoadsInFlight]) — same contract as
+    // [_loadSession]: creation resets agent state too.
+    _sessionLoadsInFlight++;
+    try {
+      return await _createSessionInner(name: name);
+    } finally {
+      _sessionLoadsInFlight--;
+    }
+  }
+
+  Future<Session> _createSessionInner({String? name}) async {
     try {
       final session = await _repo.create(
         JsonlSessionCreateOptions(
@@ -574,6 +585,18 @@ extension on AgentCli {
   }
 
   Future<Session> _loadSession(SessionMetadata metadata) async {
+    // The wake gate (see [_sessionLoadsInFlight]): no inbox/scheduled
+    // wake may start a run while this load walks — the half-loaded agent
+    // cannot survive an over-window guard (the goal_builder incident).
+    _sessionLoadsInFlight++;
+    try {
+      return await _loadSessionInner(metadata);
+    } finally {
+      _sessionLoadsInFlight--;
+    }
+  }
+
+  Future<Session> _loadSessionInner(SessionMetadata metadata) async {
     final bootSw = Stopwatch()..start();
     // gh-968 parity: the budget must price the prompt the FIRST REQUEST
     // will carry. The messaging section joins at mailbox-prefix sync,
