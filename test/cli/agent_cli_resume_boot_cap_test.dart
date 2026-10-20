@@ -4,6 +4,7 @@
 // 143% and waited"). Degradation (AC5): a dead summarizer degrades to the
 // existing local-trim valve with a visible note — the boot survives and the
 // next request is still ≤ window.
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -23,6 +24,22 @@ Model get _model => const Model(
   maxTokens: 4096,
 );
 
+// The LM-boot-cap tests (AC5/backstop/stale-abort) need a resume that is
+// OVER THE TRIGGER but UNDER THE WINDOW — the domain where the boot cap
+// still runs an LLM pass (over-window now trims locally and instantly).
+// A 131k window widens the (trigger, window) band enough that the seed's
+// token math holds regardless of the exact system-prompt/tool overhead.
+const _bigWindow = 131072;
+// CompactionSettings.forWindow(131072): reserve 16384 -> trigger 114688.
+Model get _bigModel => const Model(
+  id: 'test-model',
+  api: 'test-api',
+  provider: 'test-provider',
+  baseUrl: 'https://example.test',
+  contextWindow: _bigWindow,
+  maxTokens: 4096,
+);
+
 void main() {
   late FakeCliIO io;
 
@@ -39,6 +56,7 @@ void main() {
   Future<MemoryExecutionEnv> seedOverWindow(
     String name, {
     MemoryExecutionEnv? into,
+    int keptCount = 40,
   }) async {
     final env = into ?? MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
     // Suppress session-start memory maintenance (same pattern as
@@ -60,15 +78,19 @@ void main() {
       firstKeptEntryId: firstKept,
       tokensBefore: 99999,
     );
-    for (var i = 1; i < 40; i++) {
+    for (var i = 1; i < keptCount; i++) {
       await seed.appendMessage(UserMessage.text('kept$i ${'a' * 4000}'));
     }
     return env;
   }
 
-  AgentCli cli(MemoryExecutionEnv env, FakeStreamFunction stream) => AgentCli(
+  AgentCli cli(
+    MemoryExecutionEnv env,
+    FakeStreamFunction stream, {
+    Model? model,
+  }) => AgentCli(
     config: AgentCliConfig(
-      model: _model,
+      model: model ?? _model,
       apiKey: '[REDACTED:Sensitive Value]',
       env: env,
       sessionRoot: '/sessions',
@@ -89,50 +111,42 @@ void main() {
       );
 
   test(
-    'AC3: an over-window resume runs ONE forced compaction pass at idle '
-    'boot — before any user message — and the next request fits the window',
+    'AC3 (goal_builder contract): an over-window resume boots INSTANTLY — '
+    'the local-trim valve caps it with NO LM call — and the next request '
+    'fits the window',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
-      final env = await seedOverWindow('boot-cap-target');
+      final env = await seedOverWindow('boot-cap-target'); // ~40k > 32768
       final stream = FakeStreamFunction([
-        // Consumed by the BOOT CAP's summarizer — must happen before any
-        // user input exists.
-        textTurn('compacted boot summary'),
-        // The first user turn's answer.
-        textTurn('answered after boot cap'),
+        // NO boot-time summarizer call exists anymore — the FIRST stream
+        // call is the first user turn.
+        textTurn('answered after instant boot cap'),
       ]);
       final agent = cli(env, stream);
 
       final run = agent.run();
-      // NO user input yet: the cap's summarizer call proves the pass ran
-      // at idle boot (S1: boot never used to cap anything — the meter sat
-      // over 100% and waited for the first pre-flight).
       await waitForIt(
-        () => stream.calls >= 1 && !agent.isBusy,
-        reason: 'the boot cap compaction runs before any user message',
+        () => io.out.toString().contains('trimmed locally') && !agent.isBusy,
+        reason: 'boot settles instantly with the local-trim note '
+            '(no LM cap for over-window)',
       );
-      // ONE forced pass — which may legitimately issue several LLM calls
-      // (chunked summarization over the smol window). What matters for the
-      // AC: the calls happen at IDLE BOOT, before any user input exists.
-      final callsAtBoot = stream.calls;
-      expect(callsAtBoot, greaterThanOrEqualTo(1));
+      // The whole point of the goal_builder fix: zero provider calls at
+      // boot — the old LM cap here took 3.5 minutes on a slow summarizer
+      // and read as a hung open.
+      expect(stream.calls, 0);
+      expect(io.out.toString(), contains('trimmed locally'));
 
       io.sendLine('go');
       await waitForIt(
-        () => stream.calls > callsAtBoot && !agent.isBusy,
-        reason: 'the first user turn answers on the capped context',
+        () => stream.calls >= 1 && !agent.isBusy,
+        reason: 'the first user turn answers on the trimmed context',
       );
       io.sendLine('/exit');
       await run;
 
-      final output = io.out.toString();
-      expect(output, contains('auto-compacted'));
-      // The turn's request rides the CAPPED context: at/below the
-      // compaction threshold (meter parity with the pre-cap number).
       final turnContext = stream.contexts.last;
       expect(requestTokensOf(turnContext), lessThanOrEqualTo(_threshold));
-      // The cap genuinely folded: the kept messages the summary replaced
-      // no longer ride the request.
+      // The trim genuinely dropped the old kept messages.
       final texts = [
         for (final m in turnContext.messages)
           if (m is UserMessage) messageText(m),
@@ -143,10 +157,14 @@ void main() {
 
   test(
     'AC5: a dead summarizer at boot degrades to the local trim with a '
-    'visible note — the boot survives and the next request is ≤ window',
+    'visible note — the boot survives and the next request is ≤ window '
+    '(over-trigger-under-window keeps the LM boot cap)',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
-      final env = await seedOverWindow('boot-cap-target');
+      // 115 kept messages ≈ 115k tokens: over the 114,688 trigger, UNDER
+      // the 131,072 window — the over-trigger case that still runs the LM
+      // boot cap (over-window now trims locally and instantly instead).
+      final env = await seedOverWindow('boot-cap-target', keptCount: 115);
       final stream = FakeStreamFunction([
         // The boot cap's summarizer attempt FAILS.
         [
@@ -161,7 +179,7 @@ void main() {
         // The first user turn's answer.
         textTurn('answered after degraded boot'),
       ]);
-      final agent = cli(env, stream);
+      final agent = cli(env, stream, model: _bigModel);
 
       final run = agent.run();
       await waitForIt(
@@ -193,18 +211,23 @@ void main() {
     'state (review thread: the on-Object catch failed silently)',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
-      final env = await seedOverWindow('boot-cap-target');
+      final env = await seedOverWindow('boot-cap-target', keptCount: 115);
       final stream = FakeStreamFunction([
         // The cap's summarizer SUCCEEDS and the transcript is restamped —
         // then rendering the report block throws (broken stdout). The
         // unexpected-throw class the on-Object backstop exists for.
         textTurn('compacted boot summary'),
-        textTurn('answered after the crashed report'),
+        // The crashed cap schedules a forced retry before the next turn
+        // (the note says so) — that retry consumes a summarizer call
+        // (a no-work pass: the branch is already compacted at the leaf).
+        textTurn('retry pass summary'),
+        // The 'go' turn itself.
+        textTurn('FINAL ANSWER after the crashed report'),
       ]);
       final brokenIo = _BrokenStdoutIo();
       final agent = AgentCli(
         config: AgentCliConfig(
-          model: _model,
+          model: _bigModel,
           apiKey: '[REDACTED:Sensitive Value]',
           env: env,
           sessionRoot: '/sessions',
@@ -224,8 +247,9 @@ void main() {
       );
       brokenIo.sendLine('go');
       await waitForIt(
-        () => stream.calls >= 2 && !agent.isBusy,
-        reason: 'the turn proceeds after the crashed cap',
+        () => stream.calls >= 3 && !agent.isBusy,
+        reason: 'the turn proceeds after the crashed cap (and its forced '
+            'retry pass)',
       );
       brokenIo.sendLine('/exit');
       await run;
@@ -238,12 +262,12 @@ void main() {
       expect(output, contains('[resume] boot compaction failed'));
       expect(output, contains('stdout pipe broken'));
       // Boot survival is unchanged: the turn answers…
-      expect(output, contains('answered after the crashed report'));
+      expect(output, contains('FINAL ANSWER after the crashed report'));
       // …on the CAPPED context (the transcript was restamped before the
       // report render crashed).
       expect(
         requestTokensOf(stream.contexts.last),
-        lessThanOrEqualTo(_threshold),
+        lessThanOrEqualTo(_bigWindow - 16384),
       );
     },
   );
@@ -266,7 +290,7 @@ void main() {
       );
       await small.appendSessionName('small-boot');
       await small.appendMessage(UserMessage.text('tiny'));
-      await seedOverWindow('boot-cap-target', into: env);
+      await seedOverWindow('boot-cap-target', into: env, keptCount: 115);
 
       // Turn 1 hangs until the interrupt cancels it (the Ctrl+C leg);
       // the boot cap's summarizer ladder after the switch consumes the
@@ -296,7 +320,7 @@ void main() {
 
       final agent = AgentCli(
         config: AgentCliConfig(
-          model: _model,
+          model: _bigModel,
           apiKey: '[REDACTED:Sensitive Value]',
           env: env,
           sessionRoot: '/sessions',

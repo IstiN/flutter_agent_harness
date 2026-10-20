@@ -241,12 +241,19 @@ void main() {
         },
         cancelOnError: true,
       );
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      // macOS FSEvents delivers directory events with ~1s latency and
+      // may replay the FIRST save's temp-file lifecycle AFTER this watch
+      // started (Linux inotify never does — CI stayed green while local
+      // macOS runs blamed save #2 for save #1's tmp file). Let the
+      // historical deliveries land, then drain the buffer so only the
+      // second save's events are asserted.
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      events.clear();
       await saveCliConfig(
         tmp.path,
         saved.withCustomProviders(saved.customProviders),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
       await subscription.cancel();
 
       expect(
