@@ -38,12 +38,6 @@ permissions:
   # "github-actions[bot] does not have permission to update this pull
   # request" even with PullRequests: write granted).
   contents: write         # checkout + silent update-branch pushes
-  workflows: write        # gh-1106 follow-through: silent update-branch
-                          # merges carry main's workflow-file changes (live:
-                          # fork PR #1591 push rejected — "refusing to allow
-                          # a GitHub App to create or update workflow
-                          # build-mobile.yml without workflows permission").
-                          # GITHUB_TOKEN pushes still fire no events.
   issues: write           # labels + close-issue safety net
   pull-requests: write    # update-branch + merge
   checks: write           # bridge-free validation stamps (factory #510):
@@ -73,9 +67,15 @@ jobs:
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
       # #687: one source of truth for the machine login (repo variable).
       machine-author: ${{ vars.MACHINE_AUTHOR || '' }}
-      # #687: the workflow token — silent branch updates (pushes trigger
-      # no workflows). Input channel: secrets-block mapping arrives empty.
-      silent-token: ${{ github.token }}
+      # #687/gh-1106: silent branch updates. github.token CANNOT push
+      # workflow-file changes (the permissions block has no 'workflows'
+      # scope — GITHUB_TOKEN is never granted it; live: fork PR updates
+      # rejected with "refusing to allow a GitHub App to create or update
+      # workflow ... without workflows permission", and #1717's attempt to
+      # add it made the file unparseable: HTTP 422 "Unexpected value
+      # 'workflows'"). Use the workflows-capable PAT instead — pushes to
+      # PR heads fire synchronize (wanted: validation on the fresh head).
+      silent-token: ${{ secrets.PAT_TOKEN }}
       # Dispatch-only CI: this repo's CI file (the SM dispatches it on PR
       # heads; default 'quality.yml' fits dmtools-dart, not this repo).
       # gh-1537: the dispatched run is the SINGLE pre-merge gate — ci.yml
