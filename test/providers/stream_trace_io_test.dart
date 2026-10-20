@@ -1,7 +1,9 @@
 // StreamTrace io half: the file sink and the env-gated installer —
 // same "diagnostics must never break the host" contract as the fa.log
-// telemetry sink (truncates at install, per-line flush, silent on any
-// IO failure).
+// telemetry sink (truncates at install, buffered flush, silent on any
+// IO failure). Buffering keeps the per-mark cost off the hot stream
+// path (review: a sync fsync per SSE chunk perturbs the cadence being
+// measured); tests flush explicitly instead of waiting on the timer.
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/providers/stream_trace.dart';
@@ -30,6 +32,7 @@ void main() {
 
       StreamTrace.mark(StreamTraceMark.net, '+8B');
       StreamTrace.mark(StreamTraceMark.emit, 'text +2');
+      sink.dispose();
 
       final lines = file.readAsLinesSync();
       expect(lines, hasLength(2));
@@ -40,7 +43,29 @@ void main() {
       expect(file.readAsStringSync(), isNot(contains('stale')));
     });
 
-    test('a write failure degrades to silence, never throws', () {
+    test('lines buffer until flush — the file stays empty in between', () {
+      final sink = FileStreamTraceSink(file);
+      StreamTrace.start(sink);
+
+      StreamTrace.mark(StreamTraceMark.net, '+1B');
+      expect(file.existsSync(), isTrue); // truncated at install
+      expect(file.readAsStringSync(), '');
+
+      sink.flush();
+      expect(file.readAsStringSync(), contains('net'));
+      sink.dispose();
+    });
+
+    test('flush on a broken path degrades to silence, never throws', () {
+      final sink = FileStreamTraceSink(file);
+      StreamTrace.start(sink);
+      StreamTrace.mark(StreamTraceMark.net, '+1B');
+      dir.deleteSync(recursive: true);
+      expect(sink.flush, returnsNormally);
+      expect(sink.dispose, returnsNormally);
+    });
+
+    test('a buffered write to a deleted directory never throws on mark', () {
       final sink = FileStreamTraceSink(file);
       StreamTrace.start(sink);
       dir.deleteSync(recursive: true);
@@ -48,6 +73,7 @@ void main() {
         () => StreamTrace.mark(StreamTraceMark.net, '+1B'),
         returnsNormally,
       );
+      sink.dispose();
     });
   });
 
@@ -63,7 +89,7 @@ void main() {
       if (dir.existsSync()) dir.deleteSync(recursive: true);
     });
 
-    test('starts a trace only when the env value is 1', () {
+    test('starts a trace only when the env value is 1', () async {
       final file = File('${dir.path}/on.log');
       final trace = maybeStartStreamTrace(
         file,
@@ -72,6 +98,9 @@ void main() {
       expect(trace, isNotNull);
       expect(StreamTrace.active, same(trace));
       StreamTrace.mark(StreamTraceMark.net, '+1B');
+      // The installer's sink flushes on its 250ms timer — give it a
+      // beat (also proves the timer path itself works).
+      await Future<void>.delayed(const Duration(milliseconds: 600));
       expect(file.readAsStringSync(), contains('net'));
     });
 

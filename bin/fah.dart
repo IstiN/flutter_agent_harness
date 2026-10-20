@@ -88,7 +88,10 @@ Future<void> main(List<String> args) async {
   // StreamTrace (diagnostic): FA_STREAM_TRACE=1 arms the per-chunk
   // net→emit→render timing trail at ~/.fah/logs/stream-trace.log — the
   // "streamed x ms, rendered y ms" post-mortem for bursty endpoints.
-  final homeDir = Platform.environment['HOME'];
+  // HOME everywhere except Windows (USERPROFILE there) — same fallback
+  // as _homeDir().
+  final homeDir =
+      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
   if (homeDir != null && homeDir.isNotEmpty) {
     maybeStartStreamTrace(
       File('$homeDir/.fah/logs/stream-trace.log'),
