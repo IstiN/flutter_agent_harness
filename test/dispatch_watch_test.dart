@@ -70,6 +70,8 @@ String iso(int seconds) {
 ///   `jobs-served-<id>.log` — (written by the stub) the jobs body actually
 ///                        served per poll — ground truth that a fixture
 ///                        modeled a running job, however the body was built
+///   `view-fail-next`   — holds N: the next N `gh run view` calls fail
+///                        (exit 1, no output) — models a gh/API outage
 ///   `cancelled-<id>`   — marker created by `gh run cancel`
 ///   `list-calls`       — internal counter
 /// GH_STUB_LIST_EMPTY_FIRST=N makes the first N `run list` calls return [].
@@ -113,6 +115,16 @@ case "\$cmd" in
         ;;
       view)
         id="\$3"
+        # view-fail-next holds N: the next N view calls fail (exit 1, no
+        # output) — models a gh/API outage exactly like a real network
+        # failure would (the script sees an empty poll).
+        if [ -f "\$GH_STUB_DIR/view-fail-next" ]; then
+          failN=\$(cat "\$GH_STUB_DIR/view-fail-next" 2>/dev/null || echo 0)
+          if [ "\$failN" -gt 0 ] 2>/dev/null; then
+            echo \$((failN - 1)) > "\$GH_STUB_DIR/view-fail-next"
+            exit 1
+          fi
+        fi
         # The watcher polls with ONE combined call — `gh run view --json
         # status,conclusion,jobs` — served from two fixtures consumed in
         # lockstep: view-<id>.txt (one `<status> <conclusion>` line per
@@ -632,6 +644,66 @@ void main() {
           reason:
               'long-budget legs wait out realistic sibling-leg occupancy '
               'before wedging a quiet-but-alive child',
+        );
+      },
+    );
+
+    test(
+      'a sustained gh/API outage does not false-wedge — error polls cannot judge',
+      () {
+        // Review follow-up on gh-172: a failed poll sets running="" which
+        // (before the fix) skipped BOTH the refresh branch and the stall
+        // branch, so the stall clock kept accumulating from the last
+        // SUCCESSFUL poll across the outage. An outage outliving the
+        // window that starts while the child was quiet therefore wedged a
+        // healthy child — and during such an outage `gh run cancel` is
+        // unreachable anyway. Expected: cannot observe ⇒ cannot judge —
+        // error polls refresh the stall clock; the budget stays the
+        // backstop.
+        final dw = runDw(
+          'outage-no-wedge',
+          [
+            'build-mobile.yml',
+            '--title',
+            playTitle,
+            '--budget-seconds',
+            '60', // never fires: the whole watch is ~7 polls x 2s
+            '-f',
+            'android_content=all',
+          ],
+          {
+            'runs.json': runJson([run(111, playTitle, iso(-10))]),
+            // t0 poll: quiet (clock starts). t≈2..8: 4 FAILED polls —
+            // the outage spans 8s > the 5s window. t≈8: first successful
+            // poll AFTER the outage — still between jobs (a broken
+            // refresh reads ~8s here and false-wedges); t≈10: build
+            // picked up; t≈12: completed.
+            'view-fail-next': '4\n',
+            'jobs-111.txt': '0\n0\n1\n',
+            'view-111.txt':
+                'in_progress -\nin_progress -\nin_progress -\ncompleted success\n',
+          },
+          env: {'DW_POLL_SECONDS': '2', 'DW_QUEUE_STALL_SECONDS': '5'},
+        );
+        expect(dw.exitCode, 0);
+        expect(
+          dw.log.where((l) => l.startsWith('workflow run')).length,
+          1,
+          reason: 'an API outage must not self-heal a healthy child',
+        );
+        expect(
+          dw.log.where((l) => l.contains('run cancel')),
+          isEmpty,
+          reason:
+              'during an outage the cancel is unreachable anyway — '
+              'and there is nothing to cancel',
+        );
+        expect(
+          dw.out,
+          isNot(contains('no running job')),
+          reason:
+              'the outage (4 failed polls, ~8s > the 5s window) must not '
+              'leave the stall signature in the leg log',
         );
       },
     );

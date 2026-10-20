@@ -154,9 +154,12 @@ while :; do
     # One poll = one API call (gh-172 review): status, conclusion and the
     # running-job count arrive atomically — half the per-poll traffic and
     # no race where the two calls straddle a completion and one iteration
-    # ticks the stall clock on an already-dead run. An empty poll (failed
-    # call) counts as progress: never cancel a possibly-healthy run on a
-    # polling blip.
+    # ticks the stall clock on an already-dead run. A failed poll cannot
+    # observe, so it cannot judge: it refreshes the stall clock (no
+    # signal — no accumulation) and never trips the guard; an outage
+    # outliving the window is accepted bounded debt (during one, `gh run
+    # cancel` hits the same unreachable API anyway) — the budget stays
+    # the backstop.
     observed="$(gh run view "$run_id" --repo "$repo" --json status,conclusion,jobs \
       --jq '"\(.status)/" + (.conclusion // "-") + " " + ([.jobs[] | select(.status == "in_progress")] | length | tostring)' 2>/dev/null)" || observed=""
     status="${observed%% *}"
@@ -164,6 +167,11 @@ while :; do
     if [ -z "$observed" ] || [ "$status" = "$observed" ]; then
       status="error/-"
       running=""
+      # gh-172 rework: refresh the stall clock on error polls too — a
+      # sustained gh/API outage (longer than the window, starting while
+      # the child was quiet) must not read as "no running job for Ns"
+      # and false-wedge a healthy child into the one self-heal.
+      last_running="$(date +%s)"
     fi
     if [ "${status%%/*}" = "completed" ]; then break; fi
     now=$(date +%s)
