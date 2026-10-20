@@ -680,6 +680,22 @@ Future<void> _runApp(List<String> args) async {
     stderr.writeln(line);
   }
 
+  // gh-1679: slots whose key never reached the durable store must not
+  // masquerade as saved — the wizard's persisted `keyNotPersisted` marker
+  // (plus any in-process save degradations) renders one boot line per
+  // affected slot with the retry command, on stderr like every boot
+  // diagnostic (never stdout — the headless events channel rule). AFTER
+  // the legacy-slot migration above (gh-1679 review): the note decides
+  // "slot still empty" via this snapshot, so a flagged entry whose key
+  // just got copied onto its canonical slot must not get a "did not
+  // reach the store" line one statement before the copy lands.
+  for (final line in secureKeySaveDegradationLines(
+    keys: keyCache,
+    customProviders: saved.customProviders,
+  )) {
+    stderr.writeln(line);
+  }
+
   // gh-1000 (E2): when the boot-pinned key slot exists in BOTH the
   // environment and the store with different values, note the provenance
   // order (the env value wins). Detection + wording are the shared
