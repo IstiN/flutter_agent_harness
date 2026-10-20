@@ -65,6 +65,9 @@ String iso(int seconds) {
 ///   `view-<id>.txt`    — one `<status> <conclusion>` line per
 ///                        `gh run view <id>` poll; the last line repeats
 ///                        once exhausted
+///   `jobs-<id>.txt`    — one running-job COUNT per `gh run view <id>
+///                        --json jobs` poll; the last line repeats;
+///                        absent file = 1 job always running
 ///   `cancelled-<id>`   — marker created by `gh run cancel`
 ///   `list-calls`       — internal counter
 /// GH_STUB_LIST_EMPTY_FIRST=N makes the first N `run list` calls return [].
@@ -108,16 +111,39 @@ case "\$cmd" in
         ;;
       view)
         id="\$3"
-        if [ -f "\$GH_STUB_DIR/cancelled-\$id" ]; then
-          status=completed; conclusion=cancelled
+        # `--json jobs` polls (gh-172 queue-stall guard) are served from
+        # jobs-<id>.txt: one running-job COUNT per poll, last line repeats;
+        # absent file = 1 job running (healthy child) so older fixtures
+        # without job modeling keep their behavior. cancelled = 0.
+        is_jobs=0
+        for ((j = 0; j < \${#args[@]} - 1; j++)); do
+          if [ "\${args[\$j]}" = "--json" ] && [ "\${args[\$((j + 1))]}" = "jobs" ]; then is_jobs=1; fi
+        done
+        if [ "\$is_jobs" = "1" ]; then
+          if [ -f "\$GH_STUB_DIR/cancelled-\$id" ]; then
+            n=0
+          else
+            jf="\$GH_STUB_DIR/jobs-\$id.txt"
+            if [ -f "\$jf" ]; then
+              n=\$(head -1 "\$jf")
+              sed -i.bak '1d' "\$jf" && rm -f "\$jf.bak"
+              if ! [ -s "\$jf" ]; then printf '%s\\n' "\$n" > "\$jf"; fi
+            else
+              n=1
+            fi
+          fi
+          body=\$(seq -f '{"status":"in_progress"}' -s ',' 1 "\$n" 2>/dev/null || true)
+          printf '{"jobs":[%s]}' "\$body" | apply_jq
+        elif [ -f "\$GH_STUB_DIR/cancelled-\$id" ]; then
+          printf '{"status":"completed","conclusion":"cancelled"}' | apply_jq
         else
           f="\$GH_STUB_DIR/view-\$id.txt"
           line=\$(head -1 "\$f")
           sed -i.bak '1d' "\$f" && rm -f "\$f.bak"
           if ! [ -s "\$f" ]; then printf '%s\\n' "\$line" > "\$f"; fi
           status="\${line%% *}"; conclusion="\${line#* }"
+          printf '{"status":"%s","conclusion":"%s"}' "\$status" "\$conclusion" | apply_jq
         fi
-        printf '{"status":"%s","conclusion":"%s"}' "\$status" "\$conclusion" | apply_jq
         ;;
       cancel)
         id="\$3"
@@ -445,6 +471,110 @@ void main() {
             'the second wedge must point at the pool (issue #344), not just time out',
       );
       expect(dw.out, contains('222'));
+    });
+  });
+
+  // ── gh-172 — queue-stall guard (pool-held zombie) ───────────────────────
+  // Run 39374894901, 2026-10-20: after the budget self-heal cancelled the
+  // wedged run, the re-dispatched child sat `queued` FOREVER — the hung
+  // self-hosted worker that ignored its own 90m job ceiling also never
+  // processed the run cancellation, so the single-runner pool stayed held.
+  // The watcher polls RUN status only, saw `in_progress` throughout, burned
+  // the remaining ~107m of leg time, and the leg died at its 360m ceiling
+  // with no diagnostic and the orphaned child left in the queue.
+  group('gh-172 — a run alive but with nothing running is a wedge too', () {
+    test(
+      'pool-held child stalls into the one self-heal, then fails fast and cancels the orphan',
+      () {
+        final dw = runDw(
+          'queue-stall',
+          [
+            'build-mobile.yml',
+            '--title',
+            testflightTitle,
+            '--budget-seconds',
+            '600', // large: ONLY the stall guard can end each attempt
+            '-f',
+            'ios_content=all',
+          ],
+          {
+            // Attempt 1: run 111 in_progress but every job queued/done
+            // (version completed 09:40:18, build-ios queued on the
+            // zombie-held runner). Attempt 2: run 222, same signature.
+            'runs.json': runJson([run(111, testflightTitle, iso(-10))]),
+            'runs2.json': runJson([
+              run(111, testflightTitle, iso(-10)),
+              run(222, testflightTitle, iso(-1)),
+            ]),
+            'view-111.txt': 'in_progress -\n',
+            'view-222.txt': 'in_progress -\n',
+            'jobs-111.txt': '0\n',
+            'jobs-222.txt': '0\n',
+          },
+          env: {'DW_QUEUE_STALL_SECONDS': '1'},
+        );
+        expect(dw.exitCode, 1);
+        expect(
+          dw.log.where((l) => l.startsWith('workflow run')).length,
+          2,
+          reason: 'the queue stall rides the same ONE self-heal as #344',
+        );
+        expect(
+          dw.log.any((l) => l.contains('run cancel 111 --repo OWNER/REPO')),
+          isTrue,
+          reason: 'attempt 1 must be cancelled before the re-dispatch',
+        );
+        expect(dw.out, contains('re-dispatch'));
+        expect(
+          dw.out,
+          contains('runner pool suspect'),
+          reason:
+              'the second stall must fail fast naming the pool, not burn '
+              'the leg ceiling mid-watch (the gh-172 death)',
+        );
+        expect(dw.out, contains('222'));
+        expect(
+          dw.out,
+          contains('no running job'),
+          reason: 'the leg log must carry the queue-stall signature',
+        );
+        expect(
+          dw.log.any((l) => l.contains('run cancel 222 --repo OWNER/REPO')),
+          isTrue,
+          reason:
+              'the orphaned second run must be cancelled on the fail path — '
+              'a queued child left behind publishes unattended when the pool revives',
+        );
+      },
+    );
+
+    test('a transient between-jobs pickup gap does not trip the guard', () {
+      final dw = runDw(
+        'queue-transient',
+        [
+          'build-mobile.yml',
+          '--title',
+          playTitle,
+          '--budget-seconds',
+          '600',
+          '-f',
+          'android_content=all',
+        ],
+        {
+          'runs.json': runJson([run(111, playTitle, iso(-10))]),
+          // Poll 1: between jobs (version done, build-ios not yet picked
+          // up); from poll 2 a job is running; then the run completes.
+          'jobs-111.txt': '0\n1\n',
+          'view-111.txt': 'in_progress -\nin_progress -\ncompleted success\n',
+        },
+        env: {'DW_QUEUE_STALL_SECONDS': '2'},
+      );
+      expect(dw.exitCode, 0);
+      expect(
+        dw.log.where((l) => l.startsWith('workflow run')).length,
+        1,
+        reason: 'a healthy inter-job gap must never cancel a child',
+      );
     });
   });
 
