@@ -69,6 +69,7 @@ final class CustomProviderEntry {
     this.authHeader,
     this.connectTimeout,
     this.streamIdleTimeout,
+    this.keyNotPersisted = false,
   });
 
   /// Parses one yaml map from the `customProviders:` list. Throws
@@ -129,6 +130,10 @@ final class CustomProviderEntry {
         'streamIdleTimeoutMs',
         'customProviders entry "$name"',
       ),
+      // gh-1679: an entry recorded while its key write degraded to
+      // session-only keeps the marker so the next boot can surface the
+      // degradation while the slot stays empty.
+      keyNotPersisted: node['keyNotPersisted'] == true,
     );
   }
 
@@ -175,6 +180,14 @@ final class CustomProviderEntry {
   /// issue #1398). Null keeps the global value, then the 300 s default.
   Duration? streamIdleTimeout;
 
+  /// True when the wizard recorded this entry while its key write degraded
+  /// to session-only (gh-1679): the entry carries a visible "key not
+  /// persisted" marker so the next boot surfaces the degradation while the
+  /// slot stays empty. Cleared by a later successful save of [keyName] and
+  /// never written to yaml when false (existing configs stay
+  /// byte-identical).
+  bool keyNotPersisted;
+
   /// The last-used model id (rewritten on `/model` switches while active).
   String modelId;
 
@@ -189,6 +202,7 @@ final class CustomProviderEntry {
       'authHeader': ?authHeader,
       'connectTimeoutMs': ?connectTimeout?.inMilliseconds,
       'streamIdleTimeoutMs': ?streamIdleTimeout?.inMilliseconds,
+      'keyNotPersisted': ?(keyNotPersisted ? true : null),
       'modelId': modelId,
     };
   }
