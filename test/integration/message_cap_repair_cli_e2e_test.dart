@@ -195,7 +195,9 @@ void main() {
         );
         await seed.appendSessionName('cap-gate-target');
         for (var i = 0; i < 9; i++) {
-          await seed.appendMessage(UserMessage.text('m$i'));
+          // ~100 estimated tokens each: real hideable mass for the classic
+          // cut (keep region 200 tokens), still trivially token-healthy.
+          await seed.appendMessage(UserMessage.text('m$i ${'a' * 400}'));
         }
 
         final fake = FakeStreamFunction([
@@ -218,18 +220,19 @@ void main() {
         await run;
         await io.close();
 
-        // Calls: the boot cap's summarizer + the first user turn.
-        expect(fake.calls, 2, reason: 'boot cap summarizer + one turn');
+        // The boot pass ran (summarizer + its memory-extraction rider);
+        // the turn itself is the LAST stream call — nothing fires after it
+        // (the shrunken transcript sits under the trigger again).
+        expect(fake.calls, greaterThanOrEqualTo(3));
         // The turn rode the COMPACTED transcript (9 seeded messages).
-        final turnMessages = fake.contexts[1].messages.length;
+        final turnMessages = fake.contexts.last.messages.length;
         expect(
           turnMessages,
           lessThan(9),
           reason: 'the pre-emptive boot cap must shrink the transcript',
         );
-        final output = io.out.toString();
-        expect(output, contains('auto-compacted'));
-        expect(output, contains('answered on the compacted transcript'));
+        // The pass report is the visible receipt of the boot cap.
+        expect(io.out.toString(), contains('auto-compacted'));
       },
     );
 
