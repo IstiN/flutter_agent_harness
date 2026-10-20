@@ -176,11 +176,14 @@ jobs:
   # 90m ceiling and never processes the run cancel either) — the leg burned
   # its remaining ~107m watching a child that could never start and died as
   # a bare 360m ceiling kill. The watcher now also treats "not completed
-  # but NO job in_progress for DW_QUEUE_STALL_SECONDS (600s)" as a wedge
-  # riding the same one self-heal, and cancels the child on the fail path
-  # so an orphaned queued run can't publish unattended when the pool
+  # but NO job in_progress for DW_QUEUE_STALL_SECONDS (default
+  # max(600, budget/8) — 15000s/8 = 1875s ≈ 31m here; it cannot tell a
+  # zombie-held pool from a sibling leg's job legitimately occupying the
+  # shared fa-m5-1, so it waits out realistic sibling occupancy)" as a
+  # wedge riding the same one self-heal, and cancels the child on the fail
+  # path so an orphaned queued run can't publish unattended when the pool
   # revives. Second wedge now ends in a diagnostic inside the leg
-  # (testflight ≈ 250m + 13m + 10m stall = 273m < 360m).
+  # (testflight ≈ 250m + 13m + 31m stall = 294m < 360m).
 
   testflight:
     name: 'Leg: TestFlight'
