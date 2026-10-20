@@ -63,6 +63,7 @@ AgentCli _bootCli({
   required String homeDir,
   required StreamFunction stream,
   String? sessionName,
+  ModelsConfig? modelsConfig,
 }) => AgentCli(
   config: AgentCliConfig(
     model: _model,
@@ -71,6 +72,7 @@ AgentCli _bootCli({
     homeDir: homeDir,
     sessionRoot: '/sessions',
     sessionName: sessionName,
+    modelsConfig: modelsConfig,
     providerKind: 'openai-completions',
     compactionEngine: CompactionEngine.classic,
     compactionSettings: const CompactionSettings(
@@ -232,6 +234,72 @@ void main() {
           reason: 'the pre-emptive boot cap must shrink the transcript',
         );
         // The pass report is the visible receipt of the boot cap.
+        expect(io.out.toString(), contains('auto-compacted'));
+      },
+    );
+
+    test(
+      'a config-pinned messageCap wins over the learned store (tier order)',
+      timeout: const Timeout(Duration(seconds: 120)),
+      () async {
+        // The learned store says 64; the config pins 24. The boot gate
+        // must fire on the PIN's trigger (24 − 16 = 8 — a 9-message
+        // session crosses it) — not the store's (64 − 16 = 48, never
+        // reached): the pin is the second tier over the learned record.
+        await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+        Directory('${tempHome.path}/.fah').createSync(recursive: true);
+        File('${tempHome.path}/.fah/model_caps.json').writeAsStringSync(
+          jsonEncode({
+            ModelCapsStore.keyOf('test-provider', 'cap-model'): {
+              'maxMessages': 64,
+            },
+          }),
+        );
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final seed = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+        );
+        await seed.appendSessionName('cap-gate-target');
+        for (var i = 0; i < 9; i++) {
+          await seed.appendMessage(UserMessage.text('m$i ${'a' * 400}'));
+        }
+
+        final fake = FakeStreamFunction([
+          textTurn('pin-tier boot summary'),
+          textTurn('answered on the pin-compacted transcript'),
+        ]);
+        final cli = _bootCli(
+          env: env,
+          io: io,
+          homeDir: tempHome.path,
+          stream: fake.call,
+          sessionName: 'cap-gate-target',
+          modelsConfig: ModelsConfig(
+            overrides: ModelCapabilityOverrides(
+              entries: {
+                'test-provider': {
+                  'cap-model': const ModelCapabilityOverride(messageCap: 24),
+                },
+              },
+            ),
+          ),
+        );
+
+        final run = cli.run();
+        await io.settle(() => fake.calls >= 1 && !cli.isBusy);
+        io.sendLine('go');
+        await io.settle(() => fake.calls >= 2 && !cli.isBusy);
+        io.sendLine('/exit');
+        await run;
+        await io.close();
+
+        expect(fake.calls, greaterThanOrEqualTo(3));
+        final turnMessages = fake.contexts.last.messages.length;
+        expect(
+          turnMessages,
+          lessThan(9),
+          reason: 'the PIN-triggered boot cap must shrink the transcript',
+        );
         expect(io.out.toString(), contains('auto-compacted'));
       },
     );
