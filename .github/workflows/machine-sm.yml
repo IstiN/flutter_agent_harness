@@ -38,6 +38,12 @@ permissions:
   # "github-actions[bot] does not have permission to update this pull
   # request" even with PullRequests: write granted).
   contents: write         # checkout + silent update-branch pushes
+  workflows: write        # gh-1106 follow-through: silent update-branch
+                          # merges carry main's workflow-file changes (live:
+                          # fork PR #1591 push rejected — "refusing to allow
+                          # a GitHub App to create or update workflow
+                          # build-mobile.yml without workflows permission").
+                          # GITHUB_TOKEN pushes still fire no events.
   issues: write           # labels + close-issue safety net
   pull-requests: write    # update-branch + merge
   checks: write           # bridge-free validation stamps (factory #510):
