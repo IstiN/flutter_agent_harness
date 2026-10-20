@@ -51,7 +51,7 @@
   call in every session mode by default — explicitly switching the
   session to yolo drops that guard (the override is cleared, not
   bypassed silently).
-- Artifact (rebuilt on every deploy):
+- Artifact (attached to every release):
   https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip — unzip, then open
   chrome://extensions, enable Developer mode, Load unpacked, pick the
   unzipped folder.

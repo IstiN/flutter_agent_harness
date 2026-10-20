@@ -42,12 +42,17 @@ const gateInvocation =
     'python3 scripts/size_manifest.py check build/fa-extension.zip '
     '--baseline scripts/size_budget/fa-extension.tsv';
 
-/// The extsize classifier arm in the changes job.
+/// The extsize classifier arm in the changes job. gh-1684 rework also
+/// arms the root `vendor/` forks (patch edits are a normal maintenance
+/// event and path deps carry no content hash in pubspec.lock), the gate
+/// tool itself and root pubspec_overrides.yaml (feeds `dart pub get`
+/// for the dart2js agent build, same as pubspec.yaml/pubspec.lock).
 final extsizeGrep =
-    r"grep -qE '(^browser_ext/|^flutter_app/|^lib/|^packages/"
-    r"|^pubspec\.yaml$|^pubspec\.lock$"
+    r"grep -qE '(^browser_ext/|^flutter_app/|^lib/|^packages/|^vendor/"
+    r"|^pubspec\.yaml$|^pubspec_overrides\.yaml$|^pubspec\.lock$"
     r"|^scripts/(build_browser_ext|fetch_vendor_assets|stage_extension_panel"
     r"|ext_package_guard|prune_flutter_assets)\."
+    r"|^scripts/size_manifest\.py$"
     r"|^scripts/size_budget/fa-extension\.tsv$"
     r"|^\.github/workflows/(ci|build-macos|pages)\.yml$)'";
 
@@ -111,6 +116,14 @@ void main() {
         index,
         contains('Download fa-extension.zip from $releaseDownloadUrl'),
       );
+    });
+
+    test('the llms.txt artifact lead-in matches the release channel (rework)', () {
+      // AC1 moved the zip channel to Releases: build-macos builds it
+      // per release, ci.yml extension-size-gate per PR — deploys no
+      // longer touch it, so "(rebuilt on every deploy)" is stale.
+      expect(llms, contains('- Artifact (attached to every release):'));
+      expect(llms, isNot(contains('rebuilt on every deploy')));
     });
   });
 
@@ -215,6 +228,37 @@ void main() {
       // re-run the gate and prove the new floor matches the artifact;
       // a vendor.lock bump without a reseed fails red here.
       expect(extsizeGrep, contains('fa-extension'));
+    });
+
+    test('the trigger set arms on root vendor/ fork edits (rework)', () {
+      // The vendored forks are real build inputs of the gated artifact
+      // (pubspec.yaml → vendor/xterm; pubspec_overrides → vendor/dart_tui;
+      // flutter_app/pubspec.yaml → ../vendor/wasm_run*). Path deps carry
+      // no content hash in pubspec.lock, so a patched-fork edit can move
+      // the zip manifest with no other covered path touched — the exact
+      // merge-then-red failure mode gh-1684 exists to kill.
+      expect(extsizeGrep, contains('^vendor/'));
+      expect(
+        ciBody.split('\n  changes:')[1].split('\n  # ─')[0],
+        contains(r'|^packages/|^vendor/'),
+        reason:
+            'the root vendor tree must sit in the same alternation, '
+            'not a second grep arm that could drift',
+      );
+    });
+
+    test('the trigger set arms on the gate tool itself (rework)', () {
+      // A scripts/size_manifest.py change (rev normalization, budget
+      // math, is_vendored split) must re-run the gate that runs it —
+      // the always-on core tests cover correctness, not enforcement.
+      expect(extsizeGrep, contains(r'^scripts/size_manifest\.py$'));
+    });
+
+    test('the trigger set arms on root pubspec_overrides.yaml (rework)', () {
+      // The overrides file selects the vendored dart_tui fork for the
+      // dart2js agent build — same supply-chain surface as
+      // pubspec.yaml/pubspec.lock, which are already armed.
+      expect(extsizeGrep, contains(r'^pubspec_overrides\.yaml$'));
     });
 
     test('the classifier failure arm runs the leg (fail-safe)', () {
@@ -332,6 +376,23 @@ void main() {
         (s) => s.toString(),
       )).join('\n');
       expect(ciSteps, contains('flutter-version: 3.47.7'));
+    });
+
+    test('the gate leg caches the pinned Flutter SDK (rework)', () {
+      // Sibling legs (e.g. office-addin-suite, the template this leg
+      // was modeled on) set cache: true — the pin (not the cache)
+      // keeps the engine rev stable, and a cache miss re-resolves the
+      // same pinned version, so build comparability is unaffected.
+      final flutterStep = ((ciJobs[legId] as YamlMap)['steps'] as YamlList)
+          .map((s) => s.toString())
+          .firstWhere((s) => s.contains('flutter-version: 3.47.7'));
+      expect(
+        flutterStep,
+        contains('cache: true'),
+        reason:
+            'the gate fires on the high-churn paths — an uncached '
+            'SDK download taxes every one of those runs',
+      );
     });
   });
 }

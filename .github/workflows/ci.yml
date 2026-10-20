@@ -444,11 +444,18 @@ jobs:
           # size baseline itself (a reseed PR must re-prove the floor)
           # and everything that compiles INTO the zip (the panel app is
           # the flutter_app web build; sw/agent.js compiles lib/ + the
-          # root package set). Gated on the SAME two events as
+          # root package set). The root vendor/ tree is armed too: the
+          # patched forks (xterm, dart_tui, wasm_run*) are path deps —
+          # no content hash in pubspec.lock — so a fork edit moves the
+          # zip manifest with no other covered path touched. The gate
+          # tool itself and root pubspec_overrides.yaml (dart pub get
+          # for the dart2js agent build) are armed for the same reason:
+          # a change to enforcement or to the dependency set must
+          # re-prove the floor. Gated on the SAME two events as
           # exzone/locksmoke (pull_request + validation dispatch); the
           # classifier failure arm above runs it fail-safe.
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
-              grep -qE '(^browser_ext/|^flutter_app/|^lib/|^packages/|^pubspec\.yaml$|^pubspec\.lock$|^scripts/(build_browser_ext|fetch_vendor_assets|stage_extension_panel|ext_package_guard|prune_flutter_assets)\.|^scripts/size_budget/fa-extension\.tsv$|^\.github/workflows/(ci|build-macos|pages)\.yml$)'; then
+              grep -qE '(^browser_ext/|^flutter_app/|^lib/|^packages/|^vendor/|^pubspec\.yaml$|^pubspec_overrides\.yaml$|^pubspec\.lock$|^scripts/(build_browser_ext|fetch_vendor_assets|stage_extension_panel|ext_package_guard|prune_flutter_assets)\.|^scripts/size_manifest\.py$|^scripts/size_budget/fa-extension\.tsv$|^\.github/workflows/(ci|build-macos|pages)\.yml$)'; then
             echo "extsize=true" >> "$GITHUB_OUTPUT"
           fi
           if [ "${{ github.event_name }}" != "pull_request" ]; then
@@ -2247,6 +2254,10 @@ jobs:
           # the builds comparable across legs).
           flutter-version: '3.47.7'
           channel: stable
+          # Same cache as the sibling legs (office-addin-suite et al):
+          # the pin — not the cache — keeps the engine rev stable, and
+          # a cache miss re-resolves the same pinned version.
+          cache: true
 
       - name: dart pub get (root + browser_ext/dart)
         run: |
