@@ -9,6 +9,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert' as json_conv;
+import 'dart:math' as math;
 
 import 'package:meta/meta.dart';
 import '../env/execution_env.dart';
@@ -816,6 +817,7 @@ final class JsonlSessionRepo implements SessionRepo {
     SessionMetadata metadata,
     Set<String> types, {
     bool lastSegmentOnly = false,
+    int? tailCapBytes,
   }) async {
     // Rotated sessions (gh-1077) keep older records in `.part-NN`
     // segments: scan the whole chain in order or registry snapshots
@@ -824,12 +826,26 @@ final class JsonlSessionRepo implements SessionRepo {
     // between a failed rotation seed and the next open the archived
     // part and the restored primary hold the SAME records — the open
     // path dedupes (seenRecordIds), the raw scan must too (round 5).
+    //
+    // Tail cap (the goal_builder 2.7GB incident): the windowed storage
+    // never rotates, so a marathon session's PRIMARY grows unbounded
+    // (measured 2.7GB against the 80MB rotate / 95MB hard-cap design),
+    // and a from-offset-0 scan of it sat on the resume boot path for
+    // 10+ seconds (orphan-report seed) and churned post-boot
+    // (steering, obligations). Every consumer today is a TAIL consumer
+    // (`records.last`, or pending-vs-consumed steering where a pair
+    // entirely beyond the cap cancels itself), so the default bounds
+    // each FILE to the tail region a properly rotated primary promised
+    // ([kSessionSegmentHardCapBytes]); rotated `.part-NN` files are
+    // smaller than that and scan in full. Deep-history callers pass
+    // `tailCapBytes: null`.
+    final cap = tailCapBytes ?? kSessionSegmentHardCapBytes;
     final paths = await listSessionSegmentPaths(_fs, metadata.path);
     final scanned = lastSegmentOnly ? paths.sublist(paths.length - 1) : paths;
     final records = <CustomRecord>[];
     final seen = <String>{};
     for (final path in scanned) {
-      for (final record in await _readCustomRecordsInFile(path, types)) {
+      for (final record in await _readCustomRecordsInFile(path, types, cap)) {
         if (seen.add(record.id)) records.add(record);
       }
     }
@@ -841,11 +857,15 @@ final class JsonlSessionRepo implements SessionRepo {
   Future<List<CustomRecord>> _readCustomRecordsInFile(
     String path,
     Set<String> types,
+    int? tailCapBytes,
   ) async {
     final fs = _fs;
     if (fs case final RangedReadFileSystem ranged) {
-      return _readCustomRecordsStreamed(fs, ranged, path, types);
+      return _readCustomRecordsStreamed(fs, ranged, path, types, tailCapBytes);
     }
+    // Non-ranged filesystems (in-memory hosts) carry small sessions;
+    // the cap degrades to no-op there rather than approximating byte
+    // offsets over decoded lines.
     final read = await fs.readTextLines(path);
     if (read.isErr) return const [];
     final records = <CustomRecord>[];
@@ -887,6 +907,7 @@ final class JsonlSessionRepo implements SessionRepo {
     RangedReadFileSystem ranged,
     String path,
     Set<String> types,
+    int? tailCapBytes,
   ) async {
     final blockBytes = debugCustomRecordScanBlockBytes;
     final info = await fs.fileInfo(path);
@@ -894,7 +915,12 @@ final class JsonlSessionRepo implements SessionRepo {
     if (info.valueOrNull!.kind != FileKind.file) return const [];
     final size = info.valueOrNull!.size;
     final scanner = _CustomRecordBlockScanner(types);
-    var offset = 0;
+    // Start inside the tail region: a line torn at the boundary simply
+    // fails the field-shaped gate (or jsonDecode) and is skipped — the
+    // cap trades deep history, never correctness.
+    var offset = tailCapBytes == null
+        ? 0
+        : math.max(0, size - tailCapBytes);
     while (offset < size) {
       final end = (offset + blockBytes).clamp(0, size);
       final read = await ranged.readRange(path, offset, end);
