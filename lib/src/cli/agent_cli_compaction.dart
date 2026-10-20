@@ -376,14 +376,21 @@ extension AgentCliCompactionRun on AgentCli {
     tools: _agent.state.tools,
   );
 
-  /// gh-1425 AC3 (the resume boot cap): a resumed session whose projected
-  /// context is already over the compaction trigger runs ONE forced
-  /// compaction pass at IDLE BOOT — before any user message — so the ctx
-  /// meter renders the post-cap number instead of idling above 100% (the
-  /// owner's 143% at boot: the meter was honest, but nothing ever capped
-  /// the resume; the pre-flight gate only fires before a RUN). Also runs
-  /// on mid-REPL session switches (same detonation class — the switched-to
-  /// session boots over-window).
+  /// gh-1425 AC3 (the resume boot cap, lazy rework): a resumed session
+  /// whose projected context is over the compaction trigger must never
+  /// make the OPEN itself wait on an LM summarization pass (the goal_builder
+  /// and yoclip incidents: 3.5-minute boot caps read as hung opens and
+  /// were killed — every reopen re-paid them). Two regimes:
+  ///
+  /// - over the WINDOW: no request can ever be sent — the mechanical
+  ///   local-trim valve caps INSTANTLY (milliseconds, zero LM calls);
+  ///   the durable LM compaction happens through the normal paths.
+  /// - over the TRIGGER but inside the window: the next request is legal
+  ///   as-is, so boot defers — the first turn's pre-flight
+  ///   ([_maybeAutoCompact] runs before every prompt) owns the durable
+  ///   compaction BEFORE any user work continues. The meter idles at the
+  ///   honest pre-cap number (≤100%). Also runs on mid-REPL session
+  ///   switches (same detonation class).
   ///
   /// Degradation (AC5) rides the shared [AutoCompactorFactory] pipeline: a
   /// summarizer failure falls to the existing local-trim valve with its
@@ -447,6 +454,21 @@ extension AgentCliCompactionRun on AgentCli {
       }
       // The valve found nothing droppable (a degenerate single-message
       // window): fall through to the LM pass below as the last resort.
+    } else {
+      // Over the TRIGGER but inside the window: the next request is
+      // legal AS-IS — an LM summarization pass here costs minutes at a
+      // moment the user is watching a session open (the yoclip open:
+      // 194k tokens, a 3.5-minute boot cap the owner read as a hang).
+      // Defer the durable compaction to the first turn's pre-flight
+      // ([_maybeAutoCompact] runs before every prompt): the cap still
+      // lands BEFORE any user work continues, just without blocking the
+      // open. The meter idles at the honest pre-cap number (≤100%).
+      _logDiagnostic(
+        'resume boot cap deferred sid=$_logSid tokens=$tokens '
+        '(inside the window — the first-turn pre-flight owns the '
+        'durable compaction)',
+      );
+      return;
     }
     _pushBusyPhase('Compacting context…');
     _logDiagnostic('resume boot cap start sid=$_logSid tokens=$tokens');
