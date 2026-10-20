@@ -149,60 +149,66 @@ void main() {
     );
   });
 
-  test('stream-json subprocess boot: stdout is pure NDJSON (mock server)', () async {
-    final tempHome = Directory.systemTemp.createTempSync('stream_json_home_');
-    addTearDown(() => tempHome.deleteSync(recursive: true));
-    File('${tempHome.path}/.fah/config.yaml')
-      ..createSync(recursive: true)
-      ..writeAsStringSync('approvalMode: yolo\n');
-    final workspace = Directory.systemTemp.createTempSync('stream_json_ws_');
-    addTearDown(() => workspace.deleteSync(recursive: true));
+  test(
+    'stream-json subprocess boot: stdout is pure NDJSON (mock server)',
+    () async {
+      final tempHome = Directory.systemTemp.createTempSync('stream_json_home_');
+      addTearDown(() => tempHome.deleteSync(recursive: true));
+      File('${tempHome.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('approvalMode: yolo\n');
+      final workspace = Directory.systemTemp.createTempSync('stream_json_ws_');
+      addTearDown(() => workspace.deleteSync(recursive: true));
 
-    final server = await MockLlmServer.start();
-    addTearDown(server.stop);
-    server.enqueueText('plain stream reply');
+      final server = await MockLlmServer.start();
+      addTearDown(server.stop);
+      server.enqueueText('plain stream reply');
 
-    // Same convention as headless_log_file_test: temp HOME, --cwd, FA_BIN
-    // AOT seam on CI (JIT fallback locally).
-    final command = faCliCommand([
-      '--provider',
-      'openai-completions',
-      '--base-url',
-      server.baseUrl,
-      '--model',
-      'mock-model',
-      '--cwd',
-      workspace.path,
-      '--output-format',
-      'stream-json',
-      '-p',
-      'hi',
-    ], jitPrefix: const ['dart', 'run', 'bin/fah.dart']);
-    final result = await Process.run(
-      command.first,
-      command.sublist(1),
-      workingDirectory: Directory.current.path,
-      environment: {'OPENAI_API_KEY': 'mock', 'HOME': tempHome.path},
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    ).timeout(const Duration(minutes: 8));
+      // Same convention as headless_log_file_test: temp HOME, --cwd, FA_BIN
+      // AOT seam on CI (JIT fallback locally).
+      final command = faCliCommand(
+        [
+          '--provider',
+          'openai-completions',
+          '--base-url',
+          server.baseUrl,
+          '--model',
+          'mock-model',
+          '--cwd',
+          workspace.path,
+          '--output-format',
+          'stream-json',
+          '-p',
+          'hi',
+        ],
+        jitPrefix: const ['dart', 'run', 'bin/fah.dart'],
+      );
+      final result = await Process.run(
+        command.first,
+        command.sublist(1),
+        workingDirectory: Directory.current.path,
+        environment: {'OPENAI_API_KEY': 'mock', 'HOME': tempHome.path},
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      ).timeout(const Duration(minutes: 8));
 
-    expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
+      expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
 
-    final lines = (result.stdout as String)
-        .split('\n')
-        .where((line) => line.trim().isNotEmpty)
-        .toList();
-    expect(lines, isNotEmpty);
-    final parsed = [
-      for (final line in lines) jsonDecode(line) as Map<String, dynamic>,
-    ];
-    expect(parsed.first['type'], 'session');
-    expect(parsed.last['type'], 'agent_settled');
-    // Stdout carries ONLY the NDJSON stream — prose never leaks into it.
-    expect(
-      parsed.map((e) => e['type']),
-      containsAllInOrder(['session', 'agent_start', 'agent_settled']),
-    );
-  });
+      final lines = (result.stdout as String)
+          .split('\n')
+          .where((line) => line.trim().isNotEmpty)
+          .toList();
+      expect(lines, isNotEmpty);
+      final parsed = [
+        for (final line in lines) jsonDecode(line) as Map<String, dynamic>,
+      ];
+      expect(parsed.first['type'], 'session');
+      expect(parsed.last['type'], 'agent_settled');
+      // Stdout carries ONLY the NDJSON stream — prose never leaks into it.
+      expect(
+        parsed.map((e) => e['type']),
+        containsAllInOrder(['session', 'agent_start', 'agent_settled']),
+      );
+    },
+  );
 }
