@@ -62,6 +62,7 @@ AgentCli _bootCli({
   required FakeCliIO io,
   required String homeDir,
   required StreamFunction stream,
+  String? sessionName,
 }) => AgentCli(
   config: AgentCliConfig(
     model: _model,
@@ -69,6 +70,7 @@ AgentCli _bootCli({
     env: env,
     homeDir: homeDir,
     sessionRoot: '/sessions',
+    sessionName: sessionName,
     providerKind: 'openai-completions',
     compactionEngine: CompactionEngine.classic,
     compactionSettings: const CompactionSettings(
@@ -167,67 +169,74 @@ void main() {
     );
 
     test(
-      'persisted cap boot-loads and the pre-emptive gate compacts before a request',
+      'persisted cap boot-loads and the pre-emptive gate compacts a resumed session',
       timeout: const Timeout(Duration(seconds: 120)),
       () async {
-        // Seed the learned cap the way a previous process left it.
-        final capsDir = Directory('${tempHome.path}/.fah')
-          ..createSync(recursive: true);
-        File('${capsDir.path}/model_caps.json').writeAsStringSync(
+        // Suppress session-start memory maintenance so the scripted turns
+        // feed only the boot cap + the user turn (the resume-boot-cap
+        // suite's pattern).
+        await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+        // Seed the learned cap the way a previous process left it, and a
+        // resumed session whose live transcript is token-HEALTHY but past
+        // the cap − margin trigger (24 − 16 = 8): the boot cap must fire
+        // on the gh-1680 message-count path alone (the 1M window never
+        // trips shouldCompact).
+        Directory('${tempHome.path}/.fah').createSync(recursive: true);
+        File('${tempHome.path}/.fah/model_caps.json').writeAsStringSync(
           jsonEncode({
             ModelCapsStore.keyOf('test-provider', 'cap-model'): {
               'maxMessages': 24,
             },
           }),
         );
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final seed = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+        );
+        await seed.appendSessionName('cap-gate-target');
+        for (var i = 0; i < 9; i++) {
+          await seed.appendMessage(UserMessage.text('m$i'));
+        }
 
-        // REPL prompts, each answered by one tool delegation. After four
-        // prompts the live transcript reaches 9 messages — past the
-        // cap − margin trigger (24 − 16 = 8) — so the FIFTH prompt's
-        // pre-flight gate must compact BEFORE the request rides out: the
-        // additive gh-1680 trigger, token-healthy (the 1M window never
-        // trips the token threshold).
-        final turns = <List<AssistantMessageEvent>>[
-          for (var i = 1; i <= 4; i++) _readTurn(i),
-          textTurn('pre-emptive summary'),
-          textTurn('prompt five answered after the gate'),
-        ];
-        final fake = FakeStreamFunction(turns);
+        final fake = FakeStreamFunction([
+          textTurn('boot summary of the seeded turns'),
+          textTurn('answered on the compacted transcript'),
+        ]);
         final cli = _bootCli(
           env: env,
           io: io,
           homeDir: tempHome.path,
           stream: fake.call,
+          sessionName: 'cap-gate-target',
         );
 
         final run = cli.run();
-        for (var n = 1; n <= 5; n++) {
-          io.sendLine('prompt $n');
-          await settleUntil(() => fake.calls >= n);
-        }
-        await settleUntil(() => fake.calls >= 6);
+        await io.settle(() => fake.calls >= 1 && !cli.isBusy);
+        io.sendLine('go');
+        await io.settle(() => fake.calls >= 2 && !cli.isBusy);
         io.sendLine('/exit');
         await run;
         await io.close();
 
-        // Calls: 4 tool prompts + the gate's summarizer + prompt five.
         for (var i = 0; i < fake.contexts.length; i++) {
           // ignore: avoid_print
-          print('DBG call $i: ${fake.contexts[i].messages.length} msgs');
+          print('DBG call $i: ${fake.contexts[i].messages.length} msgs: '
+              '${[for (final m in fake.contexts[i].messages) m.runtimeType.toString()]}');
         }
         // ignore: avoid_print
-        print('DBG output:\n${io.out.toString()}');
-        expect(fake.calls, 6, reason: 'the pre-emptive pass adds one call');
-        final beforeGate = fake.contexts[3].messages.length;
-        final afterGate = fake.contexts[5].messages.length;
+        print('DBG out>>${io.out.toString()}<<');
+        // Calls: the boot cap's summarizer + the first user turn.
+        expect(fake.calls, 2, reason: 'boot cap summarizer + one turn');
+        // The turn rode the COMPACTED transcript (9 seeded messages).
+        final turnMessages = fake.contexts[1].messages.length;
         expect(
-          afterGate,
-          lessThan(beforeGate),
-          reason: 'the pre-emptive pass must shrink the transcript',
+          turnMessages,
+          lessThan(9),
+          reason: 'the pre-emptive boot cap must shrink the transcript',
         );
         final output = io.out.toString();
         expect(output, contains('auto-compacted'));
-        expect(output, contains('prompt five answered after the gate'));
+        expect(output, contains('answered on the compacted transcript'));
       },
     );
 
@@ -261,12 +270,14 @@ void main() {
   });
 }
 
-/// Polls until [condition] holds (the REPL surfaces no per-turn marker
-/// text; the stream call count is the observable turn boundary).
-Future<void> settleUntil(bool Function() condition) async {
-  for (var i = 0; i < 300; i++) {
-    if (condition()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+extension _FakeCliIoSettle on FakeCliIO {
+  /// Polls until [condition] holds (the resume-boot-cap suite's settle
+  /// pattern: a stream-call boundary plus the CLI leaving its busy gate).
+  Future<void> settle(bool Function() condition) async {
+    for (var i = 0; i < 300; i++) {
+      if (condition()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    fail('timed out waiting for the CLI to settle');
   }
-  fail('timed out waiting for the turn to settle');
 }
