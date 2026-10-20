@@ -64,6 +64,7 @@ import '../agent/auto_compactor.dart';
 import '../agent/stuck_tool.dart';
 import '../agent/tool_pairing.dart';
 import '../providers/models_for_endpoint.dart';
+import '../providers/stream_trace.dart';
 import '../agent/tool_registry.dart';
 import '../utils/list_equals.dart';
 import '../a2a/a2a_config.dart';

@@ -96,6 +96,10 @@ final class _TuiCliIO implements CliIO {
 
   @override
   void write(String text) {
+    // StreamTrace render mark (diagnostic, no-op unless active): text
+    // and thinking deltas both reach the screen through this seam in
+    // TUI mode — the emit→render gap names the loop/UI cost.
+    StreamTrace.mark(StreamTraceMark.render, '+${text.length}ch');
     final tui = _tui;
     if (tui != null) {
       tui.sendOutput(text);

@@ -9,6 +9,7 @@ library;
 
 import 'dart:async';
 
+import 'providers/stream_trace.dart';
 import 'types.dart';
 
 /// A push-based stream of events with an awaitable final result.
@@ -130,6 +131,27 @@ class AssistantMessageEventStream
           ),
         },
       );
+
+  @override
+  void push(AssistantMessageEvent event) {
+    // StreamTrace emit mark (diagnostic, no-op unless a host started a
+    // trace): one line per delta leaving ANY provider adapter — the
+    // net→emit gap names the adapter/SSE-decode cost, emit→render the
+    // loop/UI cost.
+    switch (event) {
+      case TextDeltaEvent(:final delta):
+        StreamTrace.mark(StreamTraceMark.emit, 'text +${delta.length}');
+      case ThinkingDeltaEvent(:final delta):
+        StreamTrace.mark(StreamTraceMark.emit, 'thinking +${delta.length}');
+      case ToolCallDeltaEvent(:final delta):
+        StreamTrace.mark(StreamTraceMark.emit, 'toolDelta +${delta.length}');
+      case DoneEvent() || ErrorEvent():
+        StreamTrace.mark(StreamTraceMark.emit, 'terminal');
+      default:
+        break;
+    }
+    super.push(event);
+  }
 }
 
 /// Creates an [AssistantMessageEventStream].
