@@ -287,7 +287,7 @@ def self_test() -> int:
             {"file": "", "message": "empty path"},
             {"message": "missing file key"},
             {"file": "goldens/no_msg.png"},
-        ]}]})
+        ]}, "not-a-gate-dict", {"violations": "not-a-list"}]})
         got = parse_detector_output(js)
         want = {"x_boxed.png": "box with an X", "no_msg.png": ""}
         if got != want:
@@ -337,8 +337,16 @@ def parse_detector_output(stdout: str) -> dict[str, str]:
     except json.JSONDecodeError:
         report = None
     if isinstance(report, dict):
-        for gate in report.get("gates", []):
-            for v in gate.get("violations", []):
+        gates = report.get("gates", [])
+        if not isinstance(gates, list):
+            gates = []
+        for gate in gates:
+            if not isinstance(gate, dict):
+                continue
+            entries = gate.get("violations", [])
+            if not isinstance(entries, list):
+                continue
+            for v in entries:
                 if not isinstance(v, dict):
                     continue
                 # defensive on BOTH fields (message was already .get);
