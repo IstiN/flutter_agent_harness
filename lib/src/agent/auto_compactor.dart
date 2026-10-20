@@ -443,80 +443,18 @@ final class AutoCompactor {
   /// session file keeps every record; the next restart replays the full
   /// transcript and the pre-flight compaction retries the LLM path with a
   /// healthy endpoint. Returns null when there is nothing droppable (the
-  ({List<Message> messages, int dropped})? _localTrimFallback() {
-    final messages = state.messages;
-    if (messages.isEmpty) return null;
-    // gh-1425: the valve must land UNDER the compaction trigger, not
-    // merely at keepRecentTokens — a keepRecent-sized tail plus the
-    // system-prompt/tool-schema overhead can sit above
-    // `window - reserveTokens`, so the next turn's auto-compact re-fires
-    // immediately and, with both summarizers still down, the session is
-    // stuck again (the exact marathon-resume cliff this valve exists
-    // for). Clamp the kept budget to the trigger minus the per-request
-    // overhead; keepRecentTokens still wins when it is smaller. Three
-    // edge guards (gh-1425 review + flutter_app IT-2):
-    // - reserve the [context trimmed] marker's own tokens (~64) so the
-    //   kept region plus marker still lands under the trigger;
-    // - floor the clamp at the newest message's tokens — a degenerate
-    //   overhead (≥ the trigger) must still trim SOMETHING, never return
-    //   an empty window (the projectedBranchBudgetCut rule);
-    // - but only up to keepRecentTokens: a newest message LARGER than
-    //   keepRecentTokens must keep the budget AT keepRecentTokens so the
-    //   walk still finds "nothing droppable" and returns null — that
-    //   null is the failure the summarizer-ladder exhaustion surfaces
-    //   (gh-1077 AC2: the app's fix-location notice fires on it, and the
-    //   transcript stays intact instead of silently dropping the user's
-    //   newest turn).
-    final overhead = estimateRequestTokens(
-      const [],
-      systemPrompt: state.systemPrompt,
-      tools: state.tools,
-    );
-    final budget = math.min(
-      settings.keepRecentTokens,
-      math.max(
-        math.max(0, window - settings.reserveTokens - overhead - 64),
-        estimateTokens(messages.last), // never an empty window
-      ),
-    );
-    var cut = 0; // first kept index
-    var accumulated = 0;
-    for (var i = messages.length - 1; i >= 0; i--) {
-      accumulated += estimateTokens(messages[i]);
-      if (accumulated > budget) {
-        cut = i + 1;
-        break;
-      }
-    }
-    if (cut <= 0) return null;
-    final kept = messages.sublist(cut);
-    if (kept.isEmpty) return null;
-    // Pairing integrity (issue #85): a token-boundary cut can land between
-    // an assistant tool call and its result, leaving an orphaned result at
-    // ANY position of the kept region — the production wedge survived the
-    // old leading-only skip as the second block of a merged wire message
-    // (`messages.0.content.1`). The request-boundary repairer is the single
-    // generalization: drops orphan results (with a visible note),
-    // synthesizes missing results, hoists displaced ones. In-memory only —
-    // the session file keeps every record.
-    final rebuilt = repairToolPairing([
-      UserMessage.text(
-        '$localTrimMarkerPrefix the summarizer endpoint was unavailable, '
-        '$cut older message(s) were dropped from the live context at '
-        '${DateTime.now().toUtc().toIso8601String()} — the full history '
-        'stays in the session file]',
-      ),
-      // Zero the kept generations' usage anchors — a stale generation-time
-      // anchor would keep the estimate over the window and retrigger the
-      // compactor on the next turn (same rule as the success pass).
-      for (final message in kept)
-        if (message is AssistantMessage)
-          message.copyWith(usage: Usage.zero)
-        else
-          message,
-    ]);
-    return (messages: rebuilt.messages, dropped: cut);
-  }
+  ({List<Message> messages, int dropped})? _localTrimFallback() =>
+      localTrimValve(
+        messages: state.messages,
+        reason: 'the summarizer endpoint was unavailable',
+        window: window,
+        settings: settings,
+        overheadTokens: estimateRequestTokens(
+          const [],
+          systemPrompt: state.systemPrompt,
+          tools: state.tools,
+        ),
+      );
 
   /// Picks the summarizer for this pass: smol first, main as fallback when
   /// [runFallback] is true. Returns the outcome, the fallback label used and
@@ -779,6 +717,87 @@ final class AutoCompactor {
 }
 
 String _modelLabel(Model m) => '${m.provider}/${m.id}';
+
+/// The mechanical over-window valve, host-callable (the resume boot cap
+/// applies it INSTANTLY when a resumed transcript cannot fit the window:
+/// an LM compaction pass there takes minutes on slow providers and blocks
+/// the whole boot — the goal_builder incident). Semantics are exactly
+/// [_localTrimFallback]'s; see there for the contract.
+({List<Message> messages, int dropped})? localTrimValve({
+  required List<Message> messages,
+  required String reason,
+  required int window,
+  required CompactionSettings settings,
+  required int overheadTokens,
+}) {
+  if (messages.isEmpty) return null;
+  // gh-1425: the valve must land UNDER the compaction trigger, not
+  // merely at keepRecentTokens — a keepRecent-sized tail plus the
+  // system-prompt/tool-schema overhead can sit above
+  // `window - reserveTokens`, so the next turn's auto-compact re-fires
+  // immediately and, with both summarizers still down, the session is
+  // stuck again (the exact marathon-resume cliff this valve exists
+  // for). Clamp the kept budget to the trigger minus the per-request
+  // overhead; keepRecentTokens still wins when it is smaller. Three
+  // edge guards (gh-1425 review + flutter_app IT-2):
+  // - reserve the [context trimmed] marker's own tokens (~64) so the
+  //   kept region plus marker still lands under the trigger;
+  // - floor the clamp at the newest message's tokens — a degenerate
+  //   overhead (≥ the trigger) must still trim SOMETHING, never return
+  //   an empty window (the projectedBranchBudgetCut rule);
+  // - but only up to keepRecentTokens: a newest message LARGER than
+  //   keepRecentTokens must keep the budget AT keepRecentTokens so the
+  //   walk still finds "nothing droppable" and returns null — that
+  //   null is the failure the summarizer-ladder exhaustion surfaces
+  //   (gh-1077 AC2: the app's fix-location notice fires on it, and the
+  //   transcript stays intact instead of silently dropping the user's
+  //   newest turn).
+  final overhead = overheadTokens;
+  final budget = math.min(
+    settings.keepRecentTokens,
+    math.max(
+      math.max(0, window - settings.reserveTokens - overhead - 64),
+      estimateTokens(messages.last), // never an empty window
+    ),
+  );
+  var cut = 0; // first kept index
+  var accumulated = 0;
+  for (var i = messages.length - 1; i >= 0; i--) {
+    accumulated += estimateTokens(messages[i]);
+    if (accumulated > budget) {
+      cut = i + 1;
+      break;
+    }
+  }
+  if (cut <= 0) return null;
+  final kept = messages.sublist(cut);
+  if (kept.isEmpty) return null;
+  // Pairing integrity (issue #85): a token-boundary cut can land between
+  // an assistant tool call and its result, leaving an orphaned result at
+  // ANY position of the kept region — the production wedge survived the
+  // old leading-only skip as the second block of a merged wire message
+  // (`messages.0.content.1`). The request-boundary repairer is the single
+  // generalization: drops orphan results (with a visible note),
+  // synthesizes missing results, hoists displaced ones. In-memory only —
+  // the session file keeps every record.
+  final rebuilt = repairToolPairing([
+    UserMessage.text(
+      '$localTrimMarkerPrefix $reason, '
+      '$cut older message(s) were dropped from the live context at '
+      '${DateTime.now().toUtc().toIso8601String()} — the full history '
+      'stays in the session file]',
+    ),
+    // Zero the kept generations' usage anchors — a stale generation-time
+    // anchor would keep the estimate over the window and retrigger the
+    // compactor on the next turn (same rule as the success pass).
+    for (final message in kept)
+      if (message is AssistantMessage)
+        message.copyWith(usage: Usage.zero)
+      else
+        message,
+  ]);
+  return (messages: rebuilt.messages, dropped: cut);
+}
 
 /// Source for the [AutoCompactor] smol/main summarizers. Hosts plug in
 /// their own resolver:
