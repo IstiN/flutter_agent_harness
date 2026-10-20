@@ -7,7 +7,6 @@
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/providers/stream_trace.dart';
 import 'package:test/test.dart';
 
 import '../cli/agent_cli_test_support.dart';
@@ -142,17 +141,13 @@ void main() {
           TextDeltaEvent(
             delta: 'hey',
             contentIndex: 0,
-            partial: testAssistant(
-              content: const [TextContent(text: 'hey')],
-            ),
+            partial: testAssistant(content: const [TextContent(text: 'hey')]),
           ),
         )
         ..push(
           DoneEvent(
             reason: StopReason.stop,
-            message: testAssistant(
-              content: const [TextContent(text: 'hey')],
-            ),
+            message: testAssistant(content: const [TextContent(text: 'hey')]),
           ),
         )
         ..end();
@@ -189,9 +184,7 @@ void main() {
             TextDeltaEvent(
               delta: 'he',
               contentIndex: 0,
-              partial: testAssistant(
-                content: const [TextContent(text: 'he')],
-              ),
+              partial: testAssistant(content: const [TextContent(text: 'he')]),
             ),
           )
           ..push(

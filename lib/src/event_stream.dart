@@ -128,9 +128,8 @@ class AssistantMessageEventStream
   /// telemetry, prompt tools) MUST construct with `traced: false`, or
   /// every delta produces one `emit` line per hop and the net→emit gap
   /// the trail exists to measure is corrupted.
-  AssistantMessageEventStream({bool traced = true})
-    : _traced = traced,
-      super(
+  AssistantMessageEventStream({this.traced = true})
+    : super(
         isComplete: (event) => event is DoneEvent || event is ErrorEvent,
         extractResult: (event) => switch (event) {
           DoneEvent(:final message) => message,
@@ -141,7 +140,8 @@ class AssistantMessageEventStream
         },
       );
 
-  final bool _traced;
+  /// Whether this stream's pushes carry the StreamTrace `emit` mark.
+  final bool traced;
 
   @override
   void push(AssistantMessageEvent event) {
@@ -150,7 +150,7 @@ class AssistantMessageEventStream
     // net→emit gap names the adapter/SSE-decode cost, emit→render the
     // loop/UI cost. Only on traced (adapter-owned) streams; wrapper
     // hops construct with traced: false (see the constructor docs).
-    if (_traced) {
+    if (traced) {
       switch (event) {
         case TextDeltaEvent(:final delta):
           StreamTrace.mark(StreamTraceMark.emit, 'text +${delta.length}');
