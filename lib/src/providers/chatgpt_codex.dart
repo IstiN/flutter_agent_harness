@@ -248,8 +248,22 @@ final class _ChatGptCodexSession {
   String? _cookiesBeforeRequest;
 
   Future<void> run() async {
-    var credentials = ChatGptOAuthCredentials.decode(encodedCredentials);
-    if (credentials.needsRefresh(DateTime.now())) {
+    // Issue #1704: the full OAuth blob is the primary shape, but a queue
+    // entry (or env var) may carry a plain Bearer access token. Decode
+    // failure degrades to raw-bearer use: no proactive refresh, and a 401
+    // surfaces as the auth death it is (a refresh cannot work without a
+    // refresh token) so the queue fails over instead of throwing
+    // FormatException before the first request.
+    final decoded = tryDecodeChatGptCredentials(encodedCredentials);
+    final rawBearer = decoded == null;
+    var credentials =
+        decoded ??
+        ChatGptOAuthCredentials(
+          accessToken: encodedCredentials,
+          refreshToken: '',
+          idToken: '',
+        );
+    if (!rawBearer && credentials.needsRefresh(DateTime.now())) {
       // Proactive: the access token is at/past expiry minus skew.
       credentials = await _refreshCredentials(credentials);
     }
@@ -257,7 +271,7 @@ final class _ChatGptCodexSession {
     var replayedCookies = false;
     var response = await _request(credentials);
     while (true) {
-      if (response.statusCode == 401 && !refreshedOn401) {
+      if (response.statusCode == 401 && !refreshedOn401 && !rawBearer) {
         // Reactive backstop: refresh once, persist, retry.
         refreshedOn401 = true;
         await response.stream.drain();
@@ -313,7 +327,7 @@ final class _ChatGptCodexSession {
     final scopedNote = model.streamIdleTimeout == null
         ? ''
         : ' — idle window ${providerWindowLabel(idle)} '
-            '(${model.timeoutScopeLabel})';
+              '(${model.timeoutScopeLabel})';
     final lines = StreamIterator<String>(
       response.stream.transform(utf8.decoder).transform(const LineSplitter()),
     );

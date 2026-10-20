@@ -37,6 +37,7 @@ export 'src/cancel_token.dart';
 export 'src/dap/dap_hub_snapshot.dart';
 export 'src/cli/agent_cli.dart';
 export 'src/cli/browser_bridge_commands.dart';
+export 'src/cli/chatgpt_credential_export.dart';
 export 'src/cli/custom_providers.dart';
 export 'src/cli/key_status.dart';
 export 'src/cli/env_provider_preconfig.dart';

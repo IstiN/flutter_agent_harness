@@ -339,7 +339,8 @@ void main() {
       expect(
         sw.elapsed,
         lessThan(const Duration(seconds: 5)),
-        reason: 'the endpoint-level entry window never reached the codex '
+        reason:
+            'the endpoint-level entry window never reached the codex '
             'bypass — the idle leg fell through to the 300s global',
       );
       final message = events.whereType<ErrorEvent>().single.error.errorMessage!;
@@ -649,9 +650,7 @@ void main() {
         ToolResultMessage(
           toolCallId: 'call_42',
           toolName: 'bash',
-          content: const [
-            ImageContent(data: 'aGk=', mimeType: 'image/png'),
-          ],
+          content: const [ImageContent(data: 'aGk=', mimeType: 'image/png')],
           isError: false,
           timestamp: DateTime.utc(2026),
         ),
@@ -661,125 +660,115 @@ void main() {
       ],
     );
 
-    test(
-      'gemini-authored history switches to responses without a 400 and '
-      're-shapes tool calls to top-level items',
-      () async {
-        Map<String, dynamic>? sentBody;
-        final client = http_testing.MockClient.streaming((
-          request,
-          requestBody,
-        ) async {
-          sentBody =
-              jsonDecode(await requestBody.bytesToString())
-                  as Map<String, dynamic>;
-          return sseResponse(
-            sseChunk({
-              'type': 'response.completed',
-              'response': {'id': 'r', 'model': 'gpt-5-codex'},
-            }),
-          );
-        });
-
-        final events = await streamChatGptCodex(
-          visionModel,
-          switchedHistory(),
-          credentials: credentials.encode(),
-          client: client,
-        ).toList();
-
-        // The switch turn completes; no provider 400.
-        expect(events.last, isA<DoneEvent>());
-
-        final input = (sentBody!['input'] as List).cast<Map<String, dynamic>>();
-        // user → gemini assistant(text+call) → function_call → output.
-        expect(input, hasLength(4));
-        expect(
-          (input[1]['content'] as List).single,
-          containsPair('type', 'output_text'),
-        );
-        final toolCall = input[2];
-        expect(toolCall['type'], 'function_call');
-        expect(toolCall['call_id'], 'call_42');
-        expect(toolCall['name'], 'bash');
-        // The thinking block rides no wire slot (dropped, not nested).
-        expect(
-          input.every(
-            (item) =>
-                item['type'] != 'message' ||
-                (item['content'] as List).every(
-                  (part) => (part as Map)['type'] != 'thinking',
-                ),
-          ),
-          isTrue,
-        );
-        // Thinking-only assistant record: skipped, not an empty message.
-        expect(
-          input.any((item) => item['role'] == 'assistant' &&
-              (item['content'] as List).isEmpty),
-          isFalse,
-        );
-        expect(firstResponsesGrammarViolation(input), isNull);
-      },
-    );
-
-    test(
-      'image-only tool result degrades to the named note and the following '
-      'turn also succeeds',
-      () async {
-        final bodies = <Map<String, dynamic>>[];
-        final client = http_testing.MockClient.streaming((
-          request,
-          requestBody,
-        ) async {
-          bodies.add(
+    test('gemini-authored history switches to responses without a 400 and '
+        're-shapes tool calls to top-level items', () async {
+      Map<String, dynamic>? sentBody;
+      final client = http_testing.MockClient.streaming((
+        request,
+        requestBody,
+      ) async {
+        sentBody =
             jsonDecode(await requestBody.bytesToString())
-                as Map<String, dynamic>,
-          );
-          return sseResponse(
-            sseChunk({
-              'type': 'response.completed',
-              'response': {'id': 'r', 'model': 'gpt-5-codex'},
-            }),
-          );
-        });
-
-        final first = await streamChatGptCodex(
-          visionModel,
-          switchedHistory(),
-          credentials: credentials.encode(),
-          client: client,
-        ).toList();
-        expect(first.last, isA<DoneEvent>());
-
-        final output = (((bodies[0]['input'] as List)[3])
-            as Map<String, dynamic>)['output'] as List;
-        expect(
-          (output.single as Map)['text'],
-          responsesOmittedToolResultNote,
+                as Map<String, dynamic>;
+        return sseResponse(
+          sseChunk({
+            'type': 'response.completed',
+            'response': {'id': 'r', 'model': 'gpt-5-codex'},
+          }),
         );
+      });
 
-        // The FOLLOWING turn (history + the first turn's answer) succeeds
-        // too — the degraded record never re-poisons the session.
-        final answer = (first.last as DoneEvent).message;
-        final secondContext = Context(
-          messages: [
-            ...switchedHistory().messages,
-            answer,
-          ],
+      final events = await streamChatGptCodex(
+        visionModel,
+        switchedHistory(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList();
+
+      // The switch turn completes; no provider 400.
+      expect(events.last, isA<DoneEvent>());
+
+      final input = (sentBody!['input'] as List).cast<Map<String, dynamic>>();
+      // user → gemini assistant(text+call) → function_call → output.
+      expect(input, hasLength(4));
+      expect(
+        (input[1]['content'] as List).single,
+        containsPair('type', 'output_text'),
+      );
+      final toolCall = input[2];
+      expect(toolCall['type'], 'function_call');
+      expect(toolCall['call_id'], 'call_42');
+      expect(toolCall['name'], 'bash');
+      // The thinking block rides no wire slot (dropped, not nested).
+      expect(
+        input.every(
+          (item) =>
+              item['type'] != 'message' ||
+              (item['content'] as List).every(
+                (part) => (part as Map)['type'] != 'thinking',
+              ),
+        ),
+        isTrue,
+      );
+      // Thinking-only assistant record: skipped, not an empty message.
+      expect(
+        input.any(
+          (item) =>
+              item['role'] == 'assistant' && (item['content'] as List).isEmpty,
+        ),
+        isFalse,
+      );
+      expect(firstResponsesGrammarViolation(input), isNull);
+    });
+
+    test('image-only tool result degrades to the named note and the following '
+        'turn also succeeds', () async {
+      final bodies = <Map<String, dynamic>>[];
+      final client = http_testing.MockClient.streaming((
+        request,
+        requestBody,
+      ) async {
+        bodies.add(
+          jsonDecode(await requestBody.bytesToString()) as Map<String, dynamic>,
         );
-        final second = await streamChatGptCodex(
-          visionModel,
-          secondContext,
-          credentials: credentials.encode(),
-          client: client,
-        ).toList();
-        expect(second.last, isA<DoneEvent>());
-        final secondInput =
-            (bodies[1]['input'] as List).cast<Map<String, dynamic>>();
-        expect(firstResponsesGrammarViolation(secondInput), isNull);
-      },
-    );
+        return sseResponse(
+          sseChunk({
+            'type': 'response.completed',
+            'response': {'id': 'r', 'model': 'gpt-5-codex'},
+          }),
+        );
+      });
+
+      final first = await streamChatGptCodex(
+        visionModel,
+        switchedHistory(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList();
+      expect(first.last, isA<DoneEvent>());
+
+      final output =
+          (((bodies[0]['input'] as List)[3]) as Map<String, dynamic>)['output']
+              as List;
+      expect((output.single as Map)['text'], responsesOmittedToolResultNote);
+
+      // The FOLLOWING turn (history + the first turn's answer) succeeds
+      // too — the degraded record never re-poisons the session.
+      final answer = (first.last as DoneEvent).message;
+      final secondContext = Context(
+        messages: [...switchedHistory().messages, answer],
+      );
+      final second = await streamChatGptCodex(
+        visionModel,
+        secondContext,
+        credentials: credentials.encode(),
+        client: client,
+      ).toList();
+      expect(second.last, isA<DoneEvent>());
+      final secondInput = (bodies[1]['input'] as List)
+          .cast<Map<String, dynamic>>();
+      expect(firstResponsesGrammarViolation(secondInput), isNull);
+    });
 
     test('converter matrix: google/anthropic/completions records convert to '
         'grammar-valid responses items', () {
@@ -789,10 +778,7 @@ void main() {
       final histories = {
         'google-generative-ai': [
           geminiAssistant([
-            const ThinkingContent(
-              thinking: 'hmm',
-              thinkingSignature: 'c2ln',
-            ),
+            const ThinkingContent(thinking: 'hmm', thinkingSignature: 'c2ln'),
             ToolCall(
               id: 'gemini-2.5:fc1',
               name: 'bash',
@@ -858,11 +844,10 @@ void main() {
           );
         }
         expect(
-          firstResponsesGrammarViolation(
-            input.cast<Map<String, dynamic>>(),
-          ),
+          firstResponsesGrammarViolation(input.cast<Map<String, dynamic>>()),
           isNull,
-          reason: 'history authored by $api must convert to valid responses '
+          reason:
+              'history authored by $api must convert to valid responses '
               'items',
         );
       });
@@ -931,10 +916,7 @@ void main() {
           firstResponsesGrammarViolation([item]);
 
       expect(
-        violation({
-          'role': 'assistant',
-          'content': 'not-a-list',
-        }),
+        violation({'role': 'assistant', 'content': 'not-a-list'}),
         contains('content is not a list'),
       );
       expect(
@@ -973,167 +955,158 @@ void main() {
       );
     });
 
-    test(
-      'adversarial corpus: every authored/poisoned/degenerate shape '
-      'converts grammar-valid (#858 AC1)',
-      () {
-        AssistantMessage codexAsst(List<ContentBlock> content) =>
-            AssistantMessage(
-              content: content,
-              api: 'responses',
-              provider: 'chatgpt',
-              model: 'gpt-5-codex',
-              usage: Usage.zero,
-              stopReason: StopReason.toolUse,
-              timestamp: DateTime.utc(2026),
-            );
-        const call = ToolCall(id: 'call_1', name: 'bash', arguments: {'c': 'ls'});
-        ToolResultMessage result(String callId, List<ContentBlock> content) =>
-            ToolResultMessage(
-              toolCallId: callId,
-              toolName: 'bash',
-              content: content,
-              isError: false,
-              timestamp: DateTime.utc(2026),
-            );
-
-        // Every threat case the card names: poison (a tool call inside an
-        // assistant record — the pre-#705 converter nested it into message
-        // content), thinking-only, image-only, orphan results, merged
-        // roles, empty records, steering interleave (E3), codex-authored
-        // tails (E5), and an orphan result from a compaction cut (E4).
-        final corpus = <String, List<Message>>{
-          'poison-call': [
-            UserMessage.text('list files'),
-            geminiAssistant([
-              const TextContent(text: 'checking'),
-              call,
-            ]),
-            result('call_1', const [TextContent(text: 'a')]),
-          ],
-          'thinking-only (E2)': [geminiAssistant([const ThinkingContent(thinking: 'h')])],
-          'image-only-assistant': [
-            geminiAssistant([
-              ImageContent(data: 'aGk=', mimeType: 'image/png'),
-            ]),
-          ],
-          'image-only-tool-result': [
-            result('call_x', const [
-              ImageContent(data: 'aGk=', mimeType: 'image/png'),
-            ]),
-          ],
-          'orphan-tool-result': [
-            UserMessage.text('go'),
-            result('call_orphan', const [TextContent(text: 'out')]),
-          ],
-          'merged-roles': [
-            UserMessage.text('a'),
-            UserMessage.text('b'),
-            geminiAssistant([const TextContent(text: 'x')]),
-            geminiAssistant([const TextContent(text: 'y'), call]),
-          ],
-          'empty-records': [
-            UserMessage.text(''),
-            geminiAssistant([const TextContent(text: '')]),
-            result('', const []),
-          ],
-          'steering-interleave (E3)': [
-            UserMessage.text('start'),
-            geminiAssistant([call]),
-            UserMessage.text('wait, also do X'),
-            result('call_1', const [TextContent(text: 'done')]),
-          ],
-          'compaction-split-pair (E4)': [
-            UserMessage.text('summary of earlier work'),
-            result('call_42', const [TextContent(text: 'file.txt')]),
-          ],
-          'codex-authored-tail (E5)': [
-            codexAsst([
-              const TextContent(text: 'did it'),
-              const ToolCall(
-                id: 'call_9',
-                name: 'bash',
-                arguments: {'x': '1'},
-              ),
-            ]),
-            result('call_9', const [TextContent(text: 'ok')]),
-          ],
-        };
-
-        corpus.forEach((name, messages) {
-          final input = responsesInputItems(messages);
-          expect(
-            firstResponsesGrammarViolation(input),
-            isNull,
-            reason: 'corpus case $name must convert grammar-valid',
+    test('adversarial corpus: every authored/poisoned/degenerate shape '
+        'converts grammar-valid (#858 AC1)', () {
+      AssistantMessage codexAsst(List<ContentBlock> content) =>
+          AssistantMessage(
+            content: content,
+            api: 'responses',
+            provider: 'chatgpt',
+            model: 'gpt-5-codex',
+            usage: Usage.zero,
+            stopReason: StopReason.toolUse,
+            timestamp: DateTime.utc(2026),
           );
-          // Idempotence (E5): a provider switch does NOT keep the typed
-          // objects in memory — every record round-trips the session JSONL
-          // (toJson → messageFromJson) before the codex wire sees it
-          // again. Re-converting that round-tripped history must produce
-          // byte-identical items, so no signature/field the converter
-          // reads can silently drift across the switch.
-          final roundTripped = [
-            for (final message in messages)
-              messageFromJson(message.toJson()),
-          ];
-          expect(
-            responsesInputItems(roundTripped),
-            input,
-            reason: 'corpus case $name must survive a switch round-trip '
-                'without conversion drift',
+      const call = ToolCall(id: 'call_1', name: 'bash', arguments: {'c': 'ls'});
+      ToolResultMessage result(String callId, List<ContentBlock> content) =>
+          ToolResultMessage(
+            toolCallId: callId,
+            toolName: 'bash',
+            content: content,
+            isError: false,
+            timestamp: DateTime.utc(2026),
           );
-        });
-      },
-    );
+
+      // Every threat case the card names: poison (a tool call inside an
+      // assistant record — the pre-#705 converter nested it into message
+      // content), thinking-only, image-only, orphan results, merged
+      // roles, empty records, steering interleave (E3), codex-authored
+      // tails (E5), and an orphan result from a compaction cut (E4).
+      final corpus = <String, List<Message>>{
+        'poison-call': [
+          UserMessage.text('list files'),
+          geminiAssistant([const TextContent(text: 'checking'), call]),
+          result('call_1', const [TextContent(text: 'a')]),
+        ],
+        'thinking-only (E2)': [
+          geminiAssistant([const ThinkingContent(thinking: 'h')]),
+        ],
+        'image-only-assistant': [
+          geminiAssistant([ImageContent(data: 'aGk=', mimeType: 'image/png')]),
+        ],
+        'image-only-tool-result': [
+          result('call_x', const [
+            ImageContent(data: 'aGk=', mimeType: 'image/png'),
+          ]),
+        ],
+        'orphan-tool-result': [
+          UserMessage.text('go'),
+          result('call_orphan', const [TextContent(text: 'out')]),
+        ],
+        'merged-roles': [
+          UserMessage.text('a'),
+          UserMessage.text('b'),
+          geminiAssistant([const TextContent(text: 'x')]),
+          geminiAssistant([const TextContent(text: 'y'), call]),
+        ],
+        'empty-records': [
+          UserMessage.text(''),
+          geminiAssistant([const TextContent(text: '')]),
+          result('', const []),
+        ],
+        'steering-interleave (E3)': [
+          UserMessage.text('start'),
+          geminiAssistant([call]),
+          UserMessage.text('wait, also do X'),
+          result('call_1', const [TextContent(text: 'done')]),
+        ],
+        'compaction-split-pair (E4)': [
+          UserMessage.text('summary of earlier work'),
+          result('call_42', const [TextContent(text: 'file.txt')]),
+        ],
+        'codex-authored-tail (E5)': [
+          codexAsst([
+            const TextContent(text: 'did it'),
+            const ToolCall(id: 'call_9', name: 'bash', arguments: {'x': '1'}),
+          ]),
+          result('call_9', const [TextContent(text: 'ok')]),
+        ],
+      };
+
+      corpus.forEach((name, messages) {
+        final input = responsesInputItems(messages);
+        expect(
+          firstResponsesGrammarViolation(input),
+          isNull,
+          reason: 'corpus case $name must convert grammar-valid',
+        );
+        // Idempotence (E5): a provider switch does NOT keep the typed
+        // objects in memory — every record round-trips the session JSONL
+        // (toJson → messageFromJson) before the codex wire sees it
+        // again. Re-converting that round-tripped history must produce
+        // byte-identical items, so no signature/field the converter
+        // reads can silently drift across the switch.
+        final roundTripped = [
+          for (final message in messages) messageFromJson(message.toJson()),
+        ];
+        expect(
+          responsesInputItems(roundTripped),
+          input,
+          reason:
+              'corpus case $name must survive a switch round-trip '
+              'without conversion drift',
+        );
+      });
+    });
   });
 
   group('choke-point guard (#858 AC4)', () {
-    test(
-      'the outbound input array is assembled only through '
-      'responsesInputItems in chatgpt_codex.dart',
-      () {
-        final source = File('lib/src/providers/chatgpt_codex.dart')
-            .readAsStringSync();
+    test('the outbound input array is assembled only through '
+        'responsesInputItems in chatgpt_codex.dart', () {
+      final source = File(
+        'lib/src/providers/chatgpt_codex.dart',
+      ).readAsStringSync();
 
-        // Exactly ONE request-body assembly of the `input` array exists,
-        // and it routes through the converter (the only other
-        // responsesInputItems call is the 400-diagnostic annotation).
-        final inputKeyLines = source
-            .split('\n')
-            .where((line) => line.trim().startsWith("'input':"))
-            .toList();
-        expect(inputKeyLines, hasLength(1));
-        expect(inputKeyLines.single, contains('responsesInputItems('));
+      // Exactly ONE request-body assembly of the `input` array exists,
+      // and it routes through the converter (the only other
+      // responsesInputItems call is the 400-diagnostic annotation).
+      final inputKeyLines = source
+          .split('\n')
+          .where((line) => line.trim().startsWith("'input':"))
+          .toList();
+      expect(inputKeyLines, hasLength(1));
+      expect(inputKeyLines.single, contains('responsesInputItems('));
 
-        // Every converter USE in the file is the request body or the
-        // diagnostic annotation (the third match is the declaration) — no
-        // third path shapes wire items.
-        final useLines = source
-            .split('\n')
-            .where((line) => line.contains('responsesInputItems('))
-            .where((line) => !line.contains(
-                'List<Map<String, dynamic>> responsesInputItems('))
-            .toList();
-        expect(useLines, hasLength(2));
-        expect(
-          useLines.any((line) => line.trim().startsWith("'input':")),
-          isTrue,
-        );
+      // Every converter USE in the file is the request body or the
+      // diagnostic annotation (the third match is the declaration) — no
+      // third path shapes wire items.
+      final useLines = source
+          .split('\n')
+          .where((line) => line.contains('responsesInputItems('))
+          .where(
+            (line) => !line.contains(
+              'List<Map<String, dynamic>> responsesInputItems(',
+            ),
+          )
+          .toList();
+      expect(useLines, hasLength(2));
+      expect(
+        useLines.any((line) => line.trim().startsWith("'input':")),
+        isTrue,
+      );
 
-        // No other lib file converts or assembles responses input items —
-        // a second assembly site would bypass the invariant's tests.
-        final offenders = <String>[];
-        for (final entity in Directory('lib').listSync(recursive: true)) {
-          if (entity is! File || !entity.path.endsWith('.dart')) continue;
-          if (entity.path.endsWith('chatgpt_codex.dart')) continue;
-          if (entity.readAsStringSync().contains('responsesInputItems')) {
-            offenders.add(entity.path);
-          }
+      // No other lib file converts or assembles responses input items —
+      // a second assembly site would bypass the invariant's tests.
+      final offenders = <String>[];
+      for (final entity in Directory('lib').listSync(recursive: true)) {
+        if (entity is! File || !entity.path.endsWith('.dart')) continue;
+        if (entity.path.endsWith('chatgpt_codex.dart')) continue;
+        if (entity.readAsStringSync().contains('responsesInputItems')) {
+          offenders.add(entity.path);
         }
-        expect(offenders, isEmpty);
-      },
-    );
+      }
+      expect(offenders, isEmpty);
+    });
   });
 
   group('sse event coverage', () {
@@ -1293,106 +1266,112 @@ void main() {
       final error = events.whereType<ErrorEvent>().single;
       expect(error.error.errorMessage, contains('ChatGPT response failed'));
     });
-    test('a 429 error message speaks human and carries the structured reset',
-        () async {
-      final client = http_testing.MockClient.streaming(
-        (request, requestBody) async => http.StreamedResponse(
-          Stream.value(utf8.encode('slow down')),
-          429,
-          headers: {
-            'content-type': 'text/plain',
-            'x-codex-primary-used-percent': '100',
-            'x-codex-primary-reset-at': '2000000000',
-          },
-        ),
-      );
-      final events = await streamChatGptCodex(
-        chatGptModel,
-        simpleContext(),
-        credentials: credentials.encode(),
-        client: client,
-      ).toList();
+    test(
+      'a 429 error message speaks human and carries the structured reset',
+      () async {
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) async => http.StreamedResponse(
+            Stream.value(utf8.encode('slow down')),
+            429,
+            headers: {
+              'content-type': 'text/plain',
+              'x-codex-primary-used-percent': '100',
+              'x-codex-primary-reset-at': '2000000000',
+            },
+          ),
+        );
+        final events = await streamChatGptCodex(
+          chatGptModel,
+          simpleContext(),
+          credentials: credentials.encode(),
+          client: client,
+        ).toList();
 
-      final error = events.whereType<ErrorEvent>().single;
-      final message = error.error.errorMessage!;
-      expect(message, contains('429'));
-      expect(message, contains('Rate limit reached'));
-      // No raw payload fragment reaches the rendered line (issue #867).
-      expect(message.contains('{'), isFalse);
-      expect(message, contains(RegExp(r'— in \d+ days')));
-      // The structured reset rides the event for surface rendering.
-      final info = error.error.rateLimit;
-      expect(info, isNotNull);
-      expect(
-        info!.resetsAt,
-        DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true),
-      );
-      expect(info.limitKind, 'primary');
-      expect(info.rawBody, 'slow down');
-    });
+        final error = events.whereType<ErrorEvent>().single;
+        final message = error.error.errorMessage!;
+        expect(message, contains('429'));
+        expect(message, contains('Rate limit reached'));
+        // No raw payload fragment reaches the rendered line (issue #867).
+        expect(message.contains('{'), isFalse);
+        expect(message, contains(RegExp(r'— in \d+ days')));
+        // The structured reset rides the event for surface rendering.
+        final info = error.error.rateLimit;
+        expect(info, isNotNull);
+        expect(
+          info!.resetsAt,
+          DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true),
+        );
+        expect(info.limitKind, 'primary');
+        expect(info.rawBody, 'slow down');
+      },
+    );
 
-    test('both windows advertised: the label names the window it came from',
-        () async {
-      final client = http_testing.MockClient.streaming(
-        (request, requestBody) async => http.StreamedResponse(
-          Stream.value(utf8.encode('slow down')),
-          429,
-          headers: {
-            'content-type': 'text/plain',
-            'x-codex-primary-used-percent': '80',
-            'x-codex-primary-reset-at': '2000000000',
-            'x-codex-secondary-used-percent': '100',
-            'x-codex-secondary-reset-at': '1990000000',
-          },
-        ),
-      );
-      final events = await streamChatGptCodex(
-        chatGptModel,
-        simpleContext(),
-        credentials: credentials.encode(),
-        client: client,
-      ).toList();
+    test(
+      'both windows advertised: the label names the window it came from',
+      () async {
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) async => http.StreamedResponse(
+            Stream.value(utf8.encode('slow down')),
+            429,
+            headers: {
+              'content-type': 'text/plain',
+              'x-codex-primary-used-percent': '80',
+              'x-codex-primary-reset-at': '2000000000',
+              'x-codex-secondary-used-percent': '100',
+              'x-codex-secondary-reset-at': '1990000000',
+            },
+          ),
+        );
+        final events = await streamChatGptCodex(
+          chatGptModel,
+          simpleContext(),
+          credentials: credentials.encode(),
+          client: client,
+        ).toList();
 
-      final error = events.whereType<ErrorEvent>().single;
-      // The rendered stamp prefers the primary window — the label must
-      // agree with it (round-1 CR: it used to say "secondary").
-      final message = error.error.errorMessage!;
-      expect(message, contains('(primary limit)'));
-      expect(message.contains('secondary'), isFalse, reason: message);
-      final info = error.error.rateLimit!;
-      expect(info.limitKind, 'primary');
-      expect(
-        info.resetsAt,
-        DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true),
-      );
-    });
+        final error = events.whereType<ErrorEvent>().single;
+        // The rendered stamp prefers the primary window — the label must
+        // agree with it (round-1 CR: it used to say "secondary").
+        final message = error.error.errorMessage!;
+        expect(message, contains('(primary limit)'));
+        expect(message.contains('secondary'), isFalse, reason: message);
+        final info = error.error.rateLimit!;
+        expect(info.limitKind, 'primary');
+        expect(
+          info.resetsAt,
+          DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true),
+        );
+      },
+    );
 
-    test('canonical Retry-After casing reaches both parses identically',
-        () async {
-      final client = http_testing.MockClient.streaming(
-        (request, requestBody) async => http.StreamedResponse(
-          Stream.value(utf8.encode('slow down')),
-          429,
-          headers: {
-            'content-type': 'text/plain',
-            // HTTP/1.1 canonical casing: the direct map index used to miss
-            // it while the structured parse (case-insensitive) saw it, so
-            // the rotation cooldown silently fell back to the default.
-            'Retry-After': '120',
-          },
-        ),
-      );
-      final events = await streamChatGptCodex(
-        chatGptModel,
-        simpleContext(),
-        credentials: credentials.encode(),
-        client: client,
-      ).toList();
+    test(
+      'canonical Retry-After casing reaches both parses identically',
+      () async {
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) async => http.StreamedResponse(
+            Stream.value(utf8.encode('slow down')),
+            429,
+            headers: {
+              'content-type': 'text/plain',
+              // HTTP/1.1 canonical casing: the direct map index used to miss
+              // it while the structured parse (case-insensitive) saw it, so
+              // the rotation cooldown silently fell back to the default.
+              'Retry-After': '120',
+            },
+          ),
+        );
+        final events = await streamChatGptCodex(
+          chatGptModel,
+          simpleContext(),
+          credentials: credentials.encode(),
+          client: client,
+        ).toList();
 
-      final error = events.whereType<ErrorEvent>().single;
-      expect(error.retryAfter, const Duration(minutes: 2));
-      expect(error.error.rateLimit?.retryAfter, const Duration(minutes: 2));
-    });
+        final error = events.whereType<ErrorEvent>().single;
+        expect(error.retryAfter, const Duration(minutes: 2));
+        expect(error.error.rateLimit?.retryAfter, const Duration(minutes: 2));
+      },
+    );
 
     test(
       'a /responses send that never completes errors fast with a timeout '
@@ -1421,5 +1400,106 @@ void main() {
         );
       },
     );
+  });
+
+  // Issue #1704: a plain Bearer access token (a queue entry or env var
+  // carrying the token, not the full OAuth blob) is used directly — no
+  // FormatException, no refresh attempts (proactive or on 401).
+  group('raw bearer credentials', () {
+    test(
+      'a plain access token is sent as the Bearer without refreshing',
+      () async {
+        final sentHeaders = <Map<String, String>>[];
+        final authRequests = <Uri>[];
+        final client = http_testing.MockClient.streaming((
+          request,
+          requestBody,
+        ) async {
+          if (request.url.host == 'auth.openai.com') {
+            authRequests.add(request.url);
+            return http.StreamedResponse(Stream.value(utf8.encode('{}')), 400);
+          }
+          sentHeaders.add(Map.of(request.headers));
+          return http.StreamedResponse(
+            Stream.value(
+              utf8.encode(
+                sseChunk({'type': 'response.output_text.delta', 'delta': 'ok'}),
+              ),
+            ),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+        final stream = streamChatGptCodex(
+          chatGptModel,
+          simpleContext(),
+          credentials: 'raw-bearer-at',
+          client: client,
+        );
+        final events = await stream.toList();
+
+        expect(events.whereType<TextDeltaEvent>().single.delta, 'ok');
+        expect(sentHeaders.single['authorization'], 'Bearer raw-bearer-at');
+        // No OAuth token request ever left: nothing to refresh with.
+        expect(authRequests, isEmpty);
+      },
+    );
+
+    test(
+      'a 401 on a raw bearer surfaces as the auth death (no refresh)',
+      () async {
+        final authRequests = <Uri>[];
+        final client = http_testing.MockClient.streaming((
+          request,
+          requestBody,
+        ) async {
+          if (request.url.host == 'auth.openai.com') {
+            authRequests.add(request.url);
+            return http.StreamedResponse(Stream.value(utf8.encode('{}')), 400);
+          }
+          return http.StreamedResponse(Stream.value(utf8.encode('')), 401);
+        });
+        final stream = streamChatGptCodex(
+          chatGptModel,
+          simpleContext(),
+          credentials: 'raw-bearer-at',
+          client: client,
+        );
+        final events = await stream.toList();
+
+        final error = events.whereType<ErrorEvent>().single;
+        expect(error.error.errorMessage, contains('401'));
+        expect(authRequests, isEmpty);
+      },
+    );
+
+    test('a partial OAuth blob degrades to its own access token', () async {
+      // A JSON object missing the refresh token can still serve as a
+      // bearer — the embedded access token is the credential (refresh
+      // degraded), never a FormatException.
+      final client = http_testing.MockClient.streaming((
+        request,
+        requestBody,
+      ) async {
+        expect(request.headers['authorization'], 'Bearer at-only');
+        return http.StreamedResponse(
+          Stream.value(
+            utf8.encode(
+              sseChunk({'type': 'response.output_text.delta', 'delta': 'ok'}),
+            ),
+          ),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final stream = streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: '{"access_token":"at-only"}',
+        client: client,
+      );
+      final events = await stream.toList();
+      expect(events.whereType<TextDeltaEvent>().single.delta, 'ok');
+    });
   });
 }

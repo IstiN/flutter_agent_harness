@@ -19,6 +19,25 @@ block a release again.
   own flow with the api type prefilled. Previously boarding opened the
   custom wizard directly, cold-asking "api type" before any provider was
   chosen.
+- feat(providers): gh-1704 — first-class Codex/ChatGPT credential export,
+  CI refresh action, and Provider Queue integration (Copilot-export
+  parity). `fa provider export <name> [--check]` resolves the saved
+  ChatGPT login's OAuth blob from its secure-store slot, refreshes it when
+  stale, and prints the shell lines (`OPENAI_API_KEY` + `OPENAI_BASE_URL`
+  = the Codex backend — these tokens never serve api.openai.com); the
+  refresh token never prints and `--check` reports credential health with
+  the SSO caveat. `/provider chatgpt import [path]` adopts an existing
+  `codex login` session (`~/.codex/auth.json`) into the same slot — no
+  browser round-trip. `.github/actions/chatgpt-codex-auth` mints a fresh
+  access token from a `CHATGPT_REFRESH_TOKEN` secret in CI (direct curl,
+  no third-party action); invalid_grant fails fast and loudly.
+  `providersQueue:` entries speak `chatgpt-codex`: an omitted `apiKeyEnv`
+  resolves the Keychain slot automatically (in-memory refresh), a new
+  `refreshTokenEnv:` field mints the initial access token on slot
+  activation, and a raw Bearer token in `apiKeyEnv` is tolerated by
+  `chatgpt_codex.dart` (no more FormatException — proactive/reactive
+  refresh degrade, a 401 surfaces as the auth death the queue fails over
+  on).
 
 - feat(bench): gh-1681 — leaderboard submission readiness. ATIF
   trajectories: new `exportAtifJson` whole-snapshot exporter
