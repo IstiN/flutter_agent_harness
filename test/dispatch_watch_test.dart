@@ -493,7 +493,8 @@ void main() {
             '--title',
             testflightTitle,
             '--budget-seconds',
-            '600', // large: ONLY the stall guard can end each attempt
+            '3', // stall window (1s) must win before the budget — in RED
+            // the old budget path still ends each attempt in ~3s
             '-f',
             'ios_content=all',
           ],
@@ -556,7 +557,7 @@ void main() {
           '--title',
           playTitle,
           '--budget-seconds',
-          '600',
+          '3',
           '-f',
           'android_content=all',
         ],
