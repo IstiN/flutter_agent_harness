@@ -65,9 +65,11 @@ String iso(int seconds) {
 ///   `view-<id>.txt`    — one `<status> <conclusion>` line per
 ///                        `gh run view <id>` poll; the last line repeats
 ///                        once exhausted
-///   `jobs-<id>.txt`    — one running-job COUNT per `gh run view <id>`
-///                        poll (with --json jobs); the last line repeats;
-///                        absent file = 1 job always running
+///   `jobs-<id>.txt`    — one running-job COUNT per watch poll; the last
+///                        line repeats; absent file = 1 job always running
+///   `jobs-served-<id>.log` — (written by the stub) the jobs body actually
+///                        served per poll — ground truth that a fixture
+///                        modeled a running job, however the body was built
 ///   `cancelled-<id>`   — marker created by `gh run cancel`
 ///   `list-calls`       — internal counter
 /// GH_STUB_LIST_EMPTY_FIRST=N makes the first N `run list` calls return [].
@@ -111,18 +113,29 @@ case "\$cmd" in
         ;;
       view)
         id="\$3"
-        # `--json jobs` polls (gh-172 queue-stall guard) are served from
-        # jobs-<id>.txt: one running-job COUNT per poll, last line repeats;
-        # absent file = 1 job running (healthy child) so older fixtures
-        # without job modeling keep their behavior. cancelled = 0.
+        # The watcher polls with ONE combined call — `gh run view --json
+        # status,conclusion,jobs` — served from two fixtures consumed in
+        # lockstep: view-<id>.txt (one `<status> <conclusion>` line per
+        # poll, last repeats) and jobs-<id>.txt (one running-job COUNT per
+        # poll, last repeats; absent file = 1 job running (healthy child)
+        # so older fixtures without job modeling keep their behavior;
+        # cancelled = 0). The body actually served is appended to
+        # jobs-served-<id>.log so a test can prove the fixture modeled a
+        # running job regardless of how the body was built.
         is_jobs=0
         for ((j = 0; j < \${#args[@]} - 1; j++)); do
-          if [ "\${args[\$j]}" = "--json" ] && [ "\${args[\$((j + 1))]}" = "jobs" ]; then is_jobs=1; fi
+          if [ "\${args[\$j]}" = "--json" ] && [[ "\${args[\$((j + 1))]}" == *jobs* ]]; then is_jobs=1; fi
         done
-        if [ "\$is_jobs" = "1" ]; then
-          if [ -f "\$GH_STUB_DIR/cancelled-\$id" ]; then
-            n=0
-          else
+        if [ -f "\$GH_STUB_DIR/cancelled-\$id" ]; then
+          status=completed; conclusion=cancelled; jobs_body=""
+        else
+          f="\$GH_STUB_DIR/view-\$id.txt"
+          line=\$(head -1 "\$f")
+          sed -i.bak '1d' "\$f" && rm -f "\$f.bak"
+          if ! [ -s "\$f" ]; then printf '%s\\n' "\$line" > "\$f"; fi
+          status="\${line%% *}"; conclusion="\${line#* }"
+          jobs_body=""
+          if [ "\$is_jobs" = "1" ]; then
             jf="\$GH_STUB_DIR/jobs-\$id.txt"
             if [ -f "\$jf" ]; then
               n=\$(head -1 "\$jf")
@@ -131,17 +144,18 @@ case "\$cmd" in
             else
               n=1
             fi
+            # No `seq -f 'literal'`: a %-less format errors on every call,
+            # the || true swallows it, and the fixture goes inert
+            # ({"jobs":[]} forever, whatever jobs-<id>.txt says). seq
+            # emits the count, sed stamps each line into a running job,
+            # paste comma-joins (n=0 → empty body → {"jobs":[]}).
+            jobs_body=\$(seq "\$n" | sed 's/.*/{"status":"in_progress"}/' | paste -sd, -)
           fi
-          body=\$(seq -f '{"status":"in_progress"}' -s ',' 1 "\$n" 2>/dev/null || true)
-          printf '{"jobs":[%s]}' "\$body" | apply_jq
-        elif [ -f "\$GH_STUB_DIR/cancelled-\$id" ]; then
-          printf '{"status":"completed","conclusion":"cancelled"}' | apply_jq
+        fi
+        if [ "\$is_jobs" = "1" ]; then
+          printf '%s\\n' "\$jobs_body" >> "\$GH_STUB_DIR/jobs-served-\$id.log"
+          printf '{"status":"%s","conclusion":"%s","jobs":[%s]}' "\$status" "\$conclusion" "\$jobs_body" | apply_jq
         else
-          f="\$GH_STUB_DIR/view-\$id.txt"
-          line=\$(head -1 "\$f")
-          sed -i.bak '1d' "\$f" && rm -f "\$f.bak"
-          if ! [ -s "\$f" ]; then printf '%s\\n' "\$line" > "\$f"; fi
-          status="\${line%% *}"; conclusion="\${line#* }"
           printf '{"status":"%s","conclusion":"%s"}' "\$status" "\$conclusion" | apply_jq
         fi
         ;;
@@ -159,13 +173,20 @@ exit 0
 }
 
 class DwRun {
-  DwRun(this.exitCode, this.out, this.log, this.runIdFile);
+  DwRun(this.exitCode, this.out, this.log, this.runIdFile, this.dir);
 
   final int exitCode;
   final String out;
   final List<String> log;
   final String? runIdFile; // content of --out-run-id, when requested
+  final Directory dir; // stub fixture dir (jobs-served-*.log lives here)
 }
+
+/// The jobs bodies the stub actually served while watching [runId] —
+/// ground truth for "the fixture modeled a running job", independent of
+/// how the stub built the body.
+List<String> servedJobs(DwRun dw, int runId) =>
+    File('${dw.dir.path}/jobs-served-$runId.log').readAsLinesSync();
 
 /// Runs scripts/dispatch_and_watch.sh with [args]; [stubFiles] seed the
 /// stub-gh fixture dir. Time knobs are shrunk so budget/poll loops resolve
@@ -212,6 +233,7 @@ DwRun runDw(
     '${res.stdout}${res.stderr}',
     File('${dir.path}/log').readAsLinesSync(),
     runIdFile && f.existsSync() ? f.readAsStringSync().trim() : null,
+    dir,
   );
 }
 
@@ -547,11 +569,69 @@ void main() {
           reason: 'the leg log must carry the queue-stall signature',
         );
         expect(
+          dw.out,
+          contains('queue-stall window 1s'),
+          reason:
+              'an explicit DW_QUEUE_STALL_SECONDS must override the '
+              'scaled default (and be visible in the leg log)',
+        );
+        expect(
           dw.log.any((l) => l.contains('run cancel 222 --repo OWNER/REPO')),
           isTrue,
           reason:
               'the orphaned second run must be cancelled on the fail path — '
               'a queued child left behind publishes unattended when the pool revives',
+        );
+      },
+    );
+
+    test(
+      'stall window defaults to max(600, budget/8) — sibling-leg occupancy must not false-wedge',
+      () {
+        // Review (gh-172): a fixed 600s window cannot tell a zombie-held
+        // pool from a healthy child queued behind a SIBLING leg's job on
+        // the shared single-runner pool (testflight's build-ios and cli's
+        // build-macos matrix contend for the same fa-m5-1; one cli matrix
+        // leg can hold it for ~150m). The default is therefore scaled off
+        // the watch budget, and the effective window is echoed on the
+        // watching line so leg logs (and this test) pin it.
+        final floorDw = runDw(
+          'stall-default-floor',
+          ['pages.yml', '--budget-seconds', '800'], // 800/8 = 100s → floor
+          {
+            'runs.json': runJson([run(555, 'Deploy to GitHub Pages', iso(-2))]),
+            'view-555.txt': 'completed success\n',
+          },
+        );
+        expect(floorDw.exitCode, 0);
+        expect(
+          floorDw.out,
+          contains('queue-stall window 600s'),
+          reason: 'short budgets keep the fast 10-minute zombie trip',
+        );
+        // Absent jobs fixture = 1 job running (the documented contract) —
+        // the served body must be a real running-job object, which is what
+        // keeps the guard quiet on fixtures without job modeling.
+        expect(
+          servedJobs(floorDw, 555).first,
+          '{"status":"in_progress"}',
+          reason: 'absent file = 1 job always running (healthy child)',
+        );
+        final scaledDw = runDw(
+          'stall-default-scaled',
+          ['pages.yml', '--budget-seconds', '16000'], // 16000/8 = 200s
+          {
+            'runs.json': runJson([run(556, 'Deploy to GitHub Pages', iso(-2))]),
+            'view-556.txt': 'completed success\n',
+          },
+        );
+        expect(scaledDw.exitCode, 0);
+        expect(
+          scaledDw.out,
+          contains('queue-stall window 200s'),
+          reason:
+              'long-budget legs wait out realistic sibling-leg occupancy '
+              'before wedging a quiet-but-alive child',
         );
       },
     );
@@ -564,24 +644,51 @@ void main() {
           '--title',
           playTitle,
           '--budget-seconds',
-          '3',
+          '60', // never fires: the whole watch is 4 polls x 3s
           '-f',
           'android_content=all',
         ],
         {
           'runs.json': runJson([run(111, playTitle, iso(-10))]),
           // Poll 1: between jobs (version done, build-ios not yet picked
-          // up); from poll 2 a job is running; then the run completes.
-          'jobs-111.txt': '0\n1\n',
-          'view-111.txt': 'in_progress -\nin_progress -\ncompleted success\n',
+          // up); poll 2: a job IS running; poll 3: between jobs again
+          // (submit hand-off); poll 4: completed. The stall window is 5s
+          // and the poll every 3s, so poll 3 only stays under the window
+          // if poll 2's running job actually refreshed last_running
+          // (3s old) — with a broken refresh the clock still reads poll 1
+          // (6s old) and the guard false-wedges this healthy child.
+          'jobs-111.txt': '0\n1\n0\n',
+          'view-111.txt':
+              'in_progress -\nin_progress -\nin_progress -\ncompleted success\n',
         },
-        env: {'DW_QUEUE_STALL_SECONDS': '2'},
+        env: {'DW_POLL_SECONDS': '3', 'DW_QUEUE_STALL_SECONDS': '5'},
       );
       expect(dw.exitCode, 0);
       expect(
         dw.log.where((l) => l.startsWith('workflow run')).length,
         1,
         reason: 'a healthy inter-job gap must never cancel a child',
+      );
+      expect(
+        dw.log.where((l) => l.contains('run cancel')),
+        isEmpty,
+        reason: 'a healthy child must never be cancelled',
+      );
+      // The stub served a RUNNING job on poll 2 — the fixture is live, so
+      // the refresh above was genuinely exercised. (A `seq -f`-broken stub
+      // serves {"jobs":[]} on every poll and this test passes vacuously.)
+      expect(
+        servedJobs(dw, 111),
+        ['', '{"status":"in_progress"}', '', ''],
+        reason:
+            'poll 2 must actually report a running job — an inert fixture '
+            'makes the whole guard test vacuous',
+      );
+      // One combined `gh run view` call per poll, not two.
+      expect(
+        dw.log.where((l) => l.contains('run view 111 ')).length,
+        4,
+        reason: 'one combined gh run view call per poll, not two',
       );
     });
   });
