@@ -115,18 +115,42 @@ case "\$cmd" in
         ;;
       view)
         id="\$3"
-        # `--json jobs` polls (gh-172 queue-stall guard) are served from
-        # jobs-<id>.txt: one running-job COUNT per poll, last line repeats;
-        # absent file = 1 job running (healthy child) so older fixtures
-        # without job modeling keep their behavior. cancelled = 0.
+        # gh-172 review: the watcher polls with ONE
+        # `gh run view --json status,conclusion,jobs` call; the stub
+        # serves that merged shape from BOTH fixture families:
+        #  view-<id>.txt — one `<status> <conclusion>` line per poll,
+        #                  last line repeats once exhausted;
+        #  jobs-<id>.txt — one running-job COUNT per poll, last line
+        #                  repeats; ABSENT file = 1 job always running
+        #                  (healthy child) so older fixtures without job
+        #                  modeling keep their behavior. cancelled = 0.
+        # Every served count is appended to served-jobs-<id>.log so tests
+        # can prove the fixture actually modeled a running job. The
+        # gh-172 review BLOCKING bug: `seq -f '{"status":...}'` has no %
+        # directive, so seq ALWAYS errored, the swallowed failure left
+        # body empty and every poll answered {"jobs":[]} — the fixture
+        # was inert and the refresh path had zero coverage.
         is_jobs=0
         for ((j = 0; j < \${#args[@]} - 1; j++)); do
-          if [ "\${args[\$j]}" = "--json" ] && [ "\${args[\$((j + 1))]}" = "jobs" ]; then is_jobs=1; fi
+          if [ "\${args[\$j]}" = "--json" ]; then
+            case "\${args[\$((j + 1))]}" in
+              *jobs*) is_jobs=1 ;;
+            esac
+          fi
         done
         if [ "\$is_jobs" = "1" ]; then
           if [ -f "\$GH_STUB_DIR/cancelled-\$id" ]; then
-            n=0
+            printf '{"status":"completed","conclusion":"cancelled","jobs":[]}' | apply_jq
           else
+            vf="\$GH_STUB_DIR/view-\$id.txt"
+            if [ -f "\$vf" ]; then
+              line=\$(head -1 "\$vf")
+              sed -i.bak '1d' "\$vf" && rm -f "\$vf.bak"
+              if ! [ -s "\$vf" ]; then printf '%s\\n' "\$line" > "\$vf"; fi
+              status="\${line%% *}"; conclusion="\${line#* }"
+            else
+              status=unknown; conclusion=-
+            fi
             jf="\$GH_STUB_DIR/jobs-\$id.txt"
             if [ -f "\$jf" ]; then
               n=\$(head -1 "\$jf")
@@ -135,9 +159,12 @@ case "\$cmd" in
             else
               n=1
             fi
+            printf '%s\\n' "\$n" >> "\$GH_STUB_DIR/served-jobs-\$id.log"
+            # n=0 → empty body → {"jobs":[]} ✓; n≥1 → comma-joined
+            # objects ✓ (no `seq -f` — its format needs a % directive).
+            body=\$(seq "\$n" | sed 's/.*/{"status":"in_progress"}/' | paste -sd, -)
+            printf '{"status":"%s","conclusion":"%s","jobs":[%s]}' "\$status" "\$conclusion" "\$body" | apply_jq
           fi
-          body=\$(seq -f '{"status":"in_progress"}' -s ',' 1 "\$n" 2>/dev/null || true)
-          printf '{"jobs":[%s]}' "\$body" | apply_jq
         elif [ -f "\$GH_STUB_DIR/cancelled-\$id" ]; then
           printf '{"status":"completed","conclusion":"cancelled"}' | apply_jq
         else
@@ -698,15 +725,15 @@ void main() {
         // The default now scales off the leg budget with a 600s floor.
         final scaled = runDw(
           'knobs-scaled',
-          ['pages.yml', '--budget-seconds', '800'],
+          ['pages.yml', '--budget-seconds', '8000'],
           {'runs.json': '[]'},
           env: {'DW_DUMP_KNOBS': '1'},
         );
         expect(scaled.exitCode, 0);
         expect(
           scaled.out,
-          contains('budget=800 queue_stall=100'),
-          reason: 'budget/8 = 100s once it clears the 600s floor',
+          contains('budget=8000 queue_stall=1000'),
+          reason: 'budget/8 = 1000s once it clears the 600s floor',
         );
         final floored = runDw(
           'knobs-floored',
@@ -718,7 +745,7 @@ void main() {
         expect(
           floored.out,
           contains('budget=800 queue_stall=600'),
-          reason: 'the 600s floor holds when budget/8 drops below it',
+          reason: 'the 600s floor holds when budget/8 (100s) drops below it',
         );
       },
     );

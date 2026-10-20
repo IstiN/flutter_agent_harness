@@ -176,11 +176,15 @@ jobs:
   # 90m ceiling and never processes the run cancel either) — the leg burned
   # its remaining ~107m watching a child that could never start and died as
   # a bare 360m ceiling kill. The watcher now also treats "not completed
-  # but NO job in_progress for DW_QUEUE_STALL_SECONDS (600s)" as a wedge
-  # riding the same one self-heal, and cancels the child on the fail path
-  # so an orphaned queued run can't publish unattended when the pool
-  # revives. Second wedge now ends in a diagnostic inside the leg
-  # (testflight ≈ 250m + 13m + 10m stall = 273m < 360m).
+  # but NO job in_progress for DW_QUEUE_STALL_SECONDS" as a wedge riding
+  # the same one self-heal, and cancels the child on the fail path so an
+  # orphaned queued run can't publish unattended when the pool revives.
+  # gh-172 review: the window is not a fixed 600s — it defaults to
+  # max(600, budget/8) because a healthy child queued behind a sibling
+  # leg's job on the shared single-runner pool (the cli build-macos matrix
+  # serializes on fa-m5-1) shows the same "nothing running" signature for
+  # hours. Second wedge still ends in a diagnostic inside the leg
+  # (testflight ≈ 250m budget + 13m cancel + 31m stall ≈ 294m < 360m).
 
   testflight:
     name: 'Leg: TestFlight'

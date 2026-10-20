@@ -158,24 +158,38 @@ while :; do
   started=$(date +%s)
   last_running="$started"
   while :; do
-    status=$(gh run view "$run_id" --repo "$repo" --json status,conclusion \
-      --jq '.status + "/" + (.conclusion // "-")' 2>/dev/null || echo "error/-")
+    # ONE gh call per poll (gh-172 review): status/conclusion and the
+    # in_progress job count come from the same snapshot — half the API
+    # traffic in a loop that polls every 60s for hours, and no
+    # between-call race where a run completing between the two calls
+    # ticks the stall clock for one iteration.
+    status=""
+    running=""
+    read -r status running < <(
+      gh run view "$run_id" --repo "$repo" --json status,conclusion,jobs \
+        --jq '"\(.status)/\(.conclusion // "-") \([.jobs[] | select(.status == "in_progress")] | length)"' 2>/dev/null
+    ) || true
+    if [ -z "$status" ]; then status="error/-"; fi
     if [ "${status%%/*}" = "completed" ]; then break; fi
     now=$(date +%s)
     # gh-172 job-level liveness: a run that is not completed but has NO job
     # in_progress is not making progress, however alive its status claims to
-    # be — the #34 zombie-worker class holds the run in_progress AND the
+    # be — the gh-172 zombie-worker class holds the run in_progress AND the
     # single-runner pool forever, so the budget below alone would burn the
     # whole leg on a child that can never proceed. API errors count as
     # progress (never cancel a possibly-healthy run on a polling blip).
-    running=$(gh run view "$run_id" --repo "$repo" --json jobs \
-      --jq '[.jobs[] | select(.status == "in_progress")] | length' 2>/dev/null) || running=""
+    # The #34 budget check sits OUTSIDE the refresh branch below: the
+    # original #34 zombie (a SUCCEEDED job held in_progress forever) shows
+    # running>0 on every poll and only ever trips the budget — chaining the
+    # budget behind the refresh would disarm it exactly when a job is
+    # (nominally) running.
     wedge=""
     if [ -n "$running" ] && [ "$running" -gt 0 ] 2>/dev/null; then
       last_running="$now"
-    elif [ -n "$running" ] && [ $((now - last_running)) -gt "$queue_stall" ]; then
+    elif [ -n "$running" ] && [ "$((now - last_running))" -gt "$queue_stall" ]; then
       wedge="no running job for ${queue_stall}s (gh-172 pool-held zombie signature)"
-    elif [ $((now - started)) -gt "$budget" ]; then
+    fi
+    if [ -z "$wedge" ] && [ "$((now - started))" -gt "$budget" ]; then
       wedge="still unfinished after ${budget}s"
     fi
     if [ -n "$wedge" ]; then
