@@ -280,6 +280,7 @@ export 'model_presets.dart' show bundledCatalogModelIds, knownModelPresets;
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
 part 'provider_export_command.dart';
+part 'chatgpt_import_command.dart';
 part 'agent_cli_compaction.dart';
 part 'provider_models.dart';
 part 'codemie_provider_commands.dart';
