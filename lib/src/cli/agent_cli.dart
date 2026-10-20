@@ -2337,6 +2337,24 @@ class AgentCli {
   /// Idle-wake guard: one inbox-triggered run at a time.
   var _inboxWakeRunning = false;
 
+  /// Session-load in-flight counter (the goal_builder boot race): a
+  /// wake run that fires while `_loadSession`/`_createSession` is still
+  /// walking a marathon file operates on a half-loaded agent — `_session`
+  /// is null, the over-window guard has no relief (`_maybeAutoCompact`
+  /// bails at the null session), and the wake's scheduled task dies with
+  /// a terminal "compaction did not run" error BEFORE the boot cap even
+  /// runs. The inbox watcher defers while the counter is positive (mail
+  /// stays pending; the 2s tick retries after boot).
+  var _sessionLoadsInFlight = 0;
+
+  /// Test seam: drive one inbox-watcher wake tick deterministically.
+  @visibleForTesting
+  Future<void> inboxWakeTickForTest() => _wakeOnInboxMail();
+
+  /// Test seam: simulate a mid-boot session load for the wake gate.
+  @visibleForTesting
+  set sessionLoadsInFlightForTest(int value) => _sessionLoadsInFlight = value;
+
   /// Test seam: observe/reset the inbox-wake streak without driving ten
   /// real runs (the cap is exactly [InboxWakePolicy.defaultMaxInboxWakeStreak]).
   /// The streak lives in [_inboxWakePolicy] — this proxy keeps the old

@@ -437,6 +437,48 @@ extension AgentCliCompactionRun on AgentCli {
         !overCap) {
       return;
     }
+    // Over the WINDOW itself: no request can ever be sent, and an LM
+    // compaction pass here takes minutes on slow summarizers (the
+    // goal_builder incident: a 3.5-minute boot cap read as a hung open
+    // and was killed — every reopen re-paid it). Apply the mechanical
+    // local-trim valve INSTANTLY instead: the boot completes in
+    // milliseconds, the meter lands under the trigger, and the durable
+    // LM compaction happens through the normal paths (the next prompt's
+    // pre-flight or an explicit /compact). The session file keeps every
+    // record — a restart replays and re-trims identically.
+    if (tokens > _effectiveContextWindow) {
+      final trimmed = localTrimValve(
+        messages: _agent.state.messages,
+        reason: 'the resumed transcript exceeded the context window',
+        window: _effectiveContextWindow,
+        settings: _effectiveCompactionSettings,
+        overheadTokens: estimateRequestTokens(
+          const [],
+          systemPrompt: _agent.state.systemPrompt,
+          tools: _agent.state.tools,
+        ),
+      );
+      if (trimmed != null) {
+        _agent.state.messages = trimmed.messages;
+        _persistedCount = _agent.state.messages.length;
+        final after = _liveRequestTokens();
+        _logDiagnostic(
+          'resume boot cap local-trim sid=$_logSid tokens=$tokens '
+          '-> $after (dropped ${trimmed.dropped})',
+        );
+        io.writeln(
+          _style.dim(
+            '[resume] the restored context (~$tokens tokens) exceeded the '
+            '$_effectiveContextWindow-token window — trimmed locally to '
+            '~$after tokens; the full history stays in the session file '
+            '(run /compact for an LLM summary)',
+          ),
+        );
+        return;
+      }
+      // The valve found nothing droppable (a degenerate single-message
+      // window): fall through to the LM pass below as the last resort.
+    }
     _pushBusyPhase('Compacting context…');
     _logDiagnostic('resume boot cap start sid=$_logSid tokens=$tokens');
     try {
