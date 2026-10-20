@@ -275,6 +275,15 @@ extension AgentCliMessagingFlow on AgentCli {
   /// mail needs no wake — the per-turn steering poll already delivers it.
   Future<void> _wakeOnInboxMail() async {
     if (_exited || isBusy || _inboxWakeRunning) return;
+    // The boot race gate (the goal_builder incident): a session load is
+    // in flight — the agent is half-loaded (`_session` may be null, the
+    // boot cap has not run). Starting the wake run HERE made the
+    // over-window guard refuse the request and the auto-continuation
+    // funnel bail at the null session — "compaction did not run (disabled
+    // or nothing to summarize)" — killing the scheduled task BEFORE the
+    // boot cap could fix the window. Defer: mail stays pending, the next
+    // 2s tick retries once the load (and its cap) settles.
+    if (_sessionLoadsInFlight > 0) return;
     // The lane decision (gh-1180): user-kind mail always wakes (gating it
     // on the streak would deadlock: no run → no reset → no run);
     // delivered scheduled self-mail is EXEMPT from the cap (a deliberate
