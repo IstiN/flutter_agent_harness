@@ -18,14 +18,14 @@
 ///   (`result`/`isError`), `turn_end` (`message`/`toolResults`),
 ///   `agent_end` (`messages`), `agent_settled`.
 /// - fa-internal events ([ModelRequestEvent],
-///   [ToolPairingRepairEvent]) are FILTERED OUT by design — cost/repair
-///   visibility stays with the TUI, `fa trajectory`, and the session
-///   ledger. The dispatch mirrors the HEP writer's defaulted family
-///   switches (CRAP gate); the sealed-set triage is enforced by the
-///   encoder test, which enumerates every [AgentEvent] AND every
-///   [AssistantMessageEvent] subtype with count tripwires, so a new
-///   subtype cannot slip into (or silently vanish from) the stream
-///   unnoticed — and if one still slips past CI,
+///   [ToolPairingRepairEvent], [MessageCapRepairEvent]) are FILTERED OUT
+///   by design — cost/repair visibility stays with the TUI, `fa
+///   trajectory`, and the session ledger. The dispatch mirrors the HEP
+///   writer's defaulted family switches (CRAP gate); the sealed-set
+///   triage is enforced by the encoder test, which enumerates every
+///   [AgentEvent] AND every [AssistantMessageEvent] subtype with count
+///   tripwires, so a new subtype cannot slip into (or silently vanish
+///   from) the stream unnoticed — and if one still slips past CI,
 ///   [StreamJsonWriter.handleEvent] degrades it to a `warning` line
 ///   instead of letting the throw kill the run.
 ///
