@@ -339,11 +339,18 @@ extension AgentCliCompactionRun on AgentCli {
     // when unanchored) — the threshold must trip on what the next request
     // actually carries.
     final tokens = _liveRequestTokens();
+    // gh-1680 AC4: the additive message-count trigger — a model with a
+    // learned cap compacts when the live count reaches `cap − margin`,
+    // BEFORE the request, even when the token trigger is untouched. The
+    // gate also consumes the one-shot E1 pass a cap-unknown refusal
+    // armed (PR #1695).
+    final overCap = _messageCapGateReached();
     if (!shouldCompact(
-      tokens,
-      _effectiveContextWindow,
-      _effectiveCompactionSettings,
-    )) {
+          tokens,
+          _effectiveContextWindow,
+          _effectiveCompactionSettings,
+        ) &&
+        !overCap) {
       return false;
     }
     _pushBusyPhase('Compacting context…');
@@ -364,7 +371,24 @@ extension AgentCliCompactionRun on AgentCli {
     // one-shot resume budget was burned on a transcript that still could
     // not be sent.
     final after = _liveRequestTokens();
-    return after <= _effectiveContextWindow;
+    // PR #1695: success needs BOTH dimensions — a pass that only shrinks
+    // tokens while the message count still trips the cap gate is not a
+    // success; the caller retries relief and the funnel reports
+    // exhaustion instead of silently re-arming a pass every turn.
+    return after <= _effectiveContextWindow && !overCap;
+  }
+
+  /// The gh-1680 message-count gate shared by the loop and boot-cap
+  /// passes: the known-cap pre-emptive trigger, or the one-shot E1 pass a
+  /// cap-unknown refusal armed (consumed here so it fires exactly once
+  /// per refusal).
+  bool _messageCapGateReached() {
+    final model = _agent.state.model;
+    return messageCapTriggerReached(
+          _agent.state.messages.length,
+          _modelCaps.learnedCapFor(model),
+        ) ||
+        _modelCaps.takePremptivePass(model.provider, model.id);
   }
 
   /// The shared request-size estimate for compaction decisions (see
@@ -406,11 +430,18 @@ extension AgentCliCompactionRun on AgentCli {
     if (_agent.state.messages.isEmpty) return;
     if (_runAbortRequested) return;
     final tokens = _liveRequestTokens();
+    // gh-1680 AC4: the message-count trigger gates the boot cap too — a
+    // resumed session riding at `cap − margin` compacts before its first
+    // request instead of re-learning the refusal the hard way. The gate
+    // also consumes the one-shot E1 pass a cap-unknown refusal armed
+    // (PR #1695).
+    final overCap = _messageCapGateReached();
     if (!shouldCompact(
-      tokens,
-      _effectiveContextWindow,
-      _effectiveCompactionSettings,
-    )) {
+          tokens,
+          _effectiveContextWindow,
+          _effectiveCompactionSettings,
+        ) &&
+        !overCap) {
       return;
     }
     // Over the WINDOW itself: no request can ever be sent, and an LM
@@ -712,6 +743,10 @@ extension AgentCliCompactionRun on AgentCli {
       operativeSkills: _enabledSkills,
       // Issue #1085 M1/M3: linked cancellation — see [_runAutoCompact].
       runToken: token,
+      // gh-1680 AC4: the learned per-model message cap rides every
+      // compaction — `count ≥ cap − margin` fires even when the token
+      // trigger is untouched (the pre-emptive trigger).
+      messageCap: _modelCaps.learnedCapFor(_agent.state.model),
       memoryExtractionHook: (text) async {
         final tui = _tuiController;
         tui?.setBusyPhase('Extracting memory…');
@@ -804,6 +839,47 @@ extension OverWindowGuardRelief on AgentCli {
         _style.dim('[resuming] continuing the turn on the compacted context'),
       );
     }
+    return after;
+  }
+}
+
+/// gh-1680: the message-cap self-heal's host relief. The provider refused
+/// the request because the message ARRAY exceeded its cap (not the
+/// tokens), so the success criterion here is the MESSAGE COUNT, not the
+/// token estimate ([_relieveOverWindow]'s no-op test would misjudge a
+/// token-healthy transcript). ONE synchronous compaction pass over the
+/// live transcript; returns the relieved list for the loop's single
+/// retry, or null when the count could not be reduced (nothing hideable —
+/// the retry then rides the coalesced payload alone, and a second refusal
+/// surfaces the terminal error).
+extension AgentCliMessageCapRelief on AgentCli {
+  Future<List<Message>?> _relieveMessageCap(List<Message> overCap) async {
+    if (_session == null) return null;
+    _logDiagnostic(
+      'message-cap relief start sid=$_logSid messages=${overCap.length}',
+    );
+    final beforeCount = overCap.length;
+    _pushBusyPhase('Compacting context…');
+    try {
+      await _runAutoCompact('[auto-compacted]');
+    } finally {
+      _pushBusyPhase('');
+    }
+    final after = _agent.state.messages.toList();
+    if (after.length >= beforeCount) {
+      _logDiagnostic('message-cap relief no-op sid=$_logSid');
+      return null;
+    }
+    _logDiagnostic(
+      'message-cap relief done sid=$_logSid messages=${after.length} '
+      '(was $beforeCount)',
+    );
+    io.writeln(
+      _style.dim(
+        '[message cap] context compacted before the retry — continuing '
+        'the turn',
+      ),
+    );
     return after;
   }
 }

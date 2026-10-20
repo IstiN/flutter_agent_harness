@@ -39,6 +39,7 @@ import 'dart:convert';
 
 import '../cancel_token.dart';
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
+import '../overflow.dart' show classifyMessageCapError;
 // The supervisor's cancel marker + the soft-yield hand-back marker live in
 // the pure-data stuck_tool module (gh-1054 review) so the tool layer can
 // recognize a supervisor-driven yield; re-exported for the loop's
@@ -68,6 +69,8 @@ import 'agent_tool.dart';
 import 'empty_completion.dart';
 import 'finalize_gate.dart';
 import 'image_registry.dart';
+import 'message_cap.dart'
+    show MessageCapPolicy, coalesceMessagesForCap, kMessageCapDefaultMargin;
 import 'misuse_breaker.dart';
 import 'stuck_tool.dart';
 import 'tool_pairing.dart';
@@ -75,6 +78,7 @@ import 'tool_pairing.dart';
 part 'agent_loop_stuck_supervision.dart';
 part 'agent_loop_empty_completion.dart';
 part 'agent_loop_finalize_gate.dart';
+part 'agent_loop_message_cap.dart';
 
 /// Marker embedded in the over-window guard's error message (see
 /// [_streamAssistantResponse]): hosts match it to recognize "the loop
@@ -413,6 +417,8 @@ final class AgentLoopConfig {
     this.transformContext,
     this.prepareNextTurn,
     this.overWindowRelief,
+    this.messageCapPolicy,
+    this.messageCapRelief,
     this.getSteeringMessages,
     this.getFollowUpMessages,
     this.steeringNotifications,
@@ -455,6 +461,15 @@ final class AgentLoopConfig {
   /// most once per response before the guard's refusal surfaces; see
   /// [OverWindowRelief]. `null` = the guard keeps today's behavior.
   final OverWindowRelief? overWindowRelief;
+
+  /// gh-1680: the learned per-model message-cap policy: a classified cap
+  /// refusal is learned and the loop retries ONCE (coalesced payload +
+  /// [messageCapRelief] compaction). `null` = pre-gh-1680 behavior.
+  final MessageCapPolicy? messageCapPolicy;
+
+  /// gh-1680: the host compaction pass for the message-cap self-heal; see
+  /// [MessageCapRelief]. Fires only when [messageCapPolicy] classified.
+  final MessageCapRelief? messageCapRelief;
 
   /// Steering messages to inject at the next turn boundary.
   final QueuedMessagesSource? getSteeringMessages;
@@ -738,22 +753,6 @@ final class ModelRequestEvent extends AgentEvent {
   /// [AgentLoopConfig.wireDump] is on. Hosts MUST redact (secrets live in
   /// plaintext inside) and cap before persisting.
   final String? rawWireDump;
-}
-
-/// Emitted when the outbound request context needed tool-pairing surgery
-/// (issue #85): orphaned tool results dropped, missing results synthesized,
-/// or duplicate ids renamed. Repairs are never silent — [report] carries
-/// the counts and affected ids, and [providerError] is set when the pass
-/// ran in response to a provider pairing error (the self-healing retry).
-final class ToolPairingRepairEvent extends AgentEvent {
-  const ToolPairingRepairEvent({required this.report, this.providerError});
-
-  /// What the repair changed (empty report = detection only).
-  final ToolPairingRepairReport report;
-
-  /// Raw provider error that triggered this pass, when it ran on the
-  /// retry path; null for the pre-request repair.
-  final String? providerError;
 }
 
 /// The FinalizeGate task ledger parsed from the run's final assistant
@@ -1452,6 +1451,9 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
 ) async {
   var reliefUsed = false;
   var pairingHealed = false;
+  // gh-1680: one-shot message-cap heal state; when armed, the next
+  // rebuilt payload coalesces toward its target.
+  final capState = _CapHealState();
   // Issue #862: drain the armed corrective note once per streamed response
   // (not per built context) so a mid-turn retry re-attaches it.
   final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
@@ -1461,98 +1463,27 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
     return await _abortedTurn(context, config, emit);
   }
   for (var attempt = 0; ; attempt++) {
-    final (requestContext, repairReport) = await _buildRequestContext(
+    final result = await _streamAttempt(
       context,
       config,
+      emit,
+      streamFunction,
       cancelToken,
       misuseNote: misuseNote,
+      capState: capState,
+      reliefUsed: reliefUsed,
+      pairingHealed: pairingHealed,
     );
-    // Pairing repairs are always surfaced (issue #85): hosts see exactly
-    // what was dropped/synthesized/renamed before the request went out.
-    if (repairReport.isNotEmpty) {
-      await emit(ToolPairingRepairEvent(report: repairReport));
+    switch (result) {
+      case _AttemptReturn():
+        return result.turn;
+      case _AttemptRetry():
+        context = result.nextContext;
+        if (result.reliefUsed != null) reliefUsed = result.reliefUsed!;
+        if (result.pairingHealed != null) {
+          pairingHealed = result.pairingHealed!;
+        }
     }
-
-    // Mid-turn over-window guard (issue #387): tool outputs can balloon one
-    // turn far past the model window. The cheap window check runs
-    // SYNCHRONOUSLY and only an actual overflow awaits
-    // [_overWindowGuardTurn] — an unconditional await here yields a
-    // microtask on EVERY turn, which reshuffles host event-listener
-    // interleaving downstream (issue #1085 CI: the flutter service's
-    // persist passes lost the final assistant append). Same shape, no
-    // yield on the normal path.
-    final window = effectiveContextWindow(
-      config.model.contextWindow,
-      config.contextWindowCap,
-    );
-    final tokens = estimateRequestTokens(
-      requestContext.messages,
-      systemPrompt: requestContext.systemPrompt,
-      tools: requestContext.tools ?? const [],
-    );
-    if (window > 0 && tokens > window) {
-      final guard = await _overWindowGuardTurn(
-        context,
-        requestContext,
-        config,
-        emit,
-        reliefUsed,
-        cancelToken,
-        window,
-        tokens,
-      );
-      reliefUsed = guard.reliefUsed;
-      if (guard.terminal != null) return guard.terminal!;
-      if (guard.retried) {
-        context = guard.context;
-        continue;
-      }
-    }
-
-    AssistantMessageEventStream response;
-
-    await emit(_captureRequest(config, requestContext));
-    try {
-      response = streamFunction(
-        config.model,
-        requestContext,
-        cancelToken: cancelToken,
-      );
-    } catch (error) {
-      return await _providerErrorTurn(context, config, emit, error);
-    }
-
-    final streamed = await _consumeResponseStream(response, context, emit);
-    final finished = streamed.finished;
-    if (finished != null) {
-      // Self-healing retry (issue #85): a provider pairing 400 means the
-      // context was corrupted in a shape this repairer missed. Log the
-      // detection, re-run the repair over the rebuilt request, retry ONCE —
-      // a wedged session recovers here instead of never. A second failure
-      // surfaces normally (no infinite loop).
-      if (_needsPairingHeal(pairingHealed, finished)) {
-        await emit(
-          ToolPairingRepairEvent(
-            report: const ToolPairingRepairReport(),
-            providerError: finished.errorMessage,
-          ),
-        );
-        pairingHealed = true;
-        continue;
-      }
-      return (finished, context);
-    }
-
-    // The provider stream closed without a terminal event (provider bug).
-    return (
-      await _finishWithoutStream(
-        context,
-        emit,
-        _streamEndedWithoutTerminal(config, streamed.partial),
-        replaceLast: streamed.addedPartial,
-      ),
-      context,
-    );
   }
 }
 
@@ -1718,13 +1649,6 @@ Future<(AssistantMessage, Context)> _providerErrorTurn(
   );
 }
 
-/// Whether a finished turn needs the one-shot pairing self-heal (issue
-/// #85): a provider pairing 400 on an error stop, before it was used.
-bool _needsPairingHeal(bool pairingHealed, AssistantMessage finished) =>
-    !pairingHealed &&
-    finished.stopReason == StopReason.error &&
-    isToolPairingProviderError(finished.errorMessage);
-
 /// Builds the synthetic error turn for a provider stream that closed
 /// without any terminal event (provider bug): keep the streamed partial
 /// when one landed, otherwise synthesize an empty error message.
@@ -1747,6 +1671,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   AgentLoopConfig config,
   CancelToken? cancelToken, {
   String? misuseNote,
+  int? capCoalesceTarget,
 }) async {
   // pi applies transformContext (then convertToLlm) before each provider
   // call; only the request payload is rewritten, never the transcript.
@@ -1833,6 +1758,8 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       tools: requestContext.tools,
     );
   }
+  // gh-1680: armed cap repair coalesces the payload; AC7 keeps the transcript untouched.
+  requestContext = _applyMessageCapCoalesce(requestContext, capCoalesceTarget);
   // gh-1556: an armed session deadline rides every request payload as a
   // trailing `time-left:` line — a standalone user message, so it can
   // never break a call/result run (same seat as the misuse note below).
