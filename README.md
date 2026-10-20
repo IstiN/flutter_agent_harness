@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/IstiN/flutter_agent_harness/actions/workflows/ci.yml/badge.svg)](https://github.com/IstiN/flutter_agent_harness/actions/workflows/ci.yml)
 [![pub package](https://img.shields.io/pub/v/flutter_agent_harness.svg)](https://pub.dev/packages/flutter_agent_harness)
-[![CRAP max 12.0 — measured whole-tree](https://img.shields.io/badge/CRAP%20max-12.0-brightgreen)](https://github.com/IstiN/crap4dart)
-[![CRAP app max 30.0](https://img.shields.io/badge/CRAP%20app-30.0-yellow)](https://github.com/IstiN/crap4dart)
+[![CRAP max 90.0 — 0.14.2 migration reseed (ladder gh-1713)](https://img.shields.io/badge/CRAP%20max-90.0-orange)](https://github.com/IstiN/crap4dart)
+[![CRAP app max 74.13 — 0.14.2 migration reseed (ladder gh-1713)](https://img.shields.io/badge/CRAP%20app-74.13-orange)](https://github.com/IstiN/crap4dart)
 [![coverage ≥ 80%](https://img.shields.io/badge/coverage-%E2%89%A5%2093%25-brightgreen)](https://github.com/IstiN/flutter_agent_harness)
 
 Cross-platform AI agent harness for Dart and Flutter — streaming provider
@@ -207,6 +207,50 @@ there is no headless `--provider chatgpt` flag). Several ChatGPT accounts
 can coexist: the flow offers the saved accounts first, each account keeps
 its own named entry and secure-store slot, and re-auth never touches a
 sibling account's credentials.
+
+A `codex login` session can skip the browser round-trip:
+`/provider chatgpt import` (optionally a path; default `~/.codex/auth.json`)
+adopts the CLI's stored tokens into the same secure-store slot — SSO
+tenants included.
+
+For headless/CI use the saved login mints a fresh Bearer credential in one
+command (issue #1704) — ChatGPT access tokens are accepted ONLY by the
+Codex backend, never by `api.openai.com`:
+
+```bash
+eval "$(fa provider export my-chatgpt)"   # export OPENAI_API_KEY=… / OPENAI_BASE_URL=…/codex
+fa provider export my-chatgpt --check     # credential health, no secrets
+```
+
+The refresh token never prints; `--check` states the SSO caveat explicitly
+(corporate session policies can shorten lifetimes or revoke refresh
+tokens). In GitHub Actions, the bundled composite action mints the token
+from a stored refresh-token secret on every run (one-time browser login,
+then no browser ever again):
+
+```yaml
+steps:
+  - uses: ./.github/actions/chatgpt-codex-auth
+    with:
+      refresh-token: ${{ secrets.CHATGPT_REFRESH_TOKEN }}
+  # OPENAI_API_KEY (fresh Bearer) + OPENAI_BASE_URL (…/backend-api/codex)
+  # are exported for the steps below.
+```
+
+`providersQueue:` entries speak `chatgpt-codex` first-class: an entry with
+no `apiKeyEnv` resolves the saved login's Keychain slot automatically, a
+`refreshTokenEnv: CHATGPT_REFRESH_TOKEN` entry mints its initial access
+token on the fly (headless runners with no Keychain), and an `apiKeyEnv`
+carrying a plain access token (not the full OAuth blob) is used as-is
+until it 401s:
+
+```yaml
+providersQueue:
+  - provider_type: chatgpt-codex
+    provider_config:
+      model: gpt-5-codex
+      refreshTokenEnv: CHATGPT_REFRESH_TOKEN
+```
 
 ### Env preconfig (Docker / headless)
 

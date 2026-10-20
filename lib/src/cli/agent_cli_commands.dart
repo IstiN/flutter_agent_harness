@@ -957,15 +957,25 @@ extension ProviderQueueEditor on AgentCli {
   }
 
   /// Secrets for [entries]: the injected env lookup first (tests, embedders),
-  /// then the process environment, then the secure-key cache.
+  /// then the process environment, then the secure-key cache. The names
+  /// mirror [collectQueueSecrets]: `apiKeyEnv`, `refreshTokenEnv`, and the
+  /// default ChatGPT slot for a `chatgpt-codex` entry with no `apiKeyEnv`
+  /// (issue #1704).
   Map<String, String> _queueSecrets(List<ProviderQueueEntry> entries) {
     final lookup = config.envVarValue;
     final env = lookup == null
         ? null
         : {
-            for (final entry in entries)
-              if (entry.apiKeyEnv != null)
-                entry.apiKeyEnv!: lookup(entry.apiKeyEnv!) ?? '',
+            for (final entry in entries) ...{
+              for (final name in [
+                ?entry.apiKeyEnv,
+                ?entry.refreshTokenEnv,
+                if (entry.apiKeyEnv == null &&
+                    entry.providerType == 'chatgpt-codex')
+                  chatGptOAuthCredentialsEnvName,
+              ])
+                name: lookup(name) ?? '',
+            },
           };
     return collectQueueSecrets(
       entries,
