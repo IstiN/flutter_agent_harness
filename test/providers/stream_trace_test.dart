@@ -4,8 +4,13 @@
 // each carrying elapsed-ms, +delta-ms-since-previous-mark, a sequence
 // number, and a detail. Answers "streamed x ms, rendered y ms" from the
 // log alone.
+import 'dart:async';
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/providers/stream_trace.dart';
 import 'package:test/test.dart';
+
+import '../cli/agent_cli_test_support.dart';
 
 final class _CollectingSink implements StreamTraceSink {
   final lines = <String>[];
@@ -118,5 +123,109 @@ void main() {
       'emit',
       'render',
     ]);
+  });
+
+  group('emit marks fire once per delta — wrapper hops stay silent', () {
+    // pr-1727 review IMPORTANT pin: push() is overridden on EVERY
+    // AssistantMessageEventStream, including the wrapper streams that
+    // re-push inner events (transient-retry, DIAL cache probe,
+    // silent-stream policy, fallback, queue, telemetry, prompt tools).
+    // Only the adapter's own stream may emit; wrappers construct with
+    // traced: false.
+    test('a stream constructed with traced: false drops emit marks', () {
+      final sink = _CollectingSink();
+      StreamTrace.start(sink);
+
+      final silent = AssistantMessageEventStream(traced: false);
+      silent
+        ..push(
+          TextDeltaEvent(
+            delta: 'hey',
+            contentIndex: 0,
+            partial: testAssistant(
+              content: const [TextContent(text: 'hey')],
+            ),
+          ),
+        )
+        ..push(
+          DoneEvent(
+            reason: StopReason.stop,
+            message: testAssistant(
+              content: const [TextContent(text: 'hey')],
+            ),
+          ),
+        )
+        ..end();
+      expect(sink.lines, isEmpty, reason: 'wrapper hops must not emit');
+
+      final loud = AssistantMessageEventStream();
+      loud.push(
+        TextDeltaEvent(
+          delta: 'hey',
+          contentIndex: 0,
+          partial: testAssistant(content: const [TextContent(text: 'hey')]),
+        ),
+      );
+      loud.end();
+      expect(sink.lines.where((l) => l.contains(' emit ')), hasLength(1));
+    });
+
+    test('one emit per delta through transientRetryStreamFunction', () async {
+      final sink = _CollectingSink();
+      StreamTrace.start(sink);
+
+      final inner = AssistantMessageEventStream();
+      final wrapped = transientRetryStreamFunction(
+        (model, context, {cancelToken}) => inner,
+      );
+      final drained = wrapped(
+        testModel,
+        const Context(messages: []),
+      ).forEach((_) {});
+      scheduleMicrotask(() {
+        inner
+          ..push(StartEvent(partial: testAssistant()))
+          ..push(
+            TextDeltaEvent(
+              delta: 'he',
+              contentIndex: 0,
+              partial: testAssistant(
+                content: const [TextContent(text: 'he')],
+              ),
+            ),
+          )
+          ..push(
+            TextDeltaEvent(
+              delta: 'llo',
+              contentIndex: 0,
+              partial: testAssistant(
+                content: const [TextContent(text: 'hello')],
+              ),
+            ),
+          )
+          ..push(
+            DoneEvent(
+              reason: StopReason.stop,
+              message: testAssistant(
+                content: const [TextContent(text: 'hello')],
+              ),
+            ),
+          )
+          ..end();
+      });
+      await drained.timeout(const Duration(seconds: 30));
+
+      // Without the fix the wrapper's own stream re-emits every delta:
+      // 4 text emits and 2 terminals instead of one each.
+      final textEmits = sink.lines
+          .where((l) => l.contains(' emit ') && l.contains('text +'))
+          .toList();
+      expect(textEmits, hasLength(2), reason: 'one emit per text delta');
+      expect(
+        sink.lines.where((l) => l.contains(' emit ') && l.contains('terminal')),
+        hasLength(1),
+        reason: 'one terminal emit, not one per hop',
+      );
+    });
   });
 }

@@ -361,43 +361,45 @@ StreamFunction Function(String apiKey) _mintingStreamForKey(
   Future<String> Function(String refreshToken) mint,
 ) {
   Future<String>? minted;
-  return (apiKey) =>
-      (Model model, Context context, {CancelToken? cancelToken}) {
-        final out = AssistantMessageEventStream();
-        unawaited(() async {
-          try {
-            minted ??= mint(refreshToken);
-            final credentials = await minted!;
-            await for (final event in factory(kind, credentials)(
-              model,
-              context,
-              cancelToken: cancelToken,
-            )) {
-              out.push(event);
-            }
-          } catch (error) {
-            out.push(
-              ErrorEvent(
-                reason: StopReason.error,
-                error: AssistantMessage(
-                  content: const [],
-                  api: model.api,
-                  provider: model.provider,
-                  model: model.id,
-                  usage: Usage.zero,
-                  stopReason: StopReason.error,
-                  errorMessage:
-                      'chatgpt-codex credential bootstrap failed: $error',
-                  timestamp: DateTime.now(),
-                ),
-              ),
-            );
-          } finally {
-            out.end();
-          }
-        }());
-        return out;
-      };
+  return (
+    apiKey,
+  ) => (Model model, Context context, {CancelToken? cancelToken}) {
+    // traced: false — this stream re-pushes an inner stream's events; the
+    // adapter's own stream carries the StreamTrace emit mark (once per delta).
+    final out = AssistantMessageEventStream(traced: false);
+    unawaited(() async {
+      try {
+        minted ??= mint(refreshToken);
+        final credentials = await minted!;
+        await for (final event in factory(kind, credentials)(
+          model,
+          context,
+          cancelToken: cancelToken,
+        )) {
+          out.push(event);
+        }
+      } catch (error) {
+        out.push(
+          ErrorEvent(
+            reason: StopReason.error,
+            error: AssistantMessage(
+              content: const [],
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+              usage: Usage.zero,
+              stopReason: StopReason.error,
+              errorMessage: 'chatgpt-codex credential bootstrap failed: $error',
+              timestamp: DateTime.now(),
+            ),
+          ),
+        );
+      } finally {
+        out.end();
+      }
+    }());
+    return out;
+  };
 }
 
 /// The wired queue: the sticky RAM state, the driven stream function, and

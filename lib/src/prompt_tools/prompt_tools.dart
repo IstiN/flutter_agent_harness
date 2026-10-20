@@ -149,7 +149,9 @@ StreamFunction promptToolStreamFunction(
       return inner(model, context, cancelToken: cancelToken);
     }
 
-    final out = AssistantMessageEventStream();
+    // traced: false — this stream re-pushes an inner stream's events; the
+    // adapter's own stream carries the StreamTrace emit mark (once per delta).
+    final out = AssistantMessageEventStream(traced: false);
     final parser = _PromptToolStreamParser(out, opts, model);
 
     final AssistantMessageEventStream innerStream;
