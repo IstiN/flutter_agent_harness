@@ -33,12 +33,14 @@ final class _FlakyStore implements SecureKeyStore {
 }
 
 /// A [Shell] that stands in for the macOS `security` CLI: records the
-/// command and clears the store's write failure — simulating the default
-/// keychain pointer coming back.
+/// command and (by default) clears the store's write failure — simulating
+/// the default keychain pointer coming back. [fixesStore] false keeps the
+/// store broken: the repair ran, but the retried save fails again.
 final class _RepairShell implements Shell {
-  _RepairShell(this.store);
+  _RepairShell(this.store, {this.fixesStore = true});
 
   final _FlakyStore store;
+  final bool fixesStore;
   final commands = <String>[];
 
   @override
@@ -47,7 +49,7 @@ final class _RepairShell implements Shell {
     ShellExecOptions? options,
   }) async {
     commands.add(command);
-    store.writeError = null;
+    if (fixesStore) store.writeError = null;
     return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
   }
 }
@@ -391,8 +393,12 @@ void main() {
         () => io.out.toString().contains('model id (empty keeps'),
       );
       io.sendLine('');
+      // The edit's own switch line is the SECOND 'switched provider to
+      // openai' — the add wizard printed the first, and a plain contains()
+      // would fire on the stale line before the flow's gate resets.
       await waitForIt(
-        () => io.out.toString().contains('switched provider to openai'),
+        () => io.out.toString().split('switched provider to openai').length >=
+            3,
       );
     }
 

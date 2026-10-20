@@ -100,6 +100,18 @@ void main() {
       );
     });
 
+    test('classifies the canceled-authorization shape (gh-1679 review: the '
+        'incident second live shape points at the same remedy)', () {
+      expect(
+        isMissingDefaultKeychainError(
+          'Bad state: security add-generic-password failed (exit 154): '
+          'SecKeychainItemCreateFromContent (<default>): The authorization '
+          'was canceled by the user',
+        ),
+        isTrue,
+      );
+    });
+
     test('the advisory names the system remedy and is text-only', () {
       final advisory = missingDefaultKeychainAdvisory();
       // The remedy command is named, never executed (pure string).

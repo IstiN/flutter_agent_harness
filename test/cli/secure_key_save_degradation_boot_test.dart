@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
@@ -160,6 +162,67 @@ void main() {
       expect(plain.toYaml(), isNot(contains('keyNotPersisted')));
       expect(CustomProviderEntry.fromYaml(plain.toYaml()).keyNotPersisted,
           isFalse);
+    });
+  });
+
+  group('boot ordering — degradation note AFTER the legacy-slot migration '
+      '(gh-1679 review)', () {
+    // Source-order pin (the provider_tuning_config_test.dart pattern): the
+    // finding is a boot-ORDER property — the note loop must run after
+    // migrateLegacyKeySlots, or a flagged entry whose key lives under a
+    // legacy cross-spelling slot gets a "did not reach the store" line for
+    // a slot the very next statement populates.
+    test('bin/fah_runapp.dart prints the degradation lines after the '
+        'migration block', () {
+      final source = File('bin/fah_runapp.dart').readAsStringSync();
+      final degradation = source.indexOf('secureKeySaveDegradationLines(');
+      final migration = source.indexOf('migrateLegacyKeySlots(');
+      expect(degradation, greaterThan(-1));
+      expect(migration, greaterThan(-1));
+      expect(
+        degradation,
+        greaterThan(migration),
+        reason:
+            'the degradation note decides "slot still empty" via the '
+            'preload snapshot — after migrateLegacyKeySlots copies a '
+            'legacy slot onto the canonical one, the note must re-read '
+            'the snapshot and stay silent',
+      );
+    });
+
+    test('migration first, then the note: a flagged entry whose key sits '
+        'under a legacy slot prints nothing', () async {
+      final store = _MapStore();
+      final keys = SecureKeyCache(store);
+      await keys.probe();
+      // The stranded shape: the canonical (record-scoped) slot is empty,
+      // an older build's host-scoped slot holds the key.
+      await keys.save('FA_KEY_API_KIMI_COM', 'sk-legacy-value');
+      final entry = CustomProviderEntry(
+        name: 'kimi_ira',
+        apiType: 'openai',
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        modelId: 'k2',
+        keyName: 'FA_KEY_API_KIMI_COM_KIMI_IRA',
+        keyNotPersisted: true,
+      );
+
+      final notices = await migrateLegacyKeySlots([
+        (
+          baseUrl: entry.baseUrl,
+          providerName: entry.name,
+          pinnedKeyName: entry.keyName,
+        ),
+      ], keys);
+      expect(notices, hasLength(1), reason: 'the copy is loud');
+      expect(keys.read('FA_KEY_API_KIMI_COM_KIMI_IRA'), 'sk-legacy-value');
+
+      // Boot order under test: the note runs AFTER the migration, sees the
+      // copied slot, and stays silent (no self-contradicting line).
+      expect(
+        secureKeySaveDegradationLines(keys: keys, customProviders: [entry]),
+        isEmpty,
+      );
     });
   });
 }
