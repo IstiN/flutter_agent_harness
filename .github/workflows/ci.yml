@@ -907,21 +907,52 @@ jobs:
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
 
+      # gh-1724: the shard evidence uploads ride the gh-1412 one-shot retry —
+      # run 39432336443 (tag v1.0.611) red'd shard 3 with every test GREEN on
+      # a single transient `Failed to FinalizeArtifact: 404 artifact not
+      # found` from GitHub's blob storage; the Quality gate followed
+      # (`a leg is failure (test-core)`) and the release went red. Same
+      # shape as the pty leg: the retry re-runs the SAME pinned action with
+      # overwrite:true (a failed attempt leaves the artifact half-registered
+      # — without overwrite the retry dies on "already exists"); a genuinely
+      # dead endpoint still fails the shard loudly.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload_core_coverage
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           name: coverage-shard-${{ matrix.shard }}
           path: coverage/lcov.info
           retention-days: 2
+      - name: Retry coverage upload (transient blob-storage reset, gh-1412)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: >-
+          always() && (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true')
+          && steps.upload_core_coverage.outcome == 'failure'
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: coverage/lcov.info
+          retention-days: 2
+          overwrite: true
 
       # junit durations for the weekly shard-rebalance.yml (retention 7d so
       # a quiet week never starves it into the file-count fallback).
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload_core_junit
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           name: junit-shard-${{ matrix.shard }}
           path: test-results/junit-shard-${{ matrix.shard }}.xml
           retention-days: 7
+      - name: Retry junit upload (transient blob-storage reset, gh-1412)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: >-
+          always() && (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true')
+          && steps.upload_core_junit.outcome == 'failure'
+        with:
+          name: junit-shard-${{ matrix.shard }}
+          path: test-results/junit-shard-${{ matrix.shard }}.xml
+          retention-days: 7
+          overwrite: true
 
   # Issue #551: the no-key integration legs (MockLlmServer scenarios, PTY
   # harness, no secrets, no network) run per-PR whenever test/integration/**
