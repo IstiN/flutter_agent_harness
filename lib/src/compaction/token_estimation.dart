@@ -191,7 +191,7 @@ int? projectedBranchBudgetCut(List<SessionRecord> branch, int budget) {
     final contribution = covered.contains(record.id)
         ? 0
         : hidden.contains(record.id)
-        ? _hiddenMarkerTokens
+        ? (record is CompactCheckpointRecord ? 0 : _hiddenMarkerTokens)
         : switch (record) {
             MessageRecord(:final message) => estimateTokens(message),
             CustomMessageRecord(:final content, :final timestamp) =>
@@ -219,10 +219,18 @@ int? projectedBranchBudgetCut(List<SessionRecord> branch, int budget) {
         :final firstRecordId,
         :final lastRecordId,
       ):
-        covered
-          ..addAll(coversRecordIds)
-          ..add(firstRecordId)
-          ..add(lastRecordId);
+        // Hidden-checkpoint parity (the goal_builder resume class): a
+        // checkpoint the judge itself hid swallows NOTHING and renders
+        // nothing (projection.dart `_coverAt` / the checkpoint case) —
+        // its span prices FULL. The hiding range is always NEWER than
+        // the checkpoint (folds reference older records), so the
+        // backward walk has already collected it here.
+        if (!hidden.contains(record.id)) {
+          covered
+            ..addAll(coversRecordIds)
+            ..add(firstRecordId)
+            ..add(lastRecordId);
+        }
       case CompactionRecord():
         // The last (newest) compaction record on the branch: its summary
         // contributed above; everything OLDER is dropped by the classic
@@ -275,28 +283,33 @@ int estimateProjectedBranchTokens(List<SessionRecord> branch) {
   // re-implemented here because projection.dart already imports this
   // library — importing back would be circular).
   final hidden = <String>{};
+  for (final record in kept) {
+    if (record is HiddenRangeRecord) hidden.addAll(record.recordIds);
+  }
+  // Hidden-checkpoint parity (the goal_builder resume class): a
+  // checkpoint the judge itself hid swallows NOTHING and renders nothing
+  // (projection.dart `_coverAt` — "its checkpoint was itself hidden —
+  // then the range renders as if uncovered"). Collecting its covers
+  // anyway undercounts the real projection by the whole covered span —
+  // a resume walk priced 175k while the request actually carried ~298k,
+  // so the budget trim never fired and the session booted over-window.
   final covered = <String>{};
   for (final record in kept) {
-    switch (record) {
-      case HiddenRangeRecord(:final recordIds):
-        hidden.addAll(recordIds);
-      case CompactCheckpointRecord(
-        :final coversRecordIds,
-        :final firstRecordId,
-        :final lastRecordId,
-      ):
-        covered
-          ..addAll(coversRecordIds)
-          ..add(firstRecordId)
-          ..add(lastRecordId);
-      default:
-        break;
+    if (record is CompactCheckpointRecord && !hidden.contains(record.id)) {
+      covered
+        ..addAll(record.coversRecordIds)
+        ..add(record.firstRecordId)
+        ..add(record.lastRecordId);
     }
   }
   var tokens = 0;
   for (final record in kept) {
     if (covered.contains(record.id)) continue;
     if (hidden.contains(record.id)) {
+      // A hidden checkpoint renders NOTHING (projection.dart's checkpoint
+      // case: "no marker, no swallow"); every other hidden record renders
+      // a one-line marker.
+      if (record is CompactCheckpointRecord) continue;
       tokens += _hiddenMarkerTokens;
       continue;
     }
