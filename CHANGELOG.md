@@ -26,6 +26,18 @@ block a release again.
   `fa: SIGTERM received …` so a child-issued kill never masquerades as a
   user Ctrl+C (exit code contract unchanged: 130 graceful, 143 escalate).
 
+- fix(gh-1757): the Android build no longer re-enters the sdkmanager
+  download roulette for CMake. v1.0.619's `build-android` leg died at
+  `:jni:configureCMakeDebug[arm64-v8a]` — the `:jni` module (transitive
+  `jni` package via path_provider_android) wires externalNativeBuild.cmake
+  with no version, so AGP auto-installed its default `cmake;3.22.1`
+  mid-configuration and one corrupt archive ("Archive is not a ZIP
+  archive") red'd the leg, the aggregate Quality gate, and the
+  Advance-vpinned-marker job. The gh-1655 pre-install action now also
+  pre-installs `cmake;3.22.1` with bounded retry + idempotent skip (same
+  hardening the NDK path already carries); the guard test pins the new
+  AC6 assertions and the AGP-version coupling (AC7).
+
 - fix(gh-1743): a structured compaction that hits its total-budget
   watchdog (the factory's 300s `totalBudget`) no longer aborts the
   live session. `AutoCompactorFactory.run()` now applies the
