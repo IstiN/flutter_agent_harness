@@ -300,7 +300,9 @@ final class FileMessagingRepository implements MessagingRepository {
     }
   }
 
-  Future<String?> _registrySlugFor(String agentId) async {
+  /// The parsed `~/.fah/messages-registry.json`, or `null` when there is
+  /// nothing usable (missing home, absent/corrupt file).
+  Future<Map<String, dynamic>?> _readRegistry() async {
     final home = _homeDir;
     if (home == null || home.isEmpty) return null;
     final path = (await _env.joinPath([
@@ -312,13 +314,16 @@ final class FileMessagingRepository implements MessagingRepository {
     final text = existing.valueOrNull;
     if (text == null || text.isEmpty) return null;
     try {
-      final decoded = jsonDecode(text) as Map<String, dynamic>;
-      final entry = decoded[agentId];
-      if (entry is Map<String, dynamic> && entry['slug'] is String) {
-        return entry['slug'] as String;
-      }
+      return jsonDecode(text) as Map<String, dynamic>;
     } on FormatException {
       return null;
+    }
+  }
+
+  Future<String?> _registrySlugFor(String agentId) async {
+    final entry = (await _readRegistry())?[agentId];
+    if (entry is Map<String, dynamic> && entry['slug'] is String) {
+      return entry['slug'] as String;
     }
     return null;
   }
@@ -348,6 +353,11 @@ final class FileMessagingRepository implements MessagingRepository {
   Future<List<MailboxEntry>> directory() async {
     final sessionRoot = _sessionRoot();
     final entries = <MailboxEntry>[];
+    // gh-1744: the registry holds each mailbox's EXACT cwd (written from
+    // the live env at registration) — read once, before the slug walk,
+    // and preferred over the slug decode whose legacy form is lossy for
+    // hyphenated workspaces.
+    final registry = await _readRegistry();
     final slugDirs = (await _env.listDir(sessionRoot)).valueOrNull ?? const [];
     for (final slugDir in slugDirs) {
       if (slugDir.kind != FileKind.directory) continue;
@@ -369,7 +379,10 @@ final class FileMessagingRepository implements MessagingRepository {
         final nameMarker = (await _env.readTextFile(
           '${mbDir.path}/.name',
         )).valueOrNull?.trim();
-        final cwd = _decodeSessionCwd?.call(slugDir.name);
+        final registryCwd = registry?[id]?['cwd'];
+        final cwd = (registryCwd is String && registryCwd.isNotEmpty)
+            ? registryCwd
+            : _decodeSessionCwd?.call(slugDir.name);
         entries.add(
           MailboxEntry(
             id: id,
@@ -440,7 +453,11 @@ final class FileMessagingRepository implements MessagingRepository {
     final home = _homeDir;
     if (home == null || home.isEmpty) return;
     final slug = encodeSessionCwd(_env.cwd);
-    final cwd = _decodeSessionCwd?.call(slug) ?? '';
+    // gh-1744: the registry exists so tooling gets the EXACT cwd — the
+    // live env knows it, while decoding the slug back is lossy for
+    // hyphenated workspaces. Hosts without a slug decoder keep the
+    // legacy empty-cwd shape.
+    final cwd = _decodeSessionCwd != null ? _env.cwd : '';
     final path = (await _env.joinPath([
       home,
       '.fah',

@@ -395,6 +395,38 @@ String mailboxWakeCommand({
       '${q(wakePromptText)} >/dev/null 2>&1 & echo woken';
 }
 
+/// Spawns the detached headless wake run of an asleep mailbox in [cwd]
+/// (the command comes from [mailboxWakeCommand]). Returns an error text or
+/// null on success.
+///
+/// gh-1744: a mailbox cwd can name a directory that does not exist (a
+/// legacy lossy slug decode, or a workspace moved away) — spawning there
+/// dies as `ProcessException: No such file or directory` and the asleep
+/// mailbox can never be woken. The directory is verified first and the
+/// refusal names it, so the tool note explains the wake failure instead of
+/// surfacing a raw process exception.
+Future<String?> launchMailboxWake({
+  required ExecutionEnv env,
+  String? wakeExecutable,
+  required String cwd,
+  required String sessionId,
+  String? sessionName,
+}) async {
+  final exists = await env.exists(cwd);
+  if (exists.isErr || exists.valueOrNull != true) {
+    return 'working directory does not exist: $cwd';
+  }
+  final command = mailboxWakeCommand(
+    wakeExecutable: wakeExecutable,
+    sessionId: sessionId,
+    sessionName: sessionName,
+  );
+  final result = await env.exec(command, options: ShellExecOptions(cwd: cwd));
+  return result.isOk
+      ? null
+      : 'shell exec failed: ${result.errorOrNull?.message ?? 'unknown error'}';
+}
+
 /// The prompt the headless wake run starts with — the inbox drain delivers
 /// the pending mail into the turn; the session file is shared.
 const wakePromptText =

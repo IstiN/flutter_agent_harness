@@ -257,14 +257,17 @@ void main() {
         // The ticket's failing workspace: round-tripping the cwd through
         // the slug used to write the non-existent /Users/y/_w/postal/nl.
         const slug = '--Users-Yury_Bakhmutski-_w-postal%2Dnl--';
+        final dashedEnv = MemoryExecutionEnv(
+          cwd: '/Users/Yury_Bakhmutski/_w/postal-nl',
+        );
         final dashed = FileMessagingRepository(
-          env: MemoryExecutionEnv(cwd: '/Users/Yury_Bakhmutski/_w/postal-nl'),
+          env: dashedEnv,
           root: '/sessions/$slug/messages',
           homeDir: '/home/user',
           decodeSessionCwd: decodeSessionCwd,
         );
         await dashed.register('sess1/main');
-        final registryText = (await env.readTextFile(
+        final registryText = (await dashedEnv.readTextFile(
           '/home/user/.fah/messages-registry.json',
         )).getOrThrow();
         final registry = jsonDecode(registryText) as Map<String, dynamic>;
