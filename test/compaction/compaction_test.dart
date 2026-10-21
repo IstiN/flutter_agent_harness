@@ -103,7 +103,7 @@ void main() {
 
       final s16384 = CompactionSettings.forWindow(16384);
       expect(s16384.reserveTokens, 4096);
-      expect(s16384.keepRecentTokens, 8192);
+      expect(s16384.keepRecentTokens, 4096);
     });
 
     test(

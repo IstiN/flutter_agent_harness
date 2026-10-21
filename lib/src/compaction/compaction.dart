@@ -470,7 +470,7 @@ final class CompactionSettings {
     );
     var keepRecentTokens = min(
       131072,
-      max(max(window ~/ 8, 2048), min(8192, window ~/ 2)),
+      max(max(window ~/ 8, 2048), min(4096, window ~/ 2)),
     );
     if (reserveTokens >= window ~/ 2) {
       reserveTokens = max(128, window ~/ 4);
