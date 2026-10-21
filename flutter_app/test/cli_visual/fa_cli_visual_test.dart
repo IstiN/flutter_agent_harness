@@ -420,58 +420,45 @@ void main() {
   });
 
   group('model edit', () {
-    testWidgets('/model-edit → context window presets', (tester) async {
-      // Fixture chat model: /model-edit mutates the ACTIVE model's config,
-      // which must never be the real user's (issue #508).
+    testWidgets('/model-edit → Model capabilities flow (merged surface)',
+        (tester) async {
+      // Fixture chat model: the flow pins the ACTIVE model's caps, which
+      // must never be the real user's (issue #508).
       final tempHome = _tempHomeWithProvider();
       final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
       await harness.screenshot(shotsDir, '50_boot_model_edit');
 
-      // 50 is the EDIT-FLOW state: the wizard picker its name claims,
-      // not a plain boot frame.
+      // 50 is the EDIT-FLOW state: bare /model-edit is the ALIAS into the
+      // Model capabilities flow, pre-focused on the active model (issue
+      // #1515 — the standalone Model parameters surface is retired).
       await harness.runSlashCommand('/model-edit');
       await harness.liveWaitForText(
-        'Context Window',
+        'Context window',
         timeout: const Duration(seconds: 15),
       );
       await harness.screenshot(shotsDir, '50_boot_model_edit');
-      expect(harness.screenText, contains('Model Edit'));
-      expect(harness.screenText, contains('Context Window'));
-      expect(harness.screenText, contains('Max Output Tokens'));
+      expect(harness.screenText, contains('capabilities —'));
+      expect(harness.screenText, contains('Context window'));
+      expect(harness.screenText, contains('Max output tokens'));
 
-      // Pick Context Window (first option) → the preset list.
+      // Open the context-window row (first option) → the preset list with
+      // the Custom… free input (ported from the retired editor).
       harness.sendEnter();
       await harness.liveWaitForText('4K', timeout: const Duration(seconds: 15));
       await harness.screenshot(shotsDir, '51_context_presets');
       expect(harness.screenText, contains('4K'));
+      expect(harness.screenText, contains('Custom…'));
 
-      // Navigate down to 128K: the highlight cursor rides the preset row.
-      harness.sendArrowDown();
-      harness.sendArrowDown();
-      harness.sendArrowDown();
-      harness.sendArrowDown();
-      harness.sendArrowDown();
-      await harness.settle(settleMs: 300);
-      await harness.screenshot(shotsDir, '52_context_highlight');
-      // The ask-picker marks the cursor row `N. > label`.
-      final presetLine = harness.viewportLines.firstWhere(
-        (line) => line.contains('128K'),
-        orElse: () => '',
-      );
-      expect(presetLine, isNotEmpty, reason: '128K preset not on screen');
-      expect(
-        presetLine,
-        contains('> 128K'),
-        reason: '128K row is not the highlighted one',
-      );
-
+      // Type-to-filter to the 128K preset and pin it: the pick writes
+      // models.overrides and applies live (issue #1515).
+      harness.sendText('128K');
       harness.sendEnter();
       await harness.liveWaitForText(
-        'context window set to',
+        'models.overrides',
         timeout: const Duration(seconds: 15),
       );
       await harness.screenshot(shotsDir, '53_context_set');
-      expect(harness.screenText, contains('context window set to'));
+      expect(harness.screenText, contains('models.overrides'));
 
       await harness.close();
       tempHome.deleteSync(recursive: true);
