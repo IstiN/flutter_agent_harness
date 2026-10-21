@@ -22,14 +22,16 @@ final class FileSessionPresenceStore implements SessionPresenceStore {
   /// heartbeat file is DELETED once it ages past it (or earlier, when
   /// [pidAlive] pronounces its process dead) — `list()` no longer only
   /// filters dead entries, it sweeps them. [pidAlive] is the host
-  /// liveness probe (`kill -0`); null keeps the sweep purely time-based.
+  /// liveness probe (`kill -0`); a `null` answer means "no probe here"
+  /// and falls back to the time-based grace. Null keeps the sweep purely
+  /// time-based.
   FileSessionPresenceStore({
     required ExecutionEnv env,
     required String root,
     DateTime Function()? now,
     this.staleAfter = const Duration(seconds: 15),
     this.cleanupAfter = defaultCleanupAfter,
-    bool Function(int pid)? pidAlive,
+    bool? Function(int pid)? pidAlive,
   }) : _env = env,
        _root = root,
        _now = now ?? DateTime.now,
@@ -47,7 +49,7 @@ final class FileSessionPresenceStore implements SessionPresenceStore {
   final ExecutionEnv _env;
   final String _root;
   final DateTime Function() _now;
-  final bool Function(int pid)? _pidAlive;
+  final bool? Function(int pid)? _pidAlive;
 
   /// How old a heartbeat may be before its process is considered dead.
   final Duration staleAfter;
@@ -137,7 +139,7 @@ final class FileSessionPresenceStore implements SessionPresenceStore {
       // .presence directory does not grow without bound.
       final touched = DateTime.tryParse(presence.touchedAt);
       if (touched == null || touched.isBefore(cutoff)) {
-        _sweepIfAged(info, presence, cleanupCutoff);
+        await _sweepIfAged(info, presence, cleanupCutoff);
         continue;
       }
       out[presence.sessionId] = presence;
@@ -164,14 +166,17 @@ final class FileSessionPresenceStore implements SessionPresenceStore {
     DateTime cleanupCutoff,
   ) async {
     final pid = presence?.pid;
-    if (pid != null && _pidAlive != null) {
-      if (_pidAlive!(pid)) return;
+    final probe = pid == null || _pidAlive == null ? null : _pidAlive(pid);
+    if (probe != null) {
+      // A gone pid cannot resume — no grace needed. A live pid's file
+      // stays whatever its age (a suspended process may resume).
+      if (probe) return;
     } else {
       final touched = presence == null
           ? null
           : DateTime.tryParse(presence.touchedAt);
       final aged = touched ?? _fromMtimeMs(info.mtimeMs);
-      if (aged == null || !aged.isBefore(cleanupCutoff)) return;
+      if (!aged.isBefore(cleanupCutoff)) return;
     }
     try {
       await _env.remove(info.path, force: true);

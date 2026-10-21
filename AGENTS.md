@@ -637,7 +637,11 @@ factual: paths, commands, invariants — no essays.
   INTERFACES so a later network impl (`fa serve --attach`, remote headless)
   drops in without touching consumers — `SessionPresenceStore`
   (register/touch/unregister/list; stale heartbeats auto-drop, crash
-  coverage), `SessionEventSource.watch` (transcript tail as
+  coverage; gh-1660: `list()` also SWEEPS dead heartbeat files — a stale
+  file is deleted when its pid probe reports the process dead
+  (`probePidAlive` in lib/io.dart, wired by bin) or its age passes the
+  5-min `cleanupAfter` grace, so `.presence/` stays bounded; live pids
+  are never swept), `SessionEventSource.watch` (transcript tail as
   `AttachedMessage` rows: user/assistant/tool), `SessionInputChannel.send`
   (user input to the owning process). File impls:
   `FileSessionPresenceStore` (`<sessionsRoot>/.presence/<id>.json`,
@@ -646,7 +650,11 @@ factual: paths, commands, invariants — no essays.
   `AgentMessageKind.user`, to `<sessionId>/main`). CLI wiring: `run()`
   registers presence, the 2s inbox timer touches it every other tick,
   `finally` unregisters; `AgentCliConfig.presenceStore` is injectable
-  (bin/fah.dart builds the file store; tests inject fakes). CLI sessions
+  (bin/fah.dart builds the file store; tests inject fakes). Header-only
+  session files (crashed runs) are swept fire-and-forget at every CLI
+  boot — `_initializeSession` → `JsonlSessionRepo.cleanupEmptySessions`
+  with a 10-min mtime grace so a concurrently booting process's
+  brand-new file is never sweep food. CLI sessions
   carry `agent: cli` metadata (the app writes `fa`). App wiring:
   `CliSessionPresence` service (3s poll) + green-dot `live` on
   `SessionTile`; a live tap in the chat-sheet drawer opens

@@ -67,7 +67,10 @@ final class SessionPresence {
 /// Registry of live sessions: a running agent process registers on
 /// start, touches on every heartbeat tick, unregisters on exit. Readers
 /// ([SessionPresenceStore.list]) see only fresh entries — a crashed
-/// process is covered by staleness, not by cleanup.
+/// process is covered by staleness, and the file-backed impl
+/// additionally SWEEPS dead heartbeat files (gh-1660): a stale file is
+/// deleted once its process is provably dead (pid probe) or its age
+/// passes the store's cleanup grace, so `.presence/` stays bounded.
 abstract interface class SessionPresenceStore {
   /// Announces a live process owning [sessionId]. Also refreshes
   /// `touchedAt` (a register is a touch).
