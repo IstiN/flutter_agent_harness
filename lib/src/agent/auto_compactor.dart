@@ -1030,6 +1030,8 @@ class AutoCompactorFactory {
   }) async {
     final smolStream = sources.smolStream ?? sources.mainStream;
     final smolModel = sources.smolModel ?? sources.mainModel;
+    // ignore: avoid_print
+    print('DEBUG _runStructured smolWin=' + smolModel.contextWindow.toString());
     // One budget token for the whole structured run: both the judge and
     // the summarizer adapters receive it, and the budget expiries below
     // cancel it so the wedged call dies at the provider layer (#515).

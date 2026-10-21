@@ -155,6 +155,8 @@ Model withRegisteredContextWindow(
   ContextWindowRegistry? registry,
 ) {
   final registered = registry?.windowFor(model);
+  // ignore: avoid_print
+  print('DEBUG wRCW id=' + model.id + ' registered=' + registered.toString() + ' cur=' + model.contextWindow.toString());
   if (registered == null || registered == model.contextWindow) return model;
   // One shared field list (gh-1742 review round 1, comment 5): the copy
   // lives on [Model] itself.

@@ -174,6 +174,8 @@ final class _ScriptedStream {
     if (system.contains('context-hygiene judge')) {
       compactionCalls++;
       compactionModels.add(model);
+      // ignore: avoid_print
+      print('DEBUG judge model window=' + model.contextWindow.toString() + ' id=' + model.id);
       final seqs = RegExp(r'^\[(\d+)\]', multiLine: true)
           .allMatches(lastUserText(context))
           .map((m) => int.parse(m.group(1)!))
@@ -183,6 +185,8 @@ final class _ScriptedStream {
     if (system.contains('context checkpoint assistant')) {
       compactionCalls++;
       compactionModels.add(model);
+      // ignore: avoid_print
+      print('DEBUG ckpt model window=' + model.contextWindow.toString() + ' id=' + model.id + ' sys=[' + system.substring(0, 60) + ']');
       return _streamOf(_usageTurn('checkpoint: earlier work summarized'));
     }
     contexts.add(
@@ -219,13 +223,14 @@ final class _Wiring {
     int? contextWindowCap,
     ModelRolesResolver? rolesResolver,
     _ScriptedStream? scriptedStream,
+    int fatChars = 2400,
   }) : stream = scriptedStream ?? _ScriptedStream() {
     manager = SubagentManager(
       parentSessionId: 'parent-session',
       clock: () => _fakeTime,
     )..mailboxPrefix = 'parent-session';
     executor = TaskExecutor(
-      childTools: [_fatTool('read', 2400)],
+      childTools: [_fatTool('read', fatChars)],
       streamFunction: () => stream.call,
       model: () => _model,
       registry: TaskAgentRegistry([
@@ -550,6 +555,11 @@ void main() {
         registry: registry,
         rolesResolver: resolver,
         scriptedStream: stream,
+        // Fat enough that the structured engine's own estimate clears its
+        // trigger — the hide pass (and its judge call) must actually run,
+        // otherwise the run short-circuits with zero passes and the
+        // assertion below is vacuous.
+        fatChars: 16000,
       );
       // The detection lands for the SMOL identity before the spawn.
       final smol = resolver.resolveRole(smolModelRole)!;

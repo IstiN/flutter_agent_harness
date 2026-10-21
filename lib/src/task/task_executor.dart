@@ -606,7 +606,14 @@ final class TaskExecutor {
         settings: settings,
         sources: AutoCompactorSources(
           smolStream: smol?.stream,
-          smolModel: smol?.model,
+          // Invariant 2 (gh-1742 review round 1, comment 6): compaction
+          // LLM calls ride the smol model WITH the registered window —
+          // the roles-config Model carries the stale catalog value (the
+          // copilot-1M-vs-256k shape), so the checkpoint payload budget
+          // and summarizer window must come from the registry truth.
+          smolModel: smol == null
+              ? null
+              : withRegisteredContextWindow(smol.model, contextWindowRegistry),
           mainStream: wiring.stream,
           mainModel: wiring.model,
         ),
