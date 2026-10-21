@@ -129,7 +129,7 @@ final class FileSessionPresenceStore implements SessionPresenceStore {
       if (raw == null) continue;
       final json = _tryJson(raw);
       if (json == null) {
-        _sweepIfAged(info, null, cleanupCutoff);
+        await _sweepIfAged(info, null, cleanupCutoff);
         continue;
       }
       final presence = SessionPresence.fromJson(_idFromFileName(name), json);
