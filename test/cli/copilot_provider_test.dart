@@ -967,6 +967,59 @@ void main() {
       expect(io.out.toString(), contains('(from endpoint)'));
     });
 
+    test('a CONFIRMING report verifies the registry window (gh-1742 review '
+        'round 1, comment 4)', () async {
+      // The endpoint reports EXACTLY the carried catalog value (1M) — the
+      // common well-catalogued shape. The model is not rebuilt and no
+      // swap note prints, but the provider just VERIFIED the window: the
+      // shared registry must publish it so the AC6 badge (task_status
+      // pressure rows) does not mark a provider-confirmed window
+      // unverified.
+      final confirmingClient = http_testing.MockClient((request) async {
+        if (request.url.host == 'api.github.com') {
+          return http.Response(
+            '{"token":"[REDACTED:credential]",'
+            '"expires_at":9999999999,"refresh_in":1500}',
+            200,
+          );
+        }
+        if (request.url.path.endsWith('/models')) {
+          return http.Response(
+            '{"data":[{"id":"gpt-4.1","model_picker_enabled":true,'
+            '"capabilities":{"supports":{"tool_calls":true},"limits":'
+            '{"max_context_window_tokens":1000000,'
+            '"max_output_tokens":16384}}}]}',
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      });
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = rolesCli([
+        ModelRef(provider: 'copilot', modelId: 'gpt-4.1'),
+      ], fake: fake, modelsHttpClient: confirmingClient);
+      final run = cli.run();
+
+      await waitForIt(
+        () => cli.contextWindowRegistry.isVerified(cli.agent.state.model),
+        reason: 'the confirming endpoint report published the verification',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      // The carried value stays (a confirming report is a model no-op).
+      expect(cli.agent.state.model.contextWindow, 1000000);
+      // …no WINDOW swap note (a max-tokens note may still print).
+      expect(
+        io.out.toString(),
+        isNot(contains('model context window: 1000000 (from endpoint)')),
+      );
+      expect(
+        cli.contextWindowRegistry.windowFor(cli.agent.state.model),
+        1000000,
+      );
+    });
+
     test('an explicitly pinned roles window wins over the endpoint', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = rolesCli([
