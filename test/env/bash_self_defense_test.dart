@@ -119,9 +119,13 @@ void main() {
         );
         final pids = result.getOrThrow().stdout.trim().split(RegExp(r'\s+'));
         // The current process (the "harness" from the shell's point of
-        // view) and at least one ancestor must be protected.
+        // view) must be protected; the ancestor chain rides along when the
+        // host process table is readable.
         expect(pids, contains('$pid'));
-        expect(pids.length, greaterThan(1));
+        final ps = Process.runSync('ps', <String>['-ax', '-o', 'pid=,ppid=']);
+        if (ps.exitCode == 0) {
+          expect(pids.length, greaterThan(1));
+        }
       },
     );
 
@@ -138,24 +142,41 @@ void main() {
         addTearDown(freeDummy.kill);
 
         final result = await const LocalShell().exec(
-          'pkill -f "sleep 1763"; '
-          'if ps -o pid= -p ${protectedDummy.pid} >/dev/null 2>&1; then '
-          'echo "protected_alive"; else echo "protected_dead"; fi; '
-          'if ps -o pid= -p ${freeDummy.pid} >/dev/null 2>&1; then '
-          'echo "free_alive"; else echo "free_reaped"; fi',
+          'pkill -f "sleep 1763"',
           options: ShellExecOptions(
             env: {'FA_PROTECTED_PIDS': '${protectedDummy.pid}'},
           ),
         );
-        final stdout = result.getOrThrow().stdout;
+        expect(result.getOrThrow().exitCode, 0);
+
+        // Signal delivery lags the pkill return by a scheduler tick; poll
+        // briefly so the assertions stay load-independent.
+        var protectedAlive = false;
+        var freeReaped = false;
+        for (var i = 0; i < 30; i++) {
+          final probe = await const LocalShell().exec(
+            'if ps -o pid= -p ${protectedDummy.pid} >/dev/null 2>&1; then '
+            'echo "protected_alive"; else echo "protected_dead"; fi; '
+            'if ps -o pid= -p ${freeDummy.pid} >/dev/null 2>&1; then '
+            'echo "free_alive"; else echo "free_reaped"; fi',
+            options: ShellExecOptions(
+              env: {'FA_PROTECTED_PIDS': '${protectedDummy.pid}'},
+            ),
+          );
+          final out = probe.getOrThrow().stdout;
+          protectedAlive = out.contains('protected_alive');
+          freeReaped = out.contains('free_reaped');
+          if (protectedAlive && freeReaped) break;
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
         expect(
-          stdout,
-          contains('protected_alive'),
+          protectedAlive,
+          isTrue,
           reason: 'a pid on FA_PROTECTED_PIDS must never be signaled',
         );
         expect(
-          stdout,
-          contains('free_reaped'),
+          freeReaped,
+          isTrue,
           reason:
               'an unprotected process matching the pattern must still '
               'be terminated (edge case E2)',
