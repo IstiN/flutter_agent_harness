@@ -30,6 +30,7 @@ AssistantMessage _message(StopReason reason) => AssistantMessage(
 final class _CapturingHooks implements AutoCompactorHooks {
   Object? bothRolesError;
   final passes = <AutoCompactorPass>[];
+  int doneCount = 0;
 
   @override
   void onDelta(String delta) {}
@@ -44,7 +45,7 @@ final class _CapturingHooks implements AutoCompactorHooks {
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
 
   @override
-  void onDone(int passes, int tokens) {}
+  void onDone(int passes, int tokens) => doneCount++;
 
   @override
   void onBothRolesFailed(Object lastError) => bothRolesError = lastError;
@@ -399,5 +400,169 @@ void main() {
     // no checkpoint was appended on the way out.
     final records = await session.getEntries();
     expect(records.whereType<CompactCheckpointRecord>(), isEmpty);
+  });
+
+  /// gh-1743: a transcript over the window with a droppable read pair —
+  /// the shape the local trim can rescue.
+  Future<(
+    Session,
+    AgentState,
+  )> _overWindowSessionWithDroppableTail() async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    await session.appendMessage(UserMessage.text('fix the login crash'));
+    await session.appendMessage(
+      AssistantMessage(
+        content: [
+          const TextContent(text: 'looking'),
+          ToolCall(id: 'c1', name: 'read', arguments: const {}),
+        ],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    await session.appendMessage(
+      ToolResultMessage(
+        toolCallId: 'c1',
+        toolName: 'read',
+        content: [TextContent(text: 'x' * 16000)],
+        isError: false,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    for (var i = 0; i < 11; i++) {
+      await session.appendMessage(
+        AssistantMessage(
+          content: [TextContent(text: 'filler $i')],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        ),
+      );
+    }
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    return (session, state);
+  }
+
+  test('gh-1743: a factory-level budget timeout (wedged judge past the '
+      'total budget) falls back to the local trim instead of aborting '
+      'the session', () async {
+    final (session, state) = await _overWindowSessionWithDroppableTail();
+    final tokensBefore = estimateRequestTokens(
+      state.messages,
+      systemPrompt: state.systemPrompt,
+      tools: state.tools,
+    );
+    final tokensSeen = <CancelToken?>[];
+    final hooks = _CapturingHooks();
+
+    final ok = await AutoCompactorFactory(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      sources: AutoCompactorSources(
+        smolStream: null,
+        smolModel: null,
+        // A judge stream that NEVER settles — not even on cancel — so
+        // the engine cannot recover within its own per-call ladder and
+        // the factory's totalBudget watchdog is what fires.
+        mainStream: (m, c, {cancelToken}) {
+          tokensSeen.add(cancelToken);
+          final stream = AssistantMessageEventStream();
+          stream.push(StartEvent(partial: _message(StopReason.stop)));
+          return stream;
+        },
+        mainModel: _model,
+      ),
+      hooks: hooks,
+      // Per-call budget outlives the run budget: the factory-level
+      // TimeoutException is the outcome under test (gh-1743), not the
+      // engine's internal #515 recovery.
+      attemptBudget: const Duration(seconds: 30),
+      totalBudget: const Duration(milliseconds: 300),
+    ).run();
+
+    // The trim rescues the run — the session is NOT aborted.
+    expect(ok, isTrue, reason: 'the local-trim fallback must rescue the run');
+    expect(hooks.bothRolesError, isNull,
+        reason: 'a rescued run never reports both roles failed');
+    // The mechanical trim reported its own receipt …
+    expect(
+      hooks.passes.any((p) => p.ok && p.fallback == 'local-trim'),
+      isTrue,
+      reason: 'the local-trim pass reports its receipt',
+    );
+    // … and the hooks bracket closed exactly once.
+    expect(hooks.doneCount, 1);
+    // The live context actually shrank and starts at the trim marker.
+    final tokensAfter = estimateRequestTokens(
+      state.messages,
+      systemPrompt: state.systemPrompt,
+      tools: state.tools,
+    );
+    expect(tokensAfter, lessThan(tokensBefore));
+    expect(state.messages.first, isA<UserMessage>());
+    final marker = state.messages.first as UserMessage;
+    expect(
+      marker.content as String,
+      contains('[context trimmed locally'),
+    );
+    // Wire stays pair-safe; the session file keeps every record.
+    expect(validateToolPairing(state.messages), isEmpty);
+    expect(
+      (await session.getEntries()).whereType<MessageRecord>().length,
+      14,
+    );
+  });
+
+  test('gh-1743: when nothing is droppable the budget timeout keeps the '
+      'failure verdict', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // A single tiny user turn: over the (forced) trigger in name only —
+    // nothing beyond the keep-recent budget exists, so the valve has
+    // nothing to cut and returns null.
+    await session.appendMessage(UserMessage.text('hi'));
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    final messagesBefore = state.messages;
+    final hooks = _CapturingHooks();
+
+    final ok = await AutoCompactorFactory(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      sources: AutoCompactorSources(
+        smolStream: null,
+        smolModel: null,
+        mainStream: (m, c, {cancelToken}) {
+          final stream = AssistantMessageEventStream();
+          stream.push(StartEvent(partial: _message(StopReason.stop)));
+          return stream;
+        },
+        mainModel: _model,
+      ),
+      hooks: hooks,
+      force: true,
+      attemptBudget: const Duration(seconds: 30),
+      totalBudget: const Duration(milliseconds: 300),
+    ).run();
+
+    expect(ok, isFalse);
+    expect(hooks.bothRolesError, isNotNull);
+    expect(identical(state.messages, messagesBefore), isTrue,
+        reason: 'no trim means no live-context change');
   });
 }
