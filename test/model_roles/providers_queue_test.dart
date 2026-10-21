@@ -1561,6 +1561,36 @@ void _bootScopeTests() {
       expect(secrets.containsKey('K_MISSING'), isFalse);
     });
   });
+
+  group('type naming in parse errors (gh-1713 CRAP descent)', () {
+    String nodeMessage(Object? node) {
+      try {
+        parseProviderQueueEntries(node, source: 'q');
+      } on ConfigException catch (e) {
+        return e.message;
+      }
+      fail('expected ConfigException');
+    }
+
+    String itemMessage(Object? item) => nodeMessage([item]);
+
+    test('a non-array node names the decoded type', () {
+      expect(nodeMessage(null), contains('got nothing'));
+      expect(nodeMessage('x'), contains('got a string'));
+      expect(nodeMessage(42), contains('got a number'));
+      expect(nodeMessage(true), contains('got a boolean'));
+      expect(nodeMessage({'a': 1}), contains('got an object'));
+    });
+
+    test('a non-object entry names the decoded type', () {
+      expect(itemMessage(1.5), contains('got a number'));
+      expect(itemMessage(true), contains('got a boolean'));
+      expect(itemMessage('s'), contains('got a string'));
+      expect(itemMessage([1]), contains('got an array'));
+      expect(itemMessage(null), contains('got nothing'));
+      expect(itemMessage(Object()), contains('got Object'));
+    });
+  });
 }
 
 final class _FakeStore implements SecureKeyStore {

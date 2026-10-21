@@ -88,7 +88,20 @@ crap:
   # 100%), 33.58 (_interpretEchoEscapes, CC 11 @ 43%). Restore to 30.0 by
   # decomposing the cluster under 0.14.2.
   # raise-issue: gh-1713
-  threshold: 74.13
+  # Restored (gh-1713, 2026-10-21): the sandbox cluster decomposed under
+  # 0.14.2 — MemoryShell._runCommand 74→3 (route-table dispatch, the #558
+  # pattern: static _commandRoutes + per-command closures, aliases and the
+  # checksum family as entries), WasiSandboxShell._runBuiltin 43→2 (the
+  # same treatment: _builtinRoutes), detectLanguage 39→3 (_extensionLanguages
+  # data table), _connectionDisplayName 12→5 (+ _presetDisplayName 2, the
+  # _presetDisplayNames data table), _interpretEchoEscapes 11→3 (+ the
+  # _echoEscapeAt seam and the _echoEscapes data table, covered by the
+  # echo -e test in test/memory_shell_test.dart), and the 0%-cov
+  # builtinsFor (6) covered by test/wasm_shell_ssh_builtins_test.dart.
+  # Existing suites stay green (473 tests across the touched shell/guard
+  # suites locally). The threshold follows back down 74.13 → 30.0. Only
+  # down; re-measure on the CI pipeline (local lcov stays impossible).
+  threshold: 30.0
 
 coverage:
   # The CI app-crap-gate job merges the two flutter-tests shard reports
