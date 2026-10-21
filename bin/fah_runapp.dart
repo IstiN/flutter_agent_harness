@@ -202,23 +202,27 @@ Future<void> _runApp(List<String> args) async {
         cwd: parsed.cwd ?? Directory.current.path,
       );
       final cleanRoot = parsed.sessionRoot ?? _defaultSessionRoot();
-      final cleanHome = homeDirectory();
-      var retention = const SessionRetentionConfig();
-      if (cleanHome != null && cleanHome.isNotEmpty) {
+      SessionRetentionConfig readRetention() {
+        final cleanHome = homeDirectory();
+        if (cleanHome == null || cleanHome.isEmpty) {
+          return const SessionRetentionConfig();
+        }
         try {
-          retention =
-              loadCliConfig(cleanHome).sessions?.retention ?? retention;
+          return loadCliConfig(cleanHome).sessions?.retention ??
+              const SessionRetentionConfig();
         } on ConfigException catch (error) {
           _fail('invalid ~/.fah/config.yaml: ${error.message}');
         }
       }
+
+      final retention = readRetention();
       exit(
         await runSessionCleanCliCommand(
           write: io.write,
           writeln: io.writeln,
           env: cleanEnv,
           sessionRoot: cleanRoot,
-          retention: retention ?? const SessionRetentionConfig(),
+          retention: retention,
           dryRun: sessionList.dryRun,
           presenceStore: FileSessionPresenceStore(
             env: cleanEnv,
