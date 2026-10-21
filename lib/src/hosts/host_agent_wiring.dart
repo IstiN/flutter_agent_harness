@@ -48,6 +48,8 @@ import '../a2a/a2a_mail_gateway.dart' show A2aMailGateway;
 import '../a2a/a2a_manager.dart' show A2aManager;
 import '../browser/browser_tools.dart';
 import '../compaction/compaction_engine.dart' show CompactionEngine;
+import '../compaction/context_window_registry.dart'
+    show ContextWindowRegistry;
 import '../config/config_service.dart';
 import '../cube/config/cube_spec.dart';
 import '../cube/config/fs_policy.dart';
@@ -182,6 +184,14 @@ final class SubagentServices {
   final ModelRolesResolver? rolesResolver;
   final CompactionEngine? compactionEngine;
 
+  /// The shared per-model context-window registry (gh-1742 invariant 2):
+  /// the host publishes detections/pins here, children resolve from it.
+  final ContextWindowRegistry? contextWindowRegistry;
+
+  /// The owner context-window cap (`agent.contextWindowCap`), honored for
+  /// children too (gh-1742).
+  final int? contextWindowCap;
+
   /// `agent.misuseBreaker` covers children too (issue #862).
   final bool misuseBreaker;
 
@@ -207,6 +217,8 @@ final class SubagentServices {
     this.stallMinutes,
     this.rolesResolver,
     this.compactionEngine,
+    this.contextWindowRegistry,
+    this.contextWindowCap,
     this.misuseBreaker = true,
     this.childSessionFactory,
     this.sessionIoRetry,
@@ -928,6 +940,10 @@ _WiredTaskSurface? _wireTaskSurface({
     subagentManager: manager,
     a2aManager: a2a,
     compactionEngine: bundle.compactionEngine,
+    // gh-1742: children resolve the same registered windows the main
+    // agent publishes (invariant 2), under the same owner cap.
+    contextWindowRegistry: bundle.contextWindowRegistry,
+    contextWindowCap: bundle.contextWindowCap,
     misuseBreaker: bundle.misuseBreaker,
     childSessionFactory: bundle.childSessionFactory,
     // Issue #222: the resume path reopens a child's JSONL session by
