@@ -34,6 +34,7 @@ export 'src/providers/conn_trace_io.dart';
 export 'src/providers/stall_sentinel_io.dart';
 export 'src/providers/stream_trace_io.dart';
 export 'src/secrets/secure_key_store_io.dart';
+export 'src/session/attach/pid_probe_io.dart';
 export 'src/telemetry/file_agent_telemetry_sink.dart';
 export 'src/tools/sqlite/sqlite3_engine_stub.dart'
     if (dart.library.io) 'src/tools/sqlite/sqlite3_engine.dart';

@@ -410,7 +410,14 @@ final class JsonlSessionRepo implements SessionRepo {
   /// place). Issue #522: empty does not mean deletable while live — a
   /// just-booted process owns a header-only file, so live rows are skipped,
   /// and everything routes through the journaled soft-delete gate.
-  Future<int> cleanupEmptySessions() async {
+  ///
+  /// gh-1660: with [olderThan] set, only header-only files whose mtime is
+  /// older than that age are swept — a brand-new header-only file is
+  /// exactly what a concurrently booting process owns between `create`
+  /// and its first append (and what its presence row may not cover yet),
+  /// so the age guard is what makes boot-time sweeps race-safe. Null
+  /// keeps the legacy sweep-everything behavior.
+  Future<int> cleanupEmptySessions({Duration? olderThan}) async {
     var removed = 0;
     final root = await _getSessionsRoot();
     final rootExists = _fsOrThrow(
@@ -419,8 +426,10 @@ final class JsonlSessionRepo implements SessionRepo {
     );
     if (!rootExists) return 0;
     final live = (await presenceStore?.list()) ?? const {};
-    final files = await _collectJsonlFiles(root);
-    for (final path in files) {
+    final cutoff = olderThan == null ? null : now().subtract(olderThan);
+    final files = await _collectJsonlFileInfos(root);
+    for (final entry in files) {
+      final path = entry.path;
       // Emptiness is decidable from the first two lines: line 1 is the
       // header, and any transcript content means a second line. The read
       // streams and stops there — scanning every session whole would turn
@@ -435,6 +444,12 @@ final class JsonlSessionRepo implements SessionRepo {
       if (nonEmpty > 1) continue;
       final id = _sessionIdFromPath(path);
       if (id != null && live.containsKey(id)) continue;
+      if (cutoff != null &&
+          !DateTime.fromMillisecondsSinceEpoch(
+            entry.mtimeMs,
+          ).isBefore(cutoff)) {
+        continue;
+      }
       await _softDelete(
         path,
         op: 'cleanup-empty',
@@ -685,21 +700,23 @@ final class JsonlSessionRepo implements SessionRepo {
     return parts.length < 2 || parts.last.isEmpty ? null : parts.last;
   }
 
-  Future<List<String>> _collectJsonlFiles(String dirPath) async {
+  /// The session sweep's file walk (gh-1660 age guard reads the mtime):
+  /// every `.jsonl` under [dirPath], carrying each file's [FileInfo].
+  Future<List<FileInfo>> _collectJsonlFileInfos(String dirPath) async {
     final entries = _fsOrThrow(
       await _fs.listDir(dirPath),
       'Failed to list session directory $dirPath',
     );
-    final files = <String>[];
+    final files = <FileInfo>[];
     for (final entry in entries) {
       if (entry.kind == FileKind.directory) {
         // The trash (issue #522) is recoverable storage, not a session
         // folder — its files must never re-enter list()/cleanup sweeps.
         if (entry.name == trashDirName) continue;
-        files.addAll(await _collectJsonlFiles(entry.path));
+        files.addAll(await _collectJsonlFileInfos(entry.path));
         continue;
       }
-      if (entry.name.endsWith('.jsonl')) files.add(entry.path);
+      if (entry.name.endsWith('.jsonl')) files.add(entry);
     }
     return files;
   }
