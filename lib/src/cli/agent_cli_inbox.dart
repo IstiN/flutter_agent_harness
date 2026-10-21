@@ -23,9 +23,7 @@ extension AgentCliMessagingFlow on AgentCli {
     // wrapped in the standard <system-notice> envelope. Unarmed = nothing.
     final messages = <Message>[
       for (final notice in _deadline.pollNotices())
-        UserMessage.text(
-          '<system-notice>\n${notice.text}\n</system-notice>',
-        ),
+        UserMessage.text('<system-notice>\n${notice.text}\n</system-notice>'),
     ];
     final queued = await _subagentManager.drainMessages(
       _subagentManager.selfId,
@@ -403,10 +401,22 @@ String mailboxWakeCommand({
 /// legacy lossy slug decode, or a workspace moved away) — spawning there
 /// dies as `ProcessException: No such file or directory` and the asleep
 /// mailbox can never be woken. The working directory is verified first
-/// (`Directory(cwd).existsSync()` semantics: existing and not a plain
-/// file; symlinks stay allowed) and the refusal names the path, so the
+/// (existing and not a plain file) and the refusal names the path, so the
 /// tool note explains the wake failure instead of surfacing a raw process
 /// exception.
+///
+/// What is guaranteed is backend kind semantics, not link resolution: the
+/// real IO env stats THROUGH symlinks (`FileStat.stat` — a link to a
+/// directory reports [FileKind.directory], so symlinked workspaces wake),
+/// and [MemoryExecutionEnv] has no symlink model, so no current backend
+/// produces [FileKind.symlink] here. The guard's explicit symlink
+/// allowance is defensive, for a backend honoring pi's documented lstat
+/// contract ("symlinks are not followed automatically"): there a
+/// symlink-kind path naming an existing directory must still wake — the
+/// spawn itself follows the link (pinned by
+/// `test/cli/agent_cli_inbox_wake_test.dart`). On such a backend a link
+/// to a plain file also passes this check and fails at the spawn; that
+/// hole is accepted while no backend reports the kind.
 Future<String?> launchMailboxWake({
   required ExecutionEnv env,
   String? wakeExecutable,

@@ -139,8 +139,15 @@ final RegExp _slugEscape = RegExp(r'%([0-9A-Fa-f]{2})');
 /// legacy lossy split.
 bool _hasReversibleEscape(String inner) => _slugEscape
     .allMatches(inner)
-    .any((m) => const {'25', '2D', '2F', '5C', '3A'}
-        .contains(m.group(1)!.toUpperCase()));
+    .any(
+      (m) => const {
+        '25',
+        '2D',
+        '2F',
+        '5C',
+        '3A',
+      }.contains(m.group(1)!.toUpperCase()),
+    );
 
 /// Undoes [_encodeCwd]'s percent-escapes in one segment. Unknown `%XX`
 /// sequences stay literal (legacy text).
@@ -163,6 +170,17 @@ String _unescapeSlugPart(String part) => part.replaceAllMapped(
 /// escapes, gh-1744) decode exactly; legacy escape-free slugs keep the
 /// historic lossy split-on-hyphen decode so existing on-disk folders stay
 /// readable.
+///
+/// Second legacy ambiguity class (gh-1744 review): the reversible marker
+/// is "the slug carries a recognized `%XX` escape", so a legacy folder
+/// whose name legitimately contained escape-like TEXT flips its decode —
+/// `%2D`, `%2F`, `%5C`, `%3A` and `%25` present in legacy slug text now
+/// unescape (e.g. `--tmp-a%2Fb--` decoded literally before this change,
+/// and decodes to `/tmp/a/b` now; `--tmp-a%2Db--` → `/tmp/a-b`;
+/// `--tmp-a%25b--` → `/tmp/a%b`). Impact is bounded: the decode only
+/// feeds the messaging `directory()` cwd fallback — the registry's exact
+/// cwd is preferred — and a wrong fallback cwd is refused by name in
+/// [launchMailboxWake] instead of crashing the wake.
 ///
 /// Returns `null` if [slug] is not wrapped in `--` or decodes to an empty path.
 String? decodeSessionCwd(String slug) {

@@ -389,9 +389,7 @@ final class FileMessagingRepository implements MessagingRepository {
         // not crash the whole listing with a NoSuchMethodError — the slug
         // decode answers instead.
         final entry = registry?[id];
-        final registryCwd = entry is Map<String, dynamic>
-            ? entry['cwd']
-            : null;
+        final registryCwd = entry is Map<String, dynamic> ? entry['cwd'] : null;
         final cwd = (registryCwd is String && registryCwd.isNotEmpty)
             ? registryCwd
             : _decodeSessionCwd?.call(slugDir.name);
