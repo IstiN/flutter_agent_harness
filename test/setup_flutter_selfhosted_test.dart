@@ -321,7 +321,8 @@ void main() {
       expect(
         result.stdout,
         'flutter_macos_arm64_3.47.7-stable.zip\n',
-        reason: 'releases_macos.json: dart_sdk_arch=arm64 -> '
+        reason:
+            'releases_macos.json: dart_sdk_arch=arm64 -> '
             'flutter_macos_arm64_3.47.7-stable.zip',
       );
     });
@@ -332,7 +333,8 @@ void main() {
       expect(
         result.stdout,
         'flutter_macos_3.47.7-stable.zip\n',
-        reason: 'releases_macos.json: dart_sdk_arch=x64 -> '
+        reason:
+            'releases_macos.json: dart_sdk_arch=x64 -> '
             'flutter_macos_3.47.7-stable.zip (no infix)',
       );
     });
@@ -373,7 +375,8 @@ void main() {
       expect(
         Directory('${sdk.path}/3.47.7/bin').existsSync(),
         isTrue,
-        reason: 'a freshly stamped slot must survive ensure_arch — '
+        reason:
+            'a freshly stamped slot must survive ensure_arch — '
             'pruning it re-downloads ~1GB on every single run',
       );
     });
@@ -555,42 +558,49 @@ void main() {
         reason: 'slot mutations must go through the tested primitives',
       );
     });
-    test('action contract: the SDK download is host-arch qualified (gh-1736)',
-        () {
-      final action = File(actionYml).readAsStringSync();
-      final curlStart = action.indexOf('if ! curl');
-      final curlEnd = action.indexOf('; then', curlStart);
-      expect(curlStart, isNonNegative);
-      final curl = action.substring(curlStart, curlEnd);
-      // gh-1736: the arch-less flutter_macos_${VER}-stable.zip is the X64
-      // archive — on the arm64 self-hosted host its dart binary dies with
-      // "Bad CPU type in executable" (exit 126). The archive name must be
-      // resolved through the tested sdk_slot.py archive primitive.
-      expect(
-        curl,
-        contains(r'$ARCHIVE'),
-        reason: r'the curl URL must download the arch-resolved "$ARCHIVE"',
-      );
-      expect(
-        action,
-        contains(r'"$SLOT" archive'),
-        reason: 'archive-name resolution must go through the tested primitive',
-      );
-      expect(
-        action,
-        isNot(contains(r'flutter_macos_${VER}-stable.zip')),
-        reason: 'the arch-less URL is the x64 build — the gh-1736 bug',
-      );
-    });
+    test(
+      'action contract: the SDK download is host-arch qualified (gh-1736)',
+      () {
+        final action = File(actionYml).readAsStringSync();
+        final curlStart = action.indexOf('if ! curl');
+        final curlEnd = action.indexOf('; then', curlStart);
+        expect(curlStart, isNonNegative);
+        final curl = action.substring(curlStart, curlEnd);
+        // gh-1736: the arch-less flutter_macos_${VER}-stable.zip is the X64
+        // archive — on the arm64 self-hosted host its dart binary dies with
+        // "Bad CPU type in executable" (exit 126). The archive name must be
+        // resolved through the tested sdk_slot.py archive primitive.
+        expect(
+          curl,
+          contains(r'$ARCHIVE'),
+          reason: r'the curl URL must download the arch-resolved "$ARCHIVE"',
+        );
+        expect(
+          action,
+          contains(r'"$SLOT" archive'),
+          reason:
+              'archive-name resolution must go through the tested primitive',
+        );
+        expect(
+          action,
+          isNot(contains(r'flutter_macos_${VER}-stable.zip')),
+          reason: 'the arch-less URL is the x64 build — the gh-1736 bug',
+        );
+      },
+    );
 
     test('action contract: a failed ensure_arch is a loud error, never a '
         'silent fall-through to reusing the slot (gh-1736 review)', () {
       final action = File(actionYml).readAsStringSync();
-      final healStart =
-          action.indexOf(r'if [[ "$DECISION" != INSTALL* ]]; then');
-      final healEnd = action.indexOf('\n       fi', healStart);
-      expect(healStart, isNonNegative,
-          reason: 'the self-heal block must guard every non-INSTALL verdict');
+      final healStart = action.indexOf(
+        r'if [[ "$DECISION" != INSTALL* ]]; then',
+      );
+      final healEnd = action.indexOf('\n        fi', healStart);
+      expect(
+        healStart,
+        isNonNegative,
+        reason: 'the self-heal block must guard every non-INSTALL verdict',
+      );
       final heal = action.substring(healStart, healEnd);
       final callIdx = heal.indexOf(r'ensure_arch "$DEST" "$HOST_ARCH")');
       expect(
@@ -598,8 +608,10 @@ void main() {
         isNonNegative,
         reason: 'the self-heal must consult the ensure_arch primitive',
       );
-      final callLine =
-          heal.substring(heal.lastIndexOf('\n', callIdx) + 1, heal.indexOf('\n', callIdx));
+      final callLine = heal.substring(
+        heal.lastIndexOf('\n', callIdx) + 1,
+        heal.indexOf('\n', callIdx),
+      );
       // The old shape — `elif [[ "$(python3 … ensure_arch …)" == reinstall* ]]`
       // — turns any nonzero exit into an empty string and a false `==`: the
       // failure silently falls through to trusting the existing slot. The
@@ -608,20 +620,23 @@ void main() {
       expect(
         callLine,
         isNot(contains('elif [[')),
-        reason: 'ensure_arch must not be consulted through a bare `elif '
+        reason:
+            'ensure_arch must not be consulted through a bare `elif '
             r'[[ "$( … )" == … ]]` command substitution — a nonzero exit '
             'degrades to an empty verdict and a silent slot reuse',
       );
       expect(
         callLine,
         contains('|| {'),
-        reason: 'the ensure_arch verdict must be captured with an explicit '
+        reason:
+            'the ensure_arch verdict must be captured with an explicit '
             'exit-code check',
       );
       expect(
         heal,
         contains('::error::'),
-        reason: 'an ensure_arch failure must surface as a step error '
+        reason:
+            'an ensure_arch failure must surface as a step error '
             'annotation, not as a silently skipped self-heal',
       );
       expect(
