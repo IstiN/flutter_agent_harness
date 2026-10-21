@@ -111,6 +111,20 @@ extension AgentServiceLifecycle on AgentService {
     return persister;
   }
 
+  /// The gh-1745 request-blob store, built lazily over the service's env
+  /// (the session files live on the same filesystem, so the blob dir
+  /// resolves next to the project's `.fah`). Null when spilling is
+  /// disabled — the legacy inline persistence applies.
+  TrajectoryRequestBlobStore? _requestBlobStoreFor() {
+    if (!trajectoryRequestBlobs) return null;
+    return _requestBlobStore ??= TrajectoryRequestBlobStore(
+      env: env,
+      sessionId: () => _session?.cachedId,
+      maxBytes: trajectoryRequestBlobMaxMb << 20,
+      ttlDays: trajectoryRequestBlobTtlDays,
+    );
+  }
+
   /// Whether a provider add/connect flow is latched (gh-1044 I1/AC6).
   bool get providerAddFlowInProgress => _providerAddFlowDepth > 0;
 
