@@ -554,6 +554,34 @@ tui:
       expect(config.statusLine!.preset, 'ascii');
     });
 
+    test('showCompactionDetails parses, defaults false, validates strictly '
+        '(gh-1636)', () {
+      // Absent → false (the compaction report stays one line).
+      expect(parseTuiSection(_tui('tui: {}')).showCompactionDetails, isFalse);
+      // Explicit true parses.
+      expect(
+        parseTuiSection(_tui('tui:\n  showCompactionDetails: true'))
+            .showCompactionDetails,
+        isTrue,
+      );
+      // Coexists with the other keys.
+      final both = parseTuiSection(
+        _tui('tui:\n  classic: true\n  showCompactionDetails: true'),
+      );
+      expect(both.classic, isTrue);
+      expect(both.showCompactionDetails, isTrue);
+      // Non-bool throws — a typo must never silently skip the opt-in.
+      expect(
+        () => parseTuiSection(_tui('tui:\n  showCompactionDetails: sure')),
+        throwsA(isA<ConfigException>()),
+      );
+      // Unknown keys still throw.
+      expect(
+        () => parseTuiSection(_tui('tui:\n  showCompactionDetail: true')),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+
     test('strict errors', () {
       expect(
         () => parseTuiSection(_tui('tui: nope')),

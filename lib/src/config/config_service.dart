@@ -1251,16 +1251,24 @@ void _validateTuiSection(Object? node, String label) {
   }
   final unknown = [
     for (final key in node.keys)
-      if (!{'theme'}.contains('$key')) '$key',
+      if (!{'theme', 'classic', 'showCompactionDetails'}.contains('$key'))
+        '$key',
   ];
   if (unknown.isNotEmpty) {
     throw ConfigException(
-      '$label: unknown tui key(s): ${unknown.join(', ')} (known: theme)',
+      '$label: unknown tui key(s): ${unknown.join(', ')} '
+      '(known: theme, classic, showCompactionDetails)',
     );
   }
   final theme = node['theme'];
-  if (theme == null || '$theme'.trim().isEmpty) {
+  if (theme != null && '$theme'.trim().isEmpty) {
     throw ConfigException('$label: tui.theme must be a non-empty theme name');
+  }
+  for (final flag in const ['classic', 'showCompactionDetails']) {
+    final value = node[flag];
+    if (value != null && value is! bool) {
+      throw ConfigException('$label: tui.$flag must be a boolean');
+    }
   }
 }
 

@@ -272,7 +272,7 @@ extension AgentCliBusyPhase on AgentCli {
 ///
 /// gh-1636: the internal checkpoint text is debug output, not
 /// conversation. By default ([details] false) the report is ONE short
-/// marker line — `auto-compacted · <engine>: N → M tokens (F freed ·
+/// marker line — `auto-compacted · ENGINE: N → M tokens (F freed ·
 /// P%)`; the `records:` line and the fenced summary only render with
 /// `details: true` (the `tui.showCompactionDetails` opt-in, or the
 /// manual `/compact` — the on-demand expansion). The summary itself is

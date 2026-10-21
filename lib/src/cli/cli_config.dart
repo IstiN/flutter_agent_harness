@@ -1054,17 +1054,20 @@ final class CliConfig {
   }
 
   /// The `tui:` section, only the persisted parts (theme, classic kill
-  /// switch, statusLine); the file stays minimal.
+  /// switch, compaction-detail opt-in, statusLine); the file stays
+  /// minimal.
   String _tuiSectionYaml() {
     final statusLineYaml = statusLine?.toYaml();
     if (tuiTheme == null &&
         !tuiClassic &&
+        !tuiShowCompactionDetails &&
         (statusLineYaml == null || statusLineYaml.isEmpty)) {
       return '';
     }
     return 'tui:\n'
         '${tuiTheme == null ? '' : '  theme: $tuiTheme\n'}'
         '${tuiClassic ? '  classic: true\n' : ''}'
+        '${tuiShowCompactionDetails ? '  showCompactionDetails: true\n' : ''}'
         '${statusLineYaml ?? ''}';
   }
 

@@ -73,29 +73,33 @@ void main() {
     };
   }
 
-  AgentCli buildCli(StreamFunction stream) => AgentCli(
-    config: AgentCliConfig(
-      model: const Model(
-        id: 'tiny-window',
-        api: 'test-api',
-        provider: 'test-provider',
-        baseUrl: 'https://example.test',
-        contextWindow: 40000,
-        maxTokens: 4096,
-      ),
-      apiKey: '[REDACTED:Sensitive Value]',
-      env: env,
-      sessionRoot: '/sessions',
-      providerKind: 'openai-completions',
-      compactionSettings: const CompactionSettings(
-        enabled: true,
-        reserveTokens: 2000,
-        keepRecentTokens: 2000,
-      ),
-    ),
-    io: io,
-    streamFunction: stream.call,
-  );
+  AgentCli buildCli(StreamFunction stream, {bool showCompactionDetails = false}) =>
+      AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'tiny-window',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 40000,
+            maxTokens: 4096,
+          ),
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          compactionSettings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 2000,
+            keepRecentTokens: 2000,
+          ),
+          // gh-1636: the full receipt block (records + summary) is the
+          // opt-in; the default receipt is the one-line marker.
+          showCompactionDetails: showCompactionDetails,
+        ),
+        io: io,
+        streamFunction: stream.call,
+      );
 
   Future<Session> openRunSession() async {
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
@@ -126,7 +130,10 @@ void main() {
       );
 
       // One receipt per fold event — no silent folds (the issue #438
-      // fixture: five folds, zero compaction lines).
+      // fixture: five folds, zero compaction lines). The gh-1636 default
+      // receipt is the ONE-LINE marker (`● auto-compacted …: N → M
+      // tokens (F freed · P%)`) — the counters moved behind the
+      // `tui.showCompactionDetails` opt-in (asserted below).
       final receipts = RegExp(
         r'^● auto-compacted',
         multiLine: true,
@@ -138,6 +145,38 @@ void main() {
             'stderr must carry a receipt per structured fold '
             '($receipts receipts for ${hiddenRanges.length} hidden ranges '
             '+ ${checkpoints.length} checkpoints):\n$stderrText',
+      );
+      // Each one-liner is still honest about the token movement.
+      final markerLines = RegExp(
+        r'^● auto-compacted.*: (\d+) → (\d+) tokens \((\d+) freed',
+        multiLine: true,
+      ).allMatches(stderrText);
+      expect(markerLines.length, receipts, reason: stderrText);
+      // The default receipt carries NO checkpoint text and no counters.
+      expect(stderrText, isNot(contains('records: ')), reason: stderrText);
+      expect(stderrText, isNot(contains('```')), reason: stderrText);
+    },
+  );
+
+  test(
+    'IT-stderr-receipt-details: with tui.showCompactionDetails the '
+    'receipt counters match the session fold records',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final cli = buildCli(foldRun(), showCompactionDetails: true);
+      final exitCode = await cli.runHeadless('count the words');
+
+      expect(exitCode, 0, reason: 'the turn finished after the folds');
+      final stderrText = io.out.toString();
+
+      final session = await openRunSession();
+      final entries = await session.getEntries();
+      final hiddenRanges = entries.whereType<HiddenRangeRecord>().toList();
+      final checkpoints = entries.whereType<CompactCheckpointRecord>().toList();
+      expect(
+        hiddenRanges.length + checkpoints.length,
+        greaterThanOrEqualTo(1),
+        reason: 'the fixture must really fold',
       );
 
       // Honest counters: the receipts' hidden counts sum to the records
@@ -176,7 +215,8 @@ void main() {
         reason:
             'summarized counters must match the checkpoints\' covered '
             'message records (claimed $claimedSummarized, session holds '
-            '$sessionSummarized):\n$stderrText',
+            '$sessionSummarized):\n'
+            '$stderrText',
       );
     },
   );

@@ -1690,6 +1690,9 @@ Future<void> _runApp(List<String> args) async {
         // The omp band composer (#806): on unless `tui.classic: true` pins
         // the legacy chrome byte-identically.
         tuiClassic: saved.tuiClassic,
+        // gh-1636: the compaction-report detail opt-in (default false —
+        // auto-folds print the one-line marker).
+        showCompactionDetails: saved.tuiShowCompactionDetails,
         statusLine: saved.statusLine,
         agentLoadMode: saved.agentLoadMode,
         // `/update` (issue #1377): the engine lives in bin/self_manage.dart
