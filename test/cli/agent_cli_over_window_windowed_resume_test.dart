@@ -103,12 +103,21 @@ void main() {
           arguments: const {'command': 'cat c.log'},
         ),
       ]),
-      // 2. Consumed by the loop's mid-run relief attempt.
+      // 2-5. The compaction pipeline's filler requests: the mid-run
+      //    relief summarizer, pass-1 memory extraction, the post-run
+      //    compaction summarizer, pass-2 memory extraction (gh-1636
+      //    note: the old fixture scripted only ONE filler + the answer,
+      //    so the answer turn was consumed as the post-run SUMMARY and
+      //    leaked into the assertions through the report's summary
+      //    fence — the fence print masked a continuation that never ran.
+      //    With the one-line default report the mask is gone, and the
+      //    fillers make every consumer's request explicit).
       textTurn('S'),
-      // 3. Consumed as the post-run compaction summary.
       textTurn('S'),
-      // 4. The continuation turn's final answer — only reachable when the
-      //    notice builds without crashing.
+      textTurn('S'),
+      textTurn('S'),
+      // 6. The continuation turn's final answer — only reachable when
+      //    the notice builds without crashing.
       textTurn('continued after compaction'),
     ]);
     final cli = AgentCli(
@@ -131,7 +140,8 @@ void main() {
     io.sendLine('go');
     await waitForIt(
       () => fake.calls >= 4 && !cli.isBusy,
-      reason: 'auto-continuation after guard + compaction on the '
+      reason:
+          'auto-continuation after guard + compaction on the '
           'windowed resume',
     );
     io.sendLine('/exit');

@@ -32,6 +32,7 @@ import 'package:yaml/yaml.dart';
 import '../a2a/a2a_config.dart';
 import '../agent/stuck_tool.dart';
 import '../cli/custom_providers.dart';
+import '../cli/tui_status_line.dart' show parseTuiSection;
 import '../compaction/compaction_engine.dart';
 import '../cube/config/cube_settings.dart';
 import '../env/execution_env.dart';
@@ -1221,7 +1222,14 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   // Issue #279: `tui.theme` must be a non-empty string (the theme itself
   // resolves at boot, where the user-theme set is known; unknown names
   // warn and keep the default).
-  'tui': (value, label) => _validateTuiSection(value, label),
+  //
+  // gh-1636 rework: the whole tui section delegates to the SAME public
+  // strict parser CliConfig.fromYaml uses (`parseTuiSection`) — the
+  // private mirror drifted twice (`classic` was missing, then
+  // `statusLine`), rejecting legitimate boot-accepted configs from
+  // `fa config check`/`set`. The parser is pure Dart (no `dart:io`),
+  // like the `power:`/`output:` delegations above.
+  'tui': (value, _) => parseTuiSection(value),
   // The output section (gh-1198) delegates to the SAME pure strict
   // parser CliConfig.fromYaml uses — no mirror to keep in sync.
   'output': (value, _) => parseOutputSection(value),
@@ -1243,25 +1251,6 @@ void validateAutoUpdateScalar(Object? value) {
   throw ConfigException(
     '"auto_update" must be true, false, or "notify", got: $scalar',
   );
-}
-
-void _validateTuiSection(Object? node, String label) {
-  if (node is! YamlMap) {
-    throw ConfigException('$label: tui section must be a map');
-  }
-  final unknown = [
-    for (final key in node.keys)
-      if (!{'theme'}.contains('$key')) '$key',
-  ];
-  if (unknown.isNotEmpty) {
-    throw ConfigException(
-      '$label: unknown tui key(s): ${unknown.join(', ')} (known: theme)',
-    );
-  }
-  final theme = node['theme'];
-  if (theme == null || '$theme'.trim().isEmpty) {
-    throw ConfigException('$label: tui.theme must be a non-empty theme name');
-  }
 }
 
 void _validateCustomProviders(Object? node) {

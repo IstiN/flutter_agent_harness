@@ -72,11 +72,14 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
 
   @override
   void onDelta(String delta) {
-    // gh-1433 E4: the log face renders the summarizer's deltas live,
-    // dimmed, through the SAME redaction seam as every other rendered
-    // token — a compaction turn is a provider request, and the log must
-    // have no silent windows. The other faces keep the busy-row tail.
+    // gh-1636: the summary being written is internal checkpoint text —
+    // echoing every delta onto the headless log buries the actual reply
+    // the same way the full report block did. Hidden by default; the
+    // gh-1430 E3 tier-2 `… reasoning Ns` line (armed around the whole
+    // compaction window) keeps the wait visible without the dump.
+    // `tui.showCompactionDetails` restores the gh-1433 E4 live stream.
     if (cli._logIsUi) {
+      if (!cli.config.showCompactionDetails) return;
       cli.io.write(cli._style.dim(cli._redactRendered(delta)));
       _deltaStreamed = true;
       return;
@@ -266,9 +269,19 @@ extension AgentCliBusyPhase on AgentCli {
 /// evictions went to hide, or the model returned blank — issue #578)
 /// omits the block: an empty ```-fence says nothing and reads as a bug.
 /// Pure; [_AgentCliCompactionReportPrinter.print] renders it.
+///
+/// gh-1636: the internal checkpoint text is debug output, not
+/// conversation. By default ([details] false) the report is ONE short
+/// marker line — `auto-compacted · ENGINE: N → M tokens (F freed ·
+/// P%)`; the `records:` line and the fenced summary only render with
+/// `details: true` (the `tui.showCompactionDetails` opt-in, or the
+/// manual `/compact` — the on-demand expansion). The summary itself is
+/// never lost: it stays in the session file, reachable via
+/// `compact_expand`.
 List<String> formatCompactionReport(
   AutoCompactorPass pass, {
   required bool auto,
+  bool details = false,
 }) {
   final freedRaw = pass.tokensBefore - pass.tokensAfter;
   // A restamped estimator can report a slightly larger after-count (same
@@ -279,9 +292,17 @@ List<String> formatCompactionReport(
       : (freed * 100 / pass.tokensBefore).round();
   final engine = pass.fallback == null ? '' : ' · ${pass.fallback}';
   final passSuffix = pass.pass == 1 ? '' : ' · pass ${pass.pass}';
+  final header = '${auto ? 'auto-compacted' : 'compacted'}$engine$passSuffix';
+  // gh-1636: the default report — one line, no checkpoint text.
+  if (!details) {
+    return [
+      '$header: ${pass.tokensBefore} → ${pass.tokensAfter} tokens '
+          '($freed freed · $pct%)',
+    ];
+  }
   final summary = pass.summary?.trim();
   return [
-    '${auto ? 'auto-compacted' : 'compacted'}$engine$passSuffix',
+    header,
     'tokens: ${pass.tokensBefore} → ${pass.tokensAfter} '
         '($freed freed · $pct%)',
     // Issue #673 AC3: the local-trim valve frees tokens WITHOUT hiding
@@ -309,7 +330,15 @@ List<String> formatCompactionReport(
 /// so both line mode and the TUI see the same block.
 extension _AgentCliCompactionReportPrinter on AgentCli {
   void _printCompactionReport(AutoCompactorPass pass, {required bool auto}) {
-    final lines = formatCompactionReport(pass, auto: auto);
+    final lines = formatCompactionReport(
+      pass,
+      auto: auto,
+      // gh-1636: an auto-fold prints the one-line marker unless
+      // `tui.showCompactionDetails` opts in; a manual /compact is the
+      // user's explicit ask — the on-demand expansion always renders the
+      // full block.
+      details: !auto || config.showCompactionDetails,
+    );
     final header = lines.first;
     final body = lines.sublist(1);
     io.writeln(_style.teal('● $header'));

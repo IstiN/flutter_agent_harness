@@ -13,6 +13,17 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1636): auto-compaction stops dumping the internal checkpoint
+  summary into the console — the default report is ONE marker line
+  (`● auto-compacted · engine: N → M tokens (F freed · P%)`); the records
+  line + fenced summary moved behind the new `tui.showCompactionDetails`
+  opt-in (default false), and the manual `/compact` still prints the full
+  block. The headless log face no longer streams the summarizer deltas by
+  default (the gh-1433 E4 live stream is part of the same opt-in; the
+  gh-1430 `… reasoning` liveness line still covers the window). Nothing
+  is lost — the summary stays in the session file, reachable via
+  `compact_expand`.
+
 - fix(test): gh-1732 — the `wrap_ansi_line_perf_test` sustained-contention
   validation leg spikes 3 of the 5 doubled runs per attempt instead of 4
   (CI run 39546301132, core shard 2/4: the old shape left exactly ONE

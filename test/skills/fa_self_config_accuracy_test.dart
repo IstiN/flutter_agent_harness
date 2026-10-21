@@ -160,6 +160,7 @@ const _nestedKeySources = <String, String>{
   'prompts.*': 'lib/src/cli/cli_config.dart',
   'compaction.engine': 'lib/src/cli/cli_config.dart',
   'tui.theme': 'lib/src/cli/cli_config.dart',
+  'tui.showCompactionDetails': 'lib/src/cli/cli_config.dart',
   'ttsr.enabled': 'lib/src/ttsr/ttsr_config.dart',
   'ttsr.contextMode': 'lib/src/ttsr/ttsr_config.dart',
   'ttsr.repeatMode': 'lib/src/ttsr/ttsr_config.dart',

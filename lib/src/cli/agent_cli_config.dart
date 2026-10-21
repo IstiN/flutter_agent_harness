@@ -44,6 +44,7 @@ final class AgentCliConfig {
     this.tuiMouseCapture = true,
     this.tuiSyncOutput,
     this.tuiClassic = false,
+    this.showCompactionDetails = false,
     this.statusLine,
     this.agentLoadMode,
     this.systemPrompt,
@@ -810,6 +811,18 @@ final class AgentCliConfig {
   /// dim one-line status footer — byte-identically, and disables the
   /// omp status band (the `images.registry: false` precedent).
   final bool tuiClassic;
+
+  /// The compaction-report detail opt-in (`tui.showCompactionDetails`,
+  /// gh-1636, default false): an auto-compaction pass prints ONE short
+  /// marker line, the internal checkpoint summary stays out of the
+  /// console, and the headless log face stops streaming the summarizer
+  /// deltas (the gh-1433 E4 stream becomes opt-in — the gh-1430 E3
+  /// `… reasoning` liveness line still covers the window). `true`
+  /// restores the full report block and the live delta stream. Nothing
+  /// is lost by default: the summary stays in the session file and is
+  /// reachable via `compact_expand`. The manual `/compact` report always
+  /// renders details.
+  final bool showCompactionDetails;
 
   /// The parsed `tui.statusLine` section; [AgentCli] resolves it once
   /// into the status-line engine the composer's top band renders.

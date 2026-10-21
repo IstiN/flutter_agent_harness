@@ -234,17 +234,19 @@ void main() {
       expect(segment.text, isNot(contains('-')));
     });
 
-    test('unarmed default band renders byte-identically to the pre-chip row',
-        () {
-      const snapshot = StatusLineSnapshot(
-        cwd: '/work',
-        modelName: 'm',
-        approvalMode: 'yolo',
-      );
-      final band = renderStatusLine(snapshot, _defaultSpec(), 120).join('\n');
-      expect(band, isNot(contains('⏱')));
-      expect(band, isNot(contains('timer')));
-    });
+    test(
+      'unarmed default band renders byte-identically to the pre-chip row',
+      () {
+        const snapshot = StatusLineSnapshot(
+          cwd: '/work',
+          modelName: 'm',
+          approvalMode: 'yolo',
+        );
+        final band = renderStatusLine(snapshot, _defaultSpec(), 120).join('\n');
+        expect(band, isNot(contains('⏱')));
+        expect(band, isNot(contains('timer')));
+      },
+    );
 
     test('armed default band shows the chip next to the other segments', () {
       const snapshot = StatusLineSnapshot(
@@ -554,6 +556,43 @@ tui:
       expect(config.statusLine!.preset, 'ascii');
     });
 
+    test('showCompactionDetails parses, defaults false, validates strictly '
+        '(gh-1636)', () {
+      // Absent → false (the compaction report stays one line).
+      expect(parseTuiSection(_tui('tui: {}')).showCompactionDetails, isFalse);
+      // Explicit true parses.
+      expect(
+        parseTuiSection(
+          _tui('tui:\n  showCompactionDetails: true'),
+        ).showCompactionDetails,
+        isTrue,
+      );
+      // Coexists with the other keys.
+      final both = parseTuiSection(
+        _tui('tui:\n  classic: true\n  showCompactionDetails: true'),
+      );
+      expect(both.classic, isTrue);
+      expect(both.showCompactionDetails, isTrue);
+      // Non-bool throws — a typo must never silently skip the opt-in.
+      // The message names the full key (the gh-1636 deduped helper
+      // builds it from the key argument — pinned here verbatim).
+      expect(
+        () => parseTuiSection(_tui('tui:\n  showCompactionDetails: sure')),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            '"tui.showCompactionDetails" must be a boolean',
+          ),
+        ),
+      );
+      // Unknown keys still throw.
+      expect(
+        () => parseTuiSection(_tui('tui:\n  showCompactionDetail: true')),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+
     test('strict errors', () {
       expect(
         () => parseTuiSection(_tui('tui: nope')),
@@ -565,7 +604,13 @@ tui:
       );
       expect(
         () => parseTuiSection(_tui('tui:\n  classic: yes-please')),
-        throwsA(isA<ConfigException>()),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            '"tui.classic" must be a boolean',
+          ),
+        ),
       );
       expect(
         () => parseTuiSection(_tui('tui:\n  statusLine: minimal')),
@@ -647,9 +692,7 @@ tui:
     test('nerdSymbols strict bool, yaml round-trip, preset precedence', () {
       // Strict schema: a non-bool value throws (issue #918 knob wiring).
       expect(
-        () => parseTuiSection(
-          _tui('tui:\n  statusLine:\n    nerdSymbols: 1'),
-        ),
+        () => parseTuiSection(_tui('tui:\n  statusLine:\n    nerdSymbols: 1')),
         throwsA(isA<ConfigException>()),
       );
       // Both bool values parse and round-trip through toYaml.
@@ -667,9 +710,9 @@ tui:
       }
       // Absent key leaves the override null (preset decides).
       expect(
-        parseTuiSection(_tui('tui:\n  statusLine:\n    preset: nerd'))
-            .statusLine!
-            .nerdSymbols,
+        parseTuiSection(
+          _tui('tui:\n  statusLine:\n    preset: nerd'),
+        ).statusLine!.nerdSymbols,
         isNull,
       );
       // Config override wins over the preset's nerd flag, in both
@@ -707,6 +750,27 @@ tui:
       );
       expect(classic.tuiClassic, isTrue);
       expect(classic.toYaml(), contains('classic: true'));
+    });
+
+    test('CliConfig carries showCompactionDetails and emits it only when '
+        'set (gh-1636)', () {
+      // Default false, never written (the file stays minimal).
+      final defaults = CliConfig();
+      expect(defaults.tuiShowCompactionDetails, isFalse);
+      expect(defaults.toYaml(), isNot(contains('showCompactionDetails')));
+      // Explicit true parses, round-trips, and survives copyWith.
+      final opted = CliConfig.fromYaml(
+        loadYaml('tui:\n  showCompactionDetails: true\n') as YamlMap,
+      );
+      expect(opted.tuiShowCompactionDetails, isTrue);
+      expect(opted.toYaml(), contains('showCompactionDetails: true'));
+      expect(
+        CliConfig.fromYaml(
+          loadYaml(opted.toYaml()) as YamlMap,
+        ).tuiShowCompactionDetails,
+        isTrue,
+      );
+      expect(opted.copyWith().tuiShowCompactionDetails, isTrue);
     });
   });
 

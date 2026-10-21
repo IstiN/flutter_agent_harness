@@ -865,8 +865,10 @@ void main() {
     setUp(() => io = FakeCliIO());
     tearDown(() => io.close());
 
-    test('the summarizer\'s thinking renders live, dimmed, before the '
-        'compaction report and the continuation turn', () async {
+    Future<AgentCli> cliFor(
+      StreamFunction streamFunction, {
+      required bool details,
+    }) async {
       const window32k = Model(
         id: 'test-model',
         api: 'test-api',
@@ -882,28 +884,7 @@ void main() {
       // Suppress session-start memory maintenance so the scripted turns
       // feed only the run under test (agent_cli_test pattern).
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
-      final fake = FakeStreamFunction([
-        // Three tool calls whose outputs (~8200 tokens each) push the
-        // next request past the window — the over-window guard fires.
-        toolTurn(const [
-          ToolCall(id: 'c1', name: 'bash', arguments: {'command': 'cat a.log'}),
-          ToolCall(id: 'c2', name: 'bash', arguments: {'command': 'cat b.log'}),
-          ToolCall(id: 'c3', name: 'bash', arguments: {'command': 'cat c.log'}),
-        ]),
-        // Consumed by the mid-run relief's no-op compaction attempt.
-        textTurn('S'),
-        // The real summarizer pass: the gh-1433 E4 contract is that its
-        // THINKING renders live on the log face instead of vanishing
-        // into a busy row that does not exist in a captured log.
-        thinkingOnlyTurn(
-          'compaction reasoning — folding three tool outputs',
-          'S',
-        ),
-        // The continuation turn after the fold.
-        textTurn('continued after compaction'),
-        textTurn('spare'),
-      ]);
-      final cli = AgentCli(
+      return AgentCli(
         config: AgentCliConfig(
           model: window32k,
           apiKey: '[REDACTED:Sensitive Value]',
@@ -913,11 +894,62 @@ void main() {
           approvalMode: ApprovalMode.yolo,
           headlessRun: true,
           compactionEngine: CompactionEngine.classic,
+          // gh-1636: the live summarizer-delta stream (and the full
+          // report block) rides the tui.showCompactionDetails opt-in.
+          showCompactionDetails: details,
         ),
         io: io,
         useColor: true,
-        streamFunction: fake.call,
+        streamFunction: streamFunction,
       );
+    }
+
+    List<List<AssistantMessageEvent>> turns() => [
+      // Three tool calls whose outputs (~8200 tokens each) push the
+      // next request past the window — the over-window guard fires.
+      toolTurn(const [
+        ToolCall(id: 'c1', name: 'bash', arguments: {'command': 'cat a.log'}),
+        ToolCall(id: 'c2', name: 'bash', arguments: {'command': 'cat b.log'}),
+        ToolCall(id: 'c3', name: 'bash', arguments: {'command': 'cat c.log'}),
+      ]),
+      // Consumed by the mid-run relief's no-op compaction attempt.
+      textTurn('S'),
+      // The real summarizer pass: the gh-1433 E4 contract is that its
+      // THINKING renders live on the log face instead of vanishing
+      // into a busy row that does not exist in a captured log — since
+      // gh-1636 only under `tui.showCompactionDetails` (the default
+      // log face must not echo the internal checkpoint text).
+      thinkingOnlyTurn(
+        'compaction reasoning — folding three tool outputs',
+        'S',
+      ),
+      // The continuation turn after the fold.
+      textTurn('continued after compaction'),
+      textTurn('spare'),
+    ];
+
+    test('gh-1636: the default log face stays summary-free — one marker '
+        'line, no checkpoint echo', () async {
+      final fake = FakeStreamFunction(turns());
+      final cli = await cliFor(fake.call, details: false);
+      final exit = await cli.runHeadless('go');
+      final out = io.out.toString();
+      expect(exit, 0, reason: out);
+      // The summarizer deltas do NOT echo onto the visible stream.
+      expect(out, isNot(contains('compaction reasoning')), reason: out);
+      // The report collapsed to the single marker line: the header
+      // carries the numbers; no fenced summary, no records line.
+      expect(out, contains(RegExp(r'● auto-compacted.*: \d+ → \d+ tokens')));
+      expect(out, isNot(contains('records: ')), reason: out);
+      expect(out, isNot(contains('```')), reason: out);
+      // The turn still continues after the fold.
+      expect(out, contains('continued after compaction'));
+    });
+
+    test('the summarizer\'s thinking renders live, dimmed, before the '
+        'compaction report and the continuation turn (opt-in)', () async {
+      final fake = FakeStreamFunction(turns());
+      final cli = await cliFor(fake.call, details: true);
       final exit = await cli.runHeadless('go');
       final out = io.out.toString();
       expect(exit, 0, reason: out);

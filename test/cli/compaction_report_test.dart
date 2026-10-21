@@ -12,6 +12,58 @@ import 'package:test/test.dart';
 import 'agent_cli_test_support.dart';
 
 void main() {
+  group('formatCompactionReport: gh-1636 one-line default', () {
+    final checkpointPass = AutoCompactorPass(
+      pass: 2,
+      tokensBefore: 105866,
+      tokensAfter: 59496,
+      fallback: 'smol',
+      ok: true,
+      summary:
+          '## Goal\n- long internal checkpoint notes\n'
+          'hidden segments (compact_expand reopens any id)',
+      hiddenRecords: 42,
+      summarizedMessages: 17,
+    );
+
+    test('the auto report is the single marker line by default', () {
+      expect(formatCompactionReport(checkpointPass, auto: true), [
+        'auto-compacted · smol · pass 2: 105866 → 59496 tokens '
+            '(46370 freed · 44%)',
+      ]);
+    });
+
+    test('the manual header rides the same one-liner', () {
+      expect(formatCompactionReport(checkpointPass, auto: false), [
+        'compacted · smol · pass 2: 105866 → 59496 tokens '
+            '(46370 freed · 44%)',
+      ]);
+    });
+
+    test('details: true keeps the full block (records + fenced summary)', () {
+      expect(
+        formatCompactionReport(checkpointPass, auto: true, details: true),
+        [
+          'auto-compacted · smol · pass 2',
+          'tokens: 105866 → 59496 (46370 freed · 44%)',
+          'records: 42 hidden · 17 summarized',
+          'summary:',
+          '```',
+          '## Goal\n- long internal checkpoint notes\n'
+              'hidden segments (compact_expand reopens any id)',
+          '```',
+        ],
+      );
+    });
+
+    test('the one-liner never carries the checkpoint text', () {
+      final line = formatCompactionReport(checkpointPass, auto: true).join();
+      expect(line, isNot(contains('checkpoint notes')));
+      expect(line, isNot(contains('records:')));
+      expect(line, isNot(contains('```')));
+    });
+  });
+
   group('formatCompactionReport (UT-report)', () {
     test('renders exact numbers, the engine, and the record counts', () {
       final pass = AutoCompactorPass(
@@ -24,7 +76,7 @@ void main() {
         hiddenRecords: 42,
         summarizedMessages: 17,
       );
-      expect(formatCompactionReport(pass, auto: false), [
+      expect(formatCompactionReport(pass, auto: false, details: true), [
         'compacted · smol',
         'tokens: 210925 → 45123 (165802 freed · 79%)',
         'records: 42 hidden · 17 summarized',
@@ -44,7 +96,7 @@ void main() {
         ok: true,
         summary: 's',
       );
-      final lines = formatCompactionReport(pass, auto: true);
+      final lines = formatCompactionReport(pass, auto: true, details: true);
       expect(lines.first, 'auto-compacted · main · pass 2');
       // Zero before-count cannot divide: 0%.
       expect(lines[1], 'tokens: 40000 → 20000 (20000 freed · 50%)');
@@ -59,7 +111,10 @@ void main() {
         ok: true,
         summary: 's',
       );
-      expect(formatCompactionReport(pass, auto: true).first, 'auto-compacted');
+      expect(
+        formatCompactionReport(pass, auto: true).first,
+        startsWith('auto-compacted:'),
+      );
     });
 
     test('an empty summary omits the block entirely (issue #578)', () {
@@ -70,7 +125,11 @@ void main() {
         fallback: 'smol',
         ok: true,
       );
-      final report = formatCompactionReport(pass, auto: false).join('\n');
+      final report = formatCompactionReport(
+        pass,
+        auto: false,
+        details: true,
+      ).join('\n');
       expect(report, isNot(contains('summary:')));
       expect(report, isNot(contains('```')));
     });
@@ -85,8 +144,8 @@ void main() {
         summary: 's',
       );
       expect(
-        formatCompactionReport(pass, auto: false)[1],
-        'tokens: 8451 → 8481 (0 freed · 0%)',
+        formatCompactionReport(pass, auto: false).single,
+        contains('8451 → 8481 tokens (0 freed · 0%)'),
       );
     });
 
@@ -104,7 +163,7 @@ void main() {
         ok: true,
         droppedMessages: 312,
       );
-      expect(formatCompactionReport(pass, auto: true), [
+      expect(formatCompactionReport(pass, auto: true, details: true), [
         'auto-compacted · local-trim',
         'tokens: 200056 → 40977 (159079 freed · 80%)',
         'records: 312 dropped (in-memory) · 0 hidden · 0 summarized',
@@ -122,7 +181,7 @@ void main() {
         summarizedMessages: 2,
       );
       expect(
-        formatCompactionReport(pass, auto: false)[2],
+        formatCompactionReport(pass, auto: false, details: true)[2],
         'records: 4 hidden · 2 summarized',
       );
     });

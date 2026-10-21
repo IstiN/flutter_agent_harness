@@ -223,6 +223,47 @@ void main() {
       );
     });
 
+    test(
+      'a tui.statusLine section boot accepts passes check (gh-1636)',
+      () async {
+        // `tui.statusLine` is a legitimate boot key (issue #805) — the
+        // config-service mirror must agree, or every `fa config check` /
+        // `fa config set` on a config carrying the status-line section
+        // reports a phantom "unknown tui key" diagnostic.
+        await env.writeFile(
+          _globalConfig,
+          '$_validGlobal\ntui:\n  statusLine:\n    preset: nerd\n',
+        );
+        final report = await checkOrThrow(service);
+        expect(report.warnings, isEmpty);
+      },
+    );
+
+    test('a bad tui.statusLine shape fails like boot parse (gh-1636)', () async {
+      // The same drift, the other direction: once the mirror knows the
+      // key it must also reject the shapes boot rejects — a non-map
+      // section and an unknown statusLine key.
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\ntui:\n  statusLine: nerd\n',
+      );
+      var report = await service.check();
+      expect(
+        report.errors.map((e) => e.message).join('\n'),
+        contains('statusLine'),
+      );
+
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\ntui:\n  statusLine:\n    preset: nerd\n    bogus: 1\n',
+      );
+      report = await service.check();
+      expect(
+        report.errors.map((e) => e.message).join('\n'),
+        contains('statusLine'),
+      );
+    });
+
     test('a2a env tokens pass the structural check', () async {
       await env.writeFile(
         _globalConfig,
@@ -371,6 +412,27 @@ void main() {
       final text = await read(_globalConfig);
       expect(text, contains('provider: zai'));
       expect(text, contains('model: openai/gpt-4o-mini'));
+    });
+
+    test('sets tui.showCompactionDetails in the user file (gh-1636)', () async {
+      await env.writeFile(_globalConfig, _validGlobal);
+      final result = await service.set(
+        'tui.showCompactionDetails',
+        'true',
+        scope: ConfigScope.global,
+      );
+      expect(result.oldDisplay, '(absent)');
+      final text = await read(_globalConfig);
+      expect(text, contains('showCompactionDetails: true'));
+      final got = await service.get('tui.showCompactionDetails');
+      expect(got.found, isTrue);
+      expect(got.display, 'true');
+      await checkOrThrow(service);
+      // A bad value never persists.
+      await expectLater(
+        service.set('tui.showCompactionDetails', 'sometimes'),
+        throwsA(isA<ConfigException>()),
+      );
     });
 
     test('rewrites only the touched line, comment included (E4)', () async {
@@ -859,6 +921,42 @@ void main() {
   });
 
   group('pins against cli_config.dart', () {
+    test('tui validation agrees with CliConfig.fromYaml (gh-1636)', () {
+      // The gh-1636 opt-in must be writable through `fa config set` AND
+      // boot-parse identically — the two mirrors accept exactly the same
+      // shapes.
+      final bad = loadYaml('tui:\n  showCompactionDetails: sure\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(bad), throwsConfigException);
+      final good = loadYaml('tui:\n  showCompactionDetails: true\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(good), returnsNormally);
+      expect(CliConfig.fromYaml(good).tuiShowCompactionDetails, isTrue);
+      // The emitter never renders the default, so the mirror's tolerance
+      // of a theme-less section is what `fa config set` needs.
+      final setShape = CliConfig(tuiShowCompactionDetails: true).toYaml();
+      expect(setShape, contains('showCompactionDetails: true'));
+      expect(
+        () => CliConfig.fromYaml(loadYaml(setShape) as YamlMap),
+        returnsNormally,
+      );
+      // statusLine (issue #805) is part of the same agreement: boot
+      // accepts the section (and its strict inner shape) — and the
+      // config-service tui validator delegates to this very parser, so
+      // `fa config check`/`set` agree with boot on every shape.
+      final statusLine =
+          loadYaml('tui:\n  statusLine:\n    preset: nerd\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(statusLine), returnsNormally);
+      for (final badStatusLine in [
+        'tui:\n  statusLine: nerd\n',
+        'tui:\n  statusLine:\n    preset: nerd\n    bogus: 1\n',
+      ]) {
+        expect(
+          () => CliConfig.fromYaml(loadYaml(badStatusLine) as YamlMap),
+          throwsConfigException,
+          reason: 'boot must reject: $badStatusLine',
+        );
+      }
+    });
+
     test('the output section validates identically (gh-1198)', () {
       final bad = loadYaml('output:\n  bogus: 1\n') as YamlMap;
       expect(() => CliConfig.fromYaml(bad), throwsConfigException);

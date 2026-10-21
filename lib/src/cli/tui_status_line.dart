@@ -720,14 +720,21 @@ StatusLineSpec resolveStatusLineSpec(
 
 /// The parsed `tui:` section: the theme name (`tui.theme`), the legacy
 /// chrome kill switch (`tui.classic` — S3's rendering concern, parsed
-/// here so the key exists and validates strictly) and the status-line
-/// section (`tui.statusLine`).
+/// here so the key exists and validates strictly), the compaction-report
+/// detail opt-in (`tui.showCompactionDetails`, gh-1636) and the
+/// status-line section (`tui.statusLine`).
 final class TuiSectionConfig {
   final String? theme;
   final bool classic;
+  final bool showCompactionDetails;
   final StatusLineConfig? statusLine;
 
-  const TuiSectionConfig({this.theme, this.classic = false, this.statusLine});
+  const TuiSectionConfig({
+    this.theme,
+    this.classic = false,
+    this.showCompactionDetails = false,
+    this.statusLine,
+  });
 }
 
 /// Parses the `tui:` yaml section. Strict (the repo's ConfigException
@@ -738,9 +745,18 @@ TuiSectionConfig parseTuiSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('tui must be a map, got: $node');
   }
-  _checkStrictKeys(node, 'tui', const {'theme', 'classic', 'statusLine'});
+  _checkStrictKeys(node, 'tui', const {
+    'theme',
+    'classic',
+    'showCompactionDetails',
+    'statusLine',
+  });
   final theme = _tuiThemeName(node['theme']);
-  final classic = _tuiClassicFlag(node['classic']);
+  final classic = _tuiBoolFlag('tui.classic', node['classic']);
+  final showCompactionDetails = _tuiBoolFlag(
+    'tui.showCompactionDetails',
+    node['showCompactionDetails'],
+  );
   final statusLine = node['statusLine'];
   if (statusLine != null && statusLine is! YamlMap) {
     throw ConfigException('"tui.statusLine" must be a map, got: $statusLine');
@@ -748,6 +764,7 @@ TuiSectionConfig parseTuiSection(Object? node) {
   return TuiSectionConfig(
     theme: theme,
     classic: classic,
+    showCompactionDetails: showCompactionDetails,
     statusLine: statusLine == null ? null : parseStatusLineConfig(statusLine),
   );
 }
@@ -761,12 +778,14 @@ String? _tuiThemeName(Object? theme) {
   return theme;
 }
 
-/// Validates the `classic:` kill switch; false when unset.
-bool _tuiClassicFlag(Object? classic) {
-  if (classic != null && classic is! bool) {
-    throw ConfigException('"tui.classic" must be a boolean');
+/// Validates a `tui.*` boolean flag (`classic:`, `showCompactionDetails:`);
+/// false when unset. The [key] is the full dotted name — the error names
+/// it so a typo'd value points at the right line.
+bool _tuiBoolFlag(String key, Object? value) {
+  if (value != null && value is! bool) {
+    throw ConfigException('"$key" must be a boolean');
   }
-  return classic as bool? ?? false;
+  return value as bool? ?? false;
 }
 
 /// The parsed `tui.statusLine:` section. `preset` selects one of the 7

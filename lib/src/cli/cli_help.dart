@@ -488,7 +488,10 @@ SESSIONS AND COMPACTION
 
   When the context nears the model's window the history is auto-compacted:
   older messages are summarized (via the smol role when configured) and
-  replaced by the summary; /compact does it on demand. Compaction prompts
+  replaced by the summary; /compact does it on demand. Each fold prints a
+  one-line marker (the full records/summary block needs
+  tui.showCompactionDetails: true — the summary itself stays in the
+  session file, reachable via compact_expand). Compaction prompts
   are overridable (see PROMPTS).
 
   Compaction engine (issue #148, default flip #287): compaction.engine =
