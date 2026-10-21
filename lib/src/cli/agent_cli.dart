@@ -121,6 +121,7 @@ import '../env/cwd_override_env.dart';
 import '../env/execution_env.dart';
 import '../env/session_vars_execution_env.dart';
 import '../hosts/host_agent_wiring.dart';
+import '../compaction/context_window_registry.dart';
 import '../hosts/host_capability_profile.dart';
 import '../hosts/host_extension_api.dart';
 import '../hosts/host_wiring_builder.dart';
@@ -347,6 +348,13 @@ const String headlessIncompleteMarker = '__FA_INCOMPLETE';
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
 class AgentCli {
+  /// The shared per-model context-window registry (gh-1742 invariant 2):
+  /// live endpoint detections and `/model-edit` pins publish here, and
+  /// every `task` child spawned afterwards resolves its compaction
+  /// window from the SAME entry — the 131,072-advertised-vs-478k-served
+  /// asymmetry can no longer fork main from its children.
+  final ContextWindowRegistry contextWindowRegistry = ContextWindowRegistry();
+
   /// Creates an [AgentCli]. [streamFunction] overrides the provider adapter
   /// (used in tests); otherwise one is built from
   /// [AgentCliConfig.providerKind] and [AgentCliConfig.apiKey].
@@ -555,6 +563,10 @@ class AgentCli {
         // (constructed inside the builder) may not exist yet.
         mainMailbox: () => _subagentManager.mailboxOf('main'),
         subagents: SubagentServices(
+          // gh-1742: children resolve the same registered windows the
+          // CLI publishes on detection/pin (invariant 2), under the
+          // same owner cap.
+          contextWindowRegistry: contextWindowRegistry,
           homeDir: config.homeDir,
           machineName: config.machineName,
           a2a: config.a2aConfig,
@@ -2473,14 +2485,11 @@ final class _CliMessageCapPolicy implements MessageCapPolicy {
   final AgentCli _cli;
   @override
   int? learnedCapFor(Model model) => ModelCapsStore.learnedCapOr(
-        _cli._modelCaps.recordFor(model.provider, model.id),
-        _cli
-            .config
-            .modelsConfig
-            ?.overrides
-            .lookup(model.provider, model.id)
-            ?.messageCap,
-      );
+    _cli._modelCaps.recordFor(model.provider, model.id),
+    _cli.config.modelsConfig?.overrides
+        .lookup(model.provider, model.id)
+        ?.messageCap,
+  );
 
   @override
   void learnFromRefusal(Model model, MessageCapRefusal refusal) {

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -60,16 +62,85 @@ void main() {
   });
 
   group('CompactionSettings.forWindow', () {
-    test('reproduces pi defaults at hosted-model windows', () {
-      for (final window in [100000, 128000, 200000]) {
-        final settings = CompactionSettings.forWindow(window);
-        expect(settings.enabled, isTrue, reason: 'window $window');
-        expect(settings.reserveTokens, 16384, reason: 'window $window');
-        expect(settings.keepRecentTokens, 20000, reason: 'window $window');
-      }
+    test(
+      'gh-1742 AC3: proportional headroom above the legacy-parity band',
+      () {
+        // 200k sits INSIDE the parity band (16k, 262k): the legacy term
+        // (`min(16384, window/4)` capped) dominates → the exact legacy
+        // reserve, so the estimate-only channel fires at the legacy line
+        // (gh-1742 review round 1, comment 1: the old proportional-only
+        // curve compacted up to 12k later than legacy there).
+        final s200k = CompactionSettings.forWindow(200000);
+        expect(s200k.reserveTokens, 16384);
+        expect(s200k.keepRecentTokens, 25000);
+        // 1M (the kimi class): reserve ≥ 65536 → ≥60k headroom at the
+        // trigger, enough to absorb one huge tool result plus drift.
+        final s1m = CompactionSettings.forWindow(1048576);
+        expect(s1m.reserveTokens, greaterThanOrEqualTo(65536));
+        expect(s1m.reserveTokens, 65536);
+        expect(s1m.keepRecentTokens, 131072);
+      },
+    );
+
+    test('UT-2: scaling table across the hosted-model range', () {
+      // window → reserve: legacy parity below 262,144 (the `min(16384,
+      // window/4)` term dominates `window/16` there), proportional above.
+      expect(CompactionSettings.forWindow(20480).reserveTokens, 5120);
+      expect(CompactionSettings.forWindow(32768).reserveTokens, 8192);
+      expect(CompactionSettings.forWindow(65536).reserveTokens, 16384);
+      expect(CompactionSettings.forWindow(131072).reserveTokens, 16384);
+      expect(CompactionSettings.forWindow(262144).reserveTokens, 16384);
+      expect(CompactionSettings.forWindow(524288).reserveTokens, 32768);
+      expect(CompactionSettings.forWindow(2000000).reserveTokens, 65536);
     });
 
-    test('scales to small on-device windows (quarter reserve, half keep)', () {
+    test('hosted mid-band windows reproduce the pi defaults exactly', () {
+      // The 128k hosted class (and every window in (16k, 262k)) rides the
+      // legacy curve exactly: reserve 16384, keep 20000 — the flutter_app
+      // AC (`agent_service_test` "hosted configs keep pi defaults") pins
+      // the same values, and the estimate-only degradation path (E1)
+      // compacts no later than before.
+      final s128k = CompactionSettings.forWindow(128000);
+      expect(s128k.reserveTokens, 16384);
+      expect(s128k.keepRecentTokens, 20000);
+      expect(CompactionSettings.forWindow(127000).reserveTokens, 16384);
+      expect(CompactionSettings.forWindow(127000).keepRecentTokens, 20000);
+    });
+
+    test(
+      'REG: the estimate trigger never fires later than the legacy curve',
+      () {
+        // The pre-gh-1742 curve, exactly (the parity half of the
+        // gh-1742 review's comment 1): the new reserve must be >= the
+        // legacy reserve at EVERY window, so `window - reserve` — what
+        // `shouldCompact` fires on — never sits LATER than before. This
+        // is the property the "≤64k fires no later than legacy" claim
+        // used to promise and the old floor (`min(4096, window/4)`)
+        // broke for every window in (16k, 262k).
+        int legacyReserve(int window) {
+          var reserve = math.min(16384, math.max(1024, window ~/ 4));
+          if (reserve >= window ~/ 2) reserve = math.max(128, window ~/ 4);
+          return reserve;
+        }
+
+        for (var window = 512; window <= 2100000; window += 512) {
+          final settings = CompactionSettings.forWindow(window);
+          expect(
+            settings.reserveTokens,
+            greaterThanOrEqualTo(legacyReserve(window)),
+            reason:
+                'window $window: the reserve undercut legacy — the '
+                'estimate-only channel (E1, no reported usage) would '
+                'compact later than before',
+          );
+        }
+      },
+    );
+
+    test('scales to small on-device windows (summary pricing floor)', () {
+      // The ≤262k band rides the legacy curve exactly (gh-1742: the
+      // proportional curve only takes over above the legacy-parity band)
+      // — small dev/on-device windows compact no later than before.
       final s8192 = CompactionSettings.forWindow(8192);
       expect(s8192.reserveTokens, 2048);
       expect(s8192.keepRecentTokens, 4096);
@@ -80,6 +151,8 @@ void main() {
 
       final s16384 = CompactionSettings.forWindow(16384);
       expect(s16384.reserveTokens, 4096);
+      // Legacy keep at 16k (`min(20000, 16384/2)`), mirrored by the
+      // keep-side parity floor.
       expect(s16384.keepRecentTokens, 8192);
     });
 
@@ -119,11 +192,24 @@ void main() {
           lessThan(window),
           reason: 'window $window: kept region must leave room to free',
         );
+      }
+    });
+
+    test('UT-2: monotone in the window (reserve and keep)', () {
+      var previous = CompactionSettings.forWindow(512);
+      for (var window = 1024; window <= 2100000; window += 512) {
+        final settings = CompactionSettings.forWindow(window);
         expect(
           settings.reserveTokens,
-          lessThanOrEqualTo(settings.keepRecentTokens),
-          reason: 'window $window',
+          greaterThanOrEqualTo(previous.reserveTokens),
+          reason: 'reserve monotone at window $window',
         );
+        expect(
+          settings.keepRecentTokens,
+          greaterThanOrEqualTo(previous.keepRecentTokens),
+          reason: 'keepRecent monotone at window $window',
+        );
+        previous = settings;
       }
     });
   });
@@ -136,20 +222,17 @@ void main() {
       expect(effectiveContextWindow(100000, 0), 100000);
     });
 
-    test(
-      'UT-W1: a cap above the catalog window RAISES the effective window '
-      '(issue #729)',
-      () {
-        // The repro: a glm endpoint serving ~1M under a 200k catalog id —
-        // the owner override raises the meter/threshold/guard basis to the
-        // served truth instead of falsely overflowing at 200k.
-        expect(effectiveContextWindow(200000, 1000000), 1000000);
-        expect(effectiveContextWindow(200000, 200001), 200001);
-        // The raise composes with the clamp-down: the override wins in
-        // whichever direction it points.
-        expect(effectiveContextWindow(200000, 16384), 16384);
-      },
-    );
+    test('UT-W1: a cap above the catalog window RAISES the effective window '
+        '(issue #729)', () {
+      // The repro: a glm endpoint serving ~1M under a 200k catalog id —
+      // the owner override raises the meter/threshold/guard basis to the
+      // served truth instead of falsely overflowing at 200k.
+      expect(effectiveContextWindow(200000, 1000000), 1000000);
+      expect(effectiveContextWindow(200000, 200001), 200001);
+      // The raise composes with the clamp-down: the override wins in
+      // whichever direction it points.
+      expect(effectiveContextWindow(200000, 16384), 16384);
+    });
 
     test('UT-W1: the raise feeds the compaction threshold and trigger', () {
       // At the raised basis a 347k-token branch is UNDER the trigger; at
@@ -158,11 +241,7 @@ void main() {
       final raised = effectiveContextWindow(200000, 1000000);
       final raw = effectiveContextWindow(200000, null);
       expect(
-        shouldCompact(
-          347000,
-          raised,
-          CompactionSettings.forWindow(raised),
-        ),
+        shouldCompact(347000, raised, CompactionSettings.forWindow(raised)),
         isFalse,
       );
       expect(
@@ -173,14 +252,14 @@ void main() {
 
     test('the compaction threshold rides the capped window', () {
       // A 1M-window model under a 256k cap triggers at the 256k basis
-      // (forWindow reserve 16384 → trigger 239616), never at the 1M one;
-      // uncapped, the same model triggers at 983616. The meter, the
-      // threshold and the loop guard all consume the same
+      // (gh-1742 forWindow: reserve 16384 → trigger 239616), never at
+      // the 1M one; uncapped, the same model triggers at 983040. The
+      // meter, the threshold and the loop guard all consume the same
       // effectiveContextWindow basis.
       final capped = effectiveContextWindow(1000000, 256000);
       final uncapped = effectiveContextWindow(1000000, null);
       expect(
-        shouldCompact(240000, capped, CompactionSettings.forWindow(capped)),
+        shouldCompact(240001, capped, CompactionSettings.forWindow(capped)),
         isTrue,
       );
       expect(
@@ -191,8 +270,8 @@ void main() {
   });
 
   group('fit-the-window compaction payloads (issue #729)', () {
-    // The repro basis: a 200k window with the default reserve leaves a
-    // 183644-token payload budget.
+    // The repro basis: a 200k window with the (legacy-parity) reserve
+    // leaves a 183616-token payload budget.
     final budget = summarizationPayloadBudget(
       200000,
       CompactionSettings.forWindow(200000),
@@ -208,6 +287,7 @@ void main() {
         prompts.add(request.prompt);
         return SummarizationResult.success(text);
       }
+
       return (call: call, prompts: prompts);
     }
 
@@ -231,10 +311,7 @@ void main() {
       }
       // Order preserved, nothing lost: the flatten of the chunks is the
       // original sequence, message for message.
-      expect(
-        [for (final chunk in chunks) ...chunk],
-        equals(messages),
-      );
+      expect([for (final chunk in chunks) ...chunk], equals(messages));
     });
 
     test('UT-C1: a single message bigger than the budget is one chunk', () {
@@ -260,95 +337,91 @@ void main() {
       );
     });
 
-    test(
-      'IT-C1: an over-budget region is summarized chunk-wise; every '
-      'outbound prompt stays under the payload budget',
-      () async {
-        final fake = recorder('FOLD');
-        final messages = [for (var i = 0; i < 347; i++) fat('u$i-')];
+    test('IT-C1: an over-budget region is summarized chunk-wise; every '
+        'outbound prompt stays under the payload budget', () async {
+      final fake = recorder('FOLD');
+      final messages = [for (var i = 0; i < 347; i++) fat('u$i-')];
 
-        final summary = await generateSummary(
-          messages,
-          summarize: fake.call,
-          maxPromptTokens: budget,
-        );
-
-        expect(summary, 'FOLD');
-        expect(fake.prompts, hasLength(greaterThan(1)));
-        // The #729 invariant: every recorded outbound prompt fits the
-        // summarizer's window minus the reserve.
-        for (final prompt in fake.prompts) {
-          expect(
-            estimateStringTokens(prompt),
-            lessThanOrEqualTo(budget),
-            reason: 'outbound payload exceeded the budget',
-          );
-        }
-        // The fold: chunk 0 uses the summary prompt, later chunks the
-        // update prompt threading the running summary.
-        expect(fake.prompts.first, isNot(contains('<previous-checkpoint>')));
-        for (var i = 1; i < fake.prompts.length; i++) {
-          expect(fake.prompts[i], contains('<previous-checkpoint>'));
-        }
-      },
-    );
-
-    test('under-budget payloads ride the legacy prompt byte-identically',
-        () async {
-      final fake = recorder('S');
-      final legacy = <String>[];
-      final messages = [fat('u1'), fat('u2')];
-
-      final bounded = await generateSummary(
+      final summary = await generateSummary(
         messages,
         summarize: fake.call,
         maxPromptTokens: budget,
       );
-      final unbounded = await generateSummary(
-        messages,
-        summarize: (request) async {
-          legacy.add(request.prompt);
-          return SummarizationResult.success('S');
-        },
-      );
 
-      expect(fake.prompts, hasLength(1)); // one call, no chunking
-      expect(legacy.single, fake.prompts.single);
-      expect(bounded, 'S');
-      expect(unbounded, 'S');
+      expect(summary, 'FOLD');
+      expect(fake.prompts, hasLength(greaterThan(1)));
+      // The #729 invariant: every recorded outbound prompt fits the
+      // summarizer's window minus the reserve.
+      for (final prompt in fake.prompts) {
+        expect(
+          estimateStringTokens(prompt),
+          lessThanOrEqualTo(budget),
+          reason: 'outbound payload exceeded the budget',
+        );
+      }
+      // The fold: chunk 0 uses the summary prompt, later chunks the
+      // update prompt threading the running summary.
+      expect(fake.prompts.first, isNot(contains('<previous-checkpoint>')));
+      for (var i = 1; i < fake.prompts.length; i++) {
+        expect(fake.prompts[i], contains('<previous-checkpoint>'));
+      }
     });
 
     test(
-      'a single message bigger than the whole budget is truncated with an '
-      'explicit note, and the prompt still fits',
+      'under-budget payloads ride the legacy prompt byte-identically',
       () async {
         final fake = recorder('S');
-        // A giant ASSISTANT message: no candidate line (#81 keeps user
-        // asks uncapped), so the fit helper is what bounds the payload.
-        final giant = AssistantMessage(
-          content: [TextContent(text: 'g' * (budget * 4 + 8000))],
-          api: 'openai-completions',
-          provider: 'openrouter',
-          model: 'm1',
-          usage: Usage.zero,
-          stopReason: StopReason.stop,
-          timestamp: DateTime.utc(2026),
-        );
+        final legacy = <String>[];
+        final messages = [fat('u1'), fat('u2')];
 
-        final summary = await generateSummary(
-          [giant],
+        final bounded = await generateSummary(
+          messages,
           summarize: fake.call,
           maxPromptTokens: budget,
         );
-
-        expect(summary, 'S');
-        expect(
-          estimateStringTokens(fake.prompts.single),
-          lessThanOrEqualTo(budget),
+        final unbounded = await generateSummary(
+          messages,
+          summarize: (request) async {
+            legacy.add(request.prompt);
+            return SummarizationResult.success('S');
+          },
         );
-        expect(fake.prompts.single, contains('more characters truncated'));
+
+        expect(fake.prompts, hasLength(1)); // one call, no chunking
+        expect(legacy.single, fake.prompts.single);
+        expect(bounded, 'S');
+        expect(unbounded, 'S');
       },
     );
+
+    test('a single message bigger than the whole budget is truncated with an '
+        'explicit note, and the prompt still fits', () async {
+      final fake = recorder('S');
+      // A giant ASSISTANT message: no candidate line (#81 keeps user
+      // asks uncapped), so the fit helper is what bounds the payload.
+      final giant = AssistantMessage(
+        content: [TextContent(text: 'g' * (budget * 4 + 8000))],
+        api: 'openai-completions',
+        provider: 'openrouter',
+        model: 'm1',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      );
+
+      final summary = await generateSummary(
+        [giant],
+        summarize: fake.call,
+        maxPromptTokens: budget,
+      );
+
+      expect(summary, 'S');
+      expect(
+        estimateStringTokens(fake.prompts.single),
+        lessThanOrEqualTo(budget),
+      );
+      expect(fake.prompts.single, contains('more characters truncated'));
+    });
   });
 
   group('findCutPoint', () {
