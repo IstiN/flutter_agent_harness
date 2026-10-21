@@ -158,15 +158,19 @@ final class TrajectoryRequestBlobStore {
     if (files.isEmpty) return 0;
     final now = _clock();
     final ttl = Duration(days: ttlDays);
-    DateTime ageOf(FileInfo f) =>
-        DateTime.fromMillisecondsSinceEpoch(f.mtimeMs);
     final sorted = [...files]..sort((a, b) => a.mtimeMs.compareTo(b.mtimeMs));
     var total = sorted.fold<int>(0, (sum, f) => sum + f.size);
     var deleted = 0;
-    for (final file in sorted) {
-      final expired = now.difference(ageOf(file)) > ttl;
-      // Oldest first: expired files go regardless of the budget; beyond
-      // that only the oldest files leave until the dir fits.
+    // Oldest first, and the NEWEST blob always survives — "keep last N"
+    // semantics: expired files go regardless of the budget, beyond that
+    // only the oldest files leave until the dir fits.
+    for (var i = 0; i < sorted.length - 1; i++) {
+      final file = sorted[i];
+      final expired =
+          now.difference(
+            DateTime.fromMillisecondsSinceEpoch(file.mtimeMs),
+          ) >
+          ttl;
       if (!expired && total <= maxBytes) break;
       await _env.remove(file.path, force: true);
       total -= file.size;

@@ -133,8 +133,8 @@ void main() {
       );
       final restored = TrajectoryRequestDetail.fromJson(stripped.toJson());
       expect(restored.spillFile, stripped.spillFile);
-      expect(restored.messages.single.role, stripped.messages.single.role);
-      expect(restored.messages.single.blocks, isEmpty);
+      expect(restored.messages.first.role, stripped.messages.first.role);
+      expect(restored.messages.first.blocks, isEmpty);
     });
   });
 
@@ -258,8 +258,13 @@ void main() {
       var current = now;
       final s = store(ttlDays: 30, clock: () => current);
       await s.write(detail: _detail());
-      // Age the first blob past the TTL, then write again: the sweep
-      // removes it.
+      // Pin the first blob's mtime to the fake clock (the memory fs
+      // stamps real wall-clock) so the age math is deterministic, age it
+      // past the TTL, then write again: the sweep removes it.
+      env.setMtime(
+        '.fah/trajectories/s1/requests/1.json',
+        now.millisecondsSinceEpoch,
+      );
       current = now.add(const Duration(days: 31));
       final spill = await s.write(detail: _detail());
       expect(spill!.file, endsWith('2.json'));

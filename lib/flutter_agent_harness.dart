@@ -51,12 +51,14 @@ export 'src/cli/cli_args.dart';
 export 'src/cli/cli_config.dart'
     show
         CliConfig,
+        TrajectorySection,
         applyProviderTimeoutEnvOverride,
         loadCliConfig,
         loadProjectCompactionEngine,
         loadProjectContextWindowCap,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
+        loadProjectTrajectorySection,
         parseProviderTimeouts,
         resolveStartupCubeSource;
 export 'src/config/app_config_sections.dart';
