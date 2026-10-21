@@ -615,6 +615,7 @@ final class TaskExecutor {
         force: runForced,
       ).run();
     } on Object catch (e) {
+      print('DEBUG compactChild threw: $e');
       return false; // The guard remains the last resort.
     }
     // Post-compaction invariant (#387): the flush cursor restarts at the

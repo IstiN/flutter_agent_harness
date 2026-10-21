@@ -245,9 +245,12 @@ final class StructuredCompactor {
     // Tier 2 LRU re-hide (issue #1379): evict least-recently-used
     // expansion artifacts first — the oldest expand call/result pairs
     // re-fold into markers before the judge ever sees the ledger.
+    print('DEBUG engine force=$force trigger=$trigger req=${_requestTokens()}');
     await _runLruRehidePasses(trigger);
     if (!await _runHidePasses(trigger)) return false;
+    print('DEBUG engine after hide req=${_requestTokens()}');
     if (!await _runCheckpointPasses(trigger)) return false;
+    print('DEBUG engine after ckpt');
     return _requestTokens() <= trigger;
   }
 
@@ -398,6 +401,7 @@ final class StructuredCompactor {
       if (_hideableEntries(view.ledger).isEmpty) break;
 
       final call = await _callJudge(view);
+      print('DEBUG judge failure=${call.failure} ans=${call.answer?.substring(0, (call.answer?.length ?? 0).clamp(0, 120))}');
       if (call.failure != null) {
         // F1: a failed judge call hides nothing — but since #541 it is
         // COUNTED, not fatal: one retry, then the deterministic
