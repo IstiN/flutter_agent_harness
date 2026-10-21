@@ -494,11 +494,13 @@ void main() {
     expect(hooks.bothRolesError, isNull,
         reason: 'a rescued run never reports both roles failed');
     // The mechanical trim reported its own receipt …
-    expect(
-      hooks.passes.any((p) => p.ok && p.fallback == 'local-trim'),
-      isTrue,
-      reason: 'the local-trim pass reports its receipt',
+    final trimReceipt = hooks.passes.singleWhere(
+      (p) => p.ok && p.fallback == 'local-trim',
     );
+    // … and the receipt explains where the tokens went (issue #673
+    // AC3): the dropped user + tool-call + tool-result read pair, with
+    // every filler kept inside the keepRecent budget.
+    expect(trimReceipt.droppedMessages, 3);
     // … and the hooks bracket closed exactly once.
     expect(hooks.doneCount, 1);
     // The live context actually shrank and starts at the trim marker.
@@ -562,9 +564,72 @@ void main() {
     expect(hooks.bothRolesError, isNotNull);
     expect(hooks.passes.any((p) => p.fallback == 'local-trim'), isFalse,
         reason: 'nothing was droppable — no trim receipt may be reported');
+    // The exhaustion path is a terminal path like any other: it reports
+    // its failed-pass receipt AND closes the host onDone bracket (the
+    // CLI's HEP compaction_end frame keys off it — a run that ends here
+    // must not leave the bracket open).
+    expect(hooks.doneCount, 1,
+        reason: 'the exhaustion path closes the onDone bracket');
+    final failedPasses = hooks.passes.where((p) => !p.ok).toList();
+    expect(failedPasses, hasLength(1),
+        reason: 'the exhaustion path reports its failed-pass receipt');
+    expect(failedPasses.single.fallback, isNull);
+    expect(failedPasses.single.error, same(hooks.bothRolesError));
     // No trim means no live-context change (AgentState copies on assign,
     // so compare element identity, not list identity).
     expect(state.messages.length, messagesBefore.length);
     expect(identical(state.messages.single, messagesBefore.single), isTrue);
   });
+
+  test('gh-1743: a cancelled run token surfaces the abort — the rescue '
+      'valve never trims (nor reports success) on a run the user '
+      'stopped', () async {
+    final (session, state) = await overWindowSessionWithDroppableTail();
+    final abort = CancelTokenSource()..cancel('user abort');
+    final hooks = _CapturingHooks();
+
+    // The SAME wedged-judge shape as the rescue test: the totalBudget
+    // watchdog is what fires, so the factory's timed-out branch (and
+    // only it) is the code under test — with an already-cancelled run
+    // token attached.
+    await expectLater(
+      AutoCompactorFactory(
+        session: session,
+        state: state,
+        window: 1000,
+        settings: settings,
+        sources: AutoCompactorSources(
+          smolStream: null,
+          smolModel: null,
+          mainStream: (m, c, {cancelToken}) {
+            final stream = AssistantMessageEventStream();
+            stream.push(StartEvent(partial: _message(StopReason.stop)));
+            return stream;
+          },
+          mainModel: _model,
+        ),
+        hooks: hooks,
+        // Cancel parity (issue #1085): a cancelled compaction is never
+        // a mere failed pass — the valve must surface the cancel, not
+        // rescue a run the user just stopped.
+        runToken: abort.token,
+        attemptBudget: const Duration(seconds: 30),
+        totalBudget: const Duration(milliseconds: 300),
+      ).run(),
+      throwsA(isA<CancelledException>()),
+    );
+    // Nothing reported, nothing trimmed: the aborted run leaves no
+    // receipts, no failure verdict, no bracket — and the live context
+    // untouched.
+    expect(hooks.passes, isEmpty,
+        reason: 'a cancelled run is never a mere failed pass');
+    expect(hooks.bothRolesError, isNull);
+    expect(hooks.doneCount, 0);
+    expect(state.messages.first, isA<UserMessage>());
+    expect(
+      (state.messages.first as UserMessage).content as String,
+      isNot(contains('[context trimmed locally')),
+    );
+  });
+}
 }
