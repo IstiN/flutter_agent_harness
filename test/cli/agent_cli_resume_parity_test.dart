@@ -319,12 +319,68 @@ void main() {
     'override (the ACTIVE reserve, not forWindow)',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
-      // The DEFAULT reserve (forWindow(32768) today) keeps the whole
-      // 18-message file; the PIN overrides it with a LARGER reserve —
-      // the budget must shrink accordingly, proving the wiring reads
-      // the ACTIVE settings and never the curve.
+      // The DEFAULT budget keeps the whole seeded file; the PIN
+      // overrides it with a LARGER reserve — the budget must shrink
+      // accordingly, proving the wiring reads the ACTIVE settings and
+      // never the curve.
+      //
+      // The seed count derives from the file's own meter (the header
+      // rule): gh-1742 review c1 corrected the forWindow curve (the 32k
+      // reserve went 4096 -> 8192, exact legacy parity) and staled a
+      // fixed 18-message seed — the default budget legitimately shrank,
+      // so a count pinned to one curve's constant cannot happen twice.
+      //
+      // First measure the CLI's real request overhead off a probe
+      // resume (the IT-NOGUARD pattern): requestTokens -
+      // transcriptTokens of the first captured request.
+      const probeCount = 2;
+      final probeEnv = await freshEnv();
+      await seedFlat(probeEnv, 'parity-target', probeCount);
+      final probeStream = FakeStreamFunction([textTurn('ok')]);
+      final probeExit = await headlessCli(
+        probeEnv,
+        probeStream,
+      ).runHeadless('go');
+      expect(probeExit, 0);
+      final probeContext = probeStream.contexts.first;
+      final cliOverhead =
+          requestTokens(probeContext) - transcriptTokens(probeContext);
+
+      // The full-file request basis for [count] seeded messages + the
+      // live turn, priced by the same meter the budget enforces.
+      int flatFileTokens(int count) =>
+          transcriptTokens(
+            Context(
+              messages: [
+                for (var i = 0; i < count; i++)
+                  UserMessage.text('m$i ${'a' * 400}'),
+                UserMessage.text('go'),
+              ],
+            ),
+          ) +
+          cliOverhead;
+
+      // The largest flat file that still fits the DEFAULT parity
+      // budget — the default must keep it whole.
+      var count = 0;
+      while (count < 40 && flatFileTokens(count + 1) <= _threshold) {
+        count++;
+      }
+      expect(count, greaterThanOrEqualTo(1),
+          reason: 'the default budget must keep a non-empty file');
+
+      // The premise must be two-sided: the file that fits the default
+      // budget must still BUST the LARGER pinned reserve's budget, or
+      // the override assertion below would be vacuous.
+      const overrideReserve = 16384;
+      expect(
+        flatFileTokens(count),
+        greaterThan(_window - overrideReserve),
+        reason: 'the seeded file must overflow the pinned-reserve budget',
+      );
+
       final defaultEnv = await freshEnv();
-      await seedFlat(defaultEnv, 'parity-target', 18);
+      await seedFlat(defaultEnv, 'parity-target', count);
       final defaultStream = FakeStreamFunction([textTurn('ok')]);
       final defaultExit = await headlessCli(
         defaultEnv,
@@ -332,18 +388,22 @@ void main() {
       ).runHeadless('go');
       expect(defaultExit, 0);
       final keptByDefault = defaultStream.contexts.first.messages.length;
-      expect(keptByDefault, 19, reason: 'the default budget keeps the file');
+      expect(
+        keptByDefault,
+        count + 1,
+        reason: 'the default budget keeps the file',
+      );
 
       io = FakeCliIO();
       final overrideEnv = await freshEnv();
-      await seedFlat(overrideEnv, 'parity-target', 18);
+      await seedFlat(overrideEnv, 'parity-target', count);
       final overrideStream = FakeStreamFunction([textTurn('ok')]);
       final overrideExit = await headlessCli(
         overrideEnv,
         overrideStream,
         compactionSettings: const CompactionSettings(
           enabled: true,
-          reserveTokens: 16384,
+          reserveTokens: overrideReserve,
           keepRecentTokens: 16384,
         ),
       ).runHeadless('go');
@@ -353,7 +413,7 @@ void main() {
       // The larger pinned reserve shrinks the parity budget — the trim
       // fires where the default kept everything.
       expect(keptByOverride, lessThan(keptByDefault));
-      expect(keptByOverride, lessThan(19));
+      expect(keptByOverride, lessThan(count + 1));
     },
   );
 
