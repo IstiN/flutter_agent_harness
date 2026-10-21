@@ -132,14 +132,24 @@ final class _ScriptedStream {
   final contexts = <Context>[];
   int compactionCalls = 0;
 
-  /// Scripted real-child turns keyed on a substring of the last user
-  /// text; each entry is consumed once. Falls back to a plain text turn.
-  final Map<String, List<List<AssistantMessageEvent>>> rules = {};
+  /// Scripted real-child turn FACTORIES keyed on a substring of the last
+  /// user text; each entry fires at most once. Falls back to a plain text
+  /// turn.
+  final Map<String, List<AssistantMessageEvent> Function()> rules = {};
+  final Set<String> _usedRules = {};
 
   int get calls => contexts.length;
 
+  /// The text the next turn is keyed on: the last user message, or —
+  /// after a tool call — the last tool result's text.
   static String lastUserText(Context context) {
     for (final message in context.messages.reversed) {
+      if (message is ToolResultMessage) {
+        return message.content
+            .whereType<TextContent>()
+            .map((b) => b.text)
+            .join('\n');
+      }
       if (message is UserMessage) {
         final content = message.content;
         if (content is String) return content;
@@ -178,8 +188,8 @@ final class _ScriptedStream {
     );
     final text = lastUserText(context);
     for (final entry in rules.entries) {
-      if (text.contains(entry.key) && entry.value.isNotEmpty) {
-        return _streamOf(entry.value.removeAt(0));
+      if (text.contains(entry.key) && _usedRules.add(entry.key)) {
+        return _streamOf(entry.value());
       }
     }
     return _streamOf(_usageTurn('done'));
@@ -247,6 +257,17 @@ final class _Wiring {
       index: 0,
       context: '',
     );
+  }
+
+  /// Waits out the fire-and-forget transcript flush (the real session is
+  /// attached to the handle when it lands).
+  Future<void> settle(String id) async {
+    final placeholder = '${manager.parentSessionId}/$id';
+    for (var i = 0; i < 1000; i++) {
+      if (manager[id]!.sessionId != placeholder) return;
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    fail('child session for "$id" never attached');
   }
 
   Future<List<SessionRecord>> sessionRecords(String id) async {
@@ -318,16 +339,14 @@ void main() {
         // The boundary before turn 3 must force the pass: the estimate
         // anchors on total_tokens (100) and stays far under the trigger.
         wiring.stream.rules.addAll({
-          'forced-pass': [
-            [_toolTurn('c1')],
-            [
+          // Turn 1: tool call (usage-less).
+          'forced-pass': () => _toolTurn('c1'),
+          // Turn 2 (keyed on the fattened tool result): another tool call
+          // carrying the gateway report — total_tokens 100 (excludes the
+          // cached prefix), real accepted context =
+          // 100 input + 3400 cacheRead = 3500 > 2976.
+          'fat:': () =>
               _toolTurn('c2', input: 100, cacheRead: 3400, totalTokens: 100),
-            ],
-          ],
-          // After the second tool result the child finishes with text.
-          'fat:': [
-            [_usageTurn('interim')],
-          ],
         });
         final result = await wiring.executor.runSpawn(
           item: const TaskItem(
@@ -364,6 +383,7 @@ void main() {
         );
         // The child session gained a compaction record (structured
         // engine: hidden ranges / checkpoints; classic: CompactionRecord).
+        await wiring.settle('forced');
         final records = await wiring.sessionRecords('forced');
         expect(
           records.any(
@@ -383,13 +403,9 @@ void main() {
       // Same gateway shape, but the real accepted context (600) is under
       // the trigger: no compaction call, no record.
       wiring.stream.rules.addAll({
-        'quiet-observed': [
-          [_toolTurn('c1')],
-          [_toolTurn('c2', input: 300, cacheRead: 300, totalTokens: 300)],
-        ],
-        'fat:': [
-          [_usageTurn('interim')],
-        ],
+        'quiet-observed': () => _toolTurn('c1'),
+        'fat:': () =>
+            _toolTurn('c2', input: 300, cacheRead: 300, totalTokens: 300),
       });
       final result = await wiring.executor.runSpawn(
         item: const TaskItem(
@@ -402,6 +418,7 @@ void main() {
       );
       expect(result.status, TaskSpawnStatus.completed);
       expect(wiring.stream.compactionCalls, 0);
+      await wiring.settle('quiet');
       final records = await wiring.sessionRecords('quiet');
       expect(
         records.any(
