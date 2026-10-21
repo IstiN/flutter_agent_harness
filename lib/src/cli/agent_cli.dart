@@ -120,6 +120,7 @@ import '../env/cwd_override_env.dart';
 import '../env/execution_env.dart';
 import '../env/session_vars_execution_env.dart';
 import '../hosts/host_agent_wiring.dart';
+import '../compaction/context_window_registry.dart';
 import '../hosts/host_capability_profile.dart';
 import '../hosts/host_extension_api.dart';
 import '../hosts/host_wiring_builder.dart';
