@@ -19,16 +19,26 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
-/// The last user message's text — the child-run routing key.
-String _lastUserText(Context context) {
-  for (final message in context.messages.reversed) {
-    if (message is UserMessage) return message.content as String;
+/// Whether the transcript carries the child's task marker anywhere in a
+/// user message (the child prompt wraps the task text in framework
+/// prose, so the marker is matched, not the whole text).
+bool _isChildRun(Context context) {
+  for (final message in context.messages) {
+    if (message is! UserMessage) continue;
+    final content = message.content;
+    final text = content is String
+        ? content
+        : [
+            for (final block in content as List<ContentBlock>)
+              if (block is TextContent) block.text,
+          ].join();
+    if (text.contains('KIDMARK')) return true;
   }
-  return '';
+  return false;
 }
 
-/// A scripted stream: the parent replays [parentTurns] in order; a CHILD
-/// run (its task carries the marker) replays a plain text turn.
+/// A scripted stream: a CHILD run replays a plain text turn; the parent
+/// replays [parentTurns] in order.
 final class _RegistryRouter {
   _RegistryRouter(this.parentTurns);
 
@@ -40,16 +50,13 @@ final class _RegistryRouter {
     Context context, {
     CancelToken? cancelToken,
   }) {
-    if (_lastUserText(context).contains('KIDMARK')) {
-      return FakeStreamFunction([textTurn('child done')]).call(
-        model,
-        context,
-      );
-    }
-    final index =
-        _parentCalls < parentTurns.length ? _parentCalls : parentTurns.length - 1;
-    _parentCalls++;
-    return FakeStreamFunction([parentTurns[index]]).call(model, context);
+    final turn = _isChildRun(context)
+        ? textTurn('child done')
+        : parentTurns[
+            _parentCalls < parentTurns.length
+                ? _parentCalls++
+                : parentTurns.length - 1];
+    return FakeStreamFunction([turn]).call(model, context);
   }
 }
 
@@ -86,9 +93,7 @@ void main() {
 
   test('AC2a: /model-edit publishes the pin into the shared registry',
       () async {
-    final cli = await bootedCli(
-      FakeStreamFunction([textTurn('')]).call,
-    );
+    final cli = await bootedCli(FakeStreamFunction([textTurn('')]).call);
     io.sendLine('/model-edit contextWindow 478000');
     await waitForIt(
       () => io.out.toString().contains('478000'),
@@ -135,18 +140,10 @@ void main() {
       expect(cli.contextWindowRegistry.windowFor(testModel), 478000);
 
       io.sendLine('spawn a kid');
-      try {
-        await waitForIt(
-          () => cli.subagentManager['kid'] != null,
-          reason: 'the child registers',
-        );
-      } on Object {
-        // ignore: avoid_print
-        print('OUT TAIL: ${io.out.toString().substring(
-              io.out.toString().length - 1500.clamp(0, io.out.toString().length),
-            )}');
-        rethrow;
-      }
+      await waitForIt(
+        () => cli.subagentManager['kid'] != null,
+        reason: 'the child registers',
+      );
       await waitForIt(
         () => cli.subagentManager['kid']!.windowTokens == 478000,
         reason: 'the child pressure stamp resolves the registered window',
