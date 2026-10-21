@@ -979,7 +979,15 @@ class AutoCompactorFactory {
     if (engine == CompactionEngine.structured) {
       final adapter = _StructuredHooksAdapter(hooks);
       final outcome = await _runStructured(adapter: adapter);
-      if (outcome.ok) {
+      // gh-1742 invariant 1: a FORCED run (observed usage over the line)
+      // that did zero passes is not relief — the structured engine's
+      // pass loops gate on its own transcript estimate, so an
+      // observation the estimate cannot see would come back `ok` with
+      // nothing done and the child would ride an over-window context
+      // into the next request. Fall through to the classic engine,
+      // whose forced semantics run the summarizer regardless of its
+      // own estimate. An unforced no-op stays the success short-circuit.
+      if (outcome.ok && (adapter.passCount > 0 || !forced)) {
         // Close the hooks bracket the classic [AutoCompactor.run] closes
         // on every terminal path: hosts key off [AutoCompactorHooks.onDone]
         // (the CLI's HEP `compaction_end` frame, the Flutter chat sheet),
