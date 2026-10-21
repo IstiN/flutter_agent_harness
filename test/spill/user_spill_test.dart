@@ -151,8 +151,10 @@ void main() {
       final config = resolveRunSpillsConfig(null, {
         userSpillThresholdEnvVar: '0',
       });
+      // With no section there is nothing else armed: the user path is off
+      // and the tool path was never asked for.
       expect(config!.isUserActive, isFalse);
-      expect(config.isActive, isTrue);
+      expect(config.isActive, isFalse);
     });
 
     test('junk user env is ignored', () {
@@ -170,6 +172,42 @@ void main() {
       });
       expect(config!.threshold, 2048);
       expect(config.userThreshold, 32768);
+    });
+
+    test('the user knob alone does NOT arm tool-result spilling (review)', () {
+      // No section + FAH_USER_SPILL_THRESHOLD only: the user path arms,
+      // the tool path stays off (threshold 0 → the tool hook never
+      // attaches).
+      final config = resolveRunSpillsConfig(null, {
+        userSpillThresholdEnvVar: '32768',
+      });
+      expect(config!.isUserActive, isTrue);
+      expect(config.isActive, isFalse);
+      expect(config.threshold, 0);
+    });
+
+    test('the section kill-switch beats the env knobs (review)', () {
+      const disabled = SpillsConfig(enabled: false);
+      final viaUser = resolveRunSpillsConfig(disabled, {
+        userSpillThresholdEnvVar: '32768',
+      });
+      expect(identical(viaUser, disabled), isTrue);
+      expect(viaUser!.isUserActive, isFalse);
+      final viaTool = resolveRunSpillsConfig(disabled, {
+        spillThresholdEnvVar: '2048',
+      });
+      expect(identical(viaTool, disabled), isTrue);
+      expect(viaTool!.isActive, isFalse);
+    });
+
+    test('the user knob set to 0 with an active section keeps tools on', () {
+      final config = resolveRunSpillsConfig(const SpillsConfig(), {
+        userSpillThresholdEnvVar: '0',
+      });
+      // The section asked for tool-result spilling; the knob silences
+      // only the user path.
+      expect(config!.isUserActive, isFalse);
+      expect(config.isActive, isTrue);
     });
   });
 
@@ -290,6 +328,26 @@ void main() {
         expect(identical(out, raw), isTrue);
       },
     );
+
+    test('idempotent on an already-spilled replacement (review)', () async {
+      final env = _env();
+      final guard = _guard(env);
+      // A CLI-busy steer pre-spills at accept; the drained replacement
+      // re-enters the guard at the seam. It must pass through unchanged —
+      // no second file, same object (the FIFO identity depends on it).
+      final replacement = await guard.guard(UserMessage.text(_bigText));
+      final reGuarded = await guard.guard(replacement);
+      expect(identical(reGuarded, replacement), isTrue);
+      // No user-2 spill materialized; user-1 still holds the verbatim body.
+      expect(
+        env.exportSnapshot().files.keys.where((k) => k.contains('user-2')),
+        isEmpty,
+      );
+      expect(
+        (await env.readTextFile('.fah/spills/sess-1/user-1.md')).valueOrNull,
+        _bigText,
+      );
+    });
 
     test('multiple oversized messages each get their own file (AC4)', () async {
       final env = _env();

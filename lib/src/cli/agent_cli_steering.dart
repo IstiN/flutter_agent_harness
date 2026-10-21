@@ -97,16 +97,17 @@ extension AgentCliSteering on AgentCli {
       // Issue #1760: bound an oversized steer BEFORE it joins the FIFO —
       // spill fires here, and the FIFO, the session record and the
       // transcript all carry the same bounded object. No guard installed
-      // = the message verbatim, with zero awaits (the queued-count
-      // warning above and the wedge watchdog keep their synchronous view).
+      // = the message verbatim, with zero awaits: the FIFO entry joins
+      // synchronously and the queued-count warning above and the wedge
+      // watchdog keep their synchronous view (issue #488 AC1a). WITH a
+      // guard the join lands after the spill write — a few ms later; the
+      // wedged warning above already counted this accept, a rapid second
+      // steer mid-spill may briefly under-count, and the #488 crash
+      // recovery still sees every accepted steer via the session record.
       final spillGuard = _agent.userMessageGuard;
       final delivered = spillGuard == null
           ? message
           : await spillGuard(message);
-      // The FIFO entry joins SYNCHRONOUSLY — the queued count in the
-      // warning above and the wedge watchdog must see every accepted
-      // steer even while its session write is still in flight (issue
-      // #488 AC1a); the persist below only patches the record id in.
       _pendingSteering.add(
         PendingSteering(message: delivered, recordId: null, panel: panel),
       );

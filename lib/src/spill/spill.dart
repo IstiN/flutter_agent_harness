@@ -89,11 +89,19 @@ SpillsConfig? resolveRunSpillsConfig(
   final value = int.tryParse(env[spillThresholdEnvVar]?.trim() ?? '');
   final userValue = int.tryParse(env[userSpillThresholdEnvVar]?.trim() ?? '');
   if (value == null && userValue == null) return section;
+  // The section kill-switch beats the env knobs (issue #1760 review): a
+  // bench knob tunes/enables within an enabled-or-absent section — it
+  // never resurrects a section the user switched off.
+  if (section != null && !section.enabled) return section;
   if (value != null && value <= 0) return const SpillsConfig(enabled: false);
   final base = section ?? const SpillsConfig();
+  // The USER knob scopes itself to the user path: with no section it must
+  // not arm tool-result spilling as a side effect (threshold stays 0 →
+  // isActive false, isUserActive per the knob).
+  final toolOff = section == null && value == null;
   return SpillsConfig(
     enabled: true,
-    threshold: value ?? base.threshold,
+    threshold: toolOff ? 0 : (value ?? base.threshold),
     headChars: base.headChars,
     tailChars: base.tailChars,
     userThreshold: userValue ?? base.userThreshold,
@@ -603,6 +611,14 @@ final class UserMessageSpillGuard {
     final raw = content is String
         ? content
         : _textContentOf(content as List<ContentBlock>);
+    // Idempotence (issue #1760 review): an already-spilled replacement —
+    // a steered message that pre-spilled at accept, then drains through
+    // the seam again — passes through unchanged. Re-spilling the bounded
+    // preview would fork the FIFO's object identity and multiply spill
+    // files; the pinned preview header only occurs in spill artifacts.
+    if (raw.contains('[spilled: ') && raw.contains('[spill file: ')) {
+      return message;
+    }
     final budget = budgetTokens();
     if (!shouldSpillUserMessage(raw, config, budget)) return message;
     // Redaction BEFORE the write (AC6) — and the replacement preview is
