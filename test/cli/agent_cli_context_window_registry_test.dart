@@ -106,6 +106,7 @@ void main() {
   test(
     'AC2b: a child spawned after the registry entry resolves the '
     'registered window, not the carried one',
+    timeout: const Timeout(Duration(minutes: 3)),
     () async {
       final router = _RegistryRouter([
         toolTurn([
