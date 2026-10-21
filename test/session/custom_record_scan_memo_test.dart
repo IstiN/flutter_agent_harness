@@ -1,8 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/env/execution_env.dart';
-import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:test/test.dart';
 
 /// The `readCustomRecordsOfType` scan memo (gh-1734): the boot/switch
