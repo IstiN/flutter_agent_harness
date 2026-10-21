@@ -8,7 +8,6 @@ library;
 import 'dart:math';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/session_retention.dart';
 import 'package:test/test.dart';
 
 DateTime _clockNow = DateTime(2026, 1, 10, 12);

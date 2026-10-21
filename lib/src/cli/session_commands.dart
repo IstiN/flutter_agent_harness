@@ -406,6 +406,12 @@ extension on AgentCli {
   }
 
   Future<Session> _initializeSession() async {
+    // gh-1746 boot hygiene: the opt-in sessions retention sweep (AC7).
+    // Awaited (unlike the header-only sweep below): it DELETES files, so
+    // it must finish before this process opens a session the sweep could
+    // otherwise race. Only runs when the user touched `sessions:` in the
+    // config — a section-free boot stays byte-identical legacy (AC1).
+    await _retentionBootCheck();
     // gh-1660 boot hygiene: crashed/killed runs leave header-only session
     // files behind (the clean-exit `deleteSessionIfEmpty` never ran for
     // them). Fire-and-forget, best-effort — never delays the first turn.
@@ -455,6 +461,38 @@ extension on AgentCli {
       await repo.cleanupEmptySessions(olderThan: _headerOnlySweepGrace);
     } on Object {
       // Best-effort: never let hygiene delay or fail the boot.
+    }
+  }
+
+  /// The boot retention check (gh-1746): with the `sessions:` config
+  /// section present, run [SessionRetentionSweeper.enforceAtBoot] — cap
+  /// + `sweep: boot` deletes whole units; every outcome renders through
+  /// [sessionSweepReportLines] into the boot log (fa.log, AC7) and the
+  /// dim notice channel (line mode + the TUI re-print after the banner,
+  /// the same surface as the roles-drop warning). Absent section (null)
+  /// returns immediately: no sweep, no note, no walk (AC1). Best-effort:
+  /// a failed check never fails the boot.
+  Future<void> _retentionBootCheck() async {
+    final sessions = config.sessionsRetention;
+    if (sessions == null) return;
+    try {
+      final report =
+          await SessionRetentionSweeper(
+            fs: _env,
+            sessionsRoot: config.sessionRoot,
+            retention: sessions.retention,
+            presenceStore: config.presenceStore,
+            // AC7: one log line per auto-deletion (+ the plan on a boot
+            // apply) lands in fa.log with the other lifecycle lines.
+            log: (line) => _logDiagnostic('[retention] $line'),
+          ).enforceAtBoot();
+      final lines = sessionSweepReportLines(report);
+      for (final line in lines) {
+        _logDiagnostic('[retention] $line');
+      }
+      _retentionBootLines = List.unmodifiable(lines);
+    } on Object catch (error) {
+      _logDiagnostic('[retention] boot check failed: $error');
     }
   }
 

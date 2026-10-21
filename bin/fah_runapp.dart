@@ -203,9 +203,15 @@ Future<void> _runApp(List<String> args) async {
       );
       final cleanRoot = parsed.sessionRoot ?? _defaultSessionRoot();
       final cleanHome = homeDirectory();
-      final retention = cleanHome == null || cleanHome.isEmpty
-          ? null
-          : loadCliConfig(cleanHome).sessions?.retention;
+      var retention = const SessionRetentionConfig();
+      if (cleanHome != null && cleanHome.isNotEmpty) {
+        try {
+          retention =
+              loadCliConfig(cleanHome).sessions?.retention ?? retention;
+        } on ConfigException catch (error) {
+          _fail('invalid ~/.fah/config.yaml: ${error.message}');
+        }
+      }
       exit(
         await runSessionCleanCliCommand(
           write: io.write,
@@ -1420,6 +1426,9 @@ Future<void> _runApp(List<String> args) async {
         // runner's $RUNNER_TEMP). Null keeps <cwd>/.fah/bash_jobs.
         jobLogDir: jobLogDirOverride(Platform.environment),
         spills: spillsConfig,
+        // gh-1746: the opt-in sessions retention policy (user config);
+        // null = the section is absent — no sweep, no note (AC1).
+        sessionsRetention: saved.sessions,
         // Shared by the env config and the presence store below.
         env: cliEnv,
         // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the

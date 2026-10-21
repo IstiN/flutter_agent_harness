@@ -6,7 +6,9 @@
 @TestOn('vm')
 library;
 
+import 'package:flutter_agent_harness/src/cli/cli_config.dart';
 import 'package:flutter_agent_harness/src/session_retention.dart';
+import 'package:flutter_agent_harness/src/config/config_service.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
@@ -134,6 +136,46 @@ void main() {
       );
       expect(reparsed.retention.maxTotalBytes, 4096);
       expect(reparsed.retention.minAgeDays, 14);
+    });
+  });
+
+  group('CliConfig sessions plumbing (gh-1746)', () {
+    YamlMap doc(String yaml) => loadYaml(yaml) as YamlMap;
+
+    test('absent section parses to null (AC1 byte-identical legacy)', () {
+      final config = CliConfig.fromYaml(doc('model: m\n'));
+      expect(config.sessions, isNull);
+      // And the emitter renders nothing for it.
+      expect(config.toYaml(), isNot(contains('sessions')));
+    });
+
+    test('present section parses tolerantly and renders back', () {
+      final config = CliConfig.fromYaml(
+        doc('sessions:\n  retention:\n    maxTotalBytes: 8192\n'),
+      );
+      expect(config.sessions, isNotNull);
+      expect(config.sessions!.retention.maxTotalBytes, 8192);
+      final rendered = config.toYaml();
+      expect(rendered, contains('sessions:'));
+      expect(rendered, contains('maxTotalBytes: 8192'));
+      final reparsed = CliConfig.fromYaml(doc(rendered));
+      expect(reparsed.sessions!.retention.maxTotalBytes, 8192);
+    });
+
+    test('tolerant: unknown keys under sessions: become notes, not errors',
+        () {
+      final config = CliConfig.fromYaml(
+        doc('sessions:\n  bogus: 1\n'),
+      );
+      expect(config.sessions, isNotNull);
+      expect(config.sessions!.notes.single, contains('bogus'));
+    });
+
+    test('config service accepts sessions: as a known section', () {
+      // The runtime known-keys set must contain the section — a `fa
+      // config set sessions.retention.maxTotalBytes` write is rejected
+      // otherwise (and the emitter would drop it on save).
+      expect(configTopLevelKeys, contains('sessions'));
     });
   });
 }
