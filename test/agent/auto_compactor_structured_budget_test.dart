@@ -400,4 +400,49 @@ void main() {
     final records = await session.getEntries();
     expect(records.whereType<CompactCheckpointRecord>(), isEmpty);
   });
+
+  test('structured engine factory: TimeoutException in structured run triggers '
+      'localTrimFallback and rescues the session', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // Create multiple messages so localTrimFallback has messages to drop
+    for (var i = 0; i < 15; i++) {
+      await session.appendMessage(UserMessage.text('u$i: ${'test' * 80}'));
+    }
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    final hooks = _CapturingHooks();
+
+    final factory = AutoCompactorFactory(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      sources: AutoCompactorSources(
+        smolStream: null,
+        smolModel: null,
+        mainStream: (m, c, {cancelToken}) => _neverAnsweringStream(
+          m,
+          c,
+          cancelToken: cancelToken,
+        ),
+        mainModel: _model,
+      ),
+      engine: CompactionEngine.structured,
+      hooks: hooks,
+      attemptBudget: const Duration(milliseconds: 50),
+      totalBudget: const Duration(milliseconds: 100),
+      force: true,
+    );
+
+    final ok = await factory.run();
+    expect(ok, isTrue);
+    expect(hooks.passes, isNotEmpty);
+    expect(hooks.passes.last.fallback, 'local-trim');
+    expect(hooks.passes.last.ok, isTrue);
+    expect(state.messages.first, isA<UserMessage>());
+    final marker = state.messages.first as UserMessage;
+    expect(marker.content as String, contains('context trimmed locally'));
+  });
 }

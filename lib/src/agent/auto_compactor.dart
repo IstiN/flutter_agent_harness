@@ -927,9 +927,27 @@ class AutoCompactorFactory {
       }
       if (outcome.timedOut) {
         // Budget kill (issue #515): the summarizer/judge wedged past the
-        // watchdog budget and the underlying call was aborted. Fail fast
-        // with the named error — re-running the classic engine here would
-        // only re-wedge the same endpoint.
+        // watchdog budget and the underlying call was aborted.
+        // Fallback to local trim instead of failing the task:
+        final fallbackCompactor = build();
+        final trimmed = fallbackCompactor._localTrimFallback();
+        if (trimmed != null) {
+          final tokensBefore = _requestTokens();
+          state.messages = trimmed.messages;
+          final tokensAfter = _requestTokens();
+          hooks.onPass(
+            AutoCompactorPass(
+              pass: adapter.passCount + 1,
+              tokensBefore: tokensBefore,
+              tokensAfter: tokensAfter,
+              fallback: 'local-trim',
+              ok: true,
+              droppedMessages: trimmed.dropped,
+            ),
+          );
+          hooks.onDone(adapter.passCount + 1, tokensAfter);
+          return !shouldCompact(tokensAfter, window, settings);
+        }
         hooks.onBothRolesFailed(outcome.error!);
         return false;
       }
