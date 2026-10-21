@@ -4703,5 +4703,16 @@
       "cacheRead": 1670144,
       "model": "kimi-for-coding"
     }
+  ],
+  "issue-1763": [
+    {
+      "leg": "rework",
+      "at": "2026-10-21T23:17:30Z",
+      "prompt": 48264,
+      "completion": 9922,
+      "total": 58186,
+      "cacheRead": 940480,
+      "model": "glm-5.3-flash"
+    }
   ]
 }
