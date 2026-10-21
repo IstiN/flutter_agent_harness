@@ -12,6 +12,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show JsonlSessionRepo, SessionMetadata;
 import 'package:flutter_agent_harness/io.dart' show LocalExecutionEnv;
 
+import 'package:fa/services/dap_home.dart';
 import 'package:fa/services/sessions_root.dart';
 
 import 'dap_service.dart';
@@ -23,16 +24,27 @@ import 'dap_service.dart';
 final class IoDapHubService implements DapHubService {
   IoDapHubService({
     Map<String, String>? environment,
-    this.home,
+    String? home,
     this.probeTimeout = const Duration(seconds: 5),
-  }) : environment = environment ?? Platform.environment;
+  }) : environment = environment ?? Platform.environment,
+       _injectedHome = home;
 
   /// Injected environment (defaults to `Platform.environment`; test seam —
   /// pointing `HOME` at a temp dir keeps tests off the real `~/.dap`).
   final Map<String, String> environment;
 
-  /// Home directory for the `~/.dap` layout (test seam).
-  final String? home;
+  /// The constructor's `home:` argument (the test seam). Not an
+  /// initializing formal on purpose: the named parameter must stay the
+  /// public `home:` (private named parameters are not allowed), and the
+  /// effective home is [resolveDapHome]'s precedence over it — naming the
+  /// field `_home` would trip `prefer_initializing_formals` (gh-1730
+  /// review).
+  final String? _injectedHome;
+
+  /// Home directory for the `~/.dap` layout: the injected test seam, else the
+  /// mobile sandbox ([dapHomeOverride] — `/` is read-only on Android/iOS),
+  /// else null (the package's `$HOME`).
+  String? get home => resolveDapHome(_injectedHome);
 
   /// How long the live probe waits for the hub's welcome before reporting
   /// unreachable — the client keeps reconnecting forever otherwise.
