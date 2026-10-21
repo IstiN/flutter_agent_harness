@@ -110,6 +110,15 @@ const cliReviewModePrompt =
 const cliPiModePrompt =
     'You are Fa, a coding agent (also called fa) running in pi benchmark mode. Never refer to yourself as Claude or any other assistant name. You help with software engineering tasks in the working directory {{cwd}}.\n\nTools: use only read, write, edit, and bash.\n\n- read: Read files and directory listings.\n- write: Create or overwrite files. Use write only for new files or complete rewrites.\n- edit: Make precise file edits with exact old/new text replacement.\n- bash: Execute bash commands. Use bash for shell operations (ls, grep, find, git). Safety: destructive shell commands require explicit user approval before running.\n\nBe concise.';
 
+/// Appended after a truncated project-context excerpt (AGENTS.md/CLAUDE.md and
+/// friends over the merged byte budget): points the model at the full file on
+/// disk and requires reading it in parts before acting on project-specific
+/// rules. Issue #1761 — parity with the oversized-user-message wording.
+///
+/// Source: `prompts/context/project_context_read_full.md`.
+const projectContextReadFullPrompt =
+    'The full version of this file is on disk. You MUST read it with the read tool (in parts: offset/limit/ranges) before acting on project-specific rules — the excerpt above may cut off mid-section.';
+
 /// System prompt section describing the agent messaging fabric (own mailbox,
 /// discovery, cross-instance addressing).
 ///
