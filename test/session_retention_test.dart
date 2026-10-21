@@ -31,10 +31,15 @@ void main() {
   });
 
   /// Seeds a session and returns its id; [sizeBytes] of transcript body
-  /// rides a message so the file really carries the bytes.
+  /// rides a message so the file really carries the bytes. [createdAt]
+  /// rewrites the header timestamp (the repo stamps real time at
+  /// creation) so ages are deterministic against the fake clock;
+  /// [lastUsed] backdates the mtime — always ≥ [createdAt] so the E3
+  /// floor never masks the intended age.
   Future<String> seedSession({
     String? name,
     String cwd = '/work',
+    DateTime? createdAt,
     DateTime? lastUsed,
     int sizeBytes = 0,
   }) async {
@@ -44,9 +49,21 @@ void main() {
     }
     if (name != null) await session.appendSessionName(name);
     final metadata = await session.getMetadata();
-    if (lastUsed != null) {
-      env.setMtime(metadata.path, lastUsed.millisecondsSinceEpoch);
+    final effectiveCreated = createdAt ?? _clockNow;
+    if (createdAt != null) {
+      final raw = (await env.readTextFile(metadata.path)).valueOrNull!;
+      await env.writeFile(
+        metadata.path,
+        raw.replaceFirst(
+          RegExp(r'"timestamp":"[^"]+"'),
+          '"timestamp":"${createdAt.toIso8601String()}"',
+        ),
+      );
     }
+    env.setMtime(
+      metadata.path,
+      (lastUsed ?? effectiveCreated).millisecondsSinceEpoch,
+    );
     return metadata.id;
   }
 
@@ -146,12 +163,25 @@ void main() {
 
     test('AC3: oldest-last-used deleted first until under the cap',
         () async {
-      final oldest = await seedSession(sizeBytes: 100, lastUsed: daysAgo(60));
-      final middle = await seedSession(sizeBytes: 100, lastUsed: daysAgo(30));
-      await seedSession(sizeBytes: 100, lastUsed: daysAgo(1));
+      final oldest = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(60),
+      );
+      final middle = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(30),
+      );
+      await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(1),
+      );
       final usage = await sweeper().usage();
-      // A cap that forces out exactly the two oldest units.
-      final cap = usage.totalBytes - 250;
+      // A cap that forces out exactly the two oldest (equal-sized) units.
+      final unit = usage.sessions.first.bytes;
+      final cap = usage.totalBytes - unit * 2 + 1;
       final report = await sweeper(
         retention: SessionRetentionConfig(maxTotalBytes: cap, minAgeDays: 0),
       ).sweep(dryRun: false);
@@ -165,19 +195,33 @@ void main() {
 
     test('AC3: live, named, young and current sessions are exempt',
         () async {
-      final live = await seedSession(sizeBytes: 100, lastUsed: daysAgo(60));
+      final live = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(60),
+      );
       final named = await seedSession(
         name: 'keepme',
+        createdAt: daysAgo(90),
         sizeBytes: 100,
         lastUsed: daysAgo(59),
       );
-      final young = await seedSession(sizeBytes: 100, lastUsed: daysAgo(1));
-      final current = await seedSession(sizeBytes: 100, lastUsed: daysAgo(58));
+      final young = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(1),
+      );
+      final current = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(58),
+      );
       await presence.register(live);
       final usage = await sweeper().usage();
+      final unit = usage.sessions.first.bytes;
       final report = await sweeper(
         retention: SessionRetentionConfig(
-          maxTotalBytes: usage.totalBytes - 50,
+          maxTotalBytes: usage.totalBytes - unit + 1,
           minAgeDays: 14,
         ),
         currentSessionId: current,
@@ -198,13 +242,14 @@ void main() {
     test('keepNamed: false makes named sessions deletable', () async {
       final named = await seedSession(
         name: 'doomed',
+        createdAt: daysAgo(90),
         sizeBytes: 100,
         lastUsed: daysAgo(60),
       );
       final usage = await sweeper().usage();
       final report = await sweeper(
         retention: SessionRetentionConfig(
-          maxTotalBytes: usage.totalBytes - 20,
+          maxTotalBytes: usage.totalBytes - 1,
           minAgeDays: 0,
           keepNamed: false,
         ),
@@ -214,13 +259,21 @@ void main() {
 
     test('AC4: exempt-only overflow names each blocker with its size',
         () async {
-      final a = await seedSession(sizeBytes: 100, lastUsed: daysAgo(60));
-      final b = await seedSession(sizeBytes: 300, lastUsed: daysAgo(59));
+      final a = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(60),
+      );
+      final b = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 300,
+        lastUsed: daysAgo(1),
+      );
       await presence.register(a);
       final usage = await sweeper().usage();
       final report = await sweeper(
         retention: SessionRetentionConfig(
-          maxTotalBytes: usage.totalBytes - 10,
+          maxTotalBytes: usage.totalBytes - 1,
           minAgeDays: 14,
         ),
       ).sweep(dryRun: true);
@@ -234,7 +287,11 @@ void main() {
 
     test('E1: a cap smaller than one marathon session still deletes it',
         () async {
-      final marathon = await seedSession(sizeBytes: 5000, lastUsed: daysAgo(60));
+      final marathon = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 5000,
+        lastUsed: daysAgo(60),
+      );
       final report = await sweeper(
         retention: const SessionRetentionConfig(maxTotalBytes: 1, minAgeDays: 0),
       ).sweep(dryRun: false);
@@ -247,10 +304,15 @@ void main() {
         () async {
       final doomed = await seedSession(
         cwd: '/work',
+        createdAt: daysAgo(90),
         sizeBytes: 100,
         lastUsed: daysAgo(60),
       );
-      final survivor = await seedSession(sizeBytes: 100, lastUsed: daysAgo(61));
+      final survivor = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(2),
+      );
       final doomedMeta = (await repo.list()).firstWhere(
         (m) => m.id == doomed,
       );
@@ -318,19 +380,40 @@ void main() {
     });
 
     test('E2: a session that becomes live mid-sweep is skipped', () async {
-      final a = await seedSession(sizeBytes: 100, lastUsed: daysAgo(60));
-      final b = await seedSession(sizeBytes: 100, lastUsed: daysAgo(59));
+      final a = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(60),
+      );
+      final b = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(59),
+      );
       final usage = await sweeper().usage();
-      final report = await sweeper(
+      final unit = usage.sessions.first.bytes;
+      // Flipping presence: the plan and a's unlink see b absent; the
+      // check immediately before b's unlink sees it live.
+      var listCalls = 0;
+      late SessionRetentionSweeper flippingSweeper;
+      final flippingPresence = _FlippingPresence(
+        delegate: presence,
+        lateLiveId: b,
+        liveFromCall: 3,
+        onCall: () => listCalls++,
+      );
+      flippingSweeper = SessionRetentionSweeper(
+        fs: env,
+        sessionsRoot: '/sessions',
         retention: SessionRetentionConfig(
-          maxTotalBytes: usage.totalBytes - 10,
+          maxTotalBytes: usage.totalBytes - unit * 2 + 1,
           minAgeDays: 0,
         ),
-      ).sweep(dryRun: false).then((report) async {
-        // b became live while the plan ran (the apply loop re-checks).
-        await presence.register(b);
-        return report;
-      });
+        presenceStore: flippingPresence,
+        now: _clock,
+        currentSessionId: null,
+      );
+      final report = await flippingSweeper.sweep(dryRun: false);
       final deleted = report.deletions.map((d) => d.sessionId).toSet();
       expect(deleted, contains(a));
       expect(report.logLines.where((l) => l.contains('skipped')), isNotEmpty);
@@ -341,10 +424,16 @@ void main() {
         () async {
       final oldOther = await seedSession(
         cwd: '/other',
+        createdAt: daysAgo(90),
         sizeBytes: 100,
         lastUsed: daysAgo(60),
       );
-      await seedSession(cwd: '/work', sizeBytes: 100, lastUsed: daysAgo(1));
+      await seedSession(
+        cwd: '/work',
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(1),
+      );
       final usage = await sweeper().usage();
       final report = await sweeper(
         retention: SessionRetentionConfig(
@@ -357,44 +446,50 @@ void main() {
   });
 
   group('boot policy (E5 + posture B)', () {
-    test('no cap: deletions never run; the soft warn fires past 5 GiB',
+    test('no cap: deletions never run; the soft warn fires past the seam',
         () async {
-      await seedSession(sizeBytes: 100, lastUsed: daysAgo(60));
+      await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(60),
+      );
       final quiet = await sweeper().enforceAtBoot();
       expect(quiet.capConfigured, isFalse);
       expect(quiet.overSoftWarn, isFalse);
       expect(quiet.deletions, isEmpty);
 
       final usage = await sweeper().usage();
-      // Grow the root past the soft threshold without another session.
-      await env.writeFile(
-        '/sessions/--work--/filler.bin',
-        'z' * (retentionSoftWarnBytes - usage.totalBytes + 1024),
-      );
-      final loud = await sweeper().enforceAtBoot();
+      final loud = await SessionRetentionSweeper(
+        fs: env,
+        sessionsRoot: '/sessions',
+        presenceStore: presence,
+        now: _clock,
+        softWarnBytes: usage.totalBytes + 1,
+      ).enforceAtBoot();
+      expect(loud.capConfigured, isFalse);
       expect(loud.overSoftWarn, isTrue);
       expect(loud.deletions, isEmpty);
     });
 
     test('E5: cap set with sweep off — over-cap note, no deletions',
         () async {
-      await seedSession(sizeBytes: 100, lastUsed: daysAgo(60));
+      await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(60),
+      );
       final usage = await sweeper().usage();
-      final report = await sweeper(
-        retention: SessionRetentionConfig(
-          maxTotalBytes: usage.totalBytes - 10,
-          sweep: SessionRetentionSweepMode.off,
-        ),
-      ).enforceAtBoot();
+      final retention = SessionRetentionConfig(
+        maxTotalBytes: usage.totalBytes - 1,
+        sweep: SessionRetentionSweepMode.off,
+      );
+      final report = await sweeper(retention: retention).enforceAtBoot();
       expect(report.overCapSweepOff, isTrue);
       expect(report.deletions, isEmpty);
       expect((await repo.list()), hasLength(1));
       // The manual verb still enforces it.
       final manual = await sweeper(
-        retention: SessionRetentionConfig(
-          maxTotalBytes: usage.totalBytes - 10,
-          sweep: SessionRetentionSweepMode.off,
-        ),
+        retention: retention,
       ).sweep(dryRun: false);
       expect(manual.deletions, hasLength(1));
     });
@@ -445,6 +540,7 @@ void main() {
           );
           final id = await seedSession(
             name: shape.name,
+            createdAt: daysAgo(shape.ageDays + 30),
             lastUsed: daysAgo(shape.ageDays),
             sizeBytes: 50 + random.nextInt(400),
           );
@@ -487,8 +583,16 @@ void main() {
   group('report rendering', () {
     test('the dry-run plan prints the exact actions; apply matches',
         () async {
-      final doomed = await seedSession(sizeBytes: 100, lastUsed: daysAgo(60));
-      await seedSession(sizeBytes: 100, lastUsed: daysAgo(1));
+      final doomed = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(60),
+      );
+      await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(1),
+      );
       final usage = await sweeper().usage();
       final retention = SessionRetentionConfig(
         maxTotalBytes: usage.totalBytes - 10,
@@ -522,6 +626,47 @@ void main() {
       expect(formatRetentionBytes(5 * 1024 * 1024 * 1024), '5 GB');
     });
   });
+}
+
+/// Presence whose liveness view flips after N `list()` calls — models a
+/// session that becomes live DURING the apply loop (E2).
+final class _FlippingPresence implements SessionPresenceStore {
+  _FlippingPresence({
+    required this.delegate,
+    required this.lateLiveId,
+    required this.liveFromCall,
+    this.onCall,
+  });
+
+  final SessionPresenceStore delegate;
+
+  /// The id that turns live late.
+  final String lateLiveId;
+  final int liveFromCall;
+  final void Function()? onCall;
+  int _calls = 0;
+
+  @override
+  Future<void> register(String sessionId, {int? pid, String? host}) =>
+      delegate.register(sessionId, pid: pid, host: host);
+
+  @override
+  Future<void> touch(String sessionId) => delegate.touch(sessionId);
+
+  @override
+  Future<void> unregister(String sessionId) => delegate.unregister(sessionId);
+
+  @override
+  Future<Map<String, SessionPresence>> list() async {
+    final all = await delegate.list();
+    final call = _calls++;
+    onCall?.call();
+    if (call >= liveFromCall - 1) return all;
+    return {
+      for (final entry in all.entries)
+        if (entry.key != lateLiveId) entry.key: entry.value,
+    };
+  }
 }
 
 class _Shape {

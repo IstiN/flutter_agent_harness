@@ -280,7 +280,7 @@ final class SessionDiskUsage {
   final String path;
 
   /// Root-side unit bytes: the primary, its rotated `.part-NNNN` segments
-  /// and `.corupt` sidecars, `.tools/<sid>.yaml`, and the per-session
+  /// and `.corrupt` sidecars, `.tools/<sid>.yaml`, and the per-session
   /// usage directory. This is what the cap measures.
   final int bytes;
 
@@ -506,6 +506,7 @@ final class SessionRetentionSweeper {
     DateTime Function()? now,
     this.log,
     this.cleanWorkspaceSpills = true,
+    this.softWarnBytes = retentionSoftWarnBytes,
   }) : _fs = fs,
        _root = sessionsRoot,
        _now = now ?? DateTime.now;
@@ -536,6 +537,10 @@ final class SessionRetentionSweeper {
   /// Whether the walk measures and apply removes the workspace
   /// `.fah/spills/<sid>/` dirs.
   final bool cleanWorkspaceSpills;
+
+  /// The posture-B soft-warn threshold (seam: tests shrink it; prod uses
+  /// [retentionSoftWarnBytes]).
+  final int softWarnBytes;
 
   void _emit(String line) {
     log?.call(line);
@@ -621,14 +626,14 @@ final class SessionRetentionSweeper {
           ? header.createdAt
           : mtime;
       var bytes = entry.size;
-      // The rotated segments and their `.corupt` sidecars share the
-      // unit: `<base>.part-NNNN` and `<base>[.part-NNNN].corupt`.
+      // The rotated segments and their `.corrupt` sidecars share the
+      // unit: `<base>.part-NNNN` and `<base>[.part-NNNN].corrupt`.
       final baseName = entry.name;
       for (final sibling in children) {
         if (identical(sibling, entry)) continue;
         if (sibling.kind != FileKind.file) continue;
         final name = sibling.name;
-        if (name.startsWith('$baseName.part-') || name == '$baseName.corupt') {
+        if (name.startsWith('$baseName.part-') || name == '$baseName.corrupt') {
           bytes += sibling.size;
         }
       }
@@ -753,7 +758,7 @@ final class SessionRetentionSweeper {
         usage: current,
         dryRun: true,
         capConfigured: false,
-        overSoftWarn: current.totalBytes > retentionSoftWarnBytes,
+        overSoftWarn: current.totalBytes > softWarnBytes,
       );
     }
     if (retention.sweep == SessionRetentionSweepMode.off) {
@@ -956,7 +961,7 @@ final class SessionRetentionSweeper {
       if (child.kind != FileKind.file) continue;
       if (child.name == baseName ||
           child.name.startsWith('$baseName.part-') ||
-          child.name == '$baseName.corupt') {
+          child.name == '$baseName.corrupt') {
         await _fs.remove(child.path, force: true);
       }
     }
