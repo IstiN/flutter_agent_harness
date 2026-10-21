@@ -346,6 +346,35 @@ final class AutoCompactor {
     }
   }
 
+  /// gh-1743: host-callable emergency valve for a timed-out compaction —
+  /// applies the same mechanical local trim [_localTrimFallback] the
+  /// classic pass ladder ends on (keep the most recent
+  /// [CompactionSettings.keepRecentTokens], repair tool pairing, prefix
+  /// the `[context trimmed locally]` marker), fires the `local-trim` pass
+  /// receipt and closes the [AutoCompactorHooks.onDone] bracket exactly
+  /// like the `_runPass` trim branch, and reports whether the live
+  /// context was actually bounded. `false` means nothing was droppable —
+  /// the caller keeps its failure verdict.
+  bool applyLocalTrimFallback({int pass = 1}) {
+    final tokensBefore = _requestTokens();
+    final trimmed = _localTrimFallback();
+    if (trimmed == null) return false;
+    state.messages = trimmed.messages;
+    final tokensAfter = _requestTokens();
+    hooks.onPass(
+      AutoCompactorPass(
+        pass: pass,
+        tokensBefore: tokensBefore,
+        tokensAfter: tokensAfter,
+        fallback: 'local-trim',
+        ok: true,
+        droppedMessages: trimmed.dropped,
+      ),
+    );
+    hooks.onDone(pass, tokensAfter);
+    return true;
+  }
+
   /// Whether the smol summarizer is distinct from the main one and should be
   /// tried before falling back to main.
   bool _shouldRunFallback() {
@@ -989,9 +1018,17 @@ class AutoCompactorFactory {
       }
       if (outcome.timedOut) {
         // Budget kill (issue #515): the summarizer/judge wedged past the
-        // watchdog budget and the underlying call was aborted. Fail fast
-        // with the named error — re-running the classic engine here would
-        // only re-wedge the same endpoint.
+        // watchdog budget and the underlying call was aborted. gh-1743:
+        // do NOT abort the live session — re-running the classic engine
+        // here would only re-wedge the same endpoint, but the mechanical
+        // local trim needs no endpoint at all: bound the live context
+        // (keepRecentTokens, pairing-repaired, `[context trimmed locally]`
+        // marker) so the run proceeds. The failure verdict is kept only
+        // when there is nothing left to trim.
+        final trimmed = build().applyLocalTrimFallback(
+          pass: adapter.passCount + 1,
+        );
+        if (trimmed) return true;
         hooks.onBothRolesFailed(outcome.error!);
         return false;
       }

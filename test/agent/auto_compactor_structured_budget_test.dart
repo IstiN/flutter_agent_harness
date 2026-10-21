@@ -404,10 +404,7 @@ void main() {
 
   /// gh-1743: a transcript over the window with a droppable read pair —
   /// the shape the local trim can rescue.
-  Future<(
-    Session,
-    AgentState,
-  )> _overWindowSessionWithDroppableTail() async {
+  Future<(Session, AgentState)> overWindowSessionWithDroppableTail() async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
     await session.appendMessage(UserMessage.text('fix the login crash'));
     await session.appendMessage(
@@ -456,7 +453,7 @@ void main() {
   test('gh-1743: a factory-level budget timeout (wedged judge past the '
       'total budget) falls back to the local trim instead of aborting '
       'the session', () async {
-    final (session, state) = await _overWindowSessionWithDroppableTail();
+    final (session, state) = await overWindowSessionWithDroppableTail();
     final tokensBefore = estimateRequestTokens(
       state.messages,
       systemPrompt: state.systemPrompt,
@@ -565,7 +562,9 @@ void main() {
     expect(hooks.bothRolesError, isNotNull);
     expect(hooks.passes.any((p) => p.fallback == 'local-trim'), isFalse,
         reason: 'nothing was droppable — no trim receipt may be reported');
-    expect(identical(state.messages, messagesBefore), isTrue,
-        reason: 'no trim means no live-context change');
+    // No trim means no live-context change (AgentState copies on assign,
+    // so compare element identity, not list identity).
+    expect(state.messages.length, messagesBefore.length);
+    expect(identical(state.messages.single, messagesBefore.single), isTrue);
   });
 }
