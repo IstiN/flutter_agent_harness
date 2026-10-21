@@ -129,7 +129,9 @@ AssistantMessageEventStream streamDial(
   // 4xx/5xx. The injected client wrapper records the failing status, the
   // error-event handler flips the kill switch and replays marker-less.
   final probe = _DialCacheProbeClient(client);
-  final outer = AssistantMessageEventStream();
+  // traced: false — this stream re-pushes an inner stream's events; the
+  // adapter's own stream carries the StreamTrace emit mark (once per delta).
+  final outer = AssistantMessageEventStream(traced: false);
   final inner = _streamDialOnce(
     model,
     context,

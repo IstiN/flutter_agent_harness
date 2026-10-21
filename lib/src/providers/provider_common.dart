@@ -29,6 +29,7 @@ import 'provider_tuning.dart'
 import 'stall_sentinel.dart'
     show providerConnectStallFired, providerIdleStallFired;
 import 'conn_trace_bench.dart';
+import 'stream_trace.dart';
 import 'transient_retry_stream.dart';
 
 /// Placeholder substituted for user-message images when the target model has
@@ -820,10 +821,9 @@ String redactProviderUrl(Uri url) {
 /// Renders a watchdog window for stall notes: whole seconds at or above
 /// 1s, milliseconds below — a scoped 400ms window must never read as
 /// `idle window 0s` (issue #1554 review round 2).
-String providerWindowLabel(Duration window) =>
-    window.inMilliseconds < 1000
-        ? '${window.inMilliseconds}ms'
-        : '${window.inSeconds}s';
+String providerWindowLabel(Duration window) => window.inMilliseconds < 1000
+    ? '${window.inMilliseconds}ms'
+    : '${window.inSeconds}s';
 
 /// Connect/first-headers watchdog for provider calls: an endpoint that
 /// never answers the request would otherwise hang the turn forever. Three
@@ -1101,6 +1101,7 @@ StreamIterator<ServerSentEvent> createSseIterator(
       // isClosed mirrors onError: a misbehaving source emitting after the
       // done forward would throw StateError inside this handler — the
       // same handlerless-crash class this sink exists to prevent.
+      StreamTrace.mark(StreamTraceMark.net, '+${data.length}B');
       if (!abandoned && !body.isClosed) body.add(data);
     },
     onError: (Object error, StackTrace stackTrace) {
@@ -1219,7 +1220,7 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
       final scopedNote = timeoutSource == null
           ? ''
           : ' — idle window ${providerWindowLabel(_idleTimeout)} '
-              '($timeoutSource)';
+                '($timeoutSource)';
       completer.completeError(
         TimeoutException(
           'no events from the endpoint for '
