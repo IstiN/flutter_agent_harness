@@ -44,10 +44,17 @@ extension AgentCliSteering on AgentCli {
   /// the model miss the attachment entirely). [images] rides along when
   /// the steer originated from a composer submit carrying clipboard chips
   /// (issue #276): they become ImageContent blocks next to the text.
-  void _steerResolved(
+  ///
+  /// The mid-run branch guards the message through the intake spill
+  /// ([Agent.userMessageGuard], issue #1760) BEFORE it joins the FIFO:
+  /// the delivery FIFO, the accepted-steer session record and the
+  /// transcript all carry the SAME (bounded) object, and the queued
+  /// object identity the delivery matcher relies on holds. The idle
+  /// branch lets the run's own intake seam guard it.
+  Future<void> _steerResolved(
     String trimmed, {
     List<TuiImageAttachment> images = const [],
-  }) {
+  }) async {
     final resolved = resolveInteractiveFileReference(trimmed);
     if (resolved != trimmed) {
       io.writeln(_style.dim('[file] attached to steered message'));
@@ -87,15 +94,24 @@ extension AgentCliSteering on AgentCli {
         final queued = _pendingSteering.length + 1;
         io.writeln(tuiWarning(_stallBannerLine(queued: queued)));
       }
+      // Issue #1760: bound an oversized steer BEFORE it joins the FIFO —
+      // spill fires here, and the FIFO, the session record and the
+      // transcript all carry the same bounded object. No guard installed
+      // = the message verbatim, with zero awaits (the queued-count
+      // warning above and the wedge watchdog keep their synchronous view).
+      final spillGuard = _agent.userMessageGuard;
+      final delivered = spillGuard == null
+          ? message
+          : await spillGuard(message);
       // The FIFO entry joins SYNCHRONOUSLY — the queued count in the
       // warning above and the wedge watchdog must see every accepted
       // steer even while its session write is still in flight (issue
       // #488 AC1a); the persist below only patches the record id in.
       _pendingSteering.add(
-        PendingSteering(message: message, recordId: null, panel: panel),
+        PendingSteering(message: delivered, recordId: null, panel: panel),
       );
-      unawaited(_persistSteeringAccepted(message, panel));
-      _agent.steer(message);
+      unawaited(_persistSteeringAccepted(delivered, panel));
+      _agent.steer(delivered);
       return;
     }
     // Idle steering (issue #437 AC4, mail parity): the steer STARTS the
@@ -114,7 +130,7 @@ extension AgentCliSteering on AgentCli {
   /// Steers every queued TUI message into the running agent.
   Future<void> _steerTuiMessages(List<String> messages) async {
     for (final message in messages) {
-      _steerResolved(message);
+      await _steerResolved(message);
     }
   }
 
@@ -570,15 +586,20 @@ extension AgentCliSteering on AgentCli {
   }
 
   /// Test seam: queues a steer through the same `_steerResolved` path
-  /// mid-run input takes (panel join + agent steer queue).
+  /// mid-run input takes (panel join + agent steer queue). With the
+  /// intake spill guard installed (issue #1760) the returned future must
+  /// be awaited before queue-state assertions — the guard's spill write
+  /// is async.
   @visibleForTesting
-  void steerForTest(String text) => _steerResolved(text);
+  Future<void> steerForTest(String text) => _steerResolved(text);
 
   /// Test seam: steers with clipboard chips through the same
   /// `_steerResolved` path a busy composer submit takes (issue #276).
   @visibleForTesting
-  void steerImagesForTest(String text, List<TuiImageAttachment> images) =>
-      _steerResolved(text, images: images);
+  Future<void> steerImagesForTest(
+    String text,
+    List<TuiImageAttachment> images,
+  ) => _steerResolved(text, images: images);
 
   /// Test seam: the run-settle steering resolution (leftover run or loud
   /// drop) so driver tests can exercise both branches deterministically

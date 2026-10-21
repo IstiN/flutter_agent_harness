@@ -101,7 +101,20 @@ block a release again.
   surfaces exactly as today. JSONL is never rewritten;
   `images.registry: false` keeps the byte-identical legacy shape
   including the recovery-off behavior.
-
+- feat(gh-1760): oversized user-message intake spills to a file instead of
+  blowing the context window. Any incoming user message — headless
+  `-p`/positional, TUI first/mid-session, steering/follow-up drain,
+  external inbox — whose text passes the new relative threshold (a
+  `spills.userFraction` of the live window budget minus the compaction
+  reserve, floored by `spills.userThreshold` bytes) is redacted and
+  written verbatim to `.fah/spills/<sessionId>/user-<n>.md` (the #678
+  layout) from one choke point (`Agent.userMessageGuard`); the model
+  receives a bounded head+tail preview plus a read-in-parts instruction
+  riding the replacement USER message (copy in
+  `prompts/spill/user_read_instruction.md`). Images stay inline, a
+  refused spill write degrades to today's inline behavior, and
+  `spills.enabled: false` / `userThreshold: 0` / the new
+  `FAH_USER_SPILL_THRESHOLD` env knob (bytes) keep the legacy shapes.
 
 - fix(gh-1743): a structured compaction that hits its total-budget
   watchdog (the factory's 300s `totalBudget`) no longer aborts the

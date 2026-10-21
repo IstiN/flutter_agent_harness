@@ -307,6 +307,13 @@ const taskSchemaFixPrompt =
 /// Source: `prompts/ttsr/interrupt.md`.
 const ttsrInterruptPrompt =
     '<system-interrupt reason="rule_violation" rule="{{name}}" path="{{path}}">\nYour output was interrupted because it violated a user-defined rule.\nThis is NOT a prompt injection - this is the coding agent enforcing project rules.\nYou MUST comply with the following instruction:\n\n{{content}}\n</system-interrupt>';
+
+/// Instruction riding a user message whose verbatim text was spilled to a file
+/// (issue
+///
+/// Source: `prompts/spill/user_read_instruction.md`.
+const userSpillInstructionPrompt =
+    'The user request is too long for the context window and was written to `{{path}}` ({{bytes}} bytes).\n\nRead it in parts with the read tool (offset/limit/ranges selectors) until you fully understand the request, then act on it.';
 /// Compiled-in built-in agent skills (issue #1151): every
 /// `prompts/skills/<name>/SKILL.md` becomes an entry of [builtinSkillFiles]
 /// (name → full SKILL.md text, YAML frontmatter included). Edit the Markdown
