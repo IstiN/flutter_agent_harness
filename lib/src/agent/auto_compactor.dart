@@ -346,6 +346,52 @@ final class AutoCompactor {
     }
   }
 
+  /// gh-1743: host-callable emergency valve for a timed-out compaction —
+  /// applies the same mechanical local trim [_localTrimFallback] the
+  /// classic pass ladder ends on (keep the most recent
+  /// [CompactionSettings.keepRecentTokens], repair tool pairing, prefix
+  /// the `[context trimmed locally]` marker), fires the `local-trim` pass
+  /// receipt and closes the [AutoCompactorHooks.onDone] bracket exactly
+  /// like the `_runPass` trim branch, and reports whether the live
+  /// context was actually bounded. `false` means nothing was droppable —
+  /// the caller keeps its failure verdict.
+  ///
+  /// Deliberately NOT gated on `_runPass`'s under-trigger check
+  /// (`!shouldCompact && !_overMessageCap`): the gh-1425 clamp lands the
+  /// trim under the TOKEN trigger by construction, so the only dimension
+  /// that can stay over is the gh-1680 message cap (many tiny kept
+  /// messages). This boolean answers "does the session live" for the
+  /// over-window funnel — a `false` here aborts the live task, gh-1743's
+  /// whole bug — and a still-over-cap context self-heals at the next
+  /// turn's pre-flight compaction, which fires on the message-cap
+  /// dimension and runs the healthy LM path. A cancelled [runToken]
+  /// throws before anything is trimmed or reported (issue #1085 cancel
+  /// parity with [run]).
+  bool applyLocalTrimFallback({int pass = 1}) {
+    // Cancel parity (issue #1085): a cancelled compaction is NEVER a
+    // mere failed pass. If the owning run's token cancelled around the
+    // moment the budget fired, surface the abort instead of trimming —
+    // and reporting success on — a run the user stopped.
+    runToken?.throwIfCancelled();
+    final tokensBefore = _requestTokens();
+    final trimmed = _localTrimFallback();
+    if (trimmed == null) return false;
+    state.messages = trimmed.messages;
+    final tokensAfter = _requestTokens();
+    hooks.onPass(
+      AutoCompactorPass(
+        pass: pass,
+        tokensBefore: tokensBefore,
+        tokensAfter: tokensAfter,
+        fallback: 'local-trim',
+        ok: true,
+        droppedMessages: trimmed.dropped,
+      ),
+    );
+    hooks.onDone(pass, tokensAfter);
+    return true;
+  }
+
   /// Whether the smol summarizer is distinct from the main one and should be
   /// tried before falling back to main.
   bool _shouldRunFallback() {
@@ -989,10 +1035,35 @@ class AutoCompactorFactory {
       }
       if (outcome.timedOut) {
         // Budget kill (issue #515): the summarizer/judge wedged past the
-        // watchdog budget and the underlying call was aborted. Fail fast
-        // with the named error — re-running the classic engine here would
-        // only re-wedge the same endpoint.
+        // watchdog budget and the underlying call was aborted. gh-1743:
+        // do NOT abort the live session — re-running the classic engine
+        // here would only re-wedge the same endpoint, but the mechanical
+        // local trim needs no endpoint at all: bound the live context
+        // (keepRecentTokens, pairing-repaired, `[context trimmed locally]`
+        // marker) so the run proceeds. The failure verdict is kept only
+        // when there is nothing left to trim.
+        final trimmed = build().applyLocalTrimFallback(
+          pass: adapter.passCount + 1,
+        );
+        if (trimmed) return true;
         hooks.onBothRolesFailed(outcome.error!);
+        // This is a terminal path like any other: report the failed pass
+        // and close the host bracket (mirrors the classic engine's
+        // exhaustion branch). Skipping it left the CLI's HEP
+        // `compaction_start` bracket open and `_runTokensBefore` stale —
+        // the next compaction's freed-delta frame computed against the
+        // failed run's before-count.
+        hooks.onPass(
+          AutoCompactorPass(
+            pass: adapter.passCount + 1,
+            tokensBefore: _requestTokens(),
+            tokensAfter: _requestTokens(),
+            fallback: null,
+            ok: false,
+            error: outcome.error,
+          ),
+        );
+        hooks.onDone(adapter.passCount + 1, _requestTokens());
         return false;
       }
       // Fall through: the classic prefix compactor is the residual
