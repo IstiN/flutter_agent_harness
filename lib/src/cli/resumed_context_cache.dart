@@ -1,9 +1,11 @@
 /// The warm-switch resumed-context cache (gh-1734 root cause 3): a
 /// session whose file is unchanged since its last open reuses the built
 /// [SessionContext] instead of re-paying the projection walk on every
-/// open/switch. Entries are keyed by (path, sizeBytes, mtimeMs); any
-/// change to the file (append, rotation, truncate) produces a different
-/// fingerprint and a clean miss.
+/// open/switch. Entries are keyed by (path, sizeBytes, mtimeMs, variant);
+/// any change to the file (append, rotation, truncate) produces a
+/// different fingerprint and a clean miss, and the caller-supplied
+/// [variant] separates builds whose meaning changed (the resume budget
+/// bounds how much history a build carries).
 library;
 
 import '../session/session_tree.dart';
@@ -13,11 +15,13 @@ final class _Entry {
   _Entry({
     required this.sizeBytes,
     required this.mtimeMs,
+    required this.variant,
     required this.context,
   });
 
   final int sizeBytes;
   final int mtimeMs;
+  final int variant;
   final SessionContext context;
 }
 
@@ -44,7 +48,7 @@ final class ResumedContextCache {
   int get length => _entries.length;
 
   /// The context built for [path] when the file still has exactly
-  /// ([sizeBytes], [mtimeMs]) — the state it was built from. The returned
+  /// ([sizeBytes], [mtimeMs]) and the same build [variant]. The returned
   /// context carries a fresh message list; the entry is refreshed as the
   /// most recently used. A stale probe does not evict the entry (the
   /// caller rebuilds and re-remembers over it).
@@ -52,10 +56,13 @@ final class ResumedContextCache {
     String path, {
     required int sizeBytes,
     required int mtimeMs,
+    int variant = 0,
   }) {
     final entry = _entries[path];
     if (entry == null) return null;
-    if (entry.sizeBytes != sizeBytes || entry.mtimeMs != mtimeMs) {
+    if (entry.sizeBytes != sizeBytes ||
+        entry.mtimeMs != mtimeMs ||
+        entry.variant != variant) {
       return null;
     }
     _entries.remove(path);
@@ -70,17 +77,20 @@ final class ResumedContextCache {
     );
   }
 
-  /// Remembers [context] as the build for [path] at the given fingerprint.
+  /// Remembers [context] as the build for [path] at the given fingerprint
+  /// and [variant].
   void remember(
     String path, {
     required int sizeBytes,
     required int mtimeMs,
     required SessionContext context,
+    int variant = 0,
   }) {
     _entries.remove(path);
     _entries[path] = _Entry(
       sizeBytes: sizeBytes,
       mtimeMs: mtimeMs,
+      variant: variant,
       context: context,
     );
     while (_entries.length > capacity) {

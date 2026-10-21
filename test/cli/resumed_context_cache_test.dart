@@ -66,6 +66,29 @@ void main() {
     expect(cache.match('/s/b.jsonl', sizeBytes: 10, mtimeMs: 1), isNull);
   });
 
+  test('misses for a different build variant (the resume budget bounds '
+      'how much history a build carries)', () {
+    final cache = ResumedContextCache()
+      ..remember(
+        '/s/a.jsonl',
+        sizeBytes: 10,
+        mtimeMs: 1,
+        variant: 1000,
+        context: contextOf('a'),
+      );
+    expect(
+      cache.match('/s/a.jsonl', sizeBytes: 10, mtimeMs: 1, variant: 2000),
+      isNull,
+    );
+    final hit = cache.match(
+      '/s/a.jsonl',
+      sizeBytes: 10,
+      mtimeMs: 1,
+      variant: 1000,
+    );
+    expect(hit, isNotNull);
+  });
+
   test('re-remembering the same path refreshes the entry', () {
     final cache = ResumedContextCache()
       ..remember(

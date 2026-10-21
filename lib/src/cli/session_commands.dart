@@ -682,12 +682,22 @@ extension on AgentCli {
     // for them. Context stays byte-identical: the compaction transform
     // drops everything before the boundary anyway.
     final fpBefore = await _sessionFileFingerprint(metadata);
+    // The resume budget bounds how much history the walk keeps resident —
+    // two different budgets legitimately build different context slices,
+    // so it rides the cache key as the build variant (gh-1734).
+    final budget = resumeParityBudget(
+      effectiveContextWindow: _effectiveContextWindow,
+      reserveTokens: _effectiveCompactionSettings.reserveTokens,
+      systemPrompt: _agent.state.systemPrompt,
+      tools: _agent.state.tools,
+    );
     final cachedContext = fpBefore == null
         ? null
         : _resumedContextCache.match(
             metadata.path,
             sizeBytes: fpBefore.sizeBytes,
             mtimeMs: fpBefore.mtimeMs,
+            variant: budget,
           );
     final session = await _repo.open(metadata, windowed: true);
     stage('open');
@@ -711,12 +721,6 @@ extension on AgentCli {
     // auto-compaction on a fresh resume. With the parity budget the
     // resumed meter sits at/below window − reserve — below the
     // compaction trigger — on every fresh resume.
-    final budget = resumeParityBudget(
-      effectiveContextWindow: _effectiveContextWindow,
-      reserveTokens: _effectiveCompactionSettings.reserveTokens,
-      systemPrompt: _agent.state.systemPrompt,
-      tools: _agent.state.tools,
-    );
     final boundaryResident = await session.ensureCompactionBoundaryResident(
       tokenBudget: budget,
     );
@@ -760,6 +764,7 @@ extension on AgentCli {
           metadata.path,
           sizeBytes: fpAfter.sizeBytes,
           mtimeMs: fpAfter.mtimeMs,
+          variant: budget,
           context: built,
         );
       }
