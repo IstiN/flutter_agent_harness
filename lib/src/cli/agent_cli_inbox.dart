@@ -23,7 +23,9 @@ extension AgentCliMessagingFlow on AgentCli {
     // wrapped in the standard <system-notice> envelope. Unarmed = nothing.
     final messages = <Message>[
       for (final notice in _deadline.pollNotices())
-        UserMessage.text('<system-notice>\n${notice.text}\n</system-notice>'),
+        UserMessage.text(
+          '<system-notice>\n${notice.text}\n</system-notice>',
+        ),
     ];
     final queued = await _subagentManager.drainMessages(
       _subagentManager.selfId,
@@ -414,7 +416,7 @@ String mailboxWakeCommand({
 /// contract ("symlinks are not followed automatically"): there a
 /// symlink-kind path naming an existing directory must still wake — the
 /// spawn itself follows the link (pinned by
-/// `test/cli/agent_cli_inbox_wake_test.dart`). On such a backend a link
+/// `test/cli/agent_cli_mailbox_wake_test.dart`). On such a backend a link
 /// to a plain file also passes this check and fails at the spawn; that
 /// hole is accepted while no backend reports the kind.
 Future<String?> launchMailboxWake({

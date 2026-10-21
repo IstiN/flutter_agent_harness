@@ -139,15 +139,8 @@ final RegExp _slugEscape = RegExp(r'%([0-9A-Fa-f]{2})');
 /// legacy lossy split.
 bool _hasReversibleEscape(String inner) => _slugEscape
     .allMatches(inner)
-    .any(
-      (m) => const {
-        '25',
-        '2D',
-        '2F',
-        '5C',
-        '3A',
-      }.contains(m.group(1)!.toUpperCase()),
-    );
+    .any((m) => const {'25', '2D', '2F', '5C', '3A'}
+        .contains(m.group(1)!.toUpperCase()));
 
 /// Undoes [_encodeCwd]'s percent-escapes in one segment. Unknown `%XX`
 /// sequences stay literal (legacy text).
