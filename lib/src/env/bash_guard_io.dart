@@ -230,6 +230,11 @@ exit 1
 /// and the protected pid set injected into every bash tool call. [shimDir]
 /// is null when no shim applied (pkill/killall/pgrep missing on the host) —
 /// the pid set still arms the `kill()` prelude.
+///
+/// The shim dir is deliberately NOT deleted at process exit: a concurrent
+/// bash call in another fa process may be mid-lookup, and unlinking under
+/// it would turn `pkill` into an exec failure. Cost: one ~2 KB dir per fa
+/// process launch in `$TMPDIR` (OS tmp reapers bound it).
 final class BashGuardProvision {
   /// Creates the provision. Never throws on the caller side: provisioning
   /// failures degrade to a null provision instead.
