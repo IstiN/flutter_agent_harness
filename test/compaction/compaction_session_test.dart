@@ -159,7 +159,13 @@ void main() {
           hiddenRecords: 2,
           summarizedMessages: 2,
         );
-        final report = formatCompactionReport(pass, auto: true).join('\n');
+        final report = formatCompactionReport(
+          pass,
+          auto: true,
+          // gh-1636: the blank-summary contract lives on the detail block;
+          // the default report is now the one-line marker.
+          details: true,
+        ).join('\n');
         expect(report, isNot(contains('summary:')));
         expect(report, isNot(contains('```')));
       },

@@ -420,6 +420,7 @@ final class CliConfig {
     this.quota = const QuotaSection(),
     this.tuiTheme,
     this.tuiClassic = false,
+    this.tuiShowCompactionDetails = false,
     this.statusLine,
     this.links = const LinksConfig(),
     this.streamThinking = false,
@@ -465,6 +466,7 @@ final class CliConfig {
       // The classic-chrome kill switch + statusLine section (issue #805);
       // the renderer wires them in S3.
       tuiClassic: tui.classic,
+      tuiShowCompactionDetails: tui.showCompactionDetails,
       statusLine: tui.statusLine,
       // The ttsr section is parsed strictly too (bad rules must surface).
       ttsr: map['ttsr'] == null
@@ -870,6 +872,15 @@ final class CliConfig {
   /// key validates strictly; consumed by the S3 rendering concern.
   final bool tuiClassic;
 
+  /// The compaction-report detail opt-in (`tui.showCompactionDetails`,
+  /// gh-1636): default false — an auto-compaction pass prints ONE short
+  /// marker line and the internal checkpoint summary stays in the session
+  /// file (reachable via `compact_expand`); true restores the full
+  /// report block (records + fenced summary) and the headless log face's
+  /// live summarizer-delta stream. The manual `/compact` report always
+  /// renders details.
+  final bool tuiShowCompactionDetails;
+
   /// The statusLine section (`tui.statusLine`, issue #805): preset or
   /// custom segment groups + separator + options. `null` = the default
   /// preset. Consumed by [TuiStatusLine] via [resolveStatusLineSpec].
@@ -942,6 +953,7 @@ final class CliConfig {
     QuotaSection? quota,
     String? tuiTheme,
     bool? tuiClassic,
+    bool? tuiShowCompactionDetails,
     StatusLineConfig? statusLine,
     LinksConfig? links,
     bool? streamThinking,
@@ -993,6 +1005,8 @@ final class CliConfig {
       quota: quota ?? this.quota,
       tuiTheme: tuiTheme ?? this.tuiTheme,
       tuiClassic: tuiClassic ?? this.tuiClassic,
+      tuiShowCompactionDetails:
+          tuiShowCompactionDetails ?? this.tuiShowCompactionDetails,
       statusLine: statusLine ?? this.statusLine,
       links: links ?? this.links,
       streamThinking: streamThinking ?? this.streamThinking,

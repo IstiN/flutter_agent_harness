@@ -720,14 +720,21 @@ StatusLineSpec resolveStatusLineSpec(
 
 /// The parsed `tui:` section: the theme name (`tui.theme`), the legacy
 /// chrome kill switch (`tui.classic` — S3's rendering concern, parsed
-/// here so the key exists and validates strictly) and the status-line
-/// section (`tui.statusLine`).
+/// here so the key exists and validates strictly), the compaction-report
+/// detail opt-in (`tui.showCompactionDetails`, gh-1636) and the
+/// status-line section (`tui.statusLine`).
 final class TuiSectionConfig {
   final String? theme;
   final bool classic;
+  final bool showCompactionDetails;
   final StatusLineConfig? statusLine;
 
-  const TuiSectionConfig({this.theme, this.classic = false, this.statusLine});
+  const TuiSectionConfig({
+    this.theme,
+    this.classic = false,
+    this.showCompactionDetails = false,
+    this.statusLine,
+  });
 }
 
 /// Parses the `tui:` yaml section. Strict (the repo's ConfigException
@@ -738,9 +745,16 @@ TuiSectionConfig parseTuiSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('tui must be a map, got: $node');
   }
-  _checkStrictKeys(node, 'tui', const {'theme', 'classic', 'statusLine'});
+  _checkStrictKeys(
+    node,
+    'tui',
+    const {'theme', 'classic', 'showCompactionDetails', 'statusLine'},
+  );
   final theme = _tuiThemeName(node['theme']);
   final classic = _tuiClassicFlag(node['classic']);
+  final showCompactionDetails = _tuiShowCompactionDetailsFlag(
+    node['showCompactionDetails'],
+  );
   final statusLine = node['statusLine'];
   if (statusLine != null && statusLine is! YamlMap) {
     throw ConfigException('"tui.statusLine" must be a map, got: $statusLine');
@@ -748,6 +762,7 @@ TuiSectionConfig parseTuiSection(Object? node) {
   return TuiSectionConfig(
     theme: theme,
     classic: classic,
+    showCompactionDetails: showCompactionDetails,
     statusLine: statusLine == null ? null : parseStatusLineConfig(statusLine),
   );
 }
@@ -767,6 +782,15 @@ bool _tuiClassicFlag(Object? classic) {
     throw ConfigException('"tui.classic" must be a boolean');
   }
   return classic as bool? ?? false;
+}
+
+/// Validates the `showCompactionDetails:` opt-in (gh-1636); false when
+/// unset.
+bool _tuiShowCompactionDetailsFlag(Object? value) {
+  if (value != null && value is! bool) {
+    throw ConfigException('"tui.showCompactionDetails" must be a boolean');
+  }
+  return value as bool? ?? false;
 }
 
 /// The parsed `tui.statusLine:` section. `preset` selects one of the 7

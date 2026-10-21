@@ -136,7 +136,13 @@ void main() {
       var renderedHidden = 0;
       var hidePassIndex = 0;
       for (final pass in passes) {
-        final report = formatCompactionReport(pass, auto: true).join('\n');
+        final report = formatCompactionReport(
+          pass,
+          auto: true,
+          // gh-1636: the records/summary contracts under test live on the
+          // detail block; the default report is now the one-line marker.
+          details: true,
+        ).join('\n');
         final match = RegExp(
           r'records: (\d+) hidden · (\d+) summarized',
         ).firstMatch(report);
@@ -213,7 +219,11 @@ void main() {
 
     final checkpoints = passes.where((p) => p.summary != null).toList();
     expect(checkpoints, isNotEmpty, reason: 'the fixture reaches checkpoint');
-    final report = formatCompactionReport(checkpoints.first, auto: true);
+    final report = formatCompactionReport(
+      checkpoints.first,
+      auto: true,
+      details: true,
+    );
     expect(report.first, contains('auto-compacted'));
     expect(
       report.join('\n'),
