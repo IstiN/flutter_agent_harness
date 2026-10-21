@@ -45,12 +45,12 @@ final class ResumedContextCache {
   /// The context built for [path] when the file still has exactly
   /// ([sizeBytes], [mtimeMs]) — the state it was built from. The returned
   /// context carries a fresh message list; the entry is refreshed as the
-  /// most recently used.
+  /// most recently used. A stale probe does not evict the entry (the
+  /// caller rebuilds and re-remembers over it).
   SessionContext? match(String path, {required int sizeBytes, required int mtimeMs}) {
     final entry = _entries[path];
     if (entry == null) return null;
     if (entry.sizeBytes != sizeBytes || entry.mtimeMs != mtimeMs) {
-      _entries.remove(path);
       return null;
     }
     _entries.remove(path);
