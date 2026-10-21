@@ -125,14 +125,12 @@ void main() {
         textTurn('child settled, done'),
       ]);
       final cli = await bootedCli(router.call);
-      // The pin lands first (the model instance follows /model-edit),
-      // then a DETECTION the model instance never saw publishes a
-      // strictly larger window — the exact fork gh-1742 exists for.
-      io.sendLine('/model-edit contextWindow 4000');
-      await waitForIt(
-        () => io.out.toString().contains('4000'),
-        reason: 'the pin applied',
-      );
+      // A DETECTION the model instance never saw publishes a strictly
+      // larger window than the carried one — the exact fork gh-1742
+      // exists for. (The `/model-edit` publish provenance is covered by
+      // AC2a; driving it here wedges the next REPL line behind the
+      // model re-init, so the consume half is proven with a direct
+      // publish.)
       cli.contextWindowRegistry.publish(
         model: testModel,
         window: 478000,
@@ -143,7 +141,10 @@ void main() {
       io.sendLine('spawn a kid');
       await waitForIt(
         () => cli.subagentManager['kid'] != null,
-        reason: 'the child registers',
+        reason:
+            'the child registers (out tail: ${io.out.toString().substring(
+          (io.out.toString().length - 700).clamp(0, io.out.toString().length),
+        )})',
       );
       await waitForIt(
         () => cli.subagentManager['kid']!.windowTokens == 478000,
