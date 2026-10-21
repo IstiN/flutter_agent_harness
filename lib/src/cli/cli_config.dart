@@ -18,6 +18,7 @@ import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../cube/config/cube_settings.dart';
+import '../session_retention.dart';
 import 'headless_config.dart';
 import 'waiting_heartbeat.dart';
 import '../providers/provider_common.dart';
@@ -405,6 +406,7 @@ final class CliConfig {
     this.tools,
     this.redact,
     this.spills,
+    this.sessions,
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
     this.wireDump = false,
@@ -489,6 +491,12 @@ final class CliConfig {
       spills: map['spills'] == null
           ? null
           : SpillsConfig.fromYaml(map['spills']),
+      // The sessions section (gh-1746); tolerant like spills — unknown
+      // keys and mistyped scalars become notes. Absent keeps the
+      // byte-identical legacy boot (AC1).
+      sessions: map['sessions'] == null
+          ? null
+          : SessionsConfig.fromYaml(map['sessions']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       // Entries named after a built-in catalog provider are dropped (issue
       // #221's ghost "openai"): they shadow `/provider <name>` routing and
@@ -784,6 +792,12 @@ final class CliConfig {
   /// and wins wholesale, like the other project sections).
   final SpillsConfig? spills;
 
+  /// Optional `sessions:` section (gh-1746) — the opt-in retention
+  /// policy for the sessions root. Tolerant parse (deviations become
+  /// notes, never boot failures); `null` means the section is absent —
+  /// boot never sweeps and never notes (AC1's byte-identical legacy).
+  final SessionsConfig? sessions;
+
   /// `registry` kill switch + `maxPerRequest` cap. `null` keeps the
   /// defaults (registry on, [defaultMaxImagesPerRequest]).
   final ImageRegistryConfig? images;
@@ -938,6 +952,7 @@ final class CliConfig {
     ToolsConfig? tools,
     RedactionConfig? redact,
     SpillsConfig? spills,
+    SessionsConfig? sessions,
     CompactionEngine? compactionEngine,
     int? compactionJudgeBudgetSeconds,
     bool? wireDump,
@@ -989,6 +1004,7 @@ final class CliConfig {
       tools: tools ?? this.tools,
       redact: redact ?? this.redact,
       spills: spills ?? this.spills,
+      sessions: sessions ?? this.sessions,
       compactionEngine: compactionEngine ?? this.compactionEngine,
       compactionJudgeBudgetSeconds:
           compactionJudgeBudgetSeconds ?? this.compactionJudgeBudgetSeconds,
@@ -1105,6 +1121,7 @@ final class CliConfig {
     if (wireDump) buffer.write('trajectory:\n  wireDump: true\n');
     if (images != null) buffer.write(_imagesYaml());
     buffer.write(_spillsYaml());
+    buffer.write(_sessionsYaml());
     buffer.write(_agentSectionYaml());
     // The subagents heartbeat section (issue #383), only when explicitly
     // configured; defaults are never written so the file stays minimal.
@@ -1345,6 +1362,10 @@ final class CliConfig {
   /// (gh-1572: the emitter used to be unable to render the section at
   /// all, so every save dropped it).
   String _spillsYaml() => spills?.toYaml() ?? '';
+
+  /// The `sessions:` section (gh-1746), only when explicitly configured
+  /// (defaults are never written so the file stays minimal).
+  String _sessionsYaml() => sessions?.toYaml() ?? '';
 
   String _allowedToolsYaml() {
     if (allowedTools.isEmpty) return 'allowedTools: []\n';
@@ -1788,6 +1809,7 @@ const _diskPreservedSections = {
   // is the only faithful form, like `memory:`/`a2a:`); the rest render
   // when the caller carries them — caller wins wherever it rendered.
   'spills',
+  'sessions',
   'subagents',
   'waiting',
   'jobs',

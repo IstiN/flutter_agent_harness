@@ -193,6 +193,35 @@ Future<void> _runApp(List<String> args) async {
         ),
       );
     }
+    if (sessionList.verb == 'clean') {
+      // gh-1746 AC6: `fa session clean [--dry-run]` — one retention sweep
+      // pass, intercepted like repair: no agent boot. The policy comes
+      // from the user config (`sessions.retention`, tolerant parse).
+      final io = _TerminalCliIO(headless: true);
+      final cleanEnv = LocalExecutionEnv(
+        cwd: parsed.cwd ?? Directory.current.path,
+      );
+      final cleanRoot = parsed.sessionRoot ?? _defaultSessionRoot();
+      final cleanHome = homeDirectory();
+      final retention = cleanHome == null || cleanHome.isEmpty
+          ? null
+          : loadCliConfig(cleanHome).sessions?.retention;
+      exit(
+        await runSessionCleanCliCommand(
+          write: io.write,
+          writeln: io.writeln,
+          env: cleanEnv,
+          sessionRoot: cleanRoot,
+          retention: retention ?? const SessionRetentionConfig(),
+          dryRun: sessionList.dryRun,
+          presenceStore: FileSessionPresenceStore(
+            env: cleanEnv,
+            root: cleanRoot,
+            pidAlive: probePidAlive,
+          ),
+        ),
+      );
+    }
     exit(
       await runSessionListCliCommand(
         write: io.write,
