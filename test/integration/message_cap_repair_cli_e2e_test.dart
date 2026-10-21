@@ -173,14 +173,18 @@ void main() {
       timeout: const Timeout(Duration(seconds: 120)),
       () async {
         // Suppress session-start memory maintenance so the scripted turns
-        // feed only the boot cap + the user turn (the resume-boot-cap
-        // suite's pattern).
+        // feed only the pre-flight cap pass + the user turn (the
+        // resume-boot-cap suite's pattern).
         await env.writeFile('/work/.fah/memory/.last_maintenance', '');
         // Seed the learned cap the way a previous process left it, and a
         // resumed session whose live transcript is token-HEALTHY but past
-        // the cap − margin trigger (24 − 16 = 8): the boot cap must fire
-        // on the gh-1680 message-count path alone (the 1M window never
-        // trips shouldCompact).
+        // the cap − margin trigger (24 − 16 = 8): the gate must fire on
+        // the gh-1680 message-count path alone (the 1M window never
+        // trips shouldCompact). LAZY REWORK (gh-1425 AC3): the resumed
+        // OPEN must never wait on an LM summarization pass — the boot
+        // defers and the FIRST TURN's pre-flight
+        // ([_maybeAutoCompact] gates on the same message-count trigger)
+        // owns the durable compaction before the request.
         Directory('${tempHome.path}/.fah').createSync(recursive: true);
         File('${tempHome.path}/.fah/model_caps.json').writeAsStringSync(
           jsonEncode({
@@ -200,8 +204,14 @@ void main() {
           await seed.appendMessage(UserMessage.text('m$i ${'a' * 400}'));
         }
 
+        // Pre-flight pass, then the turn's answer. The compaction's
+        // memory-extraction rider (best-effort, wired only when long-term
+        // memory is active) consumes one scripted turn when it fires — a
+        // second copy of the answer text keeps the script correct either
+        // way, and an unconsumed tail turn is fine.
         final fake = FakeStreamFunction([
-          textTurn('boot summary of the seeded turns'),
+          textTurn('pre-flight summary of the seeded turns'),
+          textTurn('answered on the compacted transcript'),
           textTurn('answered on the compacted transcript'),
         ]);
         final cli = _bootCli(
@@ -213,25 +223,36 @@ void main() {
         );
 
         final run = cli.run();
-        await io.settle(() => fake.calls >= 1 && !cli.isBusy);
+        // LAZY BOOT: settles instantly, ZERO LM calls (the old synchronous
+        // boot cap here blocked the open on an LM pass — gh-1425 AC3).
+        await io.settle(() => !cli.isBusy);
+        expect(fake.calls, 0, reason: 'the lazy boot makes no LM calls');
         io.sendLine('go');
-        await io.settle(() => fake.calls >= 2 && !cli.isBusy);
+        await io.settle(
+          () =>
+              io.out.toString().contains(
+                'answered on the compacted '
+                'transcript',
+              ) &&
+              !cli.isBusy,
+          reason: 'the pre-flight compaction + the turn answer settle',
+        );
         io.sendLine('/exit');
         await run;
         await io.close();
 
-        // The boot pass ran (summarizer + its memory-extraction rider);
-        // the turn itself is the LAST stream call — nothing fires after it
-        // (the shrunken transcript sits under the trigger again).
-        expect(fake.calls, greaterThanOrEqualTo(3));
+        // The pre-flight pass ran (summarizer + its memory-extraction
+        // rider); the turn itself is the LAST stream call — nothing fires
+        // after it (the shrunken transcript sits under the trigger again).
+        expect(fake.calls, greaterThanOrEqualTo(2));
         // The turn rode the COMPACTED transcript (9 seeded messages).
         final turnMessages = fake.contexts.last.messages.length;
         expect(
           turnMessages,
           lessThan(9),
-          reason: 'the pre-emptive boot cap must shrink the transcript',
+          reason: 'the first-turn pre-flight cap must shrink the transcript',
         );
-        // The pass report is the visible receipt of the boot cap.
+        // The pass report is the visible receipt of the pre-flight cap.
         expect(io.out.toString(), contains('auto-compacted'));
       },
     );
@@ -269,11 +290,11 @@ void main() {
 extension _FakeCliIoSettle on FakeCliIO {
   /// Polls until [condition] holds (the resume-boot-cap suite's settle
   /// pattern: a stream-call boundary plus the CLI leaving its busy gate).
-  Future<void> settle(bool Function() condition) async {
+  Future<void> settle(bool Function() condition, {String? reason}) async {
     for (var i = 0; i < 300; i++) {
       if (condition()) return;
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
-    fail('timed out waiting for the CLI to settle');
+    fail('timed out waiting for the CLI to settle: ${reason ?? 'condition'}');
   }
 }
