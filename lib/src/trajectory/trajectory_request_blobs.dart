@@ -117,10 +117,7 @@ final class TrajectoryRequestBlobStore {
     }
     _counter++;
     final file = '${trajectoryRequestBlobDir(sid)}/$_counter.json';
-    final written = await _env.writeBinaryFile(
-      file,
-      utf8.encode(payload),
-    );
+    final written = await _env.writeBinaryFile(file, utf8.encode(payload));
     if (written.isErr) return null;
     await _maybeSweep(payload.length);
     return TrajectoryRequestSpill(file: file, wireDumpHash: dump?.hash);
@@ -167,9 +164,7 @@ final class TrajectoryRequestBlobStore {
     for (var i = 0; i < sorted.length - 1; i++) {
       final file = sorted[i];
       final expired =
-          now.difference(
-            DateTime.fromMillisecondsSinceEpoch(file.mtimeMs),
-          ) >
+          now.difference(DateTime.fromMillisecondsSinceEpoch(file.mtimeMs)) >
           ttl;
       if (!expired && total <= maxBytes) break;
       await _env.remove(file.path, force: true);

@@ -156,27 +156,30 @@ void main() {
       clock: clock,
     );
 
-    test('write lands a JSON blob under .fah/trajectories/<sid>/requests/',
-        () async {
-      final spill = await store().write(detail: _detail());
-      expect(spill, isNotNull);
-      expect(spill!.file, '.fah/trajectories/s1/requests/1.json');
-      expect(spill.wireDumpHash, isNull);
-      final read = await env.readTextFile(spill.file);
-      final decoded = jsonDecode(read.valueOrNull!) as Map;
-      expect(decoded.containsKey('detail'), isTrue);
-      final restored = TrajectoryRequestDetail.fromJson(
-        (decoded['detail'] as Map).cast<String, dynamic>(),
-      );
-      // The blob carries the FULL detail (previews + blocks).
-      expect(restored.messages.first.preview, isNotEmpty);
-      expect(restored.messages.first.blocks, isNotEmpty);
-    });
+    test(
+      'write lands a JSON blob under .fah/trajectories/<sid>/requests/',
+      () async {
+        final spill = await store().write(detail: _detail());
+        expect(spill, isNotNull);
+        expect(spill!.file, '.fah/trajectories/s1/requests/1.json');
+        expect(spill.wireDumpHash, isNull);
+        final read = await env.readTextFile(spill.file);
+        final decoded = jsonDecode(read.valueOrNull!) as Map;
+        expect(decoded.containsKey('detail'), isTrue);
+        final restored = TrajectoryRequestDetail.fromJson(
+          (decoded['detail'] as Map).cast<String, dynamic>(),
+        );
+        // The blob carries the FULL detail (previews + blocks).
+        expect(restored.messages.first.preview, isNotEmpty);
+        expect(restored.messages.first.blocks, isNotEmpty);
+      },
+    );
 
-    test('write with a raw wire dump stores it and reports the hash',
-        () async {
-      final spill = await store()
-          .write(detail: _detail(), rawWireDump: '{"model":"m","messages":[]}');
+    test('write with a raw wire dump stores it and reports the hash', () async {
+      final spill = await store().write(
+        detail: _detail(),
+        rawWireDump: '{"model":"m","messages":[]}',
+      );
       expect(spill!.wireDumpHash, isNotNull);
       final dump = await store().readWireDump(spill.file);
       expect(dump, isNotNull);
@@ -206,9 +209,7 @@ void main() {
     });
 
     test('a missing session id spills to the sessionless dir', () async {
-      final spill = await store(sessionId: () => null).write(
-        detail: _detail(),
-      );
+      final spill = await store(sessionId: () => null).write(detail: _detail());
       expect(spill!.file, startsWith('.fah/trajectories/sessionless/'));
     });
 
@@ -222,57 +223,62 @@ void main() {
       expect(failing.writeCalls, 1);
     });
 
-    test('rotation deletes oldest blobs beyond the per-session byte budget',
-        () async {
-      final s = store(maxBytes: 1);
-      // Each blob exceeds the 1-byte budget, so every write sweeps the
-      // dir down to just the newest file.
-      await s.write(detail: _detail());
-      await s.write(detail: _detail());
-      final spill = await s.write(detail: _detail());
-      expect(spill!.file, endsWith('3.json'));
-      final listing = await env.listDir('.fah/trajectories/s1/requests');
-      expect(listing.valueOrNull!.map((f) => f.name).toList(), ['3.json']);
-    });
+    test(
+      'rotation deletes oldest blobs beyond the per-session byte budget',
+      () async {
+        final s = store(maxBytes: 1);
+        // Each blob exceeds the 1-byte budget, so every write sweeps the
+        // dir down to just the newest file.
+        await s.write(detail: _detail());
+        await s.write(detail: _detail());
+        final spill = await s.write(detail: _detail());
+        expect(spill!.file, endsWith('3.json'));
+        final listing = await env.listDir('.fah/trajectories/s1/requests');
+        expect(listing.valueOrNull!.map((f) => f.name).toList(), ['3.json']);
+      },
+    );
 
-    test('rotation keeps files within the budget when blobs are small',
-        () async {
-      final s = store(maxBytes: 100000);
-      final small = TrajectoryRequestDetail(
-        messageCount: 1,
-        systemPromptChars: 0,
-        toolCount: 0,
-        toolNames: const [],
-        messages: const [],
-      );
-      await s.write(detail: small);
-      await s.write(detail: small);
-      await s.write(detail: small);
-      final listing = await env.listDir('.fah/trajectories/s1/requests');
-      expect(listing.valueOrNull!.length, 3);
-    });
+    test(
+      'rotation keeps files within the budget when blobs are small',
+      () async {
+        final s = store(maxBytes: 100000);
+        final small = TrajectoryRequestDetail(
+          messageCount: 1,
+          systemPromptChars: 0,
+          toolCount: 0,
+          toolNames: const [],
+          messages: const [],
+        );
+        await s.write(detail: small);
+        await s.write(detail: small);
+        await s.write(detail: small);
+        final listing = await env.listDir('.fah/trajectories/s1/requests');
+        expect(listing.valueOrNull!.length, 3);
+      },
+    );
 
-    test('expired blobs (older than the TTL) are pruned on the next write',
-        () async {
-      final now = DateTime(2026, 1, 1);
-      var current = now;
-      final s = store(ttlDays: 30, clock: () => current);
-      await s.write(detail: _detail());
-      // Pin the first blob's mtime to the fake clock (the memory fs
-      // stamps real wall-clock) so the age math is deterministic, age it
-      // past the TTL, then write again: the sweep removes it.
-      env.setMtime(
-        '.fah/trajectories/s1/requests/1.json',
-        now.millisecondsSinceEpoch,
-      );
-      current = now.add(const Duration(days: 31));
-      final spill = await s.write(detail: _detail());
-      expect(spill!.file, endsWith('2.json'));
-      final names = (await env.listDir('.fah/trajectories/s1/requests'))
-          .valueOrNull!
-          .map((f) => f.name)
-          .toList();
-      expect(names, ['2.json']);
-    });
+    test(
+      'expired blobs (older than the TTL) are pruned on the next write',
+      () async {
+        final now = DateTime(2026, 1, 1);
+        var current = now;
+        final s = store(ttlDays: 30, clock: () => current);
+        await s.write(detail: _detail());
+        // Pin the first blob's mtime to the fake clock (the memory fs
+        // stamps real wall-clock) so the age math is deterministic, age it
+        // past the TTL, then write again: the sweep removes it.
+        env.setMtime(
+          '.fah/trajectories/s1/requests/1.json',
+          now.millisecondsSinceEpoch,
+        );
+        current = now.add(const Duration(days: 31));
+        final spill = await s.write(detail: _detail());
+        expect(spill!.file, endsWith('2.json'));
+        final names = (await env.listDir(
+          '.fah/trajectories/s1/requests',
+        )).valueOrNull!.map((f) => f.name).toList();
+        expect(names, ['2.json']);
+      },
+    );
   });
 }

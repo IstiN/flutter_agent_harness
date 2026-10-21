@@ -156,16 +156,17 @@ extension on AgentCli {
     var detail = event.detail;
     var rawWireDump = event.rawWireDump;
     if (config.trajectoryRequestBlobs) {
-      final spill = await (_requestBlobStore ??= TrajectoryRequestBlobStore(
-        env: _coreToolEnv,
-        sessionId: () => _session?.cachedId,
-        maxBytes: config.trajectoryRequestBlobMaxMb << 20,
-        ttlDays: config.trajectoryRequestBlobTtlDays,
-      )).write(
-        detail: event.detail,
-        rawWireDump: event.rawWireDump,
-        redactWireDump: config.redactionPipeline?.redact,
-      );
+      final spill =
+          await (_requestBlobStore ??= TrajectoryRequestBlobStore(
+            env: _coreToolEnv,
+            sessionId: () => _session?.cachedId,
+            maxBytes: config.trajectoryRequestBlobMaxMb << 20,
+            ttlDays: config.trajectoryRequestBlobTtlDays,
+          )).write(
+            detail: event.detail,
+            rawWireDump: event.rawWireDump,
+            redactWireDump: config.redactionPipeline?.redact,
+          );
       if (spill != null) {
         detail = stripTrajectoryRequestDetail(
           event.detail,

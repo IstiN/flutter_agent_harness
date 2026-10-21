@@ -290,10 +290,9 @@ TrajectoryRequestDetail capTrajectoryRequestDetail(
     final message = messages[i];
     final weight =
         message.preview.length +
-        [for (final b in message.blocks) b.text.length].fold<int>(
-          0,
-          (a, b) => a + b,
-        );
+        [
+          for (final b in message.blocks) b.text.length,
+        ].fold<int>(0, (a, b) => a + b);
     if (fullCount >= requestSummaryMaxMessages ||
         fullChars + weight > requestSummaryCharsBudget) {
       break;

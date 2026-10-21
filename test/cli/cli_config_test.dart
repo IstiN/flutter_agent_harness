@@ -1553,6 +1553,85 @@ memory:
       expect(loadCliConfig(tmp.path).wireDump, isFalse);
     });
 
+    test('gh-1745: requestBlobs defaults ON; the rotation knobs parse', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory:\n');
+      var config = loadCliConfig(tmp.path);
+      expect(config.trajectoryRequestBlobs, isTrue);
+      expect(config.trajectoryRequestBlobMaxMb, 50);
+      expect(config.trajectoryRequestBlobTtlDays, 30);
+
+      file.writeAsStringSync(
+        'trajectory:\n'
+        '  requestBlobs: false\n'
+        '  requestBlobMaxMb: 10\n'
+        '  requestBlobTtlDays: 7\n',
+      );
+      config = loadCliConfig(tmp.path);
+      expect(config.trajectoryRequestBlobs, isFalse);
+      expect(config.trajectoryRequestBlobMaxMb, 10);
+      expect(config.trajectoryRequestBlobTtlDays, 7);
+    });
+
+    test('gh-1745: rejects bad requestBlob scalars and keys stay strict', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory:\n  requestBlobMaxMb: 0\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"trajectory.requestBlobMaxMb" must be a positive '
+                'integer'),
+          ),
+        ),
+      );
+      file.writeAsStringSync('trajectory:\n  requestBlobTtlDays: soon\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"trajectory.requestBlobTtlDays" must be a positive '
+                'integer'),
+          ),
+        ),
+      );
+      file.writeAsStringSync('trajectory:\n  requestBlobs: 1\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"trajectory.requestBlobs" must be a boolean'),
+          ),
+        ),
+      );
+    });
+
+    test('gh-1745: loadProjectTrajectorySection carries the whole section',
+        () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('other: 1\n');
+      expect(loadProjectTrajectorySection(tmp.path), isNull);
+      file.writeAsStringSync(
+        'trajectory:\n  requestBlobs: false\n  requestBlobMaxMb: 5\n',
+      );
+      final section = loadProjectTrajectorySection(tmp.path);
+      expect(section, isNotNull);
+      expect(section!.requestBlobs, isFalse);
+      expect(section.requestBlobMaxMb, 5);
+      expect(section.requestBlobTtlDays, 30);
+      // The legacy wireDump loader still resolves through the same parse.
+      expect(loadProjectWireDump(tmp.path), isFalse);
+    });
+
     test('rejects unknown trajectory keys', () {
       final file = File('${tmp.path}/.fah/config.yaml');
       file.createSync(recursive: true);

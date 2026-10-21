@@ -92,7 +92,8 @@ void main() {
     expect(
       summary,
       isNot(contains('"blocks"')),
-      reason: 'gh-1745: the per-message block texts must not ride the '
+      reason:
+          'gh-1745: the per-message block texts must not ride the '
           'primary JSONL',
     );
 
@@ -124,23 +125,25 @@ void main() {
     expect(listing.valueOrNull!.length, 2);
   });
 
-  test('trajectory.requestBlobs:false restores the legacy inline record',
-      () async {
-    final rig = await _rig(requestBlobs: false);
-    rig.io.sendLine('go');
-    await _settle(rig);
-    await _exit(rig);
+  test(
+    'trajectory.requestBlobs:false restores the legacy inline record',
+    () async {
+      final rig = await _rig(requestBlobs: false);
+      rig.io.sendLine('go');
+      await _settle(rig);
+      await _exit(rig);
 
-    final jsonl = await _sessionJsonl(rig);
-    final summary = _summaryLine(jsonl);
-    expect(summary, isNot(contains('"spillFile"')));
-    expect(summary, contains('"blocks"'));
-    expect(
-      (await rig.env.listDir('.fah/trajectories')).isErr,
-      isTrue,
-      reason: 'no blob dir is created when spilling is off',
-    );
-  });
+      final jsonl = await _sessionJsonl(rig);
+      final summary = _summaryLine(jsonl);
+      expect(summary, isNot(contains('"spillFile"')));
+      expect(summary, contains('"blocks"'));
+      expect(
+        (await rig.env.listDir('.fah/trajectories')).isErr,
+        isTrue,
+        reason: 'no blob dir is created when spilling is off',
+      );
+    },
+  );
 
   test('a spilled wire dump lives in the blob, not the JSONL', () async {
     final rig = await _rig(wireDump: true);
@@ -159,21 +162,26 @@ void main() {
     final spillPath = RegExp(
       '"spillFile":"([^"]+)"',
     ).firstMatch(summary)!.group(1)!;
-    final store = TrajectoryRequestBlobStore(env: rig.env, sessionId: () => null);
+    final store = TrajectoryRequestBlobStore(
+      env: rig.env,
+      sessionId: () => null,
+    );
     final dump = await store.readWireDump(spillPath);
     expect(dump, isNotNull);
     expect(dump!.hash, isNotEmpty);
   });
 
-  test('wireDump with spilling off keeps the legacy inline dump record',
-      () async {
-    final rig = await _rig(requestBlobs: false, wireDump: true);
-    rig.io.sendLine('go');
-    await _settle(rig);
-    await _exit(rig);
+  test(
+    'wireDump with spilling off keeps the legacy inline dump record',
+    () async {
+      final rig = await _rig(requestBlobs: false, wireDump: true);
+      rig.io.sendLine('go');
+      await _settle(rig);
+      await _exit(rig);
 
-    expect(await _sessionJsonl(rig), contains('"trajectory_wire_dump"'));
-  });
+      expect(await _sessionJsonl(rig), contains('"trajectory_wire_dump"'));
+    },
+  );
 }
 
 class _Rig {

@@ -59,9 +59,7 @@ import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
     show TrajectoryHiddenRecordPreview, projectHiddenRecordPreviews;
 import '../trajectory/trajectory_record.dart'
-    show
-        TrajectoryCompactedRecord,
-        stripTrajectoryRequestDetail;
+    show TrajectoryCompactedRecord, stripTrajectoryRequestDetail;
 import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_request_blobs.dart';
 import '../agent/agent_tool.dart';
@@ -2475,14 +2473,11 @@ final class _CliMessageCapPolicy implements MessageCapPolicy {
   final AgentCli _cli;
   @override
   int? learnedCapFor(Model model) => ModelCapsStore.learnedCapOr(
-        _cli._modelCaps.recordFor(model.provider, model.id),
-        _cli
-            .config
-            .modelsConfig
-            ?.overrides
-            .lookup(model.provider, model.id)
-            ?.messageCap,
-      );
+    _cli._modelCaps.recordFor(model.provider, model.id),
+    _cli.config.modelsConfig?.overrides
+        .lookup(model.provider, model.id)
+        ?.messageCap,
+  );
 
   @override
   void learnFromRefusal(Model model, MessageCapRefusal refusal) {
