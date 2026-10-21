@@ -73,33 +73,35 @@ void main() {
     };
   }
 
-  AgentCli buildCli(StreamFunction stream, {bool showCompactionDetails = false}) =>
-      AgentCli(
-        config: AgentCliConfig(
-          model: const Model(
-            id: 'tiny-window',
-            api: 'test-api',
-            provider: 'test-provider',
-            baseUrl: 'https://example.test',
-            contextWindow: 40000,
-            maxTokens: 4096,
-          ),
-          apiKey: '[REDACTED:Sensitive Value]',
-          env: env,
-          sessionRoot: '/sessions',
-          providerKind: 'openai-completions',
-          compactionSettings: const CompactionSettings(
-            enabled: true,
-            reserveTokens: 2000,
-            keepRecentTokens: 2000,
-          ),
-          // gh-1636: the full receipt block (records + summary) is the
-          // opt-in; the default receipt is the one-line marker.
-          showCompactionDetails: showCompactionDetails,
-        ),
-        io: io,
-        streamFunction: stream.call,
-      );
+  AgentCli buildCli(
+    StreamFunction stream, {
+    bool showCompactionDetails = false,
+  }) => AgentCli(
+    config: AgentCliConfig(
+      model: const Model(
+        id: 'tiny-window',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 40000,
+        maxTokens: 4096,
+      ),
+      apiKey: '[REDACTED:Sensitive Value]',
+      env: env,
+      sessionRoot: '/sessions',
+      providerKind: 'openai-completions',
+      compactionSettings: const CompactionSettings(
+        enabled: true,
+        reserveTokens: 2000,
+        keepRecentTokens: 2000,
+      ),
+      // gh-1636: the full receipt block (records + summary) is the
+      // opt-in; the default receipt is the one-line marker.
+      showCompactionDetails: showCompactionDetails,
+    ),
+    io: io,
+    streamFunction: stream.call,
+  );
 
   Future<Session> openRunSession() async {
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');

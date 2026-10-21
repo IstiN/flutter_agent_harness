@@ -234,17 +234,19 @@ void main() {
       expect(segment.text, isNot(contains('-')));
     });
 
-    test('unarmed default band renders byte-identically to the pre-chip row',
-        () {
-      const snapshot = StatusLineSnapshot(
-        cwd: '/work',
-        modelName: 'm',
-        approvalMode: 'yolo',
-      );
-      final band = renderStatusLine(snapshot, _defaultSpec(), 120).join('\n');
-      expect(band, isNot(contains('⏱')));
-      expect(band, isNot(contains('timer')));
-    });
+    test(
+      'unarmed default band renders byte-identically to the pre-chip row',
+      () {
+        const snapshot = StatusLineSnapshot(
+          cwd: '/work',
+          modelName: 'm',
+          approvalMode: 'yolo',
+        );
+        final band = renderStatusLine(snapshot, _defaultSpec(), 120).join('\n');
+        expect(band, isNot(contains('⏱')));
+        expect(band, isNot(contains('timer')));
+      },
+    );
 
     test('armed default band shows the chip next to the other segments', () {
       const snapshot = StatusLineSnapshot(
@@ -560,8 +562,9 @@ tui:
       expect(parseTuiSection(_tui('tui: {}')).showCompactionDetails, isFalse);
       // Explicit true parses.
       expect(
-        parseTuiSection(_tui('tui:\n  showCompactionDetails: true'))
-            .showCompactionDetails,
+        parseTuiSection(
+          _tui('tui:\n  showCompactionDetails: true'),
+        ).showCompactionDetails,
         isTrue,
       );
       // Coexists with the other keys.
@@ -675,9 +678,7 @@ tui:
     test('nerdSymbols strict bool, yaml round-trip, preset precedence', () {
       // Strict schema: a non-bool value throws (issue #918 knob wiring).
       expect(
-        () => parseTuiSection(
-          _tui('tui:\n  statusLine:\n    nerdSymbols: 1'),
-        ),
+        () => parseTuiSection(_tui('tui:\n  statusLine:\n    nerdSymbols: 1')),
         throwsA(isA<ConfigException>()),
       );
       // Both bool values parse and round-trip through toYaml.
@@ -695,9 +696,9 @@ tui:
       }
       // Absent key leaves the override null (preset decides).
       expect(
-        parseTuiSection(_tui('tui:\n  statusLine:\n    preset: nerd'))
-            .statusLine!
-            .nerdSymbols,
+        parseTuiSection(
+          _tui('tui:\n  statusLine:\n    preset: nerd'),
+        ).statusLine!.nerdSymbols,
         isNull,
       );
       // Config override wins over the preset's nerd flag, in both
@@ -750,8 +751,9 @@ tui:
       expect(opted.tuiShowCompactionDetails, isTrue);
       expect(opted.toYaml(), contains('showCompactionDetails: true'));
       expect(
-        CliConfig.fromYaml(loadYaml(opted.toYaml()) as YamlMap)
-            .tuiShowCompactionDetails,
+        CliConfig.fromYaml(
+          loadYaml(opted.toYaml()) as YamlMap,
+        ).tuiShowCompactionDetails,
         isTrue,
       );
       expect(opted.copyWith().tuiShowCompactionDetails, isTrue);

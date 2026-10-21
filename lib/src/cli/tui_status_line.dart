@@ -745,11 +745,12 @@ TuiSectionConfig parseTuiSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('tui must be a map, got: $node');
   }
-  _checkStrictKeys(
-    node,
-    'tui',
-    const {'theme', 'classic', 'showCompactionDetails', 'statusLine'},
-  );
+  _checkStrictKeys(node, 'tui', const {
+    'theme',
+    'classic',
+    'showCompactionDetails',
+    'statusLine',
+  });
   final theme = _tuiThemeName(node['theme']);
   final classic = _tuiClassicFlag(node['classic']);
   final showCompactionDetails = _tuiShowCompactionDetailsFlag(

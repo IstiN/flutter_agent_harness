@@ -19,7 +19,8 @@ void main() {
       tokensAfter: 59496,
       fallback: 'smol',
       ok: true,
-      summary: '## Goal\n- long internal checkpoint notes\n'
+      summary:
+          '## Goal\n- long internal checkpoint notes\n'
           'hidden segments (compact_expand reopens any id)',
       hiddenRecords: 42,
       summarizedMessages: 17,
@@ -75,18 +76,15 @@ void main() {
         hiddenRecords: 42,
         summarizedMessages: 17,
       );
-      expect(
-        formatCompactionReport(pass, auto: false, details: true),
-        [
-          'compacted · smol',
-          'tokens: 210925 → 45123 (165802 freed · 79%)',
-          'records: 42 hidden · 17 summarized',
-          'summary:',
-          '```',
-          '## Decisions\n- ship it',
-          '```',
-        ],
-      );
+      expect(formatCompactionReport(pass, auto: false, details: true), [
+        'compacted · smol',
+        'tokens: 210925 → 45123 (165802 freed · 79%)',
+        'records: 42 hidden · 17 summarized',
+        'summary:',
+        '```',
+        '## Decisions\n- ship it',
+        '```',
+      ]);
     });
 
     test('the auto header and pass number ride the same line', () {
@@ -165,14 +163,11 @@ void main() {
         ok: true,
         droppedMessages: 312,
       );
-      expect(
-        formatCompactionReport(pass, auto: true, details: true),
-        [
-          'auto-compacted · local-trim',
-          'tokens: 200056 → 40977 (159079 freed · 80%)',
-          'records: 312 dropped (in-memory) · 0 hidden · 0 summarized',
-        ],
-      );
+      expect(formatCompactionReport(pass, auto: true, details: true), [
+        'auto-compacted · local-trim',
+        'tokens: 200056 → 40977 (159079 freed · 80%)',
+        'records: 312 dropped (in-memory) · 0 hidden · 0 summarized',
+      ]);
     });
     test('a summarizer pass keeps the hidden/summarized-only line', () {
       final pass = AutoCompactorPass(

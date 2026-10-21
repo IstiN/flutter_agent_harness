@@ -884,19 +884,19 @@ void main() {
       // The gh-1636 opt-in must be writable through `fa config set` AND
       // boot-parse identically — the two mirrors accept exactly the same
       // shapes.
-      final bad = loadYaml('tui:\n  showCompactionDetails: sure\n')
-          as YamlMap;
+      final bad = loadYaml('tui:\n  showCompactionDetails: sure\n') as YamlMap;
       expect(() => CliConfig.fromYaml(bad), throwsConfigException);
-      final good =
-          loadYaml('tui:\n  showCompactionDetails: true\n') as YamlMap;
+      final good = loadYaml('tui:\n  showCompactionDetails: true\n') as YamlMap;
       expect(() => CliConfig.fromYaml(good), returnsNormally);
       expect(CliConfig.fromYaml(good).tuiShowCompactionDetails, isTrue);
       // The emitter never renders the default, so the mirror's tolerance
       // of a theme-less section is what `fa config set` needs.
       final setShape = CliConfig(tuiShowCompactionDetails: true).toYaml();
       expect(setShape, contains('showCompactionDetails: true'));
-      expect(() => CliConfig.fromYaml(loadYaml(setShape) as YamlMap),
-          returnsNormally);
+      expect(
+        () => CliConfig.fromYaml(loadYaml(setShape) as YamlMap),
+        returnsNormally,
+      );
     });
 
     test('the output section validates identically (gh-1198)', () {
