@@ -306,6 +306,7 @@ void main() {
       },
     );
   });
+
   group('host-arch archive selection + slot arch stamp (gh-1736)', () {
     // gh-1736: the action downloaded the arch-less flutter_macos_<v> zip —
     // the X64 build per releases_macos.json — onto the arm64 self-hosted
