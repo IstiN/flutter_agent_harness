@@ -568,6 +568,23 @@ confirm the swatch line with the user. Asked for a palette "like X" where
 X is unknown, ask two or three palette questions first — never invent one
 silently.
 
+### Compaction report detail
+
+By default an auto-compaction fold prints ONE short marker line
+(`● auto-compacted · engine: N → M tokens (F freed · P%)`); the internal
+checkpoint summary stays in the session file (reachable via
+`compact_expand`) and out of the console. To render the full report block
+(records + fenced summary) and the live summarizer stream on headless
+runs, opt in:
+
+```yaml
+tui:
+  showCompactionDetails: true
+```
+
+The manual `/compact` command always renders the full block. Applies at
+next boot.
+
 ## Prompts, TTSR & A2A
 
 The remaining user-file sections (all global scope):

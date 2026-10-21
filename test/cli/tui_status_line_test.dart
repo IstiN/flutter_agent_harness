@@ -736,6 +736,26 @@ tui:
       expect(classic.tuiClassic, isTrue);
       expect(classic.toYaml(), contains('classic: true'));
     });
+
+    test('CliConfig carries showCompactionDetails and emits it only when '
+        'set (gh-1636)', () {
+      // Default false, never written (the file stays minimal).
+      final defaults = CliConfig();
+      expect(defaults.tuiShowCompactionDetails, isFalse);
+      expect(defaults.toYaml(), isNot(contains('showCompactionDetails')));
+      // Explicit true parses, round-trips, and survives copyWith.
+      final opted = CliConfig.fromYaml(
+        loadYaml('tui:\n  showCompactionDetails: true\n') as YamlMap,
+      );
+      expect(opted.tuiShowCompactionDetails, isTrue);
+      expect(opted.toYaml(), contains('showCompactionDetails: true'));
+      expect(
+        CliConfig.fromYaml(loadYaml(opted.toYaml()) as YamlMap)
+            .tuiShowCompactionDetails,
+        isTrue,
+      );
+      expect(opted.copyWith().tuiShowCompactionDetails, isTrue);
+    });
   });
 
   group('snapshot purity', () {
