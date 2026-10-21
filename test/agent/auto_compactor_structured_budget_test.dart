@@ -491,8 +491,11 @@ void main() {
 
     // The trim rescues the run — the session is NOT aborted.
     expect(ok, isTrue, reason: 'the local-trim fallback must rescue the run');
-    expect(hooks.bothRolesError, isNull,
-        reason: 'a rescued run never reports both roles failed');
+    expect(
+      hooks.bothRolesError,
+      isNull,
+      reason: 'a rescued run never reports both roles failed',
+    );
     // The mechanical trim reported its own receipt …
     final trimReceipt = hooks.passes.singleWhere(
       (p) => p.ok && p.fallback == 'local-trim',
@@ -512,16 +515,10 @@ void main() {
     expect(tokensAfter, lessThan(tokensBefore));
     expect(state.messages.first, isA<UserMessage>());
     final marker = state.messages.first as UserMessage;
-    expect(
-      marker.content as String,
-      contains('[context trimmed locally'),
-    );
+    expect(marker.content as String, contains('[context trimmed locally'));
     // Wire stays pair-safe; the session file keeps every record.
     expect(validateToolPairing(state.messages), isEmpty);
-    expect(
-      (await session.getEntries()).whereType<MessageRecord>().length,
-      14,
-    );
+    expect((await session.getEntries()).whereType<MessageRecord>().length, 14);
   });
 
   test('gh-1743: when nothing is droppable the budget timeout keeps the '
@@ -562,17 +559,26 @@ void main() {
 
     expect(ok, isFalse);
     expect(hooks.bothRolesError, isNotNull);
-    expect(hooks.passes.any((p) => p.fallback == 'local-trim'), isFalse,
-        reason: 'nothing was droppable — no trim receipt may be reported');
+    expect(
+      hooks.passes.any((p) => p.fallback == 'local-trim'),
+      isFalse,
+      reason: 'nothing was droppable — no trim receipt may be reported',
+    );
     // The exhaustion path is a terminal path like any other: it reports
     // its failed-pass receipt AND closes the host onDone bracket (the
     // CLI's HEP compaction_end frame keys off it — a run that ends here
     // must not leave the bracket open).
-    expect(hooks.doneCount, 1,
-        reason: 'the exhaustion path closes the onDone bracket');
+    expect(
+      hooks.doneCount,
+      1,
+      reason: 'the exhaustion path closes the onDone bracket',
+    );
     final failedPasses = hooks.passes.where((p) => !p.ok).toList();
-    expect(failedPasses, hasLength(1),
-        reason: 'the exhaustion path reports its failed-pass receipt');
+    expect(
+      failedPasses,
+      hasLength(1),
+      reason: 'the exhaustion path reports its failed-pass receipt',
+    );
     expect(failedPasses.single.fallback, isNull);
     expect(failedPasses.single.error, same(hooks.bothRolesError));
     // No trim means no live-context change (AgentState copies on assign,
@@ -621,8 +627,11 @@ void main() {
     // Nothing reported, nothing trimmed: the aborted run leaves no
     // receipts, no failure verdict, no bracket — and the live context
     // untouched.
-    expect(hooks.passes, isEmpty,
-        reason: 'a cancelled run is never a mere failed pass');
+    expect(
+      hooks.passes,
+      isEmpty,
+      reason: 'a cancelled run is never a mere failed pass',
+    );
     expect(hooks.bothRolesError, isNull);
     expect(hooks.doneCount, 0);
     expect(state.messages.first, isA<UserMessage>());
@@ -631,5 +640,4 @@ void main() {
       isNot(contains('[context trimmed locally')),
     );
   });
-}
 }

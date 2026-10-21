@@ -355,7 +355,24 @@ final class AutoCompactor {
   /// like the `_runPass` trim branch, and reports whether the live
   /// context was actually bounded. `false` means nothing was droppable —
   /// the caller keeps its failure verdict.
+  ///
+  /// Deliberately NOT gated on `_runPass`'s under-trigger check
+  /// (`!shouldCompact && !_overMessageCap`): the gh-1425 clamp lands the
+  /// trim under the TOKEN trigger by construction, so the only dimension
+  /// that can stay over is the gh-1680 message cap (many tiny kept
+  /// messages). This boolean answers "does the session live" for the
+  /// over-window funnel — a `false` here aborts the live task, gh-1743's
+  /// whole bug — and a still-over-cap context self-heals at the next
+  /// turn's pre-flight compaction, which fires on the message-cap
+  /// dimension and runs the healthy LM path. A cancelled [runToken]
+  /// throws before anything is trimmed or reported (issue #1085 cancel
+  /// parity with [run]).
   bool applyLocalTrimFallback({int pass = 1}) {
+    // Cancel parity (issue #1085): a cancelled compaction is NEVER a
+    // mere failed pass. If the owning run's token cancelled around the
+    // moment the budget fired, surface the abort instead of trimming —
+    // and reporting success on — a run the user stopped.
+    runToken?.throwIfCancelled();
     final tokensBefore = _requestTokens();
     final trimmed = _localTrimFallback();
     if (trimmed == null) return false;
@@ -1030,6 +1047,23 @@ class AutoCompactorFactory {
         );
         if (trimmed) return true;
         hooks.onBothRolesFailed(outcome.error!);
+        // This is a terminal path like any other: report the failed pass
+        // and close the host bracket (mirrors the classic engine's
+        // exhaustion branch). Skipping it left the CLI's HEP
+        // `compaction_start` bracket open and `_runTokensBefore` stale —
+        // the next compaction's freed-delta frame computed against the
+        // failed run's before-count.
+        hooks.onPass(
+          AutoCompactorPass(
+            pass: adapter.passCount + 1,
+            tokensBefore: _requestTokens(),
+            tokensAfter: _requestTokens(),
+            fallback: null,
+            ok: false,
+            error: outcome.error,
+          ),
+        );
+        hooks.onDone(adapter.passCount + 1, _requestTokens());
         return false;
       }
       // Fall through: the classic prefix compactor is the residual
