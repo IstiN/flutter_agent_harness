@@ -738,7 +738,13 @@ extension on AgentCli {
   void _applyDetectedContextWindow(Model model) {
     final detected = _modelContextWindows[model.id];
     if (detected != null && detected != model.contextWindow) {
-      _replaceModelLimits(contextWindow: detected);
+      _replaceModelLimits(
+        contextWindow: detected,
+        // gh-1742 invariant 2: the detection publishes into the shared
+        // registry so children spawned afterwards ride the SERVED
+        // window, not the advertised one.
+        windowSource: ContextWindowSource.endpointReport,
+      );
       io.writeln(_style.dim('model context window: $detected (from endpoint)'));
     }
   }
@@ -1360,6 +1366,7 @@ extension on AgentCli {
     _replaceModelLimits(
       contextWindow: isContext ? value : null,
       maxTokens: isContext ? null : value,
+      windowSource: isContext ? ContextWindowSource.userPin : null,
     );
   }
 
@@ -1378,7 +1385,10 @@ extension on AgentCli {
   void _applyModelLimitEdit(String field, int value) {
     switch (field) {
       case 'contextWindow':
-        _replaceModelLimits(contextWindow: value);
+        _replaceModelLimits(
+          contextWindow: value,
+          windowSource: ContextWindowSource.userPin,
+        );
         io.writeln('model context window set to $value');
       case 'maxTokens':
         _replaceModelLimits(maxTokens: value);
@@ -1390,7 +1400,11 @@ extension on AgentCli {
 
   /// Rebuilds the active model with new token limits, preserving every other
   /// field (endpoint detection and `/model-edit`).
-  void _replaceModelLimits({int? contextWindow, int? maxTokens}) {
+  void _replaceModelLimits({
+    int? contextWindow,
+    int? maxTokens,
+    ContextWindowSource? windowSource,
+  }) {
     final current = _agent.state.model;
     _agent.state.model = Model(
       id: current.id,
@@ -1407,6 +1421,17 @@ extension on AgentCli {
       compat: current.compat,
       authHeader: current.authHeader,
     );
+    // gh-1742 invariant 2: a window write publishes into the shared
+    // registry (endpoint report or user pin — the pin wins by publish
+    // order), so main, children, and the meter resolve ONE window per
+    // model identity.
+    if (contextWindow != null && windowSource != null) {
+      contextWindowRegistry.publish(
+        model: _agent.state.model,
+        window: contextWindow,
+        source: windowSource,
+      );
+    }
     unawaited(config.onModelChanged?.call(_agent.state.model));
   }
 }
