@@ -274,7 +274,11 @@ Future<void> pushJsApp(
     isDemo: AppsStore.demoAppIds.contains(app.id),
     source: source,
   );
-  final store = permissionsStore ?? await AppPermissionsStore.load(service.env);
+  // Use manager.env: in extension-relay mode, service is RelayAgentService whose
+  // dummy base env is a blank memory shell, while manager.env is the real persistent
+  // sandbox holding apps/ and IndexedDB snapshots.
+  final effectiveEnv = manager.env;
+  final store = permissionsStore ?? await AppPermissionsStore.load(effectiveEnv);
   final appService = await resolveAppBoundSession(manager, app.id) ?? service;
   if (!context.mounted) return;
   // Wide screens: the apps side panel owns a nested Navigator registered on
@@ -287,7 +291,7 @@ Future<void> pushJsApp(
     MaterialPageRoute<void>(
       builder: (_) => JsAppView(
         app: app,
-        env: service.env,
+        env: effectiveEnv,
         permissionsStore: store,
         llmHandler: service.completeOnce,
         onSendToAgent: (message) => forwardAppMessageToAgent(manager, message),
