@@ -345,17 +345,25 @@ void main() {
     // best ratios 3.35x/3.31x at 500k cells): a contention window long
     // enough to span ≥3 of the 5 timed runs of the doubled size in EVERY
     // attempt inflates every attempt MEDIAN, so the cross-attempt min
-    // cannot rescue it. Model that shape deterministically: 4 of the 5
-    // doubled runs spiked in each of the 3 attempts, small runs
+    // cannot rescue it. Model that shape deterministically: 3 of the 5
+    // doubled runs spiked in each of the 3 attempts (the live-red
+    // minimum: median-of-5 [c,c,s] is still a spiked value), small runs
     // untouched (the small samples were stable in both live reds —
     // exposure scales with run duration). Median-of-5 takes a spiked
-    // value in every attempt and fails; a per-size min finds the one
-    // clean doubled run per attempt (~2x) and passes.
+    // value in every attempt and fails; a per-size min finds the two
+    // clean doubled runs per attempt (~2x) and passes.
+    //
+    // Exactly one clean doubled run per attempt (4-of-5 spiked) was not
+    // enough — that sample is timed in real wall clock, and real jitter
+    // on it is the very shape being modeled: gh-1732 (fa run 39546301132,
+    // shard 2) red at a 3.30x best ratio because the single clean
+    // doubled sample of every attempt was inflated (~+60%) while the
+    // real 500k growth tests on the same runner stayed green. Two clean
+    // samples per attempt make the per-attempt min tolerate one
+    // contaminated clean run; the cross-attempt min covers the rest.
     // Measurement call order: per attempt, 5 timed runs of the small
     // input then 5 of the doubled one.
-    final sustained = ContendedClock(
-      spiked: {6, 7, 8, 9, 16, 17, 18, 19, 26, 27, 28, 29},
-    );
+    final sustained = ContendedClock(spiked: {6, 7, 8, 16, 17, 18, 26, 27, 28});
     expectLinearGrowth(
       asciiProse,
       100000,
