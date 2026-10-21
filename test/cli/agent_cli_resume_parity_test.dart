@@ -16,8 +16,12 @@ import 'package:test/test.dart';
 import 'agent_cli_test_support.dart';
 
 const _window = 32768;
-const _reserve = 8192;
-// CompactionSettings.forWindow(32768): reserve = min(16384, window ~/ 4).
+// The ACTIVE curve, not a frozen number: the parity threshold tracks
+// whatever `CompactionSettings.forWindow` resolves today (gh-1742 made
+// it proportional) — the CLI's resume budget reads the same source, so
+// the test guards the parity PROPERTY (meter ≤ trigger), not one
+// curve's constant.
+final _reserve = CompactionSettings.forWindow(_window).reserveTokens;
 final _threshold = _window - _reserve;
 
 Model get _model => const Model(
@@ -303,7 +307,9 @@ void main() {
       expect(output, isNot(contains('Context window exhausted')));
       expect(output, isNot(contains('auto-compacted')));
       final context = stream.contexts.first;
-      expect(requestTokens(context), lessThanOrEqualTo(32768 - 8192));
+      // The ACTIVE reserve for the capped window (tracks forWindow —
+      // gh-1742 made it proportional), not a frozen number.
+      expect(requestTokens(context), lessThanOrEqualTo(_threshold));
       expect(context.messages.length, lessThan(101));
     },
   );
@@ -313,40 +319,64 @@ void main() {
     'override (the ACTIVE reserve, not forWindow)',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
-      // ~18k transcript tokens: over the default-reserve budget
-      // (32768 − 8192 − overhead ≈ 16k) but under the override's
-      // (32768 − 4096 − overhead ≈ 20k).
+      // The wiring proof: the SAME oversized seed, resumed twice — the
+      // default budget (forWindow's ACTIVE reserve) trims it to what
+      // fits, and the LARGER pinned reserve trims STRICTLY more. If the
+      // budget ever read a frozen number instead of the ACTIVE
+      // settings, the two runs would keep the same slice.
+      //
+      // The seed is oversized against the WINDOW itself (400 messages ≈
+      // 40k estimated tokens > the whole 32k window), so the file
+      // overflows every budget this window can express — the test pins
+      // no curve constant. (A fixed 18-message seed DID stale when
+      // gh-1742 review c1 corrected the forWindow curve — the 32k
+      // reserve went 4096 -> 8192, exact legacy parity, and the default
+      // budget legitimately shrank from keeping all 19 to keeping 15.)
+      const seededCount = 400;
+      const overrideReserve = 16384;
+
       final defaultEnv = await freshEnv();
-      await seedFlat(defaultEnv, 'parity-target', 18);
+      await seedFlat(defaultEnv, 'parity-target', seededCount);
       final defaultStream = FakeStreamFunction([textTurn('ok')]);
       final defaultExit = await headlessCli(
         defaultEnv,
         defaultStream,
       ).runHeadless('go');
       expect(defaultExit, 0);
-      final trimmed = defaultStream.contexts.first.messages.length;
-      expect(trimmed, lessThan(21), reason: 'the default reserve trims');
+      final keptByDefault = defaultStream.contexts.first.messages.length;
+      // The default budget actually TRIMS the oversized file — the
+      // budget is active, not a whole-file pass-through.
+      expect(
+        keptByDefault,
+        lessThan(seededCount + 1),
+        reason: 'the oversized file must overflow the default budget',
+      );
 
       io = FakeCliIO();
       final overrideEnv = await freshEnv();
-      await seedFlat(overrideEnv, 'parity-target', 18);
+      await seedFlat(overrideEnv, 'parity-target', seededCount);
       final overrideStream = FakeStreamFunction([textTurn('ok')]);
       final overrideExit = await headlessCli(
         overrideEnv,
         overrideStream,
         compactionSettings: const CompactionSettings(
           enabled: true,
-          reserveTokens: 4096,
-          keepRecentTokens: 8192,
+          reserveTokens: overrideReserve,
+          keepRecentTokens: 16384,
         ),
       ).runHeadless('go');
       expect(overrideExit, 0);
-      final kept = overrideStream.contexts.first.messages.length;
+      final keptByOverride = overrideStream.contexts.first.messages.length;
 
-      // The smaller reserve keeps the whole file — the budget moved with
-      // the ACTIVE settings.
-      expect(kept, greaterThan(trimmed));
-      expect(kept, 19);
+      // The larger pinned reserve shrinks the parity budget — the trim
+      // fires strictly deeper than the default's.
+      expect(
+        keptByOverride,
+        lessThan(keptByDefault),
+        reason:
+            'the budget must read the ACTIVE settings: a larger pinned '
+            'reserve keeps strictly less on the same seed',
+      );
     },
   );
 
