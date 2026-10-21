@@ -130,7 +130,7 @@ void main() {
       expect(rendered, startsWith('sessions:'));
       expect(rendered, contains('maxTotalBytes: 4096'));
       final reparsed = SessionsConfig.fromYaml(
-        loadYaml(rendered),
+        (loadYaml(rendered) as YamlMap)['sessions'],
       );
       expect(reparsed.retention.maxTotalBytes, 4096);
       expect(reparsed.retention.minAgeDays, 14);

@@ -491,17 +491,24 @@ SessionSweepReport _noOpReport({
 /// file, the per-session usage directory, and the workspace spills —
 /// re-checking presence immediately before every unlink (E2).
 final class SessionRetentionSweeper {
+  // The sweeper's filesystem/root params read better under their public
+  // names than as `_fs`/`_root` initializing formals (the repo's
+  // established ignore, see checkpoint_tool.dart).
+  // ignore_for_file: prefer_initializing_formals
+
   /// Creates a sweeper over [fs] rooted at [sessionsRoot].
   SessionRetentionSweeper({
-    required FileSystem _fs,
-    required String _root,
+    required FileSystem fs,
+    required String sessionsRoot,
     this.retention = const SessionRetentionConfig(),
     this.presenceStore,
     this.currentSessionId,
     DateTime Function()? now,
     this.log,
     this.cleanWorkspaceSpills = true,
-  }) : _now = now ?? DateTime.now;
+  }) : _fs = fs,
+       _root = sessionsRoot,
+       _now = now ?? DateTime.now;
 
   /// The filesystem abstraction (never `dart:io`).
   final FileSystem _fs;
@@ -845,7 +852,7 @@ final class SessionRetentionSweeper {
         await _deleteUnit(usage, action);
         final line =
             'retention: deleted ${action.path} '
-            '(${formatSessionBytes(action.bytes)}; age ${action.ageDays}d; '
+            '(${formatRetentionBytes(action.bytes)}; age ${action.ageDays}d; '
             'over-cap)';
         logLines.add(line);
         _emit(line);
@@ -871,8 +878,8 @@ final class SessionRetentionSweeper {
       final held = blockers.fold<int>(0, (sum, b) => sum + b.bytes);
       final note =
           'retention: still over cap by '
-          '${formatSessionBytes(remaining - cap)} — ${blockers.length} '
-          'exempt session(s) hold ${formatSessionBytes(held)}; '
+          '${formatRetentionBytes(remaining - cap)} — ${blockers.length} '
+          'exempt session(s) hold ${formatRetentionBytes(held)}; '
           'nothing else is deletable';
       logLines.add(note);
       _emit(note);
@@ -1010,7 +1017,7 @@ final class _SessionHeaderFacts {
 
 /// Human-readable bytes for footer/plan/log lines (`4.9 GB`, `512 KB`,
 /// `37 B`) — 1024-based, one decimal below ten.
-String formatSessionBytes(int bytes) {
+String formatRetentionBytes(int bytes) {
   if (bytes < 1024) return '$bytes B';
   const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
   var value = bytes.toDouble();
@@ -1033,7 +1040,7 @@ List<String> sessionSweepReportLines(SessionSweepReport report) {
   if (!report.capConfigured) {
     if (report.overSoftWarn) {
       lines.add(
-        'sessions: ${formatSessionBytes(report.totalBytes)} on disk — no '
+        'sessions: ${formatRetentionBytes(report.totalBytes)} on disk — no '
         'sessions.retention cap configured; set '
         'sessions.retention.maxTotalBytes in ~/.fah/config.yaml to enable '
         'a sweep',
@@ -1045,26 +1052,26 @@ List<String> sessionSweepReportLines(SessionSweepReport report) {
       ? 'dry run — nothing deleted'
       : (report.applied ? 'applied' : 'nothing to delete');
   lines.add(
-    'sessions clean: $mode (cap ${formatSessionBytes(report.capBytes)}, '
-    'total ${formatSessionBytes(report.totalBytes)})',
+    'sessions clean: $mode (cap ${formatRetentionBytes(report.capBytes)}, '
+    'total ${formatRetentionBytes(report.totalBytes)})',
   );
   for (final action in report.deletions) {
     lines.add(
       '${report.applied ? 'deleted' : 'would delete'}: ${action.path} '
-      '(${formatSessionBytes(action.bytes)}; age ${action.ageDays}d; '
+      '(${formatRetentionBytes(action.bytes)}; age ${action.ageDays}d; '
       'over-cap)',
     );
   }
   if (report.freedBytes > 0) {
     lines.add(
-      'freed: ${formatSessionBytes(report.freedBytes)} · '
-      'remaining: ${formatSessionBytes(report.remainingBytes)}',
+      'freed: ${formatRetentionBytes(report.freedBytes)} · '
+      'remaining: ${formatRetentionBytes(report.remainingBytes)}',
     );
   }
   if (report.overCapSweepOff) {
     lines.add(
-      'sessions over cap (${formatSessionBytes(report.totalBytes)} > '
-      '${formatSessionBytes(report.capBytes)}) and retention sweep is off; '
+      'sessions over cap (${formatRetentionBytes(report.totalBytes)} > '
+      '${formatRetentionBytes(report.capBytes)}) and retention sweep is off; '
       'run fa session clean to enforce it',
     );
   }
@@ -1072,7 +1079,7 @@ List<String> sessionSweepReportLines(SessionSweepReport report) {
     lines.add('exempt sessions keep the root over the cap:');
     for (final blocker in report.blockers) {
       lines.add(
-        '  - ${blocker.path} (${formatSessionBytes(blocker.bytes)}, '
+        '  - ${blocker.path} (${formatRetentionBytes(blocker.bytes)}, '
         '${blocker.exemption!.label})',
       );
     }
