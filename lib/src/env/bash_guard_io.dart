@@ -101,6 +101,28 @@ FA_REAL_PKILL='__FA_REAL_PKILL__'
 FA_REAL_PGREP='__FA_REAL_PGREP__'
 
 sig=''
+sel=''
+# Flags that would corrupt the victim set if they reached pgrep (c = count
+# mode prints a number the loop would read as a pid, v = negated match)
+# never enter the guarded path — the real pkill decides.
+for a in "$@"; do
+  case "$a" in
+    -[a-zA-Z]*)
+      fa_body="${a#-}"
+      case "$fa_body" in
+        [0-9]*|[Ss][Ii][Gg]*|[A-Z]*) continue ;;
+      esac
+      fa_rest="$fa_body"
+      while [ -n "$fa_rest" ]; do
+        fa_c="${fa_rest%"${fa_rest#?}"}"
+        case "$fa_c" in
+          [cv]) exec "$FA_REAL_PKILL" "$@" ;;
+        esac
+        fa_rest="${fa_rest#?}"
+      done
+      ;;
+  esac
+done
 while [ $# -gt 0 ]; do
   case "$1" in
     --signal) sig="${2-}"; shift 2 ;;
@@ -108,7 +130,7 @@ while [ $# -gt 0 ]; do
     --) shift; break ;;
     -[0-9]*) sig="$1"; shift ;;
     -[Ss][Ii][Gg][A-Za-z]*|-[A-Z][A-Z]*) sig="$1"; shift ;;
-    -*) shift ;;
+    -*) sel="$sel $1"; shift ;;
     *) break ;;
   esac
 done
@@ -118,7 +140,8 @@ if [ "$#" -ne 1 ]; then
   exec "$FA_REAL_PKILL" "$@"
 fi
 
-pids=$("$FA_REAL_PGREP" "$@" 2>/dev/null)
+# The selection flags ride along: pgrep shares pkill's selection engine.
+pids=$("$FA_REAL_PGREP" $sel "$@" 2>/dev/null)
 rc=$?
 if [ "$rc" -ge 2 ]; then
   # pgrep rejected the selection (a flag it does not share): the real

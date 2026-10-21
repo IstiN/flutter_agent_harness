@@ -683,14 +683,14 @@ final class LocalShell implements Shell, BackgroundShell {
         unawaited(
           process.exitCode.then((_) {
             try {
-              scriptDir?.deleteSync(recursive: true);
+              scriptDir.deleteSync(recursive: true);
             } on Object {
               // Best-effort; a leaked temp dir is reaped by the OS.
             }
           }),
         );
       }
-      return (Ok(process), scriptDir);
+      return (Ok<Process, ExecutionError>(process), scriptDir);
     } on Object catch (error) {
       try {
         scriptDir?.deleteSync(recursive: true);
@@ -698,7 +698,7 @@ final class LocalShell implements Shell, BackgroundShell {
         // Best-effort cleanup of the failed spawn.
       }
       return (
-        Err(
+        Err<Process, ExecutionError>(
           ExecutionError(
             ExecutionErrorCode.spawnError,
             error.toString(),
