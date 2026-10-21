@@ -279,27 +279,24 @@ final class _Wiring {
 
 void main() {
   group('AC2: children resolve the window from the shared registry', () {
-    test(
-      'registry published after "detection" → the child rides the '
-      'registered window, not the catalog one',
-      () async {
-        final registry = ContextWindowRegistry();
-        final wiring = _Wiring(registry: registry);
-        // The live detection lands BEFORE the spawn (the CLI published it
-        // via _replaceModelLimits / _applyDetectedContextWindow).
-        registry.publish(
-          model: _model,
-          window: _registeredWindow,
-          source: ContextWindowSource.endpointReport,
-        );
-        await wiring.spawn('w1', 'registry-window');
-        final handle = wiring.manager['w1']!;
-        // The repro of the 131,072-vs-478k asymmetry: the child's
-        // compaction basis is the REGISTERED window, not the catalog
-        // 4000 the wiring model still carries.
-        expect(handle.windowTokens, _registeredWindow);
-      },
-    );
+    test('registry published after "detection" → the child rides the '
+        'registered window, not the catalog one', () async {
+      final registry = ContextWindowRegistry();
+      final wiring = _Wiring(registry: registry);
+      // The live detection lands BEFORE the spawn (the CLI published it
+      // via _replaceModelLimits / _applyDetectedContextWindow).
+      registry.publish(
+        model: _model,
+        window: _registeredWindow,
+        source: ContextWindowSource.endpointReport,
+      );
+      await wiring.spawn('w1', 'registry-window');
+      final handle = wiring.manager['w1']!;
+      // The repro of the 131,072-vs-478k asymmetry: the child's
+      // compaction basis is the REGISTERED window, not the catalog
+      // 4000 the wiring model still carries.
+      expect(handle.windowTokens, _registeredWindow);
+    });
 
     test('without a registry entry the child falls back to the carried '
         'window (byte-identical legacy behavior)', () async {
@@ -308,19 +305,21 @@ void main() {
       expect(wiring.manager['w1']!.windowTokens, _catalogWindow);
     });
 
-    test('contextWindowCap is honored for children too (clamps down)',
-        () async {
-      final registry = ContextWindowRegistry();
-      registry.publish(
-        model: _model,
-        window: _registeredWindow,
-        source: ContextWindowSource.endpointReport,
-      );
-      final wiring = _Wiring(registry: registry, contextWindowCap: 2000);
-      await wiring.spawn('w1', 'capped');
-      // The owner cap wins in whichever direction it points.
-      expect(wiring.manager['w1']!.windowTokens, 2000);
-    });
+    test(
+      'contextWindowCap is honored for children too (clamps down)',
+      () async {
+        final registry = ContextWindowRegistry();
+        registry.publish(
+          model: _model,
+          window: _registeredWindow,
+          source: ContextWindowSource.endpointReport,
+        );
+        final wiring = _Wiring(registry: registry, contextWindowCap: 2000);
+        await wiring.spawn('w1', 'capped');
+        // The owner cap wins in whichever direction it points.
+        expect(wiring.manager['w1']!.windowTokens, 2000);
+      },
+    );
   });
 
   group('AC5: observed-over-headroom forces the compaction pass', () {
@@ -368,7 +367,8 @@ void main() {
           expect(
             estimate,
             lessThan(trigger),
-            reason: 'the estimate channel must stay under the trigger for '
+            reason:
+                'the estimate channel must stay under the trigger for '
                 'this repro (got $estimate)',
           );
         }
@@ -378,7 +378,8 @@ void main() {
         expect(
           wiring.stream.compactionCalls,
           greaterThanOrEqualTo(1),
-          reason: 'the observed-over-headroom channel must force the '
+          reason:
+              'the observed-over-headroom channel must force the '
               'compaction pass',
         );
         // The child session gained a compaction record (structured
@@ -433,27 +434,29 @@ void main() {
       expect(wiring.manager['quiet']!.observedTokens, 600);
     });
 
-    test('the pressure stamp carries the observed channel (AC6 basis)',
-        () async {
-      final registry = ContextWindowRegistry();
-      final wiring = _Wiring(registry: registry);
-      await wiring.executor.runSpawn(
-        item: const TaskItem(
-          name: 'stamped',
-          agent: 'worker',
-          task: 'stamped',
-        ),
-        index: 0,
-        context: '',
-      );
-      final handle = wiring.manager['stamped']!;
-      expect(handle.estTokens, isNotNull);
-      expect(handle.windowTokens, _catalogWindow);
-      // No registry entry → the window is unverified (AC6's badge basis).
-      expect(handle.windowVerified, isFalse);
-      // The transcript's last assistant message reported no context → no
-      // observation.
-      expect(handle.observedTokens, isNull);
-    });
+    test(
+      'the pressure stamp carries the observed channel (AC6 basis)',
+      () async {
+        final registry = ContextWindowRegistry();
+        final wiring = _Wiring(registry: registry);
+        await wiring.executor.runSpawn(
+          item: const TaskItem(
+            name: 'stamped',
+            agent: 'worker',
+            task: 'stamped',
+          ),
+          index: 0,
+          context: '',
+        );
+        final handle = wiring.manager['stamped']!;
+        expect(handle.estTokens, isNotNull);
+        expect(handle.windowTokens, _catalogWindow);
+        // No registry entry → the window is unverified (AC6's badge basis).
+        expect(handle.windowVerified, isFalse);
+        // The transcript's last assistant message reported no context → no
+        // observation.
+        expect(handle.observedTokens, isNull);
+      },
+    );
   });
 }

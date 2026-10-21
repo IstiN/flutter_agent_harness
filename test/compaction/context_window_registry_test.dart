@@ -87,9 +87,7 @@ void main() {
       expect(registry.windowFor(_model(id: 'gpt-other')), isNull);
       // A same model id on a different endpoint does not either.
       expect(
-        registry.windowFor(
-          _model(baseUrl: 'https://other.example.com/v1'),
-        ),
+        registry.windowFor(_model(baseUrl: 'https://other.example.com/v1')),
         isNull,
       );
     });

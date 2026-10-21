@@ -977,8 +977,21 @@ class AutoCompactorFactory {
   /// [build] instead.
   Future<bool> run() async {
     if (engine == CompactionEngine.structured) {
+      // gh-1680: a reached message-cap trigger forces the pass exactly
+      // like `force` — the structured engine's internal gate is
+      // token-only, so the additive message-count dimension must bypass
+      // it here (AC4). Computed up front so the zero-pass fall-through
+      // below covers the cap channel identically.
+      final capTriggered = messageCapTriggerReached(
+        state.messages.length,
+        messageCap,
+        margin: messageCapMargin,
+      );
       final adapter = _StructuredHooksAdapter(hooks);
-      final outcome = await _runStructured(adapter: adapter);
+      final outcome = await _runStructured(
+        adapter: adapter,
+        capTriggered: capTriggered,
+      );
       // gh-1742 invariant 1: a FORCED run (observed usage over the line)
       // that did zero passes is not relief — the structured engine's
       // pass loops gate on its own transcript estimate, so an
@@ -987,7 +1000,7 @@ class AutoCompactorFactory {
       // into the next request. Fall through to the classic engine,
       // whose forced semantics run the summarizer regardless of its
       // own estimate. An unforced no-op stays the success short-circuit.
-      if (outcome.ok && (adapter.passCount > 0 || !forced)) {
+      if (outcome.ok && (adapter.passCount > 0 || !(force || capTriggered))) {
         // Close the hooks bracket the classic [AutoCompactor.run] closes
         // on every terminal path: hosts key off [AutoCompactorHooks.onDone]
         // (the CLI's HEP `compaction_end` frame, the Flutter chat sheet),
@@ -1013,6 +1026,7 @@ class AutoCompactorFactory {
 
   Future<({bool ok, bool timedOut, Object? error})> _runStructured({
     _StructuredHooksAdapter? adapter,
+    bool capTriggered = false,
   }) async {
     final smolStream = sources.smolStream ?? sources.mainStream;
     final smolModel = sources.smolModel ?? sources.mainModel;
@@ -1065,14 +1079,9 @@ class AutoCompactorFactory {
           'role=smol, model=${smolModel.id} @ '
           '${Uri.parse(smolModel.baseUrl).host}',
     );
-    // gh-1680: a reached message-cap trigger forces the pass exactly like
-    // `force` — the structured engine's internal gate is token-only, so
-    // the additive message-count dimension must bypass it here (AC4).
-    final capTriggered = messageCapTriggerReached(
-      state.messages.length,
-      messageCap,
-      margin: messageCapMargin,
-    );
+    // gh-1680: the cap trigger is computed by [run] and handed in so a
+    // forced-but-zero-pass structured outcome can fall through to the
+    // classic engine there (gh-1742 invariant 1).
     final running = compactor.run(force: force || capTriggered);
     try {
       final ok = await running.timeout(

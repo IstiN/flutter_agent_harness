@@ -572,8 +572,7 @@ final class TaskExecutor {
       ),
       windowTokens: window,
       observedTokens: observed,
-      windowVerified:
-          contextWindowRegistry?.isVerified(wiring.model) ?? false,
+      windowVerified: contextWindowRegistry?.isVerified(wiring.model) ?? false,
     );
     if (!decision.triggered) return false;
     // Forced-channel latch (gh-1742): an observation already reacted to
@@ -595,9 +594,6 @@ final class TaskExecutor {
     }
     await _flushChildTranscript(id, child);
     final session = _childSessions[id];
-    // ignore: avoid_print
-    print('DBG executor triggered=${decision.triggered} forced=$runForced '
-        'obs=$observed window=$window est=$est sessionNull=${session == null}');
     if (session == null) return false;
     final before = est - incomingTokens;
     try {
@@ -617,9 +613,7 @@ final class TaskExecutor {
         engine: compactionEngine ?? CompactionEngine.structured,
         force: runForced,
       ).run();
-    } on Object catch (e) {
-      // ignore: avoid_print
-      print('DBG executor compactor threw: $e');
+    } on Object {
       return false; // The guard remains the last resort.
     }
     // Post-compaction invariant (#387): the flush cursor restarts at the
