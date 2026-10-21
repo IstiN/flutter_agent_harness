@@ -33,7 +33,7 @@ void main() {
     final hit = cache.match('/s/a.jsonl', sizeBytes: 10, mtimeMs: 1);
     expect(hit, isNotNull);
     expect(hit!.messages.single, isA<UserMessage>());
-    expect((hit.messages.single as UserMessage).text, 'a');
+    expect((hit.messages.single as UserMessage).content, 'a');
   });
 
   test('misses when the size changes (an append landed)', () {
@@ -85,7 +85,7 @@ void main() {
       );
     expect(cache.match('/s/a.jsonl', sizeBytes: 10, mtimeMs: 1), isNull);
     final hit = cache.match('/s/a.jsonl', sizeBytes: 20, mtimeMs: 2);
-    expect((hit!.messages.single as UserMessage).text, 'new');
+    expect((hit!.messages.single as UserMessage).content, 'new');
   });
 
   test('each hit hands out a fresh message list', () {

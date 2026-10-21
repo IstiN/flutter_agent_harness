@@ -123,7 +123,8 @@ void main() {
 
   test('a warm switch back to an unchanged session reuses the built '
       'context (source=cache)', () async {
-    final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call,
+        sessionName: 'alpha');
     final run = cli.run();
     await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
@@ -139,8 +140,8 @@ void main() {
     await waitForIt(
       () async =>
           (await readLog()).contains('boot_stage context') &&
-          (await readLog()).split('boot_stage context').length >= 4,
-      reason: 'alpha boot + beta switch + alpha switch contexts logged',
+          (await readLog()).split('boot_stage context').length >= 3,
+      reason: 'beta switch + alpha switch contexts logged',
     );
     io.sendLine('/exit');
     await run;
@@ -158,7 +159,7 @@ void main() {
       alphaContexts.last,
       contains('source=cache'),
       reason:
-          'alpha was opened at boot and unchanged since — the warm switch '
+          'alpha was loaded at boot and unchanged since — the warm switch '
           'back must reuse the built context',
     );
     // The replayed transcript still shows the session's content.
