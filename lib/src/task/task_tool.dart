@@ -29,6 +29,7 @@ import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../compaction/compaction_engine.dart';
+import '../compaction/context_window_registry.dart';
 import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
 import '../model.dart';
@@ -213,6 +214,8 @@ final class TaskToolConfig {
     this.childSessionOpener,
     this.a2aManager,
     this.compactionEngine,
+    this.contextWindowRegistry,
+    this.contextWindowCap,
     this.misuseBreaker = true,
   }) : semaphore = Semaphore(normalizeConcurrencyLimit(maxConcurrent)),
        outputs = outputs ?? AgentOutputStore(),
@@ -286,6 +289,16 @@ final class TaskToolConfig {
   /// host's config choice rides to children — null resolves to structured.
   final CompactionEngine? compactionEngine;
 
+  /// The shared per-model context-window registry (gh-1742 invariant 2):
+  /// children resolve their compaction window and loop-guard basis from
+  /// the same registered values the main agent publishes. Null = carried
+  /// `model.contextWindow` (legacy behavior).
+  final ContextWindowRegistry? contextWindowRegistry;
+
+  /// The owner context-window cap (`agent.contextWindowCap`), honored for
+  /// children too (gh-1742).
+  final int? contextWindowCap;
+
   /// The tool-misuse circuit breaker switch (issue #862, default true):
   /// every spawned child agent gets a breaker wired into its loop.
   final bool misuseBreaker;
@@ -308,6 +321,8 @@ final class TaskToolConfig {
     childSessionFactory: childSessionFactory,
     childSessionOpener: childSessionOpener,
     compactionEngine: compactionEngine,
+    contextWindowRegistry: contextWindowRegistry,
+    contextWindowCap: contextWindowCap,
     misuseBreaker: misuseBreaker,
   );
 }
