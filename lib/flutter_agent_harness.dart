@@ -130,6 +130,13 @@ export 'src/compaction/compaction.dart';
 export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';
 export 'src/compaction/bench_trigger.dart';
+// gh-1742 review round 1, comment 3: `hasAnyReportedUsage` stays internal
+// until a caller exists (gh-1232: the barrel is append-only — a
+// speculative export is the wrong order). The E1 discrimination it
+// enables ("no observation yet" vs "this provider never reports usage")
+// lands with its consumer.
+export 'src/compaction/context_pressure.dart' hide hasAnyReportedUsage;
+export 'src/compaction/context_window_registry.dart';
 export 'src/context.dart';
 export 'src/cube/cube.dart';
 export 'src/env/execution_env.dart';
