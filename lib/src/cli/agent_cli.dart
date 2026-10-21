@@ -2476,14 +2476,11 @@ final class _CliMessageCapPolicy implements MessageCapPolicy {
   final AgentCli _cli;
   @override
   int? learnedCapFor(Model model) => ModelCapsStore.learnedCapOr(
-        _cli._modelCaps.recordFor(model.provider, model.id),
-        _cli
-            .config
-            .modelsConfig
-            ?.overrides
-            .lookup(model.provider, model.id)
-            ?.messageCap,
-      );
+    _cli._modelCaps.recordFor(model.provider, model.id),
+    _cli.config.modelsConfig?.overrides
+        .lookup(model.provider, model.id)
+        ?.messageCap,
+  );
 
   @override
   void learnFromRefusal(Model model, MessageCapRefusal refusal) {
