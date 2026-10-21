@@ -876,6 +876,17 @@ final class JsonlSessionRepo implements SessionRepo {
   /// such a caller may re-report once after a resume; use it only where
   /// that degradation is acceptable and the chain walk must not sit on
   /// the boot path (the #503 precedent).
+  ///
+  /// gh-1734 scan memo: the result is memoized per (session path, scan
+  /// parameters, chain fingerprint) — the boot/switch path re-scans the
+  /// same chain on every open/switch (obligations ledger, orphan
+  /// reports, subagent registry, steering), a 95MB-tail read each time
+  /// on a marathon file. An unchanged chain (same per-file size+mtime)
+  /// is served from the memo without touching the file; any
+  /// append/rotation/truncate changes a stat and re-scans. A memo hit
+  /// returns a fresh list of SHARED record instances — the codebase
+  /// treats custom records as immutable (read-only payload consumers);
+  /// mutating them would corrupt future hits.
   Future<List<CustomRecord>> readCustomRecordsOfType(
     SessionMetadata metadata,
     Set<String> types, {
@@ -909,6 +920,25 @@ final class JsonlSessionRepo implements SessionRepo {
     final cap = tailCapBytes;
     final paths = await listSessionSegmentPaths(_fs, metadata.path);
     final scanned = lastSegmentOnly ? paths.sublist(paths.length - 1) : paths;
+    // gh-1734 scan memo: the boot/switch path re-scans the same chain on
+    // EVERY open/switch (obligations ledger, orphan reports, subagent
+    // registry, steering) — a 95MB-tail read each time on a marathon
+    // file. The scan is a pure function of the scanned bytes, so a
+    // (path, params, size, mtime)-keyed memo serves an unchanged chain
+    // without touching it; any append/rotation/truncate changes a stat
+    // and misses. Records are SHARED between callers — the codebase
+    // treats them as immutable (read-only payload consumers).
+    final fingerprint = await _scanChainFingerprint(scanned);
+    final memo = fingerprint == null ? null : _scanMemo[metadata.path];
+    if (memo != null &&
+        memo.matches(
+          types: types,
+          lastSegmentOnly: lastSegmentOnly,
+          tailCapBytes: cap,
+          fingerprint: fingerprint!,
+        )) {
+      return List.of(memo.records);
+    }
     final records = <CustomRecord>[];
     final seen = <String>{};
     for (final path in scanned) {
@@ -916,7 +946,58 @@ final class JsonlSessionRepo implements SessionRepo {
         if (seen.add(record.id)) records.add(record);
       }
     }
+    // Store only when the chain did not change during the scan — the
+    // fingerprint must describe exactly the bytes the records came from.
+    if (fingerprint != null) {
+      final after = await _scanChainFingerprint(scanned);
+      if (after != null && _sameScanFingerprint(fingerprint, after)) {
+        _scanMemo[metadata.path] = _CustomRecordScanMemo(
+          types: types,
+          lastSegmentOnly: lastSegmentOnly,
+          tailCapBytes: cap,
+          fingerprint: after,
+          records: List.of(records),
+        );
+      }
+    }
     return records;
+  }
+
+  /// Per-path last-entry memo behind [readCustomRecordsOfType]; one entry
+  /// per session path bounds the memory (records are small, the newest
+  /// scan wins).
+  final Map<String, _CustomRecordScanMemo> _scanMemo = {};
+
+  /// Stats every scanned chain file — the memo key's fingerprint. Null
+  /// when any stat fails (missing/unreadable file): no memo then, the
+  /// scan runs and returns whatever it finds (unchanged behavior).
+  Future<Map<String, (int, int)>?> _scanChainFingerprint(
+    List<String> paths,
+  ) async {
+    final stats = <String, (int, int)>{};
+    for (final path in paths) {
+      try {
+        final info = await _fs.fileInfo(path);
+        final file = info.valueOrNull;
+        if (file == null || file.kind != FileKind.file) return null;
+        stats[path] = (file.size, file.mtimeMs);
+      } on Object {
+        return null;
+      }
+    }
+    return stats;
+  }
+
+  static bool _sameScanFingerprint(
+    Map<String, (int, int)> a,
+    Map<String, (int, int)> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (final entry in a.entries) {
+      final other = b[entry.key];
+      if (other == null || other != entry.value) return false;
+    }
+    return true;
   }
 
   /// Single-file scan behind [readCustomRecordsOfType]; see its
@@ -1287,5 +1368,41 @@ final class _CustomRecordBlockScanner {
       }
     }
     return prefix;
+  }
+}
+
+/// One memoized custom-record scan (gh-1734): the exact scan parameters
+/// plus the stat fingerprint of every scanned chain file. Any parameter
+/// or stat difference misses.
+final class _CustomRecordScanMemo {
+  _CustomRecordScanMemo({
+    required this.types,
+    required this.lastSegmentOnly,
+    required this.tailCapBytes,
+    required this.fingerprint,
+    required this.records,
+  });
+
+  final Set<String> types;
+  final bool lastSegmentOnly;
+  final int? tailCapBytes;
+  final Map<String, (int, int)> fingerprint;
+  final List<CustomRecord> records;
+
+  bool matches({
+    required Set<String> types,
+    required bool lastSegmentOnly,
+    required int? tailCapBytes,
+    required Map<String, (int, int)> fingerprint,
+  }) {
+    if (this.lastSegmentOnly != lastSegmentOnly) return false;
+    if (this.tailCapBytes != tailCapBytes) return false;
+    if (this.types.length != types.length) return false;
+    if (!this.types.containsAll(types)) return false;
+    if (this.fingerprint.length != fingerprint.length) return false;
+    for (final entry in this.fingerprint.entries) {
+      if (fingerprint[entry.key] != entry.value) return false;
+    }
+    return true;
   }
 }
