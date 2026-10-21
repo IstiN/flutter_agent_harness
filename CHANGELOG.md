@@ -13,6 +13,14 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1743): a structured compaction that hits its total-budget
+  watchdog (the factory's 300s `totalBudget`) no longer aborts the
+  live session. `AutoCompactorFactory.run()` now applies the
+  mechanical local-trim fallback (keepRecentTokens, pairing-repaired,
+  `[context trimmed locally]` marker — the same valve the classic
+  pass ladder ends on) instead of failing fast; the honest
+  both-roles-failed verdict is kept only when nothing is droppable.
+
 - fix(gh-1636): auto-compaction stops dumping the internal checkpoint
   summary into the console — the default report is ONE marker line
   (`● auto-compacted · engine: N → M tokens (F freed · P%)`); the records
