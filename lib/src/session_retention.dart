@@ -2,7 +2,7 @@
 /// sessions root, enforced by an age-aware, live/named-safe sweep.
 ///
 /// The framing guarantee: **with no `sessions.retention` config nothing is
-/// EVER auto-deleted** — absent section means byte-identical legacy
+/// EVER auto-deleted** — an absent section means byte-identical legacy
 /// behavior (AC1). The config parses tolerantly (unknown keys and
 /// mistyped scalars become notes, never boot failures), the usage walk is
 /// O(directory entries) (stat-based sizes, never a byte-level read of
@@ -22,6 +22,7 @@ import 'dart:convert';
 import 'env/execution_env.dart';
 import 'session/attach/session_presence.dart';
 import 'session/session_chunk_reader.dart';
+import 'session/session_record.dart' show SessionInfoRecord;
 import 'session/session_storage.dart';
 
 /// When the retention sweep runs (`sessions.retention.sweep`).
@@ -44,11 +45,15 @@ final class SessionRetentionConfig {
   /// Creates a configuration; see each field for its default.
   const SessionRetentionConfig({
     this.maxTotalBytes = 0,
-    this.minAgeDays = 14,
+    this.minAgeDays = defaultMinAgeDays,
     this.keepNamed = true,
     this.sweep = SessionRetentionSweepMode.boot,
     this.notes = const [],
   });
+
+  /// The default `minAgeDays` (public for the yaml emitter's non-default
+  /// check).
+  static const int defaultMinAgeDays = 14;
 
   /// The total-size cap over the sessions root, in bytes. `0` (the
   /// default) means NO cap — nothing is ever auto-deleted.
@@ -72,17 +77,12 @@ final class SessionRetentionConfig {
   bool get hasCap => maxTotalBytes > 0;
 
   /// Whether any retention key differs from its default (a touched
-  /// section). Drives the yaml emitter (defaults are never written) and
-  /// the "aware user" soft-warn note.
+  /// section). Drives the yaml emitter (defaults are never written).
   bool get hasExplicitValues =>
       maxTotalBytes != 0 ||
       minAgeDays != defaultMinAgeDays ||
       !keepNamed ||
       sweep != SessionRetentionSweepMode.boot;
-
-  /// The default `minAgeDays` (kept public for the yaml emitter's
-  /// non-default check).
-  static const int defaultMinAgeDays = 14;
 
   /// Parses the `retention:` map (the value of `sessions.retention:`).
   /// Tolerant: never throws; every deviation lands in [notes].
@@ -122,9 +122,7 @@ final class SessionRetentionConfig {
             notes,
           );
           if (minAgeDays < 0) {
-            notes.add(
-              'sessions.retention.minAgeDays: negative, clamped to 0',
-            );
+            notes.add('sessions.retention.minAgeDays: negative, clamped to 0');
             minAgeDays = 0;
           }
         case 'keepNamed':
@@ -176,26 +174,23 @@ final class SessionRetentionConfig {
   }
 
   /// The `retention:` block, only the non-default keys (the file stays
-  /// minimal); indented for nesting under `sessions:`. Empty at the
-  /// defaults.
+  /// minimal), indented [indent] spaces for nesting under `sessions:`.
+  /// Empty at the defaults.
   String toYaml({int indent = 2}) {
     if (!hasExplicitValues) return '';
     final pad = ' ' * indent;
-    final buffer = StringBuffer('${pad}retention:\n');
     final inner = ' ' * (indent + 2);
-    if (maxTotalBytes != 0) buffer.write('$inner maxTotalBytes not written');
-    return _renderRetentionBody(pad, inner);
-  }
-
-  String _renderRetentionBody(String pad, String inner) {
     final buffer = StringBuffer('${pad}retention:\n');
-    if (maxTotalBytes != 0) buffer.write('${inner}maxTotalBytes: $maxTotalBytes\n');
+    if (maxTotalBytes != 0) {
+      buffer.write('${inner}maxTotalBytes: $maxTotalBytes\n');
+    }
     if (minAgeDays != defaultMinAgeDays) {
       buffer.write('${inner}minAgeDays: $minAgeDays\n');
     }
     if (!keepNamed) buffer.write('${inner}keepNamed: false\n');
     if (sweep != SessionRetentionSweepMode.boot) {
-      buffer.write('${inner}sweep: ${sweep == SessionRetentionSweepMode.off ? 'off' : 'boot'}\n');
+      final label = sweep == SessionRetentionSweepMode.off ? 'off' : 'boot';
+      buffer.write('${inner}sweep: $label\n');
     }
     return buffer.toString();
   }
@@ -249,7 +244,7 @@ final class SessionsConfig {
     if (retention.notes.isNotEmpty || notes.isNotEmpty) {
       // Notes mean hand-written content the typed renderer cannot
       // faithfully re-emit; stay silent and let the disk-preservation
-      // backstop keep the raw block (gh-1572 convention).
+      // backstop keep the raw block (the gh-1572 convention).
       return '';
     }
     if (!retention.hasExplicitValues) return '';
@@ -277,14 +272,14 @@ final class SessionDiskUsage {
     this.name,
   });
 
-  /// Session id (from the file header, or the basename when the header
-  /// is unreadable — such a file is never a sweep candidate).
+  /// Session id (from the file basename; the header must parse for the
+  /// file to be a candidate at all).
   final String sessionId;
 
   /// The primary transcript `.jsonl` path.
   final String path;
 
-  /// Root-side unit bytes: the primary, its rotated `.part-NN` segments
+  /// Root-side unit bytes: the primary, its rotated `.part-NNNN` segments
   /// and `.corupt` sidecars, `.tools/<sid>.yaml`, and the per-session
   /// usage directory. This is what the cap measures.
   final int bytes;
@@ -306,7 +301,7 @@ final class SessionDiskUsage {
   final DateTime lastUsedAt;
 
   /// The session's display name, when already known. Null = unresolved
-  /// (the sweper resolves lazily, only for deletion candidates).
+  /// (the sweeper resolves lazily, only for deletion candidates).
   final String? name;
 
   /// Age in whole days as of [asOf].
@@ -338,8 +333,8 @@ final class SessionUsageSnapshot {
 
 /// Why a session escaped the sweep.
 enum SessionRetentionExemption {
-  /// The session this process owns — never self-sweep.
-  current('current session'),
+  /// The session this process owns — never self-swept.
+  current('current'),
 
   /// A fresh presence heartbeat exists — a running process owns it.
   live('live'),
@@ -352,7 +347,7 @@ enum SessionRetentionExemption {
 
   const SessionRetentionExemption(this.label);
 
-  /// Short reason label for plan/log lines.
+  /// Short reason label for plan/blocker lines.
   final String label;
 }
 
@@ -374,7 +369,7 @@ final class SessionSweepAction {
   /// Primary transcript path (the face of the unit in every line).
   final String path;
 
-  /// Unit bytes (root-side; spills are extra freed bytes).
+  /// Root-side unit bytes.
   final int bytes;
 
   /// Age in whole days at plan time.
@@ -396,7 +391,8 @@ final class SessionSweepReport {
     required this.totalBytes,
     required this.capBytes,
     required this.actions,
-    required this.freedBytes,
+    required this.rootFreedBytes,
+    required this.spillFreedBytes,
     required this.logLines,
     this.notes = const [],
     this.overSoftWarn = false,
@@ -419,16 +415,24 @@ final class SessionSweepReport {
   /// Deletions and blockers, in plan order (deletions oldest-first).
   final List<SessionSweepAction> actions;
 
-  /// Bytes freed (or that the plan WOULD free): deleted units plus their
-  /// workspace spill bytes.
-  final int freedBytes;
+  /// Root-side bytes freed (or that the plan WOULD free).
+  final int rootFreedBytes;
+
+  /// Workspace spill bytes freed (or planned to free).
+  final int spillFreedBytes;
+
+  /// Total freed bytes (root-side units + spills).
+  int get freedBytes => rootFreedBytes + spillFreedBytes;
+
+  /// Root-side bytes left after (or, in a dry run, hypothetically after)
+  /// the deletions.
+  int get remainingBytes => totalBytes - rootFreedBytes;
 
   /// The AC7 lines: one per deletion (and per mid-sweep skip). The host
   /// persists them to its boot log.
   final List<String> logLines;
 
-  /// Walk/policy notes (exemptions that kept the sweep short, presence
-  /// failures, symlinks skipped).
+  /// Walk/policy notes (symlinks skipped, presence failures, …).
   final List<String> notes;
 
   /// No cap configured and the total crosses [retentionSoftWarnBytes] —
@@ -451,19 +455,35 @@ final class SessionSweepReport {
   List<SessionSweepAction> get blockers =>
       actions.where((action) => !action.isDeletion).toList();
 
-  /// Root-side bytes left after (or, in a dry run, hypothetically after)
-  /// the deletions.
-  int get remainingBytes => totalBytes - (freedBytes - _spillFreed);
-
-  final int _spillFreed;
-
   /// Whether the exempt set alone kept the root over the cap (AC4) —
   /// the loud note names each blocker.
   bool get hasBlockerOverflow =>
       capConfigured && remainingBytes > capBytes && blockers.isNotEmpty;
 }
 
-/// The opt-in session retention sweper (gh-1746).
+SessionSweepReport _noOpReport({
+  required SessionUsageSnapshot usage,
+  required bool dryRun,
+  required bool capConfigured,
+  int capBytes = 0,
+  List<String> notes = const [],
+  bool overSoftWarn = false,
+  bool overCapSweepOff = false,
+}) => SessionSweepReport(
+  dryRun: dryRun,
+  capConfigured: capConfigured,
+  totalBytes: usage.totalBytes,
+  capBytes: capBytes,
+  actions: const [],
+  rootFreedBytes: 0,
+  spillFreedBytes: 0,
+  logLines: const [],
+  notes: [...usage.notes, ...notes],
+  overSoftWarn: overSoftWarn,
+  overCapSweepOff: overCapSweepOff,
+);
+
+/// The opt-in session retention sweeper (gh-1746).
 ///
 /// Pure Dart over [FileSystem]: walks the sessions root stat-first, plans
 /// oldest-last-used-first deletions under the cap, and (on apply) deletes
@@ -473,22 +493,20 @@ final class SessionSweepReport {
 final class SessionRetentionSweeper {
   /// Creates a sweeper over [fs] rooted at [sessionsRoot].
   SessionRetentionSweeper({
-    required FileSystem fs,
-    required String sessionsRoot,
+    required FileSystem _fs,
+    required String _root,
     this.retention = const SessionRetentionConfig(),
     this.presenceStore,
     this.currentSessionId,
     DateTime Function()? now,
     this.log,
     this.cleanWorkspaceSpills = true,
-  }) : _fs = fs,
-       _root = sessionsRoot,
-       _now = now ?? DateTime.now;
+  }) : _now = now ?? DateTime.now;
 
   /// The filesystem abstraction (never `dart:io`).
   final FileSystem _fs;
 
-  /// The sessions root (absolute or env-relative).
+  /// The sessions root.
   final String _root;
 
   /// The opt-in policy; the default constructs to no cap at all.
@@ -508,38 +526,28 @@ final class SessionRetentionSweeper {
   /// to its boot log; null keeps the report-only behavior.
   final void Function(String line)? log;
 
-  /// Whether apply also removes the workspace `.fah/spills/<sid>/` dirs.
+  /// Whether the walk measures and apply removes the workspace
+  /// `.fah/spills/<sid>/` dirs.
   final bool cleanWorkspaceSpills;
 
-  bool _logged(String line) {
+  void _emit(String line) {
     log?.call(line);
-    return true;
   }
 
-  Future<String?> _rootOrNull() async {
-    final exists = await _fs.exists(_root);
-    return exists.isOk && exists.valueOrNull == true ? _root : null;
-  }
+  Future<List<FileInfo>?> _listDirOrNull(String dir) async =>
+      (await _fs.listDir(dir)).valueOrNull;
 
-  List<FileInfo>? _listed(String dir, List<String> notes) {
-    final result = _fs.listDir(dir);
-    return result.valueOrNull;
-    // Errors surface as a null listing — a missing dir is empty, a
-    // failing one is noted by the caller via [notes] where it matters.
-  }
-
-  /// The stat-based usage walk (AC-visible shape of the sessions root).
+  /// The stat-based usage walk.
   Future<SessionUsageSnapshot> usage() async {
     final notes = <String>[];
-    final root = await _rootOrNull();
-    if (root == null) return SessionUsageSnapshot(sessions: const [], totalBytes: 0);
-    final topLevel = _listed(root, notes);
+    final exists = await _fs.exists(_root);
+    if (!(exists.isOk && exists.valueOrNull == true)) {
+      return const SessionUsageSnapshot(sessions: [], totalBytes: 0);
+    }
+    final topLevel = await _listDirOrNull(_root);
     if (topLevel == null) {
-      return SessionUsageSnapshot(
-        sessions: const [],
-        totalBytes: 0,
-        notes: notes..add('retention: sessions root unreadable: $root'),
-      );
+      notes.add('retention: sessions root unreadable: $_root');
+      return SessionUsageSnapshot(sessions: const [], totalBytes: 0, notes: notes);
     }
     topLevel.sort((a, b) => a.name.compareTo(b.name));
     // Top-level dirs: `--slug--` workspace folders hold the transcripts;
@@ -580,12 +588,9 @@ final class SessionRetentionSweeper {
     Map<String, FileInfo> usageDirsByName,
     List<String> notes,
   ) async {
-    final children = _listed(slugDir.path, notes);
+    final children = await _listDirOrNull(slugDir.path);
     if (children == null) return const [];
     children.sort((a, b) => a.name.compareTo(b.name));
-    final toolsDir = children
-        .where((c) => c.kind == FileKind.directory && c.name == '.tools')
-        .firstOrNull;
     final sessions = <SessionDiskUsage>[];
     for (final entry in children) {
       if (entry.kind == FileKind.symlink) {
@@ -594,19 +599,20 @@ final class SessionRetentionSweeper {
       }
       if (entry.kind != FileKind.file) continue;
       final sessionId = sessionIdFromSessionPath(entry.path);
-      if (sessionId == null || !_isSafeSegment(sessionId)) continue;
-      final header = await _readHeader(entry.path);
+      if (sessionId == null || !isSafePathSegment(sessionId)) continue;
+      final header = await _headerFacts(entry.path);
       if (header == null) {
-        // A file we cannot identify is never sweep food (AC1 spirit:
-        // only positively-identified sessions are candidates).
+        // A file we cannot identify is never sweep food (only
+        // positively-identified sessions are candidates).
         notes.add('retention: skipped unidentified ${entry.path}');
         continue;
       }
-      final headerTime = header.timestamp;
       final mtime = DateTime.fromMillisecondsSinceEpoch(entry.mtimeMs);
       // E3: last-used never precedes creation (backup tools touch mtimes
       // backwards; the header time is the floor).
-      final lastUsed = mtime.isBefore(headerTime) ? headerTime : mtime;
+      final lastUsed = mtime.isBefore(header.createdAt)
+          ? header.createdAt
+          : mtime;
       var bytes = entry.size;
       // The rotated segments and their `.corupt` sidecars share the
       // unit: `<base>.part-NNNN` and `<base>[.part-NNNN].corupt`.
@@ -620,10 +626,7 @@ final class SessionRetentionSweeper {
         }
       }
       // The `.tools/<sid>.yaml` scope file dies with the session too.
-      final toolsYaml = await _fileBytes(
-        '${slugDir.path}/.tools/$sessionId.yaml',
-      );
-      bytes += toolsYaml;
+      bytes += await _fileBytes('${slugDir.path}/.tools/$sessionId.yaml');
       // The per-session usage directory (`<root>/<sid>/usage.json`).
       final usageDir = usageDirsByName[sessionId];
       if (usageDir != null) {
@@ -645,25 +648,23 @@ final class SessionRetentionSweeper {
           bytes: bytes,
           spillBytes: spillBytes,
           cwd: header.cwd,
-          createdAt: headerTime,
+          createdAt: header.createdAt,
           lastUsedAt: lastUsed,
         ),
       );
     }
-    if (toolsDir == null) return sessions;
     return sessions;
   }
 
   Future<int> _fileBytes(String path) async {
-    final info = await _fs.fileInfo(path);
-    final file = info.valueOrNull;
-    return file != null && file.kind == FileKind.file ? file.size : 0;
+    final info = (await _fs.fileInfo(path)).valueOrNull;
+    return info != null && info.kind == FileKind.file ? info.size : 0;
   }
 
   /// Recursive byte sum of [dir]; symlinks are skipped, never followed
   /// out of the root (E4).
   Future<int> _dirBytes(String dir, List<String> notes) async {
-    final children = _fs.listDir(dir).valueOrNull;
+    final children = await _listDirOrNull(dir);
     if (children == null) return 0;
     var total = 0;
     for (final entry in children) {
@@ -680,9 +681,9 @@ final class SessionRetentionSweeper {
     return total;
   }
 
-  Future<_SessionHeaderFacts?> _readHeader(String path) async {
-    final lines = await _fs.readTextLines(path, maxLines: 1);
-    final line = lines.valueOrNull?.firstOrNull;
+  Future<_SessionHeaderFacts?> _headerFacts(String path) async {
+    final lines = (await _fs.readTextLines(path, maxLines: 1)).valueOrNull;
+    final line = (lines == null || lines.isEmpty) ? null : lines.first;
     if (line == null || line.isEmpty) return null;
     Object? decoded;
     try {
@@ -717,7 +718,7 @@ final class SessionRetentionSweeper {
   Future<String?> _nameOf(SessionDiskUsage session) async {
     final segments = await listSessionSegmentPaths(_fs, session.path);
     for (final segment in segments.reversed) {
-      final SessionInfoRecord? info;
+      SessionInfoRecord? info;
       try {
         info = await SessionChunkReader(
           fs: _fs,
@@ -739,36 +740,25 @@ final class SessionRetentionSweeper {
   /// cap + `sweep: off` → over-cap note, no deletions; cap + boot → the
   /// full sweep.
   Future<SessionSweepReport> enforceAtBoot() async {
-    final usage = await usage();
+    final current = await usage();
     if (!retention.hasCap) {
-      return SessionSweepReport(
+      return _noOpReport(
+        usage: current,
         dryRun: true,
         capConfigured: false,
-        totalBytes: usage.totalBytes,
-        capBytes: 0,
-        actions: const [],
-        freedBytes: 0,
-        logLines: const [],
-        notes: usage.notes,
-        overSoftWarn: usage.totalBytes > retentionSoftWarnBytes,
-        _spillFreed: 0,
+        overSoftWarn: current.totalBytes > retentionSoftWarnBytes,
       );
     }
     if (retention.sweep == SessionRetentionSweepMode.off) {
-      return SessionSweepReport(
+      return _noOpReport(
+        usage: current,
         dryRun: true,
         capConfigured: true,
-        totalBytes: usage.totalBytes,
         capBytes: retention.maxTotalBytes,
-        actions: const [],
-        freedBytes: 0,
-        logLines: const [],
-        notes: usage.notes,
-        overCapSweepOff: usage.totalBytes > retention.maxTotalBytes,
-        _spillFreed: 0,
+        overCapSweepOff: current.totalBytes > retention.maxTotalBytes,
       );
     }
-    return sweep(dryRun: false, prebuilt: usage);
+    return sweep(dryRun: false, prebuilt: current);
   }
 
   /// Plans the sweep (and applies it when [dryRun] is false).
@@ -778,49 +768,28 @@ final class SessionRetentionSweeper {
   }) async {
     final usage = prebuilt ?? await this.usage();
     if (!retention.hasCap) {
-      return SessionSweepReport(
-        dryRun: dryRun,
-        capConfigured: false,
-        totalBytes: usage.totalBytes,
-        capBytes: 0,
-        actions: const [],
-        freedBytes: 0,
-        logLines: const [],
-        notes: usage.notes,
-        _spillFreed: 0,
-      );
+      return _noOpReport(usage: usage, dryRun: dryRun, capConfigured: false);
     }
     final cap = retention.maxTotalBytes;
     if (usage.totalBytes <= cap) {
-      return SessionSweepReport(
+      // AC2: under the cap — no deletions, no noise.
+      return _noOpReport(
+        usage: usage,
         dryRun: dryRun,
         capConfigured: true,
-        totalBytes: usage.totalBytes,
         capBytes: cap,
-        actions: const [],
-        freedBytes: 0,
-        logLines: const [],
-        notes: usage.notes,
-        _spillFreed: 0,
       );
     }
     // Presence first, fail-closed: an unavailable probe aborts the sweep
     // instead of risking a live session (AC3).
     final live = await _liveIds();
     if (live == null) {
-      return SessionSweepReport(
+      return _noOpReport(
+        usage: usage,
         dryRun: dryRun,
         capConfigured: true,
-        totalBytes: usage.totalBytes,
         capBytes: cap,
-        actions: const [],
-        freedBytes: 0,
-        logLines: const [],
-        notes: [
-          ...usage.notes,
-          'retention: presence probe failed — sweep aborted (fail-closed)',
-        ],
-        _spillFreed: 0,
+        notes: ['retention: presence probe failed — sweep aborted'],
       );
     }
     final now = _now();
@@ -865,22 +834,21 @@ final class SessionRetentionSweeper {
         // a session that became live mid-sweep is skipped, never forced.
         final fresh = await _liveIds();
         if (fresh == null || fresh.contains(action.sessionId)) {
-          logLines.add(
-            'retention: skipped ${action.path} '
-            '(became live mid-sweep)',
-          );
-          _logged(logLines.last);
+          final skip =
+              'retention: skipped ${action.path} (became live mid-sweep)';
+          logLines.add(skip);
+          _emit(skip);
           freed -= action.bytes;
           spillFreed -= _spillBytesOf(usage, action.sessionId);
           continue;
         }
         await _deleteUnit(usage, action);
-        logLines.add(
-          'retention: deleted ${action.path} '
-          '(${formatSessionBytes(action.bytes)}; age ${action.ageDays}d; '
-          'over-cap)',
-        );
-        _logged(logLines.last);
+        final line =
+            'retention: deleted ${action.path} '
+            '(${formatSessionBytes(action.bytes)}; age ${action.ageDays}d; '
+            'over-cap)';
+        logLines.add(line);
+        _emit(line);
       }
     }
     // AC4: when the deletable set cannot bring the root under the cap,
@@ -891,16 +859,23 @@ final class SessionRetentionSweeper {
       final deletedIds = deletions.map((a) => a.sessionId).toSet();
       for (final session in usage.sessions) {
         if (deletedIds.contains(session.sessionId)) continue;
-        blockers.add(_action(session, now, _exemptionOf(session, live, namedBlockerIds)));
+        blockers.add(
+          _action(
+            session,
+            now,
+            _exemptionOf(session, live, namedBlockerIds),
+          ),
+        );
       }
       blockers.sort((a, b) => b.bytes.compareTo(a.bytes));
-      logLines.add(
-        'retention: still over cap by ${formatSessionBytes(remaining - cap)} '
-        '— ${blockers.length} exempt session(s) hold '
-        '${formatSessionBytes(blockers.fold(0, (sum, b) => sum + b.bytes))}; '
-        'nothing else is deletable',
-      );
-      _logged(logLines.last);
+      final held = blockers.fold<int>(0, (sum, b) => sum + b.bytes);
+      final note =
+          'retention: still over cap by '
+          '${formatSessionBytes(remaining - cap)} — ${blockers.length} '
+          'exempt session(s) hold ${formatSessionBytes(held)}; '
+          'nothing else is deletable';
+      logLines.add(note);
+      _emit(note);
     }
     return SessionSweepReport(
       dryRun: dryRun,
@@ -908,26 +883,20 @@ final class SessionRetentionSweeper {
       totalBytes: usage.totalBytes,
       capBytes: cap,
       actions: [...deletions, ...blockers],
-      freedBytes: freed + spillFreed,
+      rootFreedBytes: freed,
+      spillFreedBytes: spillFreed,
       logLines: List.unmodifiable(logLines),
       notes: usage.notes,
       applied: applied,
-      _spillFreed: spillFreed,
     );
   }
 
-  int _spillBytesOf(SessionUsageSnapshot usage, String sessionId) =>
-      usage.sessions
-          .firstWhere(
-            (session) => session.sessionId == sessionId,
-            orElse: () => const SessionDiskUsage(
-              sessionId: '',
-              path: '',
-              bytes: 0,
-              createdAt: null,
-            ),
-          )
-          .spillBytes;
+  int _spillBytesOf(SessionUsageSnapshot usage, String sessionId) {
+    for (final session in usage.sessions) {
+      if (session.sessionId == sessionId) return session.spillBytes;
+    }
+    return 0;
+  }
 
   SessionSweepAction _action(
     SessionDiskUsage session,
@@ -956,20 +925,26 @@ final class SessionRetentionSweeper {
     return SessionRetentionExemption.tooYoung;
   }
 
-  /// Deletes one whole sweep unit. Every remove is force+recursive — a
-  /// vanished sidecar is fine, a partially-deleted unit is still a
-  /// deletion.
+  /// Deletes one whole sweep unit. Every remove is force — a vanished
+  /// sidecar is fine; a partially-deleted unit is still a deletion.
   Future<void> _deleteUnit(
     SessionUsageSnapshot usage,
     SessionSweepAction action,
   ) async {
-    final session = usage.sessions.firstWhere(
-      (candidate) => candidate.sessionId == action.sessionId,
-    );
-    final dir = _dirOf(session.path);
-    final baseName = session.path.split('/').last;
+    SessionDiskUsage? session;
+    for (final candidate in usage.sessions) {
+      if (candidate.sessionId == action.sessionId) {
+        session = candidate;
+        break;
+      }
+    }
+    if (session == null) return;
+    final path = session.path;
+    final separatorIndex = path.lastIndexOf('/');
+    final dir = separatorIndex <= 0 ? null : path.substring(0, separatorIndex);
+    final baseName = path.split('/').last;
     // Primary + rotated segments + corrupt sidecars.
-    final children = _fs.listDir(dir).valueOrNull ?? const <FileInfo>[];
+    final children = (await _listDirOrNull(dir ?? '')) ?? const <FileInfo>[];
     for (final child in children) {
       if (child.kind != FileKind.file) continue;
       if (child.name == baseName ||
@@ -978,38 +953,27 @@ final class SessionRetentionSweeper {
         await _fs.remove(child.path, force: true);
       }
     }
-    // `.tools/<sid>.yaml`.
-    if (dir != null && _isSafeSegment(session.sessionId)) {
-      await _fs.remove('$dir/.tools/${session.sessionId}.yaml', force: true);
-    }
-    // The per-session usage directory `<root>/<sid>/`.
-    final usageDir = '${_root}/${session.sessionId}';
-    if (_isSafeSegment(session.sessionId)) {
-      await _removeTree(usageDir);
-    }
-    // Workspace spills `<cwd>/.fah/spills/<sid>/`.
-    final cwd = session.cwd;
-    if (cleanWorkspaceSpills &&
-        cwd != null &&
-        cwd.isNotEmpty &&
-        _isSafeSegment(session.sessionId)) {
-      await _removeTree('$cwd/.fah/spills/${session.sessionId}');
+    // `.tools/<sid>.yaml` and the per-session usage dir `<root>/<sid>/`.
+    if (isSafePathSegment(session.sessionId)) {
+      if (dir != null) {
+        await _fs.remove('$dir/.tools/${session.sessionId}.yaml', force: true);
+      }
+      await _removeTree('$_root/${session.sessionId}');
+      // Workspace spills `<cwd>/.fah/spills/<sid>/`.
+      final cwd = session.cwd;
+      if (cleanWorkspaceSpills && cwd != null && cwd.isNotEmpty) {
+        await _removeTree('$cwd/.fah/spills/${session.sessionId}');
+      }
     }
   }
 
   /// Removes a directory tree unless it is a symlink (E4: never follow
   /// links out of the root).
   Future<void> _removeTree(String dir) async {
-    final info = await _fs.fileInfo(dir);
-    final file = info.valueOrNull;
-    if (file == null) return; // nothing there
-    if (file.kind == FileKind.symlink) return; // never follow out (E4)
+    final info = (await _fs.fileInfo(dir)).valueOrNull;
+    if (info == null) return; // nothing there
+    if (info.kind == FileKind.symlink) return;
     await _fs.remove(dir, recursive: true, force: true);
-  }
-
-  String? _dirOf(String path) {
-    final index = path.lastIndexOf('/');
-    return index <= 0 ? null : path.substring(0, index);
   }
 }
 
@@ -1025,7 +989,7 @@ String? sessionIdFromSessionPath(String path) {
 
 /// Whether [segment] can be safely joined under a trusted directory:
 /// rejects path separators and `.`/`..` (E4 path-escape guard).
-bool _isSafeSegment(String segment) =>
+bool isSafePathSegment(String segment) =>
     segment.isNotEmpty &&
     segment != '.' &&
     segment != '..' &&
@@ -1044,8 +1008,8 @@ final class _SessionHeaderFacts {
   final DateTime createdAt;
 }
 
-/// Human-readable bytes for plan/footer/log lines (`4.9 GB`, `512 KB`,
-/// `37 B`) — 1024-based, one decimal.
+/// Human-readable bytes for footer/plan/log lines (`4.9 GB`, `512 KB`,
+/// `37 B`) — 1024-based, one decimal below ten.
 String formatSessionBytes(int bytes) {
   if (bytes < 1024) return '$bytes B';
   const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
@@ -1062,7 +1026,8 @@ String formatSessionBytes(int bytes) {
 }
 
 /// Renders [report] as the `fa session clean` output lines (the exact
-/// plan for a dry run, the applied outcome otherwise; AC6).
+/// plan for a dry run, the applied outcome otherwise; AC6). Empty for a
+/// silent no-cap report below the soft-warn threshold.
 List<String> sessionSweepReportLines(SessionSweepReport report) {
   final lines = <String>[];
   if (!report.capConfigured) {
