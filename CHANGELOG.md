@@ -13,6 +13,18 @@ block a release again.
 
 ## Unreleased
 
+- fix(test): gh-1732 — the `wrap_ansi_line_perf_test` sustained-contention
+  validation leg spikes 3 of the 5 doubled runs per attempt instead of 4
+  (CI run 39546301132, core shard 2/4: the old shape left exactly ONE
+  real-wall-clock-timed doubled sample per attempt, and real jitter on
+  that single sample — the very shape being modeled — inflated all three
+  attempts' min ratios to a 3.30x best against the 3.2 bound while the
+  real 500k growth legs on the same runner stayed green). 3-of-5 is the
+  documented live-red shape ("≥3 of the 5 timed runs"): median-of-5
+  [c,c,s] is still a spiked value, so the leg still proves the
+  pre-gh-1532 median harness fails, and the min harness now rides two
+  clean doubled samples per attempt.
+
 - fix(#1705): CLI fresh-install boarding asks the provider choice FIRST —
   the same list the `/add-provider` picker shows (presets, `Custom` last) —
   and only `Custom` continues into the api-type wizard; a preset opens its
