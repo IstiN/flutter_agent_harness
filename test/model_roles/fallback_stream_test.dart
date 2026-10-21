@@ -1575,4 +1575,97 @@ void main() {
       );
     });
   });
+
+  group('caller-model window honor (gh-1742 review round 1, comment 6)', () {
+    test('a same-identity caller model dials with the caller window',
+        () async {
+      // The catalog entry carries the stale window; the caller (the
+      // compaction adapters, the registry-patched agent model) hands the
+      // chain the SAME identity with the registered window — the dial
+      // must ride the caller's window, not the stale catalog 400.
+      final catalog = _model('anthropic', 'kimi').copyWith(contextWindow: 400);
+      final registered = catalog.copyWith(contextWindow: 478000);
+      final dialed = <Model>[];
+      final probe = FallbackStreamFunction(
+        entries: [
+          ChainEntry(
+            model: catalog,
+            keyRing: ApiKeyRing(
+              baseName: 'K_kimi',
+              credentials: [
+                ApiKeyCredential('K_kimi', 'v-a'),
+              ],
+              startIndex: 0,
+              now: () => DateTime.utc(2026),
+            ),
+            streamForKey: (apiKey) => (model, context, {cancelToken}) {
+              dialed.add(model);
+              final out = AssistantMessageEventStream();
+              for (final event in _okTurn(model, 'ok')) {
+                out.push(event);
+              }
+              out.end();
+              return out;
+            },
+          ),
+        ],
+        policy: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+        now: () => DateTime.utc(2026),
+        jitterFraction: () => 1.0,
+        sleeper: (delay, token) async => true,
+      );
+      final out = probe.call(registered, const Context(messages: []));
+      await out.toList();
+      expect(dialed, hasLength(1));
+      expect(
+        dialed.single.contextWindow,
+        478000,
+        reason:
+            'the chain must dial the caller-supplied window for a '
+            'same-identity entry — the registry truth over the stale '
+            'catalog value (invariant 2: the window rides the Model '
+            'instance itself)',
+      );
+    });
+
+    test('a different-identity caller model keeps the entry model',
+        () async {
+      final catalog = _model('anthropic', 'kimi');
+      final stranger = _model('ignored', 'ignored');
+      final dialed = <Model>[];
+      final probe = FallbackStreamFunction(
+        entries: [
+          ChainEntry(
+            model: catalog,
+            keyRing: ApiKeyRing(
+              baseName: 'K_kimi',
+              credentials: [
+                ApiKeyCredential('K_kimi', 'v-a'),
+              ],
+              startIndex: 0,
+              now: () => DateTime.utc(2026),
+            ),
+            streamForKey: (apiKey) => (model, context, {cancelToken}) {
+              dialed.add(model);
+              final out = AssistantMessageEventStream();
+              for (final event in _okTurn(model, 'ok')) {
+                out.push(event);
+              }
+              out.end();
+              return out;
+            },
+          ),
+        ],
+        policy: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+        now: () => DateTime.utc(2026),
+        jitterFraction: () => 1.0,
+        sleeper: (delay, token) async => true,
+      );
+      final out = probe.call(stranger, const Context(messages: []));
+      await out.toList();
+      expect(dialed, hasLength(1));
+      expect(dialed.single.contextWindow, catalog.contextWindow);
+      expect(dialed.single.id, catalog.id);
+    });
+  });
 }
