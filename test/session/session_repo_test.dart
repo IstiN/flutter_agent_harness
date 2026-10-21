@@ -477,6 +477,46 @@ void main() {
         );
       },
     );
+
+    test(
+      'cleanupEmptySessions olderThan spares fresh header-only files',
+      () async {
+        final envFs = MemoryFileSystem();
+        final cleanRepo = JsonlSessionRepo(
+          fs: envFs,
+          sessionsRoot: '/sessions',
+        );
+        // Fresh header-only file: exactly what a concurrently booting
+        // process owns between repo.create and its first append — never
+        // sweep food, whatever its live-row state.
+        final fresh = await cleanRepo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        final freshPath = (await fresh.getMetadata()).path;
+        // Old header-only file: garbage a crashed run left behind.
+        final old = await cleanRepo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        final oldPath = (await old.getMetadata()).path;
+        // Old but with transcript: never empty-cleanup food.
+        final real = await cleanRepo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        final realPath = (await real.getMetadata()).path;
+        await real.appendMessage(UserMessage.text('hello'));
+        final past = DateTime.now().subtract(const Duration(minutes: 30));
+        envFs.setMtime(oldPath, past.millisecondsSinceEpoch);
+        envFs.setMtime(realPath, past.millisecondsSinceEpoch);
+
+        final removed = await cleanRepo.cleanupEmptySessions(
+          olderThan: const Duration(minutes: 10),
+        );
+        expect(removed, 1);
+        expect((await envFs.exists(oldPath)).valueOrNull, isFalse);
+        expect((await envFs.exists(freshPath)).valueOrNull, isTrue);
+        expect((await envFs.exists(realPath)).valueOrNull, isTrue);
+      },
+    );
   });
 
   group('issue #199 — parallel listing', () {

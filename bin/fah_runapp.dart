@@ -184,6 +184,11 @@ Future<void> _runApp(List<String> args) async {
           presenceStore: FileSessionPresenceStore(
             env: listEnv,
             root: sessionRoot,
+            // gh-1660: the sweep deletes a stale presence file only when
+            // the pid probe pronounces its process dead (or past the
+            // cleanup grace without a pid) — wire the POSIX probe so
+            // live-but-stale rows are never swept under a listing run.
+            pidAlive: probePidAlive,
           ),
         ),
       );
@@ -1454,8 +1459,14 @@ Future<void> _runApp(List<String> args) async {
         folderModelStateApplies: applyFolderState || folderState == null,
         // Live-session presence: the running CLI heartbeats its session so
         // the Fa app (sharing the sessions root on macOS) marks it live and
-        // can attach. Null where the root is process-local (tests).
-        presenceStore: FileSessionPresenceStore(env: cliEnv, root: sessionRoot),
+        // can attach. Null where the root is process-local (tests). The
+        // pid probe (gh-1660) lets the same store's sweep tell a dead
+        // heartbeat (delete) from a suspended process (keep).
+        presenceStore: FileSessionPresenceStore(
+          env: cliEnv,
+          root: sessionRoot,
+          pidAlive: probePidAlive,
+        ),
         processId: pid,
         // Sleep prevention (issue #325, oh-my-pi port): one assertion for
         // the whole session — caffeinate on macOS (bound to our pid by

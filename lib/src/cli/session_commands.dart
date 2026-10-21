@@ -380,6 +380,10 @@ extension on AgentCli {
   }
 
   Future<Session> _initializeSession() async {
+    // gh-1660 boot hygiene: crashed/killed runs leave header-only session
+    // files behind (the clean-exit `deleteSessionIfEmpty` never ran for
+    // them). Fire-and-forget, best-effort — never delays the first turn.
+    unawaited(_sweepHeaderOnlySessions());
     final name = config.sessionName?.trim();
     if (name != null && name.isNotEmpty) {
       final matches = await _sessionNameMatches(name);
@@ -408,6 +412,24 @@ extension on AgentCli {
       return _createSession(name: name);
     }
     return _createSession();
+  }
+
+  /// The boot-time header-only sweep (gh-1660): trashes one-line session
+  /// files older than the grace — garbage left by crashed/killed runs the
+  /// clean-exit [deleteSessionIfEmpty] never saw. Best-effort and
+  /// fire-and-forget: a failed sweep leaves the files for the next boot,
+  /// and the age guard (plus the live-presence-row guard inside the repo)
+  /// keeps concurrently booting processes' brand-new files safe.
+  static const _headerOnlySweepGrace = Duration(minutes: 10);
+
+  Future<void> _sweepHeaderOnlySessions() async {
+    final repo = _repo;
+    if (repo is! JsonlSessionRepo) return;
+    try {
+      await repo.cleanupEmptySessions(olderThan: _headerOnlySweepGrace);
+    } on Object {
+      // Best-effort: never let hygiene delay or fail the boot.
+    }
   }
 
   Future<Session> _createSession({String? name}) async {
