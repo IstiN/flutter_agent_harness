@@ -140,7 +140,8 @@ void main() {
     io.sendLine('go');
     await waitForIt(
       () => fake.calls >= 4 && !cli.isBusy,
-      reason: 'auto-continuation after guard + compaction on the '
+      reason:
+          'auto-continuation after guard + compaction on the '
           'windowed resume',
     );
     io.sendLine('/exit');
