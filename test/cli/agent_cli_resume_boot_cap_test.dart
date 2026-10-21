@@ -187,13 +187,20 @@ void main() {
 
       final run = agent.run();
       // LAZY BOOT: settles instantly, zero provider calls, no compaction
-      // UI at all (the old synchronous LM boot cap here cost minutes and
-      // read as a hung open — the yoclip incident).
+      // PASS (the old synchronous LM boot cap here cost minutes and read
+      // as a hung open — the yoclip incident). The regime does get a dim
+      // receipt note (gh-1729 review) — asserted below. Wait for the
+      // status line: `!isBusy` alone is also true BEFORE the async boot
+      // starts.
       await waitForIt(
-        () => !agent.isBusy,
+        () => io.out.toString().contains('ctx ') && !agent.isBusy,
         reason: 'boot settles instantly without any compaction pass',
       );
       expect(stream.calls, 0);
+      expect(
+        io.out.toString(),
+        contains('compaction deferred to the first message'),
+      );
 
       io.sendLine('go');
       await waitForIt(
@@ -282,21 +289,171 @@ void main() {
     },
   );
 
-  // SKIP (follow-up ticket): the mid-REPL /session switch races its own
-  // async tail (lease claim/release around the loader) — an idle-boot
-  // switch can wedge before 'switched to session' renders, and the first
-  // prompt then hangs busy with zero provider calls. The lazy-boot
-  // CONTRACT itself is covered above (AC3/AC5/backstop) and was verified
-  // live on this exact switch scenario with instrumentation; the race is
-  // pre-existing REPL machinery, not the lazy cap. Filed separately.
   test(
-    'AC3 lazy switch: a mid-REPL /session switch to an over-trigger '
-    'session settles instantly (no LM calls) and the FIRST turn\'s '
-    'pre-flight compacts before the request — a stale abort flag cannot '
-    'suppress it (_startRun re-arms the flag before the pre-flight, and '
-    '_switchToMetadata clears it at the switch)',
+    'E1 pass (gh-1729 review): a cap-unknown refusal arms the one-shot '
+    'pre-emptive pass; a mid-REPL switch to an over-trigger-UNDER-window '
+    'session DEFERS without consuming it — the first turn\'s pre-flight '
+    'still fires the pass and compacts before the request',
     timeout: const Timeout(Duration(minutes: 5)),
-    skip: 'mid-REPL switch lease race — follow-up ticket',
+    () async {
+      // Session A ('small-boot', created first): tiny, boots under-window.
+      // Session B ('boot-cap-target', created second): 40 kept messages
+      // (~40k tokens) — UNDER the 114,688 token trigger, so the armed E1
+      // one-shot pass is the ONLY compaction trigger on the other side of
+      // the switch (the reviewer's exact scenario: consumed at boot, the
+      // first turn's pre-flight finds no trigger at all and the request
+      // rides out uncapped).
+      final env = MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final small = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+      );
+      await small.appendSessionName('small-boot');
+      await small.appendMessage(UserMessage.text('tiny'));
+      await seedOverWindow('boot-cap-target', into: env, keptCount: 40);
+
+      // Turn 1 in session A: a cap-UNKNOWN refusal (no parseable number)
+      // arms the E1 one-shot pass — then the coalesce-only retry answers.
+      // The switch's lazy boot must PEEK the armed pass, never consume it:
+      // the first turn in session B owns the pass (and the compaction).
+      //
+      // Shape-discriminating fake: compaction-side calls (the chunked
+      // summarizer ladder, the memory-extraction rider) carry a
+      // single-message context and always get fresh chunk text; real turn
+      // calls carry history and ride the refusal-heal script, with the
+      // answer reserved for the LAST turn — so the script cannot go
+      // misaligned no matter how many ladder calls the pass needs.
+      final cap = _CapAwareSwitchStream(hangTurns: {2}, refusalTurns: {1});
+
+      final agent = AgentCli(
+        config: AgentCliConfig(
+          model: _bigModel,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'small-boot',
+          providerKind: 'openai-completions',
+          skillsAccess: SkillsAccess.granted,
+          compactionEngine: CompactionEngine.classic,
+        ),
+        io: io,
+        streamFunction: cap.call,
+      );
+
+      final run = agent.run();
+      await waitForIt(() => !agent.isBusy, reason: 'session A boots idle');
+      io.sendLine('go');
+      // Turn 1: a cap-UNKNOWN refusal heals once (the relief no-ops on the
+      // tiny transcript and ARMS the E1 pass via learnFromRefusal), then
+      // the heal's coalesce retry hangs — the user interrupts it mid-turn
+      // (the reviewer's scenario: the switch happens while the refused
+      // turn is still in flight). The abort skips the post-run
+      // compaction, so the armed pass is still pending when the switch
+      // boots session B. This is ALSO the gh-1425 stale-abort coverage
+      // the old skipped switch test carried: the abort sets
+      // `_runAbortRequested`, the switch must clear it
+      // (`_switchToMetadata`) so the boot gate is not suppressed (the
+      // deferred note below proves it ran), and `_beginUserPrompt` must
+      // clear it again so the first turn's pre-flight fires.
+      await waitForIt(
+        () => cap.calls >= 2 && io.out.toString().contains('retrying once'),
+        reason: 'the refusal healed once and the retry stream started',
+      );
+      final callsAfterRefusal = cap.calls;
+      io.interrupt();
+      await waitForIt(
+        () => !agent.isBusy && io.out.toString().contains('Operation aborted'),
+        reason: 'the interrupted retry settles as an aborted turn',
+      );
+
+      io.sendLine('/session boot-cap-target');
+      await waitForIt(
+        () =>
+            io.out.toString().contains(
+              "switched to session "
+              "'boot-cap-target'",
+            ) &&
+            !agent.isBusy,
+        reason: 'the switch settles (terminal line after the async tail)',
+      );
+      // The lazy boot made no LM call AND kept the armed pass pending:
+      // the transcript sits UNDER the token trigger, so the deferred note
+      // only prints when the pending E1 pass makes the boot gate true —
+      // the note IS the proof the pass survived the abort.
+      expect(
+        io.out.toString(),
+        contains('compaction deferred to the first message'),
+      );
+
+      io.sendLine('go');
+      await waitForIt(
+        () =>
+            io.out.toString().contains(
+              'FINAL ANSWER on the compacted transcript',
+            ) &&
+            !agent.isBusy,
+        reason: 'the first turn pre-flight compacts and then answers',
+      );
+      await io.close();
+      unawaited(run);
+
+      final output = io.out.toString();
+      // THE CONTRACT: the armed E1 pass fired at the FIRST TURN's
+      // pre-flight — the durable compaction ran BEFORE the request (never
+      // a silent skip, and the request must not ride out uncapped to
+      // re-learn the refusal the hard way). Turn calls 1-2 are session A's
+      // refusal heal; EVERY session-B turn (the 'go' request first) must
+      // ride the COMPACTED transcript — a post-run compaction with an
+      // auto-continuation would leave the first request uncapped instead.
+      expect(output, contains('auto-compacted'));
+      final turnContexts = [
+        for (final c in cap.contexts)
+          if (c.messages.length > 1) c,
+      ];
+      final postSwitchTurns = turnContexts.skip(2).toList();
+      expect(postSwitchTurns, isNotEmpty, reason: 'the switch turn ran');
+      for (var i = 0; i < postSwitchTurns.length; i++) {
+        expect(
+          requestTokensOf(postSwitchTurns[i]),
+          lessThanOrEqualTo(_bigWindow - 16384),
+          reason:
+              'post-switch turn #$i must ride the COMPACTED transcript — '
+              'the armed E1 pass fired at the pre-flight, before the request',
+        );
+      }
+      // 41 restored messages went in; the compacted transcript came back.
+      expect(
+        postSwitchTurns.first.messages.length,
+        lessThan(41),
+        reason:
+            'the session-B turn request rode the compacted transcript, '
+            'not the 41-message restore',
+      );
+      expect(
+        cap.calls,
+        greaterThan(callsAfterRefusal + 1),
+        reason: 'the pre-flight pass issued summarizer call(s) before the turn',
+      );
+    },
+  );
+
+  // gh-1729 review: the switch regime is covered UN-SKIPPED — the old
+  // skip (#1728's input-pump-vs-switch-tail wedge) is closed for this
+  // flow by waiting for the switch's TERMINAL line ("switched to session
+  // '…'", printed after every awaited step of _switchToMetadata,
+  // including the subagent rehydrate) before any prompt is sent: the
+  // input pump can no longer dispatch a queued prompt into the switch's
+  // async tail. The stale-abort interaction rides its own test below (an
+  // interrupted heal retry, the reviewer's E1 scenario — the level where
+  // the flag actually matters). The machinery-side wedge (#1728: a
+  // switch that never completes at all) stays tracked there; the
+  // terminal-line wait turns any recurrence into a LOUD timeout instead
+  // of a silently-wedged pass.
+  test(
+    'AC3 lazy switch (gh-1729 un-skip): a mid-REPL /session switch to an '
+    'over-trigger session settles instantly (no LM calls) and the FIRST '
+    'turn\'s pre-flight compacts before the request',
+    timeout: const Timeout(Duration(minutes: 5)),
     () async {
       // Session A ('small-boot', created first): tiny, boots under-window.
       // Session B ('boot-cap-target', created second): over-trigger but
@@ -311,19 +468,13 @@ void main() {
       await seedOverWindow('boot-cap-target', into: env, keptCount: 115);
 
       // The lazy boot makes ZERO LM calls at the switch; the first turn's
-      // pre-flight then consumes the scripted summary chunks (chunked
-      // summarization issues several calls — script generously so the
-      // ladder never starves into local-trim) and finally the answer.
-      final cap = FakeStreamFunction([
-        for (var i = 1; i <= 40; i++)
-          textTurn('compacted pre-flight summary chunk $i'),
-        textTurn('FINAL ANSWER after the lazy switch'),
-      ]);
-      AssistantMessageEventStream streamCall(
-        Model model,
-        Context context, {
-        CancelToken? cancelToken,
-      }) => cap.call(model, context);
+      // pre-flight then runs the chunked summarization ladder (an
+      // unpredictable number of single-message calls — the
+      // shape-discriminating fake serves fresh chunk text to each) and
+      // finally the turn answers.
+      final cap = _CapAwareSwitchStream(
+        answerText: 'FINAL ANSWER after the lazy switch',
+      );
 
       final agent = AgentCli(
         config: AgentCliConfig(
@@ -337,7 +488,7 @@ void main() {
           compactionEngine: CompactionEngine.classic,
         ),
         io: io,
-        streamFunction: streamCall,
+        streamFunction: cap.call,
       );
 
       final run = agent.run();
@@ -348,9 +499,21 @@ void main() {
       // with ZERO LM calls — the durable compaction is the first turn's
       // pre-flight.
       io.sendLine('/session boot-cap-target');
+      // gh-1729/#1728: wait for the switch's TERMINAL line — it prints
+      // after every awaited step of _switchToMetadata — so the queued
+      // prompt can never enter the switch's async tail (the #1728 wedge
+      // shape). The deferred-regime note is the lazy boot's receipt.
       await waitForIt(
-        () => io.out.toString().contains('boot-cap-target') && !agent.isBusy,
-        reason: 'the lazy switch settles instantly',
+        () =>
+            io.out.toString().contains(
+              "switched to session 'boot-cap-target'",
+            ) &&
+            !agent.isBusy,
+        reason: 'the lazy switch settles (terminal line)',
+      );
+      expect(
+        io.out.toString(),
+        contains('compaction deferred to the first message'),
       );
       expect(cap.calls, 0, reason: 'lazy boot makes no LM calls');
 
@@ -377,6 +540,100 @@ void main() {
       );
     },
   );
+}
+
+/// A cap-UNKNOWN refusal turn: an error message with NO parseable message
+/// number — `learnFromRefusal` arms the E1 one-shot pre-emptive pass
+/// instead of learning a numeric cap (the shape PR #1695's E1 covers).
+List<AssistantMessageEvent> _capUnknownRefusalTurn() {
+  final msg = testAssistant(
+    stopReason: StopReason.error,
+    errorMessage: 'Error: 400 too many messages in one request',
+  );
+  return [
+    StartEvent(partial: msg),
+    ErrorEvent(reason: StopReason.error, error: msg),
+  ];
+}
+
+/// Shape-discriminating fake stream for the switch suites: compaction-side
+/// calls (the chunked summarizer ladder, the memory-extraction rider) carry
+/// a single-message context and always get fresh chunk text; real turn
+/// calls carry history and ride a scripted turn list, whose LAST entry is
+/// served for every subsequent turn. [contexts] mirrors
+/// [FakeStreamFunction.contexts] so the suites' token assertions work
+/// unchanged.
+class _CapAwareSwitchStream {
+  final contexts = <Context>[];
+
+  /// Turn numbers (1-based) that HANG until cancelled — the mid-heal
+  /// abort: the heal's retry streams forever until the user interrupts.
+  final Set<int> hangTurns;
+
+  /// Turn numbers (1-based) served as a cap-UNKNOWN refusal (the E1
+  /// arming flow); every other turn gets [answerText].
+  final Set<int> refusalTurns;
+
+  /// The answer served for every non-refusal, non-hanging turn call.
+  final String answerText;
+
+  _CapAwareSwitchStream({
+    this.hangTurns = const {},
+    this.refusalTurns = const {},
+    this.answerText = 'FINAL ANSWER on the compacted transcript',
+  });
+
+  int get calls => contexts.length;
+
+  int _turnCalls = 0;
+  int _chunkCalls = 0;
+
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    contexts.add(
+      Context(
+        systemPrompt: context.systemPrompt,
+        messages: List.of(context.messages),
+        tools: context.tools,
+      ),
+    );
+    final stream = AssistantMessageEventStream();
+    if (context.messages.length > 1) _turnCalls++;
+    if (context.messages.length > 1 && hangTurns.contains(_turnCalls)) {
+      // Hang until cancelled, then report aborted (the AbortableStream
+      // pattern): the heal's retry never completes on its own.
+      stream.push(StartEvent(partial: testAssistant()));
+      cancelToken?.onCancel.then((_) {
+        stream.push(
+          ErrorEvent(
+            reason: StopReason.aborted,
+            error: testAssistant(
+              stopReason: StopReason.aborted,
+              errorMessage: 'Operation aborted',
+            ),
+          ),
+        );
+        stream.end();
+      });
+      return stream;
+    }
+    final List<AssistantMessageEvent> events;
+    if (context.messages.length <= 1) {
+      events = textTurn('compacted pre-flight summary chunk ${++_chunkCalls}');
+    } else {
+      events = refusalTurns.contains(_turnCalls)
+          ? _capUnknownRefusalTurn()
+          : textTurn(answerText);
+    }
+    for (final event in events) {
+      stream.push(event);
+    }
+    stream.end();
+    return stream;
+  }
 }
 
 /// A [FakeCliIO] whose stdout dies mid-boot: every `auto-compacted` report

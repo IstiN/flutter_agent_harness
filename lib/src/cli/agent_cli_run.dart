@@ -135,7 +135,10 @@ extension AgentCliRun on AgentCli {
     // post-run compaction (quota-limited smol role, provider outage) used to
     // leave every request carrying an over-window payload (ctx 240% gauge).
     try {
-      await _maybeAutoCompact();
+      // gh-1729 review: the pre-flight is where the armed E1 one-shot
+      // pass must ACT (a compaction before the request) — see
+      // [_maybeAutoCompact]'s `forceE1Pass`.
+      await _maybeAutoCompact(forceE1Pass: true);
     } on CancelledException {
       rethrow;
     } on Object catch (error) {

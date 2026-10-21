@@ -324,7 +324,7 @@ extension AgentCliCompactionRun on AgentCli {
   /// threshold. Returns whether a compaction pass actually ran and
   /// succeeded — the over-window guard's auto-continuation keys off this
   /// to resume only when the window was really freed.
-  Future<bool> _maybeAutoCompact() async {
+  Future<bool> _maybeAutoCompact({bool forceE1Pass = false}) async {
     final session = _session;
     if (session == null) return false;
     if (_agent.state.messages.isEmpty) return false;
@@ -344,6 +344,10 @@ extension AgentCliCompactionRun on AgentCli {
     // BEFORE the request, even when the token trigger is untouched. The
     // gate also consumes the one-shot E1 pass a cap-unknown refusal
     // armed (PR #1695).
+    final model = _agent.state.model;
+    final e1PassPending =
+        forceE1Pass &&
+        _modelCaps.isPremptivePassPending(model.provider, model.id);
     final overCap = _messageCapGateReached();
     if (!shouldCompact(
           tokens,
@@ -356,7 +360,16 @@ extension AgentCliCompactionRun on AgentCli {
     _pushBusyPhase('Compacting context…');
     _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
     try {
-      await _runAutoCompact('[auto-compacted]');
+      // gh-1729 review: when the E1 one-shot pass is the trigger, the
+      // funnel's own re-check cannot see it (a cap-UNKNOWN model has no
+      // learned cap to trip `_overMessageCap`, and the transcript sits
+      // under the token trigger) — without `force` the pass would be
+      // consumed and the funnel would silently no-op. Forced only at the
+      // pre-flight ([_beginUserPrompt], `forceE1Pass`): the pass's
+      // contract is a compaction BEFORE the next user request; the
+      // post-run fold keeps its shipped no-op-when-under-trigger
+      // behavior.
+      await _runAutoCompact('[auto-compacted]', force: e1PassPending);
     } finally {
       // Hand the busy row back to the run even when the compaction throws
       // or is cancelled (issue #1085): a stale 'Compacting context…'
@@ -381,7 +394,9 @@ extension AgentCliCompactionRun on AgentCli {
   /// The gh-1680 message-count gate shared by the loop and boot-cap
   /// passes: the known-cap pre-emptive trigger, or the one-shot E1 pass a
   /// cap-unknown refusal armed (consumed here so it fires exactly once
-  /// per refusal).
+  /// per refusal). CONSUMING — call only from a path that runs a
+  /// compaction when it returns true ([_maybeAutoCompact]); the boot-cap
+  /// decision uses the peeking [_messageCapGatePending] instead.
   bool _messageCapGateReached() {
     final model = _agent.state.model;
     return messageCapTriggerReached(
@@ -389,6 +404,25 @@ extension AgentCliCompactionRun on AgentCli {
           _modelCaps.learnedCapFor(model),
         ) ||
         _modelCaps.takePremptivePass(model.provider, model.id);
+  }
+
+  /// The non-consuming twin of [_messageCapGateReached]: same compound
+  /// gate, but the armed E1 one-shot pass is only PEEKED
+  /// ([ModelCaps.isPremptivePassPending]), never removed. gh-1729 review:
+  /// the boot-cap DECISION must not spend the pass — the lazy defer
+  /// branch returns without running a compaction, and a pass consumed
+  /// there is silently dropped (the next request rides out uncapped and
+  /// re-learns the refusal the hard way — exactly what the pass exists to
+  /// avoid). The pass fires (and is consumed) where a compaction actually
+  /// runs: the first turn's pre-flight, or the boot's synchronous
+  /// over-window last resort.
+  bool _messageCapGatePending() {
+    final model = _agent.state.model;
+    return messageCapTriggerReached(
+          _agent.state.messages.length,
+          _modelCaps.learnedCapFor(model),
+        ) ||
+        _modelCaps.isPremptivePassPending(model.provider, model.id);
   }
 
   /// The shared request-size estimate for compaction decisions (see
@@ -432,10 +466,11 @@ extension AgentCliCompactionRun on AgentCli {
     final tokens = _liveRequestTokens();
     // gh-1680 AC4: the message-count trigger gates the boot cap too — a
     // resumed session riding at `cap − margin` compacts before its first
-    // request instead of re-learning the refusal the hard way. The gate
-    // also consumes the one-shot E1 pass a cap-unknown refusal armed
-    // (PR #1695).
-    final overCap = _messageCapGateReached();
+    // request instead of re-learning the refusal the hard way. PEEKING
+    // gate (gh-1729 review): the armed E1 one-shot pass is consumed only
+    // where a compaction actually runs — consuming it for a decision the
+    // defer branch below does not act on would silently drop it.
+    final overCap = _messageCapGatePending();
     if (!shouldCompact(
           tokens,
           _effectiveContextWindow,
@@ -498,6 +533,16 @@ extension AgentCliCompactionRun on AgentCli {
         'resume boot cap deferred sid=$_logSid tokens=$tokens '
         '(inside the window — the first-turn pre-flight owns the '
         'durable compaction)',
+      );
+      // gh-1729 review: the deferred regime gets a visible receipt like
+      // every other compaction decision on this path — a meter idling
+      // just under the trigger with nothing happening reads as a stalled
+      // boot without it.
+      io.writeln(
+        _style.dim(
+          '[resume] context over the compaction trigger (~$tokens tokens, '
+          'inside the window) — compaction deferred to the first message',
+        ),
       );
       return;
     }
@@ -644,7 +689,11 @@ extension AgentCliCompactionRun on AgentCli {
   /// resume boot cap (which passes the session explicitly — at boot
   /// `_session` is not assigned yet). Returns whether a pass reported
   /// success (a rendered report block).
-  Future<bool> _runAutoCompact(String label, {Session? session}) async {
+  Future<bool> _runAutoCompact(
+    String label, {
+    Session? session,
+    bool force = false,
+  }) async {
     // The user's explicit stop wins over any compaction (issue #1085
     // round-1): the abort must not merely cancel the IN-FLIGHT pass — it
     // must not be answered with a FRESH pass either (an aborted run's
@@ -686,6 +735,7 @@ extension AgentCliCompactionRun on AgentCli {
         label,
         abort.token,
         session: session,
+        force: force,
       );
     } finally {
       _activeCompactionAbort = null;
@@ -706,6 +756,7 @@ extension AgentCliCompactionRun on AgentCli {
     String label,
     CancelToken token, {
     Session? session,
+    bool force = false,
   }) async {
     final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
     final hooks = _AutoCompactorCliHooks(
@@ -781,7 +832,7 @@ extension AgentCliCompactionRun on AgentCli {
           _pushBusyPhase('Compacting context…');
         }
       },
-      force: label == '[compacted]',
+      force: force || label == '[compacted]',
     ).run();
     _persistedCount = _agent.state.messages.length;
     return hooks.reportedPass;

@@ -188,6 +188,11 @@ private func liveActivityEnd(result: @escaping FlutterResult) {
 /// signed in, or the iCloud capability/container id missing from the
 /// provisioning profile). `syncStatus` → {available, containerUrl?}. The
 /// file copy itself happens Dart-side once the container URL is known.
+/// `excludeFromBackup` {path} → the number of items marked, marking a file
+/// or directory subtree excluded from iCloud device backups
+/// (`NSURLIsExcludedFromBackupKey`) — the secret-store policy of issue #329
+/// E4 for trees that live outside the keychain (the sandbox `.dap` hub
+/// config holds the hub clientSecret and identity/channel keys).
 private func registerICloudChannel(messenger: FlutterBinaryMessenger) {
   let channel = FlutterMethodChannel(
     name: "fah/icloud",
@@ -201,8 +206,77 @@ private func registerICloudChannel(messenger: FlutterBinaryMessenger) {
       iCloudContainerDocumentsPath { path in
         result(["available": path != nil, "containerUrl": path as Any])
       }
+    case "excludeFromBackup":
+      let args = call.arguments as? [String: Any] ?? [:]
+      guard let path = args["path"] as? String, !path.isEmpty else {
+        result(
+          FlutterError(
+            code: "bad_args",
+            message: "path is required",
+            details: nil
+          )
+        )
+        return
+      }
+      iCloudExcludeFromBackup(path: path, result: result)
     default:
       result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+/// Marks [path] and everything under it excluded from iCloud device backups.
+///
+/// The flag is set on the directory AND every existing descendant: the OS
+/// excludes a flagged directory's subtree at backup time, but an app
+/// upgrade can point this call at a directory that already has content, and
+/// re-marking is idempotent and cheap at this scale. Answers the number of
+/// items marked; a partial failure answers `exclude_failed` (the caller
+/// logs — exclusion is hardening, never a boot precondition).
+private func iCloudExcludeFromBackup(path: String, result: @escaping FlutterResult) {
+  DispatchQueue.global(qos: .utility).async {
+    let fm = FileManager.default
+    var isDirectory: ObjCBool = false
+    guard fm.fileExists(atPath: path, isDirectory: &isDirectory) else {
+      DispatchQueue.main.async {
+        result(
+          FlutterError(
+            code: "not_found",
+            message: "no file at \(path)",
+            details: nil
+          )
+        )
+      }
+      return
+    }
+    var targets = [URL(fileURLWithPath: path, isDirectory: isDirectory.boolValue)]
+    if isDirectory.boolValue,
+      let enumerator = fm.enumerator(
+        at: targets[0],
+        includingPropertiesForKeys: nil
+      ) {
+      targets.append(contentsOf: enumerator.allObjects.compactMap { $0 as? URL })
+    }
+    do {
+      for var url in targets {
+        let values = try url.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        if values.isExcludedFromBackup != true {
+          var resourceValues = URLResourceValues()
+          resourceValues.isExcludedFromBackup = true
+          try url.setResourceValues(resourceValues)
+        }
+      }
+      DispatchQueue.main.async { result(targets.count) }
+    } catch {
+      DispatchQueue.main.async {
+        result(
+          FlutterError(
+            code: "exclude_failed",
+            message: error.localizedDescription,
+            details: nil
+          )
+        )
+      }
     }
   }
 }
