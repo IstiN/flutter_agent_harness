@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:fa/sandbox/env_factory_io.dart' as app_env;
 import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/backup_exclusion.dart' as backup;
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -242,6 +243,65 @@ void main() {
       final log = AppLog.dump();
       expect(log, contains('falling back to MemoryShell'));
       expect(log, contains('PanicException'));
+    });
+  });
+
+  group('createMobileSandboxEnv .dap backup exclusion (gh-1730 review)', () {
+    late Directory appSupport;
+    late Directory documents;
+
+    setUp(() {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      appSupport = Directory.systemTemp.createTempSync('fah_app_support_');
+      documents = Directory.systemTemp.createTempSync('fah_documents_');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(
+        appSupport,
+        documents,
+      );
+    });
+
+    tearDown(() {
+      backup.excludePathFromBackupOverride = null;
+      for (final dir in [appSupport, documents]) {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('marks the sandbox .dap tree excluded from cloud backups', () async {
+      final excluded = <String>[];
+      backup.excludePathFromBackupOverride = (path) async {
+        excluded.add(path);
+      };
+
+      await app_env.createMobileSandboxEnv(
+        loadShell: () async => throw StateError('skip the wasm shell'),
+      );
+
+      // The hub config tree is created eagerly, before the hub client can
+      // write a credential into it…
+      final dapDir = Directory('${documents.path}/fah_sandbox/.dap');
+      expect(dapDir.existsSync(), isTrue);
+      // …and it — not the whole sandbox (sessions etc. stay restorable) —
+      // is what the exclusion request names.
+      expect(excluded, [dapDir.path]);
+    });
+
+    test('exclusion still runs when the wasm shell falls back', () async {
+      // Ordering pin: the exclusion happens BEFORE the shell loads, so the
+      // issue-#640 MemoryShell fallback never skips it.
+      final excluded = <String>[];
+      backup.excludePathFromBackupOverride = (path) async {
+        excluded.add(path);
+      };
+
+      final env = await app_env.createMobileSandboxEnv(
+        loadShell: () async => throw StateError('PanicException: python.wasm'),
+      );
+
+      expect(env, isA<PersistentWebExecutionEnv>());
+      final dapDir = Directory('${documents.path}/fah_sandbox/.dap');
+      expect(dapDir.existsSync(), isTrue);
+      expect(excluded, [dapDir.path]);
     });
   });
 }

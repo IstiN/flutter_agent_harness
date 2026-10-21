@@ -132,6 +132,28 @@ The agent lives in the browser, not in the panel:
 
 Full details: [docs/browser-extension.md](../docs/browser-extension.md).
 
+## Manifest notes
+
+`manifest.json` is plain JSON (Chrome rejects `//` comments; a guard test
+parses it strictly). The rationale that used to live inline:
+
+- **Permission set (issue #137)** — maximum viable: the generic
+  `chrome.*` bridge (`browser_api`) exposes every declared namespace to
+  the agent, so permissions without access are pure waste. Tier 3
+  exclusions (also in `permission_matrix.dart`): `enterprise.*`
+  (device-admin only), `platformKeys` / `fileSystemProvider` /
+  `wallpaper` (ChromeOS-only), `gcm` / `instanceID` (legacy push, no
+  agent surface), `devtools` (opens interactive windows),
+  `passwords` (Chrome has no such API). `commands` / `omnibox` are
+  manifest keys, not permissions. `management` is declared but
+  bridge-default-DENIED (an injected page must not disable the agent's
+  own extension).
+- **`content/embed_relay.js` (issue #470)** — the embedded fa pane
+  (fa1.dev inside the Outlook tab) bridges its provider HTTP to the SW
+  through this relay (page JS has no `chrome.*`, fetches are
+  CORS-blocked). `all_frames: true` because the pane is a cross-origin
+  iframe. Inert elsewhere (answers only `__faEmbed-pane` messages).
+
 ## Store review
 
 Unpacked and enterprise installs are the first-class distribution path
