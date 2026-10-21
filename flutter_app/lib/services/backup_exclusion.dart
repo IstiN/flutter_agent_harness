@@ -30,13 +30,16 @@ Future<void> Function(String path)? excludePathFromBackupOverride;
 /// Marks the file or directory at [path] excluded from cloud backups.
 ///
 /// A failure must never break boot — the exclusion is hardening, not a
-/// precondition — so every error path logs and moves on.
+/// precondition — so every error path logs and moves on. The kIsWeb check
+/// comes FIRST: on the web `Platform.isIOS` throws at runtime
+/// (web_safety_guard_test), and the correct answer there is a no-op anyway.
 Future<void> excludePathFromBackup(String path) async {
   final override = excludePathFromBackupOverride;
   if (override != null) {
     await override(path);
     return;
   }
+  if (kIsWeb) return;
   if (!Platform.isIOS) return;
   try {
     await _icloudChannel.invokeMethod<void>('excludeFromBackup', {
