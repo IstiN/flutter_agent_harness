@@ -64,7 +64,8 @@ final class TrajectoryRequestBlobStore {
     this.maxBytes = trajectoryRequestBlobMaxBytes,
     this.ttlDays = trajectoryRequestBlobTtlDays,
     DateTime Function()? clock,
-  }) : _env = env,
+  }) : // ignore: prefer_initializing_formals — named private-field formals
+       _env = env,
        _sessionId = sessionId,
        _clock = clock ?? DateTime.now;
 
