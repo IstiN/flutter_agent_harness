@@ -830,6 +830,17 @@ final class JsonlSessionRepo implements SessionRepo {
   /// such a caller may re-report once after a resume; use it only where
   /// that degradation is acceptable and the chain walk must not sit on
   /// the boot path (the #503 precedent).
+  ///
+  /// gh-1734 scan memo: the result is memoized per (session path, scan
+  /// parameters, chain fingerprint) — the boot/switch path re-scans the
+  /// same chain on every open/switch (obligations ledger, orphan
+  /// reports, subagent registry, steering), a 95MB-tail read each time
+  /// on a marathon file. An unchanged chain (same per-file size+mtime)
+  /// is served from the memo without touching the file; any
+  /// append/rotation/truncate changes a stat and re-scans. A memo hit
+  /// returns a fresh list of SHARED record instances — the codebase
+  /// treats custom records as immutable (read-only payload consumers);
+  /// mutating them would corrupt future hits.
   Future<List<CustomRecord>> readCustomRecordsOfType(
     SessionMetadata metadata,
     Set<String> types, {
@@ -871,10 +882,8 @@ final class JsonlSessionRepo implements SessionRepo {
     // without touching it; any append/rotation/truncate changes a stat
     // and misses. Records are SHARED between callers — the codebase
     // treats them as immutable (read-only payload consumers).
-    final fingerprint = await _scanChainFingerprint(scanned, cap);
-    final memo = fingerprint == null
-        ? null
-        : _scanMemo[metadata.path];
+    final fingerprint = await _scanChainFingerprint(scanned);
+    final memo = fingerprint == null ? null : _scanMemo[metadata.path];
     if (memo != null &&
         memo.matches(
           types: types,
@@ -894,7 +903,7 @@ final class JsonlSessionRepo implements SessionRepo {
     // Store only when the chain did not change during the scan — the
     // fingerprint must describe exactly the bytes the records came from.
     if (fingerprint != null) {
-      final after = await _scanChainFingerprint(scanned, cap);
+      final after = await _scanChainFingerprint(scanned);
       if (after != null && _sameScanFingerprint(fingerprint, after)) {
         _scanMemo[metadata.path] = _CustomRecordScanMemo(
           types: types,
@@ -918,7 +927,6 @@ final class JsonlSessionRepo implements SessionRepo {
   /// scan runs and returns whatever it finds (unchanged behavior).
   Future<Map<String, (int, int)>?> _scanChainFingerprint(
     List<String> paths,
-    int? tailCapBytes,
   ) async {
     final stats = <String, (int, int)>{};
     for (final path in paths) {

@@ -16,10 +16,7 @@ void main() {
 
   test('misses on an empty cache', () {
     final cache = ResumedContextCache();
-    expect(
-      cache.match('/s/a.jsonl', sizeBytes: 10, mtimeMs: 1),
-      isNull,
-    );
+    expect(cache.match('/s/a.jsonl', sizeBytes: 10, mtimeMs: 1), isNull);
   });
 
   test('hits on the same path + size + mtime', () {

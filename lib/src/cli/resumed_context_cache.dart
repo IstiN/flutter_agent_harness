@@ -32,7 +32,8 @@ final class _Entry {
 /// layer never mutates projected messages in place).
 final class ResumedContextCache {
   /// Creates a cache holding at most [capacity] sessions (≥ 1).
-  ResumedContextCache({int capacity = 4}) : capacity = capacity < 1 ? 1 : capacity;
+  ResumedContextCache({int capacity = 4})
+    : capacity = capacity < 1 ? 1 : capacity;
 
   /// Maximum number of sessions kept resident.
   final int capacity;
@@ -47,7 +48,11 @@ final class ResumedContextCache {
   /// context carries a fresh message list; the entry is refreshed as the
   /// most recently used. A stale probe does not evict the entry (the
   /// caller rebuilds and re-remembers over it).
-  SessionContext? match(String path, {required int sizeBytes, required int mtimeMs}) {
+  SessionContext? match(
+    String path, {
+    required int sizeBytes,
+    required int mtimeMs,
+  }) {
     final entry = _entries[path];
     if (entry == null) return null;
     if (entry.sizeBytes != sizeBytes || entry.mtimeMs != mtimeMs) {

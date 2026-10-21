@@ -29,22 +29,24 @@ void main() {
     fs.rangeCalls.clear();
   });
 
-  test('an unchanged file is scanned once — the repeat call is memoized',
-      () async {
-    final first = await repo.readCustomRecordsOfType(metadata, {'a_type'});
-    expect(first, hasLength(1));
-    final callsAfterFirst = fs.rangeCalls.length;
-    expect(callsAfterFirst, greaterThan(0));
+  test(
+    'an unchanged file is scanned once — the repeat call is memoized',
+    () async {
+      final first = await repo.readCustomRecordsOfType(metadata, {'a_type'});
+      expect(first, hasLength(1));
+      final callsAfterFirst = fs.rangeCalls.length;
+      expect(callsAfterFirst, greaterThan(0));
 
-    final second = await repo.readCustomRecordsOfType(metadata, {'a_type'});
-    expect(second, hasLength(1));
-    expect(second.single.id, first.single.id);
-    expect(
-      fs.rangeCalls.length,
-      callsAfterFirst,
-      reason: 'the second scan must be served from the memo, not re-read',
-    );
-  });
+      final second = await repo.readCustomRecordsOfType(metadata, {'a_type'});
+      expect(second, hasLength(1));
+      expect(second.single.id, first.single.id);
+      expect(
+        fs.rangeCalls.length,
+        callsAfterFirst,
+        reason: 'the second scan must be served from the memo, not re-read',
+      );
+    },
+  );
 
   test('an append invalidates the memo — the new record is seen', () async {
     await repo.readCustomRecordsOfType(metadata, {'a_type'});
@@ -53,10 +55,9 @@ void main() {
     await session.appendCustomEntry(customType: 'a_type', data: {'n': 2});
     final freshMetadata = await session.getMetadata();
 
-    final second = await repo.readCustomRecordsOfType(
-      freshMetadata,
-      {'a_type'},
-    );
+    final second = await repo.readCustomRecordsOfType(freshMetadata, {
+      'a_type',
+    });
     expect(second, hasLength(2));
     expect(
       fs.rangeCalls.length,
@@ -71,30 +72,30 @@ void main() {
     expect(other, isEmpty);
   });
 
-  test('a multi-type scan memoizes independently of a single-type scan',
-      () async {
-    await repo.readCustomRecordsOfType(metadata, {'a_type'});
-    final callsAfterSingle = fs.rangeCalls.length;
-    final both = await repo.readCustomRecordsOfType(metadata, {
-      'a_type',
-      'b_type',
-    });
-    expect(both, hasLength(1));
-    expect(
-      fs.rangeCalls.length,
-      greaterThan(callsAfterSingle),
-      reason: 'a different type set is a different memo key',
-    );
-  });
+  test(
+    'a multi-type scan memoizes independently of a single-type scan',
+    () async {
+      await repo.readCustomRecordsOfType(metadata, {'a_type'});
+      final callsAfterSingle = fs.rangeCalls.length;
+      final both = await repo.readCustomRecordsOfType(metadata, {
+        'a_type',
+        'b_type',
+      });
+      expect(both, hasLength(1));
+      expect(
+        fs.rangeCalls.length,
+        greaterThan(callsAfterSingle),
+        reason: 'a different type set is a different memo key',
+      );
+    },
+  );
 
   test('lastSegmentOnly scans are memoized under their own key', () async {
     await repo.readCustomRecordsOfType(metadata, {'a_type'});
     final callsAfterWhole = fs.rangeCalls.length;
-    final lastOnly = await repo.readCustomRecordsOfType(
-      metadata,
-      {'a_type'},
-      lastSegmentOnly: true,
-    );
+    final lastOnly = await repo.readCustomRecordsOfType(metadata, {
+      'a_type',
+    }, lastSegmentOnly: true);
     expect(lastOnly, hasLength(1));
     expect(
       fs.rangeCalls.length,
@@ -103,11 +104,9 @@ void main() {
     );
     // And a repeat of the lastSegmentOnly shape hits ITS memo.
     final callsAfterLastOnly = fs.rangeCalls.length;
-    await repo.readCustomRecordsOfType(
-      metadata,
-      {'a_type'},
-      lastSegmentOnly: true,
-    );
+    await repo.readCustomRecordsOfType(metadata, {
+      'a_type',
+    }, lastSegmentOnly: true);
     expect(fs.rangeCalls.length, callsAfterLastOnly);
   });
 
@@ -121,11 +120,9 @@ void main() {
   test('an explicit tail-cap change is a different memo key', () async {
     await repo.readCustomRecordsOfType(metadata, {'a_type'});
     final callsAfterDefault = fs.rangeCalls.length;
-    final uncapped = await repo.readCustomRecordsOfType(
-      metadata,
-      {'a_type'},
-      tailCapBytes: null,
-    );
+    final uncapped = await repo.readCustomRecordsOfType(metadata, {
+      'a_type',
+    }, tailCapBytes: null);
     expect(uncapped, hasLength(1));
     expect(
       fs.rangeCalls.length,
@@ -192,8 +189,7 @@ final class CountingRangeFs implements FileSystem, RangedReadFileSystem {
       _delegate.listDir(path);
 
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
 
   @override
   Future<Result<void, FileError>> createDir(

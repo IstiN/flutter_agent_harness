@@ -45,8 +45,7 @@ void main() {
     );
   }
 
-  test('a same-cwd switch keeps the live prompt (no project reload)',
-      () async {
+  test('a same-cwd switch keeps the live prompt (no project reload)', () async {
     await seedSession('alpha', '/work');
     final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
     final run = cli.run();

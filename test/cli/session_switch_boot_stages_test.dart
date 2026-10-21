@@ -123,8 +123,10 @@ void main() {
 
   test('a warm switch back to an unchanged session reuses the built '
       'context (source=cache)', () async {
-    final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call,
-        sessionName: 'alpha');
+    final cli = cliFor(
+      FakeStreamFunction([textTurn('ok')]).call,
+      sessionName: 'alpha',
+    );
     final run = cli.run();
     await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
@@ -207,10 +209,7 @@ void main() {
   });
 }
 
-Future<SessionMetadata> _metadataById(
-  JsonlSessionRepo repo,
-  String id,
-) async {
+Future<SessionMetadata> _metadataById(JsonlSessionRepo repo, String id) async {
   final sessions = await repo.list();
   return sessions.firstWhere((m) => m.id == id);
 }
