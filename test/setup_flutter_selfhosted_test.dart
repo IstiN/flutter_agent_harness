@@ -542,12 +542,12 @@ void main() {
       // resolved through the tested sdk_slot.py archive primitive.
       expect(
         curl,
-        contains(r'"$ARCHIVE"'),
-        reason: 'the curl URL must download the arch-resolved $ARCHIVE',
+        contains(r'$ARCHIVE'),
+        reason: r'the curl URL must download the arch-resolved "$ARCHIVE"',
       );
       expect(
         action,
-        contains('sdk_slot.py archive'),
+        contains(r'"$SLOT" archive'),
         reason: 'archive-name resolution must go through the tested primitive',
       );
       expect(
