@@ -7,6 +7,11 @@
 // corpus whose observed usage exceeds the estimate by >=10% flips
 // `shouldCompact` through the assessed pressure.
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+// gh-1742 review round 1, comment 3: hasAnyReportedUsage is hidden from
+// the barrel until a caller exists — the test reaches it via the src
+// path.
+import 'package:flutter_agent_harness/src/compaction/context_pressure.dart'
+    show hasAnyReportedUsage;
 import 'package:test/test.dart';
 
 AssistantMessage _assistant({
