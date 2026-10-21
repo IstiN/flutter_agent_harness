@@ -1749,7 +1749,9 @@ jobs:
           # detector fixes (checkmark V, yellow-on-dark digits, hollow
           # boxes, solid glyph runs); the configs now rely on 0.14.2
           # behaviour (severity: error, old excludes dropped).
-          dart pub global activate crap4dart ">=0.14.2 <0.15.0"
+          # gh-1738: >=0.15.0 — the similarity gate (file-level
+          # near-duplicates over md+dart), wired into crap4dart.yaml.
+          dart pub global activate crap4dart ">=0.15.0 <0.16.0"
           dart pub global run crap4dart analyze
 
       - name: Quality gates (broken goldens + Type-2 duplication, issue 1106)
@@ -2392,9 +2394,11 @@ jobs:
           # crap4dart#3/#4 (2026-10-15): >=0.14.2 <0.15.0 — same bounded
           # pin as the core job; the broken_goldens detector fixes the
           # flipped configs rely on.
+          # gh-1738: >=0.15.0 — same bounded pin as the core job; the
+          # root config's similarity gate runs under this version.
           # coverage.run_tests: false in both configs — the merged shard
           # lcov above is the source; never re-run the suite here.
-          dart pub global activate crap4dart ">=0.14.2 <0.15.0"
+          dart pub global activate crap4dart ">=0.15.0 <0.16.0"
           cd flutter_app && dart pub global run crap4dart analyze --format json > crap_report.json
 
       # Issue #490 AC2: publish the ranked CRAP JSON even when the ratchet
