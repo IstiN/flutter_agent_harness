@@ -223,6 +223,47 @@ void main() {
       );
     });
 
+    test(
+      'a tui.statusLine section boot accepts passes check (gh-1636)',
+      () async {
+        // `tui.statusLine` is a legitimate boot key (issue #805) — the
+        // config-service mirror must agree, or every `fa config check` /
+        // `fa config set` on a config carrying the status-line section
+        // reports a phantom "unknown tui key" diagnostic.
+        await env.writeFile(
+          _globalConfig,
+          '$_validGlobal\ntui:\n  statusLine:\n    preset: nerd\n',
+        );
+        final report = await checkOrThrow(service);
+        expect(report.warnings, isEmpty);
+      },
+    );
+
+    test('a bad tui.statusLine shape fails like boot parse (gh-1636)', () async {
+      // The same drift, the other direction: once the mirror knows the
+      // key it must also reject the shapes boot rejects — a non-map
+      // section and an unknown statusLine key.
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\ntui:\n  statusLine: nerd\n',
+      );
+      var report = await service.check();
+      expect(
+        report.errors.map((e) => e.message).join('\n'),
+        contains('statusLine'),
+      );
+
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\ntui:\n  statusLine:\n    preset: nerd\n    bogus: 1\n',
+      );
+      report = await service.check();
+      expect(
+        report.errors.map((e) => e.message).join('\n'),
+        contains('statusLine'),
+      );
+    });
+
     test('a2a env tokens pass the structural check', () async {
       await env.writeFile(
         _globalConfig,
@@ -897,6 +938,23 @@ void main() {
         () => CliConfig.fromYaml(loadYaml(setShape) as YamlMap),
         returnsNormally,
       );
+      // statusLine (issue #805) is part of the same agreement: boot
+      // accepts the section (and its strict inner shape) — and the
+      // config-service tui validator delegates to this very parser, so
+      // `fa config check`/`set` agree with boot on every shape.
+      final statusLine =
+          loadYaml('tui:\n  statusLine:\n    preset: nerd\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(statusLine), returnsNormally);
+      for (final badStatusLine in [
+        'tui:\n  statusLine: nerd\n',
+        'tui:\n  statusLine:\n    preset: nerd\n    bogus: 1\n',
+      ]) {
+        expect(
+          () => CliConfig.fromYaml(loadYaml(badStatusLine) as YamlMap),
+          throwsConfigException,
+          reason: 'boot must reject: $badStatusLine',
+        );
+      }
     });
 
     test('the output section validates identically (gh-1198)', () {

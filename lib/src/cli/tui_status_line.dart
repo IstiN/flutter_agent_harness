@@ -752,8 +752,9 @@ TuiSectionConfig parseTuiSection(Object? node) {
     'statusLine',
   });
   final theme = _tuiThemeName(node['theme']);
-  final classic = _tuiClassicFlag(node['classic']);
-  final showCompactionDetails = _tuiShowCompactionDetailsFlag(
+  final classic = _tuiBoolFlag('tui.classic', node['classic']);
+  final showCompactionDetails = _tuiBoolFlag(
+    'tui.showCompactionDetails',
     node['showCompactionDetails'],
   );
   final statusLine = node['statusLine'];
@@ -777,19 +778,12 @@ String? _tuiThemeName(Object? theme) {
   return theme;
 }
 
-/// Validates the `classic:` kill switch; false when unset.
-bool _tuiClassicFlag(Object? classic) {
-  if (classic != null && classic is! bool) {
-    throw ConfigException('"tui.classic" must be a boolean');
-  }
-  return classic as bool? ?? false;
-}
-
-/// Validates the `showCompactionDetails:` opt-in (gh-1636); false when
-/// unset.
-bool _tuiShowCompactionDetailsFlag(Object? value) {
+/// Validates a `tui.*` boolean flag (`classic:`, `showCompactionDetails:`);
+/// false when unset. The [key] is the full dotted name — the error names
+/// it so a typo'd value points at the right line.
+bool _tuiBoolFlag(String key, Object? value) {
   if (value != null && value is! bool) {
-    throw ConfigException('"tui.showCompactionDetails" must be a boolean');
+    throw ConfigException('"$key" must be a boolean');
   }
   return value as bool? ?? false;
 }

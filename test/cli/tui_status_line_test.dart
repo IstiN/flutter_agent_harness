@@ -574,9 +574,17 @@ tui:
       expect(both.classic, isTrue);
       expect(both.showCompactionDetails, isTrue);
       // Non-bool throws — a typo must never silently skip the opt-in.
+      // The message names the full key (the gh-1636 deduped helper
+      // builds it from the key argument — pinned here verbatim).
       expect(
         () => parseTuiSection(_tui('tui:\n  showCompactionDetails: sure')),
-        throwsA(isA<ConfigException>()),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            '"tui.showCompactionDetails" must be a boolean',
+          ),
+        ),
       );
       // Unknown keys still throw.
       expect(
@@ -596,7 +604,13 @@ tui:
       );
       expect(
         () => parseTuiSection(_tui('tui:\n  classic: yes-please')),
-        throwsA(isA<ConfigException>()),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            '"tui.classic" must be a boolean',
+          ),
+        ),
       );
       expect(
         () => parseTuiSection(_tui('tui:\n  statusLine: minimal')),
