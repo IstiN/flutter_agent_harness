@@ -528,10 +528,11 @@ void main() {
   test('gh-1743: when nothing is droppable the budget timeout keeps the '
       'failure verdict', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
-    // A single tiny user turn: over the (forced) trigger in name only —
-    // nothing beyond the keep-recent budget exists, so the valve has
-    // nothing to cut and returns null.
-    await session.appendMessage(UserMessage.text('hi'));
+    // A single tiny user turn with the trigger at zero (window 100,
+    // reserve 100): the structured checkpoint pass reaches the wedged
+    // summarizer, but the trim valve finds nothing droppable (the kept
+    // region would be empty) — so the honest failure verdict must stay.
+    await session.appendMessage(UserMessage.text('a' * 40));
     final state = AgentState(
       model: _model,
       messages: await session.buildContextMessages(),
@@ -542,7 +543,7 @@ void main() {
     final ok = await AutoCompactorFactory(
       session: session,
       state: state,
-      window: 1000,
+      window: 100,
       settings: settings,
       sources: AutoCompactorSources(
         smolStream: null,
@@ -562,6 +563,8 @@ void main() {
 
     expect(ok, isFalse);
     expect(hooks.bothRolesError, isNotNull);
+    expect(hooks.passes.any((p) => p.fallback == 'local-trim'), isFalse,
+        reason: 'nothing was droppable — no trim receipt may be reported');
     expect(identical(state.messages, messagesBefore), isTrue,
         reason: 'no trim means no live-context change');
   });
