@@ -435,23 +435,29 @@ final class CompactionSettings {
 
   /// Creates settings scaled to a model's context [window] (in tokens).
   ///
-  /// pi's fixed defaults ([defaultCompactionSettings]: reserve 16384, keep
-  /// 20000) exceed the whole window of a small on-device model (2048-8192),
-  /// where `shouldCompact` would never (or always) fire. The scaling rule:
+  /// gh-1742 (AC3): PROPORTIONAL headroom. The legacy flat reserve
+  /// (16,384) was tuned for 200k windows — 1.6% of a 1M window, which let
+  /// real input ride 976k–982k for hours on the kimi-k3 session before
+  /// the first auto-compaction. The scaling rule now:
   ///
-  /// - `reserveTokens = min(16384, max(1024, window ~/ 4))` — a quarter of
-  ///   the window, clamped into pi's range, covers the summary prompt and
-  ///   its output;
-  /// - `keepRecentTokens = min(20000, max(2048, window ~/ 2))` — half the
-  ///   window, clamped into pi's range, stays as recent context.
+  /// - `reserveTokens = min(65536, max(1024, window ~/ 16))` — 6.25% of
+  ///   the window, clamped into [1024, 65536]: a 200k window reserves
+  ///   12,500, a 1M window keeps ≥60k headroom at the trigger (enough to
+  ///   absorb one huge tool result plus estimator drift), and the 1024
+  ///   floor still prices the summary prompt + its output on small
+  ///   models;
+  /// - `keepRecentTokens = min(131072, max(2048, window ~/ 8))` — the
+  ///   post-compaction floor scales with the window (12.5%, clamped
+  ///   [2048, 131072]) so the compaction sawtooth restarts proportional
+  ///   to the window instead of always ~20k (2% of 1M — restarts tiny).
   ///
-  /// At 128000+ this reproduces pi's defaults exactly. Degenerate small
-  /// windows relax the floors proportionally so the reserve never eats half
-  /// the window and the kept region never eats all of it (below that,
-  /// compaction could not free anything).
+  /// Monotone in the window: a bigger window reserves (and keeps) as much
+  /// or more. Degenerate small windows relax the floors proportionally so
+  /// the reserve never eats half the window and the kept region never
+  /// eats all of it (below that, compaction could not free anything).
   factory CompactionSettings.forWindow(int window) {
-    var reserveTokens = min(16384, max(1024, window ~/ 4));
-    var keepRecentTokens = min(20000, max(2048, window ~/ 2));
+    var reserveTokens = min(65536, max(1024, window ~/ 16));
+    var keepRecentTokens = min(131072, max(2048, window ~/ 8));
     if (reserveTokens >= window ~/ 2) {
       reserveTokens = max(128, window ~/ 4);
     }

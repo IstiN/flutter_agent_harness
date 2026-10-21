@@ -60,27 +60,46 @@ void main() {
   });
 
   group('CompactionSettings.forWindow', () {
-    test('reproduces pi defaults at hosted-model windows', () {
-      for (final window in [100000, 128000, 200000]) {
-        final settings = CompactionSettings.forWindow(window);
-        expect(settings.enabled, isTrue, reason: 'window $window');
-        expect(settings.reserveTokens, 16384, reason: 'window $window');
-        expect(settings.keepRecentTokens, 20000, reason: 'window $window');
-      }
+    test(
+      'gh-1742 AC3: proportional headroom — 6.25%, clamped at 64Ki above',
+      () {
+        // 200k: exactly 6.25% (12,500) — proportional, not the legacy flat
+        // 16,384 (1.6% of 1M — the flat reserve is the bug this card
+        // fixes).
+        final s200k = CompactionSettings.forWindow(200000);
+        expect(s200k.reserveTokens, 12500);
+        expect(s200k.keepRecentTokens, 25000);
+        // 1M (the kimi class): reserve ≥ 65536 → ≥60k headroom at the
+        // trigger, enough to absorb one huge tool result plus drift.
+        final s1m = CompactionSettings.forWindow(1048576);
+        expect(s1m.reserveTokens, greaterThanOrEqualTo(65536));
+        expect(s1m.reserveTokens, 65536);
+        expect(s1m.keepRecentTokens, 131072);
+      },
+    );
+
+    test('UT-2: scaling table across the hosted-model range', () {
+      // window → (reserve, keepRecent): 6.25% / 12.5%, floored at the
+      // summary pricing minimums, capped at 64Ki / 128Ki.
+      expect(CompactionSettings.forWindow(65536).reserveTokens, 4096);
+      expect(CompactionSettings.forWindow(131072).reserveTokens, 8192);
+      expect(CompactionSettings.forWindow(262144).reserveTokens, 16384);
+      expect(CompactionSettings.forWindow(524288).reserveTokens, 32768);
+      expect(CompactionSettings.forWindow(2000000).reserveTokens, 65536);
     });
 
-    test('scales to small on-device windows (quarter reserve, half keep)', () {
+    test('scales to small on-device windows (summary pricing floor)', () {
       final s8192 = CompactionSettings.forWindow(8192);
-      expect(s8192.reserveTokens, 2048);
-      expect(s8192.keepRecentTokens, 4096);
+      expect(s8192.reserveTokens, 1024);
+      expect(s8192.keepRecentTokens, 2048);
 
       final s4096 = CompactionSettings.forWindow(4096);
       expect(s4096.reserveTokens, 1024);
       expect(s4096.keepRecentTokens, 2048);
 
       final s16384 = CompactionSettings.forWindow(16384);
-      expect(s16384.reserveTokens, 4096);
-      expect(s16384.keepRecentTokens, 8192);
+      expect(s16384.reserveTokens, 1024);
+      expect(s16384.keepRecentTokens, 2048);
     });
 
     test(
@@ -124,6 +143,24 @@ void main() {
           lessThanOrEqualTo(settings.keepRecentTokens),
           reason: 'window $window',
         );
+      }
+    });
+
+    test('UT-2: monotone in the window (reserve and keep)', () {
+      var previous = CompactionSettings.forWindow(512);
+      for (var window = 1024; window <= 2100000; window += 512) {
+        final settings = CompactionSettings.forWindow(window);
+        expect(
+          settings.reserveTokens,
+          greaterThanOrEqualTo(previous.reserveTokens),
+          reason: 'reserve monotone at window $window',
+        );
+        expect(
+          settings.keepRecentTokens,
+          greaterThanOrEqualTo(previous.keepRecentTokens),
+          reason: 'keepRecent monotone at window $window',
+        );
+        previous = settings;
       }
     });
   });
@@ -173,14 +210,14 @@ void main() {
 
     test('the compaction threshold rides the capped window', () {
       // A 1M-window model under a 256k cap triggers at the 256k basis
-      // (forWindow reserve 16384 → trigger 239616), never at the 1M one;
-      // uncapped, the same model triggers at 983616. The meter, the
-      // threshold and the loop guard all consume the same
-      // effectiveContextWindow basis.
+      // (gh-1742 forWindow: reserve 6.25% = 16000 → trigger 240000),
+      // never at the 1M one; uncapped, the same model triggers at
+      // 983040. The meter, the threshold and the loop guard all consume
+      // the same effectiveContextWindow basis.
       final capped = effectiveContextWindow(1000000, 256000);
       final uncapped = effectiveContextWindow(1000000, null);
       expect(
-        shouldCompact(240000, capped, CompactionSettings.forWindow(capped)),
+        shouldCompact(240001, capped, CompactionSettings.forWindow(capped)),
         isTrue,
       );
       expect(
