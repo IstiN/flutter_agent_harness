@@ -582,7 +582,6 @@ final class TaskExecutor {
     // boundary. An observation back UNDER the line (the honest post-fold
     // report) resets the latch.
     // ignore: avoid_print
-    print('DEBUG compact triggered=${decision.triggered} est=$est observed=$observed window=$window forced=${decision.needsForce}');
     var runForced = false;
     if (observed != null) {
       final latch = _forcedObservedAt[id];
@@ -615,7 +614,7 @@ final class TaskExecutor {
         engine: compactionEngine ?? CompactionEngine.structured,
         force: runForced,
       ).run();
-    } on Object {
+    } on Object catch (e) {
       return false; // The guard remains the last resort.
     }
     // Post-compaction invariant (#387): the flush cursor restarts at the

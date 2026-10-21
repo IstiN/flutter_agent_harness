@@ -532,9 +532,8 @@ void main() {
       // provider must be a catalog kind the resolver knows; the copilot
       // spec is the one the review cites.)
       const smolRef = ModelRef(
-        provider: 'openai',
-        modelId: 'smol-model',
-        keyless: true,
+        provider: 'anthropic',
+        modelId: 'test-smol',
         contextWindow: 400,
         maxTokens: 256,
       );
@@ -544,12 +543,8 @@ void main() {
           roles: {'smol': [smolRef]},
           retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
         ),
-        secrets: const {},
-        streamFactory: (kind, apiKey) {
-          // ignore: avoid_print
-          print('DEBUG streamFactory kind=\$kind');
-          return stream.call;
-        },
+        secrets: const {'ANTHROPIC_API_KEY': 'k'},
+        streamFactory: (kind, apiKey) => stream.call,
       );
       final wiring = _Wiring(
         registry: registry,
@@ -572,8 +567,6 @@ void main() {
             _toolTurn('c2', input: 100, cacheRead: 3400, totalTokens: 100),
       });
       final result = await wiring.spawn('smolwin', 'forced-pass');
-      // ignore: avoid_print
-      print('DEBUG status=${result.status} calls=${wiring.stream.compactionCalls} ctxs=${wiring.stream.contexts.length} err=${result.error} out=${result.output}');
       expect(result.status, TaskSpawnStatus.completed);
       expect(
         wiring.stream.compactionCalls,
