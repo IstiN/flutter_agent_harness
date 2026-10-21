@@ -198,6 +198,7 @@ export 'src/providers/thinking.dart';
 export 'src/providers/stall_taxonomy.dart';
 export 'src/providers/conn_trace.dart';
 export 'src/providers/stall_sentinel.dart';
+export 'src/providers/stream_trace.dart';
 export 'src/providers/silent_stream_policy.dart';
 export 'src/redact/redaction_cli.dart';
 export 'src/redact/redaction_hooks.dart';
