@@ -794,6 +794,8 @@ final class FallbackStreamFunction {
     unawaited(
       _drive(out, context, cancelToken)
           .catchError((Object error) {
+            // ignore: avoid_print
+            print('DEBUG wrapper error: \$error');
             // Defensive (providers never throw; a fake in tests might):
             // convert into the errors-as-events contract.
             final failure = _terminalMessage(

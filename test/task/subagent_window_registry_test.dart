@@ -132,6 +132,10 @@ final class _ScriptedStream {
   final contexts = <Context>[];
   int compactionCalls = 0;
 
+  /// The Model each compaction LLM call rode (the smol/main summarizer
+  /// wiring — the gh-1742 review round 1, comment 6 assertion target).
+  final List<Model> compactionModels = [];
+
   /// Scripted real-child turn FACTORIES keyed on a substring of the last
   /// user text; each entry fires at most once. Falls back to a plain text
   /// turn.
@@ -169,6 +173,7 @@ final class _ScriptedStream {
     final system = context.systemPrompt ?? '';
     if (system.contains('context-hygiene judge')) {
       compactionCalls++;
+      compactionModels.add(model);
       final seqs = RegExp(r'^\[(\d+)\]', multiLine: true)
           .allMatches(lastUserText(context))
           .map((m) => int.parse(m.group(1)!))
@@ -177,6 +182,7 @@ final class _ScriptedStream {
     }
     if (system.contains('context checkpoint assistant')) {
       compactionCalls++;
+      compactionModels.add(model);
       return _streamOf(_usageTurn('checkpoint: earlier work summarized'));
     }
     contexts.add(
@@ -208,8 +214,12 @@ final class _ScriptedStream {
 }
 
 final class _Wiring {
-  _Wiring({ContextWindowRegistry? registry, int? contextWindowCap}) {
-    stream = _ScriptedStream();
+  _Wiring({
+    ContextWindowRegistry? registry,
+    int? contextWindowCap,
+    ModelRolesResolver? rolesResolver,
+    _ScriptedStream? scriptedStream,
+  }) : stream = scriptedStream ?? _ScriptedStream() {
     manager = SubagentManager(
       parentSessionId: 'parent-session',
       clock: () => _fakeTime,
@@ -230,6 +240,7 @@ final class _Wiring {
       subagentManager: manager,
       contextWindowRegistry: registry,
       contextWindowCap: contextWindowCap,
+      rolesResolver: rolesResolver,
       childSessionFactory: (parentId, childId) => repo.create(
         JsonlSessionCreateOptions(
           cwd: '/work',
@@ -247,7 +258,7 @@ final class _Wiring {
 
   final env = MemoryExecutionEnv(cwd: '/work');
   late final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-  late final _ScriptedStream stream;
+  final _ScriptedStream stream;
   late final SubagentManager manager;
   late final TaskExecutor executor;
 
@@ -509,5 +520,76 @@ void main() {
         expect(handle.observedTokens, isNull);
       },
     );
+  });
+
+  group('the smol summarizer resolves the registered window (gh-1742 '
+      'review round 1, comment 6)', () {
+    test('compaction LLM calls ride the smol model WITH the registered '
+        'window, not the stale catalog one', () async {
+      final registry = ContextWindowRegistry();
+      // A smol chain entry carrying a WRONG catalog window — exactly the
+      // copilot-1M-vs-256k-kimi shape the registry exists for. (The
+      // provider must be a catalog kind the resolver knows; the copilot
+      // spec is the one the review cites.)
+      const smolRef = ModelRef(
+        provider: 'openai',
+        modelId: 'smol-model',
+        keyless: true,
+        contextWindow: 400,
+        maxTokens: 256,
+      );
+      final stream = _ScriptedStream();
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {'smol': [smolRef]},
+          retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+        ),
+        secrets: const {},
+        streamFactory: (kind, apiKey) {
+          // ignore: avoid_print
+          print('DEBUG streamFactory kind=\$kind');
+          return stream.call;
+        },
+      );
+      final wiring = _Wiring(
+        registry: registry,
+        rolesResolver: resolver,
+        scriptedStream: stream,
+      );
+      // The detection lands for the SMOL identity before the spawn.
+      final smol = resolver.resolveRole(smolModelRole)!;
+      registry.publish(
+        model: smol.model,
+        window: 478000,
+        source: ContextWindowSource.endpointReport,
+      );
+      // The AC5 forced-pass repro (observed over the 400-catalog
+      // trigger): the structured engine's judge/checkpoint calls ride
+      // the smol chain.
+      wiring.stream.rules.addAll({
+        'forced-pass': () => _toolTurn('c1'),
+        'fat:': () =>
+            _toolTurn('c2', input: 100, cacheRead: 3400, totalTokens: 100),
+      });
+      final result = await wiring.spawn('smolwin', 'forced-pass');
+      // ignore: avoid_print
+      print('DEBUG status=${result.status} calls=${wiring.stream.compactionCalls} ctxs=${wiring.stream.contexts.length} err=${result.error} out=${result.output}');
+      expect(result.status, TaskSpawnStatus.completed);
+      expect(
+        wiring.stream.compactionCalls,
+        greaterThanOrEqualTo(1),
+        reason: 'the forced pass must have run a compaction LLM call',
+      );
+      for (final model in wiring.stream.compactionModels) {
+        expect(
+          model.contextWindow,
+          478000,
+          reason:
+              '${model.id}: the smol summarizer must resolve the '
+              'REGISTERED window (the checkpoint payload budget and '
+              'summarizerWindow mis-bound on the stale catalog 400)',
+        );
+      }
+    });
   });
 }

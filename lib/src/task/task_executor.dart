@@ -581,6 +581,8 @@ final class TaskExecutor {
     // constant over-line observation must not re-run forced passes every
     // boundary. An observation back UNDER the line (the honest post-fold
     // report) resets the latch.
+    // ignore: avoid_print
+    print('DEBUG compact triggered=${decision.triggered} est=$est observed=$observed window=$window forced=${decision.needsForce}');
     var runForced = false;
     if (observed != null) {
       final latch = _forcedObservedAt[id];
