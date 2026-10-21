@@ -382,13 +382,24 @@ extension AgentCliCompactionRun on AgentCli {
   /// passes: the known-cap pre-emptive trigger, or the one-shot E1 pass a
   /// cap-unknown refusal armed (consumed here so it fires exactly once
   /// per refusal).
-  bool _messageCapGateReached() {
+  ///
+  /// [consume] false PEEKS the one-shot instead of taking it — for
+  /// callers that only decide whether a cap is due ([_capResumedContext]'s
+  /// defer regime): a deferring boot must not silently drop the armed
+  /// pass (PR review #1729: the first turn's pre-flight still needs to
+  /// see it, or the E1 protection degrades into one avoidable provider
+  /// refusal). Callers that act immediately keep the default consuming
+  /// form.
+  bool _messageCapGateReached({bool consume = true}) {
     final model = _agent.state.model;
+    final pass = consume
+        ? _modelCaps.takePremptivePass(model.provider, model.id)
+        : _modelCaps.isPremptivePassPending(model.provider, model.id);
     return messageCapTriggerReached(
           _agent.state.messages.length,
           _modelCaps.learnedCapFor(model),
         ) ||
-        _modelCaps.takePremptivePass(model.provider, model.id);
+        pass;
   }
 
   /// The shared request-size estimate for compaction decisions (see
@@ -433,9 +444,11 @@ extension AgentCliCompactionRun on AgentCli {
     // gh-1680 AC4: the message-count trigger gates the boot cap too — a
     // resumed session riding at `cap − margin` compacts before its first
     // request instead of re-learning the refusal the hard way. The gate
-    // also consumes the one-shot E1 pass a cap-unknown refusal armed
-    // (PR #1695).
-    final overCap = _messageCapGateReached();
+    // also sees the one-shot E1 pass a cap-unknown refusal armed (PR
+    // #1695) — PEEKED, not consumed: this site may DEFER (below), and a
+    // deferring boot must leave the pass armed for the first turn's
+    // pre-flight. The consuming take happens only where the boot acts.
+    final overCap = _messageCapGateReached(consume: false);
     if (!shouldCompact(
           tokens,
           _effectiveContextWindow,
@@ -454,6 +467,10 @@ extension AgentCliCompactionRun on AgentCli {
     // pre-flight or an explicit /compact). The session file keeps every
     // record — a restart replays and re-trims identically.
     if (tokens > _effectiveContextWindow) {
+      // The boot acts NOW — this is the pass firing (PR #1695's "exactly
+      // once per refusal"): take what the peek saw. A no-op when the
+      // gate tripped on the numeric cap alone (nothing was pending).
+      if (overCap) _messageCapGateReached();
       final trimmed = localTrimValve(
         messages: _agent.state.messages,
         reason: 'the resumed transcript exceeded the context window',
@@ -498,6 +515,17 @@ extension AgentCliCompactionRun on AgentCli {
         'resume boot cap deferred sid=$_logSid tokens=$tokens '
         '(inside the window — the first-turn pre-flight owns the '
         'durable compaction)',
+      );
+      // Visible receipt (review #1729): every other compaction decision
+      // on this path prints one — a meter idling at ~95% with no note
+      // reads as a stuck boot, exactly what this fix removes. The E1
+      // one-shot stays armed (peeked above): the first turn's pre-flight
+      // consumes it and compacts BEFORE the request goes out.
+      io.writeln(
+        _style.dim(
+          '[resume] context over the compaction trigger (~$tokens tokens, '
+          'inside the window) — compaction deferred to the first message',
+        ),
       );
       return;
     }

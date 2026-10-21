@@ -218,6 +218,58 @@ void main() {
   );
 
   test(
+    'AC5 (lazy rework, happy defer): an over-trigger-under-window resume '
+    'prints the VISIBLE defer note, makes zero LM calls at boot, and the '
+    'first turn\'s pre-flight runs the durable compaction BEFORE the '
+    'request goes out',
+    timeout: const Timeout(Duration(minutes: 5)),
+    () async {
+      // 115 kept ≈ 115k tokens: over the 114,688 trigger, UNDER the
+      // 131,072 window — the lazy regime. The resume (not switch) path:
+      // race-free, the same _capResumedContext the switch runs.
+      final env = await seedOverWindow('boot-cap-target', keptCount: 115);
+      final stream = FakeStreamFunction([
+        // The first turn's pre-flight summarization (chunked ladder —
+        // script generously so it never starves into local-trim), then
+        // the answer.
+        for (var i = 1; i <= 40; i++) textTurn('pre-flight summary chunk $i'),
+      ]);
+      final agent = cli(env, stream, model: _bigModel);
+
+      final run = agent.run();
+      await waitForIt(
+        () =>
+            io.out.toString().contains('deferred to the first message') &&
+            !agent.isBusy,
+        reason: 'boot settles instantly with the visible defer note',
+      );
+      // LAZY BOOT: zero provider calls — the durable compaction is
+      // deferred, and the note makes that visible (review #1729: a
+      // meter idling at ~88% with no receipt reads as a stuck boot).
+      expect(stream.calls, 0);
+
+      io.sendLine('go');
+      await waitForIt(
+        () => stream.calls >= 2 && !agent.isBusy,
+        reason: 'the pre-flight compacts, then the turn answers',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      // The durable compaction landed through the normal pre-flight path
+      // (the rendered report), never the degenerate local-trim valve.
+      expect(output, contains('auto-compacted'));
+      expect(output, contains('deferred to the first message'));
+      // The compacted request fits under the trigger.
+      expect(
+        requestTokensOf(stream.contexts.last),
+        lessThanOrEqualTo(_bigWindow - 16384),
+      );
+    },
+  );
+
+  test(
     'AC3 backstop (lazy rework): a broken-stdout boot never wedges — zero '
     'LM calls at boot, and the first turn\'s pre-flight compact + answer '
     'both survive the throwing IO',
@@ -296,7 +348,7 @@ void main() {
     'suppress it (_startRun re-arms the flag before the pre-flight, and '
     '_switchToMetadata clears it at the switch)',
     timeout: const Timeout(Duration(minutes: 5)),
-    skip: 'mid-REPL switch lease race — follow-up ticket',
+    skip: 'mid-REPL switch lease race — #1728',
     () async {
       // Session A ('small-boot', created first): tiny, boots under-window.
       // Session B ('boot-cap-target', created second): over-trigger but

@@ -158,10 +158,19 @@ case "\$cmd" in
             fi
             # No `seq -f 'literal'`: a %-less format errors on every call,
             # the || true swallows it, and the fixture goes inert
-            # ({"jobs":[]} forever, whatever jobs-<id>.txt says). seq
-            # emits the count, sed stamps each line into a running job,
-            # paste comma-joins (n=0 → empty body → {"jobs":[]}).
-            jobs_body=\$(seq "\$n" | sed 's/.*/{"status":"in_progress"}/' | paste -sd, -)
+            # ({"jobs":[]} forever, whatever jobs-<id>.txt says). No plain
+            # `seq "\$n"` either: BSD seq(1) prints TWO lines for `seq 0`
+            # (GNU prints none), so n=0 served two phantom running jobs on
+            # macOS and flipped the served-jobs fixtures — a portable
+            # count loop stamps exactly n running jobs (n=0 → empty body
+            # → {"jobs":[]}).
+            jobs_body=''
+            i=0
+            while [ "\$i" -lt "\$n" ] 2>/dev/null; do
+              if [ -n "\$jobs_body" ]; then jobs_body="\$jobs_body,"; fi
+              jobs_body="\$jobs_body{\\\"status\\\":\\\"in_progress\\\"}"
+              i=\$((i + 1))
+            done
           fi
         fi
         if [ "\$is_jobs" = "1" ]; then
