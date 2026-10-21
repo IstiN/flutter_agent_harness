@@ -788,7 +788,9 @@ final class FallbackStreamFunction {
     Context context, {
     CancelToken? cancelToken,
   }) {
-    final out = AssistantMessageEventStream();
+    // traced: false — this stream re-pushes an inner stream's events; the
+    // adapter's own stream carries the StreamTrace emit mark (once per delta).
+    final out = AssistantMessageEventStream(traced: false);
     unawaited(
       _drive(out, context, cancelToken)
           .catchError((Object error) {

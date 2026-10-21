@@ -360,7 +360,9 @@ final class AgentTelemetry {
   StreamFunction wrapStreamFunction(StreamFunction inner) {
     return (model, context, {cancelToken}) {
       _emit(AgentTelemetryEventKind.requestStart, detail: _modelDetail(model));
-      final outer = AssistantMessageEventStream();
+      // traced: false — this stream re-pushes an inner stream's events; the
+      // adapter's own stream carries the StreamTrace emit mark (once per delta).
+      final outer = AssistantMessageEventStream(traced: false);
       AssistantMessageEventStream response;
       try {
         response = inner(model, context, cancelToken: cancelToken);

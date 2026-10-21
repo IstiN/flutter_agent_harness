@@ -38,7 +38,16 @@ final class _TerminalCliIO implements CliIO {
   Stream<void> get interrupts => _interrupts.stream;
 
   @override
-  void write(String text) => stdout.write(text);
+  void write(String text) {
+    // StreamTrace render mark (diagnostic, no-op unless active): the
+    // headless / line-mode live surface — stdout. Same leg the TUI seam
+    // records; exactly one of the two seams fires per surface write
+    // (headless and line-mode REPL never construct _TuiCliIO, and the
+    // TUI seam marks only its own sendOutput branch), so the emit→render
+    // gap is measurable in bench/scripted runs too.
+    StreamTrace.mark(StreamTraceMark.render, '+${text.length}ch');
+    stdout.write(text);
+  }
 
   @override
   void writeln(String text) =>

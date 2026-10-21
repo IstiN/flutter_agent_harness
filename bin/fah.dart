@@ -85,6 +85,19 @@ Future<void> main(List<String> args) async {
   // lookup, [conn-trace] stderr lines, the observed dart:io client, the
   // sentinel's disk sink) install here — the ONE dart:io boundary.
   installProviderStallForensics();
+  // StreamTrace (diagnostic): FA_STREAM_TRACE=1 arms the per-chunk
+  // net→emit→render timing trail at ~/.fah/logs/stream-trace.log — the
+  // "streamed x ms, rendered y ms" post-mortem for bursty endpoints.
+  // HOME everywhere except Windows (USERPROFILE there) — same fallback
+  // as _homeDir().
+  final homeDir =
+      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+  if (homeDir != null && homeDir.isNotEmpty) {
+    maybeStartStreamTrace(
+      File('$homeDir/.fah/logs/stream-trace.log'),
+      envLookup: (key) => Platform.environment[key],
+    );
+  }
   // Session segment rotation warnings (fa gh-1077): the session layer has
   // no console dependency — the CLI surfaces hard-cap truncations and
   // rotation fallbacks on stderr.

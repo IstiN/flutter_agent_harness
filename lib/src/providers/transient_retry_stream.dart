@@ -333,7 +333,9 @@ StreamFunction transientRetryStreamFunction(
 }) {
   assert(maxAttempts >= 1, 'maxAttempts must be at least 1');
   return (Model model, Context context, {CancelToken? cancelToken}) {
-    final out = AssistantMessageEventStream();
+    // traced: false — this stream re-pushes an inner stream's events; the
+    // adapter's own stream carries the StreamTrace emit mark (once per delta).
+    final out = AssistantMessageEventStream(traced: false);
     unawaited(
       _drive(out, inner, model, context, cancelToken, maxAttempts, delay)
           .catchError((Object error) {
