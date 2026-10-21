@@ -5,6 +5,7 @@
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/unpacked_loader.dart';
 import 'package:fa/apps/widget_payload_validator.dart';
+import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -94,6 +95,12 @@ Future<void> loadUnpackedWidget(
 
   try {
     await widgetLoader.install(inspection);
+    // Flush persistent env immediately so unpacked widget files are guaranteed
+    // to be stored in IndexedDB before the browser side panel can be closed.
+    final env = manager.env;
+    if (env is PersistentWebExecutionEnv) {
+      await env.flush();
+    }
   } on Object catch (error) {
     AppLog.i('apps', 'unpacked install failed: $error');
     if (!context.mounted) return;
