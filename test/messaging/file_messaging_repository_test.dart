@@ -246,9 +246,150 @@ void main() {
         '/home/user/.fah/messages-registry.json',
       )).getOrThrow();
       final registry = jsonDecode(registryText) as Map<String, dynamic>;
+
       expect(registry['main'], {'slug': '--work--', 'cwd': '/work'});
       expect(registry['explore:a1'], {'slug': '--work--', 'cwd': '/work'});
     });
+
+    test(
+      'registry stores the exact cwd of a hyphenated workspace (gh-1744)',
+      () async {
+        // The ticket's failing workspace: round-tripping the cwd through
+        // the slug used to write the non-existent /Users/y/_w/postal/nl.
+        const slug = '--Users-Yury_Bakhmutski-_w-postal%2Dnl--';
+        final dashedEnv = MemoryExecutionEnv(
+          cwd: '/Users/Yury_Bakhmutski/_w/postal-nl',
+        );
+        final dashed = FileMessagingRepository(
+          env: dashedEnv,
+          root: '/sessions/$slug/messages',
+          homeDir: '/home/user',
+          decodeSessionCwd: decodeSessionCwd,
+        );
+        await dashed.register('sess1/main');
+        final registryText = (await dashedEnv.readTextFile(
+          '/home/user/.fah/messages-registry.json',
+        )).getOrThrow();
+        final registry = jsonDecode(registryText) as Map<String, dynamic>;
+        expect(registry['sess1/main'], {
+          'slug': slug,
+          'cwd': '/Users/Yury_Bakhmutski/_w/postal-nl',
+        });
+      },
+    );
+
+    test(
+      'directory prefers the exact registry cwd over the lossy decode (gh-1744)',
+      () async {
+        // A legacy lossy slug folder: its decode names a directory that
+        // does not exist. The registry's exact cwd must win so the wake
+        // launcher gets a spawnable working directory.
+        const legacySlug = '--Users-Yury_Bakhmutski-_w-postal-nl--';
+        final mailboxDir = '/sessions/$legacySlug/messages/sess1_main';
+        await env.createDir('$mailboxDir/inbox', recursive: true);
+        (await env.writeFile('$mailboxDir/.id', 'sess1/main')).getOrThrow();
+        (await env.writeFile(
+          '/home/user/.fah/messages-registry.json',
+          jsonEncode({
+            'sess1/main': {
+              'slug': legacySlug,
+              'cwd': '/Users/Yury_Bakhmutski/_w/postal-nl',
+            },
+          }),
+        )).getOrThrow();
+
+        final entry = (await repo.directory()).singleWhere(
+          (e) => e.id == 'sess1/main',
+        );
+        expect(entry.cwd, '/Users/Yury_Bakhmutski/_w/postal-nl');
+      },
+    );
+
+    test(
+      'directory falls back to the slug decode when the registry has no cwd',
+      () async {
+        const legacySlug = '--Users-Yury_Bakhmutski-_w-postal-nl--';
+        final mailboxDir = '/sessions/$legacySlug/messages/sess1_main';
+        await env.createDir('$mailboxDir/inbox', recursive: true);
+        (await env.writeFile('$mailboxDir/.id', 'sess1/main')).getOrThrow();
+        (await env.writeFile(
+          '/home/user/.fah/messages-registry.json',
+          jsonEncode({
+            'sess1/main': {'slug': legacySlug},
+          }),
+        )).getOrThrow();
+
+        final entry = (await repo.directory()).singleWhere(
+          (e) => e.id == 'sess1/main',
+        );
+        expect(entry.cwd, '/Users/Yury_Bakhmutski/_w/postal/nl');
+      },
+    );
+
+    test(
+      'directory tolerates a non-map registry entry (gh-1744 review)',
+      () async {
+        // A registry that is valid JSON but whose entry is not an object
+        // (another tool corrupted it) must not kill the whole listing with
+        // a NoSuchMethodError — the slug decode answers instead.
+        const legacySlug = '--Users-Yury_Bakhmutski-_w-postal-nl--';
+        final mailboxDir = '/sessions/$legacySlug/messages/sess1_main';
+        await env.createDir('$mailboxDir/inbox', recursive: true);
+        (await env.writeFile('$mailboxDir/.id', 'sess1/main')).getOrThrow();
+        (await env.writeFile(
+          '/home/user/.fah/messages-registry.json',
+          jsonEncode({'sess1/main': 'corrupted by another tool'}),
+        )).getOrThrow();
+
+        final entry = (await repo.directory()).singleWhere(
+          (e) => e.id == 'sess1/main',
+        );
+        expect(entry.cwd, '/Users/Yury_Bakhmutski/_w/postal/nl');
+      },
+    );
+
+    test(
+      'directory tolerates a non-map registry document (gh-1744 review)',
+      () async {
+        // Same shape-error class one level up: a registry whose TOP LEVEL
+        // is not an object escapes `on FormatException` with a TypeError —
+        // the listing must survive it through the slug decode fallback.
+        const legacySlug = '--Users-Yury_Bakhmutski-_w-postal-nl--';
+        final mailboxDir = '/sessions/$legacySlug/messages/sess1_main';
+        await env.createDir('$mailboxDir/inbox', recursive: true);
+        (await env.writeFile('$mailboxDir/.id', 'sess1/main')).getOrThrow();
+        (await env.writeFile(
+          '/home/user/.fah/messages-registry.json',
+          '["corrupted by another tool"]',
+        )).getOrThrow();
+
+        final entry = (await repo.directory()).singleWhere(
+          (e) => e.id == 'sess1/main',
+        );
+        expect(entry.cwd, '/Users/Yury_Bakhmutski/_w/postal/nl');
+      },
+    );
+
+    test(
+      'register rewrites a non-map registry document (gh-1744 review)',
+      () async {
+        // _recordRegistry reads the same file: a non-map document must be
+        // treated as "nothing usable" (fresh registry), not crash the
+        // registration.
+        (await env.writeFile(
+          '/home/user/.fah/messages-registry.json',
+          '["corrupted by another tool"]',
+        )).getOrThrow();
+
+        await repo.register('main');
+        final registryText = (await env.readTextFile(
+          '/home/user/.fah/messages-registry.json',
+        )).getOrThrow();
+        expect(jsonDecode(registryText), {
+          'main': {'slug': '--work--', 'cwd': '/work'},
+        });
+      },
+    );
 
     test('directory tolerates a missing session root', () async {
       final isolated = FileMessagingRepository(

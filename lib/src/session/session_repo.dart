@@ -109,7 +109,19 @@ abstract interface class SessionRepo {
 
 String _encodeCwd(String cwd) {
   final normalized = cwd.replaceAll(RegExp(r'[/\\]+$'), '');
-  return '--${normalized.replaceFirst(RegExp(r'^[/\\]'), '').replaceAll(RegExp(r'[/\\:]'), '-')}--';
+  final bare = normalized.replaceFirst(RegExp(r'^[/\\]'), '');
+  // Reversible escaping (gh-1744): separators still flatten to `-`, but a
+  // literal `-` must not be mistaken for one, so it (and every character
+  // the decoder treats specially) rides percent-escapes BEFORE the
+  // separator flattening. Paths without any of them encode
+  // byte-identically to the legacy scheme, keeping existing on-disk slug
+  // folders and pi's layout stable.
+  final escaped = bare
+      .replaceAll('%', '%25')
+      .replaceAll('-', '%2D')
+      .replaceAll(':', '%3A')
+      .replaceAll(RegExp(r'[/\\]'), '-');
+  return '--$escaped--';
 }
 
 /// The per-project directory slug used under the sessions root
@@ -117,8 +129,51 @@ String _encodeCwd(String cwd) {
 /// fabric root) colocate with the project's sessions.
 String encodeSessionCwd(String cwd) => _encodeCwd(cwd);
 
+/// The escape sequences [decodeSessionCwd] understands. `%2D` (a literal
+/// hyphen) is what makes the scheme reversible: without it, hyphens in
+/// directory names decoded as path separators (gh-1744).
+final RegExp _slugEscape = RegExp(r'%([0-9A-Fa-f]{2})');
+
+/// Whether [inner] carries a reversible escape — the marker that the slug
+/// was written by the reversible encoder and must not go through the
+/// legacy lossy split.
+bool _hasReversibleEscape(String inner) => _slugEscape
+    .allMatches(inner)
+    .any((m) => const {'25', '2D', '2F', '5C', '3A'}
+        .contains(m.group(1)!.toUpperCase()));
+
+/// Undoes [_encodeCwd]'s percent-escapes in one segment. Unknown `%XX`
+/// sequences stay literal (legacy text).
+String _unescapeSlugPart(String part) => part.replaceAllMapped(
+  _slugEscape,
+  (m) => switch (m.group(1)!.toUpperCase()) {
+    '25' => '%',
+    '2D' => '-',
+    '2F' => '/',
+    '5C' => r'\',
+    '3A' => ':',
+    _ => m.group(0)!,
+  },
+);
+
 /// Reverses [encodeSessionCwd]: `--Users-Uladzimir_Klyshevich-git-dm.ai--`
 /// → `/Users/Uladzimir_Klyshevich/git/dm.ai`.
+///
+/// Slugs written by the reversible encoder (they carry `%2D`-style
+/// escapes, gh-1744) decode exactly; legacy escape-free slugs keep the
+/// historic lossy split-on-hyphen decode so existing on-disk folders stay
+/// readable.
+///
+/// Second legacy ambiguity class (gh-1744 review): the reversible marker
+/// is "the slug carries a recognized `%XX` escape", so a legacy folder
+/// whose name legitimately contained escape-like TEXT flips its decode —
+/// `%2D`, `%2F`, `%5C`, `%3A` and `%25` present in legacy slug text now
+/// unescape (e.g. `--tmp-a%2Fb--` decoded literally before this change,
+/// and decodes to `/tmp/a/b` now; `--tmp-a%2Db--` → `/tmp/a-b`;
+/// `--tmp-a%25b--` → `/tmp/a%b`). Impact is bounded: the decode only
+/// feeds the messaging `directory()` cwd fallback — the registry's exact
+/// cwd is preferred — and a wrong fallback cwd is refused by name in
+/// [launchMailboxWake] instead of crashing the wake.
 ///
 /// Returns `null` if [slug] is not wrapped in `--` or decodes to an empty path.
 String? decodeSessionCwd(String slug) {
@@ -127,9 +182,11 @@ String? decodeSessionCwd(String slug) {
   }
   final inner = slug.substring(2, slug.length - 2);
   if (inner.isEmpty) return null;
+  final reversible = _hasReversibleEscape(inner);
   final parts = inner.split('-');
   if (parts.isEmpty || parts.any((p) => p.isEmpty)) return null;
-  return '/${parts.join('/')}';
+  if (!reversible) return '/${parts.join('/')}';
+  return '/${parts.map(_unescapeSlugPart).join('/')}';
 }
 
 /// Creates a new session id (time-ordered uuidv7).
