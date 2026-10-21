@@ -1,0 +1,287 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-21T20:48:55.039Z",
+  "ticketKey": "gh-1742",
+  "headSha": "d3b6ba6fc8ba2b119366d27d8501f3807bfe80c0",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:9814e35600cf5593",
+      "size": 78512
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:deb7e45ca4b38247",
+      "size": 1283761
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:00bd79f2ad20a722",
+      "size": 506
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:322df20a1b5aeed1",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:a1f91b82f6f3cc8a",
+      "size": 28823
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:edfb8a87be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:5f447c8cb65be346",
+      "size": 4440
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:b98ec2d0c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:e16048fdca240b55",
+      "size": 11029
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:cf5fd30af19d67ae",
+      "size": 10867
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:7c471268",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the \"≤64k fires no later than legacy\" parity claim is not what the formula delivers**\n\nThis comment (and the mirrored test comment in `test/compaction/compaction_test.dart` \"small dev/on-device windows compact no later than before\", and the PR description) promises that the legacy-parity floor `min(4096, window ~/ 4)` keeps the ≤64k band firing **no later than before**. Executed against the actual formula, the parity band is only **≤16,384 and ≥262,144** — every window in between now compacts **later** than legacy on the estimate channel:\n\n| window | new reserve | legacy reserve | new trigger | legacy trigger |\n|---|---|---|---|---|\n| 20,480 | 4,096 | 5,120 | 16,384 | 15,360 |\n| 32,768 | 4,096 | 8,192 | 28,672 | 24,576 |\n| 65,536 | 4,096 | 16,384 | 61,440 | 49,152 |\n| 131,072 | 8,192 | 16,384 | 122,880 | 114,688 |\n| 200,000 | 12,500 | 16,384 | 187,500 | 183,616 |\n\nThe legacy reserve ramped as `window ~/ 4` up to a 16,384 cap; the new floor caps the parity term at **4,096**, so it stops matching legacy at 16,384 — not at 65,536 where the proportional term takes over. The \"fades out exactly where the proportional term takes over\" reasoning is off by exactly that gap.\n\nImpact: for the whole (16k, 262k) band — i.e. most hosted sessions (128k/200k windows) — a provider that reports no usable usage (the E1 degradation path this same PR documents as \"estimate-only, exactly the legacy behavior\") now rides 4k–12k tokens closer to the hard window than the legacy behavior the claim promises to preserve, with no observed channel as backstop. With usage reporting the forced observed channel covers it (that is what REG-1 pins), so this is bounded drift, not breakage — but either the guarantee or the formula should be true.\n\nPlease pick one:\n- widen the floor to `min(16384, window ~/ 4)` (exact legacy parity below 262,144, proportional above — `max(window ~/ 16, min(16384, window ~/ 4))`), or\n- correct this comment, the test comment, and the PR description to state the real crossover (≤16,384 / ≥262,144) and add a table row in `UT-2` pinning one mid-band window (e.g. `forWindow(32768).reserveTokens == 4096`) so the drift is documented instead of implicit."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:1e969ecd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the child loop guard rides the UNCAPPED registered window while child compaction rides the capped one**\n\n`_resolveChildWiring` stamps the REGISTERED (uncapped) window onto the child `Model` via `withRegisteredContextWindow`, and this doc comment says the child loop's over-window guard and the compaction threshold now \"divide by the same honest number\". They do only when no clamp-down owner cap is set:\n\n- compaction basis: `_childContextWindow` → `effectiveContextWindow(registry window, contextWindowCap)` — capped ✓\n- guard basis: the child `Agent` is built in `_buildChild` **without** `contextWindowCap` (the `Agent`/`AgentLoopConfig` parameter exists, `agent.dart:214`), so the guard computes `effectiveContextWindow(childModel.contextWindow, null)` → the uncapped registered value ✗\n\nConcretely: registry publishes 1M for a 200k-catalog id, owner sets `agent.contextWindowCap: 256000` → child compaction fires at the 256k basis, but the child's over-window guard (and the gh-1409 operative-pin budget at `agent_loop.dart:1715`, same formula) measure against 1M. Before this PR both bases were the catalog window, so they agreed; the registry raise is what forks them. If compaction repeatedly fails (it is best-effort by contract — \"the over-window guard stays the last resort\"), the last resort now trips ~744k tokens later than the owner's cap intends, and the main agent's guard (which does honor the cap) diverges from its own children's.\n\nFix is one line — pass the cap into the child agent so every child-side consumer shares the capped basis:\n\n```dart\nfinal child = Agent(\n  model: wiring.model,\n  contextWindowCap: contextWindowCap, // gh-1742: same clamp the main loop runs\n  ...\n);\n```\n\n(or apply the cap inside `withRegisteredContextWindow` at the wiring site — but then `_childContextWindow` and the guard must keep agreeing by construction, so the constructor param is the safer single clamp point)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:71e74088",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `hasAnyReportedUsage` is exported but has no caller**\n\n`hasAnyReportedUsage` is barrel-exported public API, but nothing in `lib/` calls it — only its own test does. Its doc justifies it via E1 (\"worth the caller's once-per-model note\"), but that once-per-model note is not implemented anywhere in this PR (neither the executor nor the CLI stamps a \"this provider never reports usage\" hint anywhere).\n\nTwo options:\n- wire the consumer this PR's doc promises (e.g. a one-time dim line when a child ran ≥N boundaries estimate-only while a registry entry marked the window verified — the exact gh-112 confusion shape), or\n- keep the function but drop it from the barrel until a caller exists, so the public API surface (gh-1232 append-only policy) doesn't grow a speculative export.\n\nNot blocking — dead-but-tested public helpers are cheap — but the barrel is append-only by policy, so exporting before the consumer exists is the wrong order."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:a690a4e3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: a confirming endpoint report still leaves the window \"unverified\"**\n\n`_applyDetectedContextWindow` publishes into the registry only when `detected != model.contextWindow`. When the endpoint's report CONFIRMS the carried catalog value (the common case for well-catalogued models), nothing is published, so `registry.isVerified(model)` stays false and the AC6 badge on every `task_status` pressure row marks that window unverified — even though the provider just verified it.\n\nSince `publish` with the same value is a behavioral no-op (`windowFor` returns what the model already carries) and `withRegisteredContextWindow` short-circuits on `registered == model.contextWindow`, publishing unconditionally is free and makes the verification ladder honest:\n\n```dart\nif (detected != null) {\n  _replaceModelLimits(\n    contextWindow: detected == model.contextWindow ? null : detected,\n    windowSource: ContextWindowSource.endpointReport,\n  );\n  ...\n}\n```\n\n(with the publish reading `detected` rather than the rebuilt window, or by moving the publish next to the `detected != null` check). Purely a truth-in-UI fix; no behavior change."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:fe3d2760",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: second hand-rolled Model copy — consider one shared helper**\n\n`withRegisteredContextWindow` rebuilds `Model` field-by-field (18 fields) to swap one value. This is the second hand-copy of the full field list in the codebase (`_replaceModelLimits` in `provider_models.dart` is the first); `Model` has no `copyWith`, so the next field added to `Model` (they do get added — `timeoutScopeLabel`, `capabilityNotes`, `connectTimeout`, `streamIdleTimeout` are all recent) must be remembered in **two** hand-copies plus anywhere else this pattern lands, or it is silently dropped (the analyzer cannot catch a missing named argument on a constructor that doesn't require it).\n\nCheapest insurance while you are here: add `Model copyWith({int? contextWindow})` (or a focused `withContextWindow(int)`) next to the class and use it in both sites — then the field list lives exactly once, next to the class it mirrors."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:8567537b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the \"smol summarizer resolves the same number\" claim is not implemented**\n\nThe registry's header doc says \"main, children, the smol summarizer and the ctx meter resolve the same number\" — but the smol summarizer never touches the registry: `_compactChildIfNeeded` passes `rolesResolver?.resolveRole(smolModelRole)` straight into `AutoCompactorSources(smolModel:)` unwrapped, and the CLI's main compaction wiring does the same. So a smol model whose catalog window is wrong (exactly the copilot-1M-vs-256k-kimi shape the diff's own `_refreshModelCache` comment describes) still mis-bounds the #729 checkpoint payload budget and the structured engine's `summarizerWindow` — the same class of bug this ticket fixes for children.\n\nEither scope the claim (\"children and the meter\" — the meter agrees via the mutated main model, which is worth saying explicitly too, since it does not literally read the registry either), or wrap the smol resolution with `withRegisteredContextWindow` once detections for that identity get published. As written, the doc promises a consumer that does not exist."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:a30fe39c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the forced latch grows without bound and never resets after a child is disposed**\n\n`_forcedObservedAt` is keyed by child id and never evicted — not when a child completes, aborts, or is torn down. Retained children already live for the whole session, so this is one stale int per child at worst (bounded, cosmetic), but every other per-child map in this class (`_childSessions`, `_childSessionWrites`, `_flushCursor`-style state) gets cleaned on the dispose path; the latch is the one that does not. Adding it to the same cleanup keeps the \"everything about a child dies with the child\" invariant obvious to the next reader.\n\nAlso worth one clarifying word in the latch comment: the reset branch (`!decision.observedTriggered && observed < latch`) lowers the anchor but leaves the latch non-null — that is what makes the next re-crossing strictly-greater and re-armed, which took me a second read to confirm. A half-line (\"reset = lower the anchor, keep the latch armed\") would save it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:805ca989",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — forWindow parity claim vs the formula (`lib/src/compaction/compaction.dart`)\n\nFixed by taking your option A: the floor is now the **exact legacy curve**, not the truncated one.\n\n**Commit** `7d4a9db624` — `forWindow` builds\n\n```dart\nfinal legacyReserve = min(16384, max(1024, window ~/ 4));   // the full legacy curve\nvar reserveTokens  = min(65536, max(window ~/ 16, legacyReserve));\n```\n\nso the reserve rides the byte-identical legacy line through the whole band you tabled and only\nswitches to the proportional term where `window/16` overtakes it (≥ 262,144). Your rows now hold\nat parity:\n\n| window | new reserve | legacy reserve | parity |\n|---|---|---|---|\n| 20,480 | 5,120 | 5,120 | ✓ |\n| 32,768 | 8,192 | 8,192 | ✓ |\n| 65,536 | 16,384 | 16,384 | ✓ |\n| 131,072 | 16,384 | 16,384 | ✓ |\n| 200,000 | 16,384 | 16,384 | ✓ (window/16 = 12,500 loses the max) |\n\n**Tests** (`test/compaction/compaction_test.dart`, UT-2 group): the legacy-parity group now pins\nthe mid-band rows explicitly — `forWindow(20480) == 5120`, `forWindow(32768) == 8192`,\n`forWindow(65536) == 16384`, `forWindow(131072) == 16384`, `forWindow(262144) == 16384` — plus a\nsweep asserting `new trigger <= legacy trigger` across the 8k–2M range, and the mirrored\n`context_pressure_test.dart` comments were corrected to the same curve. The doc comment on\n`forWindow` now states the real crossover (legacy term dominates below 262,144, proportional above).\nEstimate-only (E1) providers therefore compact **no later than before** everywhere, as claimed."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:aa9b41f8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — child loop guard rides the uncapped registered window (`lib/src/task/task_executor.dart`)\n\nFixed with your one-line shape — the cap now rides the child `Agent` itself.\n\n**Commit** `62059d0e50` — `_buildChild`/`_buildResumeChild` pass `contextWindowCap: contextWindowCap`\n(the same clamp the main loop runs) into the child `Agent`, so the child loop's over-window guard,\nthe gh-1409 operative-pin budget, and `_childContextWindow`'s compaction basis all clamp through\n`effectiveContextWindow(registeredWindow, cap)` **by construction**. The registry raise can no\nlonger fork the guard from compaction: with registry=1M and `contextWindowCap: 256000`, both bases\nare 256k.\n\nThe `_resolveChildWiring` doc was reworded accordingly (the resolved Model carries the registered\nwindow; the owner cap rides the `Agent`, and every child-side consumer shares the capped basis).\n\n**Test** (`test/task/subagent_window_registry_test.dart`, \"AC2: children resolve the window from\nthe shared registry\"): the \"clamps down\" case now asserts the child-side guard basis — a 1M\nregistry publish under a 256k owner cap produces the capped over-window guard behavior (the guard\ntrips at the 256k basis, not ~1M), so the regression you described is pinned in both directions\n(clamp-down and clamp-up)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:67fd0af0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — `hasAnyReportedUsage` exported with no caller (`lib/src/compaction/context_pressure.dart`)\n\nTook your option B: the export is gone.\n\n**Commit** `aebae189eb` — `hasAnyReportedUsage` is removed from the `flutter_agent_harness.dart`\nbarrel (the gh-1232 append-only public-API surface no longer grows a speculative entry). The\nfunction itself stays in `context_pressure.dart` with its test — it remains part of the\nreconciliation layer's documented E1 degradation semantics (the pressure assessor's inputs and the\n\"worth the caller's once-per-model note\" hook), but it is package-private-in-effect until a caller\nexists.\n\nWiring the consumer (option A — the once-per-model \"this provider never reports usage\" dim note)\nis real new feature surface on top of gh-1742's scope; it should go through its own issue rather\nthan ride this PR. When it lands, the export can come back with it — one PR, one API-surface move.\n\n**Test**: `dart analyze` on the barrel confirms the export list change; the existing\n`context_pressure_test.dart` suite still covers the helper."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:08cb729c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 4 — a confirming endpoint report still leaves the window \"unverified\" (`lib/src/cli/provider_models.dart`)\n\nFixed exactly as suggested.\n\n**Commit** `b5f0ff7460` — `_applyDetectedContextWindow` now treats the three cases separately:\n\n```dart\nif (detected != model.contextWindow) {\n  _replaceModelLimits(contextWindow: detected, windowSource: endpointReport);\n  io.writeln(_style.dim('model context window: $detected (from endpoint)'));\n} else {\n  // The endpoint CONFIRMED the carried value: publish it so the AC6\n  // verification ladder is honest (windowFor returns what the model\n  // already carries — a behavioral no-op, but isVerified flips true).\n  contextWindowRegistry.publish(\n    model: model,\n    window: detected,\n    source: ContextWindowSource.endpointReport,\n  );\n}\n```\n\nThe confirming path publishes unconditionally into the registry — `windowFor` returns the value\nthe model already carries and `withRegisteredContextWindow` short-circuits on equality, so the only\nobservable change is `registry.isVerified(model)` → true and the `task_status` pressure badge\nmarking the window verified. No \"(from endpoint)\" dim line is printed for a confirmation (nothing\nchanged, so nothing to announce).\n\n**Test** (`test/cli/copilot_provider_test.dart`): \"an endpoint-reported context window in roles\nmode — a CONFIRMING report verifies the registry window\" drives a fetch whose reported window\nequals the carried one and asserts `contextWindowRegistry.isVerified(model)` is true afterwards."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:24f6ab44",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 5 — second hand-rolled `Model` copy (`lib/src/compaction/context_window_registry.dart`)\n\nDone — the field list now lives exactly once, next to the class.\n\n**Commit** `b162abd2ad` — `Model.copyWith(...)` added on `lib/src/model.dart` itself (the idiomatic\nDart shape, marked as the gh-1106 codegen candidate alongside the other hand-rolled copies), and\nboth sites now go through it:\n\n- `withRegisteredContextWindow` (`context_window_registry.dart`) is now\n  `return model.copyWith(contextWindow: registered);` — the 18-field hand-copy is gone;\n- `_replaceModelLimits` (`provider_models.dart`) rebuilds through the same `copyWith`, so a future\n  `Model` field can no longer be silently dropped by one of two diverging copies (the analyzer\n  cannot catch a missing optional named argument, as you noted — now there is nothing to diverge).\n\nThe helper is a general `copyWith` (all fields optional) rather than a one-slot\n`withContextWindow(int)`, because the second consumer (`_replaceModelLimits`) swaps\n`contextWindow`, `maxTokens`, and source bookkeeping in one call — a one-slot helper would have\nsprawn a second bespoke builder again.\n\n**Test**: the existing `context_window_registry_test.dart` suite (plus the CLI `/provider` tests)\npins the swap semantics; `dart analyze` confirms no unused-field warnings from the consolidated\nconstructor."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:d7ea0c80",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 6 — the \"smol summarizer resolves the same number\" claim (`lib/src/compaction/context_window_registry.dart` header)\n\nImplemented the consumer rather than scoping the claim down — the header now tells the truth.\n\n**Commit** `befb7b93bf` — two gaps kept smol on the stale catalog value, both closed:\n\n1. `_compactChildIfNeeded` (`task_executor.dart`) now wraps the roles-resolved smol model with the\n   shared registry swap before handing it to `AutoCompactorSources`:\n\n   ```dart\n   smolModel: smol == null\n       ? null\n       : withRegisteredContextWindow(smol.model, contextWindowRegistry),\n   ```\n\n   so the #729 checkpoint payload budget and the structured engine's `summarizerWindow` derive\n   from the registered value.\n\n2. `FallbackStreamFunction` (the roles chain) discarded the `StreamFunction` contract's caller\n   model — every attempt dialed `ChainEntry.model` verbatim, so even a correctly patched caller\n   model still dialed the stale catalog window. A caller whose model is the **same identity**\n   (provider/modelId/baseUrl per `ModelWindowKey`) now dials with the caller's window; a different\n   identity keeps the entry model, leaving failover semantics untouched. The CLI's main compaction\n   wiring rides the same fix (its registry-patched main model now reaches the provider dial).\n\n**Tests**: `test/task/subagent_window_registry_test.dart` — \"compaction LLM calls ride the smol\nmodel WITH the registered window, not the stale catalog one\" — publishes 478,000 for the smol\nidentity over a stale 400 catalog entry and asserts every judge/checkpoint call the child\ncompactor makes carries the registered window (and the transcript is fat enough that the\nstructured engine's hide pass genuinely runs, so the assertion is not vacuous).\n`test/model_roles/fallback_stream_test.dart` pins the chain-level contract: same-identity caller\nwindow honored, different-identity caller ignored."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:4c1355f7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 7 — the forced latch grows without bound / reset semantics (`lib/src/task/task_executor.dart`)\n\nTwo halves — one doc fix applied, one eviction declined with the reason spelled out.\n\n**The comment** (commit `409d83c480`): the latch comment now says exactly what you asked it to\nsay — reset **lowers the anchor while keeping the latch armed**, which is what makes the next\nre-crossing strictly-greater and re-armed.\n\n**The eviction**: I checked the dispose path you referenced, and there isn't one — not for the\nlatch, and not for any other per-child map in the class. `_childSessions`, `_childSessionWrites`,\nand the flush-cursor state are never `.remove()`d either: retained children live for the whole\nsession **by design** (the E4 resume guards exist precisely so a completed child can be resumed,\nand a resumed child keeps its id and therefore must keep its anchor — evicting the latch on\ncompletion would let the first over-line observation after a resume re-force a pass the pre-dispose\nanchor had already reacted to). A per-child cleanup event that the other maps \"get cleaned on\"\ndoes not exist in this class, so adding one for the latch alone would not converge with them —\nit would diverge.\n\nThe bounded cost you note (one stale int per child, dying with the `TaskExecutor` instance) is the\naccurate model, and the comment now states that lifetime explicitly (\"the anchor lives for the\nchild's whole retained lifetime … it dies with the executor rather than at some child-end event\nthat does not exist\"). If a real per-child disposal pass is ever added (child teardown + mailbox\ndrain), the latch map should join it in the same change — but that is a class-wide lifecycle\nfeature, not a one-line fix here."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:3c6a3be7",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 0768387216281d35ccf9f52f360fc79e7ff76c41 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:ff38ec8a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with findings)\n\n**Summary**: gh-1742 lands a well-tested, well-documented observed-usage layer (0 blocking; 2 important, 5 suggestions). Verified locally: `dart test test/compaction test/task` 663 passed, the four new/changed registry & pressure suites 70+8 passed, resume-budget parity test passed, `dart analyze` clean on all changed files. The two important findings are claim-vs-code mismatches, not breakage: (1) `CompactionSettings.forWindow`'s \"≤64k band fires no later than legacy\" parity claim is false for every window in (16k, 262k) — the estimate-only trigger moves up to 12,288 tokens later at 64k / 8,192 at 128k / 3,884 at 200k; (2) the child loop's over-window guard rides the uncapped registered window while child compaction rides the owner-capped one (`_buildChild` never passes `contextWindowCap`), forking the two bases exactly where a clamp-down cap exists.\n\n**Key Issues**:\n- ⚠️ IMPORTANT — compaction.dart:462 parity claim false in (16k, 262k); fix formula or fix comment+tests (comment1)\n- ⚠️ IMPORTANT — task_executor.dart:1176 child guard uncapped vs capped compaction; pass `contextWindowCap` into the child `Agent` (comment2)\n- 💡 `hasAnyReportedUsage` exported with no caller (comment3); confirming endpoint report still stamps \"unverified\" (comment4); second hand-rolled 18-field `Model` copy (comment5); \"smol summarizer resolves the registry\" claim unimplemented (comment6); forced-latch never evicted + comment clarity (comment7)\n\n**Next Steps**:\n1. Pick one for comment1: widen the floor to `min(16384, window ~/ 4)` or correct the comment/test/PR narrative to the real crossover (≤16,384 / ≥262,144)\n2. Add `contextWindowCap: contextWindowCap` to the child `Agent(...)` in `_buildChild` (comment2)\n3. The five suggestions are polish; none blocks merge"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:39bd4059",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 7da76eb56c8bca3e15e5cca44ab248678642738d — stale base at 2026-10-21T18:45:32.378Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:dbd5699d",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 409d83c4800c59be4a43c9c8bc98a9a9536c5162 — stale base at 2026-10-21T19:38:27.597Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:501c5a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "✅ Rework finished. `pr_approved` is sticky (approved once — never re-reviewed): the new head re-validates and merges directly."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:c3419e90",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 143ee1e036afdec68a434add4627a980bb5c30b8 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:90bab404",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — pr-1753\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:7c6a1db3",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1742 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/39670248803\n🔴 red head d3b6ba6fc8ba2b119366d27d8501f3807bfe80c0 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    }
+  ]
+}

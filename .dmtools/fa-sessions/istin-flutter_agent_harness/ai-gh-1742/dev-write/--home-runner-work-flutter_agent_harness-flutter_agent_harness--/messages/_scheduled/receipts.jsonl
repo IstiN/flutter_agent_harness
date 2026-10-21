@@ -1,0 +1,4 @@
+{"ts":"2026-10-21T21:07:14.440164Z","event":"scheduled","id":"1792616834439062_0000_1c7v4t8","dueMs":1792617554439,"to":"main","text":"Check the CI re-run verdict for PR #1753 head d3b6ba6fc8: run `gh run view 39670248803 --json conclusion,jobs` (watcher job sh-43-hnfgsdhywr1cfrigq may have finished with FINAL=...). If hostile-env/Qu"}
+{"ts":"2026-10-21T21:18:45.109556Z","event":"scheduled","id":"1792617525108893_0001_2rwyl4","dueMs":1792617885108,"to":"main","text":"Backstop: check the canonical verify run for pr-1753 rework — `tail -3 /tmp/canonical_verify.log` (background job sh-51-hnfh3s3hohroqnuo runs `dart test test/compaction test/task test/agent test/cli`)"}
+{"ts":"2026-10-21T21:19:14.444095Z","event":"delivered","id":"1792616834439062_0000_1c7v4t8","to":"main","dueMs":1792617554439,"lagMs":5}
+{"ts":"2026-10-21T21:24:45.111314Z","event":"delivered","id":"1792617525108893_0001_2rwyl4","to":"main","dueMs":1792617885108,"lagMs":3}
