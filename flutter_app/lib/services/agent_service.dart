@@ -543,8 +543,11 @@ class AgentService extends ChangeNotifier
        _watchExternalSessions = watchExternalSessions,
        // ignore: prefer_initializing_formals
        _includeSharedSessionRoots = includeSharedSessionRoots,
+       // ignore: prefer_initializing_formals
        trajectoryRequestBlobs = trajectoryRequestBlobs,
+       // ignore: prefer_initializing_formals
        trajectoryRequestBlobMaxMb = trajectoryRequestBlobMaxMb,
+       // ignore: prefer_initializing_formals
        trajectoryRequestBlobTtlDays = trajectoryRequestBlobTtlDays,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
