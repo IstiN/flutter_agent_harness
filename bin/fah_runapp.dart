@@ -1891,12 +1891,13 @@ Future<void> _runApp(List<String> args) async {
   // exit 130 — instead of dying mid-write. A second SIGTERM escalates
   // (graceful → forced), the usual supervisor contract. [stdout.flush]
   // matters: exit() drops the async write buffer, taking the just-written
-  // `cancelled` frame with it.
+  // `cancelled` frame with it. gh-1763: the abort names SIGTERM (never
+  // masquerades as a user Ctrl+C).
   if (headlessPrompt != null) {
     ProcessSignal.sigterm.watch().listen((_) {
       if (_sigtermSeen) exit(143);
       _sigtermSeen = true;
-      _gracefulHeadlessExit(terminalIo.fireInterrupt);
+      _gracefulHeadlessExit(terminalIo.fireInterrupt, signal: 'SIGTERM');
     });
   }
 
@@ -1913,7 +1914,7 @@ Future<void> _runApp(List<String> args) async {
     final sigtermSub = ProcessSignal.sigterm.watch().listen((_) {
       if (sigtermSeen) exit(143);
       sigtermSeen = true;
-      _gracefulHeadlessExit(terminalIo.fireInterrupt);
+      _gracefulHeadlessExit(terminalIo.fireInterrupt, signal: 'SIGTERM');
     });
     final int code;
     try {

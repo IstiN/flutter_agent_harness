@@ -69,7 +69,22 @@ void Function()? _wireServeSettle;
 /// Graceful headless abort shared by SIGINT and SIGTERM (issue #155):
 /// abort the run, wait for it to settle (bounded — a wedged provider
 /// cannot hold the exit), flush the HEP stream, exit 130.
-void _gracefulHeadlessExit(void Function() fireInterrupt) {
+///
+/// gh-1763 AC3: the abort names its signal on stderr — a `SIGTERM` that
+/// reached fa from a child process (a broad `pkill` inside a bash tool
+/// call) must never read as a user Ctrl+C in the post-mortem log. The
+/// exit code stays 130 (the pinned supervisor contract — a second SIGTERM
+/// escalates to 143 in the caller).
+void _gracefulHeadlessExit(
+  void Function() fireInterrupt, {
+  String signal = 'SIGINT',
+}) {
+  if (signal != 'SIGINT') {
+    stderr.writeln(
+      'fa: $signal received — aborting headless run gracefully '
+      '(exit 130; a second $signal forces exit 143)',
+    );
+  }
   fireInterrupt();
   _wireServeSettle?.call();
   final run = _headlessRun;
