@@ -153,6 +153,23 @@ void main() {
               'the retry of "$id" must re-upload the SAME artifact name '
               'the gate below downloads',
         );
+        expect(
+          (retry['with'] as YamlMap)['path'],
+          (step['with'] as YamlMap)['path'],
+          reason:
+              'the retry of "$id" must re-upload the SAME path '
+              'the pty-coverage-gate merges — a drifted path would upload '
+              'wrong/empty content under the correct artifact name and '
+              'silently poison the evidence',
+        );
+        expect(
+          (retry['with'] as YamlMap)['retention-days'],
+          (step['with'] as YamlMap)['retention-days'],
+          reason:
+              'the retry of "$id" must keep the SAME retention-days — '
+              'a re-upload that outlives (or dies before) the window '
+              'its consumer expects silently shifts the evidence contract',
+        );
       }
     });
 
