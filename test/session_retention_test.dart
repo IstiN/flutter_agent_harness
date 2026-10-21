@@ -390,6 +390,7 @@ void main() {
         sizeBytes: 100,
         lastUsed: daysAgo(59),
       );
+      await presence.register(b); // b owns a real heartbeat row...
       final usage = await sweeper().usage();
       final unit = usage.sessions.first.bytes;
       // Flipping presence: the plan and a's unlink see b absent; the
