@@ -314,7 +314,12 @@ final class FileMessagingRepository implements MessagingRepository {
     final text = existing.valueOrNull;
     if (text == null || text.isEmpty) return null;
     try {
-      return jsonDecode(text) as Map<String, dynamic>;
+      // Shape-guarded (gh-1744 review): a valid-JSON document that is not
+      // an object (another tool corrupted the file) is "nothing usable" —
+      // an `as` cast here would throw a TypeError that `on FormatException`
+      // does not catch and take the whole listing down.
+      final decoded = jsonDecode(text);
+      return decoded is Map<String, dynamic> ? decoded : null;
     } on FormatException {
       return null;
     }
@@ -379,7 +384,14 @@ final class FileMessagingRepository implements MessagingRepository {
         final nameMarker = (await _env.readTextFile(
           '${mbDir.path}/.name',
         )).valueOrNull?.trim();
-        final registryCwd = registry?[id]?['cwd'];
+        // Shape-guarded (gh-1744 review): an entry that is valid JSON but
+        // not an object (e.g. a plain string written by another tool) must
+        // not crash the whole listing with a NoSuchMethodError — the slug
+        // decode answers instead.
+        final entry = registry?[id];
+        final registryCwd = entry is Map<String, dynamic>
+            ? entry['cwd']
+            : null;
         final cwd = (registryCwd is String && registryCwd.isNotEmpty)
             ? registryCwd
             : _decodeSessionCwd?.call(slugDir.name);
@@ -468,8 +480,13 @@ final class FileMessagingRepository implements MessagingRepository {
     final existingText = existing.valueOrNull;
     if (existingText != null && existingText.isNotEmpty) {
       try {
-        final decoded = jsonDecode(existingText) as Map<String, dynamic>;
-        registry = Map<String, dynamic>.from(decoded);
+        // Shape-guarded like _readRegistry (gh-1744 review): a non-map
+        // document is treated as nothing usable — the fresh entry replaces
+        // it instead of crashing the registration.
+        final decoded = jsonDecode(existingText);
+        if (decoded is Map<String, dynamic>) {
+          registry = Map<String, dynamic>.from(decoded);
+        }
       } on FormatException {
         registry = {};
       }
