@@ -46,6 +46,7 @@ import 'headless_config.dart';
 import 'headless_prompt.dart';
 import 'hep.dart';
 import 'stream_json.dart';
+import 'resumed_context_cache.dart';
 import 'key_event.dart';
 import 'key_status.dart';
 import 'model_presets.dart' show knownModelPresets;
@@ -1551,6 +1552,13 @@ class AgentCli {
   /// (see `_liveContextTokens` in approval_commands.dart): keyed on the
   /// transcript length + last message instance — never on stream content.
   final SettledContextEstimate _ctxEstimate = SettledContextEstimate();
+
+  /// The warm-switch resumed-context cache (gh-1734): a session whose
+  /// file is unchanged since its last open in this process reuses the
+  /// built context instead of re-paying the projection walk on every
+  /// switch. Keyed (path, size, mtime), LRU-bounded; invalidated from
+  /// outside by any file change (the stat fingerprint misses).
+  final ResumedContextCache _resumedContextCache = ResumedContextCache();
 
   /// Memo fields for the status line's request overhead (system prompt +
   /// tool schemas, [estimateRequestOverheadTokens] — the method lives in
