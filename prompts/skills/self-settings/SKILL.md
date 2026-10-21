@@ -698,6 +698,31 @@ spills:
 
 Applies at next boot.
 
+## Session retention
+
+<!-- parity: none (boot config only) -->
+
+The `sessions:` section (gh-1746) is the opt-in disk hygiene policy for
+the sessions root: when the total on disk crosses `maxTotalBytes`, a
+boot sweep deletes whole session units oldest-last-used-first. Live
+sessions (fresh heartbeats), named sessions, and sessions younger than
+`minAgeDays` are always exempt — and with no `sessions:` section at all
+nothing is EVER auto-deleted (byte-identical legacy boot). Tolerant
+parse: unknown keys become notes, never boot failures. Run
+`fa session clean [--dry-run]` to enforce the policy manually;
+`sweep: off` makes the manual verb the only enforcement path:
+
+```yaml
+sessions:
+  retention:
+    maxTotalBytes: 5368709120 # total cap in bytes (0 = no cap, default)
+    minAgeDays: 14 # never delete sessions used more recently than this
+    keepNamed: true # named sessions (fa --session <name>) are exempt
+    sweep: boot # boot (sweep at startup) | off (manual `fa session clean` only)
+```
+
+Applies at next boot (the sweep runs before the session opens).
+
 ## Store & product links
 
 <!-- parity: none (config-only surface; web/macOS app banner reads it too) -->
