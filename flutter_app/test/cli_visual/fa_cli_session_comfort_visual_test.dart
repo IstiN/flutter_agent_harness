@@ -80,10 +80,18 @@ void main() {
       // to `classic` so the report block carries the real summary text and
       // record counts (the structured default reports empty counts in the
       // block - the summary lives in the checkpoint record instead).
+      // `tui.showCompactionDetails: true` (gh-1636) opts INTO the full
+      // report block this golden pins: the default auto-fold report is now
+      // ONE marker line (`● auto-compacted · engine: N → M tokens`), so
+      // without the opt-in `records:` never renders and the wait times
+      // out. The one-line default itself is pinned by the core
+      // `compaction_report_test.dart` gh-1636 group.
       final tempHome = _tempHomeWithEndpoint(
         'http://127.0.0.1:$port/v1',
         extraConfig:
-            'agent:\n  contextWindowCap: 64000\ncompaction:\n  engine: classic',
+            'agent:\n  contextWindowCap: 64000\n'
+            'compaction:\n  engine: classic\n'
+            'tui:\n  showCompactionDetails: true',
       );
       final harness = await boot(
         tester,
