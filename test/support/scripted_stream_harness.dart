@@ -132,8 +132,16 @@ class FakeStreamFunction {
       ),
     );
     final stream = AssistantMessageEventStream();
-    for (final event in turns.removeAt(0)) {
-      stream.push(event);
+    // TEMP-DEBUG gh-1636: catch the exhausted-script request with a stack.
+    if (turns.isEmpty) {
+      // ignore: avoid_print
+      print('TEMP-DEBUG: script exhausted; request stack:');
+      // ignore: avoid_print
+      print(StackTrace.current);
+    } else {
+      for (final event in turns.removeAt(0)) {
+        stream.push(event);
+      }
     }
     stream.end();
     return stream;
