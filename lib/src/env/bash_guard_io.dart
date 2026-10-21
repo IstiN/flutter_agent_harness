@@ -32,7 +32,8 @@ const String bashGuardPidsEnv = 'FA_PROTECTED_PIDS';
 ///   targets) out of the arguments before invoking the real `kill`. No
 ///   protected hit → the call is passed through byte-identical. Every
 ///   construct is `set -e`/`set -u`-safe (if-chains, guarded expansions).
-String bashGuardPrelude() => '''
+String bashGuardPrelude() =>
+    '''
 # ── fa bash-guard (gh-1763): self-defense prelude ──────────────────────
 # Restore sh -c positional-parameter parity, then keep kill() from
 # signaling the harness/ancestor pids exported via $bashGuardPidsEnv.
@@ -177,7 +178,8 @@ exit 1
 String buildKillallShim({
   required String realKillall,
   required String realPgrep,
-}) => r'''#!/bin/sh
+}) =>
+    r'''#!/bin/sh
 # fa bash-guard shim for killall (gh-1763): never signals the harness or
 # its ancestor chain, the invoking shell, or itself.
 set -u
@@ -216,8 +218,8 @@ done
 [ "$out" -eq 1 ] && exit 0
 exit 1
 '''
-    .replaceAll('__FA_REAL_KILLALL__', realKillall)
-    .replaceAll('__FA_REAL_PGREP__', realPgrep);
+        .replaceAll('__FA_REAL_KILLALL__', realKillall)
+        .replaceAll('__FA_REAL_PGREP__', realPgrep);
 
 /// The per-process bash guard: a private temp dir holding the PATH shims
 /// and the protected pid set injected into every bash tool call. [shimDir]
@@ -226,7 +228,10 @@ exit 1
 final class BashGuardProvision {
   /// Creates the provision. Never throws on the caller side: provisioning
   /// failures degrade to a null provision instead.
-  const BashGuardProvision({required this.shimDir, required this.protectedPids});
+  const BashGuardProvision({
+    required this.shimDir,
+    required this.protectedPids,
+  });
 
   /// Private temp dir (0700) with the executable `pkill`/`killall` shims;
   /// prepended to PATH. Null when no shim applies.
@@ -240,9 +245,7 @@ final class BashGuardProvision {
   /// the shim dir at the head of PATH (in front of any inherited or
   /// widened PATH, so the shims always win).
   Map<String, String> environmentOverlay() {
-    final overlay = <String, String>{
-      bashGuardPidsEnv: protectedPids.join(' '),
-    };
+    final overlay = <String, String>{bashGuardPidsEnv: protectedPids.join(' ')};
     final dir = shimDir;
     if (dir != null) {
       overlay['FA_GUARD_SHIM_DIR'] = dir;
@@ -261,7 +264,10 @@ Future<BashGuardProvision?> provisionBashGuard() async {
     final shims = <String, String>{};
     final realPkill = await _resolveTool('pkill');
     if (realPkill != null && realPgrep != null) {
-      shims['pkill'] = buildPkillShim(realPkill: realPkill, realPgrep: realPgrep);
+      shims['pkill'] = buildPkillShim(
+        realPkill: realPkill,
+        realPgrep: realPgrep,
+      );
     }
     final realKillall = await _resolveTool('killall');
     if (realKillall != null && realPgrep != null) {
@@ -308,10 +314,7 @@ Future<List<int>> _protectedPidChain() async {
       if (!chain.add(parent)) break;
       current = parent;
     }
-    final pg = await Process.run(
-      'ps',
-      <String>['-o', 'pgid=', '-p', '$pid'],
-    );
+    final pg = await Process.run('ps', <String>['-o', 'pgid=', '-p', '$pid']);
     final group = int.tryParse((pg.stdout as String).trim());
     if (group != null && group > 1) chain.add(group);
   } on Object {
@@ -324,10 +327,7 @@ Future<List<int>> _protectedPidChain() async {
 /// this finds the real binary). Null when absent.
 Future<String?> _resolveTool(String name) async {
   try {
-    final result = await Process.run('sh', <String>[
-      '-c',
-      'command -v $name',
-    ]);
+    final result = await Process.run('sh', <String>['-c', 'command -v $name']);
     if (result.exitCode != 0) return null;
     final path = (result.stdout as String).trim();
     return path.isEmpty ? null : path;

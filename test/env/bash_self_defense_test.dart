@@ -46,7 +46,8 @@ void main() {
         expect(
           exec.exitCode,
           0,
-          reason: 'the shell wrapper was signaled by its own pkill '
+          reason:
+              'the shell wrapper was signaled by its own pkill '
               '(exit $exec); the script body must never ride the wrapper '
               'argv',
         );
@@ -82,10 +83,7 @@ void main() {
         await job.settled;
         // Pre-fix the job's own wrapper died by SIGTERM (exit -15).
         expect(job.exitCode, 0, reason: 'background job shell self-killed');
-        expect(
-          File(job.logPath).readAsStringSync(),
-          contains('survived'),
-        );
+        expect(File(job.logPath).readAsStringSync(), contains('survived'));
       },
     );
 
@@ -131,10 +129,12 @@ void main() {
       'pkill skips a pid on FA_PROTECTED_PIDS and still reaps the rest',
       skip: Platform.isWindows ? 'POSIX process semantics only' : false,
       () async {
-        // A dummy long-running process whose cmdline matches the pattern.
-        final protectedDummy = await Process.start('sh', ['-c', 'sleep 1763']);
+        // Two dummy processes whose cmdlines match the pattern. The dummy
+        // IS the matching process (no `sh -c` wrapper — a wrapper would
+        // exit on its own the moment its only child is signaled).
+        final protectedDummy = await Process.start('sleep', ['1763']);
         addTearDown(protectedDummy.kill);
-        final freeDummy = await Process.start('sh', ['-c', 'sleep 1763']);
+        final freeDummy = await Process.start('sleep', ['1763']);
         addTearDown(freeDummy.kill);
 
         final result = await const LocalShell().exec(
@@ -148,11 +148,18 @@ void main() {
           ),
         );
         final stdout = result.getOrThrow().stdout;
-        expect(stdout, contains('protected_alive'),
-            reason: 'a pid on FA_PROTECTED_PIDS must never be signaled');
-        expect(stdout, contains('free_reaped'),
-            reason: 'an unprotected process matching the pattern must still '
-                'be terminated (edge case E2)');
+        expect(
+          stdout,
+          contains('protected_alive'),
+          reason: 'a pid on FA_PROTECTED_PIDS must never be signaled',
+        );
+        expect(
+          stdout,
+          contains('free_reaped'),
+          reason:
+              'an unprotected process matching the pattern must still '
+              'be terminated (edge case E2)',
+        );
       },
     );
 

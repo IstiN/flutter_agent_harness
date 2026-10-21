@@ -622,8 +622,9 @@ final class LocalShell implements Shell, BackgroundShell {
       return null;
     }
     try {
-      await File('${dir.path}/cmd.sh')
-          .writeAsString('${bashGuardPrelude()}\n$command\n');
+      await File(
+        '${dir.path}/cmd.sh',
+      ).writeAsString('${bashGuardPrelude()}\n$command\n');
       return dir;
     } on Object {
       try {

@@ -272,7 +272,11 @@ void main() {
         options: const ShellExecOptions(env: {'PATH': '/bin'}),
       );
       final path = result.getOrThrow().stdout.trim();
-      expect(path.split(':').first, '/bin');
+      final parts = path.split(':');
+      // gh-1763: the bash-guard shim dir leads PATH so the shims always
+      // win; the caller's PATH follows intact (preserved, never replaced).
+      expect(parts.first, contains('fa_sh_guard_'));
+      expect(parts, contains('/bin'));
     });
 
     test('env overrides merge over the host environment', () async {
