@@ -2726,6 +2726,19 @@ void main() {
       expect(shell.commands, isEmpty);
     });
 
+    test('refuses a cwd that names a plain file (gh-1744)', () async {
+      final shell = _RecordingShell();
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      (await env.writeFile('/work/a-file', 'x')).getOrThrow();
+      final error = await launchMailboxWake(
+        env: env,
+        cwd: '/work/a-file',
+        sessionId: 'sess-1',
+      );
+      expect(error, contains('does not exist'));
+      expect(shell.commands, isEmpty);
+    });
+
     test('spawns in the existing cwd', () async {
       final shell = _RecordingShell();
       final env = MemoryExecutionEnv(cwd: '/work', shell: shell);

@@ -402,9 +402,11 @@ String mailboxWakeCommand({
 /// gh-1744: a mailbox cwd can name a directory that does not exist (a
 /// legacy lossy slug decode, or a workspace moved away) — spawning there
 /// dies as `ProcessException: No such file or directory` and the asleep
-/// mailbox can never be woken. The directory is verified first and the
-/// refusal names it, so the tool note explains the wake failure instead of
-/// surfacing a raw process exception.
+/// mailbox can never be woken. The working directory is verified first
+/// (`Directory(cwd).existsSync()` semantics: existing and not a plain
+/// file; symlinks stay allowed) and the refusal names the path, so the
+/// tool note explains the wake failure instead of surfacing a raw process
+/// exception.
 Future<String?> launchMailboxWake({
   required ExecutionEnv env,
   String? wakeExecutable,
@@ -412,8 +414,9 @@ Future<String?> launchMailboxWake({
   required String sessionId,
   String? sessionName,
 }) async {
-  final exists = await env.exists(cwd);
-  if (exists.isErr || exists.valueOrNull != true) {
+  final info = await env.fileInfo(cwd);
+  final kind = info.valueOrNull?.kind;
+  if (info.isErr || (kind != FileKind.directory && kind != FileKind.symlink)) {
     return 'working directory does not exist: $cwd';
   }
   final command = mailboxWakeCommand(
