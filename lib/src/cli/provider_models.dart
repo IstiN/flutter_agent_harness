@@ -1410,28 +1410,20 @@ extension on AgentCli {
     }
   }
 
-  /// Rebuilds the active model with new token limits, preserving every other
-  /// field (endpoint detection and `/model-edit`).
+  /// Rebuilds the active model with new token limits, preserving every
+  /// other field (endpoint detection and `/model-edit`). The copy rides
+  /// [Model.copyWith] — the one field list (gh-1742 review round 1,
+  /// comment 5) — so the recent fields (thinkingLevel, capabilityNotes,
+  /// the scoped watchdogs) survive the swap.
   void _replaceModelLimits({
     int? contextWindow,
     int? maxTokens,
     ContextWindowSource? windowSource,
   }) {
     final current = _agent.state.model;
-    _agent.state.model = Model(
-      id: current.id,
-      name: current.name,
-      api: current.api,
-      provider: current.provider,
-      baseUrl: current.baseUrl,
-      reasoning: current.reasoning,
-      input: current.input,
-      cost: current.cost,
-      contextWindow: contextWindow ?? current.contextWindow,
-      maxTokens: maxTokens ?? current.maxTokens,
-      headers: current.headers,
-      compat: current.compat,
-      authHeader: current.authHeader,
+    _agent.state.model = current.copyWith(
+      contextWindow: contextWindow,
+      maxTokens: maxTokens,
     );
     // gh-1742 invariant 2: a window write publishes into the shared
     // registry (endpoint report or user pin — the pin wins by publish

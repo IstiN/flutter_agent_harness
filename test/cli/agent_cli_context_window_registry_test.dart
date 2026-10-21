@@ -52,10 +52,9 @@ final class _RegistryRouter {
   }) {
     final turn = _isChildRun(context)
         ? textTurn('child done')
-        : parentTurns[
-            _parentCalls < parentTurns.length
-                ? _parentCalls++
-                : parentTurns.length - 1];
+        : parentTurns[_parentCalls < parentTurns.length
+              ? _parentCalls++
+              : parentTurns.length - 1];
     return FakeStreamFunction([turn]).call(model, context);
   }
 }
@@ -66,20 +65,17 @@ void main() {
   setUp(() => io = FakeCliIO());
   tearDown(() => io.close());
 
-  Future<AgentCli> bootedCli(StreamFunction stream) async {
+  Future<AgentCli> bootedRichCli(Model model, [StreamFunction? stream]) async {
     final cli = AgentCli(
       config: AgentCliConfig(
-        model: testModel,
+        model: model,
         apiKey: '[REDACTED:Sensitive Value]',
-        env: MemoryExecutionEnv(
-          cwd: '/work',
-          shell: const UnavailableShell(),
-        ),
+        env: MemoryExecutionEnv(cwd: '/work', shell: const UnavailableShell()),
         sessionRoot: '/sessions',
         approvalMode: ApprovalMode.yolo,
       ),
       io: io,
-      streamFunction: stream,
+      streamFunction: stream ?? FakeStreamFunction([textTurn('')]).call,
     );
     // The REPL settles only at /exit; the test ends via tearDown.
     unawaited(cli.run());
@@ -91,17 +87,71 @@ void main() {
     return cli;
   }
 
-  test('AC2a: /model-edit publishes the pin into the shared registry',
-      () async {
-    final cli = await bootedCli(FakeStreamFunction([textTurn('')]).call);
-    io.sendLine('/model-edit contextWindow 478000');
-    await waitForIt(
-      () => io.out.toString().contains('478000'),
-      reason: 'the pin applied',
-    );
-    expect(cli.contextWindowRegistry.isVerified(testModel), isTrue);
-    expect(cli.contextWindowRegistry.windowFor(testModel), 478000);
-  });
+  Future<AgentCli> bootedCli(StreamFunction stream) =>
+      bootedRichCli(testModel, stream);
+
+  test(
+    'AC2a: /model-edit publishes the pin into the shared registry',
+    () async {
+      final cli = await bootedCli(FakeStreamFunction([textTurn('')]).call);
+      io.sendLine('/model-edit contextWindow 478000');
+      await waitForIt(
+        () => io.out.toString().contains('478000'),
+        reason: 'the pin applied',
+      );
+      expect(cli.contextWindowRegistry.isVerified(testModel), isTrue);
+      expect(cli.contextWindowRegistry.windowFor(testModel), 478000);
+    },
+  );
+
+  test(
+    'gh-1742 review round 1, comment 5: the limits swap preserves every '
+    'Model field (one shared copyWith, no second hand-rolled field list)',
+    () async {
+      // A model carrying the fields a hand-rolled 18-field copy tends to
+      // forget (thinkingLevel, capabilityNotes, the scoped watchdogs +
+      // their label — all recent additions): the /model-edit swap must
+      // keep them. _replaceModelLimits drops exactly these today.
+      const richModel = Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        reasoning: true,
+        input: ['text', 'image'],
+        thinkingLevel: 'medium',
+        cost: ModelCost(input: 1, output: 2),
+        contextWindow: 100000,
+        maxTokens: 4096,
+        headers: {'x-a': 'b'},
+        authHeader: 'x-key',
+        capabilityNotes: ['gate drop note'],
+        connectTimeout: Duration(seconds: 7),
+        streamIdleTimeout: Duration(seconds: 90),
+        timeoutScopeLabel: 'role smol override',
+      );
+      final cli = await bootedRichCli(richModel);
+      io.sendLine('/model-edit contextWindow 478000');
+      await waitForIt(
+        () => io.out.toString().contains('478000'),
+        reason: 'the pin applied',
+      );
+      final model = cli.agent.state.model;
+      // The swap itself…
+      expect(model.contextWindow, 478000);
+      // …and everything the hand-rolled copy used to drop:
+      expect(model.thinkingLevel, 'medium');
+      expect(model.reasoning, isTrue);
+      expect(model.input, ['text', 'image']);
+      expect(model.cost.input, 1);
+      expect(model.headers, {'x-a': 'b'});
+      expect(model.authHeader, 'x-key');
+      expect(model.capabilityNotes, ['gate drop note']);
+      expect(model.connectTimeout, const Duration(seconds: 7));
+      expect(model.streamIdleTimeout, const Duration(seconds: 90));
+      expect(model.timeoutScopeLabel, 'role smol override');
+    },
+  );
 
   test(
     'AC2b: a child spawned after the registry entry resolves the '
@@ -142,9 +192,7 @@ void main() {
       await waitForIt(
         () => cli.subagentManager['kid'] != null,
         reason:
-            'the child registers (out tail: ${io.out.toString().substring(
-          (io.out.toString().length - 700).clamp(0, io.out.toString().length),
-        )})',
+            'the child registers (out tail: ${io.out.toString().substring((io.out.toString().length - 700).clamp(0, io.out.toString().length))})',
       );
       await waitForIt(
         () => cli.subagentManager['kid']!.windowTokens == 478000,

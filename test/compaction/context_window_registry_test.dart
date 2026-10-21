@@ -120,4 +120,100 @@ void main() {
       expect(registry.isVerified(model), isFalse);
     });
   });
+
+  group('withRegisteredContextWindow (the child-wiring shape)', () {
+    test('no entry and an already-matching entry return the SAME instance', () {
+      final registry = ContextWindowRegistry();
+      final model = _model();
+      expect(
+        identical(withRegisteredContextWindow(model, registry), model),
+        isTrue,
+      );
+      expect(
+        identical(withRegisteredContextWindow(model, null), model),
+        isTrue,
+      );
+      registry.publish(
+        model: model,
+        window: model.contextWindow,
+        source: ContextWindowSource.endpointReport,
+      );
+      expect(
+        identical(withRegisteredContextWindow(model, registry), model),
+        isTrue,
+      );
+    });
+
+    test('the wrap swaps the window and preserves EVERY other field '
+        '(gh-1742 review round 1, comment 5: one shared copyWith)', () {
+      final registry = ContextWindowRegistry();
+      const rich = Model(
+        id: 'rich-model',
+        name: 'Rich',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        reasoning: true,
+        input: ['text', 'image'],
+        thinkingLevel: 'max',
+        cost: ModelCost(input: 3, output: 4),
+        contextWindow: 4000,
+        maxTokens: 512,
+        headers: {'x-h': '1'},
+        authHeader: 'x-auth',
+        capabilityNotes: ['note-1'],
+        connectTimeout: Duration(seconds: 3),
+        streamIdleTimeout: Duration(seconds: 60),
+        timeoutScopeLabel: 'role smol override',
+      );
+      registry.publish(
+        model: rich,
+        window: 478000,
+        source: ContextWindowSource.endpointReport,
+      );
+      final wrapped = withRegisteredContextWindow(rich, registry);
+      expect(wrapped.contextWindow, 478000);
+      expect(wrapped.id, 'rich-model');
+      expect(wrapped.name, 'Rich');
+      expect(wrapped.api, 'test-api');
+      expect(wrapped.provider, 'test-provider');
+      expect(wrapped.baseUrl, 'https://example.test');
+      expect(wrapped.reasoning, isTrue);
+      expect(wrapped.input, ['text', 'image']);
+      expect(wrapped.thinkingLevel, 'max');
+      expect(wrapped.cost.input, 3);
+      expect(wrapped.cost.output, 4);
+      expect(wrapped.maxTokens, 512);
+      expect(wrapped.headers, {'x-h': '1'});
+      expect(wrapped.authHeader, 'x-auth');
+      expect(wrapped.capabilityNotes, ['note-1']);
+      expect(wrapped.connectTimeout, const Duration(seconds: 3));
+      expect(wrapped.streamIdleTimeout, const Duration(seconds: 60));
+      expect(wrapped.timeoutScopeLabel, 'role smol override');
+    });
+
+    test('Model.copyWith: null keeps, a value swaps (the single field '
+        'list lives next to the class)', () {
+      const model = Model(
+        id: 'm',
+        api: 'test-api',
+        provider: 'p',
+        baseUrl: 'https://example.test',
+        contextWindow: 100,
+        maxTokens: 50,
+        capabilityNotes: ['n'],
+      );
+      final swapped = model.copyWith(contextWindow: 200, maxTokens: 80);
+      expect(swapped.contextWindow, 200);
+      expect(swapped.maxTokens, 80);
+      expect(swapped.id, 'm');
+      expect(swapped.capabilityNotes, ['n']);
+      expect(identical(model.copyWith(), model), isFalse);
+      // An explicit null argument keeps the field (null = keep): there is
+      // no way to null a non-nullable field, and the nullable ones the
+      // swaps care about are never cleared.
+      expect(model.copyWith(thinkingLevel: 'low').thinkingLevel, 'low');
+      expect(model.thinkingLevel, isNull);
+    });
+  });
 }

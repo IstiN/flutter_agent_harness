@@ -133,7 +133,8 @@ final class ContextWindowRegistry {
   /// Whether [model]'s window is backed by an endpoint report or a user
   /// pin (AC6): `false` means the carried window is unverified and the
   /// meters mark it.
-  bool isVerified(Model model) => _entries.containsKey(ModelWindowKey.of(model));
+  bool isVerified(Model model) =>
+      _entries.containsKey(ModelWindowKey.of(model));
 
   /// Drops every registration (test seam; a host never calls this
   /// mid-session — E4 window shrinks arrive as new publishes).
@@ -149,27 +150,13 @@ final class ContextWindowRegistry {
 /// loop's over-window guard reads `model.contextWindow`, so the resolved
 /// window must ride the Model instance itself). Pure: returns [model]
 /// unchanged when nothing is registered or the value already matches.
-Model withRegisteredContextWindow(Model model, ContextWindowRegistry? registry) {
+Model withRegisteredContextWindow(
+  Model model,
+  ContextWindowRegistry? registry,
+) {
   final registered = registry?.windowFor(model);
   if (registered == null || registered == model.contextWindow) return model;
-  return Model(
-    id: model.id,
-    name: model.name,
-    api: model.api,
-    provider: model.provider,
-    baseUrl: model.baseUrl,
-    reasoning: model.reasoning,
-    input: model.input,
-    thinkingLevel: model.thinkingLevel,
-    cost: model.cost,
-    contextWindow: registered,
-    maxTokens: model.maxTokens,
-    headers: model.headers,
-    compat: model.compat,
-    authHeader: model.authHeader,
-    capabilityNotes: model.capabilityNotes,
-    connectTimeout: model.connectTimeout,
-    streamIdleTimeout: model.streamIdleTimeout,
-    timeoutScopeLabel: model.timeoutScopeLabel,
-  );
+  // One shared field list (gh-1742 review round 1, comment 5): the copy
+  // lives on [Model] itself.
+  return model.copyWith(contextWindow: registered);
 }
