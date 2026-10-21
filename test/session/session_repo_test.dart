@@ -200,6 +200,36 @@ void main() {
       expect(decodeSessionCwd(encodeSessionCwd('/single')), '/single');
     });
 
+    test('round-trips paths containing hyphens (gh-1744)', () {
+      // The ticket's failing workspace: every hyphen below used to decode
+      // as a path separator, naming a directory that does not exist.
+      const cwd = '/Users/Yury_Bakhmutski/_w/postal-nl';
+      expect(decodeSessionCwd(encodeSessionCwd(cwd)), cwd);
+      expect(decodeSessionCwd(encodeSessionCwd('/a/b-c/d')), '/a/b-c/d');
+      expect(decodeSessionCwd(encodeSessionCwd('/w/-weird-')), '/w/-weird-');
+    });
+
+    test('escapes literal hyphens reversibly, separators stay hyphens', () {
+      // Separators keep the legacy shape, literal hyphens are escaped, so
+      // hyphen-free paths produce byte-identical slugs (on-disk folders
+      // and pi-mono layout stay stable).
+      expect(encodeSessionCwd('/foo/bar'), '--foo-bar--');
+      expect(encodeSessionCwd('/w/postal-nl'), '--w-postal%2Dnl--');
+      expect(encodeSessionCwd('/tmp/a-b_c/d.e'), '--tmp-a%2Db_c-d.e--');
+    });
+
+    test('round-trips percent and colon characters (gh-1744)', () {
+      const cwd = '/tmp/a%2Db:c';
+      expect(decodeSessionCwd(encodeSessionCwd(cwd)), cwd);
+    });
+
+    test('legacy escape-free slugs decode as before (compat)', () {
+      // Existing on-disk folders keep decoding through the legacy split.
+      expect(decodeSessionCwd('--Users-Uladzimir_Klyshevich-git-dm.ai--'),
+          '/Users/Uladzimir_Klyshevich/git/dm.ai');
+      expect(decodeSessionCwd('--tmp-a-b--'), '/tmp/a/b');
+    });
+
     test('ignores trailing slashes when encoding', () {
       expect(encodeSessionCwd('/foo/bar/'), encodeSessionCwd('/foo/bar'));
       expect(encodeSessionCwd('/foo/bar//'), encodeSessionCwd('/foo/bar'));
@@ -229,6 +259,20 @@ void main() {
       );
       expect((await fs.exists(metadata.path)).valueOrNull, isTrue);
     });
+
+    test(
+      'create lays hyphenated cwds under a reversible slug dir (gh-1744)',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/w/postal-nl', id: 'sess-h'),
+        );
+        final metadata = await session.getMetadata();
+        expect(
+          metadata.path,
+          matches(r'^/sessions/--w-postal%2Dnl--/.+_sess-h\.jsonl$'),
+        );
+      },
+    );
 
     test(
       'create rejects nothing; ids default to unique generated values',
