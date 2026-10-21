@@ -306,6 +306,88 @@ void main() {
       },
     );
   });
+  group('host-arch archive selection + slot arch stamp (gh-1736)', () {
+    // gh-1736: the action downloaded the arch-less flutter_macos_<v> zip —
+    // the X64 build per releases_macos.json — onto the arm64 self-hosted
+    // host, so the slot's dart binary died with "Bad CPU type in
+    // executable" (exit 126). The archive name must come from the HOST
+    // arch: both matrix legs run on the ONE runner and share one SDK slot
+    // (the matrix arch only steers FLUTTER_XCODE_ARCHS), and the manifest
+    // convention is `_arm64` infix for arm64, no infix for x64.
+    test('archive: arm64 host -> arm64-qualified zip name', () {
+      final result = runSlot(['archive', '3.47.7', 'arm64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(
+        result.stdout,
+        'flutter_macos_arm64_3.47.7-stable.zip\n',
+        reason: 'releases_macos.json: dart_sdk_arch=arm64 -> '
+            'flutter_macos_arm64_3.47.7-stable.zip',
+      );
+    });
+
+    test('archive: x86_64 host -> unqualified (x64) zip name', () {
+      final result = runSlot(['archive', '3.47.7', 'x86_64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(
+        result.stdout,
+        'flutter_macos_3.47.7-stable.zip\n',
+        reason: 'releases_macos.json: dart_sdk_arch=x64 -> '
+            'flutter_macos_3.47.7-stable.zip (no infix)',
+      );
+    });
+
+    test('archive: unknown host arch is a hard error, never a silent x64', () {
+      final result = runSlot(['archive', '3.47.7', 'sparc64']);
+      expect(result.exitCode, isNot(0));
+      expect(result.stderr, contains('sparc64'));
+    });
+
+    test('ensure_arch: stamped matching slot stays (ok)', () {
+      final sdk = makeSdkRoot();
+      Directory('${sdk.path}/3.47.7/bin').createSync(recursive: true);
+      File('${sdk.path}/3.47.7/.fah-arch').writeAsStringSync('arm64');
+      final result = runSlot(['ensure_arch', '${sdk.path}/3.47.7', 'arm64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(result.stdout, 'ok\n');
+      expect(Directory('${sdk.path}/3.47.7/bin').existsSync(), isTrue);
+    });
+
+    test('ensure_arch: unstamped slot (the gh-1736 poisoned runner state) '
+        'is pruned for reinstall', () {
+      final sdk = makeSdkRoot();
+      // What the runner holds right now: an x64 3.47.7 installed by the
+      // pre-fix action — no arch stamp, and the marker already reads
+      // 3.47.7, so resolve() answers SKIP and only an arch self-heal can
+      // un-brick the slot.
+      Directory('${sdk.path}/3.47.7/bin').createSync(recursive: true);
+      File('${sdk.path}/3.47.7/bin/flutter').writeAsStringSync('x64 sdk');
+      final result = runSlot(['ensure_arch', '${sdk.path}/3.47.7', 'arm64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(result.stdout, startsWith('reinstall'));
+      expect(
+        Directory('${sdk.path}/3.47.7').existsSync(),
+        isFalse,
+        reason: 'the wrong-arch slot must go so INSTALL rebuilds it',
+      );
+    });
+
+    test('ensure_arch: mismatched stamp is pruned for reinstall', () {
+      final sdk = makeSdkRoot();
+      Directory('${sdk.path}/3.47.7/bin').createSync(recursive: true);
+      File('${sdk.path}/3.47.7/.fah-arch').writeAsStringSync('x64');
+      final result = runSlot(['ensure_arch', '${sdk.path}/3.47.7', 'arm64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(result.stdout, startsWith('reinstall'));
+      expect(Directory('${sdk.path}/3.47.7').existsSync(), isFalse);
+    });
+
+    test('ensure_arch: missing slot is a no-op ok (install creates it)', () {
+      final sdk = makeSdkRoot();
+      final result = runSlot(['ensure_arch', '${sdk.path}/3.47.7', 'arm64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(result.stdout, 'ok\n');
+    });
+  });
 
   group('self-hosted SDK regression guard (#354/#357)', () {
     final workflows = Directory('.github/workflows')
@@ -445,6 +527,33 @@ void main() {
         action,
         contains('sdk_slot.py'),
         reason: 'slot mutations must go through the tested primitives',
+      );
+    });
+    test('action contract: the SDK download is host-arch qualified (gh-1736)',
+        () {
+      final action = File(actionYml).readAsStringSync();
+      final curlStart = action.indexOf('if ! curl');
+      final curlEnd = action.indexOf('; then', curlStart);
+      expect(curlStart, isNonNegative);
+      final curl = action.substring(curlStart, curlEnd);
+      // gh-1736: the arch-less flutter_macos_${VER}-stable.zip is the X64
+      // archive — on the arm64 self-hosted host its dart binary dies with
+      // "Bad CPU type in executable" (exit 126). The archive name must be
+      // resolved through the tested sdk_slot.py archive primitive.
+      expect(
+        curl,
+        contains(r'"$ARCHIVE"'),
+        reason: 'the curl URL must download the arch-resolved $ARCHIVE',
+      );
+      expect(
+        action,
+        contains('sdk_slot.py archive'),
+        reason: 'archive-name resolution must go through the tested primitive',
+      );
+      expect(
+        action,
+        isNot(contains(r'flutter_macos_${VER}-stable.zip')),
+        reason: 'the arch-less URL is the x64 build — the gh-1736 bug',
       );
     });
 
