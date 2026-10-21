@@ -134,7 +134,27 @@ extension AgentCliRun on AgentCli {
     // compaction threshold, compact BEFORE sending the request — a failed
     // post-run compaction (quota-limited smol role, provider outage) used to
     // leave every request carrying an over-window payload (ctx 240% gauge).
-    await _maybeAutoCompact();
+    try {
+      // gh-1729 review: the pre-flight is where the armed E1 one-shot
+      // pass must ACT (a compaction before the request) — see
+      // [_maybeAutoCompact]'s `forceE1Pass`.
+      await _maybeAutoCompact(forceE1Pass: true);
+    } on CancelledException {
+      rethrow;
+    } on Object catch (error) {
+      // BEST-EFFORT by contract (the lazy boot cap's backstop transplanted
+      // to the turn): an unexpected throw — broken stdout mid-report, a
+      // provider quirk escaping the degradation ladder — must not kill
+      // the turn. The request is still legal (over-trigger is
+      // under-window by definition here; over-window resumes were capped
+      // by the local-trim boot valve) and the next turn retries.
+      io.writeln(
+        _style.dim(
+          '[pre-flight compaction failed: $error] — proceeding uncapped; '
+          'it retries before the next turn',
+        ),
+      );
+    }
   }
 
   /// Settles a finished agent stream: error-stop handling and the
