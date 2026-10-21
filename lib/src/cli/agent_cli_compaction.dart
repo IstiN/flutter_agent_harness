@@ -320,10 +320,23 @@ List<String> formatCompactionReport(
     if (summary != null && summary.isNotEmpty) ...[
       'summary:',
       '```',
-      summary,
+      _balanceSummaryFences(summary),
       '```',
     ],
   ];
+}
+
+/// gh-1755: balances unclosed code fences in compaction summaries so the
+/// outer closing fence does not toggle markdown rendering into verbatim
+/// code (an LLM summary that ends mid-fence used to swallow every row
+/// the report rendered after it).
+String _balanceSummaryFences(String summary) {
+  final fencePattern = RegExp(r'^\s*```');
+  final fenceCount = summary.split('\n').where(fencePattern.hasMatch).length;
+  if (fenceCount.isOdd) {
+    return '$summary\n```';
+  }
+  return summary;
 }
 
 /// Renders [formatCompactionReport] through the styled transcript writer
