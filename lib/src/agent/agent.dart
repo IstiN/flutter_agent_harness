@@ -599,12 +599,38 @@ class Agent {
   Future<void> _runPromptMessages(
     List<Message> messages, {
     bool skipInitialSteeringPoll = false,
-  }) async {
+  }) {
     // Issue #1760: bound oversized user prompts before they join the
-    // transcript or the first request.
-    final guarded = await _guardIncomingUserMessages(messages);
-    return _runWithLifecycle((token) {
-      return runAgentLoop(
+    // transcript or the first request. The guard runs INSIDE the run
+    // lifecycle: _runWithLifecycle registers _activeRun/_isStreaming
+    // synchronously, so a prompt();abort() sequence — and every host
+    // busy gate reading isStreaming right after send — observes the run
+    // exactly like the unguarded shape, and a token cancelled while the
+    // guard is in flight becomes the loop's aborted terminal
+    // (_streamAssistantResponse's pre-cancelled short-circuit). The
+    // no-guard path keeps the ORIGINAL synchronous executor shape — zero
+    // added microtask hops for hosts without a guard (the CI failure this
+    // guards against: an async executor re-ordered the run start against
+    // same-tick abort() and busy-gate reads).
+    final guard = userMessageGuard;
+    if (guard == null) {
+      return _runWithLifecycle((token) {
+        return runAgentLoop(
+          prompts: messages,
+          context: _createContextSnapshot(),
+          config: _createLoopConfig(
+            skipInitialSteeringPoll: skipInitialSteeringPoll,
+          ),
+          emit: _processEvent,
+          streamFunction: streamFunction,
+          toolExecutor: toolExecutor,
+          cancelToken: token,
+        );
+      });
+    }
+    return _runWithLifecycle((token) async {
+      final guarded = await _guardIncomingUserMessages(messages);
+      await runAgentLoop(
         prompts: guarded,
         context: _createContextSnapshot(),
         config: _createLoopConfig(
@@ -696,17 +722,24 @@ class Agent {
         }
         final external =
             await externalSteeringSource?.call() ?? const <Message>[];
+        final drained = [...external, ..._steeringQueue.drain()];
         // Issue #1760: mid-run steering (in-process queue and external
-        // inbox alike) passes the same intake guard.
-        return _guardIncomingUserMessages([
-          ...external,
-          ..._steeringQueue.drain(),
-        ]);
+        // inbox alike) passes the same intake guard — but only when one is
+        // installed. The no-guard path keeps the original synchronous
+        // drain-to-return shape: an extra await hop here re-ordered the
+        // boundary drains and broke steer-queue/busy-gate consumers.
+        final guard = userMessageGuard;
+        if (guard == null) return drained;
+        return _guardIncomingUserMessages(drained);
       },
       // Issue #1760: follow-ups drained by the loop at the run boundary
-      // pass the same intake guard.
-      getFollowUpMessages: () =>
-          _guardIncomingUserMessages(_followUpQueue.drain()),
+      // pass the same intake guard — sync tear-off when no guard is
+      // installed (same reason as the steering drain above).
+      getFollowUpMessages: () {
+        final guard = userMessageGuard;
+        if (guard == null) return _followUpQueue.drain();
+        return _guardIncomingUserMessages(_followUpQueue.drain());
+      },
       steeringNotifications: _steeringArrived.stream,
       // The in-process queue notifies via [steeringArrived]; the probe is
       // only needed for the external (file-inbox) source, which cannot

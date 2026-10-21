@@ -190,4 +190,42 @@ void main() {
       expect(transcript.content, _bigText);
     },
   );
+
+  test(
+    'regression (CI 39678698410): abort() on the line after prompt() '
+    'still cancels the run — the guard must not delay run registration',
+    () async {
+      // Both with and without a guard installed, _activeRun/_isStreaming
+      // register synchronously inside prompt(); a token cancelled before the
+      // loop streams becomes the aborted terminal instead of a hang.
+      for (final withGuard in [false, true]) {
+        final stream = _RecordingStream(gateIndex: 1);
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final agent = withGuard
+            ? _agent(stream, env: env)
+            : Agent(
+                model: _model,
+                streamFunction: stream.call,
+                toolExecutor: (call, token, onUpdate) async =>
+                    ToolExecutionResult.text(''),
+              );
+
+        final run = agent.prompt('hi');
+        agent.abort();
+        await run;
+
+        // The run ended aborted — not hung, not errored.
+        final last = agent.state.messages.last;
+        expect(
+          last,
+          isA<AssistantMessage>().having(
+            (m) => m.stopReason,
+            'stopReason',
+            StopReason.aborted,
+          ),
+          reason: 'withGuard=$withGuard',
+        );
+      }
+    },
+  );
 }
