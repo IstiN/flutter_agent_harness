@@ -721,6 +721,10 @@ final class TaskExecutor {
     final wiring = _resolveChildWiring(definition);
     final child = Agent(
       model: wiring.model,
+      // gh-1742 review round 1, comment 2: the same owner clamp the spawn
+      // path passes (see _buildChild) — a resumed child's guard basis
+      // stays the capped one too.
+      contextWindowCap: contextWindowCap,
       // The ORIGINAL batch context rides along (persisted on the handle):
       // the transcript does not carry the system prompt, so a resume that
       // rebuilt the prompt without it would silently drop the batch's
@@ -905,6 +909,13 @@ final class TaskExecutor {
   }) {
     final child = Agent(
       model: wiring.model,
+      // gh-1742 review round 1, comment 2: the child loop shares the
+      // owner clamp the main loop runs — its over-window guard and the
+      // gh-1409 operative-pin budget measure against
+      // effectiveContextWindow(model.contextWindow, contextWindowCap),
+      // the SAME basis _childContextWindow resolves for compaction. A
+      // registry raise (served > catalog) must not fork the two bases.
+      contextWindowCap: contextWindowCap,
       systemPrompt: systemPrompt,
       streamFunction: wiring.stream,
       toolRegistry: toolRegistry,
@@ -1166,7 +1177,11 @@ final class TaskExecutor {
   /// gh-1742 (invariant 2): the resolved model carries the REGISTERED
   /// context window for its identity, so the child loop's over-window
   /// guard and the compaction threshold divide by the same honest number
-  /// the main agent and the ctx meter resolve.
+  /// the main agent and the ctx meter resolve. The owner cap rides the
+  /// child `Agent` itself (`_buildChild`/`_buildResumeChild` pass
+  /// `contextWindowCap`), so both bases clamp through
+  /// [effectiveContextWindow] by construction — a registry raise cannot
+  /// fork the guard from compaction.
   ({Model model, StreamFunction stream}) _resolveChildWiring(
     TaskAgentDefinition definition,
   ) {

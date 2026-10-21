@@ -320,6 +320,57 @@ void main() {
         expect(wiring.manager['w1']!.windowTokens, 2000);
       },
     );
+
+    test(
+      'the child loop GUARD rides the capped window too (gh-1742 review '
+      'round 1, comment 2)',
+      () async {
+        // The registry raise forks the two child-side bases when the
+        // owner clamps down: compaction resolves
+        // effectiveContextWindow(registered, cap), but a child Agent
+        // built WITHOUT the cap guards against the raw registered value.
+        // Here the served window is 478k and the owner caps at 200
+        // tokens — every child request is grossly over the CAPPED basis,
+        // so the mid-turn guard must refuse BEFORE the first request is
+        // sent. With the uncapped guard this request goes out (and the
+        // run completes normally).
+        final registry = ContextWindowRegistry();
+        registry.publish(
+          model: _model,
+          window: _registeredWindow,
+          source: ContextWindowSource.endpointReport,
+        );
+        final wiring = _Wiring(registry: registry, contextWindowCap: 200);
+        final result = await wiring.spawn('guarded', 'over-capped');
+        expect(
+          wiring.stream.contexts,
+          isEmpty,
+          reason:
+              'the child guard must refuse at the capped basis before any '
+              'request is sent (an uncapped guard sends against 478k)',
+        );
+        // The run surfaces the guard's terminal, not a silent success:
+        // the flushed transcript's last assistant message carries the
+        // exhausted marker.
+        await wiring.settle('guarded');
+        final records = await wiring.sessionRecords('guarded');
+        final messages = records
+            .whereType<MessageRecord>()
+            .map((record) => record.message)
+            .toList();
+        expect(
+          messages.any(
+            (message) =>
+                message is AssistantMessage &&
+                isContextWindowExhaustedError(message.errorMessage),
+          ),
+          isTrue,
+          reason:
+              'no over-window guard terminal in the transcript '
+              '(${result.status}, ${messages.length} messages)',
+        );
+      },
+    );
   });
 
   group('AC5: observed-over-headroom forces the compaction pass', () {
