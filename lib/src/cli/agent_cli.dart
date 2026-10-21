@@ -1233,25 +1233,20 @@ class AgentCli {
   /// target's cwd. The headless turn drains the inbox fabric as user
   /// messages; the session JSONL is shared, so a later interactive
   /// `fa --session <name>` resumes that transcript. Returns an error text
-  /// or null on success.
+  /// or null on success. Delegates to [launchMailboxWake], which verifies
+  /// the cwd exists first (gh-1744 — a lossy decoded slug must not become
+  /// a ProcessException).
   Future<String?> _launchMailboxWake({
     required String cwd,
     required String sessionId,
     String? sessionName,
-  }) async {
-    final command = mailboxWakeCommand(
-      wakeExecutable: config.wakeExecutable,
-      sessionId: sessionId,
-      sessionName: sessionName,
-    );
-    final result = await _env.exec(
-      command,
-      options: ShellExecOptions(cwd: cwd),
-    );
-    return result.isOk
-        ? null
-        : 'shell exec failed: ${result.errorOrNull?.message ?? 'unknown error'}';
-  }
+  }) => launchMailboxWake(
+    env: _env,
+    wakeExecutable: config.wakeExecutable,
+    cwd: cwd,
+    sessionId: sessionId,
+    sessionName: sessionName,
+  );
 
   late final SubagentManager _subagentManager;
 
