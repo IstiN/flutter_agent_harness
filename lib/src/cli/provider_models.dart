@@ -732,12 +732,18 @@ extension on AgentCli {
     return (window: false, cap: false);
   }
 
-  /// Applies the endpoint-reported context window for [model] when it
-  /// differs from the carried one (called from [_refreshModelCache];
-  /// [_rolesPinnedLimits] keeps user-pinned `roles:` limits winning).
+  /// Applies the endpoint-reported context window for [model] (called
+  /// from [_refreshModelCache]; [_rolesPinnedLimits] keeps user-pinned
+  /// `roles:` limits winning). A DIFFERING report rebuilds the model and
+  /// notes the swap; a CONFIRMING report (the well-catalogued common
+  /// case) leaves the model alone but still publishes the verification
+  /// into the shared registry — gh-1742 review round 1, comment 4: the
+  /// provider just verified the window, so the AC6 badge must not keep
+  /// marking it unverified.
   void _applyDetectedContextWindow(Model model) {
     final detected = _modelContextWindows[model.id];
-    if (detected != null && detected != model.contextWindow) {
+    if (detected == null) return;
+    if (detected != model.contextWindow) {
       _replaceModelLimits(
         contextWindow: detected,
         // gh-1742 invariant 2: the detection publishes into the shared
@@ -746,6 +752,12 @@ extension on AgentCli {
         windowSource: ContextWindowSource.endpointReport,
       );
       io.writeln(_style.dim('model context window: $detected (from endpoint)'));
+    } else {
+      contextWindowRegistry.publish(
+        model: model,
+        window: detected,
+        source: ContextWindowSource.endpointReport,
+      );
     }
   }
 
