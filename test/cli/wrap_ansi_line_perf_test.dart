@@ -363,9 +363,7 @@ void main() {
     // contaminated clean run; the cross-attempt min covers the rest.
     // Measurement call order: per attempt, 5 timed runs of the small
     // input then 5 of the doubled one.
-    final sustained = ContendedClock(
-      spiked: {6, 7, 8, 16, 17, 18, 26, 27, 28},
-    );
+    final sustained = ContendedClock(spiked: {6, 7, 8, 16, 17, 18, 26, 27, 28});
     expectLinearGrowth(
       asciiProse,
       100000,
