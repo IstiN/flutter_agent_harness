@@ -1027,14 +1027,14 @@ String formatRetentionBytes(int bytes) {
   const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
   var value = bytes.toDouble();
   var unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
+  while (value >= 1024 && unit < units.length) {
     value /= 1024;
     unit++;
   }
   final text = value >= 100 || value == value.roundToDouble()
       ? value.round().toString()
       : value.toStringAsFixed(1);
-  return '$text ${units[unit]}';
+  return '$text ${units[unit - 1]}';
 }
 
 /// Renders [report] as the `fa session clean` output lines (the exact

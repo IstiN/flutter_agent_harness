@@ -465,7 +465,7 @@ void main() {
         sessionsRoot: '/sessions',
         presenceStore: presence,
         now: _clock,
-        softWarnBytes: usage.totalBytes + 1,
+        softWarnBytes: usage.totalBytes - 1,
       ).enforceAtBoot();
       expect(loud.capConfigured, isFalse);
       expect(loud.overSoftWarn, isTrue);
