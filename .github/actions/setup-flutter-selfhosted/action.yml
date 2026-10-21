@@ -78,9 +78,23 @@ runs:
           if [[ ! -d "$DEST" ]]; then
             echo "pinned $VER is missing from $SDK_ROOT — reinstalling"
             DECISION="INSTALL $VER"
-          elif [[ "$(python3 "$SLOT" ensure_arch "$DEST" "$HOST_ARCH")" == reinstall* ]]; then
-            echo "pinned $VER at $DEST is not usable on $HOST_ARCH — reinstalling from the correct archive"
-            DECISION="INSTALL $VER"
+          else
+            # Capture the verdict and check the exit code explicitly:
+            # inside `elif [[ "$( … )" == reinstall* ]]` a nonzero exit
+            # would yield an empty string and a silently false
+            # comparison, and the run would fall through to trusting
+            # the slot. ensure_arch cannot fail today — the `archive`
+            # call above already hard-gated $HOST_ARCH through the same
+            # normalise_arch vocabulary — but a future failure mode
+            # must degrade to a loud error, never a silent reuse.
+            ensure_out="$(python3 "$SLOT" ensure_arch "$DEST" "$HOST_ARCH")" || {
+              echo "::error::sdk_slot ensure_arch failed for $DEST on $HOST_ARCH: $ensure_out"
+              exit 1
+            }
+            if [[ "$ensure_out" == reinstall* ]]; then
+              echo "pinned $VER at $DEST is not usable on $HOST_ARCH — reinstalling from the correct archive"
+              DECISION="INSTALL $VER"
+            fi
           fi
         fi
 

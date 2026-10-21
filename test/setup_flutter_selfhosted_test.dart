@@ -353,6 +353,31 @@ void main() {
       expect(Directory('${sdk.path}/3.47.7/bin').existsSync(), isTrue);
     });
 
+    test('ensure_arch: raw uname stamp round-trips on x86_64 hosts '
+        '(gh-1736 review) — no prune, no re-download', () {
+      // action.yml stamps every staged tree with the RAW `uname -m`
+      // output, while ensure_arch compares against the NORMALISED
+      // manifest vocabulary. On x86_64 the two spellings differ
+      // (`x86_64` vs `x64`) — before the round-trip fix this exact
+      // state (the stamp the action just wrote) was answered
+      // `reinstall`, pruning the slot and costing a ~1GB re-download
+      // on EVERY run. The stamp must round-trip at both arches: the
+      // arm64 spelling (raw == normalised) is pinned by the
+      // 'stamped matching slot stays (ok)' test above.
+      final sdk = makeSdkRoot();
+      Directory('${sdk.path}/3.47.7/bin').createSync(recursive: true);
+      File('${sdk.path}/3.47.7/.fah-arch').writeAsStringSync('x86_64');
+      final result = runSlot(['ensure_arch', '${sdk.path}/3.47.7', 'x86_64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(result.stdout, 'ok\n');
+      expect(
+        Directory('${sdk.path}/3.47.7/bin').existsSync(),
+        isTrue,
+        reason: 'a freshly stamped slot must survive ensure_arch — '
+            'pruning it re-downloads ~1GB on every single run',
+      );
+    });
+
     test('ensure_arch: unstamped slot (the gh-1736 poisoned runner state) '
         'is pruned for reinstall', () {
       final sdk = makeSdkRoot();
@@ -555,6 +580,54 @@ void main() {
         action,
         isNot(contains(r'flutter_macos_${VER}-stable.zip')),
         reason: 'the arch-less URL is the x64 build — the gh-1736 bug',
+      );
+    });
+
+    test('action contract: a failed ensure_arch is a loud error, never a '
+        'silent fall-through to reusing the slot (gh-1736 review)', () {
+      final action = File(actionYml).readAsStringSync();
+      final healStart =
+          action.indexOf(r'if [[ "$DECISION" != INSTALL* ]]; then');
+      final healEnd = action.indexOf('\n       fi', healStart);
+      expect(healStart, isNonNegative,
+          reason: 'the self-heal block must guard every non-INSTALL verdict');
+      final heal = action.substring(healStart, healEnd);
+      final callIdx = heal.indexOf(r'ensure_arch "$DEST" "$HOST_ARCH")');
+      expect(
+        callIdx,
+        isNonNegative,
+        reason: 'the self-heal must consult the ensure_arch primitive',
+      );
+      final callLine =
+          heal.substring(heal.lastIndexOf('\n', callIdx) + 1, heal.indexOf('\n', callIdx));
+      // The old shape — `elif [[ "$(python3 … ensure_arch …)" == reinstall* ]]`
+      // — turns any nonzero exit into an empty string and a false `==`: the
+      // failure silently falls through to trusting the existing slot. The
+      // verdict must be captured with its exit code checked explicitly, and
+      // a failure must fail the step loudly.
+      expect(
+        callLine,
+        isNot(contains('elif [[')),
+        reason: 'ensure_arch must not be consulted through a bare `elif '
+            r'[[ "$( … )" == … ]]` command substitution — a nonzero exit '
+            'degrades to an empty verdict and a silent slot reuse',
+      );
+      expect(
+        callLine,
+        contains('|| {'),
+        reason: 'the ensure_arch verdict must be captured with an explicit '
+            'exit-code check',
+      );
+      expect(
+        heal,
+        contains('::error::'),
+        reason: 'an ensure_arch failure must surface as a step error '
+            'annotation, not as a silently skipped self-heal',
+      );
+      expect(
+        heal,
+        contains('exit 1'),
+        reason: 'an ensure_arch failure must fail the step',
       );
     });
 

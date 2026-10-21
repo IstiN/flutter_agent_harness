@@ -4,11 +4,11 @@
 Layout under $HOME/actions-runner-yoloit/flutter-sdk/:
 
     <version>/     one immutable tree per pinned Flutter version
+      .fah-arch    arch stamp written into each slot at install time
+                   (gh-1736): lets ensure_arch tell a healthy slot
+                   from one unpacked from a wrong-arch archive
     current        symlink to the version every new job should use
     .fah-version   advisory marker of the version `current` targets
-    .fah-arch     arch stamp written into each slot at install time
-                  (gh-1736): lets ensure_arch tell a healthy slot from
-                  one unpacked from a wrong-arch archive
 
 Concurrency contract (#357 review): build-macos.yml runs its arm64 and
 x86_64 matrix legs CONCURRENTLY on the ONE self-hosted runner, so two
@@ -270,6 +270,14 @@ def cmd_ensure_arch(dest, host_arch):
             stamp = f.read().strip()
     except OSError:
         pass
+    # The action stamps slots with the raw `uname -m` spelling; compare
+    # it in the SAME normalised vocabulary as the host side, so the
+    # stamp round-trips at both arches — on x86_64 the raw spelling and
+    # the manifest vocabulary differ (`x86_64` vs `x64`), and without
+    # this normalisation the freshly stamped slot was pruned and
+    # re-downloaded on every run (gh-1736 review). An unrecognised
+    # stamp survives as-is and still mismatches — never trusted.
+    stamp = normalise_arch(stamp) or stamp
     if stamp == arch:
         print('ok')
         return
