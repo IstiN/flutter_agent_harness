@@ -17,28 +17,48 @@ final class FileSessionPresenceStore implements SessionPresenceStore {
   /// heartbeats live in a `.presence` subdirectory that never collides
   /// with the cwd-encoded session folders). [now] and [staleAfter] are
   /// injectable for tests.
+  ///
+  /// [cleanupAfter] is the garbage-collection grace (gh-1660): a stale
+  /// heartbeat file is DELETED once it ages past it (or earlier, when
+  /// [pidAlive] pronounces its process dead) — `list()` no longer only
+  /// filters dead entries, it sweeps them. [pidAlive] is the host
+  /// liveness probe (`kill -0`); null keeps the sweep purely time-based.
   FileSessionPresenceStore({
     required ExecutionEnv env,
     required String root,
     DateTime Function()? now,
     this.staleAfter = const Duration(seconds: 15),
+    this.cleanupAfter = defaultCleanupAfter,
+    bool Function(int pid)? pidAlive,
   }) : _env = env,
        _root = root,
-       _now = now ?? DateTime.now;
+       _now = now ?? DateTime.now,
+       _pidAlive = pidAlive;
+
+  /// How old a heartbeat file may get before `list()` deletes it
+  /// (gh-1660): long enough that a suspended process (laptop sleep)
+  /// still finds its file to resume heartbeating, short enough that
+  /// crash/kill -9 garbage stays bounded. A file with a live pid is
+  /// never deleted, whatever its age.
+  static const defaultCleanupAfter = Duration(minutes: 5);
 
   static const _dirName = '.presence';
 
   final ExecutionEnv _env;
   final String _root;
   final DateTime Function() _now;
+  final bool Function(int pid)? _pidAlive;
 
   /// How old a heartbeat may be before its process is considered dead.
   final Duration staleAfter;
 
+  /// How old a dead heartbeat FILE may get before the sweep deletes it
+  /// (see [defaultCleanupAfter]).
+  final Duration cleanupAfter;
+
   String get _dirPath => '$_root/$_dirName';
   String _file(String sessionId) => '$_dirPath/${_sanitize(sessionId)}.json';
 
-  @override
   @override
   Future<void> register(String sessionId, {int? pid, String? host}) async {
     try {
@@ -95,6 +115,7 @@ final class FileSessionPresenceStore implements SessionPresenceStore {
     if ((await _env.exists(_dirPath)).valueOrNull != true) return const {};
     final files = (await _env.listDir(_dirPath)).valueOrNull ?? const [];
     final cutoff = _now().toUtc().subtract(staleAfter);
+    final cleanupCutoff = _now().toUtc().subtract(cleanupAfter);
     final out = <String, SessionPresence>{};
     for (final info in files) {
       // Memory and IO envs disagree on whether FileInfo.name carries the
@@ -105,16 +126,62 @@ final class FileSessionPresenceStore implements SessionPresenceStore {
       final raw = (await _env.readTextFile('$_dirPath/$name')).valueOrNull;
       if (raw == null) continue;
       final json = _tryJson(raw);
-      if (json == null) continue;
+      if (json == null) {
+        _sweepIfAged(info, null, cleanupCutoff);
+        continue;
+      }
       final presence = SessionPresence.fromJson(_idFromFileName(name), json);
       // Stale heartbeat = the process died without unregistering
-      // (crash, kill -9): the session is not live.
+      // (crash, kill -9): the session is not live — and (gh-1660) the
+      // file itself is swept once the process is provably dead, so the
+      // .presence directory does not grow without bound.
       final touched = DateTime.tryParse(presence.touchedAt);
-      if (touched == null || touched.isBefore(cutoff)) continue;
+      if (touched == null || touched.isBefore(cutoff)) {
+        _sweepIfAged(info, presence, cleanupCutoff);
+        continue;
+      }
       out[presence.sessionId] = presence;
     }
     return out;
   }
+
+  /// gh-1660 garbage collection: removes a dead heartbeat file when this
+  /// reader can pronounce its process dead. Best-effort — a failed
+  /// remove leaves the file for the next sweep, and readers only ever
+  /// delete inside the `.presence` directory they are listing.
+  ///
+  /// A file with a [SessionPresence.pid] and a host [pidAlive] probe is
+  /// deleted exactly when the probe reports the process dead — no grace
+  /// needed, a gone pid cannot resume (a live pid's file stays whatever
+  /// its age: a suspended process may resume heartbeating). Without a
+  /// pid or a probe the file's own age decides: `touchedAt` older than
+  /// the cleanup grace, or — for torn files whose timestamps do not
+  /// parse — the file mtime as the fallback age. Within the grace the
+  /// file only drops out of the listing.
+  Future<void> _sweepIfAged(
+    FileInfo info,
+    SessionPresence? presence,
+    DateTime cleanupCutoff,
+  ) async {
+    final pid = presence?.pid;
+    if (pid != null && _pidAlive != null) {
+      if (_pidAlive!(pid)) return;
+    } else {
+      final touched = presence == null
+          ? null
+          : DateTime.tryParse(presence.touchedAt);
+      final aged = touched ?? _fromMtimeMs(info.mtimeMs);
+      if (aged == null || !aged.isBefore(cleanupCutoff)) return;
+    }
+    try {
+      await _env.remove(info.path, force: true);
+    } on Object {
+      // Best-effort sweep; the next reader retries.
+    }
+  }
+
+  static DateTime _fromMtimeMs(int mtimeMs) =>
+      DateTime.fromMillisecondsSinceEpoch(mtimeMs).toUtc();
 
   Future<void> _write(String sessionId, SessionPresence presence) async {
     (await _env.writeFile(

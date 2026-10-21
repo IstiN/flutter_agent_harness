@@ -113,6 +113,106 @@ void main() {
         expect(await s.list(), isEmpty);
       },
     );
+
+    test(
+      'a stale presence file past the cleanup grace is deleted from disk',
+      () async {
+        final s = store();
+        await s.register('session-1');
+        final file = '/sessions/.presence/session-1.json';
+        expect((await env.exists(file)).valueOrNull, isTrue);
+        // Advance past the cleanup grace (5 min) without touching: the
+        // entry is filtered from the result AND the file is removed.
+        clock = clock.add(const Duration(minutes: 5, seconds: 1));
+        expect(await s.list(), isEmpty);
+        expect(
+          (await env.exists(file)).valueOrNull,
+          isFalse,
+          reason: 'dead heartbeats are garbage-collected, not just filtered',
+        );
+      },
+    );
+
+    test(
+      'a stale-but-young presence file stays on disk within the grace',
+      () async {
+        final s = store();
+        await s.register('session-1');
+        final file = '/sessions/.presence/session-1.json';
+        // Stale (past the 15s window) but inside the 5-min cleanup grace.
+        clock = clock.add(const Duration(seconds: 16));
+        expect(await s.list(), isEmpty);
+        expect(
+          (await env.exists(file)).valueOrNull,
+          isTrue,
+          reason: 'the grace protects a suspended process that may resume',
+        );
+      },
+    );
+
+    test('a live pid keeps its presence file past the grace', () async {
+      final probed = <int>[];
+      final s = FileSessionPresenceStore(
+        env: env,
+        root: '/sessions',
+        now: () => clock,
+        staleAfter: const Duration(seconds: 15),
+        pidAlive: (pid) {
+          probed.add(pid);
+          return true;
+        },
+      );
+      await s.register('session-1', pid: 4242);
+      final file = '/sessions/.presence/session-1.json';
+      clock = clock.add(const Duration(minutes: 30));
+      expect(await s.list(), isEmpty, reason: 'stale heartbeat is not live');
+      expect(
+        (await env.exists(file)).valueOrNull,
+        isTrue,
+        reason: 'a live process may resume heartbeating — the file stays',
+      );
+      expect(probed, [4242]);
+    });
+
+    test('a provably dead pid removes its stale presence file', () async {
+      final s = FileSessionPresenceStore(
+        env: env,
+        root: '/sessions',
+        now: () => clock,
+        pidAlive: (pid) => false,
+      );
+      await s.register('session-1', pid: 13);
+      final file = '/sessions/.presence/session-1.json';
+      // Stale (past the 15s window) but inside the cleanup grace: the pid
+      // probe pronounces the process dead without waiting for the grace.
+      clock = clock.add(const Duration(seconds: 16));
+      expect(await s.list(), isEmpty);
+      expect((await env.exists(file)).valueOrNull, isFalse);
+    });
+
+    test('an unparseable presence file ages by its mtime', () async {
+      final s = store();
+      (await env.createDir('/sessions/.presence')).getOrThrow();
+      final torn = '/sessions/.presence/torn.json';
+      (await env.writeFile(torn, '{"startedAt":')).getOrThrow();
+      // Fresh mtime (inside the grace): the torn file is only filtered,
+      // never deleted — the sweep cannot know how old the write is.
+      env.setMtime(
+        torn,
+        clock.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch,
+      );
+      clock = clock.add(const Duration(seconds: 16));
+      expect(await s.list(), isEmpty);
+      expect((await env.exists(torn)).valueOrNull, isTrue);
+      // Past the grace (aged by file mtime, touchedAt being unparseable):
+      // swept like any other dead entry.
+      env.setMtime(
+        torn,
+        clock.subtract(const Duration(minutes: 6)).millisecondsSinceEpoch,
+      );
+      expect(await s.list(), isEmpty);
+      expect((await env.exists(torn)).valueOrNull, isFalse);
+    });
   });
 
   group('FileSessionEventSource + FileSessionInputChannel', () {
