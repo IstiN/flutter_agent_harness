@@ -221,7 +221,7 @@ final class AnsiMarkdown {
       return '$_dim${'─' * width}$_reset';
     }
 
-    final fenced = _formatFence(line);
+    final fenced = _formatFence(line, stripped);
     if (fenced != null) return fenced;
 
     return _formatMarkdownLine(line);
@@ -278,10 +278,21 @@ final class AnsiMarkdown {
   /// Code fences swallow everything between the markers verbatim (pi:
   /// content indented 2 spaces, no background, dim border lines). Null for
   /// markdown content outside a fence.
-  String? _formatFence(String line) {
-    if (_fenceRe.hasMatch(line)) {
+  String? _formatFence(String line, [String? stripped]) {
+    // gh-1755: regex-test the ANSI-STRIPPED text — a fence line carrying
+    // SGR bytes (e.g. the compaction report's dimmed ```) fails _fenceRe
+    // on the raw line, the fence state never latches, and every row after
+    // an unbalanced fence renders verbatim. When the raw line already IS
+    // the text (no escapes), dim as before; otherwise the caller-styled
+    // bytes stand — re-dimming would stack SGR (no double-styling).
+    final text =
+        stripped ??
+        (line.codeUnits.any((c) => c == 0x1b)
+            ? line.replaceAll(_ansiRe, '')
+            : line);
+    if (_fenceRe.hasMatch(text)) {
       _inFence = !_inFence;
-      return '$_dim$line$_reset';
+      return text == line ? '$_dim$line$_reset' : line;
     }
     if (_inFence) {
       return '  $line';
