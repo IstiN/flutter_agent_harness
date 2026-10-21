@@ -103,7 +103,23 @@ extension on AgentCli {
   /// Switches to an existing session by metadata (picker, /resume). Adopts
   /// the session's original working directory so the agent keeps operating
   /// in the project the session belongs to.
+  ///
+  /// gh-1734: every stage is attributable in fa.log — `boot_stage`
+  /// switch-begin/open/walk/context/rehydrate/replay/switch-done lines
+  /// name the target session, so a switch regression is attributable from
+  /// the log alone (open/walk/context come from the shared session-load
+  /// path). The shell stack is NOT re-booted: config, providers, MCP,
+  /// plugins and the prompt stay live — only the session, its context and
+  /// the transcript replay rebuild, and the skills/project-context reload
+  /// runs only when the session's cwd actually differs (the live prompt
+  /// already matches the session's project otherwise).
   Future<void> _switchToMetadata(SessionMetadata metadata, String label) async {
+    final switchSw = Stopwatch()..start();
+    void switchStage(String name) => _logDiagnostic(
+      'boot_stage $name ms=${switchSw.elapsedMilliseconds} '
+      'sid=${metadata.id}',
+    );
+    _logDiagnostic('boot_stage switch-begin ms=0 sid=${metadata.id}');
     await deleteSessionIfEmpty();
     // gh-1241: close the outgoing session's usage segment before the
     // switch (after the empty-cleanup: a deleted session folds nothing).
@@ -125,12 +141,16 @@ extension on AgentCli {
     // per-session resets (the next prompt's own reset at
     // `_beginUserPrompt` is untouched).
     _runAbortRequested = false;
+    final cwdChanged = _env.cwd != metadata.cwd;
     _env.cwd = metadata.cwd;
     _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
     _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
     // Reload skills/project context for the new cwd so the system prompt
-    // matches the session's project.
-    await _loadAgentContext();
+    // matches the session's project. gh-1734: a same-cwd switch keeps the
+    // already-live prompt — config/providers/MCP/plugins/prompt are all
+    // still in place, and re-scanning skills plus re-reading the project
+    // tree for the SAME project re-pays the boot for nothing.
+    if (cwdChanged) await _loadAgentContext();
     _session = await _loadSession(metadata);
     _syncMailboxPrefix();
     // herdr pane state (issue #1481): in-process session switch — re-report
@@ -149,8 +169,14 @@ extension on AgentCli {
     // zombie rows settle before the next prompt can spawn children, and no
     // same-id spawn can race the load.
     await _subagentManager.rehydrate();
+    switchStage('rehydrate');
     io.writeln("switched to session '$label' [${_pathBasename(metadata.cwd)}]");
     _replayRestoredHistory(_agent.state.messages, label);
+    switchStage('replay');
+    _logDiagnostic(
+      'boot_stage switch-done ms=${switchSw.elapsedMilliseconds} '
+      'sid=${metadata.id}',
+    );
   }
 
   /// Replays a restored session's transcript into the output so a resume
@@ -618,6 +644,23 @@ extension on AgentCli {
     }
   }
 
+  /// The session file's stat fingerprint for the warm-switch context
+  /// cache (gh-1734): one `fileInfo` probe. Null when the path cannot be
+  /// statted (foreign repo backends, probe failure) — no caching then;
+  /// the load behaves exactly as before.
+  Future<({int sizeBytes, int mtimeMs})?> _sessionFileFingerprint(
+    SessionMetadata metadata,
+  ) async {
+    try {
+      final info = await _env.fileInfo(metadata.path);
+      final file = info.valueOrNull;
+      if (file == null || file.kind != FileKind.file) return null;
+      return (sizeBytes: file.size, mtimeMs: file.mtimeMs);
+    } on Object {
+      return null;
+    }
+  }
+
   Future<Session> _loadSessionInner(SessionMetadata metadata) async {
     final bootSw = Stopwatch()..start();
     // gh-968 parity: the budget must price the prompt the FIRST REQUEST
@@ -638,6 +681,24 @@ extension on AgentCli {
     // compaction degenerate to the full load, so behavior is unchanged
     // for them. Context stays byte-identical: the compaction transform
     // drops everything before the boundary anyway.
+    final fpBefore = await _sessionFileFingerprint(metadata);
+    // The resume budget bounds how much history the walk keeps resident —
+    // two different budgets legitimately build different context slices,
+    // so it rides the cache key as the build variant (gh-1734).
+    final budget = resumeParityBudget(
+      effectiveContextWindow: _effectiveContextWindow,
+      reserveTokens: _effectiveCompactionSettings.reserveTokens,
+      systemPrompt: _agent.state.systemPrompt,
+      tools: _agent.state.tools,
+    );
+    final cachedContext = fpBefore == null
+        ? null
+        : _resumedContextCache.match(
+            metadata.path,
+            sizeBytes: fpBefore.sizeBytes,
+            mtimeMs: fpBefore.mtimeMs,
+            variant: budget,
+          );
     final session = await _repo.open(metadata, windowed: true);
     stage('open');
     // A marathon WITHOUT compaction pages past the windowed residency
@@ -660,12 +721,6 @@ extension on AgentCli {
     // auto-compaction on a fresh resume. With the parity budget the
     // resumed meter sits at/below window − reserve — below the
     // compaction trigger — on every fresh resume.
-    final budget = resumeParityBudget(
-      effectiveContextWindow: _effectiveContextWindow,
-      reserveTokens: _effectiveCompactionSettings.reserveTokens,
-      systemPrompt: _agent.state.systemPrompt,
-      tools: _agent.state.tools,
-    );
     final boundaryResident = await session.ensureCompactionBoundaryResident(
       tokenBudget: budget,
     );
@@ -683,9 +738,38 @@ extension on AgentCli {
       );
     }
     stage('walk');
-    final context = await session.buildContext();
+    // gh-1734: a warm switch to an unchanged session reuses the built
+    // context — the projection (compaction transform + per-record
+    // projection + the obligations-ledger tail scan inside
+    // `buildContext`) is a pure function of the file bytes, so an
+    // unchanged (size, mtime) fingerprint means an identical result.
+    // Cached entry, the `context` stage reports `source=cache`.
+    final SessionContext context;
+    if (cachedContext != null) {
+      context = cachedContext;
+      stage('context source=cache');
+    } else {
+      final built = await session.buildContext();
+      context = built;
+      stage('context');
+      // Store only when the file did not change during the open: the
+      // fingerprint must describe exactly the bytes the context was
+      // built from, or a later warm hit could serve a stale transcript.
+      final fpAfter = await _sessionFileFingerprint(metadata);
+      if (fpBefore != null &&
+          fpAfter != null &&
+          fpBefore.sizeBytes == fpAfter.sizeBytes &&
+          fpBefore.mtimeMs == fpAfter.mtimeMs) {
+        _resumedContextCache.remember(
+          metadata.path,
+          sizeBytes: fpAfter.sizeBytes,
+          mtimeMs: fpAfter.mtimeMs,
+          variant: budget,
+          context: built,
+        );
+      }
+    }
     final messages = context.messages;
-    stage('context');
     // Loaded usage anchors are generation-time: post-compaction they
     // phantom-report the pre-compaction size (183k on a 27k branch) and
     // fire a no-op compaction on every resume. Re-anchor at chars/4.
