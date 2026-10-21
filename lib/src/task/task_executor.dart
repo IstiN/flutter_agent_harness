@@ -580,8 +580,13 @@ final class TaskExecutor {
     // pre-compaction anchor rides the kept tail after a fold, and a
     // constant over-line observation must not re-run forced passes every
     // boundary. An observation back UNDER the line (the honest post-fold
-    // report) resets the latch.
-    // ignore: avoid_print
+    // report) resets the latch — reset = lower the anchor while keeping
+    // the latch armed, so the next re-crossing must still be
+    // strictly-greater to fire again. The anchor lives for the child's
+    // whole retained lifetime (resumable children keep their id, and the
+    // executor's other per-child maps evict nothing either), so it dies
+    // with the executor rather than at some child-end event that does
+    // not exist.
     var runForced = false;
     if (observed != null) {
       final latch = _forcedObservedAt[id];
