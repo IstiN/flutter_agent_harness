@@ -781,8 +781,6 @@ SummarizeFn streamFunctionSummarizer(
 }) {
   return (SummarizationRequest request) async {
     try {
-      // ignore: avoid_print
-      print('DEBUG sFS call win=' + model.contextWindow.toString());
       final stream = StreamCacheRouting.runWith(
         () => streamFunction(
           model,

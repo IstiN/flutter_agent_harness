@@ -607,39 +607,33 @@ void main() {
       },
     );
 
-    test(
-      'a pathological Retry-After waits out the ceiling, then exhausts '
-      '(issue #1066)',
-      () async {
-        final a = _model('openai', 'gpt-a');
-        final probe = _Probe({
-          'v-a': [
-            _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
-            _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
-            _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
-          ],
-        });
-        final w = wrapper([
-          entry(probe, a, ['v-a']),
-        ], policy: const ModelRolesRetryPolicy(maxWait: Duration(seconds: 30)));
+    test('a pathological Retry-After waits out the ceiling, then exhausts '
+        '(issue #1066)', () async {
+      final a = _model('openai', 'gpt-a');
+      final probe = _Probe({
+        'v-a': [
+          _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
+          _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
+          _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
+        ],
+      });
+      final w = wrapper([
+        entry(probe, a, ['v-a']),
+      ], policy: const ModelRolesRetryPolicy(maxWait: Duration(seconds: 30)));
 
-        final events = await run(w);
+      final events = await run(w);
 
-        // Each wait-out is bounded to the 5m sole-entry ceiling; the
-        // retries keep consuming the per-entry budget, so the chain still
-        // exhausts — with the waited total in the story.
-        expect(sleeps, [
-          const Duration(minutes: 5),
-          const Duration(minutes: 5),
-        ]);
-        expect(probe.calls, hasLength(3)); // 1 + retriesPerEntry(2)
-        expect(
-          events.single,
-          startsWith('error(error):${a.id}:Provider chain exhausted'),
-        );
-        expect(events.single, contains('waited 10m on rate limits'));
-      },
-    );
+      // Each wait-out is bounded to the 5m sole-entry ceiling; the
+      // retries keep consuming the per-entry budget, so the chain still
+      // exhausts — with the waited total in the story.
+      expect(sleeps, [const Duration(minutes: 5), const Duration(minutes: 5)]);
+      expect(probe.calls, hasLength(3)); // 1 + retriesPerEntry(2)
+      expect(
+        events.single,
+        startsWith('error(error):${a.id}:Provider chain exhausted'),
+      );
+      expect(events.single, contains('waited 10m on rate limits'));
+    });
 
     test(
       'the waited-total label counts rate-limit waits only (issue #1066)',
@@ -661,12 +655,15 @@ void main() {
         final probe = _Probe({
           'v-a': [transportTurn(), transportTurn(), transportTurn()],
         });
-        final w = wrapper([
-          entry(probe, a, ['v-a']),
-        ], policy: const ModelRolesRetryPolicy(
-          retriesPerEntry: 2,
-          maxWait: Duration(seconds: 30),
-        ));
+        final w = wrapper(
+          [
+            entry(probe, a, ['v-a']),
+          ],
+          policy: const ModelRolesRetryPolicy(
+            retriesPerEntry: 2,
+            maxWait: Duration(seconds: 30),
+          ),
+        );
 
         final events = await run(w);
 
@@ -685,41 +682,41 @@ void main() {
       },
     );
 
-    test(
-      'the last eligible entry waits out even after an instant failover '
-      '(issue #1066)',
-      () async {
-        final a = _model('openai', 'gpt-a');
-        final b = _model('anthropic', 'claude-b');
-        final probe = _Probe({
-          'v-a': [_rateLimitTurn(a, retryAfter: const Duration(minutes: 10))],
-          'v-b': [
-            _rateLimitTurn(b, retryAfter: const Duration(seconds: 60)),
-            _okTurn(b, 'b waited it out'),
-          ],
-        });
-        final w = wrapper([
+    test('the last eligible entry waits out even after an instant failover '
+        '(issue #1066)', () async {
+      final a = _model('openai', 'gpt-a');
+      final b = _model('anthropic', 'claude-b');
+      final probe = _Probe({
+        'v-a': [_rateLimitTurn(a, retryAfter: const Duration(minutes: 10))],
+        'v-b': [
+          _rateLimitTurn(b, retryAfter: const Duration(seconds: 60)),
+          _okTurn(b, 'b waited it out'),
+        ],
+      });
+      final w = wrapper(
+        [
           entry(probe, a, ['v-a']),
           entry(probe, b, ['v-b']),
-        ], policy: const ModelRolesRetryPolicy(
+        ],
+        policy: const ModelRolesRetryPolicy(
           retriesPerEntry: 1,
           maxWait: Duration(seconds: 30),
-        ));
+        ),
+      );
 
-        final events = await run(w);
+      final events = await run(w);
 
-        // A's 10m wall instant-fails over to B (a fallback exists — the
-        // old policy); B is the last eligible entry, so its 60s wall is
-        // waited out instead of exhausting the chain.
-        expect(sleeps, [const Duration(seconds: 60)]);
-        expect(probe.calls, ['v-a', 'v-b', 'v-b']);
-        expect(events.last, 'done:${b.id}');
-        expect(notices.map((n) => n.kind), [
-          FallbackNoticeKind.modelFallback,
-          FallbackNoticeKind.retry,
-        ]);
-      },
-    );
+      // A's 10m wall instant-fails over to B (a fallback exists — the
+      // old policy); B is the last eligible entry, so its 60s wall is
+      // waited out instead of exhausting the chain.
+      expect(sleeps, [const Duration(seconds: 60)]);
+      expect(probe.calls, ['v-a', 'v-b', 'v-b']);
+      expect(events.last, 'done:${b.id}');
+      expect(notices.map((n) => n.kind), [
+        FallbackNoticeKind.modelFallback,
+        FallbackNoticeKind.retry,
+      ]);
+    });
 
     test('single-key exhaustion ends with the all-rate-limited path', () async {
       final a = _model('openai', 'gpt-a');
@@ -828,8 +825,7 @@ void main() {
         );
       });
 
-      test(
-          'issue #1168: a resumed-exhaustion terminal passes the '
+      test('issue #1168: a resumed-exhaustion terminal passes the '
           'mid-answer guard unwrapped', () async {
         // The production wiring composes the transient wrapper INSIDE the
         // ladder (providerStreamFunction per chain entry): the wrapper
@@ -881,8 +877,7 @@ void main() {
             ),
             streamForKey: (apiKey) => (model, context, {cancelToken}) {
               return transientRetryStreamFunction(
-                (innerModel, innerContext, {cancelToken}) =>
-                    dying(innerModel),
+                (innerModel, innerContext, {cancelToken}) => dying(innerModel),
                 maxAttempts: 2,
               )(model, context, cancelToken: cancelToken);
             },
@@ -1142,15 +1137,18 @@ void main() {
           'v-b': [_rateLimitTurn(b, retryAfter: backoff)],
           'v-b2': [_rateLimitTurn(b, retryAfter: backoff)],
         });
-        final w = wrapper([
-          entry(probe, a, ['v-a', 'v-a2']),
-          entry(probe, b, ['v-b', 'v-b2']),
-        ], policy: const ModelRolesRetryPolicy(
-          retriesPerEntry: 1,
-          // Issue #1066: the 30s sole-entry ceiling keeps the wait-outs
-          // short so the 10m wall outlasts them and the budget burns out.
-          maxWaitForLastEntry: Duration(seconds: 30),
-        ));
+        final w = wrapper(
+          [
+            entry(probe, a, ['v-a', 'v-a2']),
+            entry(probe, b, ['v-b', 'v-b2']),
+          ],
+          policy: const ModelRolesRetryPolicy(
+            retriesPerEntry: 1,
+            // Issue #1066: the 30s sole-entry ceiling keeps the wait-outs
+            // short so the 10m wall outlasts them and the budget burns out.
+            maxWaitForLastEntry: Duration(seconds: 30),
+          ),
+        );
 
         // Call 1 benches every key (10m retryAfter): A instant-fails over
         // to B, B (last eligible) waits out 30s, and the spent budget
@@ -1577,8 +1575,7 @@ void main() {
   });
 
   group('caller-model window honor (gh-1742 review round 1, comment 6)', () {
-    test('a same-identity caller model dials with the caller window',
-        () async {
+    test('a same-identity caller model dials with the caller window', () async {
       // The catalog entry carries the stale window; the caller (the
       // compaction adapters, the registry-patched agent model) hands the
       // chain the SAME identity with the registered window — the dial
@@ -1592,9 +1589,7 @@ void main() {
             model: catalog,
             keyRing: ApiKeyRing(
               baseName: 'K_kimi',
-              credentials: [
-                ApiKeyCredential('K_kimi', 'v-a'),
-              ],
+              credentials: [ApiKeyCredential('K_kimi', 'v-a')],
               startIndex: 0,
               now: () => DateTime.utc(2026),
             ),
@@ -1628,8 +1623,7 @@ void main() {
       );
     });
 
-    test('a different-identity caller model keeps the entry model',
-        () async {
+    test('a different-identity caller model keeps the entry model', () async {
       final catalog = _model('anthropic', 'kimi');
       final stranger = _model('ignored', 'ignored');
       final dialed = <Model>[];
@@ -1639,9 +1633,7 @@ void main() {
             model: catalog,
             keyRing: ApiKeyRing(
               baseName: 'K_kimi',
-              credentials: [
-                ApiKeyCredential('K_kimi', 'v-a'),
-              ],
+              credentials: [ApiKeyCredential('K_kimi', 'v-a')],
               startIndex: 0,
               now: () => DateTime.utc(2026),
             ),

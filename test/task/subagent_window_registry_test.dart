@@ -174,8 +174,6 @@ final class _ScriptedStream {
     if (system.contains('context-hygiene judge')) {
       compactionCalls++;
       compactionModels.add(model);
-      // ignore: avoid_print
-      print('DEBUG judge model window=' + model.contextWindow.toString() + ' id=' + model.id);
       final seqs = RegExp(r'^\[(\d+)\]', multiLine: true)
           .allMatches(lastUserText(context))
           .map((m) => int.parse(m.group(1)!))
@@ -185,8 +183,6 @@ final class _ScriptedStream {
     if (system.contains('context checkpoint assistant')) {
       compactionCalls++;
       compactionModels.add(model);
-      // ignore: avoid_print
-      print('DEBUG ckpt model window=' + model.contextWindow.toString() + ' id=' + model.id + ' sys=[' + system.substring(0, 60) + ']');
       return _streamOf(_usageTurn('checkpoint: earlier work summarized'));
     }
     contexts.add(
@@ -337,56 +333,53 @@ void main() {
       },
     );
 
-    test(
-      'the child loop GUARD rides the capped window too (gh-1742 review '
-      'round 1, comment 2)',
-      () async {
-        // The registry raise forks the two child-side bases when the
-        // owner clamps down: compaction resolves
-        // effectiveContextWindow(registered, cap), but a child Agent
-        // built WITHOUT the cap guards against the raw registered value.
-        // Here the served window is 478k and the owner caps at 200
-        // tokens — every child request is grossly over the CAPPED basis,
-        // so the mid-turn guard must refuse BEFORE the first request is
-        // sent. With the uncapped guard this request goes out (and the
-        // run completes normally).
-        final registry = ContextWindowRegistry();
-        registry.publish(
-          model: _model,
-          window: _registeredWindow,
-          source: ContextWindowSource.endpointReport,
-        );
-        final wiring = _Wiring(registry: registry, contextWindowCap: 200);
-        final result = await wiring.spawn('guarded', 'over-capped');
-        expect(
-          wiring.stream.contexts,
-          isEmpty,
-          reason:
-              'the child guard must refuse at the capped basis before any '
-              'request is sent (an uncapped guard sends against 478k)',
-        );
-        // The run surfaces the guard's terminal, not a silent success:
-        // the flushed transcript's last assistant message carries the
-        // exhausted marker.
-        await wiring.settle('guarded');
-        final records = await wiring.sessionRecords('guarded');
-        final messages = records
-            .whereType<MessageRecord>()
-            .map((record) => record.message)
-            .toList();
-        expect(
-          messages.any(
-            (message) =>
-                message is AssistantMessage &&
-                isContextWindowExhaustedError(message.errorMessage),
-          ),
-          isTrue,
-          reason:
-              'no over-window guard terminal in the transcript '
-              '(${result.status}, ${messages.length} messages)',
-        );
-      },
-    );
+    test('the child loop GUARD rides the capped window too (gh-1742 review '
+        'round 1, comment 2)', () async {
+      // The registry raise forks the two child-side bases when the
+      // owner clamps down: compaction resolves
+      // effectiveContextWindow(registered, cap), but a child Agent
+      // built WITHOUT the cap guards against the raw registered value.
+      // Here the served window is 478k and the owner caps at 200
+      // tokens — every child request is grossly over the CAPPED basis,
+      // so the mid-turn guard must refuse BEFORE the first request is
+      // sent. With the uncapped guard this request goes out (and the
+      // run completes normally).
+      final registry = ContextWindowRegistry();
+      registry.publish(
+        model: _model,
+        window: _registeredWindow,
+        source: ContextWindowSource.endpointReport,
+      );
+      final wiring = _Wiring(registry: registry, contextWindowCap: 200);
+      final result = await wiring.spawn('guarded', 'over-capped');
+      expect(
+        wiring.stream.contexts,
+        isEmpty,
+        reason:
+            'the child guard must refuse at the capped basis before any '
+            'request is sent (an uncapped guard sends against 478k)',
+      );
+      // The run surfaces the guard's terminal, not a silent success:
+      // the flushed transcript's last assistant message carries the
+      // exhausted marker.
+      await wiring.settle('guarded');
+      final records = await wiring.sessionRecords('guarded');
+      final messages = records
+          .whereType<MessageRecord>()
+          .map((record) => record.message)
+          .toList();
+      expect(
+        messages.any(
+          (message) =>
+              message is AssistantMessage &&
+              isContextWindowExhaustedError(message.errorMessage),
+        ),
+        isTrue,
+        reason:
+            'no over-window guard terminal in the transcript '
+            '(${result.status}, ${messages.length} messages)',
+      );
+    });
   });
 
   group('AC5: observed-over-headroom forces the compaction pass', () {
@@ -545,7 +538,9 @@ void main() {
       final stream = _ScriptedStream();
       final resolver = ModelRolesResolver(
         config: ModelRolesConfig(
-          roles: {'smol': [smolRef]},
+          roles: {
+            'smol': [smolRef],
+          },
           retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
         ),
         secrets: const {'ANTHROPIC_API_KEY': 'k'},
