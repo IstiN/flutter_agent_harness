@@ -168,7 +168,7 @@ case "\$cmd" in
             i=0
             while [ "\$i" -lt "\$n" ] 2>/dev/null; do
               if [ -n "\$jobs_body" ]; then jobs_body="\$jobs_body,"; fi
-              jobs_body="\$jobs_body{\\\"status\\\":\\\"in_progress\\\"}"
+              jobs_body="\$jobs_body{\\"status\\":\\"in_progress\\"}"
               i=\$((i + 1))
             done
           fi
