@@ -435,43 +435,41 @@ final class CompactionSettings {
 
   /// Creates settings scaled to a model's context [window] (in tokens).
   ///
-  /// gh-1742 (AC3): PROPORTIONAL headroom. The legacy flat reserve
-  /// (16,384) was tuned for 200k windows — 1.6% of a 1M window, which let
-  /// real input ride 976k–982k for hours on the kimi-k3 session before
-  /// the first auto-compaction. The scaling rule now:
+  /// gh-1742 (AC3): PROPORTIONAL headroom above the legacy-parity band.
+  /// The legacy flat reserve (16,384) was tuned for 200k windows — 1.6%
+  /// of a 1M window, which let real input ride 976k–982k for hours on the
+  /// kimi-k3 session before the first auto-compaction. The scaling rule:
   ///
-  /// - `reserveTokens = min(65536, max(1024, window ~/ 16))` — 6.25% of
-  ///   the window, clamped into [1024, 65536]: a 200k window reserves
-  ///   12,500, a 1M window keeps ≥60k headroom at the trigger (enough to
-  ///   absorb one huge tool result plus estimator drift), and the 1024
-  ///   floor still prices the summary prompt + its output on small
-  ///   models;
-  /// - `keepRecentTokens = min(131072, max(2048, window ~/ 8))` — the
-  ///   post-compaction floor scales with the window (12.5%, clamped
-  ///   [2048, 131072]) so the compaction sawtooth restarts proportional
-  ///   to the window instead of always ~20k (2% of 1M — restarts tiny).
+  /// - `reserveTokens = min(65536, max(window ~/ 16, legacyReserve))` —
+  ///   6.25% of the window, clamped to 64Ki, floored by the EXACT legacy
+  ///   curve (`min(16384, max(1024, window ~/ 4))`, degenerate clamps
+  ///   included). The legacy term dominates below 262,144 (where
+  ///   `window/16` would undercut it — the hosted 128k/200k class rides
+  ///   the legacy line exactly, so an estimate-only provider (E1) still
+  ///   compacts no later than before); the proportional term takes over
+  ///   above it, so a 1M window keeps ≥60k headroom at the trigger
+  ///   (enough to absorb one huge tool result plus estimator drift);
+  /// - `keepRecentTokens = min(131072, max(window ~/ 8, legacyKeep))` —
+  ///   the post-compaction floor scales with the window (12.5%, clamped
+  ///   128Ki) above the mirrored legacy curve
+  ///   (`min(20000, max(2048, window ~/ 2))`), so the sawtooth restarts
+  ///   proportional on big windows instead of always ~20k.
   ///
   /// Monotone in the window: a bigger window reserves (and keeps) as much
-  /// or more. Degenerate small windows relax the floors proportionally so
-  /// the reserve never eats half the window and the kept region never
-  /// eats all of it (below that, compaction could not free anything).
+  /// or more (max of two monotone curves under monotone clamps).
+  /// Degenerate small windows relax the floors proportionally so the
+  /// reserve never eats half the window and the kept region never eats
+  /// all of it (below that, compaction could not free anything).
   factory CompactionSettings.forWindow(int window) {
-    // Proportional headroom (gh-1742 AC3): 6.25% of the window, clamped
-    // to [1024, 65536]. A legacy-parity floor keeps the small-window
-    // band (≤64k, where `window/16` would undercut the flat legacy
-    // `min(16384, window/4)` reserve) firing no later than before — the
-    // floor is itself capped at `window/4`, so it fades out exactly
-    // where the proportional term takes over and the curve stays
-    // monotone (16384→4096, 65536→4096, 131072→8192, 200k→12500,
-    // 1M→65536).
-    var reserveTokens = min(
-      65536,
-      max(max(window ~/ 16, 1024), min(4096, window ~/ 4)),
-    );
-    var keepRecentTokens = min(
-      131072,
-      max(max(window ~/ 8, 2048), min(4096, window ~/ 2)),
-    );
+    // Legacy-parity floors (gh-1742 AC3 + review round 1, comment 1):
+    // the pre-gh-1742 curves, byte-identical. The reserve floor is what
+    // keeps the (16k, 262k) band — most hosted sessions — firing no
+    // later than before; `window/16` alone compacts up to 12,288 tokens
+    // later there.
+    final legacyReserve = min(16384, max(1024, window ~/ 4));
+    final legacyKeep = min(20000, max(2048, window ~/ 2));
+    var reserveTokens = min(65536, max(window ~/ 16, legacyReserve));
+    var keepRecentTokens = min(131072, max(window ~/ 8, legacyKeep));
     if (reserveTokens >= window ~/ 2) {
       reserveTokens = max(128, window ~/ 4);
     }

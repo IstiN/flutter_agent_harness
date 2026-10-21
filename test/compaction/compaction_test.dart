@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -61,13 +63,15 @@ void main() {
 
   group('CompactionSettings.forWindow', () {
     test(
-      'gh-1742 AC3: proportional headroom — 6.25%, clamped at 64Ki above',
+      'gh-1742 AC3: proportional headroom above the legacy-parity band',
       () {
-        // 200k: exactly 6.25% (12,500) — proportional, not the legacy flat
-        // 16,384 (1.6% of 1M — the flat reserve is the bug this card
-        // fixes).
+        // 200k sits INSIDE the parity band (16k, 262k): the legacy term
+        // (`min(16384, window/4)` capped) dominates → the exact legacy
+        // reserve, so the estimate-only channel fires at the legacy line
+        // (gh-1742 review round 1, comment 1: the old proportional-only
+        // curve compacted up to 12k later than legacy there).
         final s200k = CompactionSettings.forWindow(200000);
-        expect(s200k.reserveTokens, 12500);
+        expect(s200k.reserveTokens, 16384);
         expect(s200k.keepRecentTokens, 25000);
         // 1M (the kimi class): reserve ≥ 65536 → ≥60k headroom at the
         // trigger, enough to absorb one huge tool result plus drift.
@@ -79,20 +83,64 @@ void main() {
     );
 
     test('UT-2: scaling table across the hosted-model range', () {
-      // window → (reserve, keepRecent): 6.25% / 12.5%, floored at the
-      // summary pricing minimums, capped at 64Ki / 128Ki.
-      expect(CompactionSettings.forWindow(65536).reserveTokens, 4096);
-      expect(CompactionSettings.forWindow(131072).reserveTokens, 8192);
+      // window → reserve: legacy parity below 262,144 (the `min(16384,
+      // window/4)` term dominates `window/16` there), proportional above.
+      expect(CompactionSettings.forWindow(20480).reserveTokens, 5120);
+      expect(CompactionSettings.forWindow(32768).reserveTokens, 8192);
+      expect(CompactionSettings.forWindow(65536).reserveTokens, 16384);
+      expect(CompactionSettings.forWindow(131072).reserveTokens, 16384);
       expect(CompactionSettings.forWindow(262144).reserveTokens, 16384);
       expect(CompactionSettings.forWindow(524288).reserveTokens, 32768);
       expect(CompactionSettings.forWindow(2000000).reserveTokens, 65536);
     });
 
+    test('hosted mid-band windows reproduce the pi defaults exactly', () {
+      // The 128k hosted class (and every window in (16k, 262k)) rides the
+      // legacy curve exactly: reserve 16384, keep 20000 — the flutter_app
+      // AC (`agent_service_test` "hosted configs keep pi defaults") pins
+      // the same values, and the estimate-only degradation path (E1)
+      // compacts no later than before.
+      final s128k = CompactionSettings.forWindow(128000);
+      expect(s128k.reserveTokens, 16384);
+      expect(s128k.keepRecentTokens, 20000);
+      expect(CompactionSettings.forWindow(127000).reserveTokens, 16384);
+      expect(CompactionSettings.forWindow(127000).keepRecentTokens, 20000);
+    });
+
+    test(
+      'REG: the estimate trigger never fires later than the legacy curve',
+      () {
+        // The pre-gh-1742 curve, exactly (the parity half of the
+        // gh-1742 review's comment 1): the new reserve must be >= the
+        // legacy reserve at EVERY window, so `window - reserve` — what
+        // `shouldCompact` fires on — never sits LATER than before. This
+        // is the property the "≤64k fires no later than legacy" claim
+        // used to promise and the old floor (`min(4096, window/4)`)
+        // broke for every window in (16k, 262k).
+        int legacyReserve(int window) {
+          var reserve = math.min(16384, math.max(1024, window ~/ 4));
+          if (reserve >= window ~/ 2) reserve = math.max(128, window ~/ 4);
+          return reserve;
+        }
+
+        for (var window = 512; window <= 2100000; window += 512) {
+          final settings = CompactionSettings.forWindow(window);
+          expect(
+            settings.reserveTokens,
+            greaterThanOrEqualTo(legacyReserve(window)),
+            reason:
+                'window $window: the reserve undercut legacy — the '
+                'estimate-only channel (E1, no reported usage) would '
+                'compact later than before',
+          );
+        }
+      },
+    );
+
     test('scales to small on-device windows (summary pricing floor)', () {
-      // The ≤64k band keeps the legacy flat reserve/keep (gh-1742: the
-      // proportional curve only takes over above the legacy-parity
-      // floor) — small dev/on-device windows compact no later than
-      // before.
+      // The ≤262k band rides the legacy curve exactly (gh-1742: the
+      // proportional curve only takes over above the legacy-parity band)
+      // — small dev/on-device windows compact no later than before.
       final s8192 = CompactionSettings.forWindow(8192);
       expect(s8192.reserveTokens, 2048);
       expect(s8192.keepRecentTokens, 4096);
@@ -103,7 +151,9 @@ void main() {
 
       final s16384 = CompactionSettings.forWindow(16384);
       expect(s16384.reserveTokens, 4096);
-      expect(s16384.keepRecentTokens, 4096);
+      // Legacy keep at 16k (`min(20000, 16384/2)`), mirrored by the
+      // keep-side parity floor.
+      expect(s16384.keepRecentTokens, 8192);
     });
 
     test(
@@ -141,11 +191,6 @@ void main() {
           settings.keepRecentTokens,
           lessThan(window),
           reason: 'window $window: kept region must leave room to free',
-        );
-        expect(
-          settings.reserveTokens,
-          lessThanOrEqualTo(settings.keepRecentTokens),
-          reason: 'window $window',
         );
       }
     });
@@ -207,10 +252,10 @@ void main() {
 
     test('the compaction threshold rides the capped window', () {
       // A 1M-window model under a 256k cap triggers at the 256k basis
-      // (gh-1742 forWindow: reserve 6.25% = 16000 → trigger 240000),
-      // never at the 1M one; uncapped, the same model triggers at
-      // 983040. The meter, the threshold and the loop guard all consume
-      // the same effectiveContextWindow basis.
+      // (gh-1742 forWindow: reserve 16384 → trigger 239616), never at
+      // the 1M one; uncapped, the same model triggers at 983040. The
+      // meter, the threshold and the loop guard all consume the same
+      // effectiveContextWindow basis.
       final capped = effectiveContextWindow(1000000, 256000);
       final uncapped = effectiveContextWindow(1000000, null);
       expect(
@@ -225,8 +270,8 @@ void main() {
   });
 
   group('fit-the-window compaction payloads (issue #729)', () {
-    // The repro basis: a 200k window with the default reserve leaves a
-    // 183644-token payload budget.
+    // The repro basis: a 200k window with the (legacy-parity) reserve
+    // leaves a 183616-token payload budget.
     final budget = summarizationPayloadBudget(
       200000,
       CompactionSettings.forWindow(200000),

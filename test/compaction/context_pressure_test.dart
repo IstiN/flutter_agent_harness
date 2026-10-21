@@ -143,7 +143,8 @@ void main() {
 
   group('assessContextPressure (AC1/AC5)', () {
     final settings = CompactionSettings.forWindow(200000);
-    // 200k window: reserve 12500 → trigger 187500.
+    // 200k window: reserve 16384 (the legacy-parity value) → trigger
+    // 183616 — exactly the legacy line.
     test('estimate alone under the trigger stays quiet', () {
       final decision = assessContextPressure(
         estimatedTokens: 100000,
@@ -218,10 +219,10 @@ void main() {
           settings: CompactionSettings.forWindow(204800),
         );
         expect(decision.triggered, isTrue);
-        // forWindow(204800).reserveTokens (12,800) < legacy 16,384 → the
-        // reconciled line (192,000) sits ABOVE the legacy line, so with
-        // pressure = max(est, obs) the firing boundary can only be the
-        // same or earlier.
+        // forWindow(204800).reserveTokens == 16,384 — the legacy value
+        // exactly (204,800 sits inside the parity band), so the
+        // reconciled line (188,416) IS the legacy line and the firing
+        // boundary can never be later than before.
         expect(decision.pressureTokens, 199098);
       },
     );
