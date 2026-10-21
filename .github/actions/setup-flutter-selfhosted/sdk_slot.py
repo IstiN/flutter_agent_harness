@@ -4,6 +4,9 @@
 Layout under $HOME/actions-runner-yoloit/flutter-sdk/:
 
     <version>/     one immutable tree per pinned Flutter version
+      .fah-arch    arch stamp written into each slot at install time
+                   (gh-1736): lets ensure_arch tell a healthy slot
+                   from one unpacked from a wrong-arch archive
     current        symlink to the version every new job should use
     .fah-version   advisory marker of the version `current` targets
 
@@ -26,6 +29,11 @@ construction instead of by locking:
             a missing or half-populated slot
   gc        reclaim superseded version trees after a drain window and
             staging dirs abandoned by jobs that died mid-download
+  archive   pure resolution: version + host arch -> releases_macos.json
+            archive filename (arm64 zips carry the _arm64 infix, x64
+            zips carry none — gh-1736)
+  ensure_arch  prune a slot whose stamp is missing or not the host
+            arch, so the action reinstalls it from the right archive
 
 The manifest source can be overridden with FAH_RELEASES_MANIFEST (a URL
 or a local file path) — that is how the committed scenarios in
@@ -46,6 +54,7 @@ RELEASES_URL = (
     'releases_macos.json'
 )
 VERSION_RE = re.compile(r'^\d+\.\d+\.\d+$')
+ARCH_STAMP = '.fah-arch'
 
 
 def read_marker(path):
@@ -204,10 +213,83 @@ def cmd_gc(root, keep, min_age_days):
             shutil.rmtree(path, ignore_errors=True)
 
 
+def normalise_arch(host_arch):
+    """Map uname -m output to the manifest's dart_sdk_arch vocabulary."""
+    arch = (host_arch or '').strip().lower()
+    if arch == 'arm64':
+        return 'arm64'
+    if arch in ('x86_64', 'amd64', 'x64'):
+        return 'x64'
+    return ''
+
+
+def cmd_archive(version, host_arch):
+    """Print the releases_macos.json archive filename for this host arch.
+
+    gh-1736: the arch-less flutter_macos_<v>-stable.zip is the X64
+    build; installing it on the arm64 self-hosted runner slots an x64
+    dart that dies with 'Bad CPU type in executable' (exit 126). Per
+    the manifest convention, arm64 archives carry the _arm64 infix and
+    x64 archives carry none — the same pick subosito/flutter-action
+    makes from the platform arch. Pure: no network, no filesystem.
+    """
+    if not VERSION_RE.match(version):
+        raise ValueError(f'not a concrete version: {version!r}')
+    arch = normalise_arch(host_arch)
+    if not arch:
+        raise ValueError(
+            f'unsupported host arch {host_arch!r} — cannot pick a macOS '
+            f'Flutter SDK archive (need arm64 or x86_64/x64)')
+    infix = '_arm64' if arch == 'arm64' else ''
+    print(f'flutter_macos{infix}_{version}-stable.zip')
+
+
+def cmd_ensure_arch(dest, host_arch):
+    """Prune a slot installed for a different (or unknown) arch.
+
+    A marker can point at a slot whose contents were unpacked from the
+    wrong-arch archive — or, like the gh-1736 poisoned runner slot, from
+    the pre-fix arch-less download (no stamp at all). resolve() answers
+    SKIP for it forever, so the action runs this before trusting a
+    SKIP/REUSE verdict: a slot stamped for the host arch stays, anything
+    else is removed and reported as `reinstall` for the INSTALL path.
+    Race-safe in the two-legs-one-runner topology: both concurrent legs
+    share the host arch, so a prune never removes a tree the other leg
+    installed for itself — the loser converges on the winner's
+    correctly stamped slot.
+    """
+    arch = normalise_arch(host_arch)
+    if not arch:
+        raise ValueError(f'unsupported host arch {host_arch!r}')
+    if not os.path.isdir(dest):
+        print('ok')
+        return
+    stamp = ''
+    try:
+        with open(os.path.join(dest, ARCH_STAMP)) as f:
+            stamp = f.read().strip()
+    except OSError:
+        pass
+    # The action stamps slots with the raw `uname -m` spelling; compare
+    # it in the SAME normalised vocabulary as the host side, so the
+    # stamp round-trips at both arches — on x86_64 the raw spelling and
+    # the manifest vocabulary differ (`x86_64` vs `x64`), and without
+    # this normalisation the freshly stamped slot was pruned and
+    # re-downloaded on every run (gh-1736 review). An unrecognised
+    # stamp survives as-is and still mismatches — never trusted.
+    stamp = normalise_arch(stamp) or stamp
+    if stamp == arch:
+        print('ok')
+        return
+    print(f'reinstall: slot arch {stamp or "unstamped"} != host {arch}')
+    shutil.rmtree(dest, ignore_errors=True)
+
+
 def main(argv):
     usage = ('usage: sdk_slot.py resolve SPEC MARKER | migrate ROOT MARKER '
              '| install STAGED DEST | flip TARGET LINK | gc ROOT KEEP '
-             'MIN_AGE_DAYS')
+             'MIN_AGE_DAYS | archive VERSION HOST_ARCH | '
+             'ensure_arch DEST HOST_ARCH')
     if len(argv) < 2:
         print(usage, file=sys.stderr)
         return 2
@@ -223,6 +305,10 @@ def main(argv):
             cmd_flip(args[0], args[1])
         elif cmd == 'gc' and len(args) == 3:
             cmd_gc(args[0], args[1], float(args[2]))
+        elif cmd == 'archive' and len(args) == 2:
+            cmd_archive(args[0], args[1])
+        elif cmd == 'ensure_arch' and len(args) == 2:
+            cmd_ensure_arch(args[0], args[1])
         else:
             print(usage, file=sys.stderr)
             return 2

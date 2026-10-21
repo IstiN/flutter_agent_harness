@@ -53,22 +53,56 @@ runs:
         VER="${DECISION#* }"
         DEST="$SDK_ROOT/$VER"
 
+        # gh-1736: the archive is picked per HOST arch — the arch-less
+        # flutter_macos_<v>-stable.zip is the X64 build, and an x64 dart
+        # cannot exec on this Apple-silicon runner ("Bad CPU type in
+        # executable", exit 126). Both matrix legs run on this ONE host
+        # and share the slot (the matrix arch only steers
+        # FLUTTER_XCODE_ARCHS), so the slot's SDK must match uname -m.
+        # Same resolution subosito/flutter-action performs from the
+        # platform arch; the naming lives in the tested sdk_slot.py.
+        HOST_ARCH="$(uname -m)"
+        ARCHIVE="$(python3 "$SLOT" archive "$VER" "$HOST_ARCH")"
+        echo "host arch $HOST_ARCH -> $ARCHIVE"
+
         # Self-heal before trusting a non-INSTALL verdict: a marker can
         # point at a version dir that a human or disk cleanup removed.
         # Without this the SKIP path would export a PATH entry with no
         # flutter binary under it and every later step would die at
         # `flutter --version` until someone deletes the marker by hand —
-        # the brick the #357 review flagged on the old swap.
-        if [[ "$DECISION" != INSTALL* && ! -d "$DEST" ]]; then
-          echo "pinned $VER is missing from $SDK_ROOT — reinstalling"
-          DECISION="INSTALL $VER"
+        # the brick the #357 review flagged on the old swap. gh-1736
+        # adds the arch half: a slot unpacked from a wrong-arch archive
+        # (or unstamped, like the poisoned runner slot this fixes) is
+        # pruned by ensure_arch and reinstalled from the right archive.
+        if [[ "$DECISION" != INSTALL* ]]; then
+          if [[ ! -d "$DEST" ]]; then
+            echo "pinned $VER is missing from $SDK_ROOT — reinstalling"
+            DECISION="INSTALL $VER"
+          else
+            # Capture the verdict and check the exit code explicitly:
+            # inside `elif [[ "$( … )" == reinstall* ]]` a nonzero exit
+            # would yield an empty string and a silently false
+            # comparison, and the run would fall through to trusting
+            # the slot. ensure_arch cannot fail today — the `archive`
+            # call above already hard-gated $HOST_ARCH through the same
+            # normalise_arch vocabulary — but a future failure mode
+            # must degrade to a loud error, never a silent reuse.
+            ensure_out="$(python3 "$SLOT" ensure_arch "$DEST" "$HOST_ARCH")" || {
+              echo "::error::sdk_slot ensure_arch failed for $DEST on $HOST_ARCH: $ensure_out"
+              exit 1
+            }
+            if [[ "$ensure_out" == reinstall* ]]; then
+              echo "pinned $VER at $DEST is not usable on $HOST_ARCH — reinstalling from the correct archive"
+              DECISION="INSTALL $VER"
+            fi
+          fi
         fi
 
         if [[ "$DECISION" == INSTALL* ]]; then
           if [[ -d "$DEST" ]]; then
             echo "Flutter $VER already installed by a concurrent leg — reusing it"
           else
-            echo "Downloading Flutter $VER (spec: $SPEC) — one-time per pinned version..."
+            echo "Downloading Flutter $VER (spec: $SPEC, host $HOST_ARCH) — one-time per pinned version..."
             STAGE="$(mktemp -d "$SDK_ROOT/.stage.XXXXXX")"
             # --max-time bounds EACH transfer, --retry-max-time bounds
             # the whole retry cycle: a wedged ~1GB download can never
@@ -77,11 +111,16 @@ runs:
             if ! curl -fL --retry 3 --retry-all-errors --retry-delay 5 \
                 --max-time 600 --retry-max-time 900 \
                 -o "$STAGE/flutter.zip" \
-                "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${VER}-stable.zip"; then
-              echo "::error::Flutter SDK download for $VER failed after retries (bounded: --max-time 600 per attempt, --retry-max-time 900 total). The runner's network or storage.googleapis.com is unhealthy — check and re-run; partial state stayed inside $STAGE only, the pinned slot is untouched."
+                "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/$ARCHIVE"; then
+              echo "::error::Flutter SDK download for $ARCHIVE failed after retries (bounded: --max-time 600 per attempt, --retry-max-time 900 total). The runner's network or storage.googleapis.com is unhealthy — check and re-run; partial state stayed inside $STAGE only, the pinned slot is untouched."
               exit 1
             fi
             unzip -q "$STAGE/flutter.zip" -d "$STAGE"
+            # Stamp the staged tree with the host arch BEFORE the
+            # slot-in (gh-1736): ensure_arch can later tell a healthy
+            # slot from a wrong-arch one and self-heal it instead of
+            # re-exporting an unrunnable SDK on every run.
+            echo "$HOST_ARCH" > "$STAGE/flutter/.fah-arch"
             # Atomic slot-in: rename(2) either lands the complete tree
             # or refuses because a concurrent leg already installed the
             # identical version — the loser discards its duplicate

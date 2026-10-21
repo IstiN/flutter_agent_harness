@@ -307,6 +307,117 @@ void main() {
     );
   });
 
+  group('host-arch archive selection + slot arch stamp (gh-1736)', () {
+    // gh-1736: the action downloaded the arch-less flutter_macos_<v> zip —
+    // the X64 build per releases_macos.json — onto the arm64 self-hosted
+    // host, so the slot's dart binary died with "Bad CPU type in
+    // executable" (exit 126). The archive name must come from the HOST
+    // arch: both matrix legs run on the ONE runner and share one SDK slot
+    // (the matrix arch only steers FLUTTER_XCODE_ARCHS), and the manifest
+    // convention is `_arm64` infix for arm64, no infix for x64.
+    test('archive: arm64 host -> arm64-qualified zip name', () {
+      final result = runSlot(['archive', '3.47.7', 'arm64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(
+        result.stdout,
+        'flutter_macos_arm64_3.47.7-stable.zip\n',
+        reason:
+            'releases_macos.json: dart_sdk_arch=arm64 -> '
+            'flutter_macos_arm64_3.47.7-stable.zip',
+      );
+    });
+
+    test('archive: x86_64 host -> unqualified (x64) zip name', () {
+      final result = runSlot(['archive', '3.47.7', 'x86_64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(
+        result.stdout,
+        'flutter_macos_3.47.7-stable.zip\n',
+        reason:
+            'releases_macos.json: dart_sdk_arch=x64 -> '
+            'flutter_macos_3.47.7-stable.zip (no infix)',
+      );
+    });
+
+    test('archive: unknown host arch is a hard error, never a silent x64', () {
+      final result = runSlot(['archive', '3.47.7', 'sparc64']);
+      expect(result.exitCode, isNot(0));
+      expect(result.stderr, contains('sparc64'));
+    });
+
+    test('ensure_arch: stamped matching slot stays (ok)', () {
+      final sdk = makeSdkRoot();
+      Directory('${sdk.path}/3.47.7/bin').createSync(recursive: true);
+      File('${sdk.path}/3.47.7/.fah-arch').writeAsStringSync('arm64');
+      final result = runSlot(['ensure_arch', '${sdk.path}/3.47.7', 'arm64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(result.stdout, 'ok\n');
+      expect(Directory('${sdk.path}/3.47.7/bin').existsSync(), isTrue);
+    });
+
+    test('ensure_arch: raw uname stamp round-trips on x86_64 hosts '
+        '(gh-1736 review) — no prune, no re-download', () {
+      // action.yml stamps every staged tree with the RAW `uname -m`
+      // output, while ensure_arch compares against the NORMALISED
+      // manifest vocabulary. On x86_64 the two spellings differ
+      // (`x86_64` vs `x64`) — before the round-trip fix this exact
+      // state (the stamp the action just wrote) was answered
+      // `reinstall`, pruning the slot and costing a ~1GB re-download
+      // on EVERY run. The stamp must round-trip at both arches: the
+      // arm64 spelling (raw == normalised) is pinned by the
+      // 'stamped matching slot stays (ok)' test above.
+      final sdk = makeSdkRoot();
+      Directory('${sdk.path}/3.47.7/bin').createSync(recursive: true);
+      File('${sdk.path}/3.47.7/.fah-arch').writeAsStringSync('x86_64');
+      final result = runSlot(['ensure_arch', '${sdk.path}/3.47.7', 'x86_64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(result.stdout, 'ok\n');
+      expect(
+        Directory('${sdk.path}/3.47.7/bin').existsSync(),
+        isTrue,
+        reason:
+            'a freshly stamped slot must survive ensure_arch — '
+            'pruning it re-downloads ~1GB on every single run',
+      );
+    });
+
+    test('ensure_arch: unstamped slot (the gh-1736 poisoned runner state) '
+        'is pruned for reinstall', () {
+      final sdk = makeSdkRoot();
+      // What the runner holds right now: an x64 3.47.7 installed by the
+      // pre-fix action — no arch stamp, and the marker already reads
+      // 3.47.7, so resolve() answers SKIP and only an arch self-heal can
+      // un-brick the slot.
+      Directory('${sdk.path}/3.47.7/bin').createSync(recursive: true);
+      File('${sdk.path}/3.47.7/bin/flutter').writeAsStringSync('x64 sdk');
+      final result = runSlot(['ensure_arch', '${sdk.path}/3.47.7', 'arm64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(result.stdout, startsWith('reinstall'));
+      expect(
+        Directory('${sdk.path}/3.47.7').existsSync(),
+        isFalse,
+        reason: 'the wrong-arch slot must go so INSTALL rebuilds it',
+      );
+    });
+
+    test('ensure_arch: mismatched stamp is pruned for reinstall', () {
+      final sdk = makeSdkRoot();
+      Directory('${sdk.path}/3.47.7/bin').createSync(recursive: true);
+      File('${sdk.path}/3.47.7/.fah-arch').writeAsStringSync('x64');
+      final result = runSlot(['ensure_arch', '${sdk.path}/3.47.7', 'arm64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(result.stdout, startsWith('reinstall'));
+      expect(Directory('${sdk.path}/3.47.7').existsSync(), isFalse);
+    });
+
+    test('ensure_arch: missing slot is a no-op ok (install creates it)', () {
+      final sdk = makeSdkRoot();
+      final result = runSlot(['ensure_arch', '${sdk.path}/3.47.7', 'arm64']);
+      expect(result.exitCode, 0, reason: result.stderr);
+      expect(result.stdout, 'ok\n');
+    });
+  });
+
   group('self-hosted SDK regression guard (#354/#357)', () {
     final workflows = Directory('.github/workflows')
         .listSync()
@@ -445,6 +556,93 @@ void main() {
         action,
         contains('sdk_slot.py'),
         reason: 'slot mutations must go through the tested primitives',
+      );
+    });
+    test(
+      'action contract: the SDK download is host-arch qualified (gh-1736)',
+      () {
+        final action = File(actionYml).readAsStringSync();
+        final curlStart = action.indexOf('if ! curl');
+        final curlEnd = action.indexOf('; then', curlStart);
+        expect(curlStart, isNonNegative);
+        final curl = action.substring(curlStart, curlEnd);
+        // gh-1736: the arch-less flutter_macos_${VER}-stable.zip is the X64
+        // archive — on the arm64 self-hosted host its dart binary dies with
+        // "Bad CPU type in executable" (exit 126). The archive name must be
+        // resolved through the tested sdk_slot.py archive primitive.
+        expect(
+          curl,
+          contains(r'$ARCHIVE'),
+          reason: r'the curl URL must download the arch-resolved "$ARCHIVE"',
+        );
+        expect(
+          action,
+          contains(r'"$SLOT" archive'),
+          reason:
+              'archive-name resolution must go through the tested primitive',
+        );
+        expect(
+          action,
+          isNot(contains(r'flutter_macos_${VER}-stable.zip')),
+          reason: 'the arch-less URL is the x64 build — the gh-1736 bug',
+        );
+      },
+    );
+
+    test('action contract: a failed ensure_arch is a loud error, never a '
+        'silent fall-through to reusing the slot (gh-1736 review)', () {
+      final action = File(actionYml).readAsStringSync();
+      final healStart = action.indexOf(
+        r'if [[ "$DECISION" != INSTALL* ]]; then',
+      );
+      final healEnd = action.indexOf('\n        fi', healStart);
+      expect(
+        healStart,
+        isNonNegative,
+        reason: 'the self-heal block must guard every non-INSTALL verdict',
+      );
+      final heal = action.substring(healStart, healEnd);
+      final callIdx = heal.indexOf(r'ensure_arch "$DEST" "$HOST_ARCH")');
+      expect(
+        callIdx,
+        isNonNegative,
+        reason: 'the self-heal must consult the ensure_arch primitive',
+      );
+      final callLine = heal.substring(
+        heal.lastIndexOf('\n', callIdx) + 1,
+        heal.indexOf('\n', callIdx),
+      );
+      // The old shape — `elif [[ "$(python3 … ensure_arch …)" == reinstall* ]]`
+      // — turns any nonzero exit into an empty string and a false `==`: the
+      // failure silently falls through to trusting the existing slot. The
+      // verdict must be captured with its exit code checked explicitly, and
+      // a failure must fail the step loudly.
+      expect(
+        callLine,
+        isNot(contains('elif [[')),
+        reason:
+            'ensure_arch must not be consulted through a bare `elif '
+            r'[[ "$( … )" == … ]]` command substitution — a nonzero exit '
+            'degrades to an empty verdict and a silent slot reuse',
+      );
+      expect(
+        callLine,
+        contains('|| {'),
+        reason:
+            'the ensure_arch verdict must be captured with an explicit '
+            'exit-code check',
+      );
+      expect(
+        heal,
+        contains('::error::'),
+        reason:
+            'an ensure_arch failure must surface as a step error '
+            'annotation, not as a silently skipped self-heal',
+      );
+      expect(
+        heal,
+        contains('exit 1'),
+        reason: 'an ensure_arch failure must fail the step',
       );
     });
 
