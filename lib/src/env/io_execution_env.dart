@@ -585,7 +585,7 @@ final class LocalShell implements Shell, BackgroundShell {
     base['PATH'] = parts.join(':');
     if (guard != null) {
       final overlay = guard.environmentOverlay();
-      final shimDir = overlay.remove('FA_GUARD_SHIM_DIR');
+      final shimDir = overlay.remove(bashGuardShimDirEnv);
       // A caller-supplied pid set wins (tests inject a custom set; hosts
       // never ship one).
       for (final entry in overlay.entries) {
@@ -652,7 +652,9 @@ final class LocalShell implements Shell, BackgroundShell {
     // tree and the boot sweep can recognize leftover groups. setsid execs
     // sh in place, so the spawned pid is still the tracked one.
     final guard = await _bashGuard();
-    final scriptDir = await _writeGuardedScript(command);
+    final scriptDir = Platform.isWindows
+        ? null
+        : await _writeGuardedScript(command);
     final effectiveCommand = scriptDir == null ? command : '. "\$1"';
     final executable = Platform.isWindows
         ? 'cmd'

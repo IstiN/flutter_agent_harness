@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1763): a `bash` tool command running broad process kills can no
+  longer signal its own shell or the harness. Scripts are delivered from a
+  per-exec private temp file (`sh -c '. "$1"' sh <script>`) so the wrapper
+  argv never carries the script body (`pkill -f <pattern>` cannot
+  self-match its own `sh -c`; `$0`/`$#`/exit codes/`set -e`/stdin stay
+  identical), a PATH shim for `pkill`/`killall` plus a `kill()` prelude
+  guard exempt the harness pid chain + process group (exported as
+  `FA_PROTECTED_PIDS`) and the invoking shell from the child's own kills
+  while legitimate victims (stuck test runners, background servers) are
+  still terminated, and headless `SIGTERM` aborts now log
+  `fa: SIGTERM received …` so a child-issued kill never masquerades as a
+  user Ctrl+C (exit code contract unchanged: 130 graceful, 143 escalate).
+
 - fix(gh-1743): a structured compaction that hits its total-budget
   watchdog (the factory's 300s `totalBudget`) no longer aborts the
   live session. `AutoCompactorFactory.run()` now applies the

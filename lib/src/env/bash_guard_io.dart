@@ -23,6 +23,11 @@ import 'dart:io';
 /// the harness process group. The `kill()` prelude and both shims read it.
 const String bashGuardPidsEnv = 'FA_PROTECTED_PIDS';
 
+/// The env var carrying the shim dir path into every bash tool call (the
+/// PATH itself is prepended by `_environment`; the variable exists so the
+/// contract has one owner here).
+const String bashGuardShimDirEnv = 'FA_GUARD_SHIM_DIR';
+
 /// The guard prelude prepended to every bash tool script (POSIX):
 ///
 /// - `set --` restores `sh -c` positional-parameter parity (`$#` = 0, empty
@@ -248,7 +253,7 @@ final class BashGuardProvision {
     final overlay = <String, String>{bashGuardPidsEnv: protectedPids.join(' ')};
     final dir = shimDir;
     if (dir != null) {
-      overlay['FA_GUARD_SHIM_DIR'] = dir;
+      overlay[bashGuardShimDirEnv] = dir;
     }
     return overlay;
   }
@@ -260,36 +265,44 @@ Future<BashGuardProvision?> provisionBashGuard() async {
   if (Platform.isWindows) return null;
   try {
     final pids = await _protectedPidChain();
-    final realPgrep = await _resolveTool('pgrep');
-    final shims = <String, String>{};
-    final realPkill = await _resolveTool('pkill');
-    if (realPkill != null && realPgrep != null) {
-      shims['pkill'] = buildPkillShim(
-        realPkill: realPkill,
-        realPgrep: realPgrep,
-      );
-    }
-    final realKillall = await _resolveTool('killall');
-    if (realKillall != null && realPgrep != null) {
-      shims['killall'] = buildKillallShim(
-        realKillall: realKillall,
-        realPgrep: realPgrep,
-      );
-    }
-    String? shimDir;
-    if (shims.isNotEmpty) {
-      final dir = await Directory.systemTemp.createTemp('fa_sh_guard_');
-      for (final entry in shims.entries) {
-        final file = File('${dir.path}/${entry.key}');
-        await file.writeAsString(entry.value);
-        await Process.run('chmod', <String>['700', file.path]);
-      }
-      shimDir = dir.path;
-    }
+    final shims = await _buildShimScripts();
+    final shimDir = shims.isEmpty ? null : await _writeShimDir(shims);
     return BashGuardProvision(shimDir: shimDir, protectedPids: pids);
   } on Object {
     return null;
   }
+}
+
+/// The shim scripts keyed by the command they shadow, or empty when the
+/// host lacks the real tools (no pgrep → no victim expansion → no shim).
+Future<Map<String, String>> _buildShimScripts() async {
+  final realPgrep = await _resolveTool('pgrep');
+  if (realPgrep == null) return const {};
+  final shims = <String, String>{};
+  final realPkill = await _resolveTool('pkill');
+  if (realPkill != null) {
+    shims['pkill'] = buildPkillShim(realPkill: realPkill, realPgrep: realPgrep);
+  }
+  final realKillall = await _resolveTool('killall');
+  if (realKillall != null) {
+    shims['killall'] = buildKillallShim(
+      realKillall: realKillall,
+      realPgrep: realPgrep,
+    );
+  }
+  return shims;
+}
+
+/// Writes the shims into a private (0700 via mkdtemp semantics) temp dir
+/// and makes them executable. Returns the dir path.
+Future<String> _writeShimDir(Map<String, String> shims) async {
+  final dir = await Directory.systemTemp.createTemp('fa_sh_guard_');
+  for (final entry in shims.entries) {
+    final file = File('${dir.path}/${entry.key}');
+    await file.writeAsString(entry.value);
+    await Process.run('chmod', <String>['700', file.path]);
+  }
+  return dir.path;
 }
 
 /// The harness pid + ancestor chain (up to, but excluding, init) + the
