@@ -1,6 +1,3 @@
-@TestOn('vm')
-library;
-
 /// gh-1742 — truthful child context pressure:
 ///
 /// - AC2: children resolve their window from the SHARED per-model
@@ -14,6 +11,7 @@ library;
 ///   by the summarizer stream being invoked (a non-forced pass returns
 ///   before any compactor LLM call) while every real request estimate
 ///   stayed under the trigger.
+@TestOn('vm')
 library;
 
 import 'dart:convert';
