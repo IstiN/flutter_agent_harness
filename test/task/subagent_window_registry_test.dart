@@ -45,7 +45,9 @@ AssistantMessage _assistant({
   StopReason stopReason = StopReason.stop,
   int input = 0,
   int cacheRead = 0,
+  int? totalTokens,
 }) {
+  final observed = input + cacheRead;
   return AssistantMessage(
     content: content,
     api: 'test-api',
@@ -56,7 +58,10 @@ AssistantMessage _assistant({
       output: 0,
       cacheRead: cacheRead,
       cacheWrite: 0,
-      totalTokens: input + cacheRead,
+      // OpenAI-compatible gateways exist whose `total_tokens` excludes the
+      // cached prefix — the estimate anchor then reads far under the real
+      // accepted context (observed = input + cacheRead).
+      totalTokens: totalTokens ?? observed,
       cost: const UsageCost(),
     ),
     stopReason: stopReason,
@@ -64,17 +69,18 @@ AssistantMessage _assistant({
   );
 }
 
-/// A scripted turn whose assistant message reports [input]/[cacheRead]
-/// usage — the provider-truth channel.
+/// A scripted text turn whose assistant message reports usage.
 List<AssistantMessageEvent> _usageTurn(
   String text, {
   int input = 0,
   int cacheRead = 0,
+  int? totalTokens,
 }) {
   final partial = _assistant(
     content: [TextContent(text: text)],
     input: input,
     cacheRead: cacheRead,
+    totalTokens: totalTokens,
   );
   return [
     StartEvent(partial: partial),
@@ -82,6 +88,41 @@ List<AssistantMessageEvent> _usageTurn(
     TextDeltaEvent(contentIndex: 0, delta: text, partial: partial),
     DoneEvent(reason: StopReason.stop, message: partial),
   ];
+}
+
+/// A scripted turn ending in one tool call, optionally carrying usage.
+List<AssistantMessageEvent> _toolTurn(
+  String callId, {
+  int input = 0,
+  int cacheRead = 0,
+  int? totalTokens,
+}) {
+  final call = ToolCall(id: callId, name: 'read', arguments: const {});
+  final partial = _assistant(
+    content: [call],
+    stopReason: StopReason.toolUse,
+    input: input,
+    cacheRead: cacheRead,
+    totalTokens: totalTokens,
+  );
+  return [
+    StartEvent(partial: partial),
+    ToolCallStartEvent(contentIndex: 0, partial: partial),
+    ToolCallEndEvent(contentIndex: 0, toolCall: call, partial: partial),
+    DoneEvent(reason: StopReason.toolUse, message: partial),
+  ];
+}
+
+/// A read-tier tool returning a fixed-size payload (fattens the transcript
+/// with hideable content).
+AgentTool _fatTool(String name, int payloadChars) {
+  return AgentTool(
+    name: name,
+    description: '$name tool',
+    tier: ApprovalTier.read,
+    execute: (arguments, cancelToken, onUpdate) async =>
+        ToolExecutionResult.text('fat:${'x' * payloadChars}'),
+  );
 }
 
 /// A fake [StreamFunction] answering the structured compaction engine's
@@ -92,6 +133,10 @@ final class _ScriptedStream {
 
   final contexts = <Context>[];
   int compactionCalls = 0;
+
+  /// Scripted real-child turns keyed on a substring of the last user
+  /// text; each entry is consumed once. Falls back to a plain text turn.
+  final Map<String, List<List<AssistantMessageEvent>>> rules = {};
 
   int get calls => contexts.length;
 
@@ -133,6 +178,12 @@ final class _ScriptedStream {
         tools: context.tools,
       ),
     );
+    final text = lastUserText(context);
+    for (final entry in rules.entries) {
+      if (text.contains(entry.key) && entry.value.isNotEmpty) {
+        return _streamOf(entry.value.removeAt(0));
+      }
+    }
     return _streamOf(_usageTurn('done'));
   }
 
@@ -156,15 +207,7 @@ final class _Wiring {
       clock: () => _fakeTime,
     )..mailboxPrefix = 'parent-session';
     executor = TaskExecutor(
-      childTools: [
-        AgentTool(
-          name: 'read',
-          description: 'read tool',
-          tier: ApprovalTier.read,
-          execute: (arguments, cancelToken, onUpdate) async =>
-              ToolExecutionResult.text('x'),
-        ),
-      ],
+      childTools: [_fatTool('read', 2400)],
       streamFunction: () => stream.call,
       model: () => _model,
       registry: TaskAgentRegistry([
@@ -270,10 +313,24 @@ void main() {
         // forWindow(4000): reserve 1024 → trigger 2976.
         const trigger = _catalogWindow - 1024;
 
-        // The transcript stays TINY (the estimate channel never fires:
-        // every real request's estimate is asserted under the trigger
-        // below), but the provider reports 3,500 observed tokens — over
-        // the line. The observed channel must force the pass.
+        // Turn 1: tool call (usage-less). Tool result fattens the
+        // transcript. Turn 2: another tool call carrying the gateway
+        // report — total_tokens 100 (excludes the cached prefix), real
+        // accepted context = input 100 + cacheRead 3400 = 3500 > 2976.
+        // The boundary before turn 3 must force the pass: the estimate
+        // anchors on total_tokens (100) and stays far under the trigger.
+        wiring.stream.rules.addAll({
+          'forced-pass': [
+            [_toolTurn('c1')],
+            [
+              _toolTurn('c2', input: 100, cacheRead: 3400, totalTokens: 100),
+            ],
+          ],
+          // After the second tool result the child finishes with text.
+          'fat:': [
+            [_usageTurn('interim')],
+          ],
+        });
         final result = await wiring.executor.runSpawn(
           item: const TaskItem(
             name: 'forced',
@@ -295,7 +352,7 @@ void main() {
             estimate,
             lessThan(trigger),
             reason: 'the estimate channel must stay under the trigger for '
-                'this repro',
+                'this repro (got $estimate)',
           );
         }
         // A non-forced pass early-returns BEFORE any compactor LLM call
@@ -307,15 +364,59 @@ void main() {
           reason: 'the observed-over-headroom channel must force the '
               'compaction pass',
         );
-        // The child session gained a compaction record.
+        // The child session gained a compaction record (structured
+        // engine: hidden ranges / checkpoints; classic: CompactionRecord).
         final records = await wiring.sessionRecords('forced');
         expect(
-          records.whereType<CompactionRecord>(),
-          isNotEmpty,
+          records.any(
+            (record) =>
+                record is HiddenRangeRecord ||
+                record is CompactCheckpointRecord ||
+                record is CompactionRecord,
+          ),
+          isTrue,
           reason: 'no compaction record landed in the child session',
         );
       },
     );
+
+    test('observed usage alone under the trigger stays quiet', () async {
+      final wiring = _Wiring(registry: ContextWindowRegistry());
+      // Same gateway shape, but the real accepted context (600) is under
+      // the trigger: no compaction call, no record.
+      wiring.stream.rules.addAll({
+        'quiet-observed': [
+          [_toolTurn('c1')],
+          [_toolTurn('c2', input: 300, cacheRead: 300, totalTokens: 300)],
+        ],
+        'fat:': [
+          [_usageTurn('interim')],
+        ],
+      });
+      final result = await wiring.executor.runSpawn(
+        item: const TaskItem(
+          name: 'quiet',
+          agent: 'worker',
+          task: 'quiet-observed',
+        ),
+        index: 0,
+        context: '',
+      );
+      expect(result.status, TaskSpawnStatus.completed);
+      expect(wiring.stream.compactionCalls, 0);
+      final records = await wiring.sessionRecords('quiet');
+      expect(
+        records.any(
+          (record) =>
+              record is HiddenRangeRecord ||
+              record is CompactCheckpointRecord ||
+              record is CompactionRecord,
+        ),
+        isFalse,
+      );
+      // The observation is still stamped on the handle (AC6 basis).
+      expect(wiring.manager['quiet']!.observedTokens, 600);
+    });
 
     test('the pressure stamp carries the observed channel (AC6 basis)',
         () async {

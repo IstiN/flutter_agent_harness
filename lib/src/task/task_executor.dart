@@ -30,6 +30,8 @@ import '../a2a/a2a_client.dart';
 import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
+import '../compaction/context_pressure.dart';
+import '../compaction/context_window_registry.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
 import '../json_parse.dart';
@@ -86,6 +88,8 @@ final class TaskExecutor {
     this.childSessionFactory,
     this.childSessionOpener,
     this.compactionEngine,
+    this.contextWindowRegistry,
+    this.contextWindowCap,
     this.misuseBreaker = true,
   });
 
@@ -129,6 +133,19 @@ final class TaskExecutor {
   /// child and writes its transcript into it.
   final Future<Session> Function(String parentSessionId, String childId)?
   childSessionFactory;
+
+  /// The shared per-model context-window registry (gh-1742 invariant 2):
+  /// when present, every child resolves its compaction window and its
+  /// loop-guard basis from the SAME registered value the main agent and
+  /// the ctx meter use — a live detection or `/model-edit` published
+  /// after the session booted reaches children spawned afterwards.
+  /// Null = the carried `model.contextWindow` (legacy behavior).
+  final ContextWindowRegistry? contextWindowRegistry;
+
+  /// The owner context-window cap (`agent.contextWindowCap`,
+  /// issues #273/#729) applied to children too (gh-1742): the cap wins in
+  /// whichever direction it points, same as the main agent.
+  final int? contextWindowCap;
 
   /// Optional child-session opener (issue #222): when present, [resumeChild]
   /// reopens a retained child's JSONL session from
@@ -509,11 +526,16 @@ final class TaskExecutor {
   }
 
   /// The shared compaction core (issue #439): stamps the child's context
-  /// pressure on its handle, and when the estimate (plus [incomingTokens])
-  /// crosses the threshold, flushes the transcript and runs ONE
-  /// [AutoCompactor] pipeline — the same engine the main loop uses.
-  /// Best-effort by contract: a failed pass changes nothing and the
-  /// over-window guard stays the last resort.
+  /// pressure on its handle, and when the pressure crosses the threshold,
+  /// flushes the transcript and runs ONE [AutoCompactor] pipeline — the
+  /// same engine the main loop uses. Best-effort by contract: a failed
+  /// pass changes nothing and the over-window guard stays the last resort.
+  ///
+  /// gh-1742: the pressure is RECONCILED with the provider-reported usage
+  /// (`max(estimate, observed input+cacheRead)` — invariant 1), the
+  /// window resolves from the shared registry (invariant 2), and an
+  /// observed-over-headroom crossing runs the pass FORCED (invariant 4 /
+  /// AC5) so the compactor's own estimate-basis re-check cannot skip it.
   Future<bool> _compactChildIfNeeded(
     String id,
     Agent child, {
@@ -522,23 +544,55 @@ final class TaskExecutor {
   }) async {
     final manager = subagentManager;
     if (manager == null || childSessionFactory == null) return false;
-    final window = effectiveContextWindow(wiring.model.contextWindow, null);
+    final window = _childContextWindow(wiring.model);
     if (window <= 0) return false;
     final settings = CompactionSettings.forWindow(window);
-    final est =
-        estimateRequestTokens(
-          child.state.messages,
-          systemPrompt: child.state.systemPrompt,
-          tools: child.state.tools,
-        ) +
-        incomingTokens;
-    // Pressure stamp: the transcript-only estimate, what task_status shows.
+    final transcriptEst = estimateRequestTokens(
+      child.state.messages,
+      systemPrompt: child.state.systemPrompt,
+      tools: child.state.tools,
+    );
+    // Provider truth: the last completed request's accepted context
+    // (E1: null without a usable report — estimate-only, legacy shape).
+    final observed = lastObservedContextTokens(child.state.messages);
+    final est = transcriptEst + incomingTokens;
+    final decision = assessContextPressure(
+      estimatedTokens: est,
+      observedTokens: observed,
+      contextWindow: window,
+      settings: settings,
+    );
+    // Pressure stamp: the reconciled transcript-basis pressure (estimate
+    // plus the trailing incoming prompt), what task_status shows.
     manager.notePressure(
       id,
-      estTokens: est - incomingTokens,
+      estTokens: reconcileContextTokens(
+        estimatedTokens: transcriptEst + incomingTokens,
+        observedTokens: observed,
+      ),
       windowTokens: window,
+      observedTokens: observed,
+      windowVerified:
+          contextWindowRegistry?.isVerified(wiring.model) ?? false,
     );
-    if (!shouldCompact(est, window, settings)) return false;
+    if (!decision.triggered) return false;
+    // Forced-channel latch (gh-1742): an observation already reacted to
+    // never re-forces until a strictly higher one arrives — the stale
+    // pre-compaction anchor rides the kept tail after a fold, and a
+    // constant over-line observation must not re-run forced passes every
+    // boundary. An observation back UNDER the line (the honest post-fold
+    // report) resets the latch.
+    var runForced = false;
+    if (observed != null) {
+      final latch = _forcedObservedAt[id];
+      if (decision.needsForce && (latch == null || observed > latch)) {
+        _forcedObservedAt[id] = observed;
+        runForced = true;
+      } else if (!decision.observedTriggered &&
+          (latch == null || observed < latch)) {
+        _forcedObservedAt[id] = observed;
+      }
+    }
     await _flushChildTranscript(id, child);
     final session = _childSessions[id];
     if (session == null) return false;
@@ -558,6 +612,7 @@ final class TaskExecutor {
         ),
         hooks: _SilentCompactionHooks(),
         engine: compactionEngine ?? CompactionEngine.structured,
+        force: runForced,
       ).run();
     } on Object {
       return false; // The guard remains the last resort.
@@ -574,6 +629,19 @@ final class TaskExecutor {
     manager.recordCompaction(id, freedTokens: before - after);
     return true;
   }
+
+  /// The observed-over-headroom latch per child id (see the forced-channel
+  /// latch in [_compactChildIfNeeded]).
+  final _forcedObservedAt = <String, int>{};
+
+  /// The child's compaction/loop-guard window (gh-1742 invariant 2): the
+  /// shared registry's value for this model identity when one was
+  /// published, else the carried window — then the owner cap applied in
+  /// whichever direction it points (issues #273/#729).
+  int _childContextWindow(Model model) => effectiveContextWindow(
+    contextWindowRegistry?.windowFor(model) ?? model.contextWindow,
+    contextWindowCap,
+  );
 
   /// Resume guards (E4 + a2a): everything resumable must be a local,
   /// non-running, non-aborted child; violations throw named errors so the
@@ -1095,12 +1163,20 @@ final class TaskExecutor {
   /// whose rebuilt model would strand the parent's runtime-resolved
   /// output-cap ladder entry (endpoint detection, `/model` edits) behind
   /// a stale catalog default (issue #302).
+  ///
+  /// gh-1742 (invariant 2): the resolved model carries the REGISTERED
+  /// context window for its identity, so the child loop's over-window
+  /// guard and the compaction threshold divide by the same honest number
+  /// the main agent and the ctx meter resolve.
   ({Model model, StreamFunction stream}) _resolveChildWiring(
     TaskAgentDefinition definition,
   ) {
     final rolesResolver = this.rolesResolver;
     if (rolesResolver == null) {
-      return (model: model(), stream: streamFunction());
+      return (
+        model: withRegisteredContextWindow(model(), contextWindowRegistry),
+        stream: streamFunction(),
+      );
     }
     final role = definition.modelRole ?? subagentModelRole;
     // A pinned role always resolves (pinsRole ⇒ chainFor non-null); an
@@ -1114,9 +1190,18 @@ final class TaskExecutor {
         ? rolesResolver.resolveRole(role)
         : null;
     if (resolved != null) {
-      return (model: resolved.model, stream: resolved.stream);
+      return (
+        model: withRegisteredContextWindow(
+          resolved.model,
+          contextWindowRegistry,
+        ),
+        stream: resolved.stream,
+      );
     }
-    return (model: model(), stream: streamFunction());
+    return (
+      model: withRegisteredContextWindow(model(), contextWindowRegistry),
+      stream: streamFunction(),
+    );
   }
 
   /// The child's system prompt: the definition's prompt plus the shared

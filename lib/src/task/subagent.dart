@@ -131,11 +131,23 @@ final class SubagentHandle {
   /// Last-known context pressure of the child (issue #439): the executor
   /// stamps the estimated request tokens and the effective window at every
   /// turn boundary, so `task_status` can surface the wall before it is
-  /// hit. Null until the child's first turn.
+  /// hit. Null until the child's first turn. gh-1742: reconciled with the
+  /// provider-reported usage — `max(estimate, observed input+cacheRead)`.
   int? estTokens;
 
   /// The window [estTokens] was measured against (see [estTokens]).
   int? windowTokens;
+
+  /// The provider-reported context of the child's last completed request
+  /// (gh-1742: `usage.input + cacheRead`), null when the child has no
+  /// usage-bearing assistant message yet (fresh transcript, or a gateway
+  /// without usage reporting — estimate-only, E1).
+  int? observedTokens;
+
+  /// Whether [windowTokens] is backed by an endpoint report or a user pin
+  /// (gh-1742 AC6): false means the window is the carried catalog value —
+  /// the pressure rows mark it unverified.
+  bool windowVerified = false;
 
   /// Completed proactive compactions (issue #439).
   int compactions = 0;
@@ -210,6 +222,8 @@ final class SubagentHandle {
     'liveRequests': liveRequests,
     if (estTokens != null) 'estTokens': estTokens,
     if (windowTokens != null) 'windowTokens': windowTokens,
+    if (observedTokens != null) 'observedTokens': observedTokens,
+    if (windowVerified) 'windowVerified': true,
     'compactions': compactions,
     'lastCompactionFreed': lastCompactionFreed,
     'lastCompactionAt': lastCompactionAt,
@@ -240,6 +254,8 @@ final class SubagentHandle {
     handle.liveRequests = json['liveRequests'] as int? ?? 0;
     handle.estTokens = json['estTokens'] as int?;
     handle.windowTokens = json['windowTokens'] as int?;
+    handle.observedTokens = json['observedTokens'] as int?;
+    handle.windowVerified = json['windowVerified'] as bool? ?? false;
     handle.compactions = json['compactions'] as int? ?? 0;
     handle.lastCompactionFreed = json['lastCompactionFreed'] as int? ?? 0;
     handle.lastCompactionAt = json['lastCompactionAt'] as String?;

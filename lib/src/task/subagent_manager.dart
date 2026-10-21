@@ -637,18 +637,24 @@ final class SubagentManager {
   }
 
   /// Context-pressure stamp (issue #439): the executor calls this at every
-  /// child turn boundary with the estimated request tokens and the
+  /// child turn boundary with the reconciled request pressure and the
   /// effective window, so `task_status` can show the wall approaching.
-  /// In-memory only, like [touch] — the next boundary refreshes it.
+  /// gh-1742 adds the observed channel (`usage.input + cacheRead` of the
+  /// last completed request) and the window's verification state (AC6).
+  /// In-memory event stamp like [touch] — the next boundary refreshes it.
   void notePressure(
     String id, {
     required int estTokens,
     required int windowTokens,
+    int? observedTokens,
+    bool windowVerified = false,
   }) {
     final handle = _handles[id];
     if (handle == null) return;
     handle.estTokens = estTokens;
     handle.windowTokens = windowTokens;
+    handle.observedTokens = observedTokens;
+    handle.windowVerified = windowVerified;
     _emit(handle);
   }
 
