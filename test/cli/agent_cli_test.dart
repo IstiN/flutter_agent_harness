@@ -2709,6 +2709,42 @@ void main() {
       expect(c, contains(wakePromptText));
     });
   });
+
+  group('launchMailboxWake', () {
+    test('refuses a cwd that does not exist (gh-1744)', () async {
+      final shell = _RecordingShell();
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      // The legacy lossy slug decode names a directory that is not there.
+      final error = await launchMailboxWake(
+        env: env,
+        cwd: '/Users/y/_w/postal/nl',
+        sessionId: 'sess-1',
+        sessionName: 'postal-nl',
+      );
+      expect(error, contains('does not exist'));
+      expect(error, contains('/Users/y/_w/postal/nl'));
+      expect(shell.commands, isEmpty);
+    });
+
+    test('spawns in the existing cwd', () async {
+      final shell = _RecordingShell();
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      (await env.createDir('/Users/y/_w/postal-nl', recursive: true))
+          .getOrThrow();
+      final error = await launchMailboxWake(
+        env: env,
+        wakeExecutable: '/usr/local/bin/fa',
+        cwd: '/Users/y/_w/postal-nl',
+        sessionId: 'sess-1',
+        sessionName: 'postal-nl',
+      );
+      expect(error, isNull);
+      expect(shell.commands, hasLength(1));
+      final record = shell.commands.single;
+      expect(record.$1, contains("nohup '/usr/local/bin/fa' --session 'postal-nl'"));
+      expect(record.$2?.cwd, '/Users/y/_w/postal-nl');
+    });
+  });
 }
 
 final class _FailingDirEnv implements ExecutionEnv {
@@ -2795,4 +2831,18 @@ final class _FailingDirEnv implements ExecutionEnv {
     String command, {
     ShellExecOptions? options,
   }) => _inner.exec(command, options: options);
+}
+
+/// Records exec'd commands + options without spawning anything.
+final class _RecordingShell implements Shell {
+  final commands = <(String, ShellExecOptions?)>[];
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    commands.add((command, options));
+    return const Ok(ShellExecResult(stdout: 'woken', stderr: '', exitCode: 0));
+  }
 }
