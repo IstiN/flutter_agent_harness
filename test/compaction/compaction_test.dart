@@ -89,17 +89,21 @@ void main() {
     });
 
     test('scales to small on-device windows (summary pricing floor)', () {
+      // The ≤64k band keeps the legacy flat reserve/keep (gh-1742: the
+      // proportional curve only takes over above the legacy-parity
+      // floor) — small dev/on-device windows compact no later than
+      // before.
       final s8192 = CompactionSettings.forWindow(8192);
-      expect(s8192.reserveTokens, 1024);
-      expect(s8192.keepRecentTokens, 2048);
+      expect(s8192.reserveTokens, 2048);
+      expect(s8192.keepRecentTokens, 4096);
 
       final s4096 = CompactionSettings.forWindow(4096);
       expect(s4096.reserveTokens, 1024);
       expect(s4096.keepRecentTokens, 2048);
 
       final s16384 = CompactionSettings.forWindow(16384);
-      expect(s16384.reserveTokens, 1024);
-      expect(s16384.keepRecentTokens, 2048);
+      expect(s16384.reserveTokens, 4096);
+      expect(s16384.keepRecentTokens, 8192);
     });
 
     test(

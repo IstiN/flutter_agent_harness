@@ -456,8 +456,22 @@ final class CompactionSettings {
   /// the reserve never eats half the window and the kept region never
   /// eats all of it (below that, compaction could not free anything).
   factory CompactionSettings.forWindow(int window) {
-    var reserveTokens = min(65536, max(1024, window ~/ 16));
-    var keepRecentTokens = min(131072, max(2048, window ~/ 8));
+    // Proportional headroom (gh-1742 AC3): 6.25% of the window, clamped
+    // to [1024, 65536]. A legacy-parity floor keeps the small-window
+    // band (≤64k, where `window/16` would undercut the flat legacy
+    // `min(16384, window/4)` reserve) firing no later than before — the
+    // floor is itself capped at `window/4`, so it fades out exactly
+    // where the proportional term takes over and the curve stays
+    // monotone (16384→4096, 65536→4096, 131072→8192, 200k→12500,
+    // 1M→65536).
+    var reserveTokens = min(
+      65536,
+      max(max(window ~/ 16, 1024), min(4096, window ~/ 4)),
+    );
+    var keepRecentTokens = min(
+      131072,
+      max(max(window ~/ 8, 2048), min(8192, window ~/ 2)),
+    );
     if (reserveTokens >= window ~/ 2) {
       reserveTokens = max(128, window ~/ 4);
     }
