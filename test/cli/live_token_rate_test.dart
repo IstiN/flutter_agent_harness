@@ -196,6 +196,46 @@ void main() {
     });
   });
 
+  group('settled average (turn-granular, classic-footer seam)', () {
+    test('frozen at the last settle while the next turn keeps streaming', () {
+      final clock = _ScriptClock(0);
+      final meter = _meter(clock);
+      meter.observeDelta(40); // t0
+      clock.ms = 1000;
+      meter.observeDelta(40); // t1000: activeMs 1000
+      meter.calibrate(100); // settle: the denominator freezes at 1000
+      clock.ms = 2000;
+      meter.observeDelta(40); // the next turn keeps accruing
+      expect(meter.activeMsSettled, 1000);
+      expect(meter.settledAverageTokensPerSecond(100), 100.0);
+      // The band's live average moved on (2s active now).
+      expect(meter.tokensPerSecondAvg(100), closeTo(100 * 1000 / 2000, 1e-9));
+    });
+
+    test('hidden until the first settled turn', () {
+      final clock = _ScriptClock(0);
+      final meter = _meter(clock);
+      meter.observeDelta(40);
+      expect(meter.settledAverageTokensPerSecond(100), isNull);
+      clock.ms = 1000;
+      meter.observeDelta(40);
+      meter.calibrate(100);
+      expect(meter.settledAverageTokensPerSecond(100), 100.0);
+    });
+
+    test('reset clears the settled denominator too', () {
+      final clock = _ScriptClock(0);
+      final meter = _meter(clock);
+      meter.observeDelta(40);
+      clock.ms = 1000;
+      meter.observeDelta(40);
+      meter.calibrate(100);
+      meter.reset();
+      expect(meter.activeMsSettled, 0);
+      expect(meter.settledAverageTokensPerSecond(100), isNull);
+    });
+  });
+
   test('reset re-warms the meter (E6: no stale rate across a resume)', () {
     final clock = _ScriptClock(0);
     final meter = _meter(clock);

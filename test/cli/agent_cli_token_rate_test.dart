@@ -149,6 +149,13 @@ void main() {
       expect(row, contains('20 t/s'));
       expect(row, isNot(contains('avg '))); // no completed turn → hidden
 
+      // The classic footer mid-run (turn 0) reads v0-identically: the
+      // live rate is band-only — the #467 grid contract keeps the
+      // classic status row frame-stable between ticks.
+      final midFooter = cli.statusLineForTest();
+      expect(midFooter, isNot(contains(' t/s')));
+      expect(midFooter, isNot(contains('avg ')));
+
       script.gate.complete();
       await run;
       // handleLineForTest resolves at turn end; the busy gate holds
@@ -163,8 +170,8 @@ void main() {
       expect(after.idle, isTrue);
       expect(after.tokensPerSecondAvg, closeTo(100.0, 1e-9));
 
-      // The classic footer shows the same numbers the band does: the
-      // live part only while busy, the average persists after settle.
+      // The classic footer after settle carries the average part (turn
+      // granularity): `· avg 100`, no live `t/s` — that is band-only.
       final footer = cli.statusLineForTest();
       expect(footer, isNot(contains(' t/s')));
       expect(footer, contains('avg 100'));

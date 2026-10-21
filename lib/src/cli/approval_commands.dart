@@ -527,10 +527,10 @@ extension ApprovalCommands on AgentCli {
     // (agents visualization): named live badges — up to 3 active children
     // with type and elapsed seconds, then a +N overflow counter.
     final badge = _agentsBadge();
-    // gh-1762: the classic footer's rate part — the same two numbers the
-    // band renders, one meter. Live only while the run streams (hidden —
-    // never `0 t/s` — when idle); the session average persists like the
-    // tok/cost parts once a completed turn exists.
+    // gh-1762: the classic footer's rate part — the session average at
+    // turn granularity, moving at the same settle boundaries as
+    // tok/turn/cost. The LIVE rate stays on the band + snapshot: the
+    // classic row must not mutate between frame ticks (#467).
     final ratePart = _statusRatePart();
     // Mid-run fold badge (issue #438 AC3): «compacted and still working»
     // must be distinguishable from «hung» at a glance — the badge shows
@@ -552,17 +552,20 @@ extension ApprovalCommands on AgentCli {
     return line;
   }
 
-  /// The gh-1762 classic-footer rate part: ` · 42 t/s · avg 38` (live
-  /// only while busy, avg once the ledger has output), or empty — a
-  /// `tuiClassic` footer stays byte-identical except this part, and when
-  /// there is nothing to show it stays byte-identical entirely (AC2).
+  /// The gh-1762 classic-footer rate part: ` · avg 38` — the session
+  /// average at TURN granularity ([LiveTokenRateMeter.settledAverageTokensPerSecond]),
+  /// so the part moves at the same settle boundaries as the tok/turn
+  /// figures and the classic status row stays frame-stable between ticks
+  /// (the #467 grid contract: mid-run the busy ticker is the ONLY row
+  /// that may change — a live rate in this row re-renders every frame
+  /// and breaks the PTY grid pins). The live rate is the band's surface
+  /// (per-frame by design) and the snapshot seam; before the first
+  /// settled turn this part is empty — the row reads byte-identically to
+  /// v0 (AC2: never a `0 t/s`, and the average appears with the first
+  /// completed turn).
   String _statusRatePart() {
-    final live = isBusy ? _meter.tokensPerSecond : null;
-    final avg = _meter.tokensPerSecondAvg(_usage.total.output);
-    var part = '';
-    if (live != null && live > 0) part = ' · ${formatTokenRate(live)} t/s';
-    if (avg != null && avg > 0) part += ' · avg ${formatTokenRate(avg)}';
-    return part;
+    final avg = _meter.settledAverageTokensPerSecond(_usage.total.output);
+    return avg != null && avg > 0 ? ' · avg ${formatTokenRate(avg)}' : '';
   }
 
   /// The status-line quota badge (issue #823 AC5): `' [OR $48/$150 · 11d]'`

@@ -75,6 +75,7 @@ final class LiveTokenRateMeter {
   int _lastActivityMs = 0;
   bool _hasActivity = false;
   int _activeMs = 0;
+  int _settledActiveMs = 0;
 
   /// A text/thinking/tool-call-argument delta of [chars] characters
   /// arrived. O(1); non-positive counts are skipped, never fatal (E5).
@@ -111,6 +112,7 @@ final class LiveTokenRateMeter {
           .toDouble();
     }
     _messageTokens = 0;
+    _settledActiveMs = _activeMs;
   }
 
   /// The live rate over the rolling window, tok/s; null when no sample is
@@ -134,6 +136,24 @@ final class LiveTokenRateMeter {
     return totalOutputTokens * 1000 / _activeMs;
   }
 
+  /// Active-stream time as of the LAST completed response. Mid-turn it
+  /// holds the previous settle's value; [calibrate] advances it. The
+  /// turn-granular denominator for surfaces that must not mutate per
+  /// frame — the classic chrome's row-stability contract (#467: mid-run
+  /// the busy ticker is the only row that may change) cannot carry a
+  /// number that decays every read, so its footer part prices the
+  /// average at the settle boundaries exactly like the tok/turn figures.
+  int get activeMsSettled => _settledActiveMs;
+
+  /// [tokensPerSecondAvg] at turn granularity: [totalOutputTokens] (the
+  /// ledger total — stable mid-turn, it only moves at stream end) over
+  /// [activeMsSettled]. Frame-stable between turns; null until the first
+  /// settled turn produced both output and stream time.
+  double? settledAverageTokensPerSecond(int totalOutputTokens) {
+    if (totalOutputTokens <= 0 || _settledActiveMs <= 0) return null;
+    return totalOutputTokens * 1000 / _settledActiveMs;
+  }
+
   /// Session switch or restore: the meter re-warms in the new session
   /// (E6 — no phantom stale rate across a kill/resume; the average's
   /// numerator re-enters via the restored ledger).
@@ -145,6 +165,7 @@ final class LiveTokenRateMeter {
     _lastActivityMs = 0;
     _hasActivity = false;
     _activeMs = 0;
+    _settledActiveMs = 0;
   }
 
   /// Records [tokens] estimated output at the current clock: active-time
