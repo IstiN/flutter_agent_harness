@@ -9,6 +9,7 @@ library;
 
 import 'dart:async';
 
+import 'providers/stream_trace.dart';
 import 'types.dart';
 
 /// A push-based stream of events with an awaitable final result.
@@ -119,7 +120,15 @@ class EventStream<T, R> extends Stream<T> {
 /// ```
 class AssistantMessageEventStream
     extends EventStream<AssistantMessageEvent, AssistantMessage> {
-  AssistantMessageEventStream()
+  /// [traced] marks this stream as the ADAPTER's own stream — the one
+  /// whose pushes carry the StreamTrace `emit` mark (diagnostic). It
+  /// defaults to true; wrapper StreamFunctions that re-push an inner
+  /// stream's events through their own instance (transient-retry, DIAL
+  /// cache probe, silent-stream policy, fallback, provider queue,
+  /// telemetry, prompt tools) MUST construct with `traced: false`, or
+  /// every delta produces one `emit` line per hop and the net→emit gap
+  /// the trail exists to measure is corrupted.
+  AssistantMessageEventStream({this.traced = true})
     : super(
         isComplete: (event) => event is DoneEvent || event is ErrorEvent,
         extractResult: (event) => switch (event) {
@@ -130,12 +139,41 @@ class AssistantMessageEventStream
           ),
         },
       );
+
+  /// Whether this stream's pushes carry the StreamTrace `emit` mark.
+  final bool traced;
+
+  @override
+  void push(AssistantMessageEvent event) {
+    // StreamTrace emit mark (diagnostic, no-op unless a host started a
+    // trace): one line per delta leaving the provider adapter — the
+    // net→emit gap names the adapter/SSE-decode cost, emit→render the
+    // loop/UI cost. Only on traced (adapter-owned) streams; wrapper
+    // hops construct with traced: false (see the constructor docs).
+    if (traced) {
+      switch (event) {
+        case TextDeltaEvent(:final delta):
+          StreamTrace.mark(StreamTraceMark.emit, 'text +${delta.length}');
+        case ThinkingDeltaEvent(:final delta):
+          StreamTrace.mark(StreamTraceMark.emit, 'thinking +${delta.length}');
+        case ToolCallDeltaEvent(:final delta):
+          StreamTrace.mark(StreamTraceMark.emit, 'toolDelta +${delta.length}');
+        case DoneEvent() || ErrorEvent():
+          StreamTrace.mark(StreamTraceMark.emit, 'terminal');
+        default:
+          break;
+      }
+    }
+    super.push(event);
+  }
 }
 
 /// Creates an [AssistantMessageEventStream].
 ///
 /// Ported from pi's `createAssistantMessageEventStream` factory, intended for
 /// use in extensions.
-AssistantMessageEventStream createAssistantMessageEventStream() {
-  return AssistantMessageEventStream();
+AssistantMessageEventStream createAssistantMessageEventStream({
+  bool traced = true,
+}) {
+  return AssistantMessageEventStream(traced: traced);
 }
