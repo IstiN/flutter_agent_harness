@@ -31,6 +31,7 @@ import '../agent/misuse_breaker.dart';
 import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
 import 'ansi_markdown.dart';
+import 'live_token_rate_meter.dart';
 import 'path_candidates.dart';
 import 'slash_args.dart';
 import 'status_line_git_probe.dart';
@@ -39,6 +40,7 @@ import 'tui_status_line.dart'
         StatusLineConfig,
         StatusLineSnapshot,
         TuiStatusLine,
+        formatTokenRate,
         resolveStatusLineSpec;
 import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
@@ -1439,6 +1441,16 @@ class AgentCli {
   var _rolesDriven = false;
   final _usage = UsageAccumulator();
 
+  /// gh-1762: the live token-rate meter — fed by the agent event tap
+  /// (text/thinking/tool-call-arg deltas + per-response usage), read by
+  /// the band snapshot and the classic footer. `ledgerClock` keeps the
+  /// rate exact on a scripted clock in tests; the window comes from
+  /// `tui.statusLine.rateWindowMs` (default 5000).
+  late final LiveTokenRateMeter _meter = LiveTokenRateMeter(
+    now: ledgerClock ?? DateTime.now,
+    windowMs: config.statusLine?.rateWindowMs ?? kDefaultRateWindowMs,
+  );
+
   // Issue #277 hub driver state (see agent_hub_cli.dart): the projection
   // accumulates running spans; the panel log keeps deferred (btw) history;
   // lazy subscriptions keep task-block rendering for hub-less sessions.
@@ -2467,14 +2479,11 @@ final class _CliMessageCapPolicy implements MessageCapPolicy {
   final AgentCli _cli;
   @override
   int? learnedCapFor(Model model) => ModelCapsStore.learnedCapOr(
-        _cli._modelCaps.recordFor(model.provider, model.id),
-        _cli
-            .config
-            .modelsConfig
-            ?.overrides
-            .lookup(model.provider, model.id)
-            ?.messageCap,
-      );
+    _cli._modelCaps.recordFor(model.provider, model.id),
+    _cli.config.modelsConfig?.overrides
+        .lookup(model.provider, model.id)
+        ?.messageCap,
+  );
 
   @override
   void learnFromRefusal(Model model, MessageCapRefusal refusal) {
