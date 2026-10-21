@@ -24,6 +24,21 @@ block a release again.
   pre-installs `cmake;3.22.1` with bounded retry + idempotent skip (same
   hardening the NDK path already carries); the guard test pins the new
   AC6 assertions and the AGP-version coupling (AC7).
+- feat(#1750): per-model image caps — the outbound request never carries
+  more unique images than the target model accepts. `Model` gains an
+  optional `maxImages` (catalog-seeded: `gemini-4-argon: 10`, measured);
+  `images.perModel.<modelId>` config overrides it (strict `images:`
+  section, user truth wins); the registry resolves
+  `perModel > catalog > images.maxPerRequest` (first present wins, the
+  issue-#1554 shape). A Google-shaped `too many images … maximum allowed
+  for model <id> is <n>` 400 is classified (`image_overflow.dart`, the
+  overflow.ts twin), latches the learned cap for the (provider, model)
+  pair for the run, and re-sends ONCE through the registry at the
+  smaller cap — current-first-then-newest drops with the existing
+  never-silent notices naming the learned cap; a second refusal
+  surfaces exactly as today. JSONL is never rewritten;
+  `images.registry: false` keeps the byte-identical legacy shape
+  including the recovery-off behavior.
 
 - fix(gh-1743): a structured compaction that hits its total-budget
   watchdog (the factory's 300s `totalBudget`) no longer aborts the

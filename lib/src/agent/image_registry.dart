@@ -65,6 +65,7 @@ final class ImageRegistryConfig {
   const ImageRegistryConfig({
     this.enabled = true,
     this.maxPerRequest = defaultMaxImagesPerRequest,
+    this.perModel = const {},
   });
 
   /// Kill switch: `images.registry: false` reproduces today's request
@@ -73,6 +74,11 @@ final class ImageRegistryConfig {
 
   /// Per-request cap on unique images (`images.maxPerRequest`).
   final int maxPerRequest;
+
+  /// Per-model cap overrides (`images.perModel.<modelId>`, issue #1750):
+  /// user truth beats the catalog and the global default; a
+  /// ceiling-setter only — never raises a cap above provider reality.
+  final Map<String, int> perModel;
 }
 
 /// Process-wide image-registry settings, published by hosts at boot from
@@ -88,6 +94,37 @@ typedef ImageDropNotice = void Function(int index, String keyPreview);
 /// Set by hosts that surface drops (the CLI prints a dim transcript line
 /// + logs to fa.log). Same pattern as `transientRetryNotice`.
 ImageDropNotice? imageDropNotice;
+
+/// Host-visible learned-cap notice (issue #1750): fired ONCE when a
+/// provider image-count refusal teaches the loop a smaller cap — names
+/// the model and the learned cap before the per-image drop lines follow.
+/// Same pattern as [imageDropNotice].
+typedef ImageCapLearnedNotice = void Function(String modelId, int cap);
+
+/// Set by hosts that surface the adaptive re-send (the CLI prints a dim
+/// transcript line + logs to fa.log).
+ImageCapLearnedNotice? imageCapLearnedNotice;
+
+/// The cap-resolution seam (issue #1750): `perModel config > catalog
+/// maxImages > images.maxPerRequest` — first level present wins, the
+/// same shape as the scoped provider timeouts (issue #1554). [perModel]
+/// null reads the process-wide [imageRegistryConfig] section.
+int resolveImageCap({
+  String? modelId,
+  int? catalogMaxImages,
+  Map<String, int>? perModel,
+}) {
+  final override = modelId == null
+      ? null
+      : (perModel ?? imageRegistryConfig.perModel)[modelId];
+  if (override != null) return override;
+  return catalogMaxImages ?? imageRegistryConfig.maxPerRequest;
+}
+
+/// The runtime latch key of a model's learned image cap: (provider,
+/// model) — a mid-run `/model` switch to another pair never sees it (E2).
+String imageCapLatchKey(String provider, String modelId) =>
+    '$provider|$modelId';
 
 /// One unique image in the window.
 final class ImageRegistryEntry {
