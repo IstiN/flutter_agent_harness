@@ -340,7 +340,20 @@ extension on AgentCli {
       final targetSpec = entry?.spec ?? spec!;
       final endpoint = entry?.baseUrl ?? spec!.defaultBaseUrl;
       keySlot = entry?.keyName ?? CustomProviderRegistry.keyNameFor(endpoint);
-      final key = _providerKeyFor(targetSpec, endpoint);
+      // The key the switch itself will bind: a saved entry's OWN slot
+      // first (two entries can share one endpoint with separate slots —
+      // the shared-endpoint probe would find the OTHER entry's slot or
+      // none), then the spec's env/shared resolution for slot-less
+      // entries and catalog providers.
+      String? key;
+      if (entry != null) {
+        key = config.secureKeys == null
+            ? null
+            : (config.secureKeys?.available ?? false
+                  ? config.secureKeys?.read(keySlot)
+                  : null);
+      }
+      key ??= _providerKeyFor(targetSpec, endpoint);
       keyResolved = key != null && key.isNotEmpty;
     }
     return crossProviderSwitchRefusal(
