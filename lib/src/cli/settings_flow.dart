@@ -2440,11 +2440,6 @@ extension SettingsFlow on AgentCli {
     return [
       MenuItem(key: 'provider', label: 'Provider', description: model.provider),
       MenuItem(key: 'model', label: 'Chat model', description: model.id),
-      const MenuItem(
-        key: 'model-edit',
-        label: 'Model parameters',
-        description: 'context window, token limits',
-      ),
       MenuItem(
         key: 'model-caps',
         label: 'Model capabilities',
@@ -2587,7 +2582,6 @@ extension SettingsFlow on AgentCli {
     'model': startChatModelFlow,
     'approval': () async => _openApprovalPicker(),
     'mode': () async => _openModePicker(),
-    'model-edit': () => _handleModelEdit(''),
     'model-caps': startModelCapsFlow,
     'media': startMediaSlotFlow,
     'agent-models': startAgentModelFlow,

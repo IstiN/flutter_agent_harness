@@ -1075,11 +1075,11 @@ const _applicationNotes = <String, String>{
   // gh-1426: the Model capabilities flow reinstalls the process-wide
   // override layer, re-syncs the live ModelsConfig, and refreshes the
   // roles resolver on every write (E6 reload-after-write) — the NEXT
-  // model build picks the edit up live; the running session keeps its
-  // already-built model.
+  // model build picks the edit up live, and since issue #1515 a pin
+  // naming the ACTIVE model rebuilds that model on the spot.
   'models':
-      'applies live to the next model build — the running session keeps '
-      'its current model',
+      'applies live to the next model build — a pin naming the active '
+      'model rebuilds it immediately',
   // Issue #394: the boot-built Agent keeps the cap it was constructed
   // with (the loop's over-window guard reads its config field); the
   // running session never re-reads the yaml.

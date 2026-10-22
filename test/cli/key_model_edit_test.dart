@@ -2,7 +2,6 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -98,6 +97,13 @@ void main() {
 
       io.sendLine('/model-edit');
       await waitForIt(() => io.out.toString().contains('contextWindow'));
+      // Issue #1515: the standalone editing surface is retired — the
+      // line-mode print points at the merged Model capabilities flow.
+      await waitForIt(
+        () => io.out.toString().contains(
+          'interactive editing: /settings → Model capabilities',
+        ),
+      );
       io.sendLine('/exit');
       await run;
     });
@@ -206,73 +212,6 @@ void main() {
       expect(parseTokenPreset('4K'), 4096);
       expect(parseTokenPreset('1M'), 1048576);
       expect(parseTokenPreset('500'), 500);
-    });
-  });
-
-  group('TUI model-edit apply adapter (scripted prompt seam)', () {
-    /// A scripted prompt callback: canned answers in order.
-    Future<TuiPromptAnswer?> Function(TuiPromptSpec) scriptedPrompt(
-      List<TuiPromptAnswer> answers,
-    ) {
-      var i = 0;
-      return (spec) async {
-        if (i < answers.length) return answers[i++];
-        return null;
-      };
-    }
-
-    test('applies a preset context window through the adapter', () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(fake.call);
-      final run = cli.run();
-      await waitForIt(() => io.out.toString().contains('fa>'));
-
-      await cli.tuiModelEditForTest(
-        scriptedPrompt([
-          AskPromptAnswer(AskAnswer(selected: ['Context Window'])),
-          AskPromptAnswer(AskAnswer(selected: ['16K'])),
-        ]),
-      );
-
-      expect(io.out.toString(), contains('context window set to 16384'));
-      io.sendLine('/model-edit');
-      await waitForIt(() => io.out.toString().contains('contextWindow 16384'));
-      io.sendLine('/exit');
-      await run;
-    });
-
-    test('applies a preset max-token value through the adapter', () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(fake.call);
-      final run = cli.run();
-      await waitForIt(() => io.out.toString().contains('fa>'));
-
-      await cli.tuiModelEditForTest(
-        scriptedPrompt([
-          AskPromptAnswer(AskAnswer(selected: ['Max Output Tokens'])),
-          AskPromptAnswer(AskAnswer(selected: ['8K'])),
-        ]),
-      );
-
-      expect(io.out.toString(), contains('max tokens set to 8192'));
-      io.sendLine('/model-edit');
-      await waitForIt(() => io.out.toString().contains('maxTokens 8192'));
-      io.sendLine('/exit');
-      await run;
-    });
-
-    test('a cancelled picker applies nothing', () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(fake.call);
-      final run = cli.run();
-      await waitForIt(() => io.out.toString().contains('fa>'));
-
-      await cli.tuiModelEditForTest(scriptedPrompt([]));
-
-      io.sendLine('/model-edit');
-      await waitForIt(() => io.out.toString().contains('contextWindow 100000'));
-      io.sendLine('/exit');
-      await run;
     });
   });
 }

@@ -1303,18 +1303,16 @@ extension on AgentCli {
 
   /// `/model-edit [contextWindow|maxTokens <n>]`: shows or overrides the
   /// active model's token limits for this session (persist per chain via
-  /// roles yaml `contextWindow:`/`maxTokens:`). Bare in TUI mode opens an
-  /// interactive two-step picker (field → preset/custom value).
+  /// roles yaml `contextWindow:`/`maxTokens:`). Bare in TUI mode is the
+  /// ALIAS into the Model capabilities flow, pre-focused on the current
+  /// model (issue #1515 — the standalone Model parameters surface is
+  /// retired); line mode keeps the limits print.
   Future<void> _handleModelEdit(String rest) async {
     final args = _splitCommandArgs(rest);
     if (args.isNotEmpty) return _applyModelEditArg(args);
-    await _showModelEditDefault();
-  }
-
-  /// Bare `/model-edit`: the TUI two-step picker, or the line-mode limits.
-  Future<void> _showModelEditDefault() async {
+    final current = _agent.state.model;
     if (_useTui && _tuiController != null) {
-      await _modelEditInteractive();
+      await _editModelCapsOverride(current.provider, current.id);
     } else {
       _printModelLimits();
     }
@@ -1364,32 +1362,15 @@ extension on AgentCli {
     io.writeln(
       _style.dim('set with /model-edit <contextWindow|maxTokens> <n>'),
     );
-  }
-
-  /// Bare `/model-edit` in TUI mode: a two-step interactive picker —
-  /// Bare `/model-edit` in TUI mode: a two-step interactive picker —
-  /// (1) which field to edit (context window or max output tokens),
-  /// (2) a standard preset list plus a "Custom…" free-text entry. The
-  /// picked value is applied via [_replaceModelLimits]. Cancelling either
-  /// step aborts without changes.
-  /// `/model-edit` TUI interactive: delegates to the pure [interactiveModelEdit]
-  /// with the live controller + model.
-  Future<void> _modelEditInteractive() => interactiveModelEdit(
-    current: _agent.state.model,
-    prompt: (spec) => _openHerdrPrompt(_tuiController!, spec),
-    onResult: io.writeln,
-    onApply: _replaceModelLimitsFromEdit,
-  );
-
-  /// Adapts [interactiveModelEdit]'s apply callback to [_replaceModelLimits].
-  void _replaceModelLimitsFromEdit({
-    required bool isContext,
-    required int value,
-  }) {
-    _replaceModelLimits(
-      contextWindow: isContext ? value : null,
-      maxTokens: isContext ? null : value,
-      windowSource: isContext ? ContextWindowSource.userPin : null,
+    // The merge note (issue #1515): the standalone interactive editor and
+    // the hub's "Model parameters" row are retired — the Model
+    // capabilities flow is the one editing surface (presets + custom
+    // input + effective values with source layers live there).
+    io.writeln(
+      _style.dim(
+        'interactive editing: /settings → Model capabilities '
+        '(the Model parameters surface merged there)',
+      ),
     );
   }
 
@@ -1449,24 +1430,6 @@ extension on AgentCli {
     }
     unawaited(config.onModelChanged?.call(_agent.state.model));
   }
-}
-
-/// The public test seam of the model-edit surface: the TUI picker's apply
-/// path with the herdr prompt sheet swapped for a scripted callback, so
-/// the apply-adapter coverage needs no live terminal.
-extension AgentCliModelEditTest on AgentCli {
-  /// Runs the TUI model-edit picker against [prompt] (the scripted
-  /// answer list a test provides) and applies through the same
-  /// [_replaceModelLimitsFromEdit] adapter the live sheet uses.
-  @visibleForTesting
-  Future<void> tuiModelEditForTest(
-    Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  ) => interactiveModelEdit(
-    current: _agent.state.model,
-    prompt: prompt,
-    onResult: io.writeln,
-    onApply: _replaceModelLimitsFromEdit,
-  );
 }
 
 /// Known model ids shown by `/models` and the `/model` picker. Maps the
@@ -1574,99 +1537,4 @@ Future<String?> promptTextTui(
   );
   if (result == null || result is! TextPromptAnswer) return null;
   return result.value.trim();
-}
-
-/// Testable core of the TUI model-edit flow. Prompts for field (context
-/// window vs max tokens), then a preset or custom value, and calls [onApply]
-/// with the result. Reports messages through [onResult].
-Future<void> interactiveModelEdit({
-  required Model current,
-  required Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  required void Function(String message) onResult,
-  required void Function({required bool isContext, required int value}) onApply,
-}) async {
-  final isContext = await pickModelEditField(prompt, current);
-  if (isContext == null) return;
-
-  final value = await pickModelEditValue(prompt, isContext, onResult);
-  if (value == null) return;
-
-  onApply(isContext: isContext, value: value);
-  onResult('${isContext ? 'context window' : 'max tokens'} set to $value');
-}
-
-/// Step 1: picks which field to edit (null on cancel).
-Future<bool?> pickModelEditField(
-  Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  Model current,
-) async {
-  final result = await prompt(
-    AskPromptSpec(
-      header: 'Model Edit',
-      question: 'Which limit to edit?',
-      index: 0,
-      total: 1,
-      options: [
-        AskOption(
-          label: 'Context Window',
-          description: 'Current: ${current.contextWindow}',
-        ),
-        AskOption(
-          label: 'Max Output Tokens',
-          description: 'Current: ${current.maxTokens}',
-        ),
-      ],
-    ),
-  );
-  if (result == null || result is! AskPromptAnswer) return null;
-  return result.value.selected.first.contains('Context');
-}
-
-/// Step 2: picks a preset value or enters a custom one (null on cancel).
-Future<int?> pickModelEditValue(
-  Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  bool isContext,
-  void Function(String message) onResult,
-) async {
-  final presets = isContext
-      ? [4096, 8192, 16384, 32768, 65536, 131072, 204800, 1048576]
-      : [4096, 8192, 16384, 32768, 65536];
-  final result = await prompt(
-    AskPromptSpec(
-      header: 'Model Edit',
-      question: '${isContext ? 'Context window' : 'Max tokens'} size:',
-      index: 0,
-      total: 1,
-      options: [
-        for (final p in presets) AskOption(label: formatTokenPreset(p)),
-        const AskOption(
-          label: 'Custom…',
-          description: 'Enter a number manually',
-        ),
-      ],
-    ),
-  );
-  if (result == null || result is! AskPromptAnswer) return null;
-  final picked = result.value.selected.first;
-  if (picked != 'Custom…') return parseTokenPreset(picked);
-  return _pickCustomTokenValue(prompt, onResult);
-}
-
-Future<int?> _pickCustomTokenValue(
-  Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  void Function(String message) onResult,
-) async {
-  final textResult = await prompt(
-    const TextPromptSpec(
-      header: 'Model Edit',
-      question: 'Enter value (tokens):',
-    ),
-  );
-  if (textResult == null || textResult is! TextPromptAnswer) return null;
-  final value = int.tryParse(textResult.value.trim()) ?? 0;
-  if (value <= 0) {
-    onResult('invalid value');
-    return null;
-  }
-  return value;
 }

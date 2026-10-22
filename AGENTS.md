@@ -808,7 +808,7 @@ factual: paths, commands, invariants — no essays.
   endpoint resolves ONLY its scoped store keys (env names never hijack a
   custom endpoint); `/key set` writes store-only, never config.
   `/settings` is the interactive settings hub: a TUI picker whose entries
-  (Provider, Edit/delete provider, Chat model, Model parameters, Media
+  (Provider, Edit/delete provider, Chat model, Model capabilities, Media
   models, Agent models, Approval mode, Agent mode, API keys, MCP servers)
   launch the same flows the dedicated slash commands open; line mode prints
   a summary. ALL TUI pickers (generic host pickers included) have

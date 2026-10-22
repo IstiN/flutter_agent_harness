@@ -284,8 +284,10 @@ CLI equivalents: `/model <id>` switches the active model (a
 `/models config` displays this section, `/models set <slot> <model>
 [baseUrl]` and `/models remove <slot>` edit `models.slots`;
 `/model-edit [contextWindow|maxTokens <n>]` overrides token limits for the
-session (persist per chain via `roles:` entries instead). Role edits apply at
-next boot; `/model` applies live.
+session (persist per chain via `roles:` entries instead) — bare in the TUI
+it aliases into `/settings` → Model capabilities, the one surface that pins
+`models.overrides` (issue #1515). Role edits apply at next boot; `/model`
+applies live.
 
 ## Provider queue
 
