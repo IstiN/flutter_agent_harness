@@ -32,7 +32,15 @@ extension ApprovalCommands on AgentCli {
       ApprovalPromptSpec(request: request),
     );
     if (result is! ApprovalPromptAnswer) return ApprovalDecision.deny;
-    final note = result.note.trim();
+    _steerApprovalNote(result.note.trim(), request);
+    _noteApproveAlwaysAnswer(result.value);
+    return result.value;
+  }
+
+  /// Steers a typed approval note along as steering feedback so the model
+  /// sees it at the next step; an empty note rides nothing (split out of
+  /// [_promptForApprovalTui] to keep it under the CRAP ratchet).
+  void _steerApprovalNote(String note, ApprovalRequest request) {
     if (note.isNotEmpty) {
       _agent.steer(
         UserMessage.text(
@@ -40,8 +48,6 @@ extension ApprovalCommands on AgentCli {
         ),
       );
     }
-    _noteApproveAlwaysAnswer(result.value);
-    return result.value;
   }
 
   /// Persists the "always" preference change when [decision] is
@@ -132,9 +138,21 @@ extension ApprovalCommands on AgentCli {
     // TUI mode: each question runs through the on-screen prompt zone.
     final tui = _tuiController;
     if (_useTui && tui != null) return _answerAskQuestionsTui(tui, questions);
+    return _walkAskAnswers(_askOneQuestion, questions);
+  }
+
+  /// Walks [questions] one at a time through [answerOne]; the first
+  /// cancel (`null`) aborts the whole batch. Shared by the line-mode and
+  /// TUI branches of [_answerAskQuestions] (extracted so the TUI branch
+  /// stays under the CRAP ratchet).
+  Future<List<AskAnswer>?> _walkAskAnswers(
+    Future<AskAnswer?> Function(AskQuestion question, int index, int total)
+    answerOne,
+    List<AskQuestion> questions,
+  ) async {
     final answers = <AskAnswer>[];
     for (var i = 0; i < questions.length; i++) {
-      final answer = await _askOneQuestion(questions[i], i, questions.length);
+      final answer = await answerOne(questions[i], i, questions.length);
       if (answer == null) return null;
       answers.add(answer);
     }
@@ -147,20 +165,11 @@ extension ApprovalCommands on AgentCli {
   Future<List<AskAnswer>?> _answerAskQuestionsTui(
     FaTuiController tui,
     List<AskQuestion> questions,
-  ) async {
-    final answers = <AskAnswer>[];
-    for (var i = 0; i < questions.length; i++) {
-      final answer = await _answerOneAskQuestionTui(
-        tui,
-        questions[i],
-        i,
-        questions.length,
-      );
-      if (answer == null) return null;
-      answers.add(answer);
-    }
-    return answers;
-  }
+  ) => _walkAskAnswers(
+    (question, index, total) =>
+        _answerOneAskQuestionTui(tui, question, index, total),
+    questions,
+  );
 
   /// One TUI ask question: the prompt-zone answer, or null when cancelled
   /// (or the zone resolved with an unexpected type).
@@ -1082,14 +1091,10 @@ extension ApprovalCommands on AgentCli {
         _logDiagnostic('turn end sid=$_logSid stop=${message.stopReason.name}');
       case AgentEndEvent():
         _logDiagnostic('run end sid=$_logSid');
-      case ToolCallHeartbeatEvent():
-      case ToolCallStuckEvent():
-      case ToolPairingRepairEvent():
-      case MessageCapRepairEvent():
-        // Persisting cases: logged where the record is written (see
-        // [_persistEventLiveness]); nothing extra here.
-        break;
       default:
+      // The record-persisting cases (tool-call heartbeats, stuck calls,
+      // pairing repairs, message-cap repairs) log where the record is
+      // written (see [_persistEventLiveness]) — nothing extra here.
     }
   }
 

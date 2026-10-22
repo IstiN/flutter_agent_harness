@@ -2380,9 +2380,15 @@ extension SettingsFlow on AgentCli {
     await persist(url: isUrl ? value : null, name: isUrl ? null : value);
     await _refreshDapHubSnapshot();
     io.writeln('dap: saved ${isUrl ? 'hub url' : 'agent name'} $value');
-    // Higher-precedence sources (env, the yaml `hub:` section, the running
-    // client's startup values) can shadow the persisted value until they
-    // clear — say so instead of letting the menu silently show another url.
+    _warnDapHubValueShadowed(isUrl: isUrl, value: value);
+  }
+
+  /// The post-save override note (split out of [_editDapHubValue] to keep
+  /// it under the CRAP ratchet): higher-precedence sources (env, the yaml
+  /// `hub:` section, the running client's startup values) can shadow the
+  /// persisted value until they clear — say so instead of letting the menu
+  /// silently show another value.
+  void _warnDapHubValueShadowed({required bool isUrl, required String value}) {
     final effective = isUrl ? _dapHubSnapshot?.url : _dapHubSnapshot?.name;
     if (effective != null && effective != value) {
       io.writeln(
