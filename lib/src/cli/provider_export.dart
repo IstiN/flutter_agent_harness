@@ -211,16 +211,7 @@ String decryptProvidersExport(
       ctB64 is! String) {
     throw const ProviderExportException('.fahx envelope is malformed');
   }
-  final Uint8List salt;
-  final Uint8List nonce;
-  final Uint8List blob;
-  try {
-    salt = base64Decode(saltB64);
-    nonce = base64Decode(nonceB64);
-    blob = base64Decode(ctB64);
-  } on FormatException {
-    throw const ProviderExportException('.fahx envelope is malformed');
-  }
+  final (salt, nonce, blob) = _decodeEnvelopeFields(saltB64, nonceB64, ctB64);
   if (blob.length <= 32) {
     throw const ProviderExportException('.fahx envelope is malformed');
   }
@@ -239,6 +230,20 @@ String decryptProvidersExport(
   return utf8.decode(
     _xor(ciphertext, _keystream(keys.sublist(0, 32), nonce, ciphertext.length)),
   );
+}
+
+/// Decodes the envelope's base64 fields; every decode failure is the same
+/// loud malformed-envelope exception (no oracle for encoders).
+(Uint8List, Uint8List, Uint8List) _decodeEnvelopeFields(
+  String saltB64,
+  String nonceB64,
+  String ctB64,
+) {
+  try {
+    return (base64Decode(saltB64), base64Decode(nonceB64), base64Decode(ctB64));
+  } on FormatException {
+    throw const ProviderExportException('.fahx envelope is malformed');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -306,12 +311,16 @@ ExportedProvider _parseProviderEntry(Object? raw) {
       apiType: apiType,
       baseUrl: baseUrl,
       modelId: modelId,
-      keyName: keyName is String && keyName.isNotEmpty ? keyName : null,
+      keyName: _optionalExportedField(keyName),
       authHeader: parseAuthHeaderName(raw['authHeader'], 'exported "$name"'),
     ),
-    key: key is String && key.isNotEmpty ? key : null,
+    key: _optionalExportedField(key),
   );
 }
+
+/// Coerces an optional exported field: null unless a non-empty [String].
+String? _optionalExportedField(Object? value) =>
+    value is String && value.isNotEmpty ? value : null;
 
 // ---------------------------------------------------------------------------
 // CLI command.
