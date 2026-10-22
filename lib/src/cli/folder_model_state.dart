@@ -52,7 +52,8 @@ final class FolderModelState {
       other.customProvider == customProvider;
 
   @override
-  int get hashCode => Object.hash(providerKind, modelId, baseUrl, customProvider);
+  int get hashCode =>
+      Object.hash(providerKind, modelId, baseUrl, customProvider);
 }
 
 /// Path of the per-folder model state file for [cwd].
@@ -107,6 +108,32 @@ Future<void> saveFolderModelState(
   }
 }
 
+/// Validates and materializes the decoded model-state JSON: null when the
+/// envelope or the required fields are wrong.
+FolderModelState? _decodeFolderModelState(Object? decoded) {
+  if (decoded is! Map<String, dynamic>) return null;
+  final providerKind = decoded['providerKind'];
+  final modelId = decoded['modelId'];
+  final baseUrl = decoded['baseUrl'];
+  if (providerKind is! String ||
+      providerKind.isEmpty ||
+      modelId is! String ||
+      modelId.isEmpty) {
+    return null;
+  }
+  if (baseUrl != null && baseUrl is! String) return null;
+  // A non-string pin (a hand-edited state file) degrades to NO pin — the
+  // state itself stays servable and restores endpoint-keyed (AC4
+  // tolerance; the pin is an optimization over the endpoint match).
+  final customProvider = decoded['customProvider'];
+  return FolderModelState(
+    providerKind: providerKind,
+    modelId: modelId,
+    baseUrl: baseUrl as String?,
+    customProvider: customProvider is String ? customProvider : null,
+  );
+}
+
 /// Loads the model/provider triple saved for the folder [cwd] lives in,
 /// or `null` when absent/corrupt (the global config stays in charge).
 Future<FolderModelState?> loadFolderModelState(
@@ -119,28 +146,7 @@ Future<FolderModelState?> loadFolderModelState(
   )).valueOrNull;
   if (text == null || text.isEmpty) return null;
   try {
-    final decoded = jsonDecode(text);
-    if (decoded is! Map<String, dynamic>) return null;
-    final providerKind = decoded['providerKind'];
-    final modelId = decoded['modelId'];
-    final baseUrl = decoded['baseUrl'];
-    if (providerKind is! String ||
-        providerKind.isEmpty ||
-        modelId is! String ||
-        modelId.isEmpty) {
-      return null;
-    }
-    if (baseUrl != null && baseUrl is! String) return null;
-    // A non-string pin (a hand-edited state file) degrades to NO pin — the
-    // state itself stays servable and restores endpoint-keyed (AC4
-    // tolerance; the pin is an optimization over the endpoint match).
-    final customProvider = decoded['customProvider'];
-    return FolderModelState(
-      providerKind: providerKind,
-      modelId: modelId,
-      baseUrl: baseUrl as String?,
-      customProvider: customProvider is String ? customProvider : null,
-    );
+    return _decodeFolderModelState(jsonDecode(text));
   } on FormatException {
     return null;
   }
@@ -166,7 +172,8 @@ Future<FolderModelState?> loadFolderModelState(
   if (entry != null) return (entry: entry, note: null);
   return (
     entry: null,
-    note: 'saved provider "$name" is no longer configured — resolved by '
+    note:
+        'saved provider "$name" is no longer configured — resolved by '
         'endpoint (model kept)',
   );
 }

@@ -609,20 +609,13 @@ final class AnsiMarkdown {
     }
   }
 
-  /// Emits the grid rows: padded cells joined by dim `│`, the separator row
-  /// as a dim `───┼───` line, the header row bold. A cell wider than its
-  /// column WRAPS ([wrapAnsiLine]) onto continuation physical rows that keep
-  /// every border aligned — an overflowing table stays a real grid instead
-  /// of collapsing to raw markdown. Each physical row is padded to the full
-  /// frame: continuation cells render as blanks under the already-shown
-  /// part of their column.
+  /// Wraps every cell of every logical row (the separator row is a
+  /// single-line placeholder), then emits the physical rows.
   List<String> _renderTableRows(
     List<String> rows,
     List<int> widths,
     Map<int, List<String>> formatted,
   ) {
-    final out = <String>[];
-
     // Per logical row: the wrapped fragments of every cell, and the tallest
     // cell's line count (the physical height of that logical row).
     final fragments = <List<List<String>>>[];
@@ -644,7 +637,24 @@ final class AnsiMarkdown {
       fragments.add(wrapped);
       heights.add(h);
     }
+    return _paintTableRows(rows, widths, fragments, heights);
+  }
 
+  /// Emits the grid rows from the wrapped fragments: padded cells joined by
+  /// dim `│`, the separator row as a dim `───┼───` line, the header row
+  /// bold. A cell wider than its column WRAPS ([wrapAnsiLine], done by the
+  /// caller) onto continuation physical rows that keep every border
+  /// aligned — an overflowing table stays a real grid instead of collapsing
+  /// to raw markdown. Each physical row is padded to the full frame:
+  /// continuation cells render as blanks under the already-shown part of
+  /// their column.
+  List<String> _paintTableRows(
+    List<String> rows,
+    List<int> widths,
+    List<List<List<String>>> fragments,
+    List<int> heights,
+  ) {
+    final out = <String>[];
     for (var r = 0; r < rows.length; r++) {
       if (r == 1) {
         out.add(

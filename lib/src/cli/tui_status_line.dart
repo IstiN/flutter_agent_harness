@@ -1212,6 +1212,18 @@ bool _isBranchlessGitHeader(String header) =>
     header.startsWith('No commits yet') ||
     header.startsWith('HEAD (no branch)');
 
+/// The branch name in a `## ` porcelain header line: everything before the
+/// upstream `...` marker or the dirty `[...]` bracket. Null when the
+/// header reports no branch (see [_isBranchlessGitHeader]).
+String? _gitHeaderBranch(String header) {
+  if (_isBranchlessGitHeader(header)) return null;
+  final dot = header.indexOf('...');
+  final bracket = header.indexOf('[');
+  return header
+      .substring(0, dot < 0 ? (bracket < 0 ? header.length : bracket) : dot)
+      .trim();
+}
+
 /// Parses `git status --porcelain` output (the git watcher seam's
 /// fixture format) into counts + branch (from the `## branch` header;
 /// a detached HEAD reports a null branch — dirty counts only). Pure —
@@ -1224,16 +1236,7 @@ StatusLineGit parseGitStatusPorcelain(String output) {
   for (final line in output.split('\n')) {
     if (line.isEmpty) continue;
     if (line.startsWith('## ')) {
-      final header = line.substring(3);
-      // An initial repo and a detached HEAD both report branch-less
-      // rather than adopting their sentence as a name (see
-      // [_isBranchlessGitHeader]).
-      if (_isBranchlessGitHeader(header)) continue;
-      final dot = header.indexOf('...');
-      final bracket = header.indexOf('[');
-      branch = header
-          .substring(0, dot < 0 ? (bracket < 0 ? header.length : bracket) : dot)
-          .trim();
+      branch = _gitHeaderBranch(line.substring(3)) ?? branch;
       continue;
     }
     if (line.length < 2) continue;

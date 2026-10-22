@@ -1146,17 +1146,17 @@ final class FaTuiModel extends Model {
       return (this, null);
     }
     final revealed = (menuItems.length + 1).clamp(0, all.length);
-    return (
-      copyWith(menuItems: all.take(revealed).toList()),
-      _pickerRevealNextCmd(revealed, all.length),
-    );
+    final model = copyWith(menuItems: all.take(revealed).toList());
+    // The row set is complete after this leg — nothing left to schedule.
+    if (revealed >= all.length) return (model, null);
+    return (model, _pickerRevealNextCmd());
   }
 
-  /// The next reveal leg, or null when the row set is complete or the
-  /// hook switched off mid-run.
-  Cmd? _pickerRevealNextCmd(int revealed, int total) {
+  /// The next reveal leg, or null when the hook switched off mid-run
+  /// (row-set completeness is the caller's check).
+  Cmd? _pickerRevealNextCmd() {
     final revealMs = _pickerRevealDelayMs;
-    if (revealed >= total || revealMs <= 0) return null;
+    if (revealMs <= 0) return null;
     return _schedulePickerReveal(revealMs);
   }
 
@@ -1294,6 +1294,55 @@ final class FaTuiModel extends Model {
     return _handleArrowScrollKey(msg) ?? _handlePageScrollKey(msg);
   }
 
+  /// The ↑ arm of the arrow scroll cluster. Browsing: step to the older
+  /// entry (stop at the oldest). With an empty input ↑ first pops the
+  /// message queue, then browses the submitted-message history, else
+  /// nudges the viewport up one row.
+  (Model, Cmd?) _handleArrowScrollUp() {
+    if (historyIndex != -1) {
+      if (historyIndex > 0) {
+        final index = historyIndex - 1;
+        final entry = inputHistory[index];
+        return (
+          copyWith(historyIndex: index, inputText: entry, cursor: entry.length),
+          null,
+        );
+      }
+      return (this, null);
+    }
+    if (inputText.isEmpty) {
+      // With a non-empty queue, ↑ pops the last queued message back into
+      // the input for editing (kimi-cli).
+      if (queue.isNotEmpty) {
+        final popped = queue.last;
+        return (
+          copyWith(
+            queue: queue.sublist(0, queue.length - 1),
+            inputText: popped.text,
+            cursor: popped.text.length,
+          ),
+          null,
+        );
+      }
+      // Then the submitted-message history.
+      if (inputHistory.isNotEmpty) {
+        final index = inputHistory.length - 1;
+        final entry = inputHistory[index];
+        return (
+          copyWith(
+            historyIndex: index,
+            historyDraft: '',
+            inputText: entry,
+            cursor: entry.length,
+          ),
+          null,
+        );
+      }
+      return (_scrolledTo(scrollOffset - 1), null);
+    }
+    return (this, null);
+  }
+
   /// Normal-mode arrow scroll keys (↑/↓); null when the key belongs to
   /// another cluster. With an empty input ↑ first pops the message queue,
   /// then browses the submitted-message history; ↓ walks it back.
@@ -1301,53 +1350,7 @@ final class FaTuiModel extends Model {
   (Model, Cmd?)? _handleArrowScrollKey(KeyMsg msg) {
     switch (msg.key) {
       case 'up':
-        // Browsing: step to the older entry (stop at the oldest).
-        if (historyIndex != -1) {
-          if (historyIndex > 0) {
-            final index = historyIndex - 1;
-            final entry = inputHistory[index];
-            return (
-              copyWith(
-                historyIndex: index,
-                inputText: entry,
-                cursor: entry.length,
-              ),
-              null,
-            );
-          }
-          return (this, null);
-        }
-        if (inputText.isEmpty) {
-          // With a non-empty queue, ↑ pops the last queued message back into
-          // the input for editing (kimi-cli).
-          if (queue.isNotEmpty) {
-            final popped = queue.last;
-            return (
-              copyWith(
-                queue: queue.sublist(0, queue.length - 1),
-                inputText: popped.text,
-                cursor: popped.text.length,
-              ),
-              null,
-            );
-          }
-          // Then the submitted-message history.
-          if (inputHistory.isNotEmpty) {
-            final index = inputHistory.length - 1;
-            final entry = inputHistory[index];
-            return (
-              copyWith(
-                historyIndex: index,
-                historyDraft: '',
-                inputText: entry,
-                cursor: entry.length,
-              ),
-              null,
-            );
-          }
-          return (_scrolledTo(scrollOffset - 1), null);
-        }
-        return (this, null);
+        return _handleArrowScrollUp();
       case 'down':
         // Browsing: step to the newer entry; past the newest restores the
         // (empty) draft.
@@ -2162,37 +2165,39 @@ final class FaTuiModel extends Model {
             tail.substring(i, (i + tailChunkChars).clamp(0, tail.length)),
         ]);
     }
-    // Keep the history bounded — but AMORTIZED. Trimming back to exactly
-    // maxLines on EVERY append drops the oldest line each flush, and a
-    // changed first line breaks TranscriptMarkdown's boundary identity, so
-    // once an answer crossed the cap every 50 ms streaming flush paid a
-    // full O(history) formatAll+wrap pass (~27 ms at 2000 lines — over half
-    // the flush budget): constant scroll/typing jank for long answers. A
-    // slack window lets ordinary appends stay on the incremental path; one
-    // batch rebuild per [trimSlack] dropped lines is imperceptible.
+    return _trimHistoryHead(result);
+  }
+
+  /// Keep the history bounded — but AMORTIZED. Trimming back to exactly
+  /// maxLines on EVERY append drops the oldest line each flush, and a
+  /// changed first line breaks TranscriptMarkdown's boundary identity, so
+  /// once an answer crossed the cap every 50 ms streaming flush paid a
+  /// full O(history) formatAll+wrap pass (~27 ms at 2000 lines — over half
+  /// the flush budget): constant scroll/typing jank for long answers. A
+  /// slack window lets ordinary appends stay on the incremental path; one
+  /// batch rebuild per [trimSlack] dropped lines is imperceptible.
+  static (List<String>, int) _trimHistoryHead(List<String> result) {
     const maxLines = 2000;
     const trimSlack = 400;
-    if (result.length > maxLines + trimSlack) {
-      // A cut landing inside a fenced code block leaves the retained
-      // history with an open fence: the block's closing ``` then toggles
-      // the walk OPEN and every markdown line after it renders verbatim
-      // (raw **/### walls after a long stream). Count fence lines in the
-      // DROPPED head — the state the rebuilt walk starts in — and prepend
-      // a synthetic closing fence when it is open. The same trick
-      // tui_replay.dart uses for truncated replays.
-      final cut = result.length - maxLines;
-      var open = false;
-      for (var i = 0; i < cut; i++) {
-        if (_fenceLineStart.hasMatch(result[i])) open = !open;
-      }
-      final trimmed = result.sublist(cut);
-      if (open) trimmed.insert(0, '```');
-      // The synthetic fence line occupies index 0, so every RETAINED line
-      // sits one slot lower than after a plain cut — the head shift for
-      // stored transcript indices is cut - 1 when the repair fires.
-      return (trimmed, open ? cut - 1 : cut);
+    if (result.length <= maxLines + trimSlack) return (result, 0);
+    // A cut landing inside a fenced code block leaves the retained
+    // history with an open fence: the block's closing ``` then toggles
+    // the walk OPEN and every markdown line after it renders verbatim
+    // (raw **/### walls after a long stream). Count fence lines in the
+    // DROPPED head — the state the rebuilt walk starts in — and prepend
+    // a synthetic closing fence when it is open. The same trick
+    // tui_replay.dart uses for truncated replays.
+    final cut = result.length - maxLines;
+    var open = false;
+    for (var i = 0; i < cut; i++) {
+      if (_fenceLineStart.hasMatch(result[i])) open = !open;
     }
-    return (result, 0);
+    final trimmed = result.sublist(cut);
+    if (open) trimmed.insert(0, '```');
+    // The synthetic fence line occupies index 0, so every RETAINED line
+    // sits one slot lower than after a plain cut — the head shift for
+    // stored transcript indices is cut - 1 when the repair fires.
+    return (trimmed, open ? cut - 1 : cut);
   }
 }
 
