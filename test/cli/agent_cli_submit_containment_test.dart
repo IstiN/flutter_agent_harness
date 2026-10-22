@@ -115,8 +115,10 @@ final class _ThrowingWriteEnv implements ExecutionEnv {
       _delegate.appendFile(path, content);
 
   @override
-  Future<Result<void, FileError>> createDir(String path, {bool recursive = true}) =>
-      _delegate.createDir(path, recursive: recursive);
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
 
   @override
   Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
@@ -177,16 +179,18 @@ void main() {
       expect(reported.single, isA<StateError>());
     });
 
-    test('a Future completing with an error is reported, never rethrown',
-        () async {
-      final reported = <Object>[];
-      await runContainedSubmit(
-        () async => throw StateError('async boom'),
-        reported.add,
-      );
-      expect(reported, hasLength(1));
-      expect(reported.single, isA<StateError>());
-    });
+    test(
+      'a Future completing with an error is reported, never rethrown',
+      () async {
+        final reported = <Object>[];
+        await runContainedSubmit(
+          () async => throw StateError('async boom'),
+          reported.add,
+        );
+        expect(reported, hasLength(1));
+        expect(reported.single, isA<StateError>());
+      },
+    );
 
     test('a clean body is reported zero times', () async {
       final reported = <Object>[];
@@ -205,34 +209,41 @@ void main() {
         ),
       );
       expect(line, contains('must be at least 1024'));
-      expect(line.contains('\n'), isFalse,
-          reason: 'the panel is ONE line: $line');
+      expect(
+        line.contains('\n'),
+        isFalse,
+        reason: 'the panel is ONE line: $line',
+      );
       expect(line.contains('asynchronous suspension'), isFalse);
     });
 
-    test('a multi-line parser error collapses to its first meaningful line',
-        () {
-      final line = submitErrorPanelLine(
-        StateError(
-          'Error on line 8, column 5: Duplicate mapping key.\n'
-          '  ╷\n'
-          '8 │     "copilot":\n'
-          '  │     ^^^^^^^^^\n'
-          '  ╵',
-        ),
-      );
-      expect(
-        line,
-        contains('Error on line 8, column 5: Duplicate mapping key.'),
-      );
-      expect(line.contains('\n'), isFalse);
-    });
+    test(
+      'a multi-line parser error collapses to its first meaningful line',
+      () {
+        final line = submitErrorPanelLine(
+          StateError(
+            'Error on line 8, column 5: Duplicate mapping key.\n'
+            '  ╷\n'
+            '8 │     "copilot":\n'
+            '  │     ^^^^^^^^^\n'
+            '  ╵',
+          ),
+        );
+        expect(
+          line,
+          contains('Error on line 8, column 5: Duplicate mapping key.'),
+        );
+        expect(line.contains('\n'), isFalse);
+      },
+    );
 
-    test('the incident stack shape (replayed as data) renders frame-less',
-        () {
+    test('the incident stack shape (replayed as data) renders frame-less', () {
       final line = submitErrorPanelLine(_incidentStackFixture);
-      expect(line.contains('\n'), isFalse,
-          reason: 'never re-emitted multi-line: $line');
+      expect(
+        line.contains('\n'),
+        isFalse,
+        reason: 'never re-emitted multi-line: $line',
+      );
       expect(line.contains('asynchronous suspension'), isFalse);
       expect(line, isNot(contains('#1')));
       expect(line, isNot(contains('.dart:')));
@@ -357,15 +368,21 @@ void main() {
           '/home/u/.fah/config.yaml',
         )).valueOrNull;
         final doc = loadYaml(written!) as YamlMap;
-        final caps = ((doc['models'] as YamlMap)['overrides']
-            as YamlMap)['copilot'] as YamlMap;
+        final caps =
+            ((doc['models'] as YamlMap)['overrides'] as YamlMap)['copilot']
+                as YamlMap;
         expect((caps['gemini-4-argon'] as YamlMap)['maxTokens'], 65536);
 
         // AC2 (usability): the loop accepts a fresh submit and completes
         // it — the arg form of /model-edit writes with the fake benign.
-        final second = cli.tuiSubmitForTest('/model-edit maxTokens 4096', const []);
+        final second = cli.tuiSubmitForTest(
+          '/model-edit maxTokens 4096',
+          const [],
+        );
         await second;
-        await waitForIt(() => frames.plain.contains('model max tokens set to 4096'));
+        await waitForIt(
+          () => frames.plain.contains('model max tokens set to 4096'),
+        );
         expect(cli.isBusy, isFalse);
 
         await quitTui();

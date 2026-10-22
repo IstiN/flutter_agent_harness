@@ -775,18 +775,16 @@ models:
     await run;
   });
 
-  test(
-    'gh-1787 repro: maxTokens 65536 lands beside a host-rendered quoted '
-    'contextWindow pin (the copilot incident)',
-    () async {
-      // The incident's on-disk state: the contextWindow write landed
-      // first and the host's whole-file persist re-rendered the overrides
-      // block with jsonEncode'd keys (ModelCapabilityOverrides.toYaml).
-      // The SECOND write (max output 65536) used to miss the quoted keys,
-      // insert a duplicate bare chain, and die on the pre-write loadYaml
-      // with `YamlException: Duplicate mapping key` — the raw stack trace
-      // the transcript showed, with the maxTokens write never landing.
-      const seed = '''
+  test('gh-1787 repro: maxTokens 65536 lands beside a host-rendered quoted '
+      'contextWindow pin (the copilot incident)', () async {
+    // The incident's on-disk state: the contextWindow write landed
+    // first and the host's whole-file persist re-rendered the overrides
+    // block with jsonEncode'd keys (ModelCapabilityOverrides.toYaml).
+    // The SECOND write (max output 65536) used to miss the quoted keys,
+    // insert a duplicate bare chain, and die on the pre-write loadYaml
+    // with `YamlException: Duplicate mapping key` — the raw stack trace
+    // the transcript showed, with the maxTokens write never landing.
+    const seed = '''
 provider: copilot
 model: gemini-4-argon
 models:
@@ -795,65 +793,62 @@ models:
       "gemini-4-argon":
         contextWindow: 204800
 ''';
-      await env.writeFile('/home/u/.fah/config.yaml', seed);
-      final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
-      final cli = cliFor(
-        fake.call,
-        homeDir: '/home/u',
-        modelsConfig: ModelsConfig.fromYaml((loadYaml(seed) as Map)['models']),
-        model: const Model(
-          id: 'gemini-4-argon',
-          api: 'copilot',
-          provider: 'copilot',
-          baseUrl: 'https://api.githubcopilot.com/',
-          contextWindow: 204800,
-          maxTokens: 16384,
-        ),
-      );
-      final run = cli.run();
+    await env.writeFile('/home/u/.fah/config.yaml', seed);
+    final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      homeDir: '/home/u',
+      modelsConfig: ModelsConfig.fromYaml((loadYaml(seed) as Map)['models']),
+      model: const Model(
+        id: 'gemini-4-argon',
+        api: 'copilot',
+        provider: 'copilot',
+        baseUrl: 'https://api.githubcopilot.com/',
+        contextWindow: 204800,
+        maxTokens: 16384,
+      ),
+    );
+    final run = cli.run();
 
-      final flow = cli.startModelCapsFlow();
-      await waitForIt(() => io.out.toString().contains('model capabilities'));
-      io.sendLine('2'); // the copilot/gemini-4-argon entry row
-      await waitForIt(
-        () =>
-            io.out.toString().contains('capabilities — copilot/gemini-4-argon'),
-      );
-      io.sendLine('2'); // max output tokens
-      await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
-      io.sendLine('5'); // the 65536 preset
-      await waitForIt(
-        () => io.out.toString().contains(
-          'models.overrides.copilot.gemini-4-argon.maxTokens = 65536',
-        ),
-      );
-      io.sendLine('6'); // done (caps loop)
-      await waitForCount('Pin or edit', 2);
-      io.sendLine('3'); // done (flow menu)
-      await flow;
-      io.sendLine('/exit');
-      await run;
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('2'); // the copilot/gemini-4-argon entry row
+    await waitForIt(
+      () => io.out.toString().contains('capabilities — copilot/gemini-4-argon'),
+    );
+    io.sendLine('2'); // max output tokens
+    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    io.sendLine('5'); // the 65536 preset
+    await waitForIt(
+      () => io.out.toString().contains(
+        'models.overrides.copilot.gemini-4-argon.maxTokens = 65536',
+      ),
+    );
+    io.sendLine('6'); // done (caps loop)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('3'); // done (flow menu)
+    await flow;
+    io.sendLine('/exit');
+    await run;
 
-      // AC1: the maxTokens write LANDED beside the surviving pin — the
-      // file parses as ONE entry carrying BOTH fields.
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
-      expect(written, isNotNull);
-      final doc = loadYaml(written!) as YamlMap;
-      final overrides = (doc['models'] as YamlMap)['overrides'] as YamlMap;
-      expect(overrides.length, 1);
-      final caps =
-          (overrides['copilot'] as YamlMap)['gemini-4-argon'] as YamlMap;
-      expect(caps['maxTokens'], 65536);
-      expect(caps['contextWindow'], 204800);
-      // The live layer picked the write up (E6 reload-after-write).
-      expect(
-        modelCapabilityOverrides?.lookup('copilot', 'gemini-4-argon')?.maxTokens,
-        65536,
-      );
-    },
-  );
+    // AC1: the maxTokens write LANDED beside the surviving pin — the
+    // file parses as ONE entry carrying BOTH fields.
+    final written = (await env.readTextFile(
+      '/home/u/.fah/config.yaml',
+    )).valueOrNull;
+    expect(written, isNotNull);
+    final doc = loadYaml(written!) as YamlMap;
+    final overrides = (doc['models'] as YamlMap)['overrides'] as YamlMap;
+    expect(overrides.length, 1);
+    final caps = (overrides['copilot'] as YamlMap)['gemini-4-argon'] as YamlMap;
+    expect(caps['maxTokens'], 65536);
+    expect(caps['contextWindow'], 204800);
+    // The live layer picked the write up (E6 reload-after-write).
+    expect(
+      modelCapabilityOverrides?.lookup('copilot', 'gemini-4-argon')?.maxTokens,
+      65536,
+    );
+  });
 
   test(
     'pinning one field keeps the boot-carried caps of the live model',

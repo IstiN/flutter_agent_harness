@@ -840,9 +840,7 @@ int _findKeyLine(
   final tail = r':(\s.*)?$';
   final key = RegExp.escape(segments[depth]);
   final quoted = RegExp.escape(jsonEncode(segments[depth]));
-  final pattern = RegExp(
-    '^${RegExp.escape(indent)}(?:$key|$quoted)$tail',
-  );
+  final pattern = RegExp('^${RegExp.escape(indent)}(?:$key|$quoted)$tail');
   for (var i = cursor; i < lines.length; i++) {
     if (_indentOf(lines[i]) < depth * 2 && i > cursor) break;
     if (pattern.hasMatch(lines[i])) return i;
@@ -939,9 +937,7 @@ String _replaceLeaf(
   // The found line's own spelling is preserved (gh-1787): a quoted key
   // line is rewritten quoted — the edit stays byte-stable within its
   // block's style instead of flipping the key to the bare form.
-  final keyText = lines[found].startsWith('$indent"')
-      ? jsonEncode(key)
-      : key;
+  final keyText = lines[found].startsWith('$indent"') ? jsonEncode(key) : key;
   if (leafLines.length == 1 && _inlineSafeLine(leafLines[0])) {
     lines[found] = '$indent$keyText: ${leafLines[0]}$comment';
     return _join(lines, hadTrailingNewline);
@@ -1081,7 +1077,8 @@ String? _inlineValue(String line) {
   final firstChar = line.trimLeft().isEmpty ? '' : line.trimLeft()[0];
   if (firstChar == '"') {
     final closing = _closingQuote(line, line.indexOf('"'));
-    if (closing >= 0 && closing + 1 < line.length &&
+    if (closing >= 0 &&
+        closing + 1 < line.length &&
         line.startsWith(':', closing + 1)) {
       colon = closing + 1;
     }

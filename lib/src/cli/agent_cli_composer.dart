@@ -50,17 +50,14 @@ extension ComposerChipsSubmit on AgentCli {
       // used to escape to the zone and dump a raw async stack trace into
       // the transcript; now it renders as the clean one-line error panel
       // and the session keeps accepting input.
-      await runContainedSubmit(
-        () async {
-          await _handleLine(line, images: images);
-          // Runs are fire-and-forget (_startRun only records the future):
-          // wait for the run to actually settle so the busy spinner lives
-          // for the whole stream instead of flashing for one frame.
-          await _settled;
-          await _drainTuiQueue(controller);
-        },
-        (error) => io.writeln(_style.red(submitErrorPanelLine(error))),
-      );
+      await runContainedSubmit(() async {
+        await _handleLine(line, images: images);
+        // Runs are fire-and-forget (_startRun only records the future):
+        // wait for the run to actually settle so the busy spinner lives
+        // for the whole stream instead of flashing for one frame.
+        await _settled;
+        await _drainTuiQueue(controller);
+      }, (error) => io.writeln(_style.red(submitErrorPanelLine(error))));
     } finally {
       _abortRequested = false;
       controller.sendBusy(false, source: 'submit');
@@ -84,10 +81,7 @@ extension ComposerChipsSubmit on AgentCli {
   /// and runs a composer submit through the full
   /// busy-gate → _handleLine → settle → queue-drain path (issue #276).
   @visibleForTesting
-  Future<void> tuiSubmitForTest(
-    String line,
-    List<TuiImageAttachment> images,
-  ) {
+  Future<void> tuiSubmitForTest(String line, List<TuiImageAttachment> images) {
     final controller = _tuiController ?? _createTuiController();
     _tuiController = controller;
     return _handleTuiSubmit(controller, line, images);
