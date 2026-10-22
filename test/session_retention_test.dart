@@ -599,6 +599,98 @@ void main() {
     });
   });
 
+  group('fail-closed presence (gh-1746 review)', () {
+    test('a missing presence store aborts the sweep like a failed probe — '
+        'live sessions survive', () async {
+      final live = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 700,
+        lastUsed: daysAgo(60),
+      );
+      await presence.register(live);
+      final dead = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 300,
+        lastUsed: daysAgo(60),
+      );
+
+      // No `presenceStore` — the shape under review. The default must
+      // FAIL CLOSED: an embedder host that forgot to wire presence must
+      // never sweep live sessions while believing none are live.
+      final report = await SessionRetentionSweeper(
+        fs: env,
+        sessionsRoot: '/sessions',
+        retention: const SessionRetentionConfig(
+          maxTotalBytes: 1,
+          minAgeDays: 0,
+        ),
+        now: _clock,
+      ).enforceAtBoot();
+
+      expect(report.deletions, isEmpty);
+      expect(report.applied, isFalse);
+      expect(
+        report.notes,
+        contains('retention: presence store missing — sweep aborted'),
+      );
+      // Both units — the live one AND the deletable one — are untouched:
+      // the whole sweep aborted, nothing was risked.
+      final survivors = (await repo.list()).map((m) => m.id).toSet();
+      expect(survivors, containsAll([live, dead]));
+    });
+
+    test(
+      'the dry-run plan aborts too — no phantom plan without presence',
+      () async {
+        await seedSession(
+          createdAt: daysAgo(90),
+          sizeBytes: 300,
+          lastUsed: daysAgo(60),
+        );
+        final report = await SessionRetentionSweeper(
+          fs: env,
+          sessionsRoot: '/sessions',
+          retention: const SessionRetentionConfig(
+            maxTotalBytes: 1,
+            minAgeDays: 0,
+          ),
+          now: _clock,
+        ).sweep(dryRun: true);
+        expect(report.deletions, isEmpty);
+        expect(
+          report.notes,
+          contains('retention: presence store missing — sweep aborted'),
+        );
+      },
+    );
+
+    test('allowMissingPresence: true opts back into the test-only shape — '
+        'null reads as "nothing is live"', () async {
+      final live = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 700,
+        lastUsed: daysAgo(60),
+      );
+      await presence.register(live);
+      final sweeper = SessionRetentionSweeper(
+        fs: env,
+        sessionsRoot: '/sessions',
+        retention: const SessionRetentionConfig(
+          maxTotalBytes: 1,
+          minAgeDays: 0,
+        ),
+        now: _clock,
+        allowMissingPresence: true,
+      );
+      final report = await sweeper.sweep(dryRun: false);
+      // The explicit opt-in sweeps as if nothing were live: the live
+      // session is NOT protected (that is the documented convenience —
+      // and exactly why it must stay opt-in).
+      expect(report.deletions.map((a) => a.sessionId), contains(live));
+      expect(report.applied, isTrue);
+    });
+  });
+
   group('E4 path escape', () {
     test('a path-shaped session id is never a candidate', () async {
       // A file whose basename sid decodes to `..` — hostile shape.

@@ -45,8 +45,10 @@ void main() {
 
     test('valid section parses all keys', () {
       final config = SessionRetentionConfig.fromYaml(
-        parse('maxTotalBytes: 1000\nminAgeDays: 3\nkeepNamed: false\n'
-            'sweep: off'),
+        parse(
+          'maxTotalBytes: 1000\nminAgeDays: 3\nkeepNamed: false\n'
+          'sweep: off',
+        ),
       );
       expect(config.maxTotalBytes, 1000);
       expect(config.minAgeDays, 3);
@@ -57,9 +59,7 @@ void main() {
     });
 
     test('zero maxTotalBytes means no cap', () {
-      final config = SessionRetentionConfig.fromYaml(
-        parse('maxTotalBytes: 0'),
-      );
+      final config = SessionRetentionConfig.fromYaml(parse('maxTotalBytes: 0'));
       expect(config.maxTotalBytes, 0);
       expect(config.hasCap, isFalse);
       expect(config.notes, isEmpty);
@@ -162,11 +162,8 @@ void main() {
       expect(reparsed.sessions!.retention.maxTotalBytes, 8192);
     });
 
-    test('tolerant: unknown keys under sessions: become notes, not errors',
-        () {
-      final config = CliConfig.fromYaml(
-        doc('sessions:\n  bogus: 1\n'),
-      );
+    test('tolerant: unknown keys under sessions: become notes, not errors', () {
+      final config = CliConfig.fromYaml(doc('sessions:\n  bogus: 1\n'));
       expect(config.sessions, isNotNull);
       expect(config.sessions!.notes.single, contains('bogus'));
     });

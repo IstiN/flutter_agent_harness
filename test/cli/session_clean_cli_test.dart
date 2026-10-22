@@ -24,11 +24,20 @@ final class _CleanIo {
 void main() {
   late MemoryExecutionEnv env;
   late JsonlSessionRepo repo;
+  late FileSessionPresenceStore presence;
 
   setUp(() {
     _clockNow = DateTime(2026, 1, 10, 12);
     env = MemoryExecutionEnv(cwd: '/work');
     repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    // The fail-closed posture (gh-1746 review): a sweep without a
+    // presence store aborts — wire one, exactly like production
+    // (bin/fah_runapp.dart) always does.
+    presence = FileSessionPresenceStore(
+      env: env,
+      root: '/sessions',
+      now: _clock,
+    );
   });
 
   Future<String> seedSession({
@@ -37,9 +46,7 @@ void main() {
     DateTime? lastUsed,
     int sizeBytes = 0,
   }) async {
-    final session = await repo.create(
-      JsonlSessionCreateOptions(cwd: '/work'),
-    );
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     if (sizeBytes > 0) {
       await session.appendMessage(UserMessage.text('x' * sizeBytes));
     }
@@ -75,6 +82,7 @@ void main() {
         writeln: io.writeln,
         env: env,
         sessionRoot: '/sessions',
+        presenceStore: presence,
         now: _clock,
         dryRun: true,
         retention: const SessionRetentionConfig(maxTotalBytes: 1),
@@ -87,8 +95,7 @@ void main() {
       expect((await repo.list()).map((m) => m.id), contains(doomed));
     });
 
-    test('apply deletes exactly the planned units and reports (AC6)',
-        () async {
+    test('apply deletes exactly the planned units and reports (AC6)', () async {
       final doomed = await seedSession(
         createdAt: daysAgo(90),
         lastUsed: daysAgo(60),
@@ -105,6 +112,7 @@ void main() {
         writeln: io.writeln,
         env: env,
         sessionRoot: '/sessions',
+        presenceStore: presence,
         now: _clock,
         dryRun: false,
         retention: const SessionRetentionConfig(maxTotalBytes: 1),
@@ -119,21 +127,24 @@ void main() {
       expect((await repo.list()).map((m) => m.id), isNot(contains(doomed)));
     });
 
-    test('no cap configured: prints the hint, exits 0, deletes nothing',
-        () async {
-      await seedSession(createdAt: daysAgo(90), lastUsed: daysAgo(60));
-      final io = _CleanIo();
-      final code = await runSessionCleanCliCommand(
-        write: io.write,
-        writeln: io.writeln,
-        env: env,
-        sessionRoot: '/sessions',
-        now: _clock,
-        retention: const SessionRetentionConfig(),
-      );
-      expect(code, 0);
-      expect(io.buffer.toString(), contains('sessions.retention'));
-      expect((await repo.list()), isNotEmpty);
-    });
+    test(
+      'no cap configured: prints the hint, exits 0, deletes nothing',
+      () async {
+        await seedSession(createdAt: daysAgo(90), lastUsed: daysAgo(60));
+        final io = _CleanIo();
+        final code = await runSessionCleanCliCommand(
+          write: io.write,
+          writeln: io.writeln,
+          env: env,
+          sessionRoot: '/sessions',
+          presenceStore: presence,
+          now: _clock,
+          retention: const SessionRetentionConfig(),
+        );
+        expect(code, 0);
+        expect(io.buffer.toString(), contains('sessions.retention'));
+        expect((await repo.list()), isNotEmpty);
+      },
+    );
   });
 }

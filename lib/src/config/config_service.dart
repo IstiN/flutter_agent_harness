@@ -1043,7 +1043,8 @@ String applicationNote(String section) => switch (section) {
   'compaction' => 'applies at the next compaction (session override: flag)',
   // gh-1746: the retention sweep runs at boot only — a save can never
   // retro-enforce it mid-session.
-  'sessions' => 'applies at next boot (the sweep runs before the session opens)',
+  'sessions' =>
+    'applies at next boot (the sweep runs before the session opens)',
   'ttsr' =>
     'rule edits apply live when the stream-rule engine is running, '
         'otherwise at next boot (issue #392)',

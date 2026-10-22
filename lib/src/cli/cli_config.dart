@@ -934,6 +934,7 @@ final class CliConfig {
   /// notes, never boot failures); `null` means the section is absent —
   /// boot never sweeps and never notes (AC1's byte-identical legacy).
   final SessionsConfig? sessions;
+
   /// Optional `projectContext:` section (issue #1761) — the merged
   /// project-context budget (`maxBytes`; `0` disables the section and
   /// skips every file read). Tolerant parse; `null` means the section is
@@ -1523,6 +1524,7 @@ final class CliConfig {
   /// The `sessions:` section (gh-1746), only when explicitly configured
   /// (defaults are never written so the file stays minimal).
   String _sessionsYaml() => sessions?.toYaml() ?? '';
+
   /// The `projectContext:` section (issue #1761), only when explicitly
   /// configured; the default budget is never written so the file stays
   /// minimal (same rule as `_spillsYaml`).

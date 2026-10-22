@@ -504,6 +504,7 @@ final class SessionRetentionSweeper {
     this.log,
     this.cleanWorkspaceSpills = true,
     this.softWarnBytes = retentionSoftWarnBytes,
+    this.allowMissingPresence = false,
   }) : _fs = fs,
        _root = sessionsRoot,
        _now = now ?? DateTime.now;
@@ -517,9 +518,18 @@ final class SessionRetentionSweeper {
   /// The opt-in policy; the default constructs to no cap at all.
   final SessionRetentionConfig retention;
 
-  /// Live-session heartbeats; null disables the live exemption (tests
-  /// without presence).
+  /// Live-session presence heartbeats. A MISSING store fails the sweep
+  /// closed — the same abort as a failed probe (gh-1746 review): an
+  /// embedder host that forgot to wire presence must never sweep live
+  /// sessions while believing none are live. The old test convenience
+  /// (null reads as "nothing is live") is opt-in via
+  /// [allowMissingPresence].
   final SessionPresenceStore? presenceStore;
+
+  /// Whether a missing [presenceStore] is tolerated (reads as "nothing
+  /// is live"). Default false — fail closed like a failed probe; tests
+  /// without presence opt in explicitly (gh-1746 review).
+  final bool allowMissingPresence;
 
   /// The session this process owns — never a deletion candidate.
   final String? currentSessionId;
@@ -816,7 +826,19 @@ final class SessionRetentionSweeper {
       );
     }
     // Presence first, fail-closed: an unavailable probe aborts the sweep
-    // instead of risking a live session (AC3).
+    // instead of risking a live session (AC3). A MISSING store fails
+    // closed the same way (gh-1746 review): a host that forgot to wire
+    // presence must not sweep live sessions while believing none are
+    // live. Tests opt back in via [allowMissingPresence].
+    if (presenceStore == null && !allowMissingPresence) {
+      return _noOpReport(
+        usage: usage,
+        dryRun: dryRun,
+        capConfigured: true,
+        capBytes: cap,
+        notes: ['retention: presence store missing — sweep aborted'],
+      );
+    }
     final live = await _liveIds();
     if (live == null) {
       return _noOpReport(

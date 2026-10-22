@@ -62,6 +62,7 @@ void main() {
     StreamFunction streamFunction, {
     String? sessionName,
     SessionsConfig? sessions,
+    bool wirePresence = true,
   }) => AgentCli(
     config: AgentCliConfig(
       model: testModel,
@@ -71,7 +72,7 @@ void main() {
       providerKind: 'openai-completions',
       sessionName: sessionName,
       sessionsRetention: sessions,
-      presenceStore: presence,
+      presenceStore: wirePresence ? presence : null,
       homeDir: '/home',
     ),
     io: bootIo,
@@ -259,6 +260,44 @@ void main() {
       expect(after, isNotNull);
       expect(after!.startsWith(before!), isTrue);
       expect((await repo.list()).map((m) => m.id), contains(untouched.id));
+    });
+
+    test('FAIL-CLOSED: a boot with no presence store wired aborts the '
+        'sweep instead of assuming nothing is live', () async {
+      final doomed = await seedSession(
+        lastUsed: DateTime.now().subtract(const Duration(days: 60)),
+        sizeBytes: 500,
+      );
+      final before = (await env.readTextFile(doomed.path)).valueOrNull;
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = bootCli(
+        fake.call,
+        sessionName: doomed.id,
+        sessions: retention(),
+        // The embedder-host mistake the review flags: production always
+        // wires a store (bin/fah_runapp.dart); a host that forgets must
+        // get a fail-closed abort, never a sweep that believes "nothing
+        // is live".
+        wirePresence: false,
+      );
+      final run = cli.run();
+      await waitForIt(
+        () => !cli.isBusy && bootIo.out.toString().contains('ok'),
+        reason: 'the scripted first turn completes',
+      );
+      bootIo.sendLine('/exit');
+      await run;
+      final log = await bootLog();
+      expect(
+        log,
+        contains('retention: presence store missing — sweep aborted'),
+      );
+      expect(log, isNot(contains('[retention] deleted')));
+      // The unit survives: the sweep aborted before touching anything.
+      final after = (await env.readTextFile(doomed.path)).valueOrNull;
+      expect(after, isNotNull);
+      expect(after!.startsWith(before!), isTrue);
+      expect((await repo.list()).map((m) => m.id), contains(doomed.id));
     });
   });
 
