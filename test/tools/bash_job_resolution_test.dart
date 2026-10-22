@@ -261,11 +261,17 @@ void main() {
   });
 
   group('AC3 — status without id stays bounded', () {
-    Future<int> statusLineCount(int exitedCount, {bool all = false}) async {
+    Future<String> statusText(
+      int exitedCount, {
+      bool all = false,
+      int? maxRetainedExitedJobs,
+    }) async {
       final localEnv = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
       final localRegistry = ShellJobRegistry(
         env: localEnv,
-        maxRetainedExitedJobs: exitedCount + 10,
+        // Default: no pruning (every exited job stays retained), so the
+        // assertions below test the STATUS listing's truncation alone.
+        maxRetainedExitedJobs: maxRetainedExitedJobs ?? exitedCount + 10,
       );
       final localTool = bashJobTool(localRegistry);
       await localRegistry.start('runner');
@@ -280,15 +286,38 @@ void main() {
         null,
         null,
       );
-      return _text(result).split('\n').length;
+      return _text(result);
     }
+
+    Future<int> statusLineCount(
+      int exitedCount, {
+      bool all = false,
+      int? maxRetainedExitedJobs,
+    }) => statusText(
+      exitedCount,
+      all: all,
+      maxRetainedExitedJobs: maxRetainedExitedJobs,
+    ).then((text) => text.split('\n').length);
 
     test('line count = running + min(exited, 20) + summary', () async {
       expect(await statusLineCount(0), 2);
       expect(await statusLineCount(5), 2 + 5);
       expect(await statusLineCount(20), 2 + 20);
       expect(await statusLineCount(100), 2 + 20 + 1);
-      expect(await statusLineCount(10000), 2 + 20 + 1);
+      // gh-1789: 10k sequential starts here allocated 2.5 GB churn for the
+      // same cap coverage — the cap is under test, not the round number.
+      // 500 with the registry cap forcing real pruning (100 retained) still
+      // overflows the 20-row listing: 2 + 20 + summary.
+      expect(
+        await statusLineCount(500, maxRetainedExitedJobs: 100),
+        2 + 20 + 1,
+      );
+      // Non-vacuous pruning pin: the summary reports the RETAINED count —
+      // if the cap never pruned, this would read 500 exited total.
+      expect(
+        await statusText(500, maxRetainedExitedJobs: 100),
+        contains('(100 exited total'),
+      );
     });
 
     test('all: true restores the full dump', () async {
