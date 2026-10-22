@@ -13,6 +13,20 @@ block a release again.
 
 ## Unreleased
 
+- feat(1515): ONE model-limits settings surface — the settings hub's
+  standalone "Model parameters" row is retired and bare `/model-edit`
+  (TUI) aliases into `/settings` → Model capabilities, pre-focused on the
+  active model. The caps flow gains the model-edit preset ladders +
+  Custom… free input for context window / max output (a preset pick
+  writes `models.overrides` AND rebuilds the active model on the spot —
+  the old flow's live-mutation semantics, now durable), every field row
+  shows the current EFFECTIVE value with its source layer (`pinned` /
+  `role override` / `catalog`), the thinking row is an omp-style selector
+  (only levels the model supports, per-rung budget metadata, current
+  level preselected), and the hub row describes the effective summary
+  (`200K ctx · 16K out · thinking off`) instead of a pin count. The
+  scripted `/model-edit <field> <n>` form and the line-mode limits print
+  are unchanged.
 - feat(gh-1746): opt-in session disk retention — `sessions.retention` in
   `~/.fah/config.yaml` caps the sessions root and sweeps whole session
   units (transcript + sidecars) oldest-last-used-first at boot, exempting

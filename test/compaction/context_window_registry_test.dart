@@ -216,4 +216,35 @@ void main() {
       expect(model.thinkingLevel, isNull);
     });
   });
+
+  group('remove (issue #1515 unpin path)', () {
+    test('drops one identity and leaves the rest untouched', () {
+      final registry = ContextWindowRegistry();
+      final a = _model(id: 'model-a');
+      final b = _model(id: 'model-b');
+      registry.publish(
+        model: a,
+        window: 100,
+        source: ContextWindowSource.userPin,
+      );
+      registry.publish(
+        model: b,
+        window: 200,
+        source: ContextWindowSource.endpointReport,
+      );
+
+      registry.remove(a);
+      expect(registry.windowFor(a), isNull);
+      expect(registry.isVerified(a), isFalse);
+      // E2 isolation: the sibling identity keeps its registration.
+      expect(registry.windowFor(b), 200);
+      expect(registry.isVerified(b), isTrue);
+    });
+
+    test('removing an unknown identity is a no-op', () {
+      final registry = ContextWindowRegistry();
+      registry.remove(_model(id: 'never-published'));
+      expect(registry.entries, isEmpty);
+    });
+  });
 }

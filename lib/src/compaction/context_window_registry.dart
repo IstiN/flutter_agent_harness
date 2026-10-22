@@ -136,6 +136,14 @@ final class ContextWindowRegistry {
   bool isVerified(Model model) =>
       _entries.containsKey(ModelWindowKey.of(model));
 
+  /// Drops the registration row for [model]'s identity. The capability
+  /// flow's UNPIN path (issue #1515) uses it: a userPin whose pin is gone
+  /// must stop resolving — consumers fall back to the rebuilt model's
+  /// carried window. [clear] stays the test seam (hosts drop ONE
+  /// identity, never all; a mid-session E4 shrink arrives as a new
+  /// publish, not a removal).
+  void remove(Model model) => _entries.remove(ModelWindowKey.of(model));
+
   /// Drops every registration (test seam; a host never calls this
   /// mid-session — E4 window shrinks arrive as new publishes).
   void clear() => _entries.clear();
