@@ -306,10 +306,9 @@ void main() {
         'maxTokens',
       );
       await waitForIt(
-        () => frames.plain.contains('maxTokens in tokens'),
+        () => frames.plain.contains('Enter a number manually'),
         reason: 'the token ladder picker opened',
       );
-      await cli.tuiWizardPickForTest('wizard:maxTokens in tokens', '65536');
       return (submit, cli);
     }
 
@@ -323,18 +322,25 @@ void main() {
       'landed, the session stays usable (IT-2/REG-1)',
       timeout: const Timeout(Duration(seconds: 120)),
       () async {
-        var calls = 0;
+        // The fake arms only when the FLOW's apply fires (the boot's
+        // endpoint-detection path fires the same callback detached and
+        // must not consume the throw).
+        var armed = false;
         final (submit, cli) = await openIncidentFlow(
           onModelChanged: (model) async {
-            calls++;
-            if (calls == 1) throw StateError('host persist failed');
+            if (armed) throw StateError('host persist failed');
           },
         );
+        armed = true;
+        await cli.tuiWizardPickForTest('wizard:maxTokens in tokens', '65536');
         // The boundary contains the throw: the submit future completes.
         await submit;
 
         // AC2: the clean one-line panel carries the exception message.
-        expect(frames.plain, contains('Bad state: host persist failed'));
+        await waitForIt(
+          () => frames.plain.contains('Bad state: host persist failed'),
+          reason: 'the error panel painted',
+        );
         // AC3/REG-1: the serialized transcript never shows a raw stack.
         expect(
           frames.plain,
