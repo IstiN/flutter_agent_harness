@@ -275,25 +275,7 @@ final class ShellJobBoard {
       );
       _pendingResumeLost.clear();
     }
-    for (final card in _cards) {
-      if (!taskBlockStateIsTerminal(card.state)) continue;
-      if (_emittedCardIds.contains(card.id)) continue;
-      final bucket = cardsOfTurn(card.turn);
-      final collapsed = bucket.length > 3;
-      final bucketDone = bucket.every((c) => taskBlockStateIsTerminal(c.state));
-      if (collapsed) {
-        if (!bucketDone) continue;
-        // Collapsed turns emit only the summary — except non-done
-        // terminal cards (lost/failed/timed out/stopped), which print
-        // individually: a failure is never summarized away (issue #429).
-        if (card.state == TaskBlockState.done) continue;
-        _emittedCardIds.add(card.id);
-        lines.addAll(taskBlockLines(card, width: width, fit: fit));
-        continue;
-      }
-      _emittedCardIds.add(card.id);
-      lines.addAll(taskBlockLines(card, width: width, fit: fit));
-    }
+    _takeCardLines(lines, width: width, fit: fit);
     final turns = _cards.map((c) => c.turn).toSet().toList()..sort();
     for (final t in turns) {
       if (_emittedSummaryTurns.contains(t)) continue;
@@ -312,6 +294,35 @@ final class ShellJobBoard {
       );
     }
     return lines;
+  }
+
+  /// The per-card pass of [takeTranscriptLines] (split out to keep it
+  /// under the CRAP ratchet): terminal cards print once, oldest first —
+  /// individually for non-collapsed turns; collapsed turns emit their
+  /// cards only once the whole bucket settled, except non-done terminal
+  /// cards (lost/failed/timed out/stopped), which print individually: a
+  /// failure is never summarized away (issue #429).
+  void _takeCardLines(
+    List<String> lines, {
+    required int width,
+    required CardTextFit fit,
+  }) {
+    for (final card in _cards) {
+      if (!taskBlockStateIsTerminal(card.state)) continue;
+      if (_emittedCardIds.contains(card.id)) continue;
+      final bucket = cardsOfTurn(card.turn);
+      final collapsed = bucket.length > 3;
+      final bucketDone = bucket.every((c) => taskBlockStateIsTerminal(c.state));
+      if (collapsed) {
+        if (!bucketDone) continue;
+        if (card.state == TaskBlockState.done) continue;
+        _emittedCardIds.add(card.id);
+        lines.addAll(taskBlockLines(card, width: width, fit: fit));
+        continue;
+      }
+      _emittedCardIds.add(card.id);
+      lines.addAll(taskBlockLines(card, width: width, fit: fit));
+    }
   }
 
   /// The `shell_job_registry` records (issue #429 AC9): the capped card
