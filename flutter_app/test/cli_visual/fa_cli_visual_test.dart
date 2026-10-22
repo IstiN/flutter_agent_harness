@@ -688,11 +688,16 @@ void main() {
         timeout: const Duration(seconds: 15),
       );
 
-      // Navigate to "Media models" (fifth entry — after the gh-1426
-      // "Model capabilities" row) and open it.
-      for (var i = 0; i < 4; i++) {
-        harness.sendArrowDown();
-      }
+      // Navigate to "Media models" via type-to-filter — the hub row set
+      // is curated per issue (#1515 merged the Model parameters row into
+      // Model capabilities), so fixed arrow counts go stale; the filter
+      // matches the row's visible label (the compaction test's pattern)
+      // and the filtered picker title carries the query.
+      harness.sendText('media');
+      await harness.liveWaitForText(
+        'Settings: media',
+        timeout: const Duration(seconds: 15),
+      );
       harness.sendEnter();
 
       // Step 1: the slot picker.
