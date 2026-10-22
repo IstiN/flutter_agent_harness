@@ -5,7 +5,7 @@
 Tracked upstream: pub.dev quickjs_runtime 0.4.2
 (sha256 `4ea408c7f2f278d95979c92a8c217c78dd8161d046d15858995450a2cb5a0398`).
 `hook/build.dart` carries exactly two deltas and the vendored C sources carry
-three CodeQL inline-suppression comments; everything else is upstream
+three widening casts (with explanatory comments); everything else is upstream
 verbatim. Pinned by `test/quickjs_runtime_vendor_pin_test.dart`:
 
 - **Android**: no longer links `-lpthread` — bionic ships pthread inside
@@ -19,22 +19,28 @@ verbatim. Pinned by `test/quickjs_runtime_vendor_pin_test.dart`:
   `flutter_assemble.vcxproj` (Lockfile smoke windows CI leg).
   `QuickjsFfi.isAvailable` is false without the asset, so js_widget_runtime
   falls back to its flutter_js backend — the pre-0.4.0 Windows behavior.
-- **C sources (comment-only)**: three `// codeql [cpp/integer-multiplication-cast-to-long]`
-  inline-suppression comments — CodeQL default setup analyzes C/C++ in
-  `none` build mode (every vendored source is extracted) and flagged 3
-  upstream "multiplication result converted to larger type" idioms
-  (`libbf.c` div/rem fast path `q * q`, `libbf.c`
-  `digits_per_limb * radix_bits`, `quickjs.c` `new_size * elem_size` in
-  the `js_realloc2` call) as high-severity new alerts, failing the
-  CodeQL check. They are upstream numerics (one site carries Bellard's
-  own `XXX: potential arithmetic overflow` remark), so the fork does NOT
-  rewrite them — it suppresses the exact query id. Comments are inert to
-  the compiled library; iOS/macOS binaries are byte-identical.
+- **C sources (3 value-identical widening casts)**: CodeQL default setup
+  analyzes C/C++ in `none` build mode (every vendored source is extracted)
+  and flagged 3 upstream "multiplication result converted to larger type"
+  idioms (`cpp/integer-multiplication-cast-to-long`, high severity,
+  failing the CodeQL check): `libbf.c` sqrtrem else-arm `q * q`,
+  `libbf.c` `digits_per_limb * radix_bits`, `quickjs.c` `new_size *
+  elem_size` in the `js_realloc2` call. Each is rewritten as an explicit
+  cast-before-multiply that is VALUE-IDENTICAL to upstream under its
+  existing guard/invariant — `(dlimb_t)q * q` (the `(q >> l) != 0`
+  else-arm bounds q < 2^l, so the narrow product never wraps),
+  `(slimb_t)digits_per_limb * radix_bits` (product is exactly LIMB_BITS),
+  `(size_t)new_size * elem_size` (identical wherever the int product was
+  defined; the theoretical >INT_MAX path — Bellard's own `XXX: potential
+  arithmetic overflow` remark — becomes a clean OOM instead of signed UB).
+  Inline `// codeql [...]` suppression comments were tried first and do
+  NOT work: GitHub code scanning does not honor them
+  (github/codeql#11427).
 
 Re-vendor (copy the published package over this directory) on the next
-upstream publish that fixes both; re-apply the three suppression comments
+upstream publish that fixes both; re-apply the three widening casts
 (`test/quickjs_runtime_vendor_pin_test.dart` fails with the exact
-statements to re-annotate).
+statements to re-cast).
 
 ## Upstream
 

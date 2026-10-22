@@ -195,8 +195,8 @@ void main() {
       final casts = <(String, String, String)>[
         (
           '$vendorDir/native/quickjs/libbf.c',
-          'r -= (dlimb_t)q * q;',
-          'r -= q * q;',
+          'else r -= (dlimb_t)q * q;',
+          'else r -= q * q;',
         ),
         (
           '$vendorDir/native/quickjs/libbf.c',
@@ -211,9 +211,25 @@ void main() {
               '&slack);',
         ),
       ];
-      // Match on whitespace-normalized text: the C sources may wrap long
-      // statements across lines.
-      String norm(String s) => s.replaceAll(RegExp(r'\s+'), ' ');
+      // Match on whitespace-normalized text with C comments stripped:
+      // the sources may wrap long statements, and explanatory /* … */
+      // blocks quote the narrow upstream forms verbatim.
+      String norm(String s) {
+        final out = StringBuffer();
+        var inBlock = false;
+        for (var i = 0; i < s.length; i++) {
+          if (!inBlock && i + 1 < s.length && s.startsWith('/*', i)) {
+            inBlock = true;
+            i++;
+          } else if (inBlock && i + 1 < s.length && s.startsWith('*/', i)) {
+            inBlock = false;
+            i++;
+          } else if (!inBlock) {
+            out.writeCharCode(s.codeUnitAt(i));
+          }
+        }
+        return out.toString().replaceAll(RegExp(r'\s+'), ' ');
+      }
       for (final (path, castForm, narrowForm) in casts) {
         final source = norm(File(path).readAsStringSync());
         expect(
