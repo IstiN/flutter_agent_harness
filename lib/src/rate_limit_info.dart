@@ -215,6 +215,7 @@ RateLimitInfo? parseRateLimitInfo({
     if (value is String) return int.tryParse(value);
     return null;
   }
+
   final resetsAtUnix = intOf('resets_at') ?? headerResetsAt;
   return RateLimitInfo(
     errorType: text('type'),
@@ -302,30 +303,35 @@ Duration? _resetCountdown(RateLimitInfo info, DateTime? now) {
 
 String _rateLimitTitle(RateLimitInfo info, bool ru) {
   if (info.planType case final plan? when plan.isNotEmpty) {
-    final capitalized = plan[0].toUpperCase() + plan.substring(1);
-    // Neutral by default: the generic parse layer decodes 429s from ANY
-    // provider/proxy — only a branded adapter (codex) names its vendor.
-    // Blank/whitespace values (a future adapter deriving the name from
-    // config) keep the title well-formed — no double or leading space
-    // (review round 2).
-    final brand = info.brand?.trim();
-    final hasBrand = brand != null && brand.isNotEmpty;
-    return ru
-        ? 'Лимит плана $capitalized${hasBrand ? ' $brand' : ''} '
-              'исчерпан.'
-        : '${hasBrand ? '$brand ' : ''}$capitalized plan limit '
-              'reached.';
+    return _brandedPlanTitle(info, plan, ru);
   }
-  final kind = switch (info.limitKind) {
-    null || '' => '',
-    'primary' => ru ? ' (основной лимит)' : ' (primary limit)',
-    'secondary' => ru ? ' (вторичный лимит)' : ' (secondary limit)',
-    final other => ' ($other)',
-  };
-  return ru
-      ? 'Достигнут лимит запросов$kind.'
-      : 'Rate limit reached$kind.';
+  final kind = _limitKindSuffix(info.limitKind, ru);
+  return ru ? 'Достигнут лимит запросов$kind.' : 'Rate limit reached$kind.';
 }
+
+/// The branded plan title. Neutral by default: the generic parse layer
+/// decodes 429s from ANY provider/proxy — only a branded adapter (codex)
+/// names its vendor. Blank/whitespace values (a future adapter deriving
+/// the name from config) keep the title well-formed — no double or
+/// leading space (review round 2).
+String _brandedPlanTitle(RateLimitInfo info, String plan, bool ru) {
+  final capitalized = plan[0].toUpperCase() + plan.substring(1);
+  final brand = info.brand?.trim();
+  final hasBrand = brand != null && brand.isNotEmpty;
+  return ru
+      ? 'Лимит плана $capitalized${hasBrand ? ' $brand' : ''} '
+            'исчерпан.'
+      : '${hasBrand ? '$brand ' : ''}$capitalized plan limit '
+            'reached.';
+}
+
+/// The parenthesized limit-kind qualifier (`''` when unset).
+String _limitKindSuffix(String? kind, bool ru) => switch (kind) {
+  null || '' => '',
+  'primary' => ru ? ' (основной лимит)' : ' (primary limit)',
+  'secondary' => ru ? ' (вторичный лимит)' : ' (secondary limit)',
+  final other => ' ($other)',
+};
 
 const _ruMonths = [
   'января',

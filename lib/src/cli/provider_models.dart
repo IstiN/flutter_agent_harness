@@ -1440,6 +1440,24 @@ extension on AgentCli {
   }
 }
 
+/// The public test seam of the model-edit surface: the TUI picker's apply
+/// path with the herdr prompt sheet swapped for a scripted callback, so
+/// the apply-adapter coverage needs no live terminal.
+extension AgentCliModelEditTest on AgentCli {
+  /// Runs the TUI model-edit picker against [prompt] (the scripted
+  /// answer list a test provides) and applies through the same
+  /// [_replaceModelLimitsFromEdit] adapter the live sheet uses.
+  @visibleForTesting
+  Future<void> tuiModelEditForTest(
+    Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
+  ) => interactiveModelEdit(
+    current: _agent.state.model,
+    prompt: prompt,
+    onResult: io.writeln,
+    onApply: _replaceModelLimitsFromEdit,
+  );
+}
+
 /// Known model ids shown by `/models` and the `/model` picker. Maps the
 /// provider name stored on the active [Model] to a short, useful subset.
 /// The table itself lives in `model_presets.dart` (gh-1596 AC6: shared

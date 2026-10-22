@@ -575,33 +575,90 @@ final class TaskExecutor {
       windowVerified: contextWindowRegistry?.isVerified(wiring.model) ?? false,
     );
     if (!decision.triggered) return false;
-    // Forced-channel latch (gh-1742): an observation already reacted to
-    // never re-forces until a strictly higher one arrives — the stale
-    // pre-compaction anchor rides the kept tail after a fold, and a
-    // constant over-line observation must not re-run forced passes every
-    // boundary. An observation back UNDER the line (the honest post-fold
-    // report) resets the latch — reset = lower the anchor while keeping
-    // the latch armed, so the next re-crossing must still be
-    // strictly-greater to fire again. The anchor lives for the child's
-    // whole retained lifetime (resumable children keep their id, and the
-    // executor's other per-child maps evict nothing either), so it dies
-    // with the executor rather than at some child-end event that does
-    // not exist.
-    var runForced = false;
-    if (observed != null) {
-      final latch = _forcedObservedAt[id];
-      if (decision.needsForce && (latch == null || observed > latch)) {
-        _forcedObservedAt[id] = observed;
-        runForced = true;
-      } else if (!decision.observedTriggered &&
-          (latch == null || observed < latch)) {
-        _forcedObservedAt[id] = observed;
-      }
-    }
+    final runForced = _updateForcedLatch(
+      id,
+      observed,
+      needsForce: decision.needsForce,
+      observedTriggered: decision.observedTriggered,
+    );
     await _flushChildTranscript(id, child);
     final session = _childSessions[id];
     if (session == null) return false;
     final before = est - incomingTokens;
+    final compacted = await _runChildCompactionPass(
+      session: session,
+      child: child,
+      window: window,
+      settings: settings,
+      wiring: wiring,
+      runForced: runForced,
+    );
+    if (!compacted) return false; // The guard remains the last resort.
+    // Post-compaction invariant (#387): the flush cursor restarts at the
+    // projected length so later flushes append only new messages.
+    _childSessionWrites[id] = child.state.messages.length;
+    final after = estimateRequestTokens(
+      child.state.messages,
+      systemPrompt: child.state.systemPrompt,
+      tools: child.state.tools,
+    );
+    if (after >= before) return false;
+    manager.recordCompaction(id, freedTokens: before - after);
+    return true;
+  }
+
+  /// The forced-channel latch (gh-1742): an observation already reacted to
+  /// never re-forces until a strictly higher one arrives — the stale
+  /// pre-compaction anchor rides the kept tail after a fold, and a
+  /// constant over-line observation must not re-run forced passes every
+  /// boundary. An observation back UNDER the line (the honest post-fold
+  /// report) resets the latch — reset = lower the anchor while keeping
+  /// the latch armed, so the next re-crossing must still be
+  /// strictly-greater to fire again. The anchor lives for the child's
+  /// whole retained lifetime (resumable children keep their id, and the
+  /// executor's other per-child maps evict nothing either), so it dies
+  /// with the executor rather than at some child-end event that does
+  /// not exist.
+  ///
+  /// Returns whether the pass must run FORCED (null observations never
+  /// force).
+  bool _updateForcedLatch(
+    String id,
+    int? observed, {
+    required bool needsForce,
+    required bool observedTriggered,
+  }) {
+    if (observed == null) return false;
+    final latch = _forcedObservedAt[id];
+    var runForced = false;
+    if (needsForce && _isNewAnchor(latch, observed, higher: true)) {
+      _forcedObservedAt[id] = observed;
+      runForced = true;
+    } else if (!observedTriggered &&
+        _isNewAnchor(latch, observed, higher: false)) {
+      _forcedObservedAt[id] = observed;
+    }
+    return runForced;
+  }
+
+  /// Whether [observed] clears the latch anchor: strictly higher re-forces,
+  /// strictly lower resets (gh-1742). No anchor admits anything.
+  static bool _isNewAnchor(int? latch, int observed, {required bool higher}) {
+    if (latch == null) return true;
+    return higher ? observed > latch : observed < latch;
+  }
+
+  /// Runs ONE [AutoCompactor] pipeline for the child — the same engine the
+  /// main loop uses. Best-effort by contract: a failed pass reports
+  /// `false` and nothing changes.
+  Future<bool> _runChildCompactionPass({
+    required Session session,
+    required Agent child,
+    required int window,
+    required CompactionSettings settings,
+    required ({Model model, StreamFunction stream}) wiring,
+    required bool runForced,
+  }) async {
     try {
       final smol = rolesResolver?.resolveRole(smolModelRole);
       await AutoCompactorFactory(
@@ -629,16 +686,6 @@ final class TaskExecutor {
     } on Object {
       return false; // The guard remains the last resort.
     }
-    // Post-compaction invariant (#387): the flush cursor restarts at the
-    // projected length so later flushes append only new messages.
-    _childSessionWrites[id] = child.state.messages.length;
-    final after = estimateRequestTokens(
-      child.state.messages,
-      systemPrompt: child.state.systemPrompt,
-      tools: child.state.tools,
-    );
-    if (after >= before) return false;
-    manager.recordCompaction(id, freedTokens: before - after);
     return true;
   }
 

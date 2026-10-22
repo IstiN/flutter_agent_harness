@@ -1410,6 +1410,20 @@ extension SettingsFlow on AgentCli {
     }
   }
 
+  /// Reads [path] for the surgical `mcp:` write: the file's text, `''`
+  /// when absent, or null (reason printed) when unreadable.
+  Future<String?> _readMcpSourceForWrite(String path) async {
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        return value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        return '';
+      case Err(:final error):
+        io.writeln('mcp: cannot read $path: $error — not saved');
+        return null;
+    }
+  }
+
   /// The surgical `mcp:` write shared by every action: block replace in
   /// [path] (absent block appends), validated with the real parser BEFORE
   /// the write (AC4), then the same section diff applied to the live
@@ -1420,16 +1434,8 @@ extension SettingsFlow on AgentCli {
     McpConfig next, {
     required McpConfig before,
   }) async {
-    final String source;
-    switch (await _env.readTextFile(path)) {
-      case Ok(:final value):
-        source = value;
-      case Err(:final error) when error.code == FileErrorCode.notFound:
-        source = '';
-      case Err(:final error):
-        io.writeln('mcp: cannot read $path: $error — not saved');
-        return false;
-    }
+    final source = await _readMcpSourceForWrite(path);
+    if (source == null) return false;
     final edited = _replaceTopLevelYamlBlock(source, 'mcp', next.toYaml());
     // Never persist a file the next boot would reject.
     final doc = loadYaml(edited);

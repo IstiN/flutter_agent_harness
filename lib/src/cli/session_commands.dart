@@ -661,6 +661,31 @@ extension on AgentCli {
     }
   }
 
+  /// Stores a freshly built context for the warm-switch cache only when
+  /// the file did not change during the open: the fingerprint must
+  /// describe exactly the bytes the context was built from, or a later
+  /// warm hit could serve a stale transcript (gh-1734).
+  Future<void> _rememberResumedContext(
+    SessionMetadata metadata,
+    ({int sizeBytes, int mtimeMs})? fpBefore,
+    int budget,
+    SessionContext built,
+  ) async {
+    final fpAfter = await _sessionFileFingerprint(metadata);
+    if (fpBefore != null &&
+        fpAfter != null &&
+        fpBefore.sizeBytes == fpAfter.sizeBytes &&
+        fpBefore.mtimeMs == fpAfter.mtimeMs) {
+      _resumedContextCache.remember(
+        metadata.path,
+        sizeBytes: fpAfter.sizeBytes,
+        mtimeMs: fpAfter.mtimeMs,
+        variant: budget,
+        context: built,
+      );
+    }
+  }
+
   Future<Session> _loadSessionInner(SessionMetadata metadata) async {
     final bootSw = Stopwatch()..start();
     // gh-968 parity: the budget must price the prompt the FIRST REQUEST
@@ -752,22 +777,7 @@ extension on AgentCli {
       final built = await session.buildContext();
       context = built;
       stage('context');
-      // Store only when the file did not change during the open: the
-      // fingerprint must describe exactly the bytes the context was
-      // built from, or a later warm hit could serve a stale transcript.
-      final fpAfter = await _sessionFileFingerprint(metadata);
-      if (fpBefore != null &&
-          fpAfter != null &&
-          fpBefore.sizeBytes == fpAfter.sizeBytes &&
-          fpBefore.mtimeMs == fpAfter.mtimeMs) {
-        _resumedContextCache.remember(
-          metadata.path,
-          sizeBytes: fpAfter.sizeBytes,
-          mtimeMs: fpAfter.mtimeMs,
-          variant: budget,
-          context: built,
-        );
-      }
+      await _rememberResumedContext(metadata, fpBefore, budget, built);
     }
     final messages = context.messages;
     // Loaded usage anchors are generation-time: post-compaction they

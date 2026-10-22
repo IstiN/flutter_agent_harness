@@ -726,13 +726,7 @@ String _pageSlice(String content, int page, int pages, int pageChars) =>
 String? _renderRecord(int seq, SessionRecord record) {
   switch (record) {
     case MessageRecord(:final message):
-      return switch (message) {
-        UserMessage() => '[$seq user]\n${_userText(message.content)}',
-        AssistantMessage() => '[$seq assistant]\n${_assistantText(message)}',
-        ToolResultMessage(:final toolName, :final content) =>
-          '[$seq tool_result · $toolName]\n${_blockTexts(content)}',
-        _ => '[$seq ${message.role}]',
-      };
+      return _renderMessageRecord(seq, message);
     case CustomMessageRecord(:final content):
       return '[$seq context]\n${_userText(content)}';
     case CompactCheckpointRecord(:final text, :final coversRecordIds):
@@ -747,6 +741,16 @@ String? _renderRecord(int seq, SessionRecord record) {
       return '[$seq ${record.runtimeType}]\n(system record — no content)';
   }
 }
+
+/// The message-record half of [_renderRecord]: user text, the assistant
+/// render, tool results, and the role-name fallback for any other role.
+String _renderMessageRecord(int seq, Message message) => switch (message) {
+  UserMessage() => '[$seq user]\n${_userText(message.content)}',
+  AssistantMessage() => '[$seq assistant]\n${_assistantText(message)}',
+  ToolResultMessage(:final toolName, :final content) =>
+    '[$seq tool_result · $toolName]\n${_blockTexts(content)}',
+  _ => '[$seq ${message.role}]',
+};
 
 String _userText(Object content) =>
     content is String ? content : _blockTexts(content as List<ContentBlock>);

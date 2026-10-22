@@ -392,6 +392,35 @@ final class ConfigService {
     return ConfigGetResult(key: key, found: false);
   }
 
+  /// The file a write to [segments] in the resolved [scope] lands in,
+  /// with the resolved scope. Refuses user-file-only sections requested
+  /// in project scope and hosts with no global file (issue #29 AC11/E13).
+  Future<(String, ConfigScope)> _resolveWriteFile(
+    List<String> segments,
+    ConfigScope? scope, {
+    required String key,
+  }) async {
+    final resolved = await resolveWriteScope(scope, key: key);
+    if (resolved == ConfigScope.project &&
+        !_projectSections.contains(segments.first)) {
+      throw ConfigException(
+        '"${segments.first}" is only read from the user file — the project '
+        'file participates in ${_projectSections.join('/')} only. Write it '
+        'to the user file: fa config set $key <value> --global',
+      );
+    }
+    final file = switch (resolved) {
+      ConfigScope.project => projectConfigPath,
+      ConfigScope.global => globalConfigPath,
+    };
+    if (file == null) {
+      throw const ConfigException(
+        'global scope unavailable on this host (no home directory)',
+      );
+    }
+    return (file, resolved);
+  }
+
   /// Writes [value] (rendered as a YAML scalar) at the dotted [key] in the
   /// resolved scope file. The edited text is validated with the real
   /// parsers BEFORE the write, so a bad value throws and nothing is
@@ -414,24 +443,7 @@ final class ConfigService {
     if (stdio != null) {
       throw ConfigException(_mcpStdioNote(stdio));
     }
-    final resolved = await resolveWriteScope(scope, key: key);
-    if (resolved == ConfigScope.project &&
-        !_projectSections.contains(segments.first)) {
-      throw ConfigException(
-        '"${segments.first}" is only read from the user file — the project '
-        'file participates in ${_projectSections.join('/')} only. Write it '
-        'to the user file: fa config set $key <value> --global',
-      );
-    }
-    final file = switch (resolved) {
-      ConfigScope.project => projectConfigPath,
-      ConfigScope.global => globalConfigPath,
-    };
-    if (file == null) {
-      throw const ConfigException(
-        'global scope unavailable on this host (no home directory)',
-      );
-    }
+    final (file, resolved) = await _resolveWriteFile(segments, scope, key: key);
     final text = await _readTextOrNull(file) ?? '';
     final oldDisplay = _lookupDisplay(text, segments) ?? '(absent)';
     // A JSON array/object value renders as a yaml block (list-valued keys
@@ -1026,46 +1038,50 @@ String? _inlineValue(String line) {
   return value.trim();
 }
 
-/// Whether/when a change to [section] applies at runtime.
-String applicationNote(String section) => switch (section) {
-  'memory' =>
-    'applies live — the memory controller re-reads the section on the next '
-        'memory operation',
-  'tools' =>
-    'applies live after /tools reload (and for every session started after '
-        'the change)',
-  'mcp' => 'applies live after /mcp reload',
-  'cube' => 'applies live via /cube reload, otherwise at next boot',
-  'compaction' => 'applies at the next compaction (session override: flag)',
-  'ttsr' =>
-    'rule edits apply live when the stream-rule engine is running, '
-        'otherwise at next boot (issue #392)',
+/// Whether/when a change to a config section applies at runtime — the
+/// per-key dispatch is a data map, not a switch (CRAP ratchet).
+const _applicationNotes = <String, String>{
+  'memory':
+      'applies live — the memory controller re-reads the section on the next '
+      'memory operation',
+  'tools':
+      'applies live after /tools reload (and for every session started after '
+      'the change)',
+  'mcp': 'applies live after /mcp reload',
+  'cube': 'applies live via /cube reload, otherwise at next boot',
+  'compaction': 'applies at the next compaction (session override: flag)',
+  'ttsr':
+      'rule edits apply live when the stream-rule engine is running, '
+      'otherwise at next boot (issue #392)',
   // Issue #395: the flow republishes the process-wide registry global on
   // every write, so the request build picks the change up immediately.
-  'images' => 'applies to the next request build',
+  'images': 'applies to the next request build',
   // Issue #397: the flow re-arms the session's sleep-prevention
   // assertion from the saved section on every write (hosts with a power
   // runner; without one there is no assertion to re-arm at all).
-  'power' =>
-    'applies live — the session re-arms its sleep-prevention assertion '
-        'from the saved file',
+  'power':
+      'applies live — the session re-arms its sleep-prevention assertion '
+      'from the saved file',
   // Issue #279: the session theme switches live on write (`/theme` runs
   // the same persist + switch flow); a hand-edit applies at next boot.
-  'tui' => 'applies live via /theme, otherwise at next boot',
+  'tui': 'applies live via /theme, otherwise at next boot',
   // gh-1426: the Model capabilities flow reinstalls the process-wide
   // override layer, re-syncs the live ModelsConfig, and refreshes the
   // roles resolver on every write (E6 reload-after-write) — the NEXT
   // model build picks the edit up live; the running session keeps its
   // already-built model.
-  'models' =>
-    'applies live to the next model build — the running session keeps '
-        'its current model',
+  'models':
+      'applies live to the next model build — the running session keeps '
+      'its current model',
   // Issue #394: the boot-built Agent keeps the cap it was constructed
   // with (the loop's over-window guard reads its config field); the
   // running session never re-reads the yaml.
-  'agent' => 'applies at next boot — the running session keeps its boot cap',
-  _ => 'applies at next boot',
+  'agent': 'applies at next boot — the running session keeps its boot cap',
 };
+
+/// Whether/when a change to [section] applies at runtime.
+String applicationNote(String section) =>
+    _applicationNotes[section] ?? 'applies at next boot';
 
 /// The strict `redact:` section validator, shared by `check`, `set` and
 /// the settings flow (issue #391). [RedactionConfig.fromYaml] is tolerant

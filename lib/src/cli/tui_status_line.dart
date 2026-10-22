@@ -1041,47 +1041,45 @@ final class StatusLineSeparator {
 StatusLineSeparator getSeparator(
   StatusLineSeparatorStyle style, {
   bool nerd = false,
-}) {
-  final pwLeft = nerd ? '\u{e0b0}' : '▶';
-  final pwRight = nerd ? '\u{e0b2}' : '◀';
-  final pwThinLeft = nerd ? '\u{e0b1}' : '>';
-  final pwThinRight = nerd ? '\u{e0b3}' : '<';
-  return switch (style) {
-    StatusLineSeparatorStyle.powerline => StatusLineSeparator(
-      left: pwLeft,
-      right: pwRight,
-      capAfterLeft: pwRight,
-      capBeforeRight: pwLeft,
-    ),
-    StatusLineSeparatorStyle.powerlineThin => StatusLineSeparator(
-      left: pwThinLeft,
-      right: pwThinRight,
-      // Full-width caps even for the thin style (omp verbatim).
-      capAfterLeft: pwRight,
-      capBeforeRight: pwLeft,
-    ),
-    StatusLineSeparatorStyle.slash => const StatusLineSeparator(
-      left: '/',
-      right: '/',
-    ),
-    StatusLineSeparatorStyle.pipe => const StatusLineSeparator(
-      left: '│',
-      right: '│',
-    ),
-    StatusLineSeparatorStyle.block => StatusLineSeparator(
-      left: nerd ? '█' : '▌',
-      right: nerd ? '█' : '▌',
-    ),
-    StatusLineSeparatorStyle.space => const StatusLineSeparator(
-      left: ' ',
-      right: ' ',
-    ),
-    StatusLineSeparatorStyle.ascii => const StatusLineSeparator(
-      left: '>',
-      right: '<',
-    ),
-  };
-}
+}) => switch (style) {
+  StatusLineSeparatorStyle.powerline => StatusLineSeparator(
+    left: _glyph(nerd, '\u{e0b0}', '▶'),
+    right: _glyph(nerd, '\u{e0b2}', '◀'),
+    capAfterLeft: _glyph(nerd, '\u{e0b2}', '◀'),
+    capBeforeRight: _glyph(nerd, '\u{e0b0}', '▶'),
+  ),
+  StatusLineSeparatorStyle.powerlineThin => StatusLineSeparator(
+    left: _glyph(nerd, '\u{e0b1}', '>'),
+    right: _glyph(nerd, '\u{e0b3}', '<'),
+    // Full-width caps even for the thin style (omp verbatim).
+    capAfterLeft: _glyph(nerd, '\u{e0b2}', '◀'),
+    capBeforeRight: _glyph(nerd, '\u{e0b0}', '▶'),
+  ),
+  StatusLineSeparatorStyle.slash => const StatusLineSeparator(
+    left: '/',
+    right: '/',
+  ),
+  StatusLineSeparatorStyle.pipe => const StatusLineSeparator(
+    left: '│',
+    right: '│',
+  ),
+  StatusLineSeparatorStyle.block => StatusLineSeparator(
+    left: _glyph(nerd, '█', '▌'),
+    right: _glyph(nerd, '█', '▌'),
+  ),
+  StatusLineSeparatorStyle.space => const StatusLineSeparator(
+    left: ' ',
+    right: ' ',
+  ),
+  StatusLineSeparatorStyle.ascii => const StatusLineSeparator(
+    left: '>',
+    right: '<',
+  ),
+};
+
+/// [nerdGlyph] when [nerd], else the font-safe [plainGlyph].
+String _glyph(bool nerd, String nerdGlyph, String plainGlyph) =>
+    nerd ? nerdGlyph : plainGlyph;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Gauge math + brand fade

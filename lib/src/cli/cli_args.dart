@@ -557,13 +557,7 @@ _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
         }
         i++;
       default:
-        if (arg.startsWith('-')) {
-          throw CliArgsException('unknown argument: $arg');
-        }
-        if (positionals.length >= 2) {
-          throw CliArgsException('unexpected argument: $arg');
-        }
-        positionals.add(arg);
+        _addTrajectoryPositional(positionals, arg);
     }
   }
   return (
@@ -576,6 +570,18 @@ _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
     formatSet: formatSet,
     output: output,
   );
+}
+
+/// Appends [arg] to [positionals], rejecting unknown flags and a third
+/// operand (trajectory verbs take at most two).
+void _addTrajectoryPositional(List<String> positionals, String arg) {
+  if (arg.startsWith('-')) {
+    throw CliArgsException('unknown argument: $arg');
+  }
+  if (positionals.length >= 2) {
+    throw CliArgsException('unexpected argument: $arg');
+  }
+  positionals.add(arg);
 }
 
 /// The value following a `--cwd`/`--session-root` flag at index [i].

@@ -2,6 +2,7 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -127,52 +128,54 @@ void main() {
       await run;
     });
 
-    test('/model-edit surfaces the resolved capability notes and pin source',
-        () async {
-      // gh-1426 rework: the resolver's loud notes (E1 divergence, E3 gate,
-      // E4 catalog miss) ride the Model and render next to the resolved
-      // triple — never dropped at the build boundary.
-      final previous = modelCapabilityOverrides;
-      modelCapabilityOverrides = ModelCapabilityOverrides()
-        ..set(
-          'test-provider',
-          'test-model',
-          const ModelCapabilityOverride(maxTokens: 65536),
+    test(
+      '/model-edit surfaces the resolved capability notes and pin source',
+      () async {
+        // gh-1426 rework: the resolver's loud notes (E1 divergence, E3 gate,
+        // E4 catalog miss) ride the Model and render next to the resolved
+        // triple — never dropped at the build boundary.
+        final previous = modelCapabilityOverrides;
+        modelCapabilityOverrides = ModelCapabilityOverrides()
+          ..set(
+            'test-provider',
+            'test-model',
+            const ModelCapabilityOverride(maxTokens: 65536),
+          );
+        addTearDown(() => modelCapabilityOverrides = previous);
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(
+          fake.call,
+          model: const Model(
+            id: 'test-model',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 100000,
+            maxTokens: 65536,
+            capabilityNotes: [
+              'capability override wins over the endpoint report for '
+                  'test-provider/test-model maxTokens: 65536 '
+                  '(endpoint reported 32000)',
+            ],
+          ),
         );
-      addTearDown(() => modelCapabilityOverrides = previous);
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(
-        fake.call,
-        model: const Model(
-          id: 'test-model',
-          api: 'test-api',
-          provider: 'test-provider',
-          baseUrl: 'https://example.test',
-          contextWindow: 100000,
-          maxTokens: 65536,
-          capabilityNotes: [
-            'capability override wins over the endpoint report for '
-                'test-provider/test-model maxTokens: 65536 '
-                '(endpoint reported 32000)',
-          ],
-        ),
-      );
-      final run = cli.run();
+        final run = cli.run();
 
-      io.sendLine('/model-edit');
-      await waitForIt(
-        () => io.out.toString().contains(
-          'caps source: models.overrides pin (out 65536)',
-        ),
-      );
-      await waitForIt(
-        () => io.out.toString().contains(
-          'note: capability override wins over the endpoint report',
-        ),
-      );
-      io.sendLine('/exit');
-      await run;
-    });
+        io.sendLine('/model-edit');
+        await waitForIt(
+          () => io.out.toString().contains(
+            'caps source: models.overrides pin (out 65536)',
+          ),
+        );
+        await waitForIt(
+          () => io.out.toString().contains(
+            'note: capability override wins over the endpoint report',
+          ),
+        );
+        io.sendLine('/exit');
+        await run;
+      },
+    );
 
     test('/model-edit bad field shows usage', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
@@ -203,6 +206,73 @@ void main() {
       expect(parseTokenPreset('4K'), 4096);
       expect(parseTokenPreset('1M'), 1048576);
       expect(parseTokenPreset('500'), 500);
+    });
+  });
+
+  group('TUI model-edit apply adapter (scripted prompt seam)', () {
+    /// A scripted prompt callback: canned answers in order.
+    Future<TuiPromptAnswer?> Function(TuiPromptSpec) scriptedPrompt(
+      List<TuiPromptAnswer> answers,
+    ) {
+      var i = 0;
+      return (spec) async {
+        if (i < answers.length) return answers[i++];
+        return null;
+      };
+    }
+
+    test('applies a preset context window through the adapter', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(() => io.out.toString().contains('fa>'));
+
+      await cli.tuiModelEditForTest(
+        scriptedPrompt([
+          AskPromptAnswer(AskAnswer(selected: ['Context Window'])),
+          AskPromptAnswer(AskAnswer(selected: ['16K'])),
+        ]),
+      );
+
+      expect(io.out.toString(), contains('context window set to 16384'));
+      io.sendLine('/model-edit');
+      await waitForIt(() => io.out.toString().contains('contextWindow 16384'));
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('applies a preset max-token value through the adapter', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(() => io.out.toString().contains('fa>'));
+
+      await cli.tuiModelEditForTest(
+        scriptedPrompt([
+          AskPromptAnswer(AskAnswer(selected: ['Max Output Tokens'])),
+          AskPromptAnswer(AskAnswer(selected: ['8K'])),
+        ]),
+      );
+
+      expect(io.out.toString(), contains('max tokens set to 8192'));
+      io.sendLine('/model-edit');
+      await waitForIt(() => io.out.toString().contains('maxTokens 8192'));
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('a cancelled picker applies nothing', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(() => io.out.toString().contains('fa>'));
+
+      await cli.tuiModelEditForTest(scriptedPrompt([]));
+
+      io.sendLine('/model-edit');
+      await waitForIt(() => io.out.toString().contains('contextWindow 100000'));
+      io.sendLine('/exit');
+      await run;
     });
   });
 }
