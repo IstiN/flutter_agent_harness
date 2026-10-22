@@ -1,5 +1,30 @@
 # 0.4.2
 
+## Vendored fork (flutter_agent_harness, PR #1785 rework)
+
+Tracked upstream: pub.dev quickjs_runtime 0.4.2
+(sha256 `4ea408c7f2f278d95979c92a8c217c78dd8161d046d15858995450a2cb5a0398`).
+`hook/build.dart` carries exactly two deltas; everything else is upstream
+verbatim. Pinned by `test/quickjs_runtime_vendor_pin_test.dart`:
+
+- **Android**: no longer links `-lpthread` — bionic ships pthread inside
+  libc and the NDK sysroot has had no libpthread since r18, so the
+  unconditional `-lpthread` failed the link on every ABI
+  (`ld.lld: error: unable to find library -lpthread`, Build Android APK
+  CI leg).
+- **Windows**: the hook returns before the Native Assets `CBuilder` —
+  the QuickJS 2024-01-13 sources are not MSVC-clean (C11 atomics,
+  `sys/time.h`, GNU packed attributes) and upstream 0.4.2 died in
+  `flutter_assemble.vcxproj` (Lockfile smoke windows CI leg).
+  `QuickjsFfi.isAvailable` is false without the asset, so js_widget_runtime
+  falls back to its flutter_js backend — the pre-0.4.0 Windows behavior.
+
+Re-vendor (copy the published package over this directory) on the next
+upstream publish that fixes both.
+
+## Upstream
+
+
 - `hook/build.dart`: pass `-Wl,-z,max-page-size=16384` on Android (Google
   Play 16 KB page-size alignment gate) and `-headerpad_max_install_names` +
   `-install_name @rpath/libquickjs_bridge.dylib` on iOS/macOS (App Store

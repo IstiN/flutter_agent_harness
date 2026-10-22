@@ -75,7 +75,11 @@ void main(List<String> args) async {
         // in the NDK sysroot (removed with r18), and `-lpthread` fails the
         // link on every ABI.
         OS.android => const ['m', 'dl'],
-        _ => const ['m', 'pthread', if (os == OS.linux) 'dl'],
+        // NOT const: the `if (os == …)` arm is a runtime condition and a
+        // const collection would fail the hook kernel compile with
+        // "Not a constant expression" (the Native Assets runner compiles
+        // this file with `dart compile kernel`).
+        _ => ['m', 'pthread', if (os == OS.linux) 'dl'],
       },
       optimizationLevel: OptimizationLevel.o2,
     );

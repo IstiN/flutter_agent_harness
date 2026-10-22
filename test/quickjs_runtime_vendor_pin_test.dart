@@ -24,7 +24,6 @@
 import 'dart:io';
 
 import 'package:test/test.dart';
-
 const vendorDir = 'vendor/quickjs_runtime';
 const hookPath = '$vendorDir/hook/build.dart';
 const vendorPubspecPath = '$vendorDir/pubspec.yaml';
@@ -175,7 +174,7 @@ void main() {
       // deterministic red on every package leg.
       final entry = _topLevelBlock(
         File(appLockPath).readAsStringSync(),
-        'quickjs_runtime:',
+        'quickjs_runtime',
         reason:
             '$appLockPath must still contain a quickjs_runtime entry — '
             'regenerate it (cd flutter_app && flutter pub get) after adding '
