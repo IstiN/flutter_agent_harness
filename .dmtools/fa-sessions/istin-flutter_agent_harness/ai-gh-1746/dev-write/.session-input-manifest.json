@@ -1,0 +1,399 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-22T04:34:39.317Z",
+  "ticketKey": "pr-1776",
+  "headSha": "4047ad1f77efef01d2bfbec35f1b993659e1b514",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:cf05644f008f9fe8",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:1ccbda16600c553d",
+      "size": 44562
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:bac54242bc6a7225",
+      "size": 2465
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:800cc807b3f75a80",
+      "size": 2845
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:66bf1592b9401bf2",
+      "size": 925
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:bef7c795c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:98f741e6a4e99e55",
+      "size": 2608
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:1f33fb6b5af7c912",
+      "size": 2506
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6vC54l",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/config/config_service.dart:1046",
+      "resolved": false,
+      "body": "🚨 Formatting drift — `dart format` is not clean on 4 touched files\n\n`dart format --output=none --set-exit-if-changed` (Dart 3.13.5) reports changes in:\n\n- `lib/src/cli/cli_config.dart` (2 missing blank lines, e.g. after the `sessions` getter at line 936)\n- `lib/src/config/config_service.dart` (the `applicationNote` `'sessions'` arm needs a wrapped string)\n- `test/session_retention_config_test.dart`\n- `test/cli/session_clean_cli_test.dart`\n\n`origin/main`'s version of `cli_config.dart` is format-clean under the same SDK, so this PR introduced the drift. The pre-commit hook self-heals staged files and CI does not gate on format, so nothing breaks — but the next commit from any author with the hook will reformat these lines, adding noise to a future diff.\n\nSuggested: run `dart format lib/src/cli/cli_config.dart lib/src/config/config_service.dart test/session_retention_config_test.dart test/cli/session_clean_cli_test.dart` before merge."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vC56s",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/session_retention.dart:501",
+      "resolved": false,
+      "body": "💡 `presenceStore: null` silently disables the live exemption instead of failing closed\n\n`_liveIds()` maps a null store to an empty live-set (treated as \"nothing is live\"), while a *failing* probe aborts the sweep. The doc comment scopes null to tests, and today every production boot path wires a real store (`bin/fah_runapp.dart` for the CLI; the clean verb passes one too) — so this is hardening, not a bug.\n\nBut the PR's stated posture is fail-closed (\"a presence probe failure aborts the sweep instead of risking a live session\"). A future embedder host that runs `enforceAtBoot()` without wiring a presence store would sweep live sessions while believing none are live.\n\nSuggested: in `enforceAtBoot()`, treat `presenceStore == null` the same as a failed probe (abort with a note), or add an explicit `allowMissingPresence` flag so the test convenience is opt-in rather than the default shape."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:9c1f7cb7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — parity gate classified\n\n`sessions` is now classified in `lib/src/parity/settings_registry.dart` → `fileOnlyConfigKeys`, with the WHY matching the SKILL.md `<!-- parity: none (boot config only) -->` intent:\n\n```dart\n'sessions':\n    'Session retention (gh-1746) is boot-time disk hygiene for the '\n    'CLI-owned sessions root; no app surface edits it interactively.',\n```\n\nVerification: `dart test test/parity/settings_completeness_test.dart` → 13/13 green (both previously-red tests — \"every parsed yaml key is classified\" and \"the audit table covers every key exactly once\" — pass; `sessions` is single-owner, in no `SharedSetting.yamlKeys`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:e6e73fef",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the boot sweep can delete the very session this process is about to open (data loss)**\n\n`_retentionBootCheck()` runs as the first statement of `_initializeSession()`,\nBEFORE `config.sessionName` is resolved (line 421+), and the sweeper here gets no\n`currentSessionId`. Presence registration happens much later\n(`agent_cli.dart:1918`, `_registerLivePresence()` after the session loads), so at\nsweep time the resume target has no presence row.\n\nReachable data-loss sequence:\n\n1. `fa --session <id>` — the resume form the exit hint itself prints for\n   unnamed sessions (`_sessionNameMatches` resolves ids: \"ids must resolve too\").\n2. The target is old (> `minAgeDays`), unnamed, not live, root over cap →\n   **this boot's own sweep deletes its transcript + sidecars**\n   (AC3's \"current session\" exemption is unimplementable as wired — the id is\n   knowable from args but never passed).\n3. `_sessionNameMatches` then finds nothing and `_createSession(name: <id>)`\n   silently creates a fresh empty session — the user sees their marathon\n   workspace \"open\" with zero history.\n\n`keepNamed: true` (default) protects only sessions whose name resolves from the\ntranscript; resume-by-id of an unnamed session — and any resume with\n`keepNamed: false` — is unprotected. The E2 mid-sweep presence re-check cannot\nhelp: this process registers presence only after the sweep.\n\nFix: resolve the resume target before sweeping and pass it as\n`currentSessionId` (or exempt it explicitly), e.g. resolve\n`config.sessionName` via `_sessionNameMatches` first and hand the sweeper the\nmatch id; only then run `enforceAtBoot()`.\n\nAlso note: `_retentionBootCheck` has no test coverage (see the test-gap thread),\nwhich is exactly why this seam shipped broken."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:f0a17f8f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: `header.cwd` is unvalidated and drives a recursive `removeTree`**\n\n`cwd` comes from the first line of the session file — data a corrupted,\ntruncated, or maliciously planted session header controls. The sid component is\nguarded (`isSafePathSegment`), but `cwd` is interpolated raw:\n\n```dart\nawait _removeTree('$cwd/.fah/spills/${session.sessionId}');\n// → _fs.remove(dir, recursive: true, force: true)\n```\n\nA header carrying `cwd: \"../../x\"` or `cwd: \"/\"` makes the sweep recursively\ndelete an arbitrary `<path>/.fah/spills/<sid>` tree outside any root. The\nsymlink check in `_removeTree` does not stop plain directory traversal.\n\nThe usage walk (`_dirBytes('${header.cwd}/.fah/spills/<sid>')`) reads the same\nunvalidated path — lower stakes, but the delete path needs a guard:\n\n```dart\nfinal resolved = _safeJoinUnder(header.cwd, '.fah/spills', session.sessionId);\n// reject: not absolute, contains '..' segments, or empty\n```\n\nRequire absolute, `..`-free cwds before measuring/deleting spills; skip with a\nnote otherwise. Please also consider validating in `_headerFacts` at parse time\nso one guard covers both uses."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:9394bd6a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `sessionIdFromSessionPath` duplicates `JsonlSessionRepo._sessionIdFromPath`**\n\nThis helper is a verbatim copy of the private\n`JsonlSessionRepo._sessionIdFromPath` (lib/src/session/session_repo.dart:754):\nsame `<timestamp>_<sessionId>.jsonl` split, same null rules. Two parsers for the\nsame encoding can drift (e.g. if the filename scheme ever gains a segment).\n\nEither extract one shared top-level function (session_repo's copy can delegate\nto it) or add a cross-reference comment on both sides pinning them together."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:623be55b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `SessionDiskUsage.name` is dead surface, and `_SessionHeaderFacts.id` is parsed but unused**\n\nTwo related nits in the walk:\n\n1. `SessionDiskUsage.name` (\"when already known\") is never populated —\n   `_scanSlugDir` constructs every usage without `name:`, and `_nameOf` resolves\n   lazily into a separate set. The field is always null in practice.\n2. `_headerFacts` requires `decoded['id'] is String` but never uses it. It could\n   at least cross-check `header.id == sessionId` (filename-derived) so a\n   mismatched/foreign header is treated as unidentified instead of counted as a\n   sweepable unit keyed by its filename.\n\nEither wire them (name from the header probe; id as an identity check) or drop\nthe unused surface."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:60e996b0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the AC4 blocker note names every exempt session, not the ones actually holding the cap**\n\nWhen the root remains over cap, this loop adds ALL non-deleted sessions as\nblockers — including 1 KB \"young\" sessions that have nothing to do with the\noverflow — and the header line then claims \"N exempt session(s) hold X\". With a\nlarge store the note becomes noise that hides the real blockers (usually the one\ngiant live session).\n\nConsider naming only the sessions that are actually needed to explain the\noverflow (walk blockers largest-first until `held > remaining - cap`), or at\nleast ordering the printed list by size and capping its length."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:e9216f9a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the clean branch duplicates the env/io/root construction already in scope**\n\nInside `if (sessionList != null)` the enclosing block already built `io`\n(`_TerminalCliIO(headless: true)`), `listEnv` (`LocalExecutionEnv(cwd: …)`), and\n`sessionRoot` (`parsed.sessionRoot ?? _defaultSessionRoot()`) — the clean branch\nre-creates all three as `io`/`cleanEnv`/`cleanRoot` with identical expressions.\nReuse the enclosing locals so the two verbs cannot drift (e.g. one gaining a\n`--cwd` handling the other forgets). Same for the `FileSessionPresenceStore`\nwiring, which is copied verbatim from the repair branch."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:e0cf201c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the boot seam itself has zero test coverage (AC7's log wiring, boot ordering, REG-1, E2E-1)**\n\nThe sweeper core is well tested (38 tests green on this head), but everything\nadded in `session_commands.dart` / `bin/fah_runapp.dart` is untested:\n\n- no test runs `_initializeSession` with a `sessions:` section to assert the\n  sweep runs before the session opens and `[retention]` lines land in the boot\n  log (AC7's \"report persists to the boot log\" is only asserted at the sweeper\n  level);\n- no REG-1-style legacy fixture (no section → boot byte-identical, no notes)\n  exercising the actual boot path — the ticket marks REG-1 **merge-blocking**;\n- no real-fs E2E (ticket E2E-1: `fa session clean --dry-run` then apply against\n  a temp root) — everything runs on `MemoryExecutionEnv`, so `LocalExecutionEnv`/\n  `FileSessionPresenceStore`/`homeDirectory()` wiring in `fah_runapp.dart` is\n  unverified.\n\nThe blocking boot-race bug (sweep deleting the session being resumed) lives in\nexactly this untested seam. A boot-level test with a fake config +\n`MemoryExecutionEnv` would have caught it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:c96e63fe",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: parity completeness gate is red — the new `sessions` yaml key is unclassified**\n\n`dart test test/parity/settings_completeness_test.dart` on this head fails (2 tests):\n\n```\n❌ every parsed yaml key is classified\nExpected: empty\n  Actual: ['sessions']\nUnclassified yaml keys: [sessions]. Every top-level key the parsers read\nmust be owned by a SharedSetting (yamlKeyCoverage) or listed in\nfileOnlyConfigKeys with a WHY.\n\n❌ the audit table covers every key exactly once\n```\n\nThis PR adds `'sessions'` to `configTopLevelKeys` (this line) and reads\n`map['sessions']` in `CliConfig.fromYaml`, but `lib/src/parity/settings_registry.dart`\nis untouched: `sessions` is in neither a `SharedSetting.yamlKeys` nor\n`fileOnlyConfigKeys`, so the completeness ratchet (AGENTS.md parity rules:\n\"A new yaml key landing without a classification is RED\") fails — this blocks the\nSM pre-merge validation.\n\nFix (one entry, matching the SKILL.md `<!-- parity: none (boot config only) -->`\nintent):\n\n```dart\n// lib/src/parity/settings_registry.dart, fileOnlyConfigKeys:\n'sessions':\n    'Session retention (gh-1746) is boot-time disk hygiene for the '\n    'CLI-owned sessions root; no app surface edits it interactively.',\n```\n\nRun `dart test test/parity/` after classifying."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:b08f58ed",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — the boot sweep can no longer delete the session being opened\n\n`_initializeSession()` (lib/src/cli/session_commands.dart) was restructured: the resume target now resolves **before** the sweep — `_sessionNameMatches(config.sessionName)` → `_resolveSessionNameMatch` — and `_retentionBootCheck(currentSessionId: metadata?.id)` hands the resolved id to `SessionRetentionSweeper` as `currentSessionId`. The sweep still runs before the session opens (ordering unchanged), so the resume target is exempt whether it is addressed by id (unnamed sessions — the exit-hint form), by name under `keepNamed: false`, or ambiguously auto-resolved. Presence registration timing is no longer load-bearing.\n\nRegression tests (test/cli/session_retention_boot_test.dart) reproduce the exact data-loss sequence first — `fa --session <id>` over-cap resumed target deleted and replaced by a fresh empty session — and now assert the transcript survives its own boot sweep, for both the resume-by-id and the resume-by-name/`keepNamed: false` shapes."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:7573d2dc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — header `cwd` is validated before it can drive any delete\n\nAdded `isSafeSpillCwd()` to `lib/src/session_retention.dart`: a header cwd must be non-empty, absolute (POSIX `/…` or Windows `X:\\…`/`X:/…`), and free of `..` segments on either separator. The guard runs in `_scanSlugDir` right after header parse — a unit with an unsafe cwd is skipped **with a note** (`retention: skipped <path> — unsafe header cwd \"…\" (E4)`) and never becomes a sweep candidate, so ONE guard covers both the usage walk's `_dirBytes` measurement and the sweep's `_removeTree('$cwd/.fah/spills/<sid>')`. Fail closed: a corrupted/truncated/planted header disqualifies the unit entirely rather than risking an outside-root delete.\n\nTests (test/session_retention_test.dart, \"E4 path escape\" group): relative `../../etc` cwd and absolute `/work/../evil` cwd are never measured nor deleted (the outside spill trees survive, the notes explain the skip), and a safe absolute cwd still sweeps normally (no over-blocking)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:2837b2d9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — one shared parser for the session filename encoding\n\n`JsonlSessionRepo._sessionIdFromPath` (lib/src/session/session_repo.dart) now delegates to the shared top-level `sessionIdFromSessionPath` (lib/src/session_retention.dart) instead of carrying a verbatim copy — the retention walk and the repo can no longer drift if the `<timestamp>_<sessionId>.jsonl` scheme ever gains a segment.\n\nA characterization test (test/session_retention_test.dart, \"the shared filename parser and the repo agree on ids\") pins the invariant end-to-end: repo-listed ids must equal shared-helper-decoded ids over the same tree, plus the null shapes (non-jsonl, no-id basename)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:cff61276",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — both dead surfaces are resolved (id wired, name dropped)\n\n1. `_SessionHeaderFacts.id` is now an **identity check**: in `_scanSlugDir`, a header whose `id` disagrees with the filename-derived session id is skipped with a note (`header id \"…\" does not match filename id \"…\"`) — a mismatched/foreign header can no longer make its file a sweepable unit keyed by the filename.\n2. The never-populated `SessionDiskUsage.name` field is **dropped**. Wiring it from the header probe was not viable — the header carries no display name (names live in `session_info` records), and eager resolution would add per-session file reads to the O(directory-entries) walk. `_nameOf` still resolves names lazily, only for deletion candidates (`keepNamed` decisions).\n\nTests: test/session_retention_test.dart, \"a header id that disagrees with the filename is unidentified\" (skip + note + file untouched); `dart analyze` clean after the field removal (no remaining readers)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:a24d7ef8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — the AC4 note names only the sessions that explain the overflow\n\nThe blocker walk in `SessionRetentionSweeper.sweep` is now minimal: exempt units are sorted largest-first and added only until the held bytes reach the overflow (`remaining - cap`). A 1 KB young session that has nothing to do with the overflow is no longer named — the note lists the sessions that alone prove the cap cannot be met (usually the one giant live session). The list remains size-ordered, and the note's numbers (`N exempt session(s) hold X`) describe exactly that minimal set.\n\nTests (test/session_retention_test.dart): new \"AC4: the blocker note names only the sessions that explain the overflow, largest first\" — one giant live blocker + small young pads → exactly one blocker named, exemption `live`; the older AC4 fixtures were reshaped (cap of 1 B → the overflow genuinely needs every exempt unit) so they still verify that each exemption label renders when it is actually needed."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:07de7866",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — the clean branch reuses the enclosing construction\n\n`bin/fah_runapp.dart`: inside the `sessionList != null` block the clean verb no longer re-creates `io`/env/root — it reuses the enclosing `_TerminalCliIO`, `LocalExecutionEnv`, and `parsed.sessionRoot ?? _defaultSessionRoot()` locals. The `FileSessionPresenceStore` wiring (including the gh-1660 `pidAlive` probe comment) is hoisted once as `sessionPresenceStore`, shared verbatim by the repair and clean branches, and `readRetention()` was hoisted to the same scope (it now also feeds the list verb's gh-1746 usage footer). The verbs cannot drift anymore.\n\nAdditionally the bin wiring is now guarded: `test/bin_main_wiring_reg_test.dart` pins `runSessionListCliCommand`, `runSessionRepairCliCommand`, and `runSessionCleanCliCommand` to the executable library — the gh-1000 take-ours-merge shape (which this branch already hit once) can no longer drop a session verb silently."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:e5847af1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — the boot seam now has coverage (AC7, REG-1, E2E-1, and the race)\n\nNew test/cli/session_retention_boot_test.dart drives the actual boot path (`AgentCli.run` → `_initializeSession` → `_retentionBootCheck`) on `MemoryExecutionEnv` with a scripted first turn:\n\n- **AC7 log wiring**: a boot with a `sessions:` section asserts `[retention]` lines land in `~/.fah/logs/fa.log` (read back through the in-memory fs) BEFORE the `fa boot sid=` marker — proving the sweep runs before the session opens.\n- **REG-1 (merge-blocking) legacy fixture**: a section-free boot emits no `[retention]` lines anywhere, prints no `sessions clean` note, and leaves the seeded transcript untouched (prefix-compare; the boot's own lifecycle appends aside, the retention seam adds nothing).\n- **The blocking boot-race regressions** the reviewer predicted: resume-by-id and resume-by-name-under-`keepNamed: false` both reproduced the data loss on the pre-fix head (transcript deleted, fresh empty session substituted) and now assert the resume target survives its own boot sweep.\n- **E2E-1 on a REAL filesystem**: `Directory.systemTemp` + `LocalExecutionEnv` + `FileSessionPresenceStore` — `fa session clean --dry-run` prints the exact plan and deletes nothing; apply performs exactly that plan (doomed unit gone, young keeper alive).\n\nAlso implemented the missing core-tier **`/sessions` usage footer** (ticket Visibility; flagged in the automated review): covered here for both surfaces — the in-REPL `/sessions` listing and headless `fa session list` — each printing the footer only under a configured cap (REG-1: absent otherwise), plus the bin wiring guard (`test/bin_main_wiring_reg_test.dart`) pinning the three session verbs to the executable."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:7368be86",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Same finding as the first review pass (duplicate thread); this reply covers both instances.\n\n## Fixed — parity gate classified\n\n`sessions` is now classified in `lib/src/parity/settings_registry.dart` → `fileOnlyConfigKeys`, with the WHY matching the SKILL.md `<!-- parity: none (boot config only) -->` intent:\n\n```dart\n'sessions':\n    'Session retention (gh-1746) is boot-time disk hygiene for the '\n    'CLI-owned sessions root; no app surface edits it interactively.',\n```\n\nVerification: `dart test test/parity/settings_completeness_test.dart` → 13/13 green (both previously-red tests — \"every parsed yaml key is classified\" and \"the audit table covers every key exactly once\" — pass; `sessions` is single-owner, in no `SharedSetting.yamlKeys`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:6220fe54",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Same finding as the first review pass (duplicate thread); this reply covers both instances.\n\n## Fixed — the boot sweep can no longer delete the session being opened\n\n`_initializeSession()` (lib/src/cli/session_commands.dart) was restructured: the resume target now resolves **before** the sweep — `_sessionNameMatches(config.sessionName)` → `_resolveSessionNameMatch` — and `_retentionBootCheck(currentSessionId: metadata?.id)` hands the resolved id to `SessionRetentionSweeper` as `currentSessionId`. The sweep still runs before the session opens (ordering unchanged), so the resume target is exempt whether it is addressed by id (unnamed sessions — the exit-hint form), by name under `keepNamed: false`, or ambiguously auto-resolved. Presence registration timing is no longer load-bearing.\n\nRegression tests (test/cli/session_retention_boot_test.dart) reproduce the exact data-loss sequence first — `fa --session <id>` over-cap resumed target deleted and replaced by a fresh empty session — and now assert the transcript survives its own boot sweep, for both the resume-by-id and the resume-by-name/`keepNamed: false` shapes."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:66d57667",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Same finding as the first review pass (duplicate thread); this reply covers both instances.\n\n## Fixed — header `cwd` is validated before it can drive any delete\n\nAdded `isSafeSpillCwd()` to `lib/src/session_retention.dart`: a header cwd must be non-empty, absolute (POSIX `/…` or Windows `X:\\…`/`X:/…`), and free of `..` segments on either separator. The guard runs in `_scanSlugDir` right after header parse — a unit with an unsafe cwd is skipped **with a note** (`retention: skipped <path> — unsafe header cwd \"…\" (E4)`) and never becomes a sweep candidate, so ONE guard covers both the usage walk's `_dirBytes` measurement and the sweep's `_removeTree('$cwd/.fah/spills/<sid>')`. Fail closed: a corrupted/truncated/planted header disqualifies the unit entirely rather than risking an outside-root delete.\n\nTests (test/session_retention_test.dart, \"E4 path escape\" group): relative `../../etc` cwd and absolute `/work/../evil` cwd are never measured nor deleted (the outside spill trees survive, the notes explain the skip), and a safe absolute cwd still sweeps normally (no over-blocking)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:7a895776",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Same finding as the first review pass (duplicate thread); this reply covers both instances.\n\n## Fixed — one shared parser for the session filename encoding\n\n`JsonlSessionRepo._sessionIdFromPath` (lib/src/session/session_repo.dart) now delegates to the shared top-level `sessionIdFromSessionPath` (lib/src/session_retention.dart) instead of carrying a verbatim copy — the retention walk and the repo can no longer drift if the `<timestamp>_<sessionId>.jsonl` scheme ever gains a segment.\n\nA characterization test (test/session_retention_test.dart, \"the shared filename parser and the repo agree on ids\") pins the invariant end-to-end: repo-listed ids must equal shared-helper-decoded ids over the same tree, plus the null shapes (non-jsonl, no-id basename)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:2685bb9b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Same finding as the first review pass (duplicate thread); this reply covers both instances.\n\n## Fixed — both dead surfaces are resolved (id wired, name dropped)\n\n1. `_SessionHeaderFacts.id` is now an **identity check**: in `_scanSlugDir`, a header whose `id` disagrees with the filename-derived session id is skipped with a note (`header id \"…\" does not match filename id \"…\"`) — a mismatched/foreign header can no longer make its file a sweepable unit keyed by the filename.\n2. The never-populated `SessionDiskUsage.name` field is **dropped**. Wiring it from the header probe was not viable — the header carries no display name (names live in `session_info` records), and eager resolution would add per-session file reads to the O(directory-entries) walk. `_nameOf` still resolves names lazily, only for deletion candidates (`keepNamed` decisions).\n\nTests: test/session_retention_test.dart, \"a header id that disagrees with the filename is unidentified\" (skip + note + file untouched); `dart analyze` clean after the field removal (no remaining readers)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:2d0e0487",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Same finding as the first review pass (duplicate thread); this reply covers both instances.\n\n## Fixed — the AC4 note names only the sessions that explain the overflow\n\nThe blocker walk in `SessionRetentionSweeper.sweep` is now minimal: exempt units are sorted largest-first and added only until the held bytes reach the overflow (`remaining - cap`). A 1 KB young session that has nothing to do with the overflow is no longer named — the note lists the sessions that alone prove the cap cannot be met (usually the one giant live session). The list remains size-ordered, and the note's numbers (`N exempt session(s) hold X`) describe exactly that minimal set.\n\nTests (test/session_retention_test.dart): new \"AC4: the blocker note names only the sessions that explain the overflow, largest first\" — one giant live blocker + small young pads → exactly one blocker named, exemption `live`; the older AC4 fixtures were reshaped (cap of 1 B → the overflow genuinely needs every exempt unit) so they still verify that each exemption label renders when it is actually needed."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:2f329574",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Same finding as the first review pass (duplicate thread); this reply covers both instances.\n\n## Fixed — the boot seam now has coverage (AC7, REG-1, E2E-1, and the race)\n\nNew test/cli/session_retention_boot_test.dart drives the actual boot path (`AgentCli.run` → `_initializeSession` → `_retentionBootCheck`) on `MemoryExecutionEnv` with a scripted first turn:\n\n- **AC7 log wiring**: a boot with a `sessions:` section asserts `[retention]` lines land in `~/.fah/logs/fa.log` (read back through the in-memory fs) BEFORE the `fa boot sid=` marker — proving the sweep runs before the session opens.\n- **REG-1 (merge-blocking) legacy fixture**: a section-free boot emits no `[retention]` lines anywhere, prints no `sessions clean` note, and leaves the seeded transcript untouched (prefix-compare; the boot's own lifecycle appends aside, the retention seam adds nothing).\n- **The blocking boot-race regressions** the reviewer predicted: resume-by-id and resume-by-name-under-`keepNamed: false` both reproduced the data loss on the pre-fix head (transcript deleted, fresh empty session substituted) and now assert the resume target survives its own boot sweep.\n- **E2E-1 on a REAL filesystem**: `Directory.systemTemp` + `LocalExecutionEnv` + `FileSessionPresenceStore` — `fa session clean --dry-run` prints the exact plan and deletes nothing; apply performs exactly that plan (doomed unit gone, young keeper alive).\n\nAlso implemented the missing core-tier **`/sessions` usage footer** (ticket Visibility; flagged in the automated review): covered here for both surfaces — the in-REPL `/sessions` listing and headless `fa session list` — each printing the footer only under a configured cap (REG-1: absent otherwise), plus the bin wiring guard (`test/bin_main_wiring_reg_test.dart`) pinning the three session verbs to the executable."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:8fd818f8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 Formatting drift — `dart format` is not clean on 4 touched files\n\n`dart format --output=none --set-exit-if-changed` (Dart 3.13.5) reports changes in:\n\n- `lib/src/cli/cli_config.dart` (2 missing blank lines, e.g. after the `sessions` getter at line 936)\n- `lib/src/config/config_service.dart` (the `applicationNote` `'sessions'` arm needs a wrapped string)\n- `test/session_retention_config_test.dart`\n- `test/cli/session_clean_cli_test.dart`\n\n`origin/main`'s version of `cli_config.dart` is format-clean under the same SDK, so this PR introduced the drift. The pre-commit hook self-heals staged files and CI does not gate on format, so nothing breaks — but the next commit from any author with the hook will reformat these lines, adding noise to a future diff.\n\nSuggested: run `dart format lib/src/cli/cli_config.dart lib/src/config/config_service.dart test/session_retention_config_test.dart test/cli/session_clean_cli_test.dart` before merge."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:001f26d3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 `presenceStore: null` silently disables the live exemption instead of failing closed\n\n`_liveIds()` maps a null store to an empty live-set (treated as \"nothing is live\"), while a *failing* probe aborts the sweep. The doc comment scopes null to tests, and today every production boot path wires a real store (`bin/fah_runapp.dart` for the CLI; the clean verb passes one too) — so this is hardening, not a bug.\n\nBut the PR's stated posture is fail-closed (\"a presence probe failure aborts the sweep instead of risking a live session\"). A future embedder host that runs `enforceAtBoot()` without wiring a presence store would sweep live sessions while believing none are live.\n\nSuggested: in `enforceAtBoot()`, treat `presenceStore == null` the same as a failed probe (abort with a note), or add an explicit `allowMissingPresence` flag so the test convenience is opt-in rather than the default shape."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:d28c69f0",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer b5f3014c6f944fa3a83076a670affa4259d7a25c — run 39693924110 still queued at 2026-10-21T23:42:58.508Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:7a383632",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel b5f3014c6f944fa3a83076a670affa4259d7a25c — stale base at 2026-10-21T23:44:27.935Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:ac7929da",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: 2 blocking issues: the parity completeness gate is red on this head (`dart test test/parity/settings_completeness_test.dart` → `Unclassified yaml keys: [sessions]` — the new key needs a `fileOnlyConfigKeys`/`SharedSetting` classification), and the boot sweep can delete the session the process is about to open (`fa --session <id>` resume of an old unnamed session: `_retentionBootCheck()` runs before the resume target resolves and passes no `currentSessionId`, while presence registers only after load). The sweeper core itself is solid — 38 new tests green, `dart analyze` clean, opt-in/no-cap-by-default posture correctly honored.\n\n**Key Issues**:\n- 🚨 Red parity gate: `sessions` unclassified in `lib/src/parity/settings_registry.dart` (2 failing tests).\n- 🚨 Boot-sweep data-loss race on resume (transcript + sidecars deleted, then a fresh empty session silently replaces it).\n- ⚠️ Unvalidated session-header `cwd` drives `removeTree('$cwd/.fah/spills/<sid>')` (recursive delete outside any root).\n- ⚠️ Ticket scope/coverage gaps: the core-tier `/sessions` usage footer (ticket.md \"Visibility: `/sessions` gains a usage footer\") is absent; boot-wiring/AC7, REG-1 (ticket: merge-blocking) and the real-fs E2E-1 have no tests — the boot bug above lives in that untested seam. If the footer is deliberately deferred to a follow-up, please say so in the PR description.\n\n**Next Steps**:\n1. Classify `sessions` in the parity registry; re-run `dart test test/parity/`.\n2. Resolve the resume target before sweeping and pass it as `currentSessionId`.\n3. Validate `header.cwd` (absolute, no `..`) before spill measurement/deletion.\n4. Add a boot-level test (AC7 + REG-1 fixture); note the `/sessions` footer as follow-up or implement it."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:cce03857",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Merge conflict with main — the silent branch update could not merge main (conflict). (head `af817782bd84417ea7470a6693016f53b5e51a70`) Rework re-queued (linked issue #1746 re-armed): resolve the conflicts and push — validation re-runs automatically. (approval latch kept — no re-review after the fix)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:1eb7c568",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: 2 blocking issues remain on the current head: the parity completeness gate is red (`dart test test/parity/settings_completeness_test.dart` → `Unclassified yaml keys: [sessions]` — the new key needs a `fileOnlyConfigKeys`/`SharedSetting` classification), and the boot sweep can delete the session the process is about to open (`fa --session <id>` resume of an old unnamed session: `_retentionBootCheck()` runs before the resume target resolves and passes no `currentSessionId`, while presence registers only after load). The sweeper core itself is solid — 38 new tests green, `dart analyze` clean, opt-in/no-cap-by-default posture correctly honored.\n\n**Key Issues**:\n- 🚨 Red parity gate: `sessions` unclassified in `lib/src/parity/settings_registry.dart` (2 failing tests).\n- 🚨 Boot-sweep data-loss race on resume (transcript + sidecars deleted, then a fresh empty session silently replaces it).\n- ⚠️ Unvalidated session-header `cwd` drives `removeTree('$cwd/.fah/spills/<sid>')` (recursive delete outside any root).\n- ⚠️ Ticket scope/coverage gaps: the core-tier `/sessions` usage footer (ticket.md \"Visibility: `/sessions` gains a usage footer\") is absent; boot-wiring/AC7, REG-1 (ticket: merge-blocking) and the real-fs E2E-1 have no tests — the boot bug above lives in that untested seam. If the footer is deliberately deferred to a follow-up, please say so in the PR description.\n\n**Next Steps**:\n1. Classify `sessions` in the parity registry; re-run `dart test test/parity/`.\n2. Resolve the resume target before sweeping and pass it as `currentSessionId`.\n3. Validate `header.cwd` (absolute, no `..`) before spill measurement/deletion.\n4. Add a boot-level test (AC7 + REG-1 fixture); note the `/sessions` footer as follow-up or implement it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:d8ffee34",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Re-review of the rework: all 6 previous findings (2 🚨 blocking, 3 ⚠️ important) are demonstrably fixed in this diff with regression tests — parity gate green, boot sweep no longer deletes the resume target, header `cwd` is guarded against path escape, and the previously untested boot seam now has AC7/REG-1/E2E-1 coverage including a real-filesystem E2E. Verified locally: `dart analyze lib bin test` clean; 4167 tests in `test/cli`+`test/parity`+`test/config` and 166 in `test/skills` green. Only 2 suggestion-level items remain (format drift in 4 touched files; presence-null hardening seam).\n\n**Key Issues**:\n- 💡 `dart format` drift on 4 touched files (`cli_config.dart`, `config_service.dart`, 2 new test files) — self-heals at next commit, tidy before merge.\n- 💡 `SessionRetentionSweeper(presenceStore: null)` disables the live exemption rather than failing closed (test seam today; hardening for future embedders).\n- Observation (no thread): under `keepNamed: false`, same-named alternatives offered by the startup ambiguity picker are sweep-eligible — within the configured semantics, worth a docs note someday.\n\n**Next Steps**:\n1. Optionally run `dart format` on the 4 files listed in comment 1.\n2. Merge — nothing blocks."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:b74f3afd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Same finding as the first review pass (duplicate thread); this reply covers both instances.\n\n## Fixed — the clean branch reuses the enclosing construction\n\n`bin/fah_runapp.dart`: inside the `sessionList != null` block the clean verb no longer re-creates `io`/env/root — it reuses the enclosing `_TerminalCliIO`, `LocalExecutionEnv`, and `parsed.sessionRoot ?? _defaultSessionRoot()` locals. The `FileSessionPresenceStore` wiring (including the gh-1660 `pidAlive` probe comment) is hoisted once as `sessionPresenceStore`, shared verbatim by the repair and clean branches, and `readRetention()` was hoisted to the same scope (it now also feeds the list verb's gh-1746 usage footer). The verbs cannot drift anymore.\n\nAdditionally the bin wiring is now guarded: `test/bin_main_wiring_reg_test.dart` pins `runSessionListCliCommand`, `runSessionRepairCliCommand`, and `runSessionCleanCliCommand` to the executable library — the gh-1000 take-ours-merge shape (which this branch already hit once) can no longer drop a session verb silently."
+    }
+  ]
+}
