@@ -17,6 +17,7 @@ import '../exceptions.dart';
 import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
+import '../prompts/project_context.dart' show ProjectContextConfig;
 import '../cube/config/cube_settings.dart';
 import 'headless_config.dart';
 import 'waiting_heartbeat.dart';
@@ -503,6 +504,7 @@ final class CliConfig {
     this.tools,
     this.redact,
     this.spills,
+    this.projectContext,
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
     this.wireDump = false,
@@ -593,6 +595,12 @@ final class CliConfig {
       spills: map['spills'] == null
           ? null
           : SpillsConfig.fromYaml(map['spills']),
+      // The projectContext section (issue #1761); tolerant by design —
+      // unknown keys and mistyped scalars become notes, never boot
+      // failures.
+      projectContext: map['projectContext'] == null
+          ? null
+          : ProjectContextConfig.fromYaml(map['projectContext']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       // Entries named after a built-in catalog provider are dropped (issue
       // #221's ghost "openai"): they shadow `/provider <name>` routing and
@@ -913,6 +921,12 @@ final class CliConfig {
   /// and wins wholesale, like the other project sections).
   final SpillsConfig? spills;
 
+  /// Optional `projectContext:` section (issue #1761) — the merged
+  /// project-context budget (`maxBytes`; `0` disables the section and
+  /// skips every file read). Tolerant parse; `null` means the section is
+  /// absent = the 32KB default.
+  final ProjectContextConfig? projectContext;
+
   /// `registry` kill switch + `maxPerRequest` cap. `null` keeps the
   /// defaults (registry on, [defaultMaxImagesPerRequest]).
   final ImageRegistryConfig? images;
@@ -1067,6 +1081,7 @@ final class CliConfig {
     ToolsConfig? tools,
     RedactionConfig? redact,
     SpillsConfig? spills,
+    ProjectContextConfig? projectContext,
     CompactionEngine? compactionEngine,
     int? compactionJudgeBudgetSeconds,
     bool? wireDump,
@@ -1122,6 +1137,7 @@ final class CliConfig {
       tools: tools ?? this.tools,
       redact: redact ?? this.redact,
       spills: spills ?? this.spills,
+      projectContext: projectContext ?? this.projectContext,
       compactionEngine: compactionEngine ?? this.compactionEngine,
       compactionJudgeBudgetSeconds:
           compactionJudgeBudgetSeconds ?? this.compactionJudgeBudgetSeconds,
@@ -1246,6 +1262,7 @@ final class CliConfig {
     buffer.write(_trajectoryYaml());
     if (images != null) buffer.write(_imagesYaml());
     buffer.write(_spillsYaml());
+    buffer.write(_projectContextYaml());
     buffer.write(_agentSectionYaml());
     // The subagents heartbeat section (issue #383), only when explicitly
     // configured; defaults are never written so the file stays minimal.
@@ -1486,6 +1503,11 @@ final class CliConfig {
   /// (gh-1572: the emitter used to be unable to render the section at
   /// all, so every save dropped it).
   String _spillsYaml() => spills?.toYaml() ?? '';
+
+  /// The `projectContext:` section (issue #1761), only when explicitly
+  /// configured; the default budget is never written so the file stays
+  /// minimal (same rule as `_spillsYaml`).
+  String _projectContextYaml() => projectContext?.toYaml() ?? '';
 
   /// The `trajectory:` section, defaults never written (the file stays
   /// minimal — same convention as every other section).
@@ -1954,6 +1976,7 @@ const _diskPreservedSections = {
   // is the only faithful form, like `memory:`/`a2a:`); the rest render
   // when the caller carries them — caller wins wherever it rendered.
   'spills',
+  'projectContext',
   'subagents',
   'waiting',
   'jobs',
