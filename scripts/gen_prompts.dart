@@ -240,6 +240,11 @@ const rootSpecs = <PromptSpec>[
     constName: 'ttsrInterruptPrompt',
     requiredToken: '{{content}}',
   ),
+  PromptSpec(
+    source: 'prompts/spill/user_read_instruction.md',
+    constName: 'userSpillInstructionPrompt',
+    requiredToken: '{{path}}',
+  ),
 ];
 
 /// The example app prompts, emitted into [exampleOutputPath] in this order.
