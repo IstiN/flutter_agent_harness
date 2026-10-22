@@ -50,7 +50,7 @@ extension AgentServiceEvents on AgentService {
           isError: isError,
         );
       case ModelRequestEvent():
-        _persistModelRequest(event);
+        await _persistModelRequest(event);
       case ToolPairingRepairEvent(:final report):
         // gh-1449 AC6: persist a batch of FIRST-TIME orphan notes as the
         // hidden `orphan_report` record — the resume seed (see loadSession).
@@ -267,7 +267,13 @@ extension AgentServiceEvents on AgentService {
   /// pass serializes through the same writer as message appends and flushes
   /// records right before their assistant message, so the request summary
   /// stays ahead of it on the record chain (the replay walk expects that).
-  void _persistModelRequest(ModelRequestEvent event) {
+  ///
+  /// gh-1745: the heavy half of the capture (per-message previews/block
+  /// texts, the raw wire dump) spills into the session's request-blob dir
+  /// first; the buffered `model_request_summary` keeps lightweight
+  /// metadata plus the spill pointer. A failed (or killed-switch) spill
+  /// falls back to the legacy inline persistence.
+  Future<void> _persistModelRequest(ModelRequestEvent event) async {
     final persister = _trajectoryBlobPersisterFor();
     // Issue #440: a new request-context version lands a `model_change`
     // ahead of its blob/summary records (content-addressed, once per
@@ -278,12 +284,30 @@ extension AgentServiceEvents on AgentService {
         data: const {},
       ));
     }
+    var detail = event.detail;
+    var rawWireDump = event.rawWireDump;
+    final store = _requestBlobStoreFor();
+    if (store != null) {
+      final spill = await store.write(
+        detail: event.detail,
+        rawWireDump: event.rawWireDump,
+        redactWireDump: _redactionPipeline?.redact,
+      );
+      if (spill != null) {
+        detail = stripTrajectoryRequestDetail(
+          event.detail,
+          spillFile: spill.file,
+          wireDumpHash: spill.wireDumpHash,
+        );
+        rawWireDump = null;
+      }
+    }
     _pendingRequestRecords.addAll(
       persister.recordsFor(
-        event.detail,
+        detail,
         promptBlob: event.promptBlob,
         manifestBlob: event.manifestBlob,
-        rawWireDump: event.rawWireDump,
+        rawWireDump: rawWireDump,
       ),
     );
   }
