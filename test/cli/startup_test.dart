@@ -1355,6 +1355,154 @@ void main() {
     });
   });
 
+  group('gh-1781 — standalone provider-queue boot', () {
+    test('UT-startup-api-key-queue: queueResolved satisfies the headless '
+        'key gate without OPENROUTER_API_KEY', () {
+      final key = startupApiKey(
+        'openai-completions',
+        SecureKeyCache(null),
+        baseUrl: _openrouter,
+        customProviders: const [],
+        defaultRoleResolved: false,
+        interactive: false,
+        queueResolved: true,
+        env: const {},
+      );
+      expect(key, isEmpty);
+    });
+
+    test('UT-startup-api-key-queue: an env key still resolves when the '
+        'queue is active', () {
+      final key = startupApiKey(
+        'openai-completions',
+        SecureKeyCache(null),
+        baseUrl: _openrouter,
+        customProviders: const [],
+        defaultRoleResolved: false,
+        interactive: false,
+        queueResolved: true,
+        env: const {'OPENROUTER_API_KEY': 'envkeyvalue123'},
+      );
+      expect(key, 'envkeyvalue123');
+    });
+
+    test('UT-queue-preload-names: queue entries feed the preload set', () {
+      final names = secureKeyPreloadNames(
+        CliConfig(),
+        baseUrl: null,
+        queueEntries: const [
+          ProviderQueueEntry(
+            providerType: 'anthropic',
+            model: 'm1',
+            apiKeyEnv: 'MY_CUSTOM_QUEUE_KEY',
+            refreshTokenEnv: 'MY_REFRESH_TOKEN',
+          ),
+          ProviderQueueEntry(providerType: 'chatgpt-codex', model: 'gpt-5-codex'),
+        ],
+      );
+      expect(
+        names,
+        containsAll([
+          'MY_CUSTOM_QUEUE_KEY',
+          'MY_REFRESH_TOKEN',
+          chatGptOAuthCredentialsEnvName,
+        ]),
+      );
+    });
+
+    test('UT-queue-preload-names: no queue entries keeps the legacy set '
+        'byte-identical', () {
+      final legacy = secureKeyPreloadNames(CliConfig(), baseUrl: null);
+      final withEmptyQueue = secureKeyPreloadNames(
+        CliConfig(),
+        baseUrl: null,
+        queueEntries: const [],
+      );
+      expect(withEmptyQueue, legacy);
+    });
+
+    test('UT-queue-secret-redaction: queue secrets register in both the '
+        'redactor and the pipeline', () {
+      final pipeline = buildRedactionPipeline(null);
+      final redactor = buildSecretRedactor(
+        queueSecrets: const {
+          'MY_CUSTOM_QUEUE_KEY': 'custom-secret-value-1',
+          'MY_CUSTOM_QUEUE_KEY_2': 'custom-secret-value-2',
+        },
+        env: const {},
+        pipeline: pipeline,
+      );
+      expect(
+        redactor.names,
+        containsAll(['MY_CUSTOM_QUEUE_KEY', 'MY_CUSTOM_QUEUE_KEY_2']),
+      );
+      expect(
+        redactor.redact('leak custom-secret-value-1 here'),
+        'leak *** here',
+      );
+      expect(
+        pipeline!.redact('leak custom-secret-value-2 here'),
+        'leak *** here',
+      );
+    });
+
+    test('UT-queue-secret-redaction: no queue secrets keeps the redactor '
+        'empty', () {
+      expect(buildSecretRedactor(env: const {}).isEmpty, isTrue);
+    });
+
+    test('UT-queue-boot-model-notes: the queue owns the boot identity only '
+        'when the launch pinned nothing of its own', () {
+      expect(
+        queueOwnsBootModel(
+          modelFlag: false,
+          providerFlag: false,
+          baseUrlFlag: false,
+          hasProviderPreconfig: false,
+          folderRestoreApplied: false,
+        ),
+        isTrue,
+      );
+      for (final (modelFlag, providerFlag, baseUrlFlag, preconfig, folder) in const [
+        (true, false, false, false, false),
+        (false, true, false, false, false),
+        (false, false, true, false, false),
+        (false, false, false, true, false),
+        (false, false, false, false, true),
+      ]) {
+        expect(
+          queueOwnsBootModel(
+            modelFlag: modelFlag,
+            providerFlag: providerFlag,
+            baseUrlFlag: baseUrlFlag,
+            hasProviderPreconfig: preconfig,
+            folderRestoreApplied: folder,
+          ),
+          isFalse,
+          reason:
+              'modelFlag=$modelFlag providerFlag=$providerFlag '
+              'baseUrlFlag=$baseUrlFlag preconfig=$preconfig folder=$folder',
+        );
+      }
+    });
+
+    test('referencedSecureKeyNames includes queue entry key names (the '
+        'store-diagnostics set)', () {
+      final names = referencedSecureKeyNames(
+        CliConfig(),
+        queueEntries: const [
+          ProviderQueueEntry(
+            providerType: 'anthropic',
+            model: 'm1',
+            apiKeyEnv: 'MY_CUSTOM_QUEUE_KEY',
+          ),
+        ],
+      );
+      expect(names, contains('MY_CUSTOM_QUEUE_KEY'));
+      expect(referencedSecureKeyNames(CliConfig()), isEmpty);
+    });
+  });
+
   group('webSearchSecrets', () {
     test('keyed providers join when their env key is set', () async {
       final store = webSearchSecrets(
