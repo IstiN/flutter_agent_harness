@@ -1,0 +1,447 @@
+// IT-1..IT-4 / REG-1..REG-3 (gh-178): the coherence gates driven against
+// the CLI — typed, numbered and picker switch paths over a ≥2-provider
+// candidate space with overlapping-looking ids, the request-build refusal
+// with zero requests issued, the restore gate, and the full 2026-10-22
+// incident replay.
+import 'dart:convert';
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:test/test.dart';
+
+import 'agent_cli_test_support.dart';
+
+void main() {
+  late MemoryExecutionEnv env;
+  late FakeCliIO io;
+
+  setUp(() {
+    env = MemoryExecutionEnv(cwd: '/work');
+    io = FakeCliIO();
+  });
+
+  tearDown(() {
+    io.close();
+  });
+
+  /// The incident-shaped fixture: a saved Copilot entry (enterprise
+  /// endpoint, its own key slot) is ACTIVE, and kimi is reachable as an
+  /// env-keyed catalog provider (KIMI_API_KEY in the environment) whose
+  /// `/models` answer overlaps nothing with the copilot entry's.
+  (AgentCli, FakeStreamFunction) incidentCli({
+    String? kimiEnvKey,
+    bool rolesMode = false,
+    Future<List<String>> Function(String baseUrl, {required String apiKey})?
+    modelsFetcher,
+    Model? bootModel,
+  }) {
+    final store = FakeSecureKeyStore()
+      ..map['FA_KEY_COPILOT_ACME'] = 'copilot-key';
+    if (kimiEnvKey != null) {
+      store.map['KIMI_API_KEY'] = kimiEnvKey;
+    }
+    final cache = SecureKeyCache(store);
+    final registry = CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'copilot-acme',
+        apiType: 'copilot',
+        baseUrl: 'https://api.enterprise.githubcopilot.com',
+        keyName: 'FA_KEY_COPILOT_ACME',
+        modelId: 'gemini-4-argon',
+      ),
+    ]);
+    final fake = FakeStreamFunction([
+      textTurn('ok-1'),
+      textTurn('ok-2'),
+      textTurn('ok-3'),
+      textTurn('ok-4'),
+      textTurn('ok-5'),
+    ]);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model:
+            bootModel ??
+            const Model(
+              id: 'gemini-4-argon',
+              api: 'openai-completions',
+              provider: 'copilot',
+              baseUrl: 'https://api.enterprise.githubcopilot.com',
+              contextWindow: 1000000,
+              maxTokens: 32768,
+            ),
+        apiKey: 'copilot-key',
+        env: env,
+        sessionRoot: '/sessions',
+        envVarValue: (name) => store.map[name],
+        envVarIsSet: (name) => store.map.containsKey(name),
+        secureKeys: cache,
+        customProviders: registry,
+        modelsFetcher: modelsFetcher,
+        providerKind: 'copilot',
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+    return (cli, fake);
+  }
+
+  // Returns the UNAWAITED run future (await would flatten and deadlock
+  // against the /exit each test sends before awaiting it).
+  Future<Future<void>> boot(AgentCli cli) {
+    final run = cli.run();
+    return waitForIt(
+      () => !cli.isBusy && io.out.toString().isNotEmpty,
+    ).then((_) => run);
+  }
+
+  group('IT-1: every switch path resolves the whole triple (AC1)', () {
+    test('typed `/model kimi/kimi-for-coding` switches provider + endpoint '
+        '+ key family, not just the id', () async {
+      final fetches = <String>[];
+      final (cli, fake) = incidentCli(
+        kimiEnvKey: 'kimi-key',
+        modelsFetcher: (baseUrl, {required apiKey}) async {
+          fetches.add(baseUrl);
+          return baseUrl.contains('kimi')
+              ? const ['kimi-for-coding', 'k3-256k']
+              : const ['gemini-4-argon'];
+        },
+      );
+      final run = await boot(cli);
+
+      io.sendLine('/model kimi/kimi-for-coding');
+      await waitForIt(
+        () => cli.agent.state.model.provider == 'kimi',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      // The whole quadruple moved (provider + endpoint + key family).
+      expect(cli.agent.state.model.id, 'kimi-for-coding');
+      expect(cli.agent.state.model.provider, 'kimi');
+      expect(cli.agent.state.model.baseUrl, 'https://api.kimi.com/coding/v1');
+    });
+
+    test('numbered pick of a cross-provider row moves the whole triple',
+        () async {
+      final (cli, _) = incidentCli(
+        kimiEnvKey: 'kimi-key',
+        modelsFetcher: (baseUrl, {required apiKey}) async =>
+            baseUrl.contains('kimi')
+            ? const ['kimi-for-coding', 'k3-256k']
+            : const ['gemini-4-argon'],
+      );
+      final run = await boot(cli);
+
+      io.sendLine('/models');
+      await waitForIt(
+        () => io.out.toString().contains('kimi/kimi-for-coding'),
+      );
+      final output = io.out.toString();
+      final kimiRow = output
+          .split('\n')
+          .firstWhere(
+            (line) => line.contains('kimi/kimi-for-coding'),
+            orElse: () => fail('no kimi row listed:\n$output'),
+          );
+      final number = RegExp(r'(\d+)\)\s+kimi/kimi-for-coding')
+          .firstMatch(kimiRow)
+          ?.group(1);
+      expect(number, isNotNull, reason: 'unparsed listing row: $kimiRow');
+      io.sendLine('/model $number');
+      await waitForIt(
+        () =>
+            cli.agent.state.model.provider == 'kimi' &&
+            cli.agent.state.model.id == 'kimi-for-coding',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.agent.state.model.baseUrl, 'https://api.kimi.com/coding/v1');
+    });
+
+    test('picker pick (provider|model key) moves the whole triple', () async {
+      final (cli, _) = incidentCli(
+        kimiEnvKey: 'kimi-key',
+        modelsFetcher: (baseUrl, {required apiKey}) async =>
+            baseUrl.contains('kimi')
+            ? const ['kimi-for-coding', 'k3-256k']
+            : const ['gemini-4-argon'],
+      );
+      final run = await boot(cli);
+
+      await cli.tuiSelectModelForTest('kimi|kimi-for-coding');
+      await waitForIt(
+        () =>
+            cli.agent.state.model.provider == 'kimi' &&
+            cli.agent.state.model.id == 'kimi-for-coding',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.agent.state.model.baseUrl, 'https://api.kimi.com/coding/v1');
+    });
+
+    test('a same-provider pick keeps the current triple (no provider hop)',
+        () async {
+      final (cli, _) = incidentCli(
+        kimiEnvKey: 'kimi-key',
+        modelsFetcher: (baseUrl, {required apiKey}) async =>
+            baseUrl.contains('kimi')
+            ? const ['kimi-for-coding']
+            : const ['gemini-4-argon', 'gpt-5-copilot'],
+      );
+      final run = await boot(cli);
+
+      io.sendLine('/model copilot-acme/gpt-5-copilot');
+      await waitForIt(() => cli.agent.state.model.id == 'gpt-5-copilot');
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.agent.state.model.provider, 'copilot');
+      expect(
+        cli.agent.state.model.baseUrl,
+        'https://api.enterprise.githubcopilot.com',
+      );
+    });
+  });
+
+  group('IT-1/E1: provider removed after listing refuses', () {
+    test('a cross-provider pick of an unresolvable provider refuses and '
+        'applies no partial triple', () async {
+      final (cli, _) = incidentCli(
+        kimiEnvKey: 'kimi-key',
+        modelsFetcher: (baseUrl, {required apiKey}) async =>
+            baseUrl.contains('kimi')
+            ? const ['kimi-for-coding']
+            : const ['gemini-4-argon'],
+      );
+      final run = await boot(cli);
+
+      io.sendLine('/model gone-provider/kimi-for-coding');
+      await waitForIt(
+        () => io.out.toString().contains('model coherence refusal'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(io.out.toString(), contains('gone-provider'));
+      // No partial triple: the active model is untouched.
+      expect(cli.agent.state.model.id, 'gemini-4-argon');
+      expect(cli.agent.state.model.provider, 'copilot');
+    });
+  });
+
+  group('IT-1/E3: cross-provider pick with no target key refuses up front',
+      () {
+    test('the refusal names the TARGET key slot; no request is built',
+        () async {
+      // A saved kimi entry whose key slot has no value: listed, pickable,
+      // but the switch would bake an empty key — refused up front.
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_COPILOT_ACME'] = 'copilot-key';
+      final cache = SecureKeyCache(store);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'copilot-acme',
+          apiType: 'copilot',
+          baseUrl: 'https://api.enterprise.githubcopilot.com',
+          keyName: 'FA_KEY_COPILOT_ACME',
+          modelId: 'gemini-4-argon',
+        ),
+        CustomProviderEntry(
+          name: 'kimi-act',
+          apiType: 'openai',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          keyName: 'FA_KEY_KIMI_ACT',
+          modelId: 'kimi-for-coding',
+        ),
+      ]);
+      final fake = FakeStreamFunction([textTurn('ok-1'), textTurn('ok-2')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'gemini-4-argon',
+            api: 'openai-completions',
+            provider: 'copilot',
+            baseUrl: 'https://api.enterprise.githubcopilot.com',
+            contextWindow: 1000000,
+            maxTokens: 32768,
+          ),
+          apiKey: 'copilot-key',
+          env: env,
+          sessionRoot: '/sessions',
+          envVarValue: (name) => store.map[name],
+          envVarIsSet: (name) => store.map.containsKey(name),
+          secureKeys: cache,
+          customProviders: registry,
+          providerKind: 'copilot',
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      final run = await boot(cli);
+
+      io.sendLine('/model kimi-act/kimi-for-coding');
+      await waitForIt(
+        () => io.out.toString().contains('model coherence refusal'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('/key set FA_KEY_KIMI_ACT'));
+      expect(output, contains('kimi-act'));
+      // The switch never happened — no partial triple, no keyless wiring.
+      expect(cli.agent.state.model.provider, 'copilot');
+      expect(fake.calls, 0);
+    });
+  });
+
+  group('IT-2/REG-2: the request-build gate refuses before any socket', () {
+    test('a forced mixed active model surfaces the refusal and issues ZERO '
+        'requests (AC2, AC4)', () async {
+      // The G2 guard wraps the catalog stream factory, so this test rides
+      // catalogStreamOverride instead of an injected streamFunction.
+      final store = FakeSecureKeyStore()
+        ..map['KIMI_API_KEY'] = 'kimi-key';
+      final cache = SecureKeyCache(store);
+      final fake = FakeStreamFunction([textTurn('should-never-run')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'kimi-for-coding',
+            api: 'openai-completions',
+            provider: 'copilot',
+            baseUrl: 'https://api.enterprise.githubcopilot.com',
+            contextWindow: 1000000,
+            maxTokens: 32768,
+          ),
+          // The incident's mixed boot wiring: copilot kind + a kimi key.
+          apiKey: 'kimi-key',
+          env: env,
+          sessionRoot: '/sessions',
+          envVarValue: (name) => store.map[name],
+          envVarIsSet: (name) => store.map.containsKey(name),
+          secureKeys: cache,
+          providerKind: 'copilot',
+          catalogStreamOverride: (kind, key) => fake.call,
+        ),
+        io: io,
+      );
+      final run = await boot(cli);
+
+      io.sendLine('hello');
+      await waitForIt(() => !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      expect(fake.calls, 0, reason: 'no request may leave the process');
+      expect(io.out.toString(), contains('model coherence refusal'));
+      expect(io.out.toString(), contains('/provider copilot'));
+    });
+
+    test('a coherent model streams through the same wrapper (no false '
+        'refusal)', () async {
+      final store = FakeSecureKeyStore()
+        ..map['KIMI_API_KEY'] = 'kimi-key';
+      final cache = SecureKeyCache(store);
+      final fake = FakeStreamFunction([textTurn('streams-fine')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'kimi-for-coding',
+            api: 'openai-completions',
+            provider: 'kimi',
+            baseUrl: 'https://api.kimi.com/coding/v1',
+            contextWindow: 200000,
+            maxTokens: 16384,
+          ),
+          apiKey: 'kimi-key',
+          env: env,
+          sessionRoot: '/sessions',
+          envVarValue: (name) => store.map[name],
+          envVarIsSet: (name) => store.map.containsKey(name),
+          secureKeys: cache,
+          providerKind: 'openai-completions',
+          catalogStreamOverride: (kind, key) => fake.call,
+        ),
+        io: io,
+      );
+      final run = await boot(cli);
+
+      io.sendLine('hello');
+      await waitForIt(() => !cli.isBusy && fake.calls == 1);
+      io.sendLine('/exit');
+      await run;
+
+      expect(fake.calls, 1);
+      expect(io.out.toString(), contains('streams-fine'));
+      expect(io.out.toString(), isNot(contains('model coherence refusal')));
+    });
+  });
+
+  group('IT-4/REG-2: the 2026-10-22 incident replay fails closed (AC4)',
+      () {
+    test('mixed boot + picker pick of kimi-for-coding + message never '
+        'produces a copilot-endpoint request carrying kimi-for-coding',
+        () async {
+      final (cli, fake) = incidentCli(
+        kimiEnvKey: 'kimi-key',
+        modelsFetcher: (baseUrl, {required apiKey}) async =>
+            baseUrl.contains('kimi')
+            ? const ['kimi-for-coding', 'k3-256k']
+            : const ['gemini-4-argon'],
+      );
+      final run = await boot(cli);
+
+      // The incident's pick, via the picker's cross-provider key.
+      await cli.tuiSelectModelForTest('kimi|kimi-for-coding');
+      await waitForIt(() => cli.agent.state.model.id == 'kimi-for-coding');
+
+      // REG-3 (AC5): status line, transcript record and the live model
+      // agree on the provider after the switch.
+      expect(cli.statusProviderLabelForTest(), 'kimi');
+      final sessionFile = await _lastModelChangeProvider(env);
+      expect(sessionFile, 'kimi');
+
+      io.sendLine('are you coherent?');
+      await waitForIt(() => !cli.isBusy && fake.calls == 1);
+      io.sendLine('/exit');
+      await run;
+
+      // The wire carried the kimi quadruple — never a copilot-endpoint
+      // request with a kimi model id.
+      expect(fake.models.single.provider, 'kimi');
+      expect(
+        fake.models.single.baseUrl,
+        'https://api.kimi.com/coding/v1',
+      );
+      expect(fake.models.single.id, 'kimi-for-coding');
+    });
+  });
+}
+
+/// The provider named by the LAST `model_change` record of the newest
+/// session file — the transcript half of the REG-3 agreement.
+Future<String?> _lastModelChangeProvider(MemoryExecutionEnv env) async {
+  final listing = await env.listDir('/sessions');
+  final files = [
+    for (final info in (listing.valueOrNull ?? const <FileInfo>[]))
+      if (info.name.endsWith('.jsonl')) info.name,
+  ]..sort();
+  if (files.isEmpty) return null;
+  final text = (await env.readTextFile('/sessions/${files.last}'))
+      .valueOrNull;
+  if (text == null) return null;
+  String? provider;
+  for (final line in text.split('\n')) {
+    if (!line.contains('"model_change"')) continue;
+    try {
+      final record = jsonDecode(line) as Map<String, dynamic>;
+      provider = record['provider'] as String?;
+    } on FormatException {
+      // skip torn line
+    }
+  }
+  return provider;
+}
