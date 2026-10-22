@@ -240,6 +240,75 @@ void main() {
     expect(ms, lessThan(100), reason: 'took ${ms.toStringAsFixed(1)}ms');
   });
 
+  test('absolute median gate trips on a sustained contention window '
+      '(PR #1785 hostile-env red, run 39864427289 — reproduced)', () {
+    // The live red: the median-of-5 measured 118.03ms against the 100ms
+    // budget — ~7x the file-header baseline (~17ms) — while the sibling
+    // single-word gate and all three growth gates on the SAME run stayed
+    // green: a runner contention phase spanned >=3 of the attempt's 5
+    // timed runs. Fixed 17ms/119ms samples reproduce that shape with no
+    // real timing involved: any 3 of the 5 timed runs slowed puts the raw
+    // single-attempt median at 119ms — over the budget, wrap untouched.
+    final oneContendedAttempt = ScriptedClock(slowed: {3, 4, 5});
+    final rawMedian =
+        medianWrapMs('x', 80, elapsedUs: oneContendedAttempt.call);
+    expect(
+      rawMedian,
+      greaterThan(100),
+      reason:
+          'the live red shape must trip the raw single-attempt median '
+          '(measured ${rawMedian.toStringAsFixed(1)}ms)',
+    );
+  });
+
+  test('absolute budget gate survives a contention phase covering one '
+      'whole attempt (gh-1785 rework fix)', () {
+    // Attempt 1 slowed on EVERY timed run (worse than the live red), the
+    // two follow-up attempts clean: the gate rides the clean attempt
+    // medians via the min and passes — contention alone can no longer red
+    // the leg, and the wrap itself needs no change (the live red was
+    // weather, not regression — see the reproduced test above).
+    final firstAttemptSlowed = ScriptedClock(slowed: {1, 2, 3, 4, 5});
+    expectWrapUnderBudget(
+      'x',
+      80,
+      100,
+      '1M ASCII prose',
+      elapsedUs: firstAttemptSlowed.call,
+    );
+    // Layout guard, gh-1532 style: 3 attempts x 5 timed runs = 15
+    // measurement calls. If the attempt layout ever changes, the slowed
+    // indices above silently land on the wrong calls — this turns that
+    // into a loud failure.
+    expect(
+      firstAttemptSlowed.calls,
+      15,
+      reason: 'the slowed indices encode the attempt layout',
+    );
+  });
+
+  test('hardened absolute gate still trips on a genuine regression '
+      '(min-of-attempts is not a rubber stamp)', () {
+    // Every attempt inflated — the shape a real constant-factor
+    // regression produces (the pre-gh-1496 wrap measured ~117ms clean,
+    // over the budget in EVERY attempt): the best of the attempt medians
+    // is still over the budget and the gate must fail, the same
+    // meaningfulness guard the growth asserts carry (degenerate-flat).
+    final alwaysSlow = ScriptedClock(
+      slowed: {for (var i = 1; i <= 15; i++) i},
+    );
+    expect(
+      () => expectWrapUnderBudget(
+        'x',
+        80,
+        100,
+        '1M ASCII prose',
+        elapsedUs: alwaysSlow.call,
+      ),
+      throwsA(isA<TestFailure>()),
+    );
+  });
+
   test('wrap time grows linearly: ASCII prose, 2x input <= 3.2x time', () {
     // 500k base cells, not 100k: at ~3ms per wrap the sample sits on the
     // scheduler-noise floor of a shared CI runner — the run at PR #1526
