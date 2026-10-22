@@ -80,6 +80,15 @@ extension on AgentCli {
       ('delete', 'Delete provider', 'remove from the registry'),
     ]);
     if (choice == null) return;
+    await _providerDeleteOrEdit(entry, choice);
+  }
+
+  /// Dispatches the picked action of [_providerEditOrDelete]: delete runs
+  /// its confirmation flow; everything else opens the edit wizard.
+  Future<void> _providerDeleteOrEdit(
+    CustomProviderEntry entry,
+    String choice,
+  ) async {
     if (choice == 'delete') {
       await _deleteProviderWithConfirmation(entry);
       return;
@@ -1804,6 +1813,12 @@ extension on AgentCli {
       return const <String>[];
     });
     if (projects.isEmpty) return;
+    await _pickCodeMieProject(projects);
+  }
+
+  /// Offers the project picker for [projects] and reports the selection
+  /// (a cancelled picker stays silent).
+  Future<void> _pickCodeMieProject(List<String> projects) async {
     final projectPick = await _pickOption('CodeMie project', [
       for (final p in projects) (p, p, ''),
     ]);
@@ -2121,10 +2136,15 @@ extension on AgentCli {
     return keyName;
   }
 
+  /// Whether [dot] (an `id.indexOf('.')` result) splits an id of [length]
+  /// into a usable `<head>.<tail>` pair: the dot is neither leading nor
+  /// trailing.
+  bool _dialDotSplits(int dot, int length) => dot > 0 && dot < length - 1;
+
   /// Short human label for a deployment id in the picker descriptions.
   String _dialDeploymentLabel(String id) {
     final dot = id.indexOf('.');
-    return dot > 0 && dot < id.length - 1 ? id.substring(0, dot) : id;
+    return _dialDotSplits(dot, id.length) ? id.substring(0, dot) : id;
   }
 
   /// Applies a provider/endpoint switch: rebuilds the model and stream
@@ -2437,12 +2457,17 @@ extension on AgentCli {
     String? name,
   }) => _interactiveKeySetOrReport(name, tui);
 
+  /// The secure key store when usable on this host (present and
+  /// available), else null.
+  SecureKeyCache? get _usableSecureKeys =>
+      config.secureKeys?.available == true ? config.secureKeys : null;
+
   Future<void> _interactiveKeySetOrReport(
     String? name,
     FaTuiController tui,
   ) async {
-    final keys = config.secureKeys;
-    if (keys == null || !keys.available) {
+    final keys = _usableSecureKeys;
+    if (keys == null) {
       io.writeln('secure storage unavailable on this host');
       return;
     }

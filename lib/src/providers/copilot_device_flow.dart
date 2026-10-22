@@ -147,20 +147,22 @@ Future<CopilotDeviceGrant> requestCopilotDeviceGrant({
   return CopilotDeviceGrant(
     deviceCode: deviceCode,
     userCode: userCode,
-    verificationUri: switch (body['verification_uri']) {
-      final String uri when uri.isNotEmpty => uri,
-      _ => 'https://github.com/login/device',
-    },
-    expiresIn: switch (body['expires_in']) {
-      final int n => n,
-      _ => 900,
-    },
-    interval: switch (body['interval']) {
-      final int n => n,
-      _ => 5,
-    },
+    verificationUri: _stringOr(
+      body['verification_uri'],
+      'https://github.com/login/device',
+    ),
+    expiresIn: _intOr(body['expires_in'], 900),
+    interval: _intOr(body['interval'], 5),
   );
 }
+
+/// The field's string value, or [fallback] when it is absent, not a
+/// string, or empty.
+String _stringOr(Object? value, String fallback) =>
+    value is String && value.isNotEmpty ? value : fallback;
+
+/// The field's int value, or [fallback] when it is absent or not an int.
+int _intOr(Object? value, int fallback) => value is int ? value : fallback;
 
 /// Polls for the GitHub token until the user authorizes (goal:
 /// device_flow.go `pollAccessToken`).

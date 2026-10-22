@@ -1072,47 +1072,45 @@ final class StatusLineSeparator {
 StatusLineSeparator getSeparator(
   StatusLineSeparatorStyle style, {
   bool nerd = false,
-}) {
-  final pwLeft = nerd ? '\u{e0b0}' : '▶';
-  final pwRight = nerd ? '\u{e0b2}' : '◀';
-  final pwThinLeft = nerd ? '\u{e0b1}' : '>';
-  final pwThinRight = nerd ? '\u{e0b3}' : '<';
-  return switch (style) {
-    StatusLineSeparatorStyle.powerline => StatusLineSeparator(
-      left: pwLeft,
-      right: pwRight,
-      capAfterLeft: pwRight,
-      capBeforeRight: pwLeft,
-    ),
-    StatusLineSeparatorStyle.powerlineThin => StatusLineSeparator(
-      left: pwThinLeft,
-      right: pwThinRight,
-      // Full-width caps even for the thin style (omp verbatim).
-      capAfterLeft: pwRight,
-      capBeforeRight: pwLeft,
-    ),
-    StatusLineSeparatorStyle.slash => const StatusLineSeparator(
-      left: '/',
-      right: '/',
-    ),
-    StatusLineSeparatorStyle.pipe => const StatusLineSeparator(
-      left: '│',
-      right: '│',
-    ),
-    StatusLineSeparatorStyle.block => StatusLineSeparator(
-      left: nerd ? '█' : '▌',
-      right: nerd ? '█' : '▌',
-    ),
-    StatusLineSeparatorStyle.space => const StatusLineSeparator(
-      left: ' ',
-      right: ' ',
-    ),
-    StatusLineSeparatorStyle.ascii => const StatusLineSeparator(
-      left: '>',
-      right: '<',
-    ),
-  };
-}
+}) => switch (style) {
+  StatusLineSeparatorStyle.powerline => StatusLineSeparator(
+    left: _glyph(nerd, '\u{e0b0}', '▶'),
+    right: _glyph(nerd, '\u{e0b2}', '◀'),
+    capAfterLeft: _glyph(nerd, '\u{e0b2}', '◀'),
+    capBeforeRight: _glyph(nerd, '\u{e0b0}', '▶'),
+  ),
+  StatusLineSeparatorStyle.powerlineThin => StatusLineSeparator(
+    left: _glyph(nerd, '\u{e0b1}', '>'),
+    right: _glyph(nerd, '\u{e0b3}', '<'),
+    // Full-width caps even for the thin style (omp verbatim).
+    capAfterLeft: _glyph(nerd, '\u{e0b2}', '◀'),
+    capBeforeRight: _glyph(nerd, '\u{e0b0}', '▶'),
+  ),
+  StatusLineSeparatorStyle.slash => const StatusLineSeparator(
+    left: '/',
+    right: '/',
+  ),
+  StatusLineSeparatorStyle.pipe => const StatusLineSeparator(
+    left: '│',
+    right: '│',
+  ),
+  StatusLineSeparatorStyle.block => StatusLineSeparator(
+    left: _glyph(nerd, '█', '▌'),
+    right: _glyph(nerd, '█', '▌'),
+  ),
+  StatusLineSeparatorStyle.space => const StatusLineSeparator(
+    left: ' ',
+    right: ' ',
+  ),
+  StatusLineSeparatorStyle.ascii => const StatusLineSeparator(
+    left: '>',
+    right: '<',
+  ),
+};
+
+/// [nerdGlyph] when [nerd], else the font-safe [plainGlyph].
+String _glyph(bool nerd, String nerdGlyph, String plainGlyph) =>
+    nerd ? nerdGlyph : plainGlyph;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Gauge math + brand fade
@@ -1245,6 +1243,18 @@ bool _isBranchlessGitHeader(String header) =>
     header.startsWith('No commits yet') ||
     header.startsWith('HEAD (no branch)');
 
+/// The branch name in a `## ` porcelain header line: everything before the
+/// upstream `...` marker or the dirty `[...]` bracket. Null when the
+/// header reports no branch (see [_isBranchlessGitHeader]).
+String? _gitHeaderBranch(String header) {
+  if (_isBranchlessGitHeader(header)) return null;
+  final dot = header.indexOf('...');
+  final bracket = header.indexOf('[');
+  return header
+      .substring(0, dot < 0 ? (bracket < 0 ? header.length : bracket) : dot)
+      .trim();
+}
+
 /// Parses `git status --porcelain` output (the git watcher seam's
 /// fixture format) into counts + branch (from the `## branch` header;
 /// a detached HEAD reports a null branch — dirty counts only). Pure —
@@ -1257,16 +1267,7 @@ StatusLineGit parseGitStatusPorcelain(String output) {
   for (final line in output.split('\n')) {
     if (line.isEmpty) continue;
     if (line.startsWith('## ')) {
-      final header = line.substring(3);
-      // An initial repo and a detached HEAD both report branch-less
-      // rather than adopting their sentence as a name (see
-      // [_isBranchlessGitHeader]).
-      if (_isBranchlessGitHeader(header)) continue;
-      final dot = header.indexOf('...');
-      final bracket = header.indexOf('[');
-      branch = header
-          .substring(0, dot < 0 ? (bracket < 0 ? header.length : bracket) : dot)
-          .trim();
+      branch = _gitHeaderBranch(line.substring(3)) ?? branch;
       continue;
     }
     if (line.length < 2) continue;

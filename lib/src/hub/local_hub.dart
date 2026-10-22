@@ -649,7 +649,6 @@ class LocalHub {
     Map<String, dynamic> frame,
     String? agentId,
   ) async {
-    final op = frame['op'] as String?;
     // The enroll wire shape is `{"t":"enroll"}` (no `op`) — a client
     // holding a master secret sends it right after hello. On a protected
     // hub only master-authenticated connections may enroll; the issued
@@ -659,23 +658,51 @@ class LocalHub {
     if (frame['t'] == 'enroll') {
       return _enroll(ws, agentId);
     }
+    return _dispatchOp(ws, frame['op'] as String?, frame, agentId);
+  }
+
+  /// Routes one decoded `op` frame. `send`/`join`/`flush` require an
+  /// enrolled agent id — without one they fall through to the bad-frame
+  /// reply, same as any unknown op. A `hello` answer (the agent id, or
+  /// null when the handshake was rejected) returns directly; every other
+  /// op returns the connection's [agentId] unchanged.
+  Future<String?> _dispatchOp(
+    WebSocket ws,
+    String? op,
+    Map<String, dynamic> frame,
+    String? agentId,
+  ) async {
     switch (op) {
       case 'hello':
         return _hello(ws, frame);
       case 'whois':
         _whois(ws, frame);
-      case 'send' when agentId != null:
-        await _send(ws, agentId, frame);
-      case 'join' when agentId != null:
-        _join(ws, agentId, frame);
-      case 'flush' when agentId != null:
-        _flush(ws, agentId);
       case 'presence_query':
         _presence(ws, frame);
+      case 'send' || 'join' || 'flush' when agentId != null:
+        await _agentOp(op!, ws, agentId, frame);
       default:
         _reply(ws, {'op': 'error', 'code': 'bad_frame', 'msg': 'op?$op'});
     }
     return agentId;
+  }
+
+  /// The agent-gated ops (see [_dispatchOp]): [op] is `send`, `join`, or
+  /// `flush` and [agentId] is enrolled.
+  Future<void> _agentOp(
+    String op,
+    WebSocket ws,
+    String agentId,
+    Map<String, dynamic> frame,
+  ) async {
+    switch (op) {
+      case 'send':
+        await _send(ws, agentId, frame);
+      case 'join':
+        _join(ws, agentId, frame);
+      case 'flush':
+        _flush(ws, agentId);
+    }
   }
 
   Future<String?> _hello(WebSocket ws, Map<String, dynamic> frame) async {

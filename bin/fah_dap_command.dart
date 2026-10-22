@@ -754,7 +754,7 @@ class DapHubController {
     final script = Platform.script;
     final String executable;
     final List<String> arguments;
-    if (script.scheme == 'file' && script.path.endsWith('.dart')) {
+    if (_runsFromSource(script)) {
       executable = Platform.executable;
       arguments = [script.toFilePath(), 'hub', 'serve', '--port', '$port'];
     } else {
@@ -769,6 +769,11 @@ class DapHubController {
     return process.pid;
   }
 }
+
+/// Whether this CLI runs from source (a `.dart` file script) — the hub
+/// spawn then relays through the Dart VM instead of a compiled binary.
+bool _runsFromSource(Uri script) =>
+    script.scheme == 'file' && script.path.endsWith('.dart');
 
 /// Whether the host can probe pid liveness the POSIX way (the
 /// `kill -0` dance). Windows cannot — dart:io has no liveness probe

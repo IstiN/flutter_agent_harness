@@ -77,61 +77,82 @@ final class FileAgentTelemetrySink implements AgentTelemetrySink {
   /// segment (never a dangling separator).
   String _message(AgentTelemetryEvent event) {
     final tail = _tail(event) ?? '';
-    final head = switch (event.kind) {
-      AgentTelemetryEventKind.runStart => 'run start',
-      AgentTelemetryEventKind.turnStart => 'turn start',
-      AgentTelemetryEventKind.requestStart => 'request start',
-      AgentTelemetryEventKind.firstToken => 'first token',
-      AgentTelemetryEventKind.toolStart => 'tool start',
-      AgentTelemetryEventKind.toolEnd => 'tool end',
-      AgentTelemetryEventKind.toolHeartbeat => 'tool heartbeat',
-      AgentTelemetryEventKind.toolStuck => 'tool stuck',
-      AgentTelemetryEventKind.turnEnd => 'turn end',
-      AgentTelemetryEventKind.error => 'run error',
-      AgentTelemetryEventKind.runEnd => 'run end',
-    };
+    final head = _kindLabels[event.kind]!;
     return tail.isEmpty ? '$head sid=$tag' : '$head sid=$tag $tail';
   }
+
+  /// The `head` label per record kind.
+  static const _kindLabels = <AgentTelemetryEventKind, String>{
+    AgentTelemetryEventKind.runStart: 'run start',
+    AgentTelemetryEventKind.turnStart: 'turn start',
+    AgentTelemetryEventKind.requestStart: 'request start',
+    AgentTelemetryEventKind.firstToken: 'first token',
+    AgentTelemetryEventKind.toolStart: 'tool start',
+    AgentTelemetryEventKind.toolEnd: 'tool end',
+    AgentTelemetryEventKind.toolHeartbeat: 'tool heartbeat',
+    AgentTelemetryEventKind.toolStuck: 'tool stuck',
+    AgentTelemetryEventKind.turnEnd: 'turn end',
+    AgentTelemetryEventKind.error: 'run error',
+    AgentTelemetryEventKind.runEnd: 'run end',
+  };
 
   /// The per-kind fields after `sid=`, null-guarded so a record missing
   /// its optional detail never renders a dangling separator or a literal
   /// `null`.
   String? _tail(AgentTelemetryEvent event) {
-    final name = event.toolName;
-    final detail = event.detail;
-    final parts = switch (event.kind) {
-      AgentTelemetryEventKind.runStart => const <String>[],
-      AgentTelemetryEventKind.turnStart => const <String>[],
-      AgentTelemetryEventKind.requestStart => [?detail],
-      AgentTelemetryEventKind.firstToken => [?detail],
-      AgentTelemetryEventKind.toolStart => [if (name != null) 'name=$name'],
-      AgentTelemetryEventKind.toolEnd => [
-        if (name != null) 'name=$name',
-        'error=${event.isError}',
-      ],
-      AgentTelemetryEventKind.toolHeartbeat => [
-        if (name != null) 'name=$name',
-        ?detail,
-        if (event.outputBytes != null) 'out=${event.outputBytes}B',
-        if (event.attempt != null) 'attempt=${event.attempt}',
-      ],
-      AgentTelemetryEventKind.toolStuck => [
-        if (name != null) 'name=$name',
-        ?detail,
-      ],
-      AgentTelemetryEventKind.turnEnd => [
-        'stop=${event.stopReason}',
-        'elapsed=${event.sinceRunStart.inSeconds}s',
-      ],
-      AgentTelemetryEventKind.error => [
-        'elapsed=${event.sinceRunStart.inSeconds}s',
-        if (event.httpStatus != null) 'http=${event.httpStatus}',
-        ?detail,
-      ],
-      AgentTelemetryEventKind.runEnd => [
-        'elapsed=${event.sinceRunStart.inSeconds}s',
-      ],
-    };
+    final parts = _tailBuilders[event.kind]?.call(event) ?? const <String>[];
     return parts.isEmpty ? null : parts.join(' ');
   }
+
+  /// The per-kind tail builders; runStart/turnStart have no entry — their
+  /// tail is empty (label + `sid=` alone).
+  static final _tailBuilders =
+      <AgentTelemetryEventKind, List<String> Function(AgentTelemetryEvent)>{
+        AgentTelemetryEventKind.requestStart: _detailTail,
+        AgentTelemetryEventKind.firstToken: _detailTail,
+        AgentTelemetryEventKind.toolStart: _toolTail,
+        AgentTelemetryEventKind.toolEnd: _toolTail,
+        AgentTelemetryEventKind.toolHeartbeat: _toolTail,
+        AgentTelemetryEventKind.toolStuck: _toolTail,
+        AgentTelemetryEventKind.turnEnd: _turnEndTail,
+        AgentTelemetryEventKind.error: _errorKindTail,
+        AgentTelemetryEventKind.runEnd: _elapsedTail,
+      };
+
+  /// The bare-detail tail (request start / first token).
+  static List<String> _detailTail(AgentTelemetryEvent event) => [?event.detail];
+
+  /// The `tool *` tail family: `name=` first, then the per-kind fields
+  /// (tool start carries the name alone).
+  static List<String> _toolTail(AgentTelemetryEvent event) {
+    final name = event.toolName;
+    final rest = switch (event.kind) {
+      AgentTelemetryEventKind.toolEnd => ['error=${event.isError}'],
+      AgentTelemetryEventKind.toolHeartbeat => _heartbeatTail(event),
+      AgentTelemetryEventKind.toolStuck => [?event.detail],
+      _ => const <String>[], // tool start: the name alone.
+    };
+    return [if (name != null) 'name=$name', ...rest];
+  }
+
+  static List<String> _heartbeatTail(AgentTelemetryEvent event) => [
+    ?event.detail,
+    if (event.outputBytes != null) 'out=${event.outputBytes}B',
+    if (event.attempt != null) 'attempt=${event.attempt}',
+  ];
+
+  static List<String> _turnEndTail(AgentTelemetryEvent event) => [
+    'stop=${event.stopReason}',
+    'elapsed=${event.sinceRunStart.inSeconds}s',
+  ];
+
+  static List<String> _errorKindTail(AgentTelemetryEvent event) => [
+    'elapsed=${event.sinceRunStart.inSeconds}s',
+    if (event.httpStatus != null) 'http=${event.httpStatus}',
+    ?event.detail,
+  ];
+
+  static List<String> _elapsedTail(AgentTelemetryEvent event) => [
+    'elapsed=${event.sinceRunStart.inSeconds}s',
+  ];
 }

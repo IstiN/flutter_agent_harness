@@ -391,195 +391,220 @@ class AgentWireProtocol {
 
   /// Encodes [event] into a canonical frame at this protocol's version.
   Map<String, dynamic> encodeEvent(AgentEvent event) {
-    final frame = switch (event) {
-      AgentStartEvent() => const <String, dynamic>{},
-      AgentSettledEvent() => const <String, dynamic>{},
-      TurnStartEvent() => const <String, dynamic>{},
-      AgentEndEvent(:final messages) => {
-        'messages': [
-          for (final message in messages) _messageFrameJson(message),
-        ],
-      },
-      TurnEndEvent(:final message, :final toolResults) => {
-        'message': _messageFrameJson(message),
-        'toolResults': [for (final result in toolResults) result.toJson()],
-      },
-      MessageStartEvent(:final message) => {
-        'message': _messageFrameJson(message),
-      },
-      MessageEndEvent(:final message) => {
-        'message': _messageFrameJson(message),
-      },
-      MessageUpdateEvent(:final message, :final assistantMessageEvent) => {
-        // The partial snapshot IS `message`; the nested event adds only the
-        // delta discriminator so frames stay compact.
-        'message': _messageFrameJson(message),
-        'event': encodeAssistantEvent(assistantMessageEvent),
-      },
-      ToolExecutionStartEvent(
-        :final toolCallId,
-        :final toolName,
-        :final args,
-        :final timestamp,
-      ) =>
-        {
-          'toolCallId': toolCallId,
-          'toolName': toolName,
-          'args': args,
-          'timestamp': timestamp.millisecondsSinceEpoch,
-        },
-      ToolExecutionUpdateEvent(
-        :final toolCallId,
-        :final toolName,
-        :final args,
-        :final partialResult,
-      ) =>
-        {
-          'toolCallId': toolCallId,
-          'toolName': toolName,
-          'args': args,
-          'partialResult': _encodeToolResult(partialResult),
-        },
-      ToolExecutionEndEvent(
-        :final toolCallId,
-        :final toolName,
-        :final result,
-        :final isError,
-      ) =>
-        {
-          'toolCallId': toolCallId,
-          'toolName': toolName,
-          'result': _encodeToolResult(result),
-          'isError': isError,
-        },
-      ModelRequestEvent(
-        :final detail,
-        :final promptBlob,
-        :final manifestBlob,
-        :final rawWireDump,
-      ) =>
-        {
-          'detail': detail.toJson(),
-          'promptBlob': ?promptBlob?.toJson(),
-          'manifestBlob': ?manifestBlob?.toJson(),
-          // SECRET-class (E4): redact via [redactForLog] before logging.
-          'rawWireDump': ?rawWireDump,
-        },
-      ToolPairingRepairEvent(:final report, :final providerError) => {
-        'report': _encodeRepairReport(report),
-        'providerError': ?providerError,
-      },
-      MessageCapRepairEvent(
-        :final messageCount,
-        :final learnedCap,
-        :final compacted,
-        :final providerError,
-      ) =>
-        {
-          'messageCount': messageCount,
-          'learnedCap': ?learnedCap,
-          'compacted': compacted,
-          'providerError': ?providerError,
-        },
-      TaskLedgerEvent(:final ledger) => {'ledger': ledger.toJson()},
-      // gh-1054 liveness: heartbeats and stuck-call follow-ups ride the
-      // wire so external hosts see alive-busy vs dead mid-run, same as
-      // the session ledger and the HEP frames do.
-      ToolCallHeartbeatEvent(
-        :final toolCallId,
-        :final toolName,
-        :final args,
-        :final elapsed,
-        :final outputBytes,
-        :final attempt,
-        :final timestamp,
-      ) =>
-        {
-          'toolCallId': toolCallId,
-          'toolName': toolName,
-          'args': args,
-          'elapsedMs': elapsed.inMilliseconds,
-          'outputBytes': outputBytes,
-          'attempt': attempt,
-          'timestamp': timestamp.millisecondsSinceEpoch,
-        },
-      ToolCallStuckEvent(
-        :final toolCallId,
-        :final toolName,
-        :final args,
-        :final elapsed,
-        :final action,
-        :final detail,
-        :final timestamp,
-      ) =>
-        {
-          'toolCallId': toolCallId,
-          'toolName': toolName,
-          'args': args,
-          'elapsedMs': elapsed.inMilliseconds,
-          'action': action.label,
-          'detail': detail,
-          'timestamp': timestamp.millisecondsSinceEpoch,
-        },
-    };
+    final frame = _eventEncoders[event.runtimeType]!(event);
     return {'v': version, 'kind': _kindOf(event), ...frame};
   }
+
+  /// Per-kind event encoders — table-driven like [_eventDecoders] so the
+  /// dispatch stays a tiny, fully-covered method (CRAP ratchet). Keyed by
+  /// runtimeType of the sealed [AgentEvent] hierarchy; adding a kind is one
+  /// map entry.
+  static final Map<Type, Map<String, dynamic> Function(AgentEvent)>
+  _eventEncoders = {
+    AgentStartEvent: (_) => const <String, dynamic>{},
+    AgentSettledEvent: (_) => const <String, dynamic>{},
+    TurnStartEvent: (_) => const <String, dynamic>{},
+    AgentEndEvent: (event) {
+      final e = event as AgentEndEvent;
+      return {
+        'messages': [
+          for (final message in e.messages) _messageFrameJson(message),
+        ],
+      };
+    },
+    TurnEndEvent: (event) {
+      final e = event as TurnEndEvent;
+      return {
+        'message': _messageFrameJson(e.message),
+        'toolResults': [for (final result in e.toolResults) result.toJson()],
+      };
+    },
+    MessageStartEvent: (event) => {
+      'message': _messageFrameJson((event as MessageStartEvent).message),
+    },
+    MessageEndEvent: (event) => {
+      'message': _messageFrameJson((event as MessageEndEvent).message),
+    },
+    MessageUpdateEvent: (event) {
+      // The partial snapshot IS `message`; the nested event adds only the
+      // delta discriminator so frames stay compact.
+      final e = event as MessageUpdateEvent;
+      return {
+        'message': _messageFrameJson(e.message),
+        'event': encodeAssistantEvent(e.assistantMessageEvent),
+      };
+    },
+    ToolExecutionStartEvent: (event) {
+      final e = event as ToolExecutionStartEvent;
+      return {
+        'toolCallId': e.toolCallId,
+        'toolName': e.toolName,
+        'args': e.args,
+        'timestamp': e.timestamp.millisecondsSinceEpoch,
+      };
+    },
+    ToolExecutionUpdateEvent: (event) {
+      final e = event as ToolExecutionUpdateEvent;
+      return {
+        'toolCallId': e.toolCallId,
+        'toolName': e.toolName,
+        'args': e.args,
+        'partialResult': _encodeToolResult(e.partialResult),
+      };
+    },
+    ToolExecutionEndEvent: (event) {
+      final e = event as ToolExecutionEndEvent;
+      return {
+        'toolCallId': e.toolCallId,
+        'toolName': e.toolName,
+        'result': _encodeToolResult(e.result),
+        'isError': e.isError,
+      };
+    },
+    ModelRequestEvent: (event) {
+      final e = event as ModelRequestEvent;
+      return {
+        'detail': e.detail.toJson(),
+        'promptBlob': ?e.promptBlob?.toJson(),
+        'manifestBlob': ?e.manifestBlob?.toJson(),
+        // SECRET-class (E4): redact via [redactForLog] before logging.
+        'rawWireDump': ?e.rawWireDump,
+      };
+    },
+    ToolPairingRepairEvent: (event) {
+      final e = event as ToolPairingRepairEvent;
+      return {
+        'report': _encodeRepairReport(e.report),
+        'providerError': ?e.providerError,
+      };
+    },
+    MessageCapRepairEvent: (event) {
+      final e = event as MessageCapRepairEvent;
+      return {
+        'messageCount': e.messageCount,
+        'learnedCap': ?e.learnedCap,
+        'compacted': e.compacted,
+        'providerError': ?e.providerError,
+      };
+    },
+    TaskLedgerEvent: (event) => {
+      'ledger': (event as TaskLedgerEvent).ledger.toJson(),
+    },
+    // gh-1054 liveness: heartbeats and stuck-call follow-ups ride the
+    // wire so external hosts see alive-busy vs dead mid-run, same as
+    // the session ledger and the HEP frames do.
+    ToolCallHeartbeatEvent: (event) {
+      final e = event as ToolCallHeartbeatEvent;
+      return {
+        'toolCallId': e.toolCallId,
+        'toolName': e.toolName,
+        'args': e.args,
+        'elapsedMs': e.elapsed.inMilliseconds,
+        'outputBytes': e.outputBytes,
+        'attempt': e.attempt,
+        'timestamp': e.timestamp.millisecondsSinceEpoch,
+      };
+    },
+    ToolCallStuckEvent: (event) {
+      final e = event as ToolCallStuckEvent;
+      return {
+        'toolCallId': e.toolCallId,
+        'toolName': e.toolName,
+        'args': e.args,
+        'elapsedMs': e.elapsed.inMilliseconds,
+        'action': e.action.label,
+        'detail': e.detail,
+        'timestamp': e.timestamp.millisecondsSinceEpoch,
+      };
+    },
+  };
 
   /// Encodes the nested provider-event discriminator of a
   /// `message_update` frame. `partial` is never duplicated here — the
   /// frame's `message` field IS the live partial.
-  Map<String, dynamic> encodeAssistantEvent(AssistantMessageEvent event) =>
-      switch (event) {
-        StartEvent() => const {'kind': 'start'},
-        TextStartEvent(:final contentIndex) => {
-          'kind': 'text_start',
-          'contentIndex': contentIndex,
-        },
-        TextDeltaEvent(:final contentIndex, :final delta) => {
-          'kind': 'text_delta',
-          'contentIndex': contentIndex,
-          'delta': delta,
-        },
-        TextEndEvent(:final contentIndex, :final content) => {
-          'kind': 'text_end',
-          'contentIndex': contentIndex,
-          'content': content,
-        },
-        ThinkingStartEvent(:final contentIndex) => {
-          'kind': 'thinking_start',
-          'contentIndex': contentIndex,
-        },
-        ThinkingDeltaEvent(:final contentIndex, :final delta) => {
-          'kind': 'thinking_delta',
-          'contentIndex': contentIndex,
-          'delta': delta,
-        },
-        ThinkingEndEvent(:final contentIndex, :final content) => {
-          'kind': 'thinking_end',
-          'contentIndex': contentIndex,
-          'content': content,
-        },
-        ToolCallStartEvent(:final contentIndex) => {
-          'kind': 'tool_call_start',
-          'contentIndex': contentIndex,
-        },
-        ToolCallDeltaEvent(:final contentIndex, :final delta) => {
-          'kind': 'tool_call_delta',
-          'contentIndex': contentIndex,
-          'delta': delta,
-        },
-        ToolCallEndEvent(:final contentIndex, :final toolCall) => {
-          'kind': 'tool_call_end',
-          'contentIndex': contentIndex,
-          'toolCall': toolCall.toJson(),
-        },
-        DoneEvent(:final reason) => {'kind': 'done', 'reason': reason.name},
-        ErrorEvent(:final reason, :final retryAfter) => {
-          'kind': 'error',
-          'reason': reason.name,
-          if (retryAfter != null) 'retryAfterMs': retryAfter.inMilliseconds,
-        },
+  static Map<String, dynamic> encodeAssistantEvent(
+    AssistantMessageEvent event,
+  ) => _assistantEventEncoders[event.runtimeType]!(event);
+
+  /// Table-driven like [_eventDecoders] (CRAP ratchet); keyed by runtimeType
+  /// of the sealed [AssistantMessageEvent] hierarchy.
+  static final Map<Type, Map<String, dynamic> Function(AssistantMessageEvent)>
+  _assistantEventEncoders = {
+    StartEvent: (_) => const {'kind': 'start'},
+    TextStartEvent: (event) => {
+      'kind': 'text_start',
+      'contentIndex': (event as TextStartEvent).contentIndex,
+    },
+    TextDeltaEvent: (event) {
+      final e = event as TextDeltaEvent;
+      return {
+        'kind': 'text_delta',
+        'contentIndex': e.contentIndex,
+        'delta': e.delta,
       };
+    },
+    TextEndEvent: (event) {
+      final e = event as TextEndEvent;
+      return {
+        'kind': 'text_end',
+        'contentIndex': e.contentIndex,
+        'content': e.content,
+      };
+    },
+    ThinkingStartEvent: (event) => {
+      'kind': 'thinking_start',
+      'contentIndex': (event as ThinkingStartEvent).contentIndex,
+    },
+    ThinkingDeltaEvent: (event) {
+      final e = event as ThinkingDeltaEvent;
+      return {
+        'kind': 'thinking_delta',
+        'contentIndex': e.contentIndex,
+        'delta': e.delta,
+      };
+    },
+    ThinkingEndEvent: (event) {
+      final e = event as ThinkingEndEvent;
+      return {
+        'kind': 'thinking_end',
+        'contentIndex': e.contentIndex,
+        'content': e.content,
+      };
+    },
+    ToolCallStartEvent: (event) => {
+      'kind': 'tool_call_start',
+      'contentIndex': (event as ToolCallStartEvent).contentIndex,
+    },
+    ToolCallDeltaEvent: (event) {
+      final e = event as ToolCallDeltaEvent;
+      return {
+        'kind': 'tool_call_delta',
+        'contentIndex': e.contentIndex,
+        'delta': e.delta,
+      };
+    },
+    ToolCallEndEvent: (event) {
+      final e = event as ToolCallEndEvent;
+      return {
+        'kind': 'tool_call_end',
+        'contentIndex': e.contentIndex,
+        'toolCall': e.toolCall.toJson(),
+      };
+    },
+    DoneEvent: (event) => {
+      'kind': 'done',
+      'reason': (event as DoneEvent).reason.name,
+    },
+    ErrorEvent: (event) {
+      final e = event as ErrorEvent;
+      final retryAfter = e.retryAfter;
+      return {
+        'kind': 'error',
+        'reason': e.reason.name,
+        if (retryAfter != null) 'retryAfterMs': retryAfter.inMilliseconds,
+      };
+    },
+  };
 
   /// Builds the documented `unknown_event` passthrough frame — what a host
   /// emits when it must forward a frame it does not understand.
@@ -1193,24 +1218,91 @@ class AgentWireProtocol {
   // Internals
   // ---------------------------------------------------------------------------
 
-  String _kindOf(AgentEvent event) => switch (event) {
-    AgentStartEvent() => 'agent_start',
-    AgentEndEvent() => 'agent_end',
-    AgentSettledEvent() => 'agent_settled',
-    TurnStartEvent() => 'turn_start',
-    TurnEndEvent() => 'turn_end',
-    MessageStartEvent() => 'message_start',
-    MessageUpdateEvent() => 'message_update',
-    MessageEndEvent() => 'message_end',
-    ToolExecutionStartEvent() => 'tool_execution_start',
-    ToolExecutionUpdateEvent() => 'tool_execution_update',
-    ToolExecutionEndEvent() => 'tool_execution_end',
-    ModelRequestEvent() => 'model_request',
-    ToolPairingRepairEvent() => 'tool_pairing_repair',
-    MessageCapRepairEvent() => 'message_cap_repair',
-    TaskLedgerEvent() => 'task_ledger',
-    ToolCallHeartbeatEvent() => 'tool_call_heartbeat',
-    ToolCallStuckEvent() => 'tool_call_stuck',
+  /// Event-kind names — const data table (CRAP ratchet) keyed by runtimeType
+  /// of the sealed [AgentEvent] hierarchy.
+  static const Map<Type, String> _eventKinds = {
+    AgentStartEvent: 'agent_start',
+    AgentEndEvent: 'agent_end',
+    AgentSettledEvent: 'agent_settled',
+    TurnStartEvent: 'turn_start',
+    TurnEndEvent: 'turn_end',
+    MessageStartEvent: 'message_start',
+    MessageUpdateEvent: 'message_update',
+    MessageEndEvent: 'message_end',
+    ToolExecutionStartEvent: 'tool_execution_start',
+    ToolExecutionUpdateEvent: 'tool_execution_update',
+    ToolExecutionEndEvent: 'tool_execution_end',
+    ModelRequestEvent: 'model_request',
+    ToolPairingRepairEvent: 'tool_pairing_repair',
+    MessageCapRepairEvent: 'message_cap_repair',
+    TaskLedgerEvent: 'task_ledger',
+    ToolCallHeartbeatEvent: 'tool_call_heartbeat',
+    ToolCallStuckEvent: 'tool_call_stuck',
+  };
+
+  String _kindOf(AgentEvent event) => _eventKinds[event.runtimeType]!;
+
+  /// Per-kind nested-assistant-event decoders — table-driven like
+  /// [_eventDecoders] (CRAP ratchet); adding a kind is one map entry.
+  static final Map<
+    String,
+    AssistantMessageEvent Function(Map<String, dynamic>, AssistantMessage)
+  >
+  _assistantEventDecoders = {
+    'start': (encoded, partial) => StartEvent(partial: partial),
+    'text_start': (encoded, partial) =>
+        TextStartEvent(contentIndex: _requireIndex(encoded), partial: partial),
+    'text_delta': (encoded, partial) => TextDeltaEvent(
+      contentIndex: _requireIndex(encoded),
+      delta: _requireString(encoded['delta'], 'event.delta'),
+      partial: partial,
+    ),
+    'text_end': (encoded, partial) => TextEndEvent(
+      contentIndex: _requireIndex(encoded),
+      content: _requireString(encoded['content'], 'event.content'),
+      partial: partial,
+    ),
+    'thinking_start': (encoded, partial) => ThinkingStartEvent(
+      contentIndex: _requireIndex(encoded),
+      partial: partial,
+    ),
+    'thinking_delta': (encoded, partial) => ThinkingDeltaEvent(
+      contentIndex: _requireIndex(encoded),
+      delta: _requireString(encoded['delta'], 'event.delta'),
+      partial: partial,
+    ),
+    'thinking_end': (encoded, partial) => ThinkingEndEvent(
+      contentIndex: _requireIndex(encoded),
+      content: _requireString(encoded['content'], 'event.content'),
+      partial: partial,
+    ),
+    'tool_call_start': (encoded, partial) => ToolCallStartEvent(
+      contentIndex: _requireIndex(encoded),
+      partial: partial,
+    ),
+    'tool_call_delta': (encoded, partial) => ToolCallDeltaEvent(
+      contentIndex: _requireIndex(encoded),
+      delta: _requireString(encoded['delta'], 'event.delta'),
+      partial: partial,
+    ),
+    'tool_call_end': (encoded, partial) => ToolCallEndEvent(
+      contentIndex: _requireIndex(encoded),
+      toolCall: ToolCall.fromJson(
+        _requireMap(encoded['toolCall'], 'event.toolCall'),
+      ),
+      partial: partial,
+    ),
+    'done': (encoded, partial) => DoneEvent(
+      reason: _decodeStopReason(_requireString(encoded['reason'], 'reason')),
+      message: partial,
+    ),
+    'error': (encoded, partial) => ErrorEvent(
+      reason: _decodeStopReason(_requireString(encoded['reason'], 'reason')),
+      error: partial,
+      retryAfter: encoded['retryAfterMs'] is int
+          ? Duration(milliseconds: encoded['retryAfterMs'] as int)
+          : null,
+    ),
   };
 
   static AssistantMessageEvent _decodeAssistantEvent(
@@ -1218,66 +1310,17 @@ class AgentWireProtocol {
     required AssistantMessage partial,
   }) {
     final kind = _requireString(encoded['kind'], 'event.kind');
-    // Index-kinds must carry their content index loudly — defaulting to 0
-    // would silently mis-render a producer bug.
-    int index() => _requireInt(encoded['contentIndex'], 'event.contentIndex');
-    return switch (kind) {
-      'start' => StartEvent(partial: partial),
-      'text_start' => TextStartEvent(contentIndex: index(), partial: partial),
-      'text_delta' => TextDeltaEvent(
-        contentIndex: index(),
-        delta: _requireString(encoded['delta'], 'event.delta'),
-        partial: partial,
-      ),
-      'text_end' => TextEndEvent(
-        contentIndex: index(),
-        content: _requireString(encoded['content'], 'event.content'),
-        partial: partial,
-      ),
-      'thinking_start' => ThinkingStartEvent(
-        contentIndex: index(),
-        partial: partial,
-      ),
-      'thinking_delta' => ThinkingDeltaEvent(
-        contentIndex: index(),
-        delta: _requireString(encoded['delta'], 'event.delta'),
-        partial: partial,
-      ),
-      'thinking_end' => ThinkingEndEvent(
-        contentIndex: index(),
-        content: _requireString(encoded['content'], 'event.content'),
-        partial: partial,
-      ),
-      'tool_call_start' => ToolCallStartEvent(
-        contentIndex: index(),
-        partial: partial,
-      ),
-      'tool_call_delta' => ToolCallDeltaEvent(
-        contentIndex: index(),
-        delta: _requireString(encoded['delta'], 'event.delta'),
-        partial: partial,
-      ),
-      'tool_call_end' => ToolCallEndEvent(
-        contentIndex: index(),
-        toolCall: ToolCall.fromJson(
-          _requireMap(encoded['toolCall'], 'event.toolCall'),
-        ),
-        partial: partial,
-      ),
-      'done' => DoneEvent(
-        reason: _decodeStopReason(_requireString(encoded['reason'], 'reason')),
-        message: partial,
-      ),
-      'error' => ErrorEvent(
-        reason: _decodeStopReason(_requireString(encoded['reason'], 'reason')),
-        error: partial,
-        retryAfter: encoded['retryAfterMs'] is int
-            ? Duration(milliseconds: encoded['retryAfterMs'] as int)
-            : null,
-      ),
-      _ => throw WireProtocolException('unknown nested event kind: $kind'),
-    };
+    final decoder = _assistantEventDecoders[kind];
+    if (decoder == null) {
+      throw WireProtocolException('unknown nested event kind: $kind');
+    }
+    return decoder(encoded, partial);
   }
+
+  /// Index-kinds must carry their content index loudly — defaulting to 0
+  /// would silently mis-render a producer bug.
+  static int _requireIndex(Map<String, dynamic> encoded) =>
+      _requireInt(encoded['contentIndex'], 'event.contentIndex');
 
   static Map<String, dynamic> _encodeToolResult(ToolExecutionResult result) => {
     'content': [for (final block in result.content) block.toJson()],

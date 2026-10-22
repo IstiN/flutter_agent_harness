@@ -138,59 +138,47 @@ TrajectorySection _parseTrajectorySection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('trajectory must be a map, got: $node');
   }
-  var section = const TrajectorySection();
+  bool? wireDump;
+  bool? requestBlobs;
+  int? requestBlobMaxMb;
+  int? requestBlobTtlDays;
   for (final key in node.keys) {
-    final value = node[key];
     switch (key) {
       case 'wireDump':
-        if (value is! bool) {
-          throw ConfigException('"trajectory.wireDump" must be a boolean');
-        }
-        section = TrajectorySection(
-          wireDump: value,
-          requestBlobs: section.requestBlobs,
-          requestBlobMaxMb: section.requestBlobMaxMb,
-          requestBlobTtlDays: section.requestBlobTtlDays,
-        );
+        wireDump = _readTrajectoryBool(node, '$key');
       case 'requestBlobs':
-        if (value is! bool) {
-          throw ConfigException('"trajectory.requestBlobs" must be a boolean');
-        }
-        section = TrajectorySection(
-          wireDump: section.wireDump,
-          requestBlobs: value,
-          requestBlobMaxMb: section.requestBlobMaxMb,
-          requestBlobTtlDays: section.requestBlobTtlDays,
-        );
+        requestBlobs = _readTrajectoryBool(node, '$key');
       case 'requestBlobMaxMb':
-        if (value is! int || value < 1) {
-          throw ConfigException(
-            '"trajectory.requestBlobMaxMb" must be a positive integer',
-          );
-        }
-        section = TrajectorySection(
-          wireDump: section.wireDump,
-          requestBlobs: section.requestBlobs,
-          requestBlobMaxMb: value,
-          requestBlobTtlDays: section.requestBlobTtlDays,
-        );
+        requestBlobMaxMb = _readTrajectoryPositiveInt(node, '$key');
       case 'requestBlobTtlDays':
-        if (value is! int || value < 1) {
-          throw ConfigException(
-            '"trajectory.requestBlobTtlDays" must be a positive integer',
-          );
-        }
-        section = TrajectorySection(
-          wireDump: section.wireDump,
-          requestBlobs: section.requestBlobs,
-          requestBlobMaxMb: section.requestBlobMaxMb,
-          requestBlobTtlDays: value,
-        );
+        requestBlobTtlDays = _readTrajectoryPositiveInt(node, '$key');
       default:
         throw ConfigException('unknown "trajectory" key: $key');
     }
   }
-  return section;
+  // Unset keys keep the class defaults; duplicates last-win (as before).
+  return TrajectorySection(
+    wireDump: wireDump ?? false,
+    requestBlobs: requestBlobs ?? true,
+    requestBlobMaxMb: requestBlobMaxMb ?? 50,
+    requestBlobTtlDays: requestBlobTtlDays ?? 30,
+  );
+}
+
+bool _readTrajectoryBool(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! bool) {
+    throw ConfigException('"trajectory.$key" must be a boolean');
+  }
+  return value;
+}
+
+int _readTrajectoryPositiveInt(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! int || value < 1) {
+    throw ConfigException('"trajectory.$key" must be a positive integer');
+  }
+  return value;
 }
 
 /// The parsed `quota:` section (issue #823): the status-line badge opt-in
@@ -412,59 +400,7 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('images must be a map, got: $node');
   }
-  bool readBool(String key) {
-    final value = node[key];
-    if (value is! bool) {
-      throw ConfigException('"images.$key" must be a boolean');
-    }
-    return value;
-  }
-
-  int readPositiveInt(String key) {
-    final value = node[key];
-    if (value is! int || value <= 0) {
-      throw ConfigException('"images.$key" must be a positive integer');
-    }
-    return value;
-  }
-
-  int readPerModelCap(Object? key, Object? value) {
-    if (value is! int || value <= 0) {
-      throw ConfigException(
-        '"images.perModel.$key" must be a positive integer',
-      );
-    }
-    return value;
-  }
-
-  Map<String, int> readPerModel() {
-    final value = node['perModel'];
-    if (value is! YamlMap) {
-      throw ConfigException(
-        '"images.perModel" must be a map of model id → cap, got: $value',
-      );
-    }
-    return {
-      for (final entry in value.entries)
-        '${entry.key}': readPerModelCap(entry.key, entry.value),
-    };
-  }
-
-  bool? registry;
-  int? maxPerRequest;
-  Map<String, int>? perModel;
-  for (final key in node.keys) {
-    switch (key) {
-      case 'registry':
-        registry = readBool('$key');
-      case 'maxPerRequest':
-        maxPerRequest = readPositiveInt('$key');
-      case 'perModel':
-        perModel = readPerModel();
-      default:
-        throw ConfigException('unknown "images" key: $key');
-    }
-  }
+  final (registry, maxPerRequest, perModel) = _parseImagesEntries(node);
   if (registry == null && maxPerRequest == null && perModel == null) {
     return null;
   }
@@ -473,6 +409,67 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
     maxPerRequest: maxPerRequest ?? defaultMaxImagesPerRequest,
     perModel: perModel ?? const {},
   );
+}
+
+/// The three optional images knobs parsed from [node]; unset keys stay
+/// null (gh-1713 split of [parseImagesSection]).
+(bool?, int?, Map<String, int>?) _parseImagesEntries(YamlMap node) {
+  bool? registry;
+  int? maxPerRequest;
+  Map<String, int>? perModel;
+  for (final key in node.keys) {
+    switch (key) {
+      case 'registry':
+        registry = _readImagesBool(node, '$key');
+      case 'maxPerRequest':
+        maxPerRequest = _readImagesPositiveInt(node, '$key');
+      case 'perModel':
+        perModel = _readImagesPerModel(node);
+      default:
+        throw ConfigException('unknown "images" key: $key');
+    }
+  }
+  return (registry, maxPerRequest, perModel);
+}
+
+bool _readImagesBool(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! bool) {
+    throw ConfigException('"images.$key" must be a boolean');
+  }
+  return value;
+}
+
+int _readImagesPositiveInt(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! int || value <= 0) {
+    throw ConfigException('"images.$key" must be a positive integer');
+  }
+  return value;
+}
+
+/// True when [value] is a JSON integer at or above 1 — the cap shape
+/// shared by `images.maxPerRequest` and the `images.perModel` entries.
+bool _isPositiveInt(Object? value) => value is int && value > 0;
+
+int _readImagesPerModelCap(Object? key, Object? value) {
+  if (!_isPositiveInt(value)) {
+    throw ConfigException('"images.perModel.$key" must be a positive integer');
+  }
+  return value as int;
+}
+
+Map<String, int> _readImagesPerModel(YamlMap node) {
+  final value = node['perModel'];
+  if (value is! YamlMap) {
+    throw ConfigException(
+      '"images.perModel" must be a map of model id → cap, got: $value',
+    );
+  }
+  return {
+    for (final entry in value.entries)
+      '${entry.key}': _readImagesPerModelCap(entry.key, entry.value),
+  };
 }
 
 /// Persisted CLI configuration.

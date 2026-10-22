@@ -218,27 +218,38 @@ final class TtsrController {
 
   void _checkStreamDelta(AssistantMessageEvent event) {
     if (!_manager.hasRules()) return;
-    final context = switch (event) {
-      TextDeltaEvent() => const TtsrMatchContext(source: TtsrMatchSource.text),
-      ThinkingDeltaEvent() => const TtsrMatchContext(
-        source: TtsrMatchSource.thinking,
-      ),
-      ToolCallDeltaEvent(:final contentIndex, :final partial) =>
-        _toolMatchContext(contentIndex, partial),
-      _ => null,
-    };
+    final context = _streamMatchContext(event);
     if (context == null) return;
-    final delta = switch (event) {
-      TextDeltaEvent(:final delta) => delta,
-      ThinkingDeltaEvent(:final delta) => delta,
-      ToolCallDeltaEvent(:final delta) => delta,
-      _ => '',
-    };
+    final delta = _streamDeltaText(event);
     if (delta.isEmpty) return;
     final matches = _manager.checkDelta(delta, context);
     if (matches.isEmpty) return;
     _handleMatches(matches);
   }
+
+  /// The match context for one stream delta: text/thinking deltas match
+  /// by source, tool-call deltas carry the partial block's name/stream
+  /// key, anything else matches nothing.
+  TtsrMatchContext? _streamMatchContext(AssistantMessageEvent event) =>
+      switch (event) {
+        TextDeltaEvent() => const TtsrMatchContext(
+          source: TtsrMatchSource.text,
+        ),
+        ThinkingDeltaEvent() => const TtsrMatchContext(
+          source: TtsrMatchSource.thinking,
+        ),
+        ToolCallDeltaEvent(:final contentIndex, :final partial) =>
+          _toolMatchContext(contentIndex, partial),
+        _ => null,
+      };
+
+  /// The streamed text of one delta event ('' for non-text deltas).
+  String _streamDeltaText(AssistantMessageEvent event) => switch (event) {
+    TextDeltaEvent(:final delta) => delta,
+    ThinkingDeltaEvent(:final delta) => delta,
+    ToolCallDeltaEvent(:final delta) => delta,
+    _ => '',
+  };
 
   TtsrMatchContext _toolMatchContext(
     int contentIndex,

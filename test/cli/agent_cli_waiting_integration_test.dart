@@ -129,6 +129,34 @@ void main() {
     expect(io.out, isEmpty);
   });
 
+  test('waiting heartbeat beat drives the idle status round', () async {
+    final fake = FakeStreamFunction([
+      textTurn('first answer'),
+      textTurn('still waiting: CI red'),
+    ]);
+    final cli = cliFor(fake);
+    await cli.waitingScheduleTimerForTest('check CI', const Duration(hours: 1));
+    final run = cli.run();
+    // A real run's settle edge pushes the waiting row state, which arms
+    // the heartbeat chain while the timer waiter is pending (issue #450).
+    io.sendLine('hello');
+    await waitForIt(
+      () => fake.calls == 1 && !cli.isBusy,
+      reason: 'run 1 settled (the settle edge armed the chain)',
+    );
+    // The beat fires the idle status round through the same self-wake
+    // channel as the scheduled-message deliveries: a second run.
+    cli.waitingHeartbeatTickForTest();
+    await waitForIt(
+      () => fake.calls == 2,
+      reason: 'the beat started the status round',
+    );
+    expect(fake.calls, 2, reason: 'the beat ran the idle status round');
+    await waitForIt(() => !cli.isBusy, reason: 'the status round settled');
+    io.sendLine('/exit');
+    await run;
+  });
+
   test(
     'headless --wait-for-jobs with no waiters returns immediately',
     () async {

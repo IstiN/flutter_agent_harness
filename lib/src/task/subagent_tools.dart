@@ -263,10 +263,27 @@ Future<String> _renderAgentDirectory(
       ..write(line);
   }
   // Registered children get mailboxes on first mail — list them
-  // explicitly so they are addressable before that. Superseded generations
-  // (issue #222) collapse into their chain head: one logical entry per
-  // respawn chain.
-  final knownIds = entries.map((e) => e.id).toSet();
+  // explicitly so they are addressable before that.
+  _writeDirectoryChildren(manager, buffer, entries.map((e) => e.id).toSet());
+  if (stale > 0) {
+    buffer
+      ..writeln()
+      ..write('  (+$stale stale mailbox(es) hidden — pass all: true)');
+  }
+  if (entries.isEmpty && manager.handles.isEmpty) {
+    buffer.write(' none yet — subagent mailboxes appear on first mail');
+  }
+  return buffer.toString();
+}
+
+/// Appends the registered-children section: every handle not already
+/// listed from the fabric directory. Superseded generations (issue #222)
+/// collapse into their chain head — one logical entry per respawn chain.
+void _writeDirectoryChildren(
+  SubagentManager manager,
+  StringBuffer buffer,
+  Set<String> knownIds,
+) {
   final supersededIds = {
     for (final h in manager.handles)
       if (h.supersedes != null) h.supersedes!,
@@ -286,15 +303,6 @@ Future<String> _renderAgentDirectory(
       buffer.write(' · supersedes ${handle.supersedes}');
     }
   }
-  if (stale > 0) {
-    buffer
-      ..writeln()
-      ..write('  (+$stale stale mailbox(es) hidden — pass all: true)');
-  }
-  if (entries.isEmpty && manager.handles.isEmpty) {
-    buffer.write(' none yet — subagent mailboxes appear on first mail');
-  }
-  return buffer.toString();
 }
 
 /// Renders one directory entry, or null when the mailbox is hidden from

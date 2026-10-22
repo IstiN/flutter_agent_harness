@@ -109,26 +109,30 @@ enum HostCapability {
   jsExtensions;
 
   /// Stable catalog id (snake_case, matches the matrix row).
-  String get id => switch (this) {
-    configSections => 'config_sections',
-    compaction => 'compaction',
-    loadModes => 'load_modes',
-    mcp => 'mcp',
-    messagingFabric => 'messaging_fabric',
-    approvalGate => 'approval_gate',
-    skills => 'skills',
-    sandboxEnv => 'sandbox_env',
-    backgroundShellJobs => 'background_shell_jobs',
-    sqliteLspDap => 'sqlite_lsp_dap',
-    onDeviceProviders => 'on_device_providers',
-    jsApps => 'js_apps',
-    checkpointRewind => 'checkpoint_rewind',
-    hostExtensionApi => 'host_extension_api',
-    webSearch => 'web_search',
-    visionTranscribe => 'vision_transcribe',
-    subagents => 'subagents',
-    browserBridge => 'browser_bridge',
-    jsExtensions => 'js_extensions',
+  String get id => _ids[this]!;
+
+  /// Catalog ids — const data table (CRAP ratchet); the matrix names are
+  /// external truth, so each row is spelled out rather than derived.
+  static const Map<HostCapability, String> _ids = {
+    configSections: 'config_sections',
+    compaction: 'compaction',
+    loadModes: 'load_modes',
+    mcp: 'mcp',
+    messagingFabric: 'messaging_fabric',
+    approvalGate: 'approval_gate',
+    skills: 'skills',
+    sandboxEnv: 'sandbox_env',
+    backgroundShellJobs: 'background_shell_jobs',
+    sqliteLspDap: 'sqlite_lsp_dap',
+    onDeviceProviders: 'on_device_providers',
+    jsApps: 'js_apps',
+    checkpointRewind: 'checkpoint_rewind',
+    hostExtensionApi: 'host_extension_api',
+    webSearch: 'web_search',
+    visionTranscribe: 'vision_transcribe',
+    subagents: 'subagents',
+    browserBridge: 'browser_bridge',
+    jsExtensions: 'js_extensions',
   };
 }
 
@@ -460,23 +464,7 @@ final class HostCapabilityProfile {
         );
       }
     }
-    final violation = switch (floor) {
-      FloorOn() => null,
-      FloorOff() => switch (state) {
-        CapabilityOffState() => null,
-        _ =>
-          'platform floor is off (${floor.reason}); a profile can narrow, '
-              'never force-enable',
-      },
-      FloorTransports() => switch (state) {
-        CapabilityOffState() => null,
-        CapabilityTransportState(:final transports) =>
-          transports.difference(floor.transports).isEmpty
-              ? null
-              : 'floor allows only ${floor.transports.toList()..sort()}',
-        CapabilityOnState() => _onVsFloorTransports(capability, floor),
-      },
-    };
+    final violation = _floorViolation(capability, state, floor);
     if (violation != null) {
       throw HostProfileViolation(
         'Profile "$name" cannot declare ${capability.id} = $state: '
@@ -484,4 +472,33 @@ final class HostCapabilityProfile {
       );
     }
   }
+
+  /// Floor-vs-state compatibility: the user-visible violation, or null when
+  /// [state] is legal under [floor].
+  static String? _floorViolation(
+    HostCapability capability,
+    CapabilityState state,
+    CapabilityFloor floor,
+  ) => switch (floor) {
+    FloorOn() => null,
+    FloorOff() =>
+      state is CapabilityOffState
+          ? null
+          : 'platform floor is off (${floor.reason}); a profile can narrow, '
+                'never force-enable',
+    FloorTransports() => _transportsFloorViolation(capability, state, floor),
+  };
+
+  static String? _transportsFloorViolation(
+    HostCapability capability,
+    CapabilityState state,
+    FloorTransports floor,
+  ) => switch (state) {
+    CapabilityOffState() => null,
+    CapabilityTransportState(:final transports) =>
+      transports.difference(floor.transports).isEmpty
+          ? null
+          : 'floor allows only ${floor.transports.toList()..sort()}',
+    CapabilityOnState() => _onVsFloorTransports(capability, floor),
+  };
 }

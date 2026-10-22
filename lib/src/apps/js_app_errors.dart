@@ -32,6 +32,18 @@ enum JsAppErrorKind {
   bootstrap,
 }
 
+/// The log-record `kind` string → classification. Unrecognized names fall
+/// back to [JsAppErrorKind.onerror] at the lookup site (the bootstrap
+/// never emits them, but a tap must stay total).
+const _kindByLogName = <String, JsAppErrorKind>{
+  'showError': JsAppErrorKind.showError,
+  'callback': JsAppErrorKind.callback,
+  'onerror': JsAppErrorKind.onerror,
+  'unhandledrejection': JsAppErrorKind.unhandledRejection,
+  'render': JsAppErrorKind.render,
+  'bootstrap': JsAppErrorKind.bootstrap,
+};
+
 /// One captured JS error, reported toward the authoring agent.
 class JsAppErrorEvent {
   const JsAppErrorEvent({
@@ -49,15 +61,7 @@ class JsAppErrorEvent {
     if (message is! String || message.isEmpty) return null;
     final stack = json['stack'];
     final rawKind = json['kind'];
-    final kind = switch (rawKind) {
-      'showError' => JsAppErrorKind.showError,
-      'callback' => JsAppErrorKind.callback,
-      'onerror' => JsAppErrorKind.onerror,
-      'unhandledrejection' => JsAppErrorKind.unhandledRejection,
-      'render' => JsAppErrorKind.render,
-      'bootstrap' => JsAppErrorKind.bootstrap,
-      _ => JsAppErrorKind.onerror,
-    };
+    final kind = _kindByLogName[rawKind] ?? JsAppErrorKind.onerror;
     final fingerprint = json['fingerprint'];
     return JsAppErrorEvent(
       kind: kind,

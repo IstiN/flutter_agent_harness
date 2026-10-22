@@ -886,13 +886,19 @@ extension on AgentCli {
     final activeName = _activeCustomName ?? provider;
     final all =
         _allProvidersModelCache[activeName] ??
-        (_modelCache.isNotEmpty
-            ? _modelCache
-            : (knownModelPresets[provider] ?? [_agent.state.model.id]));
+        _connectionModelFallbacks(provider);
     if (filter.isEmpty) return all.toList();
     final lower = filter.toLowerCase();
     return all.where((id) => id.toLowerCase().contains(lower)).toList();
   }
+
+  /// The active connection's model list when the cross-provider cache
+  /// misses: the session's fetched models, else the provider's presets
+  /// (else the live model id).
+  List<String> _connectionModelFallbacks(String provider) =>
+      _modelCache.isNotEmpty
+      ? _modelCache
+      : (knownModelPresets[provider] ?? [_agent.state.model.id]);
 
   /// `/models [filter]` | `config` | `set <slot> <model> [baseUrl]` |
   /// `remove <slot>` — a bare or filtered invocation lists the endpoint's
@@ -1065,12 +1071,16 @@ extension on AgentCli {
 
   /// Switches to list entry [number] (1-based) or reports the range error.
   Future<void> _switchModelOrReport(int number, List<String> list) async {
-    if (number >= 1 && number <= list.length) {
-      await _switchModel(list[number - 1]);
-    } else {
+    if (!_validModelNumber(number, list.length)) {
       io.writeln('invalid selection: $number (1-${list.length})');
+      return;
     }
+    await _switchModel(list[number - 1]);
   }
+
+  /// Whether [number] is a valid 1-based index into a list of [length].
+  bool _validModelNumber(int number, int length) =>
+      number >= 1 && number <= length;
 
   /// `/model <name>` where [name] is a custom model definition from the
   /// `models:` config section: switches provider, endpoint, and model in one

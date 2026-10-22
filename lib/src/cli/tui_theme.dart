@@ -641,30 +641,33 @@ TuiTheme parseUserTheme(String text, String fileName) {
   );
 }
 
+/// The default palette's role styles (data table, gh-1713). Roles the
+/// default leaves plain are absent — the lookup returns null.
+final Map<String, Style> _defaultRoleStyles = {
+  'accent': kDefaultTuiTheme.accent,
+  'accent2': kDefaultTuiTheme.accent2,
+  'accent2Soft': kDefaultTuiTheme.accent2Soft,
+  'muted': kDefaultTuiTheme.muted,
+  'highlight': kDefaultTuiTheme.highlight,
+  'success': kDefaultTuiTheme.success,
+  'warning': kDefaultTuiTheme.warning,
+  'error': kDefaultTuiTheme.error,
+  'border': kDefaultTuiTheme.border,
+  'focusBorder': kDefaultTuiTheme.focusBorder,
+  'userMessageBg': kDefaultTuiTheme.userMessageBg,
+  'borderMuted': kDefaultTuiTheme.borderMuted,
+  'toolTitle': kDefaultTuiTheme.toolTitle,
+  'toolOutput': kDefaultTuiTheme.toolOutput,
+  'userMessageText': kDefaultTuiTheme.userMessageText,
+  'toolSuccessBg': kDefaultTuiTheme.toolSuccessBg,
+  'toolErrorBg': kDefaultTuiTheme.toolErrorBg,
+  'kaomojiEye': kDefaultTuiTheme.kaomojiEye,
+  'kaomojiMouth': kDefaultTuiTheme.kaomojiMouth,
+};
+
 /// The [role]'s style in the default palette (`null` for roles the
 /// default leaves plain).
-Style? _defaultRoleStyle(String role) => switch (role) {
-  'accent' => kDefaultTuiTheme.accent,
-  'accent2' => kDefaultTuiTheme.accent2,
-  'accent2Soft' => kDefaultTuiTheme.accent2Soft,
-  'muted' => kDefaultTuiTheme.muted,
-  'highlight' => kDefaultTuiTheme.highlight,
-  'success' => kDefaultTuiTheme.success,
-  'warning' => kDefaultTuiTheme.warning,
-  'error' => kDefaultTuiTheme.error,
-  'border' => kDefaultTuiTheme.border,
-  'focusBorder' => kDefaultTuiTheme.focusBorder,
-  'userMessageBg' => kDefaultTuiTheme.userMessageBg,
-  'borderMuted' => kDefaultTuiTheme.borderMuted,
-  'toolTitle' => kDefaultTuiTheme.toolTitle,
-  'toolOutput' => kDefaultTuiTheme.toolOutput,
-  'userMessageText' => kDefaultTuiTheme.userMessageText,
-  'toolSuccessBg' => kDefaultTuiTheme.toolSuccessBg,
-  'toolErrorBg' => kDefaultTuiTheme.toolErrorBg,
-  'kaomojiEye' => kDefaultTuiTheme.kaomojiEye,
-  'kaomojiMouth' => kDefaultTuiTheme.kaomojiMouth,
-  _ => null,
-};
+Style? _defaultRoleStyle(String role) => _defaultRoleStyles[role];
 
 /// Loads user themes from `<home>/.fah/themes/*.json`. Filenames that
 /// shadow a built-in are skipped (user themes can never shadow built-ins);
