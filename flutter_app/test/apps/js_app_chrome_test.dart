@@ -225,5 +225,41 @@ void main() {
       });
       await tester.pump();
     });
+
+    testWidgets('overlapping reloads settle on one rendered app', (
+      tester,
+    ) async {
+      final env = await brokenAppEnv();
+      await pumpView(
+        tester,
+        env,
+        manifest: const {'id': 'demo', 'name': 'Demo', 'chrome': 'full'},
+      );
+      await tester.runAsync(() async {
+        await env.writeFile('apps/demo/widget.js', widgetJs);
+        // Two reload taps back to back: the superseded restart must bail out
+        // (and dispose what it built) instead of racing the newer one.
+        for (var i = 0; i < 2; i++) {
+          await tester.tap(find.byIcon(Icons.more_vert));
+          await tester.pump();
+          await tester.pump(const Duration(seconds: 1));
+          await tester.tap(find.text('Reload app'));
+          await tester.pump();
+        }
+        for (var i = 0; i < 30; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await tester.pump();
+          if (find.text('reloaded').evaluate().isNotEmpty) break;
+        }
+      });
+      expect(find.text('reloaded'), findsOneWidget);
+      // AC2: the spinner must settle once the winning engine renders — no
+      // stuck progress indicator from the superseded restart chain.
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await tester.runAsync(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+    });
   }, skip: _engineSkip);
 }

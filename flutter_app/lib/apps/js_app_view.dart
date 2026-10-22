@@ -300,13 +300,21 @@ class _JsAppViewState extends State<JsAppView> {
     await _restart();
   }
 
+  /// Generation of the latest [_restart] call. Overlapping restarts (reload
+  /// button + fs-revision debounce + dialog paths) used to each boot an
+  /// engine and the last writer won, leaking the others' workers/timers
+  /// while the shared lifecycle chain kept the spinner up. A superseded
+  /// run now bails out and disposes whatever it already built.
+  int _restartGen = 0;
+
   Future<void> _restart() async {
+    final gen = ++_restartGen;
     // Yield one microtask: on the first call (from initState) this lets
     // didChangeDependencies run first and record _themeJson, so the engine
     // boots with the real theme instead of an empty map. A microtask (not
     // Future(...)/Timer) keeps widget tests' fake-async zone clean.
     await Future<void>.value();
-    if (!mounted) return;
+    if (!mounted || gen != _restartGen) return;
     final themeJson = _themeJson;
     final initialTheme = themeJson == null
         ? jsThemeMap(context)
@@ -317,6 +325,7 @@ class _JsAppViewState extends State<JsAppView> {
       _startError = null;
     });
     if (old != null) await old.dispose();
+    if (!mounted || gen != _restartGen) return;
     try {
       final effective = widget.permissionsStore.forApp(widget.app).effective();
       final engine = JsAppEngine(
@@ -340,7 +349,7 @@ class _JsAppViewState extends State<JsAppView> {
       );
       engine.onCloseRequested = _closeFromJs;
       await engine.start();
-      if (!mounted) {
+      if (!mounted || gen != _restartGen) {
         await engine.dispose();
         return;
       }
@@ -350,7 +359,7 @@ class _JsAppViewState extends State<JsAppView> {
       _appSignature = await _readAppSignature();
     } on Object catch (error) {
       AppLog.i('apps', 'app start failed: ${widget.app.id} — $error');
-      if (mounted) setState(() => _startError = error);
+      if (mounted && gen == _restartGen) setState(() => _startError = error);
     }
   }
 
