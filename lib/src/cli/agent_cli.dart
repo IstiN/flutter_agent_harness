@@ -58,8 +58,10 @@ import '../agent/finalize_gate.dart';
 import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
     show TrajectoryHiddenRecordPreview, projectHiddenRecordPreviews;
-import '../trajectory/trajectory_record.dart' show TrajectoryCompactedRecord;
+import '../trajectory/trajectory_record.dart'
+    show TrajectoryCompactedRecord, stripTrajectoryRequestDetail;
 import '../trajectory/trajectory_blobs.dart';
+import '../trajectory/trajectory_request_blobs.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
 import '../agent/message_cap.dart';
@@ -1617,6 +1619,10 @@ class AgentCli {
   /// sets live in it); recreated when the session changes.
   TrajectoryBlobPersister? _trajectoryBlobPersister;
   Session? _trajectoryBlobPersisterSession;
+
+  /// gh-1745 request-blob store (the session's spill dir + rotation
+  /// policy); built lazily on the first spilled capture.
+  TrajectoryRequestBlobStore? _requestBlobStore;
 
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass

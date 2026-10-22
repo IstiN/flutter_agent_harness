@@ -463,6 +463,76 @@ void main() {
     );
 
     test(
+      'gh-1745: the request summary spills its heavy payload to the blob '
+      'dir',
+      () async {
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(_singleTextResponse('hello back')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendText('hello');
+        await service.waitForIdle();
+
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final metadata = (await repo.list()).single;
+        final session = await repo.open(metadata);
+        final entries = await session.getEntries();
+        final summary = entries
+            .whereType<CustomRecord>()
+            .firstWhere((r) => r.customType == 'model_request_summary');
+        final data = summary.data! as Map;
+        // The primary JSONL record is lightweight: a spill pointer, no
+        // per-message block texts.
+        expect(data['spillFile'], isNotNull);
+        expect((data['messages'] as List).first['blocks'], isNull);
+
+        // The blob carries the FULL detail next to the session's .fah.
+        final store = TrajectoryRequestBlobStore(
+          env: env,
+          sessionId: () => metadata.id,
+        );
+        final detail = await store.readDetail(data['spillFile'] as String);
+        expect(detail, isNotNull);
+        expect(detail!.systemPromptChars, greaterThan(0));
+      },
+    );
+
+    test(
+      'trajectoryRequestBlobs:false keeps the legacy inline summary',
+      () async {
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(_singleTextResponse('hello back')),
+          env: env,
+          sessionsRoot: '/sessions',
+          trajectoryRequestBlobs: false,
+        );
+        await service.initialize();
+
+        await service.sendText('hello');
+        await service.waitForIdle();
+
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final metadata = (await repo.list()).single;
+        final session = await repo.open(metadata);
+        final entries = await session.getEntries();
+        final summary = entries
+            .whereType<CustomRecord>()
+            .firstWhere((r) => r.customType == 'model_request_summary');
+        expect((summary.data! as Map)['spillFile'], isNull);
+        expect(
+          (await env.listDir('.fah/trajectories')).isErr,
+          isTrue,
+          reason: 'no blob dir is created when spilling is off',
+        );
+      },
+    );
+
+    test(
       'a persist pass skipped by the run finalizer still lands by idle (#1102)',
       () async {
         final env = _DeferredAppendEnv();
