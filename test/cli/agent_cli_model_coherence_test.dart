@@ -30,15 +30,20 @@ void main() {
   Future<(AgentCli, FakeStreamFunction)> incidentCli({
     String? kimiEnvKey,
     String entryApiType = 'copilot',
+    String bootProvider = 'copilot',
+    bool rideCatalogStream = false,
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
     Model? bootModel,
   }) async {
     final store = FakeSecureKeyStore()
       ..map['FA_KEY_COPILOT_ACME'] = 'copilot-key';
-    if (kimiEnvKey != null) {
-      store.map['KIMI_API_KEY'] = kimiEnvKey;
-    }
+    // KIMI's key rides the ENVIRONMENT (env-keyed catalog provider, no
+    // saved entry) — a store twin would make the env value non-genuine
+    // and hide the kimi rows from the picker.
+    final envVars = <String, String>{
+      if (kimiEnvKey != null) 'KIMI_API_KEY': kimiEnvKey,
+    };
     final cache = SecureKeyCache(store);
     await cache.preload(store.map.keys.toList());
     final registry = CustomProviderRegistry([
@@ -61,10 +66,10 @@ void main() {
       config: AgentCliConfig(
         model:
             bootModel ??
-            const Model(
+            Model(
               id: 'gemini-4-argon',
               api: 'openai-completions',
-              provider: 'copilot',
+              provider: bootProvider,
               baseUrl: 'https://api.enterprise.githubcopilot.com',
               contextWindow: 1000000,
               maxTokens: 32768,
@@ -72,16 +77,24 @@ void main() {
         apiKey: 'copilot-key',
         env: env,
         sessionRoot: '/sessions',
-        envVarValue: (name) => store.map[name],
-        envVarIsSet: (name) => store.map.containsKey(name),
+        envVarValue: (name) => envVars[name] ?? store.map[name],
+        envVarIsSet: (name) => envVars.containsKey(name) ||
+            store.map.containsKey(name),
         secureKeys: cache,
         customProviders: registry,
         activeCustomName: 'copilot-acme',
         modelsFetcher: modelsFetcher,
         providerKind: 'copilot',
+        // rideCatalogStream: the message turn flows through the REAL
+        // stream factory (`_catalogStreamFunction` → the G2 wrapper →
+        // the fake inner), so the test observes the wiring a switch
+        // actually builds.
+        catalogStreamOverride: rideCatalogStream
+            ? (kind, key) => fake.call
+            : null,
       ),
       io: io,
-      streamFunction: fake.call,
+      streamFunction: rideCatalogStream ? null : fake.call,
     );
     return (cli, fake);
   }
@@ -128,6 +141,7 @@ void main() {
       final (cli, _) = await incidentCli(
         kimiEnvKey: 'kimi-key',
         entryApiType: 'openai',
+        bootProvider: 'openai',
         modelsFetcher: (baseUrl, {required apiKey}) async =>
             baseUrl.contains('kimi')
             ? const ['kimi-for-coding', 'k3-256k']
@@ -394,6 +408,7 @@ void main() {
         () async {
       final (cli, fake) = await incidentCli(
         kimiEnvKey: 'kimi-key',
+        rideCatalogStream: true,
         modelsFetcher: (baseUrl, {required apiKey}) async =>
             baseUrl.contains('kimi')
             ? const ['kimi-for-coding', 'k3-256k']
