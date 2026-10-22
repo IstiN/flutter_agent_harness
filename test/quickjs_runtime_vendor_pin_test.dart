@@ -189,5 +189,38 @@ void main() {
       );
       expect(entry, contains('../vendor/quickjs_runtime'));
     });
+
+    test('vendored hook/build.dart compiles to kernel', () {
+      // The Native Assets runner compiles the hook with
+      // `dart compile kernel --packages=<app package_config>` before every
+      // flutter/dart build — a hook that only fails to COMPILE (syntax
+      // drift, a `const` collection wrapping a runtime `if (os == …)`
+      // arm, …) strings pins cannot see. Replicate that compile so it
+      // fails here, at the root gate, instead of on every flutter leg.
+      // Skipped where flutter_app is not pub-resolved (bare root legs).
+      final packageConfig = File('flutter_app/.dart_tool/package_config.json');
+      if (!packageConfig.existsSync()) {
+        return markTestSkipped(
+          'flutter_app is not pub-resolved in this leg — the hook kernel '
+          'compile runs wherever the app package_config exists',
+        );
+      }
+      final outDir = Directory.systemTemp.createTempSync('qjs-hook-pin-');
+      addTearDown(() => outDir.deleteSync(recursive: true));
+      final result = Process.runSync(Platform.resolvedExecutable, [
+        'compile',
+        'kernel',
+        '--packages=${packageConfig.resolveSymbolicLinksSync()}',
+        '--output=${outDir.path}/hook.dill',
+        hookPath,
+      ]);
+      expect(
+        result.exitCode,
+        0,
+        reason:
+            '$hookPath must compile — the Native Assets runner kernel-compiles '
+            'it before every build:\n${result.stdout}\n${result.stderr}',
+      );
+    });
   });
 }
