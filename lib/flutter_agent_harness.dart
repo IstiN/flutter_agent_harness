@@ -40,6 +40,7 @@ export 'src/cli/agent_cli.dart';
 export 'src/cli/browser_bridge_commands.dart';
 export 'src/cli/chatgpt_credential_export.dart';
 export 'src/cli/custom_providers.dart';
+export 'src/cli/model_switch_coherence.dart';
 export 'src/cli/key_status.dart';
 export 'src/cli/env_provider_preconfig.dart';
 export 'src/cli/provider_tuning_seed.dart';

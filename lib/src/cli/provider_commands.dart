@@ -1615,20 +1615,13 @@ extension on AgentCli {
     return (model, context, {cancelToken}) {
       final refusal = _requestBuildRefusal(model);
       if (refusal != null) {
+        final state = ProviderStreamState(model)
+          ..errorMessage = refusal.message;
         final stream = AssistantMessageEventStream();
         stream.push(
           ErrorEvent(
             reason: StopReason.error,
-            error: AssistantMessage(
-              content: const [],
-              api: model.api,
-              provider: model.provider,
-              model: model.id,
-              usage: const Usage(),
-              stopReason: StopReason.error,
-              errorMessage: refusal.message,
-              timestamp: DateTime.now(),
-            ),
+            error: state.snapshot(finalize: true),
           ),
         );
         stream.end();
@@ -1670,6 +1663,7 @@ extension on AgentCli {
         ),
       );
     }
+    final identityKind = spec.kind;
     String? bindingError;
     try {
       ProviderModelBinding.resolve(

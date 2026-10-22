@@ -1342,7 +1342,7 @@ extension on AgentCli {
     )) {
       case SameModelSwitch():
         break;
-      case CrossProviderSwitch(:final provider):
+      case CrossProviderSwitch():
         io.writeln(
           const ModelCoherenceRefusal(
             problem:

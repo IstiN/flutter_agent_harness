@@ -1013,6 +1013,28 @@ extension on AgentCli {
       entry: entry,
     );
     if (built == null) return;
+    // G3 restore gate (gh-178): a persisted triple that no longer forms a
+    // valid binding is never applied mixed. Auto-repair keeps the
+    // boot-coherent model with a loud diagnostic naming the conflicted
+    // fields and the repair (OQ3: repair, not halt — the session still
+    // boots, on a coherent quadruple).
+    final gate = restoreGateDecision(
+      providerResolvable: true,
+      bindingResolves: _restoreBindingResolves(providerKind, modelId, baseUrl),
+      persistedModelId: modelId,
+      providerName: providerKind,
+      repairModelId: _agent.state.model.id,
+    );
+    if (gate.verdict != RestoreGateVerdict.restore) {
+      io.writeln(_style.dim('note: ${gate.refusal!.message}'));
+      io.writeln(
+        _style.dim(
+          '      keeping ${_agent.state.model.id} '
+          '(${_agent.state.model.provider} @ ${_agent.state.model.baseUrl})',
+        ),
+      );
+      return;
+    }
     final spec = resolveCliProviderSpec(built.provider)!;
     // The resolved KIND feeds the session state and the stream factory —
     // a raw name-shaped id here would throw at providerStreamFunction
@@ -1085,6 +1107,35 @@ extension on AgentCli {
       ),
     );
     return null;
+  }
+
+  /// G3 (gh-178): whether the persisted `(kind, modelId, baseUrl)` triple
+  /// still resolves through the ONE validating constructor. A null
+  /// persisted endpoint resolves the record default first — the same
+  /// resolution `buildCliDefaultModel` applies — so legacy states without
+  /// a recorded baseUrl are judged on the triple they would actually bind.
+  /// Unknown/private endpoints pass leniently (nothing to judge them by);
+  /// canonical-endpoint dialect/family conflicts refuse.
+  bool _restoreBindingResolves(
+    String providerKind,
+    String modelId,
+    String? baseUrl,
+  ) {
+    final effective =
+        baseUrl?.trim() ??
+        resolveCliProviderSpec(providerKind)?.defaultBaseUrl ?? '';
+    if (effective.isEmpty) return true;
+    try {
+      ProviderModelBinding.resolve(
+        providerKind: providerKind,
+        modelId: modelId,
+        baseUrl: effective,
+        provenance: BindingProvenance.restore,
+      );
+      return true;
+    } on ConfigException {
+      return false;
+    }
   }
 
   /// Builds the restored model with the issue-#964 authHeader precedence:

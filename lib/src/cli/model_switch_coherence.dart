@@ -1,6 +1,6 @@
 /// The model-switch coherence core (gh-178): the pure decision layer
 /// behind the three gates that keep the ACTIVE model a coherent quadruple
-/// `(provider, modelId, baseUrl, key family/auth header)`.
+/// `(provider, modelId, baseUrl, key family/auth header)` quad.
 ///
 /// - **G1 (switch gate)** — [parseTypedModelTarget] resolves a typed or
 ///   picked `provider/model` entry to a same-provider model switch, a
@@ -19,7 +19,7 @@
 ///
 /// Every refusal is single-line and actionable (E6): it names the
 /// mismatched quadruple fields and the exact repair command, never a
-/// "re-authorize <provider>" redirect (the incident's wrong-remedy class,
+/// "re-authorize `<provider>`" redirect (the incident's wrong-remedy class,
 /// gh-178 AC6) and never an enumeration of unrelated configured keys (the
 /// key-inventory disclosure class).
 ///
