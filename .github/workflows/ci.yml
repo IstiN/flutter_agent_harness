@@ -852,7 +852,15 @@ jobs:
     if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     permissions:
       contents: read
-    timeout-minutes: 12
+    # gh-1778: 20 min — sized for the degraded-cache worst case, not just
+    # the warm wall. Warm shards take ~460-525 s (run 39703080550) but the
+    # v1.0.621 release run stalled ~133 s on EACH cache step (degraded
+    # GitHub cache service, keys that existed) and needed ~14 min cold —
+    # cancelled at the 12-min wall with 2535/2761 tests green, reding the
+    # whole release. 20 clears that worst case and sits in the sibling
+    # test-leg band (flutter-tests 20, integration-mock 25, pty 40); a
+    # genuinely hung shard is still killed loudly.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -875,6 +883,11 @@ jobs:
         with:
           python-version: '3.x'
 
+      # gh-1778: caches are best-effort — a restore that hangs (degraded
+      # cache service stalled both steps ~133 s on the v1.0.621 release
+      # run) or fails only means slower setup. Step-level 2-min cap bounds
+      # the stall; continue-on-error keeps a dead cache from reding the
+      # shard (unlike the gh-1724 evidence uploads, which stay loud).
       - name: Pub cache
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -882,6 +895,8 @@ jobs:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: pub-${{ runner.os }}-
+        timeout-minutes: 2
+        continue-on-error: true
 
       - run: dart pub get
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -893,6 +908,8 @@ jobs:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+        timeout-minutes: 2
+        continue-on-error: true
 
       # Duration-balanced shards (issue #177 AC3): scripts/test_shards.json
       # maps test FILES to shards (file-level units — test/cli alone was
@@ -1681,14 +1698,14 @@ jobs:
       contents: read
     steps:
       - name: Scope fastpass (out-of-scope → green in seconds)
-        if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true' && needs.changes.outputs.app != 'true'
-        run: echo "no core/shared/app changes — guards green-skipped (required context reported)"
+        if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true' && needs.changes.outputs.app != 'true' && needs.changes.outputs.docs != 'true'
+        run: echo "no core/shared/app/docs changes — guards green-skipped (required context reported)"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true'
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.docs == 'true'
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
-        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.docs == 'true'
         with:
           sdk: stable
 
@@ -1730,13 +1747,15 @@ jobs:
           mkdir -p coverage
           python3 scripts/merge_lcov.py -o coverage/lcov.info coverage-shards/*/lcov.info
 
-      - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
-        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+      # gh-1738: activate is its own step so the Quality gates step below
+      # can run for docs-only / app-zone-only PRs too — the similarity
+      # corpus lives in docs/, prompts/, flutter_app/ and packages/, and
+      # a diff confined there must reach the gate pre-merge (it routes
+      # away from the CRAP ratchet, which needs the merged lcov).
+      - name: Activate crap4dart (pinned)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.docs == 'true'
         run: |
-          # Issue #447: 0.9.5+ carries the gate framework (broken_goldens
-          # et al.); 0.2.1 knew only the CRAP ratchet. Both configs set
-          # coverage.run_tests: false — the merged shard lcov above is the
-          # coverage source; gates must not re-run the suite.
+          # Issue #447: pin bumped 0.2.1 → >=0.9.5 for the gate framework.
           # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh + the
           # duplication.sources key (native cross-module scan).
           # gh-1106: >=0.11.0 — Type-2 renamed-clone detection
@@ -1749,11 +1768,25 @@ jobs:
           # detector fixes (checkmark V, yellow-on-dark digits, hollow
           # boxes, solid glyph runs); the configs now rely on 0.14.2
           # behaviour (severity: error, old excludes dropped).
-          dart pub global activate crap4dart ">=0.14.2 <0.15.0"
+          # gh-1738: >=0.15.0 — the similarity gate (file-level
+          # near-duplicates over md+dart), wired into crap4dart.yaml.
+          dart pub global activate crap4dart ">=0.15.0 <0.16.0"
+
+      - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: |
+          # Issue #447: 0.9.5+ carries the gate framework (broken_goldens
+          # et al.); 0.2.1 knew only the CRAP ratchet. Both configs set
+          # coverage.run_tests: false — the merged shard lcov above is the
+          # coverage source; gates must not re-run the suite.
+          # crap4dart activated (pinned) in the step above.
           dart pub global run crap4dart analyze
 
       - name: Quality gates (broken goldens + Type-2 duplication, issue 1106)
-        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        # gh-1738: + docs/app — the similarity gate scans the whole tree
+        # (docs/, prompts/, flutter_app/, packages/ included); no project
+        # pub get needed (global tool, config+file gates only).
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.docs == 'true'
         run: dart pub global run crap4dart check --baseline
 
       # Issue #1234 rework: 0.11.0 has no per-gate sources override (a
@@ -2392,9 +2425,11 @@ jobs:
           # crap4dart#3/#4 (2026-10-15): >=0.14.2 <0.15.0 — same bounded
           # pin as the core job; the broken_goldens detector fixes the
           # flipped configs rely on.
+          # gh-1738: >=0.15.0 — same bounded pin as the core job; the
+          # root config's similarity gate runs under this version.
           # coverage.run_tests: false in both configs — the merged shard
           # lcov above is the source; never re-run the suite here.
-          dart pub global activate crap4dart ">=0.14.2 <0.15.0"
+          dart pub global activate crap4dart ">=0.15.0 <0.16.0"
           cd flutter_app && dart pub global run crap4dart analyze --format json > crap_report.json
 
       # Issue #490 AC2: publish the ranked CRAP JSON even when the ratchet

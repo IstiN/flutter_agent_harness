@@ -24,6 +24,7 @@ extension on AgentCli {
     _subagentManager.reset();
     // The status meter belongs to the session (see _switchToMetadata).
     _usage.reset();
+    _meter.reset();
     final matches = await _sessionNameMatches(trimmed);
     SessionMetadata? metadata;
     if (matches.length > 1 &&
@@ -128,6 +129,7 @@ extension on AgentCli {
     // The status meter belongs to the session: tok/cost/turn must not carry
     // the previous session's totals into the new one.
     _usage.reset();
+    _meter.reset();
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();

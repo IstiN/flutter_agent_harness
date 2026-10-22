@@ -122,7 +122,9 @@ coverage:
 # ─── Gates (issue #447) ────────────────────────────────────────────────────
 # This config is the single source of which gates `crap4dart check` runs
 # (CI app-crap-gate job, pre-commit core hook): 0.9.5 default-enables ALL
-# built-in gates, so everything not enforced below is disabled explicitly.
+# built-in gates, so everything not enforced below is disabled explicitly
+# (gh-1738: `similarity` is 0.15.0-only and ships default-off; it is
+# pinned OFF explicitly below so the invariant survives future defaults).
 gates:
   # Issue #1234: whole-tree ≤2800-line guard (was scripts/ci_fast_gate.sh
   # stage_size + the ci.yml shell guard). agent_service.dart and
@@ -153,6 +155,13 @@ gates:
   folder_structure: {enabled: false}
   external: {enabled: false}
   public_docs: {enabled: false}
+  # gh-1738: similarity ships default-off (0.15.0) and stays off HERE on
+  # purpose — the ROOT config's whole-tree gate (md+dart, own excludes +
+  # baseline) already covers flutter_app/ plus packages/ and everything
+  # else; a second scanner here would double-scan and fork the baseline.
+  # Kept explicit so this config's "everything not enforced below is
+  # disabled" invariant stays literally true as gates are added upstream.
+  similarity: {enabled: false}
 
   # Pixel gate over the golden set (165 PNGs). severity: warning + the
   # excludes below are the documented INTERIM mitigation (#447): the
