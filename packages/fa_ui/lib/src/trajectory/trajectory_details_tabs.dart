@@ -433,6 +433,12 @@ Widget _requestPage(
         _DetailRow(strings.requestPromptHash, detail.systemPromptHash!),
       if (detail.toolManifestHash != null)
         _DetailRow(strings.requestManifestHash, detail.toolManifestHash!),
+      // gh-1745: the full per-message detail spilled into the session's
+      // request-blob dir; the row names the file — the same pointer the
+      // CLI `/trajectory inspect` renders (the inline list below keeps
+      // the role+chars stubs).
+      if (detail.spillFile != null)
+        _DetailRow(strings.requestSpillFile, detail.spillFile!),
       if (detail.systemPromptChars > 0)
         _DetailRow(
           strings.requestSystemPrompt,
@@ -460,12 +466,15 @@ Widget _requestPage(
             style: dim,
           ),
         ),
-        Text(
-          message.preview,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
+        // gh-1745: stub messages carry no preview (the text rides the
+        // request blob) — render nothing instead of an empty line.
+        if (message.preview.isNotEmpty)
+          Text(
+            message.preview,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
-        ),
         // Issue #385 F3 drill-in: the message's block structure in model
         // order — bounded full texts and `[image WxH]` markers. Absent
         // for old sessions (E6): the preview above renders alone.
@@ -497,10 +506,19 @@ String _requestSummaryText(
   '${strings.requestSystemPrompt}: ${strings.unitChars(detail.systemPromptChars)}',
   '${strings.tabTools}: ${detail.toolCount}'
       '${detail.toolNames.isEmpty ? '' : ' (${detail.toolNames.join(', ')})'}',
-  for (final message in detail.messages)
-    '${message.role} · ${strings.unitChars(message.chars)}: '
-        '${message.preview.replaceAll('\n', ' ')}',
+  for (final message in detail.messages) _requestStubLine(message, strings),
 ].join('\n');
+
+/// gh-1745: stub messages carry no preview (the text rides the request
+/// blob) — the `: preview` tail only appears when there is one.
+String _requestStubLine(
+  TrajectoryRequestMessageSummary message,
+  TrajectoryStrings strings,
+) {
+  final head = '${message.role} · ${strings.unitChars(message.chars)}';
+  final preview = message.preview.replaceAll('\n', ' ');
+  return preview.isEmpty ? head : '$head: $preview';
+}
 
 /// Empty assistant response: an explicit statement plus the stop reason
 /// derived from the recorded blocks — never a bare placeholder.

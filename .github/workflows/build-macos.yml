@@ -401,25 +401,52 @@ jobs:
           path: vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework
           key: wasmrun-xcframework-v0.1.0
       - name: Restore vendored WasmRun macOS framework
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           # The prebuilt XCFramework is excluded from git. Order of preference:
-          # 1) actions/cache hit (per-runner, keyed by the release tag) —
-          #    every slot is first-run-warm forever;
+          # 1) actions/cache hit (keyed by the release tag) — warm until the
+          #    repo's daily cache churn LRU-evicts the entry (saved 10-20
+          #    06:02Z, gone by 10-21 19:03Z: gh-1759 ran cold twice);
           # 2) local working copy on this self-hosted runner;
-          # 3) upstream release asset — the curl budget MUST fit the 15-min
-          #    step cap WITH CORRECT ARITHMETIC (gh-1149): --retry N is N
-          #    retries ON TOP OF the initial attempt, so worst case is
-          #    (N+1) × max-time + N × retry-delay. 3 × 240s + 2 × 5s + one
-          #    30s connect + unzip ≈ 790s < 900s. The old "3 retries × 240s"
-          #    math forgot the initial attempt (975s > 900s → the step
-          #    timeout fired mid-retry), and without -C - no 240s attempt
-          #    could ever deliver the 92.7MB asset at this link's ~300KB/s
-          #    (it needs ~309s) — every attempt died at the cap having
-          #    restarted from byte 0.
+          # 3) upstream release asset — the curl budget MUST fit the step
+          #    cap WITH CORRECT ARITHMETIC (gh-1149): retries live in THIS
+          #    bash loop, not curl --retry (which adds N MORE attempts AND
+          #    restarts+truncates instead of resuming). Worst case with the
+          #    gh-1759 budget: 4 × 240s max-time + 3 × 5s sleeps = 975s,
+          #    + connect + unzip + slack ≈ 1035s < the 20-min (1200s) cap.
+          #
+          #    gh-1759: the gh-1149 budget (3 × 240s) was sized for this
+          #    link's good-day ~300KB/s. The 10-21 daily run measured
+          #    40–108KB/s (cold cache, both arch jobs): 3 × 240s banked
+          #    only 29.5MB (x86_64) / 73% (arm64) of the 97,238,501-byte
+          #    asset and the leg went red. Resume worked (`Resuming
+          #    transfer from byte position …` in the logs) — the wire
+          #    budget was simply too small, and the old pre-loop wipe
+          #    threw each run's partial away, so a slow-link day never
+          #    banked durable progress and the leg could not self-heal.
+          #    Fixes: (a) the per-arch /tmp partial now PERSISTS across
+          #    runs — -C - resumes it within the step AND across daily
+          #    runs (macOS prunes only 3-day-untouched /tmp files; a daily
+          #    run touches it) until the asset completes and the
+          #    actions/cache post-step saves the framework; (b) the loop
+          #    grew to 4 × 240s under a 20-min step cap.
           LOCAL_SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework"
           DEST="vendor/wasm_run_flutter/macos/Frameworks"
+          # PER-ARCH zip path: both matrix archs run on ONE self-hosted
+          # runner (the shared-state race this file already guards with
+          # per-arch keychains below) — a shared arch-less /tmp zip would
+          # let one job's cleanup unlink the other's in-flight partial,
+          # then both curls interleave bytes into one path.
+          ZIP="/tmp/WasmRun.xcframework-${{ matrix.arch }}.zip"
+          # The release asset is immutable per tag — pin its digest so a
+          # wrong-content-but-valid-zip cannot slip past unzip CRC32 into
+          # the permanent wasmrun-xcframework-v0.1.0 cache (same pattern
+          # as the litertlm download above). The pinned byte size tells a
+          # truncated download (KEEP the partial — the next run resumes
+          # it) apart from a complete-but-wrong one (PURGE and restart).
+          ASSET_DIGEST="aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98"
+          ASSET_BYTES=97238501
           mkdir -p "$DEST"
           if [ -f "$DEST/WasmRun.xcframework/Info.plist" ]; then
             echo "Using framework already in place (actions/cache hit or valid leftover)"
@@ -428,40 +455,44 @@ jobs:
             cp -R "$LOCAL_SRC" "$DEST/"
           else
             echo "No cache, no local copy — downloading from upstream release..."
-            # -C - makes each loop attempt RESUME the partial zip (Range
-            # requests), so slow links make forward progress; retries live
-            # in THIS loop (not curl --retry, which would add extra attempts
-            # AND restart+truncate instead of resuming). Budget: 3 × 240s
-            # max-time + 2 × 5s sleeps = 730s < the 15-min step cap, leaving
-            # connect + unzip + slack (gh-1149).
-            # PER-ARCH zip path: both matrix archs run on ONE self-hosted
-            # runner (the shared-state race this file already guards with
-            # per-arch keychains below) — a shared arch-less /tmp zip would
-            # let one job's rm -f unlink the other's in-flight partial, then
-            # both curls interleave bytes into one path.
-            ZIP="/tmp/WasmRun.xcframework-${{ matrix.arch }}.zip"
-            rm -f "$ZIP"
-            for attempt in 1 2 3; do
-              # --fail: without it curl exits 0 on HTTP 404/5xx and writes
-              # the error page into the zip; with it every HTTP error
-              # engages this loop's retries and the explicit failure below.
-              if curl --fail -L -C - --connect-timeout 30 --max-time 240 \
-                -o "$ZIP" \
-                https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip; then
-                break
-              fi
-              if [ "$attempt" = "3" ]; then
-                echo "WasmRun.xcframework download failed after $attempt attempts" >&2
+            # The partial is deliberately NOT deleted between runs
+            # (gh-1759): it is exactly what -C - is for. If the persisted
+            # zip is already complete AND digest-valid, skip the download
+            # — a -C - attempt against a complete file gets HTTP 416 and
+            # reads success as failure.
+            if [ -f "$ZIP" ] && echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null 2>&1; then
+              echo "Complete, digest-valid $ZIP persisted from an earlier run — skipping download"
+            else
+              for attempt in 1 2 3 4; do
+                # --fail: without it curl exits 0 on HTTP 404/5xx and writes
+                # the error page into the zip; with it every HTTP error
+                # engages this loop's retries. -C - makes each attempt
+                # RESUME the partial zip (Range requests), so slow links
+                # make forward progress within this step AND across runs.
+                if curl --fail -L -C - --connect-timeout 30 --max-time 240 \
+                  -o "$ZIP" \
+                  https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip; then
+                  break
+                fi
+                if [ "$attempt" = "4" ]; then
+                  echo "download attempt $attempt failed — out of loop attempts" >&2
+                else
+                  echo "download attempt $attempt failed, resuming in 5s..."
+                  sleep 5
+                fi
+              done
+              got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
+              if [ "$got" -eq "$ASSET_BYTES" ] && echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c -; then
+                : # complete and authentic — fall through to unzip
+              elif [ "$got" -lt "$ASSET_BYTES" ]; then
+                echo "WasmRun.xcframework.zip incomplete: $got / $ASSET_BYTES bytes after $attempt attempts — keeping the partial; the next run resumes from byte $got (gh-1759)" >&2
+                exit 1
+              else
+                echo "WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) or failed its pinned sha256 — purging it so the next run restarts clean" >&2
+                rm -f "$ZIP"
                 exit 1
               fi
-              echo "download attempt $attempt failed, resuming in 5s..."
-              sleep 5
-            done
-            # The release asset is immutable per tag — pin its digest so a
-            # wrong-content-but-valid-zip cannot slip past unzip CRC32 into
-            # the permanent wasmrun-xcframework-v0.1.0 cache (same pattern
-            # as the litertlm download above).
-            echo "aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98  $ZIP" | shasum -a 256 -c -
+            fi
             unzip -q "$ZIP" -d "$DEST"
           fi
           ls -la "$DEST/WasmRun.xcframework"
