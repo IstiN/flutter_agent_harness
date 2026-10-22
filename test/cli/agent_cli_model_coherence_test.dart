@@ -27,23 +27,24 @@ void main() {
   /// endpoint, its own key slot) is ACTIVE, and kimi is reachable as an
   /// env-keyed catalog provider (KIMI_API_KEY in the environment) whose
   /// `/models` answer overlaps nothing with the copilot entry's.
-  (AgentCli, FakeStreamFunction) incidentCli({
+  Future<(AgentCli, FakeStreamFunction)> incidentCli({
     String? kimiEnvKey,
-    bool rolesMode = false,
+    String entryApiType = 'copilot',
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
     Model? bootModel,
-  }) {
+  }) async {
     final store = FakeSecureKeyStore()
       ..map['FA_KEY_COPILOT_ACME'] = 'copilot-key';
     if (kimiEnvKey != null) {
       store.map['KIMI_API_KEY'] = kimiEnvKey;
     }
     final cache = SecureKeyCache(store);
+    await cache.preload(store.map.keys.toList());
     final registry = CustomProviderRegistry([
       CustomProviderEntry(
         name: 'copilot-acme',
-        apiType: 'copilot',
+        apiType: entryApiType,
         baseUrl: 'https://api.enterprise.githubcopilot.com',
         keyName: 'FA_KEY_COPILOT_ACME',
         modelId: 'gemini-4-argon',
@@ -75,6 +76,7 @@ void main() {
         envVarIsSet: (name) => store.map.containsKey(name),
         secureKeys: cache,
         customProviders: registry,
+        activeCustomName: 'copilot-acme',
         modelsFetcher: modelsFetcher,
         providerKind: 'copilot',
       ),
@@ -97,7 +99,7 @@ void main() {
     test('typed `/model kimi/kimi-for-coding` switches provider + endpoint '
         '+ key family, not just the id', () async {
       final fetches = <String>[];
-      final (cli, fake) = incidentCli(
+      final (cli, fake) = await incidentCli(
         kimiEnvKey: 'kimi-key',
         modelsFetcher: (baseUrl, {required apiKey}) async {
           fetches.add(baseUrl);
@@ -123,8 +125,9 @@ void main() {
 
     test('numbered pick of a cross-provider row moves the whole triple',
         () async {
-      final (cli, _) = incidentCli(
+      final (cli, _) = await incidentCli(
         kimiEnvKey: 'kimi-key',
+        entryApiType: 'openai',
         modelsFetcher: (baseUrl, {required apiKey}) async =>
             baseUrl.contains('kimi')
             ? const ['kimi-for-coding', 'k3-256k']
@@ -160,7 +163,7 @@ void main() {
     });
 
     test('picker pick (provider|model key) moves the whole triple', () async {
-      final (cli, _) = incidentCli(
+      final (cli, _) = await incidentCli(
         kimiEnvKey: 'kimi-key',
         modelsFetcher: (baseUrl, {required apiKey}) async =>
             baseUrl.contains('kimi')
@@ -183,7 +186,7 @@ void main() {
 
     test('a same-provider pick keeps the current triple (no provider hop)',
         () async {
-      final (cli, _) = incidentCli(
+      final (cli, _) = await incidentCli(
         kimiEnvKey: 'kimi-key',
         modelsFetcher: (baseUrl, {required apiKey}) async =>
             baseUrl.contains('kimi')
@@ -208,7 +211,7 @@ void main() {
   group('IT-1/E1: provider removed after listing refuses', () {
     test('a cross-provider pick of an unresolvable provider refuses and '
         'applies no partial triple', () async {
-      final (cli, _) = incidentCli(
+      final (cli, _) = await incidentCli(
         kimiEnvKey: 'kimi-key',
         modelsFetcher: (baseUrl, {required apiKey}) async =>
             baseUrl.contains('kimi')
@@ -217,7 +220,11 @@ void main() {
       );
       final run = await boot(cli);
 
-      io.sendLine('/model gone-provider/kimi-for-coding');
+      // E1 is a LISTING-vs-pick race: the row arrives as a STRUCTURED
+      // (provider, model) pair whose provider no longer resolves. A TYPED
+      // unknown prefix stays a coherent same-provider pasthrough (an
+      // OpenRouter-style vendor id) — covered by the UT-1 parser tests.
+      await cli.tuiSelectModelForTest('gone-provider|kimi-for-coding');
       await waitForIt(
         () => io.out.toString().contains('model coherence refusal'),
       );
@@ -385,7 +392,7 @@ void main() {
     test('mixed boot + picker pick of kimi-for-coding + message never '
         'produces a copilot-endpoint request carrying kimi-for-coding',
         () async {
-      final (cli, fake) = incidentCli(
+      final (cli, fake) = await incidentCli(
         kimiEnvKey: 'kimi-key',
         modelsFetcher: (baseUrl, {required apiKey}) async =>
             baseUrl.contains('kimi')
@@ -421,27 +428,31 @@ void main() {
   });
 }
 
-/// The provider named by the LAST `model_change` record of the newest
-/// session file — the transcript half of the REG-3 agreement.
+/// The provider named by the LAST `model_change` record under the session
+/// root — the transcript half of the REG-3 agreement.
 Future<String?> _lastModelChangeProvider(MemoryExecutionEnv env) async {
-  final listing = await env.listDir('/sessions');
-  final files = [
-    for (final info in (listing.valueOrNull ?? const <FileInfo>[]))
-      if (info.name.endsWith('.jsonl')) info.name,
-  ]..sort();
-  if (files.isEmpty) return null;
-  final text = (await env.readTextFile('/sessions/${files.last}'))
-      .valueOrNull;
-  if (text == null) return null;
   String? provider;
-  for (final line in text.split('\n')) {
-    if (!line.contains('"model_change"')) continue;
-    try {
-      final record = jsonDecode(line) as Map<String, dynamic>;
-      provider = record['provider'] as String?;
-    } on FormatException {
-      // skip torn line
+  Future<void> walk(String dir) async {
+    final listing = await env.listDir(dir);
+    for (final info in listing.valueOrNull ?? const <FileInfo>[]) {
+      final path = '$dir/${info.name}';
+      if (info.kind == FileKind.directory) {
+        await walk(path);
+      } else if (info.name.endsWith('.jsonl')) {
+        final text = (await env.readTextFile(path)).valueOrNull;
+        for (final line in (text ?? '').split('\n')) {
+          if (!line.contains('"model_change"')) continue;
+          try {
+            final record = jsonDecode(line) as Map<String, dynamic>;
+            provider = record['provider'] as String?;
+          } on FormatException {
+            // skip torn line
+          }
+        }
+      }
     }
   }
+
+  await walk('/sessions');
   return provider;
 }
