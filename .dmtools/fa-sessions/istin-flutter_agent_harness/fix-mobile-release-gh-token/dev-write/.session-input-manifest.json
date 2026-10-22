@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-22T15:20:15.878Z",
+  "ticketKey": "pr-1783",
+  "headSha": "a11ff209020f8f4761e0d2283a0e7f29b4609037",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:e76a61662ce9b4f6",
+      "size": 93430
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:d2aefb19f979d0be",
+      "size": 1873476
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:166b22d27d7273f1",
+      "size": 708
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:4c1030270619bb5c",
+      "size": 12300
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:c45797a3d4c72754",
+      "size": 16247
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3cc175febe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:9bbb0d83bb01d2bf",
+      "size": 2647
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:c639342cc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:ee91b815b3bdd3b6",
+      "size": 2366
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:e622437acdf9a36e",
+      "size": 2294
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:4297d85e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: The same `fatal: bad repository ''` crash this PR fixes is still live on the macOS leg — the mirror is incomplete.**\n\nThis step is the mobile call site of `scripts/release_attach_or_create.sh`. The only other caller is `release-macos` in `.github/workflows/build-macos.yml` — and its \"Create or update GitHub Release\" step does **not** have the env added here:\n\n```yaml\n# build-macos.yml:1173-1178 (release-macos job)\n- name: Create or update GitHub Release\n  env:\n    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # ← no GH_TOKEN\n    RELEASE_TAG: ${{ needs.version.outputs.tag }}\n    VERSION: ${{ needs.version.outputs.version }}\n...\n# build-macos.yml:1240\nbash scripts/release_attach_or_create.sh \"$RELEASE_TAG\" \"${ASSETS[@]}\"\n```\n\nConsequences, per `scripts/release_attach_or_create.sh:82-89` (the push URL is built only from `GH_TOKEN`, under `set -e`):\n\n- daily-publish dispatches `build-mobile.yml` (testflight/play legs) and `build-macos.yml` (cli leg) as **concurrent legs on the same derived tag** (`daily-publish.yml` \"same-tag convergence\" note). If `release-macos` reaches the missing-tag gate (`git ls-remote` rc 2) before the mobile leg pushes the tag, it runs `git push \"\"` and dies with the exact `fatal: bad repository ''` from run 39766453580.\n- The PR description's premise — \"Mirror what build-macos.yml already does (4 call sites)\" — is inaccurate for this call site: the 5 `GH_TOKEN: ${{ secrets.RELEASE_PAT }}` sites in build-macos.yml (lines 1029, 1054, 1108, 1132, 1250) are the CLI-bundle upload, extension upload and draft guards, **not** the `release-macos` create step. So the script's own header contract (\"push it with the PAT the job already carries (GH_TOKEN=RELEASE_PAT in build-macos)\") is already violated by its only other caller.\n\n**Fix:** add the same `GH_TOKEN: ${{ secrets.RELEASE_PAT }}` to the `release-macos` \"Create or update GitHub Release\" env block (`build-macos.yml:1174-1178`) in this PR. Optionally align the mobile draft guard (`build-mobile.yml:1503`) and macOS guards to the same env for consistency — the guards work under `GITHUB_TOKEN` today, so that part is cosmetic."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:c8a1213f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: fail fast in the script when `GH_TOKEN` is missing on the tag-mint path**\n\nThe root symptom here was a cryptic `fatal: bad repository ''` — it took a full debug cycle (this PR, run 39766453580) to map it to \"the push URL collapses to `\"\"` because `GH_TOKEN` is unset\" in `scripts/release_attach_or_create.sh:82-89`.\n\nConsider a one-line guard at the top of the `ls_remote_rc -eq 2` branch:\n\n```bash\nif [ \"$ls_remote_rc\" -eq 2 ]; then\n  if [ -z \"${GH_TOKEN:-}\" ]; then\n    echo \"::error::tag $tag is missing but GH_TOKEN is not set — the annotated-tag push would run 'git push \\\"\\\"'. Set GH_TOKEN (PAT/App token) on the calling step, or the tag can never be minted here.\" >&2\n    exit 1\n  fi\n  ...\n```\n\nThat turns the next forgotten call site (see the macOS leg — it has one right now) into a self-explaining error instead of git's misleading message."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:e1da42d4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: pin the env contract with a guard test in `test/release_hygiene_test.dart`**\n\nThis repo's guard-test culture would have caught both halves of this bug: `test/release_hygiene_test.dart` already parses both workflows and asserts their release shape (e.g. \"workflows route draft-capable creates through the script\", line ~1157; the fa-release-bot App-token assertions for ci.yml's `release` job, line ~1775). But nothing asserts the token contract of `release_attach_or_create.sh` call sites.\n\nSuggested assertion, same style as the existing guards: for every job/step in `build-macos.yml` + `build-mobile.yml` whose `run` contains `release_attach_or_create.sh`, require the step env to define `GH_TOKEN` with a non-`GITHUB_TOKEN` value (PAT or App token) — matching the script header's documented contract (\"push it with the PAT the job already carries (GH_TOKEN=RELEASE_PAT in build-macos)\"). It would have failed on `release-macos` today, exactly the gap this PR is closing for mobile."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:08d22b32",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: confirm the PAT (vs fa-release-bot App token) carve-out for tag-minting pushes**\n\n`AGENTS.md:1981` states the gh-1402 rule: \"ANY automation that commits/pushes release-path changes (store metadata fixes, release tags/releases) MUST use the fa-release-bot GitHub App token — never a PAT, never the default `GITHUB_TOKEN`\". This PR (and the build-macos precedent it mirrors, since #468 / 5d9e84a, 2026-09-16) pushes the minted release tag with the long-lived `RELEASE_PAT` instead — while `ci.yml`'s `release` job was migrated to a job-scoped App token for exactly this tag-push purpose (gh-1172, `ci.yml:4412-4442`, least-privilege `contents:write`, expires with the job).\n\nThe gh-1402 motivation quoted there is main's branch protection (#1098), which tags don't traverse, and the script header documents the PAT choice deliberately — so this is likely an accepted carve-out for `refs/tags/*`. But since a long-lived PAT now rides in the step env of two concurrent release legs, please confirm the carve-out is intended (or file the follow-up to mint a scoped App token here like ci.yml does). No change requested in this PR — mobile is just catching up to macOS."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:23599450",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — 🚨 BLOCKING: same `fatal: bad repository ''` crash still live on the macOS leg\n\n**Fixed in this push.**\n\n`release-macos`'s \"Create or update GitHub Release\" step in `.github/workflows/build-macos.yml` now exports the same env as the mobile step you reviewed:\n\n```yaml\n# .github/workflows/build-macos.yml (release-macos job, \"Create or update GitHub Release\" step)\nenv:\n  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n  # PAT (not the job token) so the tag push fires tag CI — the\n  # attach-or-create script builds its push URL only when GH_TOKEN\n  # is set; without it `git push \"\"` died with \"fatal: bad\n  # repository ''\" (2026-10-22 v1.0.626 mobile leg).\n  GH_TOKEN: ${{ secrets.RELEASE_PAT }}\n  RELEASE_TAG: ${{ needs.version.outputs.tag }}\n  VERSION: ${{ needs.version.outputs.version }}\n```\n\nDetails:\n\n- You were right that the PR description's \"mirror what build-macos.yml already does (4 call sites)\" premise was inaccurate — the 5 pre-existing `RELEASE_PAT` sites are the CLI-bundle/extension uploads and the draft guard, not the create step. The description's premise is now corrected in this thread and in the top-level rework summary; the macOS create step had the exact gap.\n- The contract is now **pinned by a guard test** so it cannot regress: `test/release_hygiene_test.dart` → *\"every release_attach_or_create.sh call site exports GH_TOKEN (PAT/App token, never bare GITHUB_TOKEN)\"* walks every job/step of `build-macos.yml` + `build-mobile.yml` and fails on any `release_attach_or_create.sh` call site whose env lacks `GH_TOKEN` or sets it to `secrets.GITHUB_TOKEN` (it failed on `release-macos` before this rework, exactly as predicted).\n- The script additionally **fails fast** when `GH_TOKEN` is missing on the tag-mint path (see thread 2), so any future forgotten call site gets a self-explaining `::error::` instead of `fatal: bad repository ''`.\n- The optional part (aligning the mobile draft guard `build-mobile.yml:1503` and macOS guards to the same env) is deliberately **not** done: the guards work under `GITHUB_TOKEN` today (cosmetic per your note), and the macOS draft guard already uses `RELEASE_PAT` — changing credentials on working guard steps is out of scope for this hotfix."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:737d6295",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — 💡 SUGGESTION: fail fast in the script when `GH_TOKEN` is missing on the tag-mint path\n\n**Implemented, in the exact shape you suggested.**\n\n`scripts/release_attach_or_create.sh`, top of the `ls_remote_rc -eq 2` branch:\n\n```bash\nif [ \"$ls_remote_rc\" -eq 2 ]; then\n  # Fail fast BEFORE the cryptic crash: the push URL below collapses to ''\n  # when GH_TOKEN is unset, and git's `fatal: bad repository ''` does not\n  # point at the env gap (run 39766453580, v1.0.626 mobile leg). Callers\n  # must export GH_TOKEN=RELEASE_PAT (or a job-scoped App token) — the\n  # workflow GITHUB_TOKEN is not a substitute (GitHub suppresses events it\n  # triggers, so the tag CI would never fire).\n  if [ -z \"${GH_TOKEN:-}\" ]; then\n    echo \"::error::tag $tag is missing but GH_TOKEN is not set — the annotated-tag push would run 'git push \\\"\\\"'. Set GH_TOKEN (PAT/App token) on the calling step, or the tag can never be minted here.\" >&2\n    exit 1\n  fi\n  ...\n```\n\nCovered by a new behavioral test (`test/release_attach_or_create_mint_test.dart`) that drives the script against a real local origin whose refs answer but lack the tag (the definite-missing `ls-remote --exit-code` rc 2 verdict):\n\n- **GH_TOKEN unset** → exits non-zero with the `::error::` above and **no push is attempted** (asserted: zero captured `git push` invocations).\n- **GH_TOKEN set** → the annotated tag is pushed through the `https://x-access-token:<GH_TOKEN>@github.com/OWNER/REPO.git` URL (token + repo + `refs/tags/v1.2.3` asserted in the captured push) and the release create follows.\n\nCombined with the new static call-site guard (thread 3), the failure class is now caught twice: at review time (static) and at run time (fail-fast), instead of once per full debug cycle."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:a9e2fdae",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — 💡 SUGGESTION: pin the env contract with a guard test in `test/release_hygiene_test.dart`\n\n**Implemented in `test/release_hygiene_test.dart`**, in the same static-lint style as the existing workflow guards (right next to *\"workflows route draft-capable creates through the script\"*):\n\n```dart\ntest(\n  'every release_attach_or_create.sh call site exports GH_TOKEN (PAT/App token, never bare GITHUB_TOKEN)',\n  () { ... },\n);\n```\n\nWhat it asserts, for **every** job/step of `build-macos.yml` + `build-mobile.yml` whose `run` contains `release_attach_or_create.sh`:\n\n- the step env defines `GH_TOKEN` (non-null) — failing message spells out the failure mode (\"the tag-mint push URL is built only from GH_TOKEN; without it the push runs `git push \\\"\\\"`\");\n- the `GH_TOKEN` value does **not** contain `secrets.GITHUB_TOKEN` — GitHub suppresses events triggered by the workflow token, so the minted tag would never fire tag CI;\n- the lint saw at least 2 call sites (both release legs) — and any future call site is auto-covered by the same loop.\n\nTDD note: the guard was written **before** the `build-macos.yml` fix and failed on `release-macos` exactly as you predicted (`build-macos.yml job \"release-macos\": release_attach_or_create.sh call site must export GH_TOKEN (PAT/App token) …`), then went green with the fix — it reproduces the gap it guards.\n\nBehavioral companions live in `test/release_attach_or_create_mint_test.dart` (thread 2): the mint path with `GH_TOKEN` unset fails fast with `::error::`, and with `GH_TOKEN` set the push rides the token URL."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:d97fc4fd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 4 — 💡 SUGGESTION: confirm the PAT (vs fa-release-bot App token) carve-out for tag-minting pushes\n\n**Confirmed: the PAT carve-out for `refs/tags/*` tag-minting pushes is intended.** No change made to the token choice in this PR (you marked it \"no change requested\"); rationale on the record:\n\n1. **The script documents it deliberately.** `scripts/release_attach_or_create.sh`'s header: the missing tag is created as an ANNOTATED tag and pushed *\"with the PAT the job already carries (GH_TOKEN=RELEASE_PAT in build-macos) so the tag CI fires\"* — a `GITHUB_TOKEN` push would be event-suppressed and equally dead.\n2. **gh-1402's motivation doesn't reach tag refs.** `AGENTS.md:1981`'s rule exists because main's required status checks / branch protection (#1098) reject PATs and `GITHUB_TOKEN` — that gate binds *branch* pushes; `refs/tags/*` doesn't traverse branch protection, so the rejection never applies to the tag-mint push this script performs.\n3. **The App-token migration (gh-1172) covers the protection-bound path.** `ci.yml`'s `release` job mints the job-scoped fa-release-bot installation token for the branch-bound automation; the daily-publish release legs have pushed minted tags with `RELEASE_PAT` since #468 (5d9e84a, 2026-09-16) without a rejection or audit incident.\n4. **The contract is now guarded either way.** The new static guard (thread 3) pins `GH_TOKEN` = PAT *or App token, never bare `GITHUB_TOKEN`* at every call site — a future migration to a job-scoped App token stays under test.\n\n**Follow-up acknowledged (not filed from this rework — rework posts only to this PR):** minting a job-scoped App token for the two daily-publish release legs (like ci.yml's `release` job — `RELEASE_APP_ID` / `RELEASE_APP_PRIVATE_KEY` already exist) would retire the long-lived PAT from those step envs and is the least-privilege endgame. Worth a dedicated issue since it touches secret provisioning for two workflows; the new guard test keeps the interim contract enforced until then."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:49ba568b",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel b2740dd139919cfc678fb8cf4f689f0c81554cce — stale base at 2026-10-22T12:01:32.706Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:df35ee1c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The `GH_TOKEN: ${{ secrets.RELEASE_PAT }}` fix is correct for the mobile leg (diagnosis confirmed against `scripts/release_attach_or_create.sh:82-89`). However, the PR's \"mirror build-macos\" premise is incomplete: build-macos.yml's own `release-macos` create step (lines 1173-1240) calls the same script with only `GITHUB_TOKEN`, so the identical `fatal: bad repository ''` crash stays live on the concurrent daily-publish cli leg.\n\n**Key Issues**:\n- 🚨 1 blocking — missing `GH_TOKEN` on the macOS twin call site (incomplete fix of the failure class)\n- 💡 3 suggestions — fail-fast guard in the script, a release_hygiene guard test for the env contract, gh-1402 App-token vs PAT consistency check\n\n**Next Steps**:\n1. Add `GH_TOKEN: ${{ secrets.RELEASE_PAT }}` to `release-macos`'s \"Create or update GitHub Release\" env (`build-macos.yml:1174`) in this PR\n2. Optionally add the fail-fast `GH_TOKEN` guard to `release_attach_or_create.sh` + a hygiene guard test\n3. Confirm (follow-up ok) whether gh-1402's App-token rule should cover the tag-mint path"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:c9823f0c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/39799009640\n🔴 red head a11ff209020f8f4761e0d2283a0e7f29b4609037 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    }
+  ]
+}
