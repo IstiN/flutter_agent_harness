@@ -89,6 +89,12 @@ factual: paths, commands, invariants — no essays.
   (exported as `FA_PROTECTED_PIDS`, overridable per exec via
   `ShellExecOptions.env` for tests) and the invoking shell, while
   legitimate victims stay killable; Windows keeps `cmd /c` verbatim.
+  Residual caveat: shapes the shim cannot model — output modes
+  (`-c`, `-v`, `-l`, `-a`, `--count`, any other long option), a signal
+  spelled after the pattern, extra operands, or a selection pgrep
+  rejects — exec the real, unshimed binary and are NOT covered by the
+  exemption (keep the pattern away from the harness cmdline in those
+  spellings).
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.

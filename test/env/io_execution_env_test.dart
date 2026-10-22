@@ -275,7 +275,16 @@ void main() {
       final parts = path.split(':');
       // gh-1763: the bash-guard shim dir leads PATH so the shims always
       // win; the caller's PATH follows intact (preserved, never replaced).
-      expect(parts.first, contains('fa_sh_guard_'));
+      // The shim dir only exists when the host has the real tools (procps
+      // provides pgrep) — a minimal container without procps provisions
+      // no shims and keeps `/bin` at the head.
+      final hostHasPgrep = Process.runSync('sh', <String>[
+        '-c',
+        'command -v pgrep',
+      ]).exitCode;
+      if (hostHasPgrep == 0) {
+        expect(parts.first, contains('fa_sh_guard_'));
+      }
       expect(parts, contains('/bin'));
     });
 

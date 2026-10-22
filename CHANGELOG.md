@@ -25,6 +25,18 @@ block a release again.
   still terminated, and headless `SIGTERM` aborts now log
   `fa: SIGTERM received …` so a child-issued kill never masquerades as a
   user Ctrl+C (exit code contract unchanged: 130 graceful, 143 escalate).
+- feat(#1761): the 32KB project-context budget never cuts silently again.
+  A file truncated to its head excerpt now carries an extended
+  `<!-- From: path — N bytes, only the first M shown -->` marker plus an
+  explicit MUST-read-the-full-file instruction (offset/limit/ranges,
+  prompt copy in `prompts/context/project_context_read_full.md`); a file
+  dropped entirely leaves a one-line tombstone naming its path instead of
+  vanishing; and the user gets a dim boot line per truncated/dropped file
+  (CLI line mode prints directly, TUI re-prints after the banner, the app
+  logs through its AppLog boot-notice seam). New `projectContext:` config
+  section: `maxBytes` (default 32768) — `0` disables the section entirely
+  and reads no files (fast boot); unknown keys are tolerated with a note.
+  Leaf-first allocation is unchanged.
 
 - fix(gh-1757): the Android build no longer re-enters the sdkmanager
   download roulette for CMake. v1.0.619's `build-android` leg died at
@@ -37,6 +49,22 @@ block a release again.
   pre-installs `cmake;3.22.1` with bounded retry + idempotent skip (same
   hardening the NDK path already carries); the guard test pins the new
   AC6 assertions and the AGP-version coupling (AC7).
+- feat(#1750): per-model image caps — the outbound request never carries
+  more unique images than the target model accepts. `Model` gains an
+  optional `maxImages` (catalog-seeded: `gemini-4-argon: 10`, measured);
+  `images.perModel.<modelId>` config overrides it (strict `images:`
+  section, user truth wins); the registry resolves
+  `perModel > catalog > images.maxPerRequest` (first present wins, the
+  issue-#1554 shape). A Google-shaped `too many images … maximum allowed
+  for model <id> is <n>` 400 is classified (`image_overflow.dart`, the
+  overflow.ts twin), latches the learned cap for the (provider, model)
+  pair for the run, and re-sends ONCE through the registry at the
+  smaller cap — current-first-then-newest drops with the existing
+  never-silent notices naming the learned cap; a second refusal
+  surfaces exactly as today. JSONL is never rewritten;
+  `images.registry: false` keeps the byte-identical legacy shape
+  including the recovery-off behavior.
+
 
 - fix(gh-1743): a structured compaction that hits its total-budget
   watchdog (the factory's 300s `totalBudget`) no longer aborts the

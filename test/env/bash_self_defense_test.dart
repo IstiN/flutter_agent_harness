@@ -31,6 +31,38 @@ void main() {
   tearDown(() {
     if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
   });
+  // The guard's shims and the setsid group dummies need POSIX tools; a
+  // minimal container without procps provisions no shims (and no
+  // `fa_sh_guard_` PATH entry), so the affected tests skip instead of
+  // failing on hosts that never had pkill/pgrep to shadow.
+  final bool hostHasPgrep =
+      !Platform.isWindows &&
+      Process.runSync('sh', <String>['-c', 'command -v pgrep']).exitCode == 0;
+  final bool hostHasSetsid =
+      !Platform.isWindows &&
+      Process.runSync('sh', <String>['-c', 'command -v setsid']).exitCode == 0;
+
+  /// Polls whether [pid] is still in the process table (~3s budget) so the
+  /// assertions stay load-independent (signal delivery lags the killer).
+  Future<bool> stillAlive(int pid, {Map<String, String>? env}) async {
+    var alive = false;
+    for (var i = 0; i < 30; i++) {
+      final probe = await const LocalShell().exec(
+        'if ps -o pid= -p $pid >/dev/null 2>&1; then echo alive; '
+        'else echo dead; fi',
+        options: env == null ? null : ShellExecOptions(env: env),
+      );
+      final out = probe.getOrThrow().stdout.trim();
+      alive = out.contains('alive');
+      if (!alive) return false;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    return alive;
+  }
+
+  final Object posixSkip = (Platform.isWindows || !hostHasPgrep)
+      ? 'POSIX procps process semantics only'
+      : false;
 
   group('AC1: pkill/pgrep self-match immunity (gh-1763)', () {
     test(
@@ -210,6 +242,244 @@ void main() {
         );
         // 999999 is not protected: the real kill semantics apply (rc=1).
         expect(result.getOrThrow().stdout.trim(), 'rc=1');
+      },
+    );
+  });
+
+  group('AC2b: review-rework kill/pkill shapes (gh-1763 threads)', () {
+    test(
+      'kill -- -PGID: a protected group target is never signaled',
+      skip: Platform.isWindows || !hostHasSetsid
+          ? 'POSIX setsid process semantics only'
+          : false,
+      () async {
+        // A `setsid` dummy is its own process-group leader: its pid IS its
+        // pgid, so `kill -TERM -<pid>` targets the whole group — the
+        // spelling agents use to reap `setsid` background jobs
+        // (`kill -- -$PID`).
+        final dummy = await Process.start('setsid', <String>['sleep', '177']);
+        addTearDown(dummy.kill);
+        final env = {'FA_PROTECTED_PIDS': '${dummy.pid}'};
+        final result = await const LocalShell().exec(
+          'kill -TERM -${dummy.pid}; echo "rc=\$?"',
+          options: ShellExecOptions(env: env),
+        );
+        final exec = result.getOrThrow();
+        expect(exec.stdout.trim(), 'rc=0');
+        expect(
+          exec.stderr,
+          contains('skipped protected'),
+          reason: 'the guard must report the skipped protected group target',
+        );
+        final alive = await stillAlive(dummy.pid, env: env);
+        expect(
+          alive,
+          isTrue,
+          reason:
+              'kill -TERM -<protected pgid> signaled the protected process '
+              'group (pre-fix the -PGID branch kept/dropped the opposite '
+              'of the positive-pid branch, so no arg set __fa_hit and the '
+              'fast path passed the call through byte-identical)',
+        );
+      },
+    );
+
+    test(
+      'kill -- -PGID: an unprotected group target is still reaped',
+      skip: Platform.isWindows || !hostHasSetsid
+          ? 'POSIX setsid process semantics only'
+          : false,
+      () async {
+        final dummy = await Process.start('setsid', <String>['sleep', '177']);
+        addTearDown(dummy.kill);
+        const env = {'FA_PROTECTED_PIDS': '4242'};
+        final result = await const LocalShell().exec(
+          'kill -TERM -${dummy.pid}; echo "rc=\$?"',
+          options: const ShellExecOptions(env: env),
+        );
+        expect(result.getOrThrow().stdout.trim(), 'rc=0');
+        final alive = await stillAlive(dummy.pid, env: env);
+        expect(
+          alive,
+          isFalse,
+          reason:
+              'an unprotected process-group kill was swallowed with rc=0 '
+              'and a false "skipped protected pid(s)" message (pre-fix the '
+              '-PGID branch marked the target as a hit without counting it '
+              'toward __fa_pids_left, so the real kill never ran)',
+        );
+      },
+    );
+
+    test(
+      'kill filters only the protected target from a mixed group kill',
+      skip: Platform.isWindows || !hostHasSetsid
+          ? 'POSIX setsid process semantics only'
+          : false,
+      () async {
+        final grouped = await Process.start('setsid', <String>['sleep', '177']);
+        addTearDown(grouped.kill);
+        final free = await Process.start('sleep', const ['177']);
+        addTearDown(free.kill);
+        final env = {'FA_PROTECTED_PIDS': '${grouped.pid}'};
+        final result = await const LocalShell().exec(
+          'kill -9 -${grouped.pid} ${free.pid}; echo "rc=\$?"',
+          options: ShellExecOptions(env: env),
+        );
+        expect(result.getOrThrow().stdout.trim(), 'rc=0');
+        final groupAlive = await stillAlive(grouped.pid, env: env);
+        final freeAlive = await stillAlive(free.pid, env: env);
+        expect(
+          groupAlive,
+          isTrue,
+          reason:
+              'the protected group target must be filtered out of a '
+              'mixed kill',
+        );
+        expect(
+          freeAlive,
+          isFalse,
+          reason:
+              'the unprotected pid in a mixed kill must still be signaled '
+              'by the real kill',
+        );
+      },
+    );
+
+    test(
+      'pkill -l defers to the real pkill (usage error) and signals nothing',
+      skip: posixSkip,
+      () async {
+        final d1 = await Process.start('sleep', const ['177']);
+        addTearDown(d1.kill);
+        final d2 = await Process.start('sleep', const ['177']);
+        addTearDown(d2.kill);
+        final result = await const LocalShell().exec(
+          'pkill -l -f "sleep 177"; echo "rc=\$?"',
+        );
+        final exec = result.getOrThrow();
+        // Real pkill rejects -l (usage error, rc=2) and signals nothing.
+        // Pre-fix the shim passed -l to pgrep, read the "pid name" rows as
+        // a pid list and signaled EVERY match.
+        expect(exec.stdout.trim(), 'rc=2');
+        expect(
+          await stillAlive(d1.pid),
+          isTrue,
+          reason: 'pkill -l is a usage error — it must not signal matches',
+        );
+        expect(
+          await stillAlive(d2.pid),
+          isTrue,
+          reason: 'pkill -l is a usage error — it must not signal matches',
+        );
+      },
+    );
+
+    test(
+      'pkill --count defers to the real pkill instead of reading the count '
+      'as a pid',
+      skip: posixSkip,
+      () async {
+        final d1 = await Process.start('sleep', const ['177']);
+        addTearDown(d1.kill);
+        final d2 = await Process.start('sleep', const ['177']);
+        addTearDown(d2.kill);
+        final result = await const LocalShell().exec(
+          'pkill --count -f "sleep 177"; echo "rc=\$?"',
+        );
+        final exec = result.getOrThrow();
+        // The real pkill decides: procps prints the bare match count.
+        // Pre-fix `--count` rode into the pgrep selection, pgrep printed
+        // the count and the shim read THAT number as a pid — signaling an
+        // arbitrary unrelated process while the real matches stayed
+        // un-signaled.
+        final lines = exec.stdout.trim().split('\n');
+        expect(
+          lines,
+          contains('2'),
+          reason:
+              'the real pkill --count prints the match count; the shim must '
+              'not swallow that output as a pid list',
+        );
+        expect(lines.last, 'rc=0');
+      },
+    );
+
+    test(
+      'pkill -u <uid> split form runs the guarded path and honors the pid '
+      'set',
+      skip: posixSkip,
+      () async {
+        final protected = await Process.start('sleep', const ['177']);
+        addTearDown(protected.kill);
+        final free = await Process.start('sleep', const ['177']);
+        addTearDown(free.kill);
+        final env = {'FA_PROTECTED_PIDS': '${protected.pid}'};
+        final result = await const LocalShell().exec(
+          'pkill -u "\$(id -u)" -f "sleep 177"; echo "rc=\$?"',
+          options: ShellExecOptions(env: env),
+        );
+        final exec = result.getOrThrow();
+        expect(exec.stdout.trim(), 'rc=0');
+        final protectedAlive = await stillAlive(protected.pid, env: env);
+        final freeAlive = await stillAlive(free.pid, env: env);
+        expect(
+          protectedAlive,
+          isTrue,
+          reason:
+              'split-form selection values fell through to the real, '
+              'unshimed pkill — the original gh-1763 crash shape '
+              '(pkill -u <uid> -f "dart ")',
+        );
+        expect(
+          freeAlive,
+          isFalse,
+          reason:
+              'the guarded path must still reap legitimate victims after '
+              'consuming the split-form selection value',
+        );
+      },
+    );
+  });
+
+  group('AC2c: guard provisioning hardening (gh-1763 review)', () {
+    test(
+      'a failing chmod degrades to a shimless provision instead of '
+      'bricking pkill',
+      skip: Platform.isWindows ? 'the guard is POSIX-only' : false,
+      () async {
+        // `false` exits 1: the shim file stays non-executable. The shim
+        // must be dropped (degrade-to-null pathway) — handing the child a
+        // non-executable `pkill` would turn every later pkill/killall
+        // call into "Permission denied" instead of degrading to the real
+        // binary. The pid set stays armed for the `kill()` prelude.
+        final provision = await provisionBashGuard(chmodCommand: 'false');
+        expect(
+          provision,
+          isNotNull,
+          reason: 'the pid set must stay armed for the kill() prelude',
+        );
+        expect(provision!.protectedPids, contains(pid));
+        expect(
+          provision.shimDir,
+          isNull,
+          reason:
+              'a shim the child cannot exec is worse than no shim — it '
+              'must be dropped from the provision',
+        );
+      },
+    );
+
+    test(
+      'a successful chmod keeps the shim dir provisioned',
+      skip: Platform.isWindows || !hostHasPgrep
+          ? 'the shims need procps (pgrep) on the host'
+          : false,
+      () async {
+        final provision = await provisionBashGuard();
+        expect(provision, isNotNull);
+        expect(provision!.shimDir, isNotNull);
+        expect(provision.protectedPids, contains(pid));
       },
     );
   });

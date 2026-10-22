@@ -313,6 +313,11 @@ class Agent {
   Set<String> get reportedOrphanKeys => _reportedOrphanKeys;
   final Set<String> _reportedOrphanKeys;
 
+  /// Issue #1750: run-lifetime learned image caps, keyed by
+  /// [imageCapLatchKey] — the loop latches a provider-refused cap here;
+  /// runtime-only, never persisted.
+  final Map<String, int> _imageCapLatches = {};
+
   /// Provider adapter used for every model call. See [StreamFunction].
   StreamFunction streamFunction;
 
@@ -659,6 +664,7 @@ class Agent {
           : (context) => prepareNextTurn?.call(context),
       toolMisuseBreaker: toolMisuseBreaker,
       reportedOrphanKeys: _reportedOrphanKeys,
+      imageCapLatches: _imageCapLatches,
       getSteeringMessages: () async {
         if (skip) {
           skip = false;

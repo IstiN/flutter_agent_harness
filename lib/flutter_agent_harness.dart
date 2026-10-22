@@ -51,12 +51,14 @@ export 'src/cli/cli_args.dart';
 export 'src/cli/cli_config.dart'
     show
         CliConfig,
+        TrajectorySection,
         applyProviderTimeoutEnvOverride,
         loadCliConfig,
         loadProjectCompactionEngine,
         loadProjectContextWindowCap,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
+        loadProjectTrajectorySection,
         parseProviderTimeouts,
         resolveStartupCubeSource;
 export 'src/config/app_config_sections.dart';
@@ -170,6 +172,7 @@ export 'src/messaging/fabric_config.dart';
 export 'src/messaging/hub_identity.dart';
 export 'src/messaging/hub_transport.dart';
 export 'src/messaging/hub_messaging_repository.dart';
+export 'src/image_overflow.dart';
 export 'src/model.dart';
 export 'src/model_roles/model_roles.dart';
 export 'src/model_roles/provider_model_binding.dart';
@@ -242,6 +245,7 @@ export 'src/trajectory/event_projection.dart';
 export 'src/trajectory/trajectory_layout.dart';
 export 'src/trajectory/trajectory_preview.dart';
 export 'src/trajectory/trajectory_blobs.dart';
+export 'src/trajectory/trajectory_request_blobs.dart';
 export 'src/trajectory/trajectory_snapshot.dart';
 export 'src/trajectory/trajectory_snapshot_builder.dart';
 export 'src/trajectory/trajectory_export.dart';

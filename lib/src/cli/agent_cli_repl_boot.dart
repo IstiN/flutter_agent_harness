@@ -95,6 +95,9 @@ extension on AgentCli {
     // Same rule for the roles-drop warning (issue #1552 AC4): stderr never
     // reached the alternate screen — the notice stream gets it.
     _printRolesDropNotice();
+    // Same rule for the project-context truncation notices (issue #1761
+    // AC2): the boot load ran before the alternate screen — re-print.
+    _printProjectContextNotices();
     // Issue #503: the reconciliation notices paint BEFORE the history
     // replay — the replay is the final paint, so the resumed session's
     // tail (the last assistant message) stays on the first glass.

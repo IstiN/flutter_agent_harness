@@ -33,9 +33,11 @@ const String bashGuardShimDirEnv = 'FA_GUARD_SHIM_DIR';
 /// - `set --` restores `sh -c` positional-parameter parity (`$#` = 0, empty
 ///   `"$@"`) — the `. "$1"` delivery otherwise leaves the script path as
 ///   `$1`.
-/// - `kill()` filters [bashGuardPidsEnv] pids (and their `-pgid` group
-///   targets) out of the arguments before invoking the real `kill`. No
-///   protected hit → the call is passed through byte-identical. Every
+/// - `kill()` filters [bashGuardPidsEnv] pids (and their non-leading
+///   `-pgid` group targets — a leading `-<number>` is the kill grammar's
+///   signal number, not a target) out of the arguments before invoking
+///   the real `kill`. No protected hit → the call is passed through
+///   byte-identical. Every
 ///   construct is `set -e`/`set -u`-safe (if-chains, guarded expansions).
 String bashGuardPrelude() =>
     '''
@@ -47,6 +49,7 @@ kill() {
   __fa_rest=''
   __fa_pids_left=0
   __fa_hit=0
+  __fa_pos=0
   for __fa_a in "\$@"; do
     case "\$__fa_a" in
       ''|-|--|%*|-[A-Za-z]*)
@@ -54,14 +57,24 @@ kill() {
         ;;
       -[0-9]*)
         __fa_n="\${__fa_a#-}"
-        __fa_keep=1
-        for __fa_p in \${$bashGuardPidsEnv:-}; do
-          if [ "\$__fa_n" = "\$__fa_p" ]; then __fa_keep=0; break; fi
-        done
-        if [ "\$__fa_keep" = 1 ]; then
-          __fa_hit=1
-        else
+        if [ "\$__fa_pos" -eq 0 ]; then
+          # kill grammar: a LEADING -<number> is the SIGNAL NUMBER (kill
+          # -9 <pid>), not a target — pass it through uncounted.
           __fa_rest="\$__fa_rest \$__fa_a"
+        else
+          # After another arg (or --) -<number> is a process-group target
+          # (kill -- -<pgid>): same keep/hit/count treatment as a
+          # positive pid.
+          __fa_keep=1
+          for __fa_p in \${$bashGuardPidsEnv:-}; do
+            if [ "\$__fa_n" = "\$__fa_p" ]; then __fa_keep=0; break; fi
+          done
+          if [ "\$__fa_keep" = 1 ]; then
+            __fa_rest="\$__fa_rest \$__fa_a"
+            __fa_pids_left=\$((__fa_pids_left + 1))
+          else
+            __fa_hit=1
+          fi
         fi
         ;;
       *)
@@ -77,6 +90,7 @@ kill() {
         fi
         ;;
     esac
+    __fa_pos=\$((__fa_pos + 1))
   done
   if [ "\$__fa_hit" = 0 ]; then
     command kill "\$@"
@@ -96,8 +110,14 @@ kill() {
 /// same selection engine and flags), filters the protected pids, the
 /// invoking shell (`PPID`) and the shim itself, then signals the rest with
 /// the requested signal (default `SIGTERM`). Selection shapes the shim
-/// does not model (signal after the pattern, `-u root`, `-t tty`, `-n`,
-/// `-o`, …) exec the real `pkill` — honest behavior over silent guessing.
+/// models: signal forms (`-9`, `-SIGTERM`, `--signal[=]`), the
+/// value-taking selection flags in split form (`-u <uid>`, `-t <tty>`,
+/// …) and glued form (`-urot`), and plain selection flags (`-f`, `-x`,
+/// …). Everything else — output modes (`-c`, `-v`, `-l`, `-a`, `--count`,
+/// any other long option), a signal spelled after the pattern, extra
+/// operands, or a selection pgrep rejects — execs the real `pkill`
+/// (honest behavior over silent guessing): outside the shim the harness
+/// chain is NOT protected.
 String buildPkillShim({required String realPkill, required String realPgrep}) =>
     r'''#!/bin/sh
 # fa bash-guard shim for pkill (gh-1763): never signals the harness or its
@@ -108,11 +128,16 @@ FA_REAL_PGREP='__FA_REAL_PGREP__'
 
 sig=''
 sel=''
-# Flags that would corrupt the victim set if they reached pgrep (c = count
-# mode prints a number the loop would read as a pid, v = negated match)
-# never enter the guarded path — the real pkill decides.
+# Flags that would corrupt the victim set never enter the guarded path —
+# the real pkill decides:
+# - output modes (c = count prints a number the victim loop would read as
+#   a pid, v = negated match, l/a = list modes the real pkill rejects with
+#   a usage error — their pgrep output is "pid name" rows, not a pid list);
+# - any other long option (only --signal/--signal=<sig> is modeled).
 for a in "$@"; do
   case "$a" in
+    --|--signal|--signal=*) continue ;;
+    --*) exec "$FA_REAL_PKILL" "$@" ;;
     -[a-zA-Z]*)
       fa_body="${a#-}"
       case "$fa_body" in
@@ -122,7 +147,7 @@ for a in "$@"; do
       while [ -n "$fa_rest" ]; do
         fa_c="${fa_rest%"${fa_rest#?}"}"
         case "$fa_c" in
-          [cv]) exec "$FA_REAL_PKILL" "$@" ;;
+          [cval]) exec "$FA_REAL_PKILL" "$@" ;;
         esac
         fa_rest="${fa_rest#?}"
       done
@@ -136,6 +161,20 @@ while [ $# -gt 0 ]; do
     --) shift; break ;;
     -[0-9]*) sig="$1"; shift ;;
     -[Ss][Ii][Gg][A-Za-z]*|-[A-Z][A-Z]*) sig="$1"; shift ;;
+    # Value-taking selection flags (procps: -u -U -g -s -t -P -G -r -O -q
+    # -F): the value may ride the next argv item (split form, e.g.
+    # `pkill -u "$(id -u)" -f <pat>`). Consume both into the selection so
+    # the guarded path still runs — execing the real, unshimed pkill here
+    # would leave the harness unprotected (the gh-1763 crash shape). The
+    # glued forms (-urot) ride the generic case below.
+    -u|-U|-g|-s|-t|-P|-G|-r|-O|-q|-F)
+      if [ "$#" -ge 2 ]; then
+        sel="$sel $1 $2"
+        shift 2
+      else
+        exec "$FA_REAL_PKILL" "$@"
+      fi
+      ;;
     -*) sel="$sel $1"; shift ;;
     *) break ;;
   esac
@@ -155,7 +194,10 @@ if [ "$rc" -ge 2 ]; then
   exec "$FA_REAL_PKILL" "$@"
 fi
 [ "$rc" -eq 0 ] || exit 1
-# pgrep -l rows are "pid name" — keep the pid column.
+# Output modes never reach this pgrep call (they exec the real pkill
+# above), so pgrep prints bare pids; the cut is belt-and-braces — list
+# rows like "pid name" would turn the name column into a phantom kill
+# target.
 pids=$(printf '%s\n' "$pids" | cut -d' ' -f1)
 
 self=$$
@@ -265,13 +307,19 @@ final class BashGuardProvision {
 }
 
 /// Provisions the guard once per process. POSIX only — null on Windows and
-/// on any failure (never throws).
-Future<BashGuardProvision?> provisionBashGuard() async {
+/// on any failure (never throws). [chmodCommand] exists for tests: it lets
+/// a suite force the chmod step to fail (`false`) and pin the
+/// degrade-to-no-shim behavior.
+Future<BashGuardProvision?> provisionBashGuard({
+  String chmodCommand = 'chmod',
+}) async {
   if (Platform.isWindows) return null;
   try {
     final pids = await _protectedPidChain();
     final shims = await _buildShimScripts();
-    final shimDir = shims.isEmpty ? null : await _writeShimDir(shims);
+    final shimDir = shims.isEmpty
+        ? null
+        : await _writeShimDir(shims, chmodCommand: chmodCommand);
     return BashGuardProvision(shimDir: shimDir, protectedPids: pids);
   } on Object {
     return null;
@@ -299,13 +347,28 @@ Future<Map<String, String>> _buildShimScripts() async {
 }
 
 /// Writes the shims into a private (0700 via mkdtemp semantics) temp dir
-/// and makes them executable. Returns the dir path.
-Future<String> _writeShimDir(Map<String, String> shims) async {
+/// and makes them executable. Returns the dir path, or null when the chmod
+/// step fails: a shim the child cannot exec is worse than no shim — every
+/// later `pkill`/`killall` would die on `Permission denied` instead of
+/// degrading to the real binary. The caller keeps the pid set armed (the
+/// `kill()` prelude) and just drops the shim dir.
+Future<String?> _writeShimDir(
+  Map<String, String> shims, {
+  String chmodCommand = 'chmod',
+}) async {
   final dir = await Directory.systemTemp.createTemp('fa_sh_guard_');
   for (final entry in shims.entries) {
     final file = File('${dir.path}/${entry.key}');
     await file.writeAsString(entry.value);
-    await Process.run('chmod', <String>['700', file.path]);
+    final chmod = await Process.run(chmodCommand, <String>['700', file.path]);
+    if (chmod.exitCode != 0) {
+      try {
+        await dir.delete(recursive: true);
+      } on Object {
+        // Best-effort cleanup of the unusable shim dir.
+      }
+      return null;
+    }
   }
   return dir.path;
 }

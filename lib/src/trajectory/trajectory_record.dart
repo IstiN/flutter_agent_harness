@@ -185,6 +185,7 @@ final class TrajectoryRequestDetail {
     this.systemPromptHash,
     this.toolManifestHash,
     this.wireDumpHash,
+    this.spillFile,
   });
 
   /// Number of messages in the outbound request.
@@ -214,6 +215,13 @@ final class TrajectoryRequestDetail {
   /// dumps are off or not captured.
   final String? wireDumpHash;
 
+  /// Relative path of the gh-1745 request blob carrying this request's
+  /// FULL detail (per-message previews and block texts) —
+  /// `.fah/trajectories/<sid>/requests/<n>.json`. Null on legacy sessions
+  /// and when the host spills nothing (kill switch, failed write): the
+  /// record then carries its detail inline as it always did.
+  final String? spillFile;
+
   /// Serializes to a JSON map.
   Map<String, dynamic> toJson() => {
     'messageCount': messageCount,
@@ -224,6 +232,7 @@ final class TrajectoryRequestDetail {
     if (systemPromptHash != null) 'systemPromptHash': systemPromptHash,
     if (toolManifestHash != null) 'toolManifestHash': toolManifestHash,
     if (wireDumpHash != null) 'wireDumpHash': wireDumpHash,
+    if (spillFile != null) 'spillFile': spillFile,
   };
 
   /// Deserializes from a JSON map produced by [toJson].
@@ -245,6 +254,7 @@ final class TrajectoryRequestDetail {
       systemPromptHash: json['systemPromptHash'] as String?,
       toolManifestHash: json['toolManifestHash'] as String?,
       wireDumpHash: json['wireDumpHash'] as String?,
+      spillFile: json['spillFile'] as String?,
     );
   }
 }
@@ -313,6 +323,35 @@ TrajectoryRequestDetail capTrajectoryRequestDetail(
     ],
   );
 }
+
+/// Reduces [detail] to the gh-1745 lightweight in-JSONL shape: per-message
+/// role+chars stubs (no previews, no block texts — the estimation basis Σ
+/// chars stays truthful) plus the [spillFile] pointer to the request blob
+/// carrying the full detail. Counts, sizes, tool names and blob hashes
+/// pass through untouched; [wireDumpHash] overrides the pointer when the
+/// raw wire dump spilled into the same blob.
+TrajectoryRequestDetail stripTrajectoryRequestDetail(
+  TrajectoryRequestDetail detail, {
+  required String spillFile,
+  String? wireDumpHash,
+}) => TrajectoryRequestDetail(
+  messageCount: detail.messageCount,
+  systemPromptChars: detail.systemPromptChars,
+  toolCount: detail.toolCount,
+  toolNames: detail.toolNames,
+  systemPromptHash: detail.systemPromptHash,
+  toolManifestHash: detail.toolManifestHash,
+  wireDumpHash: wireDumpHash ?? detail.wireDumpHash,
+  spillFile: spillFile,
+  messages: [
+    for (final message in detail.messages)
+      TrajectoryRequestMessageSummary(
+        role: message.role,
+        chars: message.chars,
+        preview: '',
+      ),
+  ],
+);
 
 /// Base of the trajectory ledger hierarchy.
 ///
