@@ -1193,6 +1193,192 @@ jobs:
         expect(creates.single.text, contains('--latest'));
       },
     );
+    test(
+      'every release_attach_or_create.sh call site exports GH_TOKEN (PAT/App token, never bare GITHUB_TOKEN)',
+      () {
+        // PR #1783 review: the script's tag-mint push URL is built ONLY
+        // from GH_TOKEN (`git push "${GH_TOKEN:+https://…}"`), so a call
+        // site that exports just GITHUB_TOKEN collapses the URL to '' and
+        // dies with `fatal: bad repository ''` (run 39766453580,
+        // v1.0.626 mobile leg) — the macOS release-macos step had exactly
+        // this gap. Pin the script header's documented contract on every
+        // caller.
+        var checked = 0;
+        for (final wf in [
+          '.github/workflows/build-macos.yml',
+          '.github/workflows/build-mobile.yml',
+        ]) {
+          jobsOf(wf).forEach((jobId, job) {
+            if (job is! Map || !job.containsKey('steps')) return;
+            for (final step in (job['steps'] as YamlList)) {
+              if (step is! YamlMap) continue;
+              final run = step['run']?.toString() ?? '';
+              if (!run.contains('release_attach_or_create.sh')) continue;
+              checked++;
+              final env = step['env'] as YamlMap?;
+              final ghToken = env?['GH_TOKEN']?.toString();
+              expect(
+                ghToken,
+                isNotNull,
+                reason:
+                    '$wf job "$jobId": release_attach_or_create.sh call site '
+                    'must export GH_TOKEN (PAT/App token) — the tag-mint '
+                    'push URL is built only from GH_TOKEN; without it the '
+                    "push runs 'git push \"\"' (fatal: bad repository '')",
+              );
+              expect(
+                ghToken,
+                isNot(contains('secrets.GITHUB_TOKEN')),
+                reason:
+                    '$wf job "$jobId": GH_TOKEN must be a PAT/App token, '
+                    'never the workflow GITHUB_TOKEN — GitHub suppresses '
+                    'events triggered by it, so the minted tag would never '
+                    'fire tag CI',
+              );
+            }
+          });
+        }
+        expect(
+          checked,
+          greaterThanOrEqualTo(2),
+          reason:
+              'the lint must see both release legs (release-macos + mobile) '
+              '— any new call site is auto-covered by the loop above',
+        );
+      },
+    );
+
+    // Mint-path sandbox: a real origin (local bare repo) whose refs answer
+    // but lack the release tag — `git ls-remote --exit-code` rc 2, the
+    // definite-missing verdict that triggers the annotated-tag mint — plus
+    // the gh stub (view: missing) and a git shim that captures the
+    // token-URL push instead of contacting github.com.
+    (int, String, List<String>, List<String>) runMint(String name, {
+      String? ghToken,
+    }) {
+      final dir = Directory(
+        '${_fixtureRoot.path}/mint-$name-${DateTime.now().microsecondsSinceEpoch}',
+      )..createSync(recursive: true);
+      final bin = stubGh(dir.path);
+      File('${dir.path}/view-seq.txt').writeAsStringSync('missing\n');
+      File('${dir.path}/a.zip').writeAsStringSync('asset-a');
+      File('${dir.path}/log').writeAsStringSync('');
+      final origin = '${dir.path}/origin.git';
+      final work = '${dir.path}/work';
+      final realGit = _resolveRealGit(bin);
+      void git(List<String> args, {String? cwd}) {
+        final r = Process.runSync(
+          realGit,
+          args,
+          workingDirectory: cwd ?? work,
+        );
+        expect(r.exitCode, 0, reason: 'fixture git $args failed: ${r.stderr}');
+      }
+
+      git(['init', '-q', '--bare', '-b', 'main', origin], cwd: dir.path);
+      git(['clone', '-q', origin, work], cwd: dir.path);
+      git(['config', 'user.email', 't@t']);
+      git(['config', 'user.name', 't']);
+      File('$work/README.md').writeAsStringSync('seed\n');
+      git(['add', '-A']);
+      git(['commit', '-q', '-m', 'seed']);
+      git(['push', '-q', 'origin', 'main']);
+      final sha =
+          Process.runSync(
+            realGit,
+            ['rev-parse', 'HEAD'],
+            workingDirectory: work,
+          ).stdout.toString().trim();
+      // Capture only the token-URL push (the mint would otherwise contact
+      // github.com); a credential-less push (empty URL) still goes to the
+      // real git and fails — exactly the bug this guards.
+      File('$bin/git').writeAsStringSync(
+        '#!/usr/bin/env bash\n'
+        'if [ "\$1" = "push" ]; then\n'
+        '  case "\$2" in\n'
+        '    https://*) echo "\$*" >> "\$FA_MINT_PUSH_LOG"; exit 0 ;;\n'
+        '  esac\n'
+        'fi\n'
+        'exec "\$FA_REAL_GIT" "\$@"\n',
+      );
+      Process.runSync('chmod', ['+x', '$bin/git']);
+      final env = <String, String>{
+        'PATH': '$bin:${Platform.environment['PATH']}',
+        'HOME': dir.path,
+        'GITHUB_REPOSITORY': 'OWNER/REPO',
+        'GH_STUB_DIR': dir.path,
+        'GH_LOG_FILE': '${dir.path}/log',
+        'GITHUB_RUN_ID': '111',
+        'GITHUB_JOB': 'release-macos',
+        'GITHUB_SHA': sha,
+        'FA_MINT_PUSH_LOG': '${dir.path}/push.log',
+        'FA_REAL_GIT': realGit,
+      };
+      // Explicit override both ways: Process.runSync merges the parent env
+      // by default, and a review host can carry a real GH_TOKEN (this
+      // session does) — the 'unset' leg must stay credential-less, the
+      // 'set' leg must see exactly the fixture token.
+      env['GH_TOKEN'] = ghToken ?? '';
+      final res = Process.runSync(
+        'bash',
+        [File('scripts/release_attach_or_create.sh').absolute.path, 'v1.2.3', 'a.zip'],
+        workingDirectory: work,
+        environment: env,
+      );
+      final pushes = File('${dir.path}/push.log').existsSync()
+          ? File('${dir.path}/push.log').readAsLinesSync()
+          : <String>[];
+      return (
+        res.exitCode,
+        '${res.stdout}${res.stderr}',
+        File('${dir.path}/log').readAsLinesSync(),
+        pushes,
+      );
+    }
+
+    test(
+      'tag mint with GH_TOKEN unset fails fast: ::error:: names the env gap, no empty-URL push',
+      () {
+        // PR #1783 review: the root symptom of run 39766453580 was git's
+        // cryptic `fatal: bad repository ''` — the push URL collapses to
+        // '' when GH_TOKEN is unset. The script must self-explain BEFORE
+        // the push.
+        final (code, out, _, pushes) = runMint('no-token');
+        expect(code, isNot(0));
+        expect(
+          out,
+          contains('::error::'),
+          reason: 'the failure must be a self-explaining Actions error',
+        );
+        expect(out, contains('GH_TOKEN is not set'));
+        expect(
+          pushes,
+          isEmpty,
+          reason: 'no push may be attempted without a credential',
+        );
+      },
+    );
+
+    test(
+      'tag mint with GH_TOKEN set pushes the annotated tag through the token URL, then creates the release',
+      () {
+        final (code, out, log, pushes) = runMint(
+          'with-token',
+          ghToken: 'pat-token-for-test',
+        );
+        expect(code, 0, reason: out);
+        expect(pushes, hasLength(1));
+        expect(pushes.single, contains('x-access-token:'));
+        expect(pushes.single, contains('pat-token-for-test'));
+        expect(pushes.single, contains('@github.com/OWNER/REPO.git'));
+        expect(pushes.single, contains('refs/tags/v1.2.3'));
+        expect(
+          log.where((l) => l.contains('release create v1.2.3')),
+          hasLength(1),
+          reason: 'the mint ends in the release create',
+        );
+      },
+    );
   });
 
   // ── AC3 — one naming scheme: bare vX.Y.Z (UT-naming) ────────────────────
