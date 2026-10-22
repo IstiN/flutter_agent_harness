@@ -148,11 +148,41 @@ extension on AgentCli {
       );
       _trajectoryBlobPersisterSession = session;
     }
+    // gh-1745: the heavy half of the capture (per-message previews/block
+    // texts, the raw wire dump) spills into the session's request-blob
+    // dir; the JSONL record keeps lightweight metadata plus the spill
+    // pointer. A failed (or killed-switch) spill falls back to the legacy
+    // inline persistence — the capture is never lost.
+    var detail = event.detail;
+    var rawWireDump = event.rawWireDump;
+    if (config.trajectoryRequestBlobs) {
+      final spill =
+          await (_requestBlobStore ??= TrajectoryRequestBlobStore(
+            env: _coreToolEnv,
+            sessionId: () => _session?.cachedId,
+            // gh-1745 rework: the canonical bytes derivation threaded
+            // through the config (no inline MB→bytes shift here).
+            maxBytes: config.trajectoryRequestBlobMaxBytes,
+            ttlDays: config.trajectoryRequestBlobTtlDays,
+          )).write(
+            detail: event.detail,
+            rawWireDump: event.rawWireDump,
+            redactWireDump: config.redactionPipeline?.redact,
+          );
+      if (spill != null) {
+        detail = stripTrajectoryRequestDetail(
+          event.detail,
+          spillFile: spill.file,
+          wireDumpHash: spill.wireDumpHash,
+        );
+        rawWireDump = null;
+      }
+    }
     final records = _trajectoryBlobPersister!.recordsFor(
-      event.detail,
+      detail,
       promptBlob: event.promptBlob,
       manifestBlob: event.manifestBlob,
-      rawWireDump: event.rawWireDump,
+      rawWireDump: rawWireDump,
     );
     for (final (:customType, :data) in records) {
       await session.appendCustomEntry(customType: customType, data: data);
