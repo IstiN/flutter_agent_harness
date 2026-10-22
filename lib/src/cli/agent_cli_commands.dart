@@ -230,10 +230,14 @@ extension SlashCommandDispatch on AgentCli {
   /// Rebinds a boot-built queue runtime with the live quota feed
   /// (issue #823): the boot constructs the runtime before the CLI — and
   /// therefore before the service — exists. No-op without a queue, so
-  /// legacy boots stay byte-identical.
+  /// legacy boots stay byte-identical. The rebuild is SILENT on the
+  /// warning channel (gh-1781 AC2): it re-resolves the exact queue the
+  /// boot already rendered, so re-printing the skip/binding lines would
+  /// double every warning on every queue boot. A user-initiated queue
+  /// EDIT keeps its own loud reload (see [_rebuildProviderQueueRuntime]).
   Future<void> attachProviderQueueQuotaFeed() async {
     if (config.providersQueueRuntime != null) {
-      await _rebuildProviderQueueRuntime();
+      await _rebuildProviderQueueRuntime(warn: false);
     }
   }
 
@@ -934,7 +938,11 @@ extension ProviderQueueEditor on AgentCli {
 
   /// Rebuilds the queue runtime from the boot scopes after an edit so the
   /// next run resolves through the fresh queue (turn-boundary liveness).
-  Future<void> _rebuildProviderQueueRuntime() async {
+  /// [warn] keeps the rebuild's skip/binding warnings loud — true for a
+  /// user-initiated edit (the reload is the only channel those lines
+  /// reach), false for the boot-time quota-feed rebind (the boot already
+  /// rendered the same lines; gh-1781 AC2 prints them once).
+  Future<void> _rebuildProviderQueueRuntime({bool warn = true}) async {
     try {
       final queue = resolveProviderQueueAtBoot(
         projectDir: config.env.cwd,
@@ -949,7 +957,7 @@ extension ProviderQueueEditor on AgentCli {
               quotaFeed: quotaService,
               // gh-1624 (review r2): the reloaded queue's unverified
               // binding mismatches say themselves, like at boot.
-              onBindingWarning: io.writeln,
+              onBindingWarning: warn ? io.writeln : null,
             );
     } on ConfigException catch (error) {
       io.writeln('queue reload failed: ${error.message}');

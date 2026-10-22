@@ -173,4 +173,68 @@ void main() {
       expect(cli.agent.state.model.id, 'queue-a');
     },
   );
+
+  // gh-1781 AC2: the boot prints the queue build's skip/binding lines ONCE
+  // (bin's queueBindingWarnings loop). The quota-feed rebind rebuilds the
+  // same queue right after boot — re-printing the identical lines through
+  // the io would double every warning on every queue boot.
+  test('the boot quota-feed rebind does not re-print the queue warning '
+      'channel', () async {
+    final warned = <String>[];
+    final runtime = ProviderQueueRuntime.build(
+      ProviderQueueResolution(
+        scope: ProviderQueueScope.env,
+        entries: [
+          ProviderQueueEntry(
+            providerType: 'anthropic',
+            model: 'queue-a',
+            apiKeyEnv: 'K_A',
+            baseUrl: 'https://a.test/v1',
+          ),
+          ProviderQueueEntry(
+            providerType: 'anthropic',
+            model: 'queue-b',
+            apiKeyEnv: 'K_MISSING',
+            baseUrl: 'https://b.test/v1',
+          ),
+        ],
+        notices: const [],
+      ),
+      secrets: const {'K_A': 'a'},
+      onBindingWarning: warned.add,
+    );
+    expect(warned, hasLength(1), reason: 'the boot build skipped entry #1');
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        providersQueueRuntime: runtime,
+        // The rebuild must see the same env view the boot saw: the same
+        // two-entry queue, K_A present, K_MISSING absent — entry #1 is
+        // skipped again on the rebuild, silently this time.
+        providerQueueEnv: const {
+          'FA_PROVIDERS_QUEUE':
+              '[{"provider_type":"anthropic","provider_config":'
+              '{"baseUrl":"https://a.test/v1","model":"queue-a",'
+              '"apiKeyEnv":"K_A"}},'
+              '{"provider_type":"anthropic","provider_config":'
+              '{"baseUrl":"https://b.test/v1","model":"queue-b",'
+              '"apiKeyEnv":"K_MISSING"}}]',
+        },
+        envVarValue: (name) => name == 'K_A' ? 'a' : null,
+        secureKeys: SecureKeyCache(null),
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    await cli.attachProviderQueueQuotaFeed();
+    expect(
+      io.out.toString(),
+      isNot(contains('provider queue skipped')),
+      reason: 'the rebind rebuilds the SAME queue the boot already '
+          'rendered — no second print',
+    );
+  });
 }
