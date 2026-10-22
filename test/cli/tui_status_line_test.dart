@@ -52,11 +52,12 @@ StatusLineSnapshot _ladderSnapshot() => StatusLineSnapshot(
 
 void main() {
   group('segment registry', () {
-    test('covers exactly the omp 27 ids plus the fa timer extension', () {
-      // 27 omp ids + `timer` (gh-1556, the deadline countdown chip).
-      expect(kStatusLineSegmentIds, hasLength(28));
+    test('covers exactly the omp 27 ids plus the fa extensions', () {
+      // 27 omp ids + `timer` (gh-1556, the deadline countdown chip) +
+      // `token_rate_avg` (gh-1762, the session-average rate).
+      expect(kStatusLineSegmentIds, hasLength(29));
       expect(kStatusLineSegments.keys.toSet(), kStatusLineSegmentIds.toSet());
-      expect(kStatusLineSegmentIds.last, 'timer');
+      expect(kStatusLineSegmentIds, containsAll(['timer', 'token_rate_avg']));
     });
 
     test('every id renders without data or throws never', () {
@@ -176,7 +177,20 @@ void main() {
 
     test('shapes pin the omp table', () {
       expect(kStatusLinePresets['default']!.left.first, 'pi');
-      expect(kStatusLinePresets['default']!.right, ['session_name']);
+      // gh-1762: the duplicated trailing context-window label gives way
+      // to the live rate pair — both render hidden until data exists, so
+      // the idle band keeps its pre-gh-1762 width.
+      expect(kStatusLinePresets['default']!.right, [
+        'session_name',
+        'token_rate',
+        'token_rate_avg',
+      ]);
+      // The other rate-bearing presets gain the average after the rate.
+      for (final name in ['full', 'nerd']) {
+        final right = kStatusLinePresets[name]!.right;
+        final rateAt = right.indexOf('token_rate');
+        expect(right[rateAt + 1], 'token_rate_avg', reason: name);
+      }
       expect(
         kStatusLinePresets['default']!.separator,
         StatusLineSeparatorStyle.powerlineThin,

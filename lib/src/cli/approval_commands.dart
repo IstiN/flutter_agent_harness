@@ -527,6 +527,11 @@ extension ApprovalCommands on AgentCli {
     // (agents visualization): named live badges — up to 3 active children
     // with type and elapsed seconds, then a +N overflow counter.
     final badge = _agentsBadge();
+    // gh-1762: the classic footer's rate part — the session average at
+    // turn granularity, moving at the same settle boundaries as
+    // tok/turn/cost. The LIVE rate stays on the band + snapshot: the
+    // classic row must not mutate between frame ticks (#467).
+    final ratePart = _statusRatePart();
     // Mid-run fold badge (issue #438 AC3): «compacted and still working»
     // must be distinguishable from «hung» at a glance — the badge shows
     // while the run continues after an auto-compaction and clears when
@@ -541,10 +546,26 @@ extension ApprovalCommands on AgentCli {
         '$foldBadge$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${_formatTokenCount(totalTokens)}tok'
-        '$costPart · turn ${_usage.turns}$badge · '
+        '$costPart · turn ${_usage.turns}$ratePart$badge · '
         '${_statusProviderLabel(model)}/${model.id}'
         '${_quotaBadgeSuffix(model.provider)}';
     return line;
+  }
+
+  /// The gh-1762 classic-footer rate part: ` · avg 38` — the session
+  /// average at TURN granularity ([LiveTokenRateMeter.settledAverageTokensPerSecond]),
+  /// so the part moves at the same settle boundaries as the tok/turn
+  /// figures and the classic status row stays frame-stable between ticks
+  /// (the #467 grid contract: mid-run the busy ticker is the ONLY row
+  /// that may change — a live rate in this row re-renders every frame
+  /// and breaks the PTY grid pins). The live rate is the band's surface
+  /// (per-frame by design) and the snapshot seam; before the first
+  /// settled turn this part is empty — the row reads byte-identically to
+  /// v0 (AC2: never a `0 t/s`, and the average appears with the first
+  /// completed turn).
+  String _statusRatePart() {
+    final avg = _meter.settledAverageTokensPerSecond(_usage.total.output);
+    return avg != null && avg > 0 ? ' · avg ${formatTokenRate(avg)}' : '';
   }
 
   /// The status-line quota badge (issue #823 AC5): `' [OR $48/$150 · 11d]'`
@@ -609,6 +630,14 @@ extension ApprovalCommands on AgentCli {
       // Unpriced/zero-cost models hide the spend segment (E2) — same
       // policy as the legacy footer's costPart.
       costUsd: cost > 0 ? cost : null,
+      // gh-1762: the live rate is a STREAMING metric — null the moment
+      // the run settles (the architecture contract: null when idle, never
+      // a stale `0 t/s`). During tool-execution gaps inside a run the
+      // window keeps decaying toward hidden on its own (AC7).
+      tokensPerSecond: isBusy ? _meter.tokensPerSecond : null,
+      // The session average is a persistent stat (like token_out): shown
+      // whenever the ledger + active-stream time exist.
+      tokensPerSecondAvg: _meter.tokensPerSecondAvg(total.output),
       sessionId: _session?.cachedId,
       idle: !isBusy,
       // gh-1446 AC5: the brand zone's ring frame, resolved from the
@@ -696,6 +725,11 @@ extension ApprovalCommands on AgentCli {
   /// the fold badge must clear at settle, error settles included).
   @visibleForTesting
   String statusLineForTest() => _statusLine();
+
+  /// Test hook for the host-built band snapshot (gh-1762 — the rate
+  /// fields ride the same per-tick projection the band renders from).
+  @visibleForTesting
+  StatusLineSnapshot statusLineSnapshotForTest() => _statusLineSnapshot();
 
   /// Endpoint equality ignoring a trailing slash (saved entries and pinned
   /// chains disagree on it routinely).
@@ -1058,7 +1092,12 @@ extension ApprovalCommands on AgentCli {
       onMessageUpdate: _onMessageUpdate,
       onToolExecutionStart: _onToolExecutionStart,
       onToolExecutionEnd: _onToolExecutionEnd,
-      onTurnEnd: (message) => _usage.add(message.usage),
+      onTurnEnd: (message) {
+        _usage.add(message.usage);
+        // gh-1762: the provider's real output tokens recalibrate the
+        // char→token factor for the next message's live estimate (AC4).
+        _meter.calibrate(message.usage.output);
+      },
       onModelRequest: _onModelRequest,
       onTaskLedger: _onTaskLedger,
     );
@@ -1178,12 +1217,20 @@ extension ApprovalCommands on AgentCli {
     if (message is! AssistantMessage) return;
     if (start) {
       _assistantPrefixPrinted = false;
+      // gh-1762: fresh per-message estimate baseline for the meter's
+      // end-of-message top-up.
+      _meter.startMessage();
       // AC3 orphan safety: post-tool narration held by a message whose
       // tool result never rendered flushes here — nothing swallowed, and
       // it lands BEFORE the new message's content (positional).
       _flushPostToolText();
       return;
     }
+    // gh-1762: providers that arrive whole (no deltas — several
+    // OpenAI-compat paths) still yield a live rate: the unobserved
+    // remainder lands as one arrival burst (AC6). Streamed messages
+    // top up ~0 (the deltas already counted the chars).
+    _meter.endMessage(estimateTokens(message));
     _onAssistantMessageEnd(message);
   }
 
@@ -1273,6 +1320,17 @@ extension ApprovalCommands on AgentCli {
       config.redactionPipeline?.redact(text) ?? text;
 
   void _onMessageUpdate(AssistantMessageEvent assistantMessageEvent) {
+    // gh-1762: the meter counts every delta as it arrives — text,
+    // thinking, and tool-call argument fragments alike — regardless of
+    // what the surface renders (a buffered or unstreamed-thinking face
+    // still prints on the model's side). O(1) per chunk.
+    final deltaChars = switch (assistantMessageEvent) {
+      TextDeltaEvent(:final delta) => delta.length,
+      ThinkingDeltaEvent(:final delta) => delta.length,
+      ToolCallDeltaEvent(:final delta) => delta.length,
+      _ => 0,
+    };
+    if (deltaChars > 0) _meter.observeDelta(deltaChars);
     if (assistantMessageEvent is ToolCallStartEvent ||
         assistantMessageEvent is ToolCallEndEvent) {
       _onToolCallGate(assistantMessageEvent);
