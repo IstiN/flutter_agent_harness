@@ -1631,6 +1631,42 @@ memory:
       );
     });
 
+    test('gh-1745: the save path emits requestBlobs/knobs only when '
+        'non-default, and they round-trip', () async {
+      // Defaults are never written — the file-stays-minimal convention.
+      expect(CliConfig().toYaml(), isNot(contains('trajectory:')));
+      // The kill switch saves (the reviewer's pinned shape).
+      final off = CliConfig(trajectoryRequestBlobs: false).toYaml();
+      expect(off, contains('trajectory:\n  requestBlobs: false'));
+      // Non-default knobs save; the derived bytes value never does.
+      final tuned = CliConfig(
+        trajectoryRequestBlobs: false,
+        trajectoryRequestBlobMaxMb: 10,
+        trajectoryRequestBlobTtlDays: 7,
+      ).toYaml();
+      expect(tuned, contains('requestBlobs: false'));
+      expect(tuned, contains('requestBlobMaxMb: 10'));
+      expect(tuned, contains('requestBlobTtlDays: 7'));
+      // Full save→load round-trip: what the emitter writes parses back.
+      await saveCliConfig(tmp.path, CliConfig(trajectoryRequestBlobs: false));
+      final reloaded = loadCliConfig(tmp.path);
+      expect(reloaded.trajectoryRequestBlobs, isFalse);
+      expect(reloaded.trajectoryRequestBlobMaxMb, 50);
+      expect(reloaded.trajectoryRequestBlobTtlDays, 30);
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(
+          trajectoryRequestBlobs: true,
+          trajectoryRequestBlobMaxMb: 10,
+          trajectoryRequestBlobTtlDays: 7,
+        ),
+      );
+      final tunedReloaded = loadCliConfig(tmp.path);
+      expect(tunedReloaded.trajectoryRequestBlobs, isTrue);
+      expect(tunedReloaded.trajectoryRequestBlobMaxMb, 10);
+      expect(tunedReloaded.trajectoryRequestBlobTtlDays, 7);
+    });
+
     test('gh-1745: loadProjectTrajectorySection carries the whole section',
         () {
       final file = File('${tmp.path}/.fah/config.yaml');
