@@ -1451,6 +1451,11 @@ jobs:
         if: needs.build-android.result == 'success' || needs.build-android-apks.result == 'success' || needs.build-ios.result == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT (not the job token) so the tag push fires tag CI — the
+          # attach-or-create script builds its push URL only when GH_TOKEN
+          # is set; without it `git push ""` died with "fatal: bad
+          # repository ''" (2026-10-22 v1.0.626 mobile leg).
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
