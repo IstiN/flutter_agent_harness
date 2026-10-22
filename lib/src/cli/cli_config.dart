@@ -447,11 +447,15 @@ int _readImagesPositiveInt(YamlMap node, String key) {
   return value;
 }
 
+/// True when [value] is a JSON integer at or above 1 — the cap shape
+/// shared by `images.maxPerRequest` and the `images.perModel` entries.
+bool _isPositiveInt(Object? value) => value is int && value > 0;
+
 int _readImagesPerModelCap(Object? key, Object? value) {
-  if (value is! int || value <= 0) {
+  if (!_isPositiveInt(value)) {
     throw ConfigException('"images.perModel.$key" must be a positive integer');
   }
-  return value;
+  return value as int;
 }
 
 Map<String, int> _readImagesPerModel(YamlMap node) {
