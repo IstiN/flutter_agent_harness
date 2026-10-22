@@ -1065,7 +1065,7 @@ void main() {
           },
         ),
       );
-      expect(chain.single.keyRing.credentials, hasLength(2));
+      expect(chain.single.keyRing.length, 2);
     });
 
     test('UT-queue-secrets-rotation-stack: an unrelated NAME_2-shaped var '

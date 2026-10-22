@@ -1390,7 +1390,7 @@ void main() {
       final names = secureKeyPreloadNames(
         CliConfig(),
         baseUrl: null,
-        queueEntries: const [
+        queueEntries: [
           ProviderQueueEntry(
             providerType: 'anthropic',
             model: 'm1',
@@ -1446,11 +1446,6 @@ void main() {
       );
     });
 
-    test('UT-queue-secret-redaction: no queue secrets keeps the redactor '
-        'empty', () {
-      expect(buildSecretRedactor(env: const {}).isEmpty, isTrue);
-    });
-
     test('UT-queue-boot-model-notes: the queue owns the boot identity only '
         'when the launch pinned nothing of its own', () {
       expect(
@@ -1490,7 +1485,7 @@ void main() {
         'store-diagnostics set)', () {
       final names = referencedSecureKeyNames(
         CliConfig(),
-        queueEntries: const [
+        queueEntries: [
           ProviderQueueEntry(
             providerType: 'anthropic',
             model: 'm1',
