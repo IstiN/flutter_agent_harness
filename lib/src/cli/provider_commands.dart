@@ -1765,6 +1765,7 @@ extension on AgentCli {
       // merges model.headers, adding `cookie: <full cookie jar>`.
       headers: {'cookie': cookie},
       compat: builtModel.compat,
+      maxImages: builtModel.maxImages,
     );
     _modelCache = const [];
     _modelContextWindows = const {};
@@ -2244,6 +2245,7 @@ extension on AgentCli {
         headers: builtModel.headers,
         compat: builtModel.compat,
         authHeader: authHeader,
+        maxImages: builtModel.maxImages,
       );
       // The cached model list belongs to the previous provider/endpoint.
       _modelCache = const [];

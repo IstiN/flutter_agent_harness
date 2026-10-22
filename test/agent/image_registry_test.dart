@@ -504,4 +504,87 @@ void main() {
       expect(current.content, 'plain text');
     });
   });
+
+  group('per-model image caps (issue #1750)', () {
+    const globalDefault = 20;
+    setUp(() {
+      imageRegistryConfig = const ImageRegistryConfig(
+        maxPerRequest: globalDefault,
+      );
+    });
+    tearDown(() {
+      imageRegistryConfig = const ImageRegistryConfig();
+    });
+
+    test('AC2: resolution matrix — perModel > catalog > default', () {
+      int resolve({
+        String? modelId,
+        int? catalog,
+        Map<String, int>? perModel,
+      }) => resolveImageCap(
+        modelId: modelId,
+        catalogMaxImages: catalog,
+        perModel: perModel,
+      );
+      // All three layers present: the first wins.
+      expect(resolve(modelId: 'm', catalog: 10, perModel: {'m': 4}), 4);
+      // perModel present, catalog absent.
+      expect(resolve(modelId: 'm', perModel: {'m': 4}), 4);
+      // perModel absent, catalog present.
+      expect(resolve(modelId: 'm', catalog: 10), 10);
+      // Only the default.
+      expect(resolve(modelId: 'm'), globalDefault);
+      expect(resolve(), globalDefault);
+      // perModel keyed for ANOTHER model never leaks (catalog wins).
+      expect(resolve(modelId: 'm', catalog: 10, perModel: {'other': 4}), 10);
+      // A perModel value below the default is honored (ceiling-setter).
+      expect(
+        resolve(modelId: 'gemini-4-argon', perModel: {'gemini-4-argon': 2}),
+        2,
+      );
+    });
+
+    test('the catalog seed names gemini-4-argon: 10', () {
+      expect(catalogMaxImages['gemini-4-argon'], 10);
+    });
+
+    test('AC1: a model with a perModel cap rides ≤ cap uniques', () {
+      // 6 uniques; the config caps this model at 3.
+      final messages = [
+        for (var i = 0; i < 5; i++) _user([_img('img$i')], ms: i),
+        _user([_img('img5')], ms: 5),
+      ];
+      final drops = <int>[];
+      final cap = resolveImageCap(
+        modelId: 'gemini-4-argon',
+        perModel: const {'gemini-4-argon': 3},
+      );
+      final rewritten = rewriteHistoryImages(
+        messages,
+        maxPerRequest: cap,
+        onDrop: (index, _) => drops.add(index),
+      );
+      expect(_imageCount(rewritten), 3);
+      expect(drops, hasLength(3));
+      // Current-first-then-newest: the current img5 plus img4, img3 ride.
+      final serialized = _serialized(rewritten);
+      for (final riding in ['img5', 'img4', 'img3']) {
+        expect(_occurrences(serialized, riding), 1);
+      }
+      for (var i = 0; i <= 2; i++) {
+        expect(_occurrences(serialized, 'img$i'), 0);
+      }
+    });
+
+    test('imageCapLatchKey is scoped per (provider, model) pair (E2)', () {
+      expect(
+        imageCapLatchKey('copilot', 'gemini-4-argon'),
+        'copilot|gemini-4-argon',
+      );
+      expect(
+        imageCapLatchKey('copilot', 'other'),
+        isNot(imageCapLatchKey('copilot', 'gemini-4-argon')),
+      );
+    });
+  });
 }

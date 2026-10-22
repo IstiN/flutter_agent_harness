@@ -164,6 +164,7 @@ extension AgentCliRunNotices on AgentCli {
   void wireRunNoticesForTesting() {
     _wireTransientRetryNotice();
     _wireImageDropNotice();
+    _wireImageCapLearnedNotice();
     _wireTextOnlyImageDropNotice();
     _wireDeliverySloNotice();
     _wireOperativePinNotice();
@@ -275,6 +276,21 @@ extension AgentCliRunNotices on AgentCli {
       _logDiagnostic(
         'image registry drop sid=$_logSid index=$index key=$keyPreview',
       );
+    };
+  }
+
+  /// Adaptive image-cap visibility (issue #1750): when a provider
+  /// image-count refusal teaches the loop a smaller cap, say so before
+  /// the per-image drop lines follow — never silent.
+  void _wireImageCapLearnedNotice() {
+    imageCapLearnedNotice = (modelId, cap) {
+      io.writeln(
+        _style.dim(
+          '[images] provider refused: too many images for $modelId — '
+          'cap learned: $cap; re-sending with fewer images',
+        ),
+      );
+      _logDiagnostic('image cap learned sid=$_logSid model=$modelId cap=$cap');
     };
   }
 
