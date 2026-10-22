@@ -698,6 +698,27 @@ spills:
 
 Applies at next boot.
 
+## Project context budget
+
+<!-- parity: notices on both surfaces; the byte knob is a config-file setting -->
+
+`AGENTS.md`/`CLAUDE.md`/`GEMINI.md`/`GOAL.md`/`DESIGN.md` + Copilot
+instruction files merge into the system prompt under a byte budget,
+allocated leaf-first (deeper files win, issue #1761). Truncation is never
+silent: the model sees a head excerpt plus an explicit
+read-the-full-file instruction, a dropped file leaves a one-line
+tombstone, and the user gets a boot notice per truncated/dropped file.
+Tolerant parse: unknown keys surface as `[projectContext]` notes at boot,
+never boot failures. `maxBytes: 0` disables the section entirely (no file
+reads, fast boot):
+
+```yaml
+projectContext:
+  maxBytes: 32768 # merged budget; 0 = section off, no file reads
+```
+
+Applies at next boot.
+
 ## Store & product links
 
 <!-- parity: none (config-only surface; web/macOS app banner reads it too) -->
