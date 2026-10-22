@@ -593,7 +593,7 @@ Future<void> _runApp(List<String> args) async {
   }
   final baseUrl = applyFolderModel ? folderState.baseUrl : effective.baseUrl;
 
-  final model = applyFolderModel
+  var model = applyFolderModel
       ? buildCliDefaultModel(
           provider,
           modelId: folderState.modelId,
@@ -680,6 +680,27 @@ Future<void> _runApp(List<String> args) async {
   // throws) — pickers fall back to the live endpoint + local defaults.
   await remoteCatalogEnrichment.preload(client: sharedProviderHttpClient());
 
+  // Provider queue (issue #418, gh-1781): FA_PROVIDERS_QUEUE env > project
+  // .fah/config.yaml `providersQueue:` > user ~/.fah/config.yaml. A parse
+  // error in a PRESENT scope is a hard startup error (line:col); no queue
+  // set anywhere = zero change (byte-identical legacy boot). The winning
+  // queue REPLACES the main-model resolution; the boot notes name the
+  // winning scope and the shadowed scopes. Resolved BEFORE the secure-store
+  // preload so the queue's key names join the preload set (I4), and before
+  // the legacy key gate so an active queue satisfies it (I1).
+  ProviderQueueResolution? queueResolution;
+  try {
+    final queue = resolveProviderQueueAtBoot(projectDir: cwd, homeDir: home);
+    if (queue.entries.isNotEmpty) {
+      // Queue entries may carry their own watchdog tuning (issue #1398);
+      // they register by baseUrl like every other registry entry.
+      seedProviderTuning(queueEntries: queue.entries);
+      queueResolution = queue;
+    }
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
+
   // Platform secure storage (macOS Keychain / Secret Service / Windows
   // Credential Locker): backs up every provider key the environment does
   // not set. Reads are process spawns, so the store is preloaded once into
@@ -689,14 +710,27 @@ Future<void> _runApp(List<String> args) async {
   // gh-1059: the preload report feeds the boot diagnostics — every read
   // logged under --debug-secrets / FA_DEBUG_KEYS, and a config that
   // references store keys while NONE resolve prints a warning instead of
-  // the silent keyless boot.
+  // the silent keyless boot. gh-1781: the resolved boot queue's key names
+  // join both sets (preload + the config-referenced diagnostics when the
+  // winning queue comes from the project/user config).
   final keyCache = SecureKeyCache(platformSecureKeyStore());
   final keyPreloadReport = await keyCache.preload(
-    secureKeyPreloadNames(saved, baseUrl: baseUrl),
+    secureKeyPreloadNames(
+      saved,
+      baseUrl: baseUrl,
+      queueEntries: queueResolution?.entries ?? const [],
+    ),
   );
   for (final line in secureKeyBootDiagnostics(
     report: keyPreloadReport,
-    referencedKeyNames: referencedSecureKeyNames(saved),
+    referencedKeyNames: referencedSecureKeyNames(
+      saved,
+      queueEntries:
+          queueResolution != null &&
+              queueResolution.scope != ProviderQueueScope.env
+          ? queueResolution.entries
+          : const [],
+    ),
     debug:
         parsed.debugSecrets ||
         isTruthyEnvValue(Platform.environment['FA_DEBUG_KEYS']),
@@ -885,6 +919,32 @@ Future<void> _runApp(List<String> args) async {
       _fail('invalid model roles config: ${error.message}');
     }
   }
+  // Provider queue runtime (gh-1781): built right after the roles resolver
+  // and BEFORE the legacy key gate — an all-keyless queue fails here with
+  // the loud queue error naming every skipped entry (I3, never the legacy
+  // `missing API key: set OPENROUTER_API_KEY` shape), and the gate below
+  // sees the active queue (`queueResolved`).
+  ProviderQueueRuntime? queueRuntime;
+  final queueNotices = <String>[];
+  // gh-1624 (review r2): queue entries carrying an unverified dialect
+  // mismatch say it on the boot — the queue lane replaces main-model
+  // resolution, its warnings never ride silently.
+  final queueBindingWarnings = <String>[];
+  final queueSecrets = queueResolution == null
+      ? const <String, String>{}
+      : collectQueueSecrets(queueResolution.entries, keyCache);
+  if (queueResolution != null) {
+    try {
+      queueRuntime = ProviderQueueRuntime.build(
+        queueResolution,
+        secrets: queueSecrets,
+        onBindingWarning: queueBindingWarnings.add,
+      );
+      queueNotices.addAll(queueResolution.notices);
+    } on ConfigException catch (error) {
+      _fail(error.message);
+    }
+  }
   late final String apiKey;
   try {
     // The FA_PROVIDER_* declaration carries its own key resolution (the
@@ -905,38 +965,30 @@ Future<void> _runApp(List<String> args) async {
             // own key slot resolves FIRST — the account the session
             // actually ran on, never a same-endpoint twin.
             pinnedKeyName: folderPinnedEntry?.keyName,
+            // gh-1781: an active queue replaces the main-model resolution
+            // — the legacy single-provider key is optional under it (I1).
+            queueResolved: queueRuntime != null,
           );
   } on ConfigException catch (error) {
     _fail(error.message);
   }
 
-  // Provider queue (issue #418): FA_PROVIDERS_QUEUE env > project
-  // .fah/config.yaml `providersQueue:` > user ~/.fah/config.yaml. A parse
-  // error in a PRESENT scope is a hard startup error (line:col); no queue
-  // set anywhere = zero change (byte-identical legacy boot). The winning
-  // queue REPLACES the main-model resolution; the boot notes name the
-  // winning scope and the shadowed scopes.
-  ProviderQueueRuntime? queueRuntime;
-  final queueNotices = <String>[];
-  // gh-1624 (review r2): queue entries carrying an unverified dialect
-  // mismatch say it on the boot — the queue lane replaces main-model
-  // resolution, its warnings never ride silently.
-  final queueBindingWarnings = <String>[];
-  try {
-    final queue = resolveProviderQueueAtBoot(projectDir: cwd, homeDir: home);
-    if (queue.entries.isNotEmpty) {
-      // Queue entries may carry their own watchdog tuning (issue #1398);
-      // they register by baseUrl like every other registry entry.
-      seedProviderTuning(queueEntries: queue.entries);
-      queueRuntime = ProviderQueueRuntime.build(
-        queue,
-        secrets: collectQueueSecrets(queue.entries, keyCache),
-        onBindingWarning: queueBindingWarnings.add,
-      );
-      queueNotices.addAll(queue.notices);
-    }
-  } on ConfigException catch (error) {
-    _fail(error.message);
+  // gh-1781 (I6): an active queue owns the boot model identity when the
+  // launch pinned none of its own — no explicit --provider/--model/
+  // --base-url flag, no FA_PROVIDER_* preconfig, no per-folder restore.
+  // The capability boot notes and the AgentCliConfig then name the active
+  // queue head instead of the unused CliConfig default; the provider kind
+  // is the head's adapter kind.
+  if (queueRuntime != null &&
+      queueOwnsBootModel(
+        modelFlag: parsed.model != null,
+        providerFlag: parsed.providerExplicit,
+        baseUrlFlag: parsed.baseUrl != null,
+        hasProviderPreconfig: faPreconfig != null,
+        folderRestoreApplied: applyFolderModel,
+      )) {
+    model = queueRuntime.streamFunction.currentModel;
+    provider = resolveCliProviderSpec(model.provider)?.kind ?? provider;
   }
   // The per-provider tuning boot notes (issue #1398, review r2): captured
   // AFTER the queue pass above so queue-carried tuning entries are in the
@@ -961,6 +1013,10 @@ Future<void> _runApp(List<String> args) async {
   final projectContextConfig = saved.projectContext;
   final redactor = buildSecretRedactor(
     roleSecrets: roleSecrets,
+    // gh-1781 (I5): every resolved queue credential (custom `apiKeyEnv`
+    // names, rotation stacks, refresh tokens) joins the redaction before
+    // any tool or stream executes.
+    queueSecrets: queueSecrets,
     keys: keyCache,
     pipeline: redactionPipeline,
   );
@@ -1474,6 +1530,15 @@ Future<void> _runApp(List<String> args) async {
           if (value != null && value.isNotEmpty) return value;
           return keyCache.read(name);
         },
+        // The enumerable env view the provider-queue scope AND its secret
+        // sweep re-resolve through (gh-1781 review r1): the quota-feed
+        // rebind and the queue-edit reload rebuild the runtime from this
+        // view — handing the same map the boot resolved (`Platform.
+        // environment`) keeps the rotation stack (`NAME_2`, `NAME_3`, …)
+        // in the rebuilt `ApiKeyRing`s instead of silently dropping to
+        // single-key rings. Resolution behavior is unchanged (null would
+        // read the same process environment).
+        providerQueueEnv: Platform.environment,
         // herdr pane self-report (issue #1481): the gate reads the pane env
         // herdr exports to every pane process; each report spawns the pane's
         // herdr binary fire-and-forget (reporter-side short timeout, silent

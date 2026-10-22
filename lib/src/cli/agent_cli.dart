@@ -1108,6 +1108,15 @@ class AgentCli {
   @visibleForTesting
   List<MenuItem> slashMenuForTest(String prefix) => _buildSlashMenu(prefix);
 
+  /// Test seam for the queue secret snapshot (gh-1781 review r1): the
+  /// exact map the quota-feed rebind and the `/providers queue` edit
+  /// reload resolve — pins the boot/rebuild parity (the rotation stack,
+  /// `NAME_2`/`NAME_3` …, must ride the rebuild's env view exactly like
+  /// the boot's [collectQueueSecrets] sweep saw it).
+  @visibleForTesting
+  Map<String, String> queueSecretsForTest(List<ProviderQueueEntry> entries) =>
+      _queueSecrets(entries);
+
   /// The items the most recent sessions picker opened with (see
   /// [openSessionsPickerForTest]).
   @visibleForTesting

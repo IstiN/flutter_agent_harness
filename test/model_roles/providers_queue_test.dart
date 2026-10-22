@@ -955,6 +955,135 @@ void main() {
     );
   });
 
+  // gh-1781: the boot-level queue contract — partial key sets skip the
+  // keyless head LOUDLY (a warning reaches the host channel), an
+  // all-keyless queue is the loud ConfigException (never the legacy
+  // missing-OPENROUTER-key failure), and the secrets snapshot carries the
+  // rotation stack so multi-credential entries build a real ApiKeyRing.
+  group('ProviderQueueRuntime.build — boot key gates (gh-1781)', () {
+    test('UT-queue-partial-keys-boot: a keyless head is skipped with a '
+        'warning and the keyed entry leads (AC2, E1)', () {
+      final lines = <String>[];
+      final runtime = ProviderQueueRuntime.build(
+        ProviderQueueResolution(
+          scope: ProviderQueueScope.env,
+          entries: [
+            _entry('anthropic', 'm-0', apiKeyEnv: 'MISSING_KEY_1'),
+            _entry('anthropic', 'm-1', apiKeyEnv: 'PRESENT_KEY_2'),
+          ],
+          notices: const [],
+        ),
+        secrets: {'PRESENT_KEY_2': 'key-two-value'},
+        onBindingWarning: lines.add,
+      );
+      expect(runtime.streamFunction.currentModel.id, 'm-1');
+      expect(lines, hasLength(1));
+      expect(
+        lines.single,
+        allOf(
+          startsWith('warning: provider queue skipped '),
+          contains('anthropic/m-0'),
+          contains('MISSING_KEY_1'),
+        ),
+      );
+    });
+
+    test('UT-queue-partial-keys-boot: a fully keyed queue emits no skip '
+        'warning', () {
+      final lines = <String>[];
+      ProviderQueueRuntime.build(
+        ProviderQueueResolution(
+          scope: ProviderQueueScope.env,
+          entries: [_entry('anthropic', 'm-0')],
+          notices: const [],
+        ),
+        secrets: {'K_API_KEY': 'key-head-value'},
+        onBindingWarning: lines.add,
+      );
+      expect(lines, isEmpty);
+    });
+
+    test('UT-queue-all-keys-missing: every entry keyless throws the loud '
+        'queue error naming each missing var (AC3)', () {
+      expect(
+        () => ProviderQueueRuntime.build(
+          ProviderQueueResolution(
+            scope: ProviderQueueScope.env,
+            entries: [
+              _entry('anthropic', 'm-0', apiKeyEnv: 'MISSING_KEY_1'),
+              _entry('anthropic', 'm-1', apiKeyEnv: 'MISSING_KEY_2'),
+            ],
+            notices: const [],
+          ),
+          secrets: const {},
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('the provider queue has no usable entry'),
+              contains('MISSING_KEY_1'),
+              contains('MISSING_KEY_2'),
+              isNot(contains('OPENROUTER_API_KEY')),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('UT-queue-secrets-rotation-stack: collectQueueSecrets captures '
+        'KEY, KEY_2, KEY_3 from env and backs the base from the store '
+        '(AC4, E2)', () async {
+      final keys = SecureKeyCache(_FakeStore({'ZAI_CODE_KEY': 'store-zai'}));
+      await keys.preload(const {'ZAI_CODE_KEY'});
+      final secrets = collectQueueSecrets(
+        [_entry('zai', 'glm-5.3-flash', apiKeyEnv: 'ZAI_CODE_KEY')],
+        keys,
+        env: const {
+          'ZAI_CODE_KEY_2': 'env-two-value1',
+          'ZAI_CODE_KEY_3': 'env-three-val',
+        },
+      );
+      expect(secrets, {
+        'ZAI_CODE_KEY': 'store-zai',
+        'ZAI_CODE_KEY_2': 'env-two-value1',
+        'ZAI_CODE_KEY_3': 'env-three-val',
+      });
+    });
+
+    test('UT-queue-secrets-rotation-stack: the stack feeds a multi-key '
+        'ApiKeyRing (AC4, E2)', () {
+      final chain = buildProviderQueueChain(
+        [_entry('zai', 'glm-5.3-flash', apiKeyEnv: 'ZAI_CODE_KEY')],
+        secrets: collectQueueSecrets(
+          [_entry('zai', 'glm-5.3-flash', apiKeyEnv: 'ZAI_CODE_KEY')],
+          SecureKeyCache(_FakeStore(const {})),
+          env: const {
+            'ZAI_CODE_KEY': 'env-base-value',
+            'ZAI_CODE_KEY_2': 'env-two-value1',
+          },
+        ),
+      );
+      expect(chain.single.keyRing.length, 2);
+    });
+
+    test('UT-queue-secrets-rotation-stack: an unrelated NAME_2-shaped var '
+        'is not captured', () async {
+      final keys = SecureKeyCache(_FakeStore(const {}));
+      await keys.preload(const {'ZAI_CODE_KEY'});
+      final secrets = collectQueueSecrets(
+        [_entry('zai', 'glm-5.3-flash', apiKeyEnv: 'ZAI_CODE_KEY')],
+        keys,
+        env: const {
+          'ZAI_CODE_KEY_OLD': 'old-value-123',
+          'OTHER_KEY_2': 'other-2-value',
+        },
+      );
+      expect(secrets, isEmpty);
+    });
+  });
+
   group('ProviderQueueRuntime failover (UT-18..26, IT-37)', () {
     late DateTime now;
     late List<Duration> sleeps;
