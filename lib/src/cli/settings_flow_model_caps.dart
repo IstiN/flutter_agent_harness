@@ -50,9 +50,11 @@ extension ModelCapabilityCapsSettings on AgentCli {
       config.modelsConfig?.overrides.lookup(provider, modelId) ??
       modelCapabilityOverrides?.lookup(provider, modelId);
 
-  /// The resolved effective caps for (provider, modelId) as this flow's
-  /// rows and [_applyCapabilityEdit] see them (same call shape, same
-  /// layering — the display can never disagree with the apply).
+  /// The resolved effective caps for (provider, modelId) — the ONE
+  /// resolution the flow's rows, the live rebuild, and the apply path
+  /// share, so the display can never disagree with the apply. Full layer
+  /// chain: the models.overrides pin, the roles-chain slot, the session's
+  /// endpoint-detected values, then the catalog buckets.
   EffectiveCaps _effectiveCapsFor(String provider, String modelId) {
     final spec = catalogProvider(provider);
     final role = _currentRoleRef(provider, modelId);
@@ -63,6 +65,8 @@ extension ModelCapabilityCapsSettings on AgentCli {
       roleContextWindow: role?.contextWindow,
       roleMaxTokens: role?.maxTokens,
       roleThinkingLevel: role?.thinkingLevel,
+      endpointContextWindow: _modelContextWindows[modelId],
+      endpointMaxTokens: _modelMaxTokens[modelId],
       spec: spec,
       api: spec?.api,
       reasoning: spec?.reasoning ?? true,
@@ -71,14 +75,17 @@ extension ModelCapabilityCapsSettings on AgentCli {
 
   /// The source-layer label of the effective context window for
   /// (provider, modelId): the models.overrides pin, the roles-chain slot,
-  /// or the catalog/endpoint buckets below them (names follow
-  /// capability_resolver.dart's precedence docs).
+  /// the endpoint-detected value, or the catalog buckets below (names
+  /// follow capability_resolver.dart's precedence docs).
   String _windowLayer(String provider, String modelId) {
     if (_pinnedCaps(provider, modelId)?.contextWindow != null) {
       return 'pinned';
     }
     if (_currentRoleRef(provider, modelId)?.contextWindow != null) {
       return 'role override';
+    }
+    if (_modelContextWindows[modelId] != null) {
+      return 'endpoint';
     }
     return 'catalog';
   }
@@ -91,6 +98,9 @@ extension ModelCapabilityCapsSettings on AgentCli {
     }
     if (_currentRoleRef(provider, modelId)?.maxTokens != null) {
       return 'role override';
+    }
+    if (_modelMaxTokens[modelId] != null) {
+      return 'endpoint';
     }
     return 'catalog';
   }
@@ -432,24 +442,19 @@ extension ModelCapabilityCapsSettings on AgentCli {
       }
     }
     config.modelRolesResolver?.refreshCapabilities();
-    final spec = catalogProvider(provider);
-    final caps = resolveModelCapabilities(
-      provider: provider,
-      modelId: modelId,
-      override: modelCapabilityOverrides?.lookup(provider, modelId),
-      spec: spec,
-      api: spec?.api,
-      reasoning: spec?.reasoning ?? true,
-    );
+    // The rebuild resolves through the SAME layered call the display uses
+    // (_effectiveCapsFor — pin > role slot > endpoint-detected > catalog):
+    // a rebuild must never swap values the user did not edit (a role
+    // chain entry's caps or a served window the session detected ride
+    // through untouched; only the pin's fields move).
+    final caps = _effectiveCapsFor(provider, modelId);
     // Pin-apply is live (issue #1515 AC5): when the edit targets the
     // ACTIVE model, rebuild it from the resolved caps — the retired
     // /model-edit flow's live-mutation semantics, now backed by
     // models.overrides so the numbers survive a model/provider switch.
     // The full constructor (not [Model.copyWith] — it null-KEEPS, and an
     // unpin must be able to CLEAR thinkingLevel/compat) enumerates every
-    // field, and a pin carrying the window publishes into the shared
-    // registry as a userPin — main, children, and the meter resolve ONE
-    // window per model identity (gh-1742 invariant 2).
+    // field incl. the catalog image cap.
     final current = _agent.state.model;
     if (current.provider == provider && current.id == modelId) {
       _agent.state.model = Model(
@@ -473,13 +478,32 @@ extension ModelCapabilityCapsSettings on AgentCli {
         connectTimeout: current.connectTimeout,
         streamIdleTimeout: current.streamIdleTimeout,
         timeoutScopeLabel: current.timeoutScopeLabel,
+        maxImages: catalogMaxImages[modelId],
       );
-      if (_pinnedCaps(provider, modelId)?.contextWindow != null) {
+      // gh-1742 invariant 2, both directions: the registry must agree
+      // with the rebuilt model — publish when an honest source stands
+      // (the pin, a roles-chain pin, an endpoint detection that still
+      // wins the resolution), DROP the stale entry when none does (a
+      // bare unpin leaves the window unverified; children and the meter
+      // fall back to the model's carried window).
+      final role = _currentRoleRef(provider, modelId);
+      final detectedWindow = _modelContextWindows[modelId];
+      if (_pinnedCaps(provider, modelId)?.contextWindow != null ||
+          role?.contextWindow != null) {
         contextWindowRegistry.publish(
           model: _agent.state.model,
           window: caps.contextWindow,
           source: ContextWindowSource.userPin,
         );
+      } else if (detectedWindow != null &&
+          detectedWindow == caps.contextWindow) {
+        contextWindowRegistry.publish(
+          model: _agent.state.model,
+          window: caps.contextWindow,
+          source: ContextWindowSource.endpointReport,
+        );
+      } else {
+        contextWindowRegistry.remove(_agent.state.model);
       }
       unawaited(config.onModelChanged?.call(_agent.state.model));
     }

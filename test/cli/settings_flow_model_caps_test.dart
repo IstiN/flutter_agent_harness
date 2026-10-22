@@ -28,10 +28,12 @@ void main() {
     String? homeDir,
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
+    Model? model,
+    Future<void> Function(Model model)? onModelChanged,
   }) {
     return AgentCli(
       config: AgentCliConfig(
-        model: testModel,
+        model: model ?? testModel,
         apiKey: '[REDACTED:Sensitive Value]',
         env: env,
         homeDir: homeDir,
@@ -39,6 +41,7 @@ void main() {
         modelsConfig: modelsConfig ?? ModelsConfig(),
         modelRolesResolver: modelRolesResolver,
         modelsFetcher: modelsFetcher,
+        onModelChanged: onModelChanged,
         providerKind: 'openai-completions',
       ),
       io: io,
@@ -547,5 +550,174 @@ models:
     await waitForIt(() => io.out.toString().contains('contextWindow 131072'));
     io.sendLine('/exit');
     await run;
+  });
+
+  test('a pin rides the role-slot layer: the rebuild cannot swap it', () async {
+    // Review round: the rebuild must resolve through the FULL chain —
+    // a roles chain entry with explicit caps is the resolver's layer 2;
+    // resolving without it silently swaps the un-pinned fields.
+    const seed = '''
+provider: openrouter
+models:
+  overrides:
+    zai:
+      glm-5.3-flash:
+        thinkingLevel: high
+''';
+    await env.writeFile('/home/u/.fah/config.yaml', seed);
+    final resolver = ModelRolesResolver(
+      config: ModelRolesConfig(
+        roles: const {
+          'default': [
+            ModelRef(
+              provider: 'zai',
+              modelId: 'glm-5.3-flash',
+              contextWindow: 500000,
+              keyless: true,
+            ),
+          ],
+        },
+        retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+      ),
+      secrets: const {},
+      streamFactory: (kind, apiKey) => FakeStreamFunction([]).call,
+    );
+    final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      homeDir: '/home/u',
+      modelsConfig: ModelsConfig.fromYaml((loadYaml(seed) as Map)['models']),
+      modelRolesResolver: resolver,
+    );
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('2'); // the zai/glm-5.3-flash entry row
+    await waitForIt(
+      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
+    );
+    // The row shows the ROLE window as the effective one.
+    await waitForIt(
+      () =>
+          io.out.toString().contains('Context window — 500000 (role override)'),
+    );
+    io.sendLine('2'); // max output tokens
+    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    io.sendLine('5'); // the 65536 preset
+    await waitForIt(
+      () => io.out.toString().contains(
+        'models.overrides.zai.glm-5.3-flash.maxTokens = 65536',
+      ),
+    );
+    io.sendLine('6'); // done (caps loop)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('3'); // done (flow menu — 2 is the pinned entry row)
+    await flow;
+    // The live rebuild kept the ROLE window and moved only maxTokens.
+    io.sendLine('/model-edit');
+    await waitForIt(() => io.out.toString().contains('contextWindow 500000'));
+    await waitForIt(() => io.out.toString().contains('maxTokens 65536'));
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('unpinning drops the stale userPin from the window registry', () async {
+    // Review round: the registry must agree with the rebuilt model in
+    // BOTH directions — a pin publishes userPin, an unpin drops the
+    // entry (children and the meter fall back to the carried window).
+    const seed = '''
+provider: openrouter
+models:
+  overrides:
+    test-provider:
+      test-model:
+        contextWindow: 131072
+''';
+    await env.writeFile('/home/u/.fah/config.yaml', seed);
+    final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      homeDir: '/home/u',
+      modelsConfig: ModelsConfig.fromYaml((loadYaml(seed) as Map)['models']),
+    );
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('2'); // the entry row
+    await waitForIt(
+      () =>
+          io.out.toString().contains('capabilities — test-provider/test-model'),
+    );
+    io.sendLine('5'); // remove this override (returns to the flow menu)
+    await waitForIt(
+      () => io.out.toString().contains(
+        'models.overrides.test-provider.test-model removed',
+      ),
+    );
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('2'); // done (flow menu — the entry row is gone)
+    await flow;
+
+    // The rebuild fell back to the catalog/documented window, and the
+    // registry entry the pin had earned is GONE (nothing republishes a
+    // pin that no longer stands).
+    expect(cli.contextWindowRegistry.windowFor(testModel), isNull);
+    io.sendLine('/model-edit');
+    await waitForIt(() => io.out.toString().contains('contextWindow 128000'));
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('the live rebuild carries the catalog image cap', () async {
+    // Review round: the constructor rebuild must not drop Model.maxImages
+    // — the image registry reads it off the live model, and losing it
+    // silently widens the ceiling to the global default.
+    const seed = '''
+provider: openrouter
+models:
+  overrides:
+    google:
+      gemini-4-argon:
+        contextWindow: 131072
+''';
+    await env.writeFile('/home/u/.fah/config.yaml', seed);
+    Model? rebuilt;
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      homeDir: '/home/u',
+      modelsConfig: ModelsConfig.fromYaml((loadYaml(seed) as Map)['models']),
+      model: buildCatalogModel('google', 'gemini-4-argon'),
+      onModelChanged: (model) async => rebuilt = model,
+    );
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('2'); // the google/gemini-4-argon entry row
+    await waitForIt(
+      () => io.out.toString().contains('capabilities — google/gemini-4-argon'),
+    );
+    io.sendLine('2'); // max output tokens
+    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    io.sendLine('5'); // the 65536 preset
+    await waitForIt(
+      () => io.out.toString().contains(
+        'models.overrides.google.gemini-4-argon.maxTokens = 65536',
+      ),
+    );
+    io.sendLine('6'); // done (caps loop)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('3'); // done (flow menu)
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
+    // The host-visible rebuilt model: maxTokens moved, maxImages stayed.
+    expect(rebuilt, isNotNull);
+    expect(rebuilt?.maxTokens, 65536);
+    expect(rebuilt?.maxImages, catalogMaxImages['gemini-4-argon']);
   });
 }

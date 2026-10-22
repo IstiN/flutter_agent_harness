@@ -420,8 +420,9 @@ void main() {
   });
 
   group('model edit', () {
-    testWidgets('/model-edit → Model capabilities flow (merged surface)',
-        (tester) async {
+    testWidgets('/model-edit → Model capabilities flow (merged surface)', (
+      tester,
+    ) async {
       // Fixture chat model: the flow pins the ACTIVE model's caps, which
       // must never be the real user's (issue #508).
       final tempHome = _tempHomeWithProvider();
