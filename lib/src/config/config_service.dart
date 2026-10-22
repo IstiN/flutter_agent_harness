@@ -41,6 +41,7 @@ import '../messaging/fabric_config.dart';
 import '../mcp/mcp_config.dart';
 import '../memory_config.dart';
 import '../power_config.dart';
+import '../prompts/project_context.dart' show ProjectContextConfig;
 import '../skills/skill_availability.dart';
 import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
@@ -76,6 +77,7 @@ const configTopLevelKeys = <String>{
   'tools',
   'redact',
   'spills',
+  'projectContext',
   'compaction',
   'customProviders',
   'models',
@@ -1193,6 +1195,8 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   // unknown keys and mistyped scalars become notes on the config, never
   // schema errors — so the validator never throws.
   'spills': (value, _) => SpillsConfig.fromYaml(value),
+  // Same rule for the projectContext section (issue #1761).
+  'projectContext': (value, _) => ProjectContextConfig.fromYaml(value),
   'tools': (value, _) => ToolsConfig.fromYaml(value),
   // The links section (issue #691): strict on shape (a bad value throws,
   // nothing persists), tolerant on unknown keys (notes, never errors).

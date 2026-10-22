@@ -128,6 +128,10 @@ const rootSpecs = <PromptSpec>[
     requiredToken: '{{cwd}}',
   ),
   PromptSpec(
+    source: 'prompts/context/project_context_read_full.md',
+    constName: 'projectContextReadFullPrompt',
+  ),
+  PromptSpec(
     source: 'prompts/cli/messaging_section.md',
     constName: 'cliMessagingSectionPrompt',
     requiredToken: '{{mailbox}}',
