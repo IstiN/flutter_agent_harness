@@ -281,4 +281,105 @@ void main() {
       },
     );
   });
+
+  group('boot-time TTL sweep (gh-1745 review)', () {
+    late MemoryExecutionEnv env;
+
+    setUp(() => env = MemoryExecutionEnv(cwd: '/work'));
+
+    TrajectoryRequestBlobStore store({
+      String? Function()? sessionId,
+      int maxBytes = trajectoryRequestBlobMaxBytes,
+      int ttlDays = trajectoryRequestBlobTtlDays,
+      DateTime Function()? clock,
+    }) => TrajectoryRequestBlobStore(
+      env: env,
+      sessionId: sessionId ?? () => 's1',
+      maxBytes: maxBytes,
+      ttlDays: ttlDays,
+      clock: clock,
+    );
+
+    Future<void> seedStale(String path, DateTime mtime) async {
+      await env.writeFile(path, '{"detail":{}}');
+      env.setMtime(path, mtime.millisecondsSinceEpoch);
+    }
+
+    test('sweepExpiredEverywhere prunes expired blobs in every session dir, '
+        'including a dead session\'s newest', () async {
+      final now = DateTime(2026, 1, 1);
+      var current = now;
+      final s = store(ttlDays: 30, clock: () => current);
+      await s.write(detail: _detail());
+      // A dead sibling session whose blobs aged past the TTL — rotation
+      // can never reach them again (that session never writes).
+      await seedStale(
+        '.fah/trajectories/dead/requests/1.json',
+        now.subtract(const Duration(days: 40)),
+      );
+      await seedStale(
+        '.fah/trajectories/dead/requests/2.json',
+        now.subtract(const Duration(days: 40)),
+      );
+      // A fresh blob in another live session stays (fresh relative to the
+      // advanced clock, not the write wall-clock).
+      await seedStale(
+        '.fah/trajectories/live/requests/1.json',
+        now.add(const Duration(days: 30)),
+      );
+
+      current = now.add(const Duration(days: 31));
+      final deleted = await s.sweepExpiredEverywhere();
+
+      expect(deleted, 2);
+      expect(
+        (await env.listDir(
+          '.fah/trajectories/dead/requests',
+        )).valueOrNull,
+        isEmpty,
+        reason: 'a dead session keeps NOTHING past the TTL — including its '
+            'newest blob (no newest-kept grace on the boot sweep)',
+      );
+      expect(
+        (await env.listDir(
+          '.fah/trajectories/live/requests',
+        )).valueOrNull!.single.name,
+        '1.json',
+      );
+      // The sweeping session's own fresh blob survives too.
+      expect(
+        (await env.listDir(
+          '.fah/trajectories/s1/requests',
+        )).valueOrNull!.map((f) => f.name),
+        ['1.json'],
+      );
+    });
+
+    test('a missing trajectories root is a no-op (fresh workspace)', () async {
+      expect(await store().sweepExpiredEverywhere(), 0);
+    });
+
+    test('the first write sweeps stale siblings (hosts need no extra '
+        'wiring)', () async {
+      final now = DateTime.now();
+      await seedStale(
+        '.fah/trajectories/dead/requests/1.json',
+        now.subtract(const Duration(days: 40)),
+      );
+
+      final spill = await store(ttlDays: 30).write(detail: _detail());
+
+      expect(spill, isNotNull);
+      expect(
+        (await env.listDir(
+          '.fah/trajectories/dead/requests',
+        )).valueOrNull,
+        isEmpty,
+      );
+      // The sweep is once per store instance: a second write must not
+      // re-list the root (the per-write sweep hour gate stays intact).
+      final spill2 = await store(ttlDays: 30).write(detail: _detail());
+      expect(spill2!.file, endsWith('2.json'));
+    });
+  });
 }

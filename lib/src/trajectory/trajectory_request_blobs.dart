@@ -35,6 +35,10 @@ const int trajectoryRequestBlobTtlDays = 30;
 String trajectoryRequestBlobDir(String? sessionId) =>
     '.fah/trajectories/${sessionId ?? 'sessionless'}/requests';
 
+/// Relative root of every session's request-blob dir (the boot-time TTL
+/// sweep walks its `<session>/requests` children).
+const String trajectoryRequestBlobsRoot = '.fah/trajectories';
+
 /// The outcome of one successful [TrajectoryRequestBlobStore.write]: the
 /// blob path for the summary's `spillFile` pointer and, when the request
 /// carried a raw wire dump, its content hash (the summary's
@@ -85,6 +89,7 @@ final class TrajectoryRequestBlobStore {
   int _counter = 0;
   var _bytesSinceSweep = 0;
   DateTime? _lastSweepAt;
+  var _bootSwept = false;
 
   /// Writes [detail] (plus the built [rawWireDump], when the request
   /// carried one) as one JSON blob and returns the spill outcome. Null on
@@ -94,11 +99,16 @@ final class TrajectoryRequestBlobStore {
   /// [redactWireDump] is the host's active pipeline pass (E1: the dump is
   /// redacted under the config active at capture time) and the dump rides
   /// the same [wireDumpMaxChars] cap as the inline record did.
+  ///
+  /// The FIRST write of a store instance also runs the boot-time TTL
+  /// sweep ([sweepOncePerBoot]) — the store is built lazily at the first
+  /// request of a session, so hosts need no extra wiring.
   Future<TrajectoryRequestSpill?> write({
     required TrajectoryRequestDetail detail,
     String? rawWireDump,
     String Function(String)? redactWireDump,
   }) async {
+    await sweepOncePerBoot();
     final dump = rawWireDump == null
         ? null
         : trajectoryBuildWireDump(rawWireDump, redact: redactWireDump);
@@ -189,6 +199,55 @@ final class TrajectoryRequestBlobStore {
     _bytesSinceSweep = 0;
     _lastSweepAt = _clock();
     await enforceBudget();
+  }
+
+  /// The boot-time TTL sweep (gh-1745 review): [enforceBudget] advances
+  /// only while a session keeps receiving requests, so an ENDED session's
+  /// blobs would age forever — the disk-footprint tail the ticket
+  /// complains about survives at the directory level. Runs at most once
+  /// per store instance (the store is built lazily at the first request
+  /// of a session, which is the host's "session open"); best-effort.
+  Future<void> sweepOncePerBoot() async {
+    if (_bootSwept) return;
+    _bootSwept = true;
+    await sweepExpiredEverywhere();
+  }
+
+  /// Deletes every blob past [ttlDays] in EVERY session's request dir
+  /// under `.fah/trajectories/`. Unlike [enforceBudget] there is no
+  /// newest-kept grace: a dead session keeps nothing past the TTL.
+  /// Returns the deleted count; every failure is swallowed (hygiene,
+  /// never a correctness path).
+  Future<int> sweepExpiredEverywhere() async {
+    final root = await _env.listDir(trajectoryRequestBlobsRoot);
+    final entries = root.valueOrNull ?? const <FileInfo>[];
+    var deleted = 0;
+    for (final entry in entries) {
+      if (entry.kind != FileKind.directory) continue;
+      deleted += await _sweepExpiredIn(
+        '$trajectoryRequestBlobsRoot/${entry.name}/requests',
+      );
+    }
+    return deleted;
+  }
+
+  /// The TTL-only pass over one explicit request-blob dir.
+  Future<int> _sweepExpiredIn(String dir) async {
+    final listing = await _env.listDir(dir);
+    final files = listing.valueOrNull;
+    if (files == null || files.isEmpty) return 0;
+    final now = _clock();
+    final ttl = Duration(days: ttlDays);
+    var deleted = 0;
+    for (final file in files) {
+      final expired =
+          now.difference(DateTime.fromMillisecondsSinceEpoch(file.mtimeMs)) >
+          ttl;
+      if (!expired) continue;
+      final removed = await _env.remove(file.path, force: true);
+      if (removed.isOk) deleted++;
+    }
+    return deleted;
   }
 
   Future<int> _maxExistingSequence(String? sid) async {

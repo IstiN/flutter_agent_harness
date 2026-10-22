@@ -182,6 +182,29 @@ void main() {
       expect(await _sessionJsonl(rig), contains('"trajectory_wire_dump"'));
     },
   );
+
+  test('the first spill sweeps stale sibling sessions past the TTL '
+      '(boot-time sweep, gh-1745 review)', () async {
+    final rig = await _rig();
+    // A dead session's blob, aged far past the 30-day TTL: no rotation
+    // can ever reach it again (that session never writes).
+    final stale = '.fah/trajectories/dead/requests/1.json';
+    await rig.env.writeFile(stale, '{"detail":{}}');
+    rig.env.setMtime(
+      stale,
+      DateTime.now().subtract(const Duration(days: 40)).millisecondsSinceEpoch,
+    );
+
+    rig.io.sendLine('go');
+    await _settle(rig);
+    await _exit(rig);
+
+    expect(
+      (await rig.env.listDir('.fah/trajectories/dead/requests')).valueOrNull,
+      isEmpty,
+      reason: 'the ended session keeps nothing past the TTL',
+    );
+  });
 }
 
 class _Rig {
