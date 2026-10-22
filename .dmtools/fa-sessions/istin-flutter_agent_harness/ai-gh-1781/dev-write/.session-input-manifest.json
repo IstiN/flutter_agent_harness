@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-22T10:42:21.991Z",
+  "ticketKey": "gh-1781",
+  "headSha": "c9982267f33991f351eb32dc3411e09910f361e8",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:2c7cb16867cf7ba6",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:f97ac5c02520db3c",
+      "size": 17007
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:5cedfb5766abfa33",
+      "size": 8396
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:7a58f0e043244daf",
+      "size": 3554
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:bde18d5ab3fb1b67",
+      "size": 1489
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:2699e8acc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:6b611c5de1a846af",
+      "size": 22882
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:b1ecde4677a343cf",
+      "size": 22631
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6vJcaR",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/startup.dart:657",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: false \"resolved NOTHING from the secure store — those providers boot keyless\" warning on the documented project/user-config queue flow**\n\n`referencedSecureKeyNames` now folds in `queueEntryKeyNames(queueEntries)` for project/user-scope queues (bin passes `queueResolution.entries` whenever `scope != ProviderQueueScope.env`). But the \"resolved NOTHING\" warning in `secureKeyBootDiagnostics` is purely store-based: it fires when **none** of the referenced names resolve **from the store**, regardless of whether the key resolves from the environment. For a queue, `apiKeyEnv` pointing at an env var is the *canonical* key shape — `buildProviderQueueChain` itself says \"keys never ride in the queue blob; name the env var holding the key\", and the shipped skill doc (`prompts/skills/self-settings/SKILL.md`, \"Provider queue\" section) documents exactly this setup:\n\n```yaml\nprovidersQueue:\n  - provider_type: openai-completions\n    provider_config:\n      model: moonshotai/Kimi-K2.6\n      baseUrl: https://gate.example/v1\n      apiKeyEnv: OPENAI_API_KEY\n```\n\nReproduced against this branch (probe over the exact boot sequence in `queue_only_headless_boot_test.dart`, secure store empty, key present in env):\n\n```\nwarning: 1 provider key(s) referenced by the config (custom providers /\nroles) resolved NOTHING from the secure store — those providers boot\nkeyless; re-enter a key or run with --debug-secrets ...\n```\n\nThe provider does **not** boot keyless (the env key resolves and the queue serves), so every boot of this flow now prints a false alarm with wrong remediation (\"re-enter a key\"). The env-scope queue is excluded for precisely this reason (\"env-only setups reference nothing — the boot warning must stay silent for them\"); a project/user-config queue with env-sourced keys is the same key-source situation and should stay silent too.\n\nSuggested fix: filter `queueEntryKeyNames` by env presence before joining the diagnostics set (same rule `freshInstallProviderState` applies — a name with a non-empty env value is not store-referenced), e.g. in `bin/fah_runapp.dart` pass `queueEntries: <entries whose key names are unset in env>` when `scope != env`, or add the env filter inside `queueEntryKeyNames`'s caller. The preload set (`secureKeyPreloadNames`) can keep the unfiltered names — preloading a name the env shadows is harmless.\n\nPlease also add the missing IT: a project-scope queue (`providersQueue:` in `<tmp>/.fah/config.yaml`) with an env-only `apiKeyEnv` must assert `bootDiagnostics` is empty — the current E3 test only covers the env scope, which is why this slipped through."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vJccd",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/agent_cli_commands.dart:945",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the boot-time rebuild loses the rotation stack — boot and rebuilt queues disagree on multi-credential entries**\n\n`collectQueueSecrets` now sweeps the rotation stack (`NAME_2`, `NAME_3`, …) from the environment so multi-credential entries build real `ApiKeyRing`s. That only works on the **boot** path, where the real `Platform.environment` reaches the sweep. The post-boot rebuild path cannot see it:\n\n- `attachProviderQueueQuotaFeed` runs on **every** queue boot and calls `_rebuildProviderQueueRuntime(warn: false)`;\n- `_rebuildProviderQueueRuntime` builds its env view via `_queueSecrets`, which constructs a map containing **only the base names** (`apiKeyEnv`, `refreshTokenEnv`, the chatgpt default slot) — no `MY_KEY_2`/`MY_KEY_3` entries;\n- `collectQueueSecrets`'s new stack sweep iterates exactly that map, so it finds nothing → the rebuilt `config.providersQueueRuntime` carries **single-key rings** where the boot build had the full stack.\n\nResult after this PR: on every queue boot the config-level runtime (what `/providers queue list`, the queue editor health rows, `_providerQueueTest` probes and `_providersQueueStatusLabel` read) silently diverges from the runtime the constructor actually wired into the agent — and any future code that re-binds `config.providersQueueRuntime` into the live agent would silently drop keys 2..n. The rebuild is also the path a `/providers queue add/remove/move` edit takes (loud `warn: true`), so an edited multi-credential queue degrades the same way.\n\nSuggested fix: make `_queueSecrets` sweep the stacks from the real environment — e.g. seed the map it hands to `collectQueueSecrets` with `NAME_\\d+` entries from `Platform.environment` (or pass the process env as a fallback source), so boot and rebuild resolve identical secret snapshots. A regression test mirroring `UT-queue-secrets-rotation-stack` through `AgentCli.attachProviderQueueQuotaFeed` would pin it.\n\n(Context: the rebuilt runtime is currently only read by the queue UI/probe surfaces — the constructor binds the boot runtime's `streamFunction` and nothing re-reads the config field into the agent. That pre-existing #823 wiring gap is not this PR's regression, but it is why the divergence is observable rather than harmful today.)"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vJcf5",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/startup.dart:541",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the entry→key-name ladder now exists three times — share `queueEntryKeyNames`**\n\nThis PR introduces `queueEntryKeyNames` as the single helper for \"which key names does a queue entry reference\", but the same ladder (`?apiKeyEnv`, `?refreshTokenEnv`, chatgpt default slot when `apiKeyEnv == null`) is still duplicated inline in two places that must stay in lockstep with it:\n\n- `collectQueueSecrets` (lib/src/cli/startup.dart:1200 — the `names` list built inside the loop)\n- `AgentCli._queueSecrets` (lib/src/cli/agent_cli_commands.dart:979 — the env-map keys)\n\nIf a fourth key slot ever joins the ladder (say a third credential kind), three of the four sites must be edited in sync. Suggest rewriting both inline lists as `queueEntryKeyNames([entry])` (or iterating it), keeping this PR's new helper the one source of truth."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vJcie",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/agent_cli_queue_model_resync_test.dart:236",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: file is not `dart format`-clean**\n\n`dart format --set-exit-if-changed test/cli/agent_cli_queue_model_resync_test.dart` reports a change at line 236 — the `reason:` argument's continuation string needs the formatter's `reason:` line break:\n\n```dart\n// current\nreason: 'the rebind rebuilds the SAME queue the boot already '\n    'rendered — no second print',\n\n// dart format\nreason:\n    'the rebind rebuilds the SAME queue the boot already '\n    'rendered — no second print',\n```\n\nThe PR otherwise formats cleanly (the incidental `secureKeySaveDegradationLines` re-indent in startup.dart suggests a formatter pass ran over lib/ but missed this test file)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vJclG",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/startup.dart:920",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: document the `queueResolved` contract in `startupApiKey`'s dartdoc**\n\n`startupApiKey`'s prose doc explains `baseUrl`, custom entries and `[pinnedKeyName]`, but the new `queueResolved` parameter — which changes the gate's contract from \"missing key = hard startup failure\" to \"optional lookup, the queue owns the stream\" — is only explained by the inline comment at the assignment. Since this flips the fail-loudly behavior the headless boot relies on, a sentence in the dartdoc (and `[queueResolved]` in the param prose) would help the next reader who lands on this signature without the gh-1781 context."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:8744f6af",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: false \"resolved NOTHING from the secure store — those providers boot keyless\" warning on the documented project/user-config queue flow**\n\n`referencedSecureKeyNames` now folds in `queueEntryKeyNames(queueEntries)` for project/user-scope queues (bin passes `queueResolution.entries` whenever `scope != ProviderQueueScope.env`). But the \"resolved NOTHING\" warning in `secureKeyBootDiagnostics` is purely store-based: it fires when **none** of the referenced names resolve **from the store**, regardless of whether the key resolves from the environment. For a queue, `apiKeyEnv` pointing at an env var is the *canonical* key shape — `buildProviderQueueChain` itself says \"keys never ride in the queue blob; name the env var holding the key\", and the shipped skill doc (`prompts/skills/self-settings/SKILL.md`, \"Provider queue\" section) documents exactly this setup:\n\n```yaml\nprovidersQueue:\n  - provider_type: openai-completions\n    provider_config:\n      model: moonshotai/Kimi-K2.6\n      baseUrl: https://gate.example/v1\n      apiKeyEnv: OPENAI_API_KEY\n```\n\nReproduced against this branch (probe over the exact boot sequence in `queue_only_headless_boot_test.dart`, secure store empty, key present in env):\n\n```\nwarning: 1 provider key(s) referenced by the config (custom providers /\nroles) resolved NOTHING from the secure store — those providers boot\nkeyless; re-enter a key or run with --debug-secrets ...\n```\n\nThe provider does **not** boot keyless (the env key resolves and the queue serves), so every boot of this flow now prints a false alarm with wrong remediation (\"re-enter a key\"). The env-scope queue is excluded for precisely this reason (\"env-only setups reference nothing — the boot warning must stay silent for them\"); a project/user-config queue with env-sourced keys is the same key-source situation and should stay silent too.\n\nSuggested fix: filter `queueEntryKeyNames` by env presence before joining the diagnostics set (same rule `freshInstallProviderState` applies — a name with a non-empty env value is not store-referenced), e.g. in `bin/fah_runapp.dart` pass `queueEntries: <entries whose key names are unset in env>` when `scope != env`, or add the env filter inside `queueEntryKeyNames`'s caller. The preload set (`secureKeyPreloadNames`) can keep the unfiltered names — preloading a name the env shadows is harmless.\n\nPlease also add the missing IT: a project-scope queue (`providersQueue:` in `<tmp>/.fah/config.yaml`) with an env-only `apiKeyEnv` must assert `bootDiagnostics` is empty — the current E3 test only covers the env scope, which is why this slipped through."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:57abd09f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the boot-time rebuild loses the rotation stack — boot and rebuilt queues disagree on multi-credential entries**\n\n`collectQueueSecrets` now sweeps the rotation stack (`NAME_2`, `NAME_3`, …) from the environment so multi-credential entries build real `ApiKeyRing`s. That only works on the **boot** path, where the real `Platform.environment` reaches the sweep. The post-boot rebuild path cannot see it:\n\n- `attachProviderQueueQuotaFeed` runs on **every** queue boot and calls `_rebuildProviderQueueRuntime(warn: false)`;\n- `_rebuildProviderQueueRuntime` builds its env view via `_queueSecrets`, which constructs a map containing **only the base names** (`apiKeyEnv`, `refreshTokenEnv`, the chatgpt default slot) — no `MY_KEY_2`/`MY_KEY_3` entries;\n- `collectQueueSecrets`'s new stack sweep iterates exactly that map, so it finds nothing → the rebuilt `config.providersQueueRuntime` carries **single-key rings** where the boot build had the full stack.\n\nResult after this PR: on every queue boot the config-level runtime (what `/providers queue list`, the queue editor health rows, `_providerQueueTest` probes and `_providersQueueStatusLabel` read) silently diverges from the runtime the constructor actually wired into the agent — and any future code that re-binds `config.providersQueueRuntime` into the live agent would silently drop keys 2..n. The rebuild is also the path a `/providers queue add/remove/move` edit takes (loud `warn: true`), so an edited multi-credential queue degrades the same way.\n\nSuggested fix: make `_queueSecrets` sweep the stacks from the real environment — e.g. seed the map it hands to `collectQueueSecrets` with `NAME_\\d+` entries from `Platform.environment` (or pass the process env as a fallback source), so boot and rebuild resolve identical secret snapshots. A regression test mirroring `UT-queue-secrets-rotation-stack` through `AgentCli.attachProviderQueueQuotaFeed` would pin it.\n\n(Context: the rebuilt runtime is currently only read by the queue UI/probe surfaces — the constructor binds the boot runtime's `streamFunction` and nothing re-reads the config field into the agent. That pre-existing #823 wiring gap is not this PR's regression, but it is why the divergence is observable rather than harmful today.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:2b94c4f8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the entry→key-name ladder now exists three times — share `queueEntryKeyNames`**\n\nThis PR introduces `queueEntryKeyNames` as the single helper for \"which key names does a queue entry reference\", but the same ladder (`?apiKeyEnv`, `?refreshTokenEnv`, chatgpt default slot when `apiKeyEnv == null`) is still duplicated inline in two places that must stay in lockstep with it:\n\n- `collectQueueSecrets` (lib/src/cli/startup.dart:1200 — the `names` list built inside the loop)\n- `AgentCli._queueSecrets` (lib/src/cli/agent_cli_commands.dart:979 — the env-map keys)\n\nIf a fourth key slot ever joins the ladder (say a third credential kind), three of the four sites must be edited in sync. Suggest rewriting both inline lists as `queueEntryKeyNames([entry])` (or iterating it), keeping this PR's new helper the one source of truth."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:384f0753",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: file is not `dart format`-clean**\n\n`dart format --set-exit-if-changed test/cli/agent_cli_queue_model_resync_test.dart` reports a change at line 236 — the `reason:` argument's continuation string needs the formatter's `reason:` line break:\n\n```dart\n// current\nreason: 'the rebind rebuilds the SAME queue the boot already '\n    'rendered — no second print',\n\n// dart format\nreason:\n    'the rebind rebuilds the SAME queue the boot already '\n    'rendered — no second print',\n```\n\nThe PR otherwise formats cleanly (the incidental `secureKeySaveDegradationLines` re-indent in startup.dart suggests a formatter pass ran over lib/ but missed this test file)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:f5fdcec4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: document the `queueResolved` contract in `startupApiKey`'s dartdoc**\n\n`startupApiKey`'s prose doc explains `baseUrl`, custom entries and `[pinnedKeyName]`, but the new `queueResolved` parameter — which changes the gate's contract from \"missing key = hard startup failure\" to \"optional lookup, the queue owns the stream\" — is only explained by the inline comment at the assignment. Since this flips the fail-loudly behavior the headless boot relies on, a sentence in the dartdoc (and `[queueResolved]` in the param prose) would help the next reader who lands on this signature without the gh-1781 context."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:1e05742c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: One blocking correctness bug: project/user-config queues with env-sourced `apiKeyEnv` keys (the documented canonical shape) now print a false \"resolved NOTHING from the secure store — those providers boot keyless\" warning on every boot (reproduced on this branch). Plus one important issue (the post-boot queue rebuild loses `NAME_2`/`NAME_3` rotation stacks) and three suggestions.\n\n**Key Issues**:\n- 🚨 `referencedSecureKeyNames` + `secureKeyBootDiagnostics`: config-scope queue keys are store-probed but never env-checked → false \"boot keyless\" alarm on the documented flow (`prompts/skills/self-settings/SKILL.md` queue example)\n- ⚠️ `_queueSecrets` builds a base-names-only env map, so `collectQueueSecrets`'s new rotation-stack sweep never fires on the quota-feed rebind / queue edits — rebuilt runtime silently drops to single-key rings\n- 💡 Entry→key-name ladder duplicated 3×; one test file not `dart format`-clean; `queueResolved` undocumented in `startupApiKey` dartdoc\n\n**Next Steps**:\n1. Filter env-resolved names out of the diagnostics set (keep them in the preload set) and add the missing project-scope IT\n2. Seed `_queueSecrets` with rotation-stack names from the process env; pin with a rebind-level rotation test\n3. Share `queueEntryKeyNames` across the three sites; run `dart format`; document `queueResolved`\n\nNote (outside this diff, pre-existing): `fa serve --a2a` / `--bridge` and wire-serve runners stream the legacy model+key lane and never consult the queue runtime — with a queue-only boot they serve an empty key; worth a follow-up."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
