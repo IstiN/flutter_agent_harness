@@ -391,8 +391,9 @@ int? resolveModelMaxOutputTokens(String modelId, {required String api}) {
     major = int.parse(after);
     minor = match.group(3) == null ? 0 : int.parse(match.group(3)!);
   } else {
-    final before = RegExp(r'(\d{1,2})(?:[.-](\d{1,2}))?(?=-|$)')
-        .firstMatch(id.substring(0, match.start));
+    final before = RegExp(
+      r'(\d{1,2})(?:[.-](\d{1,2}))?(?=-|$)',
+    ).firstMatch(id.substring(0, match.start));
     if (before == null) return _unknownClaudeOutputCeiling;
     major = int.parse(before.group(1)!);
     minor = before.group(2) == null ? 0 : int.parse(before.group(2)!);
@@ -438,6 +439,13 @@ String? parseAuthHeaderName(Object? value, String where) {
   }
   return name;
 }
+
+/// Measured per-model unique-image caps (issue #1750): only values
+/// actually observed from the provider — invented limits rot. Absent id
+/// = no per-model knowledge, the global `images.maxPerRequest` default
+/// applies. `images.perModel.<modelId>` config beats this (user truth
+/// beats built-ins).
+const catalogMaxImages = <String, int>{'gemini-4-argon': 10};
 
 /// The adapter kinds whose stream function routes through
 /// [streamOpenAICompletions] — the only wire that reads
@@ -546,6 +554,7 @@ Model buildCatalogModel(
     connectTimeout: connectTimeout,
     streamIdleTimeout: streamIdleTimeout,
     timeoutScopeLabel: timeoutScopeLabel,
+    maxImages: catalogMaxImages[modelId],
   );
 }
 
@@ -722,6 +731,7 @@ Model buildCliDefaultModel(
     // The resolver's loud notes ride the model (gh-1426 rework) — the
     // boot notice renders them; never dropped at the build boundary.
     capabilityNotes: caps.notes,
+    maxImages: catalogMaxImages[id],
   );
 }
 

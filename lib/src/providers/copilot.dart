@@ -126,6 +126,7 @@ Future<void> _runCopilotStream(
               headers: model.headers,
               compat: model.compat,
               authHeader: model.authHeader,
+              maxImages: model.maxImages,
             )
           : model;
       final inner = streamOpenAICompletions(
