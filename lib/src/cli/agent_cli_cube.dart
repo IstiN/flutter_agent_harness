@@ -11,12 +11,19 @@ const String _cubeUsage =
     'usage: /cube [list | use <name-or-path> [--allow-degrade] | off | '
     'reload | templates | install <id> | cache status | cache clear]';
 
+/// The `/cube` invocation: the subcommand (`null` for a bare `/cube`) and
+/// its whitespace-split operand tokens. Split out of
+/// [CubeCommands._handleCubeCommand] to keep it under the CRAP ratchet.
+(String?, List<String>) _parseCubeInvocation(String rest) {
+  final parts = rest.isEmpty ? const <String>[] : rest.split(RegExp(r'\s+'));
+  return (parts.isEmpty ? null : parts.first, parts);
+}
+
 /// The `/cube` command family on [AgentCli].
 extension CubeCommands on AgentCli {
   /// Dispatches `/cube` and its subcommands.
   Future<void> _handleCubeCommand(String rest) async {
-    final parts = rest.isEmpty ? const <String>[] : rest.split(RegExp(r'\s+'));
-    final sub = parts.isEmpty ? null : parts.first;
+    final (sub, parts) = _parseCubeInvocation(rest);
     if (sub == null) return _printCubeStatus();
     if (sub == 'cache') return _handleCubeCacheCommand(parts);
     if (sub == 'templates') return _cubeTemplates();

@@ -113,6 +113,12 @@ extension SlashCommandDispatch on AgentCli {
     } on Object catch (error) {
       lines = ['bridge: $error'];
     }
+    _writelnAll(lines);
+  }
+
+  /// Writes [lines] one per line — the shared tail of the slash arms
+  /// that render pre-formatted output.
+  void _writelnAll(Iterable<String> lines) {
     for (final line in lines) {
       io.writeln(line);
     }
@@ -448,9 +454,7 @@ extension SlashCommandDispatch on AgentCli {
       config.redactionPipeline,
       rest.split(_commandWhitespace).where((part) => part.isNotEmpty).toList(),
     );
-    for (final line in outcome.lines) {
-      io.writeln(line);
-    }
+    _writelnAll(outcome.lines);
     final newConfig = outcome.newConfig;
     if (newConfig != null) {
       config.redactionPipeline?.config = newConfig;

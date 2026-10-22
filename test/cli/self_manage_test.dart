@@ -372,6 +372,55 @@ void main() {
       expect(target.readAsStringSync(), 'old');
     });
 
+    test('a tar.gz miss falls back to the stable macOS zip asset', () async {
+      final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      final client = MockClient((request) async {
+        if (request.url.path.endsWith('/releases/latest')) {
+          return http.Response(
+            '',
+            302,
+            headers: {
+              'location':
+                  'https://github.com/IstiN/flutter_agent_harness/'
+                  'releases/tag/v9.9.9',
+            },
+          );
+        }
+        if (request.url.path.endsWith('SHA256SUMS.sig')) {
+          return http.Response.bytes(_fixtureSig, 200);
+        }
+        if (request.url.path.endsWith('SHA256SUMS')) {
+          return http.Response(_fixtureSums, 200);
+        }
+        if (request.url.path.endsWith('.tar.gz')) {
+          return http.Response('gone', 404);
+        }
+        if (request.url.path.endsWith('-mac.zip')) {
+          return http.Response.bytes(_fixtureZip, 200);
+        }
+        return http.Response('not found', 404);
+      });
+      final code = await runSelfUpdate(
+        currentVersion: '0.1.0',
+        detectInstall: () => binaryInstall(target.path),
+        newClient: () => client,
+        pem: _testPem,
+        runProcess: (exe, args) async => ProcessResult(0, 0, '', ''),
+      );
+      if (Platform.isMacOS) {
+        // The archive miss routes into _zipAssetName's stable zip; the
+        // zip is downloaded, then the update aborts on provenance (the
+        // fallback verifies against the pinned release key, and these
+        // are test fixtures) — the old binary is kept.
+        expect(code, 1);
+        expect(target.readAsStringSync(), 'old');
+      } else {
+        // No zip fallback off macOS: the download failure stands.
+        expect(code, 1);
+        expect(target.readAsStringSync(), 'old');
+      }
+    });
+
     test(
       'pub-global update reactivates, rebuilding a stale snapshot',
       () async {

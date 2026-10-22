@@ -294,8 +294,7 @@ bool get poolEvictionEnabled {
 
 bool _flagValue(String? raw) {
   if (raw == null) return false;
-  final value = raw.trim().toLowerCase();
-  return value == '1' || value == 'true';
+  return const {'1', 'true'}.contains(raw.trim().toLowerCase());
 }
 
 void maybeEvictProviderPool({

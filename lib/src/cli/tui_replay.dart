@@ -262,36 +262,70 @@ List<String> replayLines(
   String? cwd,
   String? home,
 }) {
+  final prelude = _replayUserPrelude(message);
+  if (prelude != null) return prelude;
+  final (prefix, body) = _replayPrefixAndBody(
+    message,
+    results: results,
+    cwd: cwd,
+    home: home,
+  );
+  if (body.trim().isEmpty) return const [];
+  final rows = body.split('\n');
+  final head = maxRows > 0 ? rows.take(maxRows).toList() : rows;
+  final suffix = maxRows > 0 && rows.length > maxRows ? ' …' : '';
+  if (suffix.isNotEmpty) _closeDanglingFence(head);
+  return _prefixReplayRows(head, prefix, suffix);
+}
+
+/// The user-message fast paths: summary markers and system-notice
+/// rewrites render verbatim, bypassing the prefix projection. Null =
+/// fall through to the regular prefix/body rendering.
+List<String>? _replayUserPrelude(Message message) {
   if (message case UserMessage(:final content)) {
     final text = _blocksText(content);
     final summaryLine = _summaryMarkerLine(text);
     if (summaryLine != null) return [summaryLine];
     if (needsSystemNoticeRewrite(text)) return renderSystemNoticeLines(text);
   }
-  final (prefix, body) = switch (message) {
-    UserMessage(:final content) => ('you: ', _blocksText(content)),
-    AssistantMessage(:final content) => (
-      'fa:  ',
-      [
-        content.whereType<TextContent>().map((b) => b.text).join('\n').trim(),
-        for (final call in content.whereType<ToolCall>())
-          replayToolRow(
-            call,
-            results[call.id],
-            width: 80,
-            cwd: cwd,
-            home: home,
-            styled: false,
-          ),
-      ].where((s) => s.isNotEmpty).join('\n'),
-    ),
-    _ => ('', ''),
-  };
-  if (body.trim().isEmpty) return const [];
-  final rows = body.split('\n');
-  final head = maxRows > 0 ? rows.take(maxRows).toList() : rows;
-  final suffix = maxRows > 0 && rows.length > maxRows ? ' …' : '';
-  if (suffix.isNotEmpty) _closeDanglingFence(head);
+  return null;
+}
+
+/// The `(prefix, body)` pair for one replayed message: `you: ` over user
+/// text, `fa:  ` over assistant text + tool rows, and an empty pair for
+/// anything else (results never render standalone).
+(String, String) _replayPrefixAndBody(
+  Message message, {
+  required Map<String, ToolResultMessage> results,
+  required String? cwd,
+  required String? home,
+}) => switch (message) {
+  UserMessage(:final content) => ('you: ', _blocksText(content)),
+  AssistantMessage(:final content) => (
+    'fa:  ',
+    [
+      content.whereType<TextContent>().map((b) => b.text).join('\n').trim(),
+      for (final call in content.whereType<ToolCall>())
+        replayToolRow(
+          call,
+          results[call.id],
+          width: 80,
+          cwd: cwd,
+          home: home,
+          styled: false,
+        ),
+    ].where((s) => s.isNotEmpty).join('\n'),
+  ),
+  _ => ('', ''),
+};
+
+/// Hangs [prefix] (first row), the matching indent (the rest), and the
+/// [suffix] (last row) over the replay rows.
+List<String> _prefixReplayRows(
+  List<String> head,
+  String prefix,
+  String suffix,
+) {
   final indent = ' ' * prefix.length;
   return [
     for (var i = 0; i < head.length; i++)
@@ -328,8 +362,7 @@ List<String> restoredInputHistory(List<Message> messages) {
 /// WHOLE messages rather than decapitating the tail's content. Tool results
 /// attach to their calls' rows (see [replayToolRow]); they never render
 /// standalone.
-(List<List<String>> entries, int firstIndex)
-buildReplayEntries(
+(List<List<String>> entries, int firstIndex) buildReplayEntries(
   List<Message> messages, {
   required bool tui,
   required int width,
@@ -389,10 +422,7 @@ buildReplayEntries(
     rows += entry.length;
     firstIndex = i;
   }
-  return (
-    _withFenceFixup(messages, firstIndex, entries),
-    firstIndex,
-  );
+  return (_withFenceFixup(messages, firstIndex, entries), firstIndex);
 }
 
 /// Whether a formatted replay [entry] still fits the boot [rowBudget]:
@@ -427,8 +457,13 @@ List<List<String>> _withFenceFixup(
   int firstIndex,
   List<List<String>> entries,
 ) {
-  if (firstIndex > 0 && entries.isNotEmpty && _fenceOpenBefore(messages, firstIndex)) {
-    return [const ['```'], ...entries];
+  if (firstIndex > 0 &&
+      entries.isNotEmpty &&
+      _fenceOpenBefore(messages, firstIndex)) {
+    return [
+      const ['```'],
+      ...entries,
+    ];
   }
   return entries;
 }

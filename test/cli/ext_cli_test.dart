@@ -8,6 +8,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
 import 'package:flutter_agent_harness/src/js_ext/extension_store.dart';
 import 'package:flutter_agent_harness/src/js_ext/jsr_runtime.dart';
+import 'package:flutter_agent_harness/src/js_ext/trust.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:test/test.dart';
@@ -455,6 +456,84 @@ void main() {
       expect(io.out, contains('up-to-date demo'));
       expect(await run(['update', 'ghost']), 1);
       expect(io.err, contains('ext not found: ghost'));
+    });
+
+    test('bundled-source update re-plans from the bundled seed', () async {
+      await run(['install', '--bundled', 'crap-guard']);
+      io.reset();
+      // The bundled trust provenance re-plans via planBundledInstall —
+      // no network, and identical content lands up-to-date.
+      final code = await run(['update', 'crap-guard']);
+      expect(code, 0);
+      expect(io.out, contains('up-to-date crap-guard'));
+    });
+
+    test('github-source update re-plans over the injected client', () async {
+      const manifest =
+          '{"name":"ghext","version":"1.0.0","capabilities":{"tools":true}}';
+      const mainJs = 'export default 1;';
+      final contentSha = extContentHash({
+        'manifest.json': manifest,
+        'main.js': mainJs,
+      });
+      final zipBytes = ZipEncoder().encode(
+        Archive()
+          ..addFile(
+            ArchiveFile(
+              'ghext-main/manifest.json',
+              manifest.length,
+              manifest.codeUnits,
+            ),
+          )
+          ..addFile(
+            ArchiveFile('ghext-main/main.js', mainJs.length, mainJs.codeUnits),
+          ),
+      );
+      final store = ExtensionStore(
+        env: env,
+        projectDir: projectDir,
+        userDir: userDir,
+      );
+      await store.write(
+        'ghext',
+        files: {'manifest.json': manifest, 'main.js': mainJs},
+        trust: TrustRecord(
+          source: ExtTrustSource.github,
+          sourceRef: 'owner/repo@abc123',
+          contentSha256: contentSha,
+          capabilities: const {
+            'network': false,
+            'allowedCommands': <String>[],
+            'keys': false,
+            'fs': false,
+            'tools': true,
+            'menus': false,
+            'hooks': <String>[],
+          },
+          grantedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      final client = MockClient((request) async {
+        if (request.url.host == 'api.github.com' &&
+            request.url.path == '/repos/owner/repo') {
+          return http.Response('{"default_branch":"main"}', 200);
+        }
+        if (request.url.path.endsWith('/git/refs/heads/main')) {
+          return http.Response('{"object":{"sha":"abc123"}}', 200);
+        }
+        if (request.url.host == 'raw.githubusercontent.com') {
+          return http.Response(manifest, 200);
+        }
+        if (request.url.host == 'codeload.github.com') {
+          return http.Response.bytes(zipBytes, 200);
+        }
+        return http.Response('nope', 404);
+      });
+      // The github trust provenance re-plans through planGithubInstall;
+      // identical content lands up-to-date with no re-prompt.
+      final code = await run(['update', 'ghext'], client: client);
+      expect(code, 0);
+      expect(io.out, contains('up-to-date ghext'));
     });
   });
 

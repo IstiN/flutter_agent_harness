@@ -36,6 +36,15 @@ part 'wasm_shell_cat.dart';
 part 'wasm_shell_grep.dart';
 part 'wasm_shell_stages.dart';
 
+/// Normalized builtin handler of `_builtinRoutes` (#1713 route table).
+typedef _BuiltinRoute =
+    Future<Result<StageResult, ExecutionError>> Function(
+      WasiSandboxShell,
+      Stage,
+      ShellExecOptions?,
+      String?,
+    );
+
 /// A [Shell] backed by a sandbox of permissive WASI binaries.
 ///
 /// This avoids the GPL licensing and portability problems of BusyBox by using
@@ -415,62 +424,69 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
   }
 
+  /// Route table: builtin → handler (#1713, the #558 pattern); aliases
+  /// (`[`/`test`, `pip`/`pip3`, `xz`/`unxz`, …) get their own entries.
+  /// `(s, st, o, src)` = shell, stage, options, inputSource.
+  static final Map<String, _BuiltinRoute> _builtinRoutes = {
+    'cat': (s, st, o, src) => s._catBuiltin(st, o, src),
+    'curl': (s, st, o, src) => s._curlBuiltin(st, o, src),
+    'wget': (s, st, o, src) => s._wgetBuiltin(st, o),
+    'git': (s, st, o, src) => s._gitBuiltin(st, o),
+    'jq': (s, st, o, src) => s._jqBuiltin(st, o, src),
+    'yq': (s, st, o, src) => s._yqBuiltin(st, o, src),
+    'env': (s, st, o, src) => s._envBuiltin(st, o),
+    'test': (s, st, o, src) => s._testBuiltin(st),
+    '[': (s, st, o, src) => s._testBuiltin(st),
+    'which': (s, st, o, src) => s._whichBuiltin(st),
+    'command': (s, st, o, src) => s._commandBuiltin(st),
+    'whoami': (s, st, o, src) => s._whoamiBuiltin(),
+    'xargs': (s, st, o, src) => s._xargsBuiltin(st, o, src),
+    'tr': (s, st, o, src) => s._trBuiltin(st, src),
+    'cd': (s, st, o, src) => s._cdBuiltin(st, o),
+    'pwd': (s, st, o, src) => s._pwdBuiltin(o),
+    'export': (s, st, o, src) => s._exportBuiltin(st),
+    'unset': (s, st, o, src) => s._unsetBuiltin(st),
+    'grep': (s, st, o, src) => s._grepBuiltin(st, o, src),
+    'du': (s, st, o, src) => s._duBuiltin(st, o),
+    'stat': (s, st, o, src) => s._statBuiltin(st, o),
+    'tac': (s, st, o, src) => s._tacBuiltin(st, o, src),
+    'expr': (s, st, o, src) => s._exprBuiltin(st),
+    'id': (s, st, o, src) => s._idBuiltin(st),
+    'relpath': (s, st, o, src) => s._relpathBuiltin(st, o),
+    'diff': (s, st, o, src) => s._diffBuiltin(st, o, src),
+    'patch': (s, st, o, src) => s._patchBuiltin(st, o, src),
+    'nslookup': (s, st, o, src) => s._nslookupBuiltin(st, o),
+    'dig': (s, st, o, src) => s._digBuiltin(st, o),
+    'whois': (s, st, o, src) => s._whoisBuiltin(st, o),
+    'ssh': (s, st, o, src) => s._sshBuiltin(st, o, src),
+    'scp': (s, st, o, src) => s._scpBuiltin(st, o),
+    'sftp': (s, st, o, src) => s._sftpBuiltin(st, o, src),
+    'tree': (s, st, o, src) => s._treeBuiltin(st, o),
+    'file': (s, st, o, src) => s._fileBuiltin(st, o),
+    'xz': (s, st, o, src) => s._xzBuiltin(st, o, decompress: false),
+    'unxz': (s, st, o, src) => s._xzBuiltin(st, o, decompress: true),
+    'bzip2': (s, st, o, src) => s._bzip2Builtin(st, o, decompress: false),
+    'bunzip2': (s, st, o, src) => s._bzip2Builtin(st, o, decompress: true),
+    'pip': (s, st, o, src) => s._pipBuiltin(st, o),
+    'pip3': (s, st, o, src) => s._pipBuiltin(st, o),
+  };
+
   /// Dispatches a builtin command to its Dart implementation.
   Future<Result<StageResult, ExecutionError>> _runBuiltin({
     required Stage stage,
     required ShellExecOptions? options,
     required String? inputSource,
   }) async {
-    return switch (stage.command) {
-      'cat' => _catBuiltin(stage, options, inputSource),
-      'curl' => _curlBuiltin(stage, options, inputSource),
-      'wget' => _wgetBuiltin(stage, options),
-      'git' => _gitBuiltin(stage, options),
-      'jq' => _jqBuiltin(stage, options, inputSource),
-      'yq' => _yqBuiltin(stage, options, inputSource),
-      'env' => _envBuiltin(stage, options),
-      'test' || '[' => _testBuiltin(stage),
-      'which' => _whichBuiltin(stage),
-      'command' => _commandBuiltin(stage),
-      'whoami' => _whoamiBuiltin(),
-      'xargs' => _xargsBuiltin(stage, options, inputSource),
-      'tr' => _trBuiltin(stage, inputSource),
-      'cd' => _cdBuiltin(stage, options),
-      'pwd' => _pwdBuiltin(options),
-      'export' => _exportBuiltin(stage),
-      'unset' => _unsetBuiltin(stage),
-      'grep' => _grepBuiltin(stage, options, inputSource),
-      'du' => _duBuiltin(stage, options),
-      'stat' => _statBuiltin(stage, options),
-      'tac' => _tacBuiltin(stage, options, inputSource),
-      'expr' => _exprBuiltin(stage),
-      'id' => _idBuiltin(stage),
-      'relpath' => _relpathBuiltin(stage, options),
-      'diff' => _diffBuiltin(stage, options, inputSource),
-      'patch' => _patchBuiltin(stage, options, inputSource),
-      'nslookup' => _nslookupBuiltin(stage, options),
-      'dig' => _digBuiltin(stage, options),
-      'whois' => _whoisBuiltin(stage, options),
-      'ssh' => _sshBuiltin(stage, options, inputSource),
-      'scp' => _scpBuiltin(stage, options),
-      'sftp' => _sftpBuiltin(stage, options, inputSource),
-      'tree' => _treeBuiltin(stage, options),
-      'file' => _fileBuiltin(stage, options),
-      'xz' ||
-      'unxz' => _xzBuiltin(stage, options, decompress: stage.command == 'unxz'),
-      'bzip2' || 'bunzip2' => _bzip2Builtin(
-        stage,
-        options,
-        decompress: stage.command == 'bunzip2',
-      ),
-      'pip' || 'pip3' => _pipBuiltin(stage, options),
-      _ => Err(
+    final handler = _builtinRoutes[stage.command];
+    if (handler == null) {
+      return Err(
         ExecutionError(
           ExecutionErrorCode.unknown,
           'Unknown builtin: ${stage.command}',
         ),
-      ),
-    };
+      );
+    }
+    return handler(this, stage, options, inputSource);
   }
 
   /// Runs either a builtin command or a WASM stage with stdin/source handling.

@@ -381,34 +381,37 @@ final class LspClient {
     // Other notifications (window/logMessage, $/progress, ...) are ignored.
   }
 
+  /// The static result table for server→client requests: progress,
+  /// capability-registration, and refresh pushes acknowledge `null`;
+  /// showDocument/applyEdit carry their fixed spec-shape answers.
+  /// Unknown methods answer -32601 (see [_handleServerRequest]).
+  static const _serverRequestResults = <String, Object?>{
+    'window/workDoneProgress/create': null,
+    'client/registerCapability': null,
+    'client/unregisterCapability': null,
+    'window/showMessageRequest': null,
+    'workspace/semanticTokens/refresh': null,
+    'workspace/inlayHint/refresh': null,
+    'workspace/codeLens/refresh': null,
+    'workspace/codeAction/refresh': null,
+    'workspace/inlineValue/refresh': null,
+    'workspace/foldingRange/refresh': null,
+    'workspace/diagnostic/refresh': null,
+    // Headless: nothing to display (spec result shape).
+    'window/showDocument': {'success': false},
+    // Not applied by this port (applyEdit capability is false).
+    'workspace/applyEdit': {'applied': false, 'failureReason': 'not supported'},
+  };
+
   void _handleServerRequest(Object id, String method, Object? params) {
     switch (method) {
       case 'workspace/configuration':
         _respond(id, result: _configurationResult(params));
       case 'workspace/workspaceFolders':
         _respond(id, result: [_workspaceFolder()]);
-      case 'window/workDoneProgress/create' ||
-          'client/registerCapability' ||
-          'client/unregisterCapability' ||
-          'window/showMessageRequest' ||
-          'workspace/semanticTokens/refresh' ||
-          'workspace/inlayHint/refresh' ||
-          'workspace/codeLens/refresh' ||
-          'workspace/codeAction/refresh' ||
-          'workspace/inlineValue/refresh' ||
-          'workspace/foldingRange/refresh' ||
-          'workspace/diagnostic/refresh':
-        _respond(id, result: null);
-      case 'window/showDocument':
-        // Headless: nothing to display (spec result shape).
-        _respond(id, result: const {'success': false});
-      case 'workspace/applyEdit':
-        // Not applied by this port (applyEdit capability is false).
-        _respond(
-          id,
-          result: const {'applied': false, 'failureReason': 'not supported'},
-        );
-      default:
+      case _ when _serverRequestResults.containsKey(method):
+        _respond(id, result: _serverRequestResults[method]);
+      case _:
         _respond(
           id,
           error: {'code': -32601, 'message': 'Method not found: $method'},

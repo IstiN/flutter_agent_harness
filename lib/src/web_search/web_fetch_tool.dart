@@ -120,6 +120,20 @@ Future<WebPage> _fetchChecked(WebFetchContext context, Uri uri) async {
   return page;
 }
 
+/// Content types rendered as HTML (converted to markdown); the empty type
+/// is treated as HTML (sniffed bodies).
+const _htmlContentTypes = {'', 'text/html', 'application/xhtml+xml'};
+
+/// Text-like content types passed through trimmed (no conversion).
+const _textLikeContentTypes = {
+  'text/plain',
+  'text/markdown',
+  'application/json',
+  'text/csv',
+  'application/xml',
+  'text/xml',
+};
+
 /// Renders a fetched page as markdown (or passes text through) with the
 /// output cap and fetch notices.
 String _renderPage(WebPage page, WebSearchConfig config) {
@@ -128,32 +142,34 @@ String _renderPage(WebPage page, WebSearchConfig config) {
       'page exceeded the ${config.maxFetchBytes}-byte read cap',
   ];
 
-  final String content;
-  switch (page.contentType) {
-    case '' || 'text/html' || 'application/xhtml+xml':
-      final markdown = htmlToMarkdown(page.body, baseUrl: page.finalUrl);
-      final title = extractHtmlTitle(page.body);
-      content = _prependTitle(markdown, title);
-    case 'text/plain' ||
-        'text/markdown' ||
-        'application/json' ||
-        'text/csv' ||
-        'application/xml' ||
-        'text/xml':
-      content = page.body.trim();
-    default:
-      throw StateError(
-        'Unsupported content type "${page.contentType}" at ${page.url} '
-        '(only HTML and plain-text content are supported)',
-      );
-  }
-
+  final content = _renderPageContent(page);
   if (content.isEmpty) {
     return '[No readable content at ${page.url}]';
   }
   var output = _cap(content, config.maxFetchChars, notices);
   if (notices.isNotEmpty) output += '\n\n[${notices.join('. ')}]';
   return output;
+}
+
+/// The page body by content type: HTML/xhtml converts to markdown, the
+/// text-like family passes through trimmed, anything else is a tool error.
+String _renderPageContent(WebPage page) {
+  if (_htmlContentTypes.contains(page.contentType)) {
+    return _renderHtmlPage(page);
+  }
+  if (_textLikeContentTypes.contains(page.contentType)) {
+    return page.body.trim();
+  }
+  throw StateError(
+    'Unsupported content type "${page.contentType}" at ${page.url} '
+    '(only HTML and plain-text content are supported)',
+  );
+}
+
+/// HTML body → markdown with the page `<title>` prepended.
+String _renderHtmlPage(WebPage page) {
+  final markdown = htmlToMarkdown(page.body, baseUrl: page.finalUrl);
+  return _prependTitle(markdown, extractHtmlTitle(page.body));
 }
 
 /// Adds the page `<title>` as an H1 unless the markdown already leads with

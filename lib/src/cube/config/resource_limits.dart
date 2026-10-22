@@ -82,8 +82,7 @@ final class CubeResourceLimits {
         );
       }
       for (final key in limits.keys) {
-        if (key is! String ||
-            !const {'cpu', 'memory', 'disk'}.contains(key)) {
+        if (key is! String || !const {'cpu', 'memory', 'disk'}.contains(key)) {
           throw ConfigException(
             'cube.spec.resources.limits: unknown key "$key" — supported: '
             'cpu, memory, disk',
@@ -147,6 +146,23 @@ final class CubeResourceLimits {
   }
 }
 
+/// Byte multipliers per uppercased size suffix: bare `K`/`M`/`G` and the
+/// `i`-forms are 1024-based, the decimal `B`-forms are 1000-based.
+const _sizeMultipliers = <String, int>{
+  '': 1,
+  'B': 1,
+  'K': 1024,
+  'KIB': 1024,
+  'KB': 1000,
+  'M': 1024 * 1024,
+  'MI': 1024 * 1024,
+  'MIB': 1024 * 1024,
+  'MB': 1000 * 1000,
+  'G': 1024 * 1024 * 1024,
+  'GIB': 1024 * 1024 * 1024,
+  'GB': 1000 * 1000 * 1000,
+};
+
 /// Parses a size string to bytes: a plain integer (`'1024'`) is bytes;
 /// binary suffixes `K`/`KiB`, `M`/`Mi`/`MiB`, `G`/`GiB` are 1024-based and
 /// decimal `B`, `KB`, `MB`, `GB` are 1000-based (case-insensitive).
@@ -163,20 +179,13 @@ int parseSizeBytes(String raw) {
   }
   final magnitude = int.parse(match.group(1)!);
   final suffix = match.group(2)!.toUpperCase();
-  const binary = 1024, decimal = 1000;
-  final multiplier = switch (suffix) {
-    '' || 'B' => 1,
-    'K' || 'KIB' => binary,
-    'KB' => decimal,
-    'M' || 'MI' || 'MIB' => binary * binary,
-    'MB' => decimal * decimal,
-    'G' || 'GIB' => binary * binary * binary,
-    'GB' => decimal * decimal * decimal,
-    _ => throw FormatException(
+  final multiplier = _sizeMultipliers[suffix];
+  if (multiplier == null) {
+    throw FormatException(
       'unknown size suffix "$suffix" in "$raw" — supported: B, K/KiB, '
       'KB, M/Mi/MiB, MB, G/GiB, GB',
-    ),
-  };
+    );
+  }
   return magnitude * multiplier;
 }
 

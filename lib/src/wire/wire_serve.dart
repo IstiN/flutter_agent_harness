@@ -299,21 +299,7 @@ final class WireServeServer {
   void _dispatch(WireCommand command) {
     switch (command) {
       case WirePromptCommand(:final text):
-        if (_isBusy()) {
-          _send(_error('busy', 'a run is already active; steer or abort it'));
-          return;
-        }
-        // ponytail: one-deep queue via a chained future — a real run queue
-        // is a follow-up if clients ever need it.
-        _promptChain = _promptChain
-            .then((_) => _runPrompt(text))
-            .then(
-              (_) {},
-              onError: (Object error) {
-                _send(_error('run_failed', '$error'));
-              },
-            );
-        unawaited(_promptChain);
+        _dispatchPrompt(text);
       case WireSteerCommand(:final text):
         if (!_isBusy()) {
           _send(_error('not_running', 'steer requires an active run'));
@@ -345,6 +331,26 @@ final class WireServeServer {
       case WireUnknownCommand(:final kind):
         _send(_error('unknown_command', 'no such command kind: "$kind"'));
     }
+  }
+
+  /// Runs a prompt command: refuses with `busy` while a run is active,
+  /// else chains the run onto the single-slot prompt queue.
+  void _dispatchPrompt(String text) {
+    if (_isBusy()) {
+      _send(_error('busy', 'a run is already active; steer or abort it'));
+      return;
+    }
+    // ponytail: one-deep queue via a chained future — a real run queue
+    // is a follow-up if clients ever need it.
+    _promptChain = _promptChain
+        .then((_) => _runPrompt(text))
+        .then(
+          (_) {},
+          onError: (Object error) {
+            _send(_error('run_failed', '$error'));
+          },
+        );
+    unawaited(_promptChain);
   }
 
   void _resolve(String id, String kind, Object? value) {
