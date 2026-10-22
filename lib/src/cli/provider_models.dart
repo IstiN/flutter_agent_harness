@@ -339,8 +339,7 @@ extension on AgentCli {
     if (resolvable && !rolesMode) {
       final targetSpec = entry?.spec ?? spec!;
       final endpoint = entry?.baseUrl ?? spec!.defaultBaseUrl;
-      keySlot =
-          entry?.keyName ?? CustomProviderRegistry.keyNameFor(endpoint);
+      keySlot = entry?.keyName ?? CustomProviderRegistry.keyNameFor(endpoint);
       final key = _providerKeyFor(targetSpec, endpoint);
       keyResolved = key != null && key.isNotEmpty;
     }
@@ -1337,8 +1336,9 @@ extension on AgentCli {
       // cross-provider reference from a vendor-prefixed id that endpoint
       // serves (OpenRouter's `openai/gpt-4o`), and the coherent legacy
       // pasthrough wins. The routing paths above use the real resolver.
-      isKnownProvider:
-        _modelCandidates('').isNotEmpty ? _isKnownModelProvider : (_) => false,
+      isKnownProvider: _modelCandidates('').isNotEmpty
+          ? _isKnownModelProvider
+          : (_) => false,
     )) {
       case SameModelSwitch():
         break;
@@ -1350,7 +1350,8 @@ extension on AgentCli {
                 'model ids never ride a foreign provider/endpoint/key '
                 'triple',
             fields: ['provider', 'baseUrl', 'key'],
-            repair: '/model <provider>/<id> resolves the whole triple, or '
+            repair:
+                '/model <provider>/<id> resolves the whole triple, or '
                 '/provider <provider> first',
           ).message,
         );

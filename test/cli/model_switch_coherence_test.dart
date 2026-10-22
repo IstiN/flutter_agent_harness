@@ -12,9 +12,13 @@ void main() {
     const activeProvider = 'copilot';
     const activeCustomName = 'copilot-acme';
     final activeIds = {'gemini-4-argon', 'gpt-4o', 'claude-sonnet'}.toSet();
-    bool knownProvider(String name) =>
-        const {'kimi', 'openai', 'openrouter', 'copilot', 'copilot-acme'}
-            .contains(name);
+    bool knownProvider(String name) => const {
+      'kimi',
+      'openai',
+      'openrouter',
+      'copilot',
+      'copilot-acme',
+    }.contains(name);
 
     ModelSwitchPlan parse(String input) => parseTypedModelTarget(
       input,
@@ -167,7 +171,8 @@ void main() {
         activeFamilyResolvesSameKey: false,
         foreignFamilyResolvesSameKey: false,
         mismatch: (
-          problem: 'model claims provider "copilot-acme" which does not '
+          problem:
+              'model claims provider "copilot-acme" which does not '
               'resolve to a configured provider record',
           fields: ['provider'],
         ),
@@ -246,9 +251,7 @@ void main() {
     test('a key matching NO configured family never refuses (explicit '
         'tokens, OAuth blobs, synthetic test keys)', () {
       expect(
-        requestCoherenceRefusal(
-          coherent().copyWith(activeFamilySame: false),
-        ),
+        requestCoherenceRefusal(coherent().copyWith(activeFamilySame: false)),
         isNull,
       );
     });
@@ -319,8 +322,7 @@ void main() {
       expect(decision.refusal, isNull);
     });
 
-    test('a mixed persisted triple auto-repairs WITH the diagnostic (OQ3)',
-        () {
+    test('a mixed persisted triple auto-repairs WITH the diagnostic (OQ3)', () {
       final decision = restoreGateDecision(
         providerResolvable: true,
         bindingResolves: false,
@@ -336,8 +338,7 @@ void main() {
       expect(decision.refusal!.message, contains('/provider'));
     });
 
-    test('a deleted provider record refuses and names the conflict (E4)',
-        () {
+    test('a deleted provider record refuses and names the conflict (E4)', () {
       final decision = restoreGateDecision(
         providerResolvable: false,
         bindingResolves: false,

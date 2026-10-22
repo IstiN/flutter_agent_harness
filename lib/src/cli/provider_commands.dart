@@ -1595,7 +1595,8 @@ extension on AgentCli {
   /// G2 (gh-178): the result is wrapped in the request-build gate — see
   /// [_gateCatalogStream] in `provider_model_coherence.dart`.
   StreamFunction _catalogStreamFunction(String kind, String key) {
-    final inner = config.catalogStreamOverride?.call(kind, key) ??
+    final inner =
+        config.catalogStreamOverride?.call(kind, key) ??
         providerStreamFunction(
           kind,
           key,

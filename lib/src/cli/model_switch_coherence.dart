@@ -180,7 +180,8 @@ ModelCoherenceRefusal? crossProviderSwitchRefusal({
 }) {
   if (!targetResolvable) {
     return ModelCoherenceRefusal(
-      problem: 'provider "$providerName" is not configured '
+      problem:
+          'provider "$providerName" is not configured '
           '(removed since the list was built?)',
       fields: const ['provider'],
       repair: '/provider add — or pick a configured provider with /provider',

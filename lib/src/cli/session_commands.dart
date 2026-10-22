@@ -1123,7 +1123,8 @@ extension on AgentCli {
   ) {
     final effective =
         baseUrl?.trim() ??
-        resolveCliProviderSpec(providerKind)?.defaultBaseUrl ?? '';
+        resolveCliProviderSpec(providerKind)?.defaultBaseUrl ??
+        '';
     if (effective.isEmpty) return true;
     try {
       ProviderModelBinding.resolve(
