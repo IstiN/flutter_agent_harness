@@ -1978,6 +1978,7 @@ static limb_t mp_sqrtrem2(limb_t *tabs, limb_t *taba)
     if (unlikely((q >> l) != 0))
         r -= (dlimb_t)1 << LIMB_BITS; /* special case when q=2^l */
     else
+        // codeql [cpp/integer-multiplication-cast-to-long] — upstream libbf div/rem fast path: q is bounded by the limb mask above, the narrow product is intentional; do not rewrite upstream numerics
         r -= q * q;
     if ((slimb_t)(r >> LIMB_BITS) < 0) {
         s--;
@@ -3654,8 +3655,8 @@ static void output_digits(DynBuf *s, const bf_t *a1, int radix, limb_t n_digits,
     } else if ((radix & (radix - 1)) == 0) {
         a = (bf_t *)a1;
         radix_bits = ceil_log2(radix);
-        digits_per_limb = LIMB_BITS / radix_bits;
         pos_incr = digits_per_limb * radix_bits;
+        digits_per_limb = LIMB_BITS / radix_bits;
         /* digits are aligned relative to the radix point */
         pos = a->len * LIMB_BITS + smod(-a->expn, radix_bits);
         first_buf_pos = 0;

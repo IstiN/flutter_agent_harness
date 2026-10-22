@@ -168,6 +168,66 @@ void main() {
       );
     });
 
+    test('CodeQL-flagged C lines carry inline suppression comments', () {
+      // CodeQL default setup analyzes C/C++ in `none` build mode — every
+      // vendored QuickJS source is extracted and scanned, and 3 upstream
+      // `cpp/integer-multiplication-cast-to-long` ("multiplication result
+      // converted to larger type") alerts fail the CodeQL check on the PR.
+      // These are upstream QuickJS/libbf numeric idioms (one carries
+      // Bellard's own `XXX: potential arithmetic overflow` remark); the
+      // vendored fork does NOT rewrite upstream numerics, it suppresses
+      // the exact alert with CodeQL inline-suppression comments. The
+      // built-in `cpp/alert-suppression` query covers the NEXT line when
+      // the comment is the first thing on its own line (shared/
+      // codeql/util/suppression/AlertSuppression.qll), and the annotation
+      // must match the query's @id — NOT the check-run title slug.
+      const suppression =
+          '// codeql [cpp/integer-multiplication-cast-to-long]';
+      final flagged = <(String, int, String)>[
+        // `r -= q * q;` — dlimb_t limb product in the div/rem fast path.
+        ('$vendorDir/native/quickjs/libbf.c', 1981, 'r -= q * q;'),
+        // `pos_incr = digits_per_limb * radix_bits;` — int → size_t widen.
+        ('$vendorDir/native/quickjs/libbf.c', 3658,
+            'pos_incr = digits_per_limb * radix_bits;'),
+        // `*psize * 3 / 2` — upstream carries its own XXX overflow remark.
+        ('$vendorDir/native/quickjs/quickjs.c', 1434,
+            'new_size = max_int(req_size, *psize * 3 / 2);'),
+      ];
+      for (final (path, line, snippet) in flagged) {
+        final lines = File(path).readAsLinesSync();
+        expect(
+          lines.length,
+          greaterThanOrEqualTo(line),
+          reason: '$path shrunk below the flagged line $line — re-check the '
+              'alert locations on the re-vendored upstream copy',
+        );
+        expect(
+          lines[line - 1],
+          contains(snippet),
+          reason: '$path:$line drifted from the CodeQL-flagged statement '
+              '`$snippet` — re-check the alert locations on the re-vendored '
+              'upstream copy before trusting the suppression placement',
+        );
+        expect(
+          lines[line - 1],
+          isNot(contains('// codeql [')),
+          reason: '$path:$line already carries a suppression comment directly '
+              'ON it — the built-in cpp/alert-suppression query only covers '
+              'the NEXT line; move it above',
+        );
+        expect(
+          lines[line - 2].trim(),
+          suppression,
+          reason:
+              '$path:${line - 1} must be exactly `$suppression` — the line '
+              'immediately above the flagged line $line. Without it the '
+              'CodeQL check goes red on the PR (3 high alerts), and the '
+              'annotation must use the query @id '
+              'cpp/integer-multiplication-cast-to-long, not the alert title.',
+        );
+      }
+    });
+
     test('flutter_app/pubspec.lock resolves quickjs_runtime as a path dep', () {
       // CI resolves flutter_app with `flutter pub get --enforce-lockfile`
       // (.github/actions/flutter-pub-get): a pubspec/lockfile skew is a

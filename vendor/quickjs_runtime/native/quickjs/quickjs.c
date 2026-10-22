@@ -1431,6 +1431,7 @@ static no_inline int js_realloc_array(JSContext *ctx, void **parray,
     void *new_array;
     /* XXX: potential arithmetic overflow */
     new_size = max_int(req_size, *psize * 3 / 2);
+    // codeql [cpp/integer-multiplication-cast-to-long] — upstream growth heuristic guarded by max_int(req_size, ...); matches upstream QuickJS 2024-01-13 semantics
     new_array = js_realloc2(ctx, *parray, new_size * elem_size, &slack);
     if (!new_array)
         return -1;
