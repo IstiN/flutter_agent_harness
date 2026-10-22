@@ -163,20 +163,24 @@ final class SpillsConfig {
   /// [isActive] — `threshold: 0` silences tool results only.
   bool get isUserActive => enabled && userThreshold > 0;
 
+  /// Whether every field sits at its default (the section renders empty,
+  /// gh-1572). Split out of [toYaml] so the writer stays under the CRAP
+  /// ratchet (#1773).
+  bool get _isAtDefaults =>
+      enabled &&
+      threshold == 8192 &&
+      headChars == 2000 &&
+      tailChars == 2000 &&
+      userThreshold == defaultUserSpillThresholdBytes &&
+      userFraction == defaultUserSpillWindowFraction;
+
   /// The `spills:` yaml section, only the non-default values — the file
   /// stays minimal (defaults are never written). Empty at the defaults,
   /// so [CliConfig.toYaml] embeds it only when explicitly configured
   /// (gh-1572: the section used to be unrenderable and silently dropped
   /// by every save).
   String toYaml() {
-    if (enabled &&
-        threshold == 8192 &&
-        headChars == 2000 &&
-        tailChars == 2000 &&
-        userThreshold == defaultUserSpillThresholdBytes &&
-        userFraction == defaultUserSpillWindowFraction) {
-      return '';
-    }
+    if (_isAtDefaults) return '';
     final buffer = StringBuffer('spills:\n');
     if (!enabled) buffer.write('  enabled: false\n');
     if (threshold != 8192) buffer.write('  threshold: $threshold\n');
