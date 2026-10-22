@@ -432,6 +432,18 @@ final class FaCliHarness {
     await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
     await _outputSub?.cancel();
     _releaseOwnedCwd();
+    _releaseTranscript();
+  }
+
+  /// gh-1789: the group declarer keeps every addTearDown closure — and thus
+  /// its harness — reachable until the whole file's group finishes, so an
+  /// unbounded raw transcript (the whole session's ANSI frames) and the
+  /// emulator's callback into the dead pty retain megabytes per test.
+  /// Release them once the CLI is dead; nothing reads them afterwards
+  /// (mid-test hardKill callers spawn a fresh harness).
+  void _releaseTranscript() {
+    _rawBuffer.clear();
+    terminal.onOutput = null;
   }
 
   /// Removes the spawn-created default CWD, if any. Best-effort and
@@ -639,5 +651,6 @@ final class FaCliHarness {
     await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
     await _outputSub?.cancel();
     _releaseOwnedCwd();
+    _releaseTranscript();
   }
 }
