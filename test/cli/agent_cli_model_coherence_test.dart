@@ -42,7 +42,7 @@ void main() {
     // saved entry) — a store twin would make the env value non-genuine
     // and hide the kimi rows from the picker.
     final envVars = <String, String>{
-      ?kimiEnvKey: kimiEnvKey,
+      'KIMI_API_KEY': ?kimiEnvKey,
     };
     final cache = SecureKeyCache(store);
     await cache.preload(store.map.keys.toList());
