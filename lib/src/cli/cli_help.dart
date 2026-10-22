@@ -615,7 +615,9 @@ SKILLS AND CONTEXT FILES
                      show or override the active model's token limits for
                      this session (an endpoint-reported window from /models
                      wins over the 200k catalog default; persist per chain
-                     via roles yaml contextWindow:/maxTokens:)
+                     via roles yaml contextWindow:/maxTokens:). Bare in the
+                     TUI opens the Model capabilities flow pre-focused on
+                     this model — the one editing surface (issue #1515)
   /provider [name] [baseUrl] [token] | custom | aiin [--no-browser] [key [apiKey]]
                      | openrouter oauth [headless] [--no-browser]
                      | chatgpt oauth [headless] [--no-browser] | /provider copilot
