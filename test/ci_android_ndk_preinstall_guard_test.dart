@@ -86,9 +86,7 @@ const appSettingsGradlePath = 'flutter_app/android/settings.gradle.kts';
 /// here so an AGP bump fails the guard until the action's literal pin is
 /// re-derived (AGP's default is not resolvable from disk before Gradle
 /// runs, so a reviewed literal + this coupling test is the honest pin).
-const agpVersionToDefaultCmake = <String, String>{
-  '9.0.1': '3.22.1',
-};
+const agpVersionToDefaultCmake = <String, String>{'9.0.1': '3.22.1'};
 
 /// Every (workflow, job) that builds an Android APK/AAB for the app — the
 /// same class enumeration the flutter_gemma seed guard pins (gh-1310: the
@@ -466,8 +464,7 @@ void main() {
       );
     });
 
-    test('AC6: the action verifies the CMake binary and fails loudly',
-        () {
+    test('AC6: the action verifies the CMake binary and fails loudly', () {
       final body = read(actionPath);
       expect(
         body,

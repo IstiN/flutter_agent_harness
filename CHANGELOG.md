@@ -22,6 +22,32 @@ block a release again.
   usage footer under a cap, and header-cwd/path-escape guards so a
   planted session header can never steer a delete outside any root.
 
+- fix(gh-1763): a `bash` tool command running broad process kills can no
+  longer signal its own shell or the harness. Scripts are delivered from a
+  per-exec private temp file (`sh -c '. "$1"' sh <script>`) so the wrapper
+  argv never carries the script body (`pkill -f <pattern>` cannot
+  self-match its own `sh -c`; `$0`/`$#`/exit codes/`set -e`/stdin stay
+  identical), a PATH shim for `pkill`/`killall` plus a `kill()` prelude
+  guard exempt the harness pid chain + process group (exported as
+  `FA_PROTECTED_PIDS`) and the invoking shell from the child's own kills
+  while legitimate victims (stuck test runners, background servers) are
+  still terminated, and headless `SIGTERM` aborts now log
+  `fa: SIGTERM received …` so a child-issued kill never masquerades as a
+  user Ctrl+C (exit code contract unchanged: 130 graceful, 143 escalate).
+
+- fix(gh-1778): the release gate no longer reds a fully-green shard when
+  GitHub's cache service degrades. v1.0.621's `Core tests (shard 2/4)` was
+  killed by its own `timeout-minutes: 12` with 2535/2761 tests green — both
+  cache steps had stalled ~133 s on keys that existed (degraded service,
+  not eviction), cold `pub get` + native-asset hook builds delayed the
+  first test to ~5 min, and the shard needed ~14 min against a budget
+  sized for the warm ~8.8 min wall. The job budget is now 20 min (sibling
+  test-leg band), and both `test-core` cache steps are best-effort
+  (`timeout-minutes: 2` + `continue-on-error: true`) — a failed restore is
+  slower setup, never a red shard. `test/ci_core_shard_timeout_guard_test.dart`
+  pins the budget and the best-effort cache contract (RED-first on the old
+  YAML).
+
 - feat(#1761): the 32KB project-context budget never cuts silently again.
   A file truncated to its head excerpt now carries an extended
   `<!-- From: path — N bytes, only the first M shown -->` marker plus an
