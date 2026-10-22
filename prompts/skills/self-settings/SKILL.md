@@ -680,22 +680,29 @@ output:
 
 Applies at next boot (the flag applies to its own run).
 
-## Tool-result spilling
+## Tool-result & user-message spilling
 
 <!-- parity: none (boot config only) -->
 
-Oversized tool results spill to `.fah/spills/<sessionId>/<n>.txt` and the
-session keeps a bounded preview + path + size stats (issue #678). Tolerant
-parse: unknown keys and mistyped scalars surface as `[spills]` notes at
-boot, never boot failures. `enabled: false` or `threshold: 0` = legacy
-behavior (nothing spills):
+Oversized tool results spill to `.fah/spills/<sessionId>/<n>.txt` and
+the session keeps a bounded preview + path + size stats (issue #678).
+An oversized USER message (headless prompt, TUI input, steering) spills
+to `.fah/spills/<sessionId>/user-<n>.md` and the model receives a
+bounded head+tail preview plus a read-in-parts instruction (issue
+#1760). Tolerant parse: unknown keys and mistyped scalars surface as
+`[spills]` notes at boot, never boot failures. `enabled: false` = legacy
+behavior (nothing spills — it beats the `FAH_SPILL_THRESHOLD` /
+`FAH_USER_SPILL_THRESHOLD` env knobs too); `threshold: 0` disables
+tool-result spilling only, `userThreshold: 0` the user path only:
 
 ```yaml
 spills:
   enabled: true # kill switch; false = byte-identical legacy
-  threshold: 8192 # chars above which a tool result spills
+  threshold: 8192 # chars above which a tool result spills; 0 = tools off
   headChars: 2000 # preview head bound (chars)
   tailChars: 2000 # preview tail bound (chars)
+  userThreshold: 16384 # absolute byte floor for the user path; 0 = user off
+  userFraction: 0.5 # spill a user message over this fraction of the live window budget
 ```
 
 Applies at next boot.

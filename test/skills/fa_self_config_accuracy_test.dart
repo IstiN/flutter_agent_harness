@@ -182,6 +182,8 @@ const _nestedKeySources = <String, String>{
   'sessions.retention.minAgeDays': 'lib/src/session_retention.dart',
   'sessions.retention.keepNamed': 'lib/src/session_retention.dart',
   'sessions.retention.sweep': 'lib/src/session_retention.dart',
+  'spills.userThreshold': 'lib/src/spill/spill.dart',
+  'spills.userFraction': 'lib/src/spill/spill.dart',
   'projectContext.maxBytes': 'lib/src/prompts/project_context.dart',
   'subagents.heartbeatMinutes': 'lib/src/task/subagent_heartbeat.dart',
   'subagents.stallMinutes': 'lib/src/task/subagent_heartbeat.dart',
