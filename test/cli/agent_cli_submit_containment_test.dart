@@ -77,8 +77,8 @@ class _FrameSink implements StreamConsumer<List<int>> {
   /// The rendered transcript with ANSI control sequences stripped — the
   /// human-readable view the text assertions run against.
   String get plain => text
-      .replaceAll(RegExp('\][^]*'), '')
-      .replaceAll(RegExp('\[[0-9;?]*[A-Za-z]'), '');
+      .replaceAll(RegExp('\u001B\\][^\u0007]*\u0007'), '')
+      .replaceAll(RegExp('\u001B\\[[0-9;?]*[A-Za-z]'), '');
 }
 
 /// An [ExecutionEnv] decorator whose `writeFile` can be made to throw —
@@ -379,11 +379,15 @@ void main() {
       () async {
         final throwingEnv = _ThrowingWriteEnv(env)
           ..throwOnPath = '/home/u/.fah/config.yaml';
-        final (submit, _) = await openIncidentFlow(throwingEnv: throwingEnv);
+        final (submit, cli) = await openIncidentFlow(throwingEnv: throwingEnv);
+        await cli.tuiWizardPickForTest('wizard:maxTokens in tokens', '65536');
         await submit;
 
         // The clean panel names the forced failure — no raw stack.
-        expect(frames.plain, contains('disk full (forced by the test)'));
+        await waitForIt(
+          () => frames.plain.contains('disk full (forced by the test)'),
+          reason: 'the error panel painted',
+        );
         expect(frames.plain, isNot(contains('asynchronous suspension')));
 
         // AC4: validate-first, no partial writes — the file is EXACTLY
