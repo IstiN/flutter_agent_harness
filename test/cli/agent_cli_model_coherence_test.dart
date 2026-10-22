@@ -41,9 +41,7 @@ void main() {
     // KIMI's key rides the ENVIRONMENT (env-keyed catalog provider, no
     // saved entry) — a store twin would make the env value non-genuine
     // and hide the kimi rows from the picker.
-    final envVars = <String, String>{
-      'KIMI_API_KEY': ?kimiEnvKey,
-    };
+    final envVars = <String, String>{'KIMI_API_KEY': ?kimiEnvKey};
     final cache = SecureKeyCache(store);
     await cache.preload(store.map.keys.toList());
     final registry = CustomProviderRegistry([

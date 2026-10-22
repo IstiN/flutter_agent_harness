@@ -1874,6 +1874,45 @@ jobs:
                 f'list 500 sessions {listed} ms')
           EOF
 
+  # gh-178 merge rule: the REG model-switch coherence suite is its own
+  # leg — a red REG job blocks merge even when all UT/IT legs are green.
+  # Runs the whole model-switch surface (pure decision core + CLI-driven
+  # gates); REG-1/REG-2/REG-3 live in these two files.
+  model-switch-reg:
+    name: REG model-switch coherence (gh-178)
+    runs-on: ubuntu-24.04-arm
+    needs: [release-pending, release-dedupe, changes]
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
+    timeout-minutes: 6
+    permissions:
+      contents: read
+    steps:
+      - name: Scope fastpass (out-of-scope → green in seconds)
+        if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true'
+        run: echo "no core/shared changes — REG green-skipped (required context reported)"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        with:
+          sdk: stable
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - run: dart pub get
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+
+      - name: REG — model-switch coherence gates (red blocks merge)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: dart test test/cli/model_switch_coherence_test.dart test/cli/agent_cli_model_coherence_test.dart
+
   # Flutter app analyze split out of the test job (was serial pub get →
   # analyze → test in one 6-min job): analyze runs in parallel with the
   # sharded test legs, each leg no longer waits for it.
