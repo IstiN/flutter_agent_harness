@@ -1178,6 +1178,13 @@ final class _LocalShellJob implements ShellJob {
   @override
   bool writeStdin(String data) {
     if (!isRunning) return false;
+    return _tryWriteStdin(data);
+  }
+
+  /// Writes [data] to the live process's stdin; false when the pipe
+  /// rejects the write (the process settled between the [isRunning] check
+  /// and the write — the exit race).
+  bool _tryWriteStdin(String data) {
     try {
       _process.stdin.write(data);
       return true;
