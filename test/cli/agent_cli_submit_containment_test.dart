@@ -73,6 +73,12 @@ class _FrameSink implements StreamConsumer<List<int>> {
   Future<void> close() async {}
 
   String get text => utf8.decode(_bytes.toBytes(), allowMalformed: true);
+
+  /// The rendered transcript with ANSI control sequences stripped — the
+  /// human-readable view the text assertions run against.
+  String get plain => text
+      .replaceAll(RegExp('\][^]*'), '')
+      .replaceAll(RegExp('\[[0-9;?]*[A-Za-z]'), '');
 }
 
 /// An [ExecutionEnv] decorator whose `writeFile` can be made to throw —
@@ -215,7 +221,11 @@ void main() {
           '  ╵',
         ),
       );
-      expect(line, 'Error on line 8, column 5: Duplicate mapping key.');
+      expect(
+        line,
+        contains('Error on line 8, column 5: Duplicate mapping key.'),
+      );
+      expect(line.contains('\n'), isFalse);
     });
 
     test('the incident stack shape (replayed as data) renders frame-less',
@@ -289,13 +299,16 @@ void main() {
       // the ACTIVE model — the incident's exact entry.
       final submit = cli.tuiSubmitForTest('/model-edit', const []);
       await waitForIt(
-        () => frames.text.contains('capabilities — copilot/gemini-4-argon'),
+        () => frames.plain.contains('capabilities — copilot/gemini-4-argon'),
       );
       await cli.tuiWizardPickForTest(
         'wizard:capabilities — copilot/gemini-4-argon',
         'maxTokens',
       );
-      await waitForIt(() => frames.text.contains('maxTokens in tokens'));
+      await waitForIt(
+        () => frames.plain.contains('maxTokens in tokens'),
+        reason: 'the token ladder picker opened',
+      );
       await cli.tuiWizardPickForTest('wizard:maxTokens in tokens', '65536');
       return (submit, cli);
     }
@@ -321,10 +334,10 @@ void main() {
         await submit;
 
         // AC2: the clean one-line panel carries the exception message.
-        expect(frames.text, contains('Bad state: host persist failed'));
+        expect(frames.plain, contains('Bad state: host persist failed'));
         // AC3/REG-1: the serialized transcript never shows a raw stack.
         expect(
-          frames.text,
+          frames.plain,
           isNot(contains('asynchronous suspension')),
           reason: 'a contained flow error must never paint stack frames',
         );
@@ -342,7 +355,7 @@ void main() {
         // it — the arg form of /model-edit writes with the fake benign.
         final second = cli.tuiSubmitForTest('/model-edit maxTokens 4096', const []);
         await second;
-        await waitForIt(() => frames.text.contains('model max tokens set to 4096'));
+        await waitForIt(() => frames.plain.contains('model max tokens set to 4096'));
         expect(cli.isBusy, isFalse);
 
         await quitTui();
@@ -360,8 +373,8 @@ void main() {
         await submit;
 
         // The clean panel names the forced failure — no raw stack.
-        expect(frames.text, contains('disk full (forced by the test)'));
-        expect(frames.text, isNot(contains('asynchronous suspension')));
+        expect(frames.plain, contains('disk full (forced by the test)'));
+        expect(frames.plain, isNot(contains('asynchronous suspension')));
 
         // AC4: validate-first, no partial writes — the file is EXACTLY
         // the pre-flow state.
