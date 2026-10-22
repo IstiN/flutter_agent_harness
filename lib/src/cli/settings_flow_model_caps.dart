@@ -50,34 +50,120 @@ extension ModelCapabilityCapsSettings on AgentCli {
       config.modelsConfig?.overrides.lookup(provider, modelId) ??
       modelCapabilityOverrides?.lookup(provider, modelId);
 
-  /// The resolved effective caps for (provider, modelId) — the ONE
-  /// resolution the flow's rows, the live rebuild, and the apply path
-  /// share, so the display can never disagree with the apply. Full layer
-  /// chain: the models.overrides pin, the roles-chain slot, the session's
-  /// endpoint-detected values, then the catalog buckets.
-  EffectiveCaps _effectiveCapsFor(String provider, String modelId) {
+  /// The pure chain resolution (pin > role slot > endpoint-detected >
+  /// catalog) plus which dimensions a VISIBLE layer named — the raw
+  /// material for [_effectiveCapsFor] and the layer labels.
+  ({
+    EffectiveCaps caps,
+    bool windowNamed,
+    bool maxTokensNamed,
+    bool thinkingNamed,
+  })
+  _resolveChain(String provider, String modelId) {
     final spec = catalogProvider(provider);
     final role = _currentRoleRef(provider, modelId);
-    return resolveModelCapabilities(
+    final pinned = _pinnedCaps(provider, modelId);
+    final endpointWindow = _modelContextWindows[modelId];
+    final endpointMaxTokens = _modelMaxTokens[modelId];
+    final caps = resolveModelCapabilities(
       provider: provider,
       modelId: modelId,
-      override: _pinnedCaps(provider, modelId),
+      override: pinned,
       roleContextWindow: role?.contextWindow,
       roleMaxTokens: role?.maxTokens,
       roleThinkingLevel: role?.thinkingLevel,
-      endpointContextWindow: _modelContextWindows[modelId],
-      endpointMaxTokens: _modelMaxTokens[modelId],
+      endpointContextWindow: endpointWindow,
+      endpointMaxTokens: endpointMaxTokens,
       spec: spec,
       api: spec?.api,
       reasoning: spec?.reasoning ?? true,
+    );
+    return (
+      caps: caps,
+      windowNamed:
+          pinned?.contextWindow != null ||
+          role?.contextWindow != null ||
+          endpointWindow != null,
+      maxTokensNamed:
+          pinned?.maxTokens != null ||
+          role?.maxTokens != null ||
+          endpointMaxTokens != null,
+      thinkingNamed:
+          pinned?.thinkingLevel != null || role?.thinkingLevel != null,
+    );
+  }
+
+  /// The resolved effective caps for (provider, modelId) — the ONE
+  /// resolution the flow's rows, the live rebuild, and the apply path
+  /// share, so the display can never disagree with the apply. A dimension
+  /// NO visible layer names falls back to the ACTIVE model's carried
+  /// value when the identity is the live one — the boot build merges
+  /// layers this resolver cannot see (the env-preconfig caps, gh-1471
+  /// D4) into the built model, and "what applies" is the built number,
+  /// not the catalog guess. [before] (the pre-write pin, on the apply
+  /// path) suppresses the fallback for a dimension the write UNPINNED —
+  /// a just-unpinned dimension must re-resolve through the chain, never
+  /// inherit the stale pin the live model still carries.
+  EffectiveCaps _effectiveCapsFor(
+    String provider,
+    String modelId, {
+    ModelCapabilityOverride? before,
+  }) {
+    final chain = _resolveChain(provider, modelId);
+    final current = _agent.state.model;
+    final isLive = current.provider == provider && current.id == modelId;
+    final windowInherit = !chain.windowNamed && before?.contextWindow == null;
+    final maxTokensInherit = !chain.maxTokensNamed && before?.maxTokens == null;
+    final thinkingInherit =
+        !chain.thinkingNamed && before?.thinkingLevel == null;
+    if (!isLive || !(windowInherit || maxTokensInherit || thinkingInherit)) {
+      return chain.caps;
+    }
+    return EffectiveCaps(
+      contextWindow: windowInherit
+          ? current.contextWindow
+          : chain.caps.contextWindow,
+      maxTokens: maxTokensInherit ? current.maxTokens : chain.caps.maxTokens,
+      thinkingLevel: thinkingInherit
+          ? current.thinkingLevel
+          : chain.caps.thinkingLevel,
+      maxTokensField: chain.caps.maxTokensField,
+      omitMaxOutputTokens: chain.caps.omitMaxOutputTokens,
+      notes: chain.caps.notes,
     );
   }
 
   /// The source-layer label of the effective context window for
   /// (provider, modelId): the models.overrides pin, the roles-chain slot,
-  /// the endpoint-detected value, or the catalog buckets below (names
-  /// follow capability_resolver.dart's precedence docs).
+  /// the endpoint-detected value, the boot-carried value (a layer the
+  /// resolver cannot see — env-preconfig — baked into the live model),
+  /// or the catalog buckets below (names follow capability_resolver.dart's
+  /// precedence docs).
   String _windowLayer(String provider, String modelId) {
+    final named = _windowLayerNamed(provider, modelId);
+    if (named != null) return named;
+    return _carriedOrCatalog(
+      provider,
+      modelId,
+      live: _agent.state.model.contextWindow,
+      chainResolved: _resolveChain(provider, modelId).caps.contextWindow,
+    );
+  }
+
+  /// The source-layer label of the effective max output (see
+  /// [_windowLayer]).
+  String _maxTokensLayer(String provider, String modelId) {
+    final named = _maxTokensLayerNamed(provider, modelId);
+    if (named != null) return named;
+    return _carriedOrCatalog(
+      provider,
+      modelId,
+      live: _agent.state.model.maxTokens,
+      chainResolved: _resolveChain(provider, modelId).caps.maxTokens,
+    );
+  }
+
+  String? _windowLayerNamed(String provider, String modelId) {
     if (_pinnedCaps(provider, modelId)?.contextWindow != null) {
       return 'pinned';
     }
@@ -87,12 +173,10 @@ extension ModelCapabilityCapsSettings on AgentCli {
     if (_modelContextWindows[modelId] != null) {
       return 'endpoint';
     }
-    return 'catalog';
+    return null;
   }
 
-  /// The source-layer label of the effective max output (see
-  /// [_windowLayer]).
-  String _maxTokensLayer(String provider, String modelId) {
+  String? _maxTokensLayerNamed(String provider, String modelId) {
     if (_pinnedCaps(provider, modelId)?.maxTokens != null) {
       return 'pinned';
     }
@@ -101,6 +185,24 @@ extension ModelCapabilityCapsSettings on AgentCli {
     }
     if (_modelMaxTokens[modelId] != null) {
       return 'endpoint';
+    }
+    return null;
+  }
+
+  /// 'carried' when the live model's number diverges from the PURE chain
+  /// resolution — a boot-injected layer (env-preconfig) the labels above
+  /// cannot name — else the plain 'catalog' bucket.
+  String _carriedOrCatalog(
+    String provider,
+    String modelId, {
+    required int live,
+    required int chainResolved,
+  }) {
+    final current = _agent.state.model;
+    if (current.provider == provider &&
+        current.id == modelId &&
+        live != chainResolved) {
+      return 'carried';
     }
     return 'catalog';
   }
@@ -267,8 +369,13 @@ extension ModelCapabilityCapsSettings on AgentCli {
     String field,
   ) async {
     final isContext = field == 'contextWindow';
+    // The window ladder starts at the parse floor (16384 — the compaction
+    // reserve): the retired session-only editor carried 4K/8K rungs that
+    // the validated upsert can never land, and a dead row is a broken
+    // promise (issue #1515 review round 2). The maxTokens floor is 1024 —
+    // its full ladder stays.
     final presets = isContext
-        ? const [4096, 8192, 16384, 32768, 65536, 131072, 204800, 1048576]
+        ? const [16384, 32768, 65536, 131072, 204800, 1048576]
         : const [4096, 8192, 16384, 32768, 65536];
     final caps = _effectiveCapsFor(provider, modelId);
     final effective = isContext ? caps.contextWindow : caps.maxTokens;
@@ -340,13 +447,14 @@ extension ModelCapabilityCapsSettings on AgentCli {
       io.writeln('model capabilities: no user config on this host — not saved');
       return;
     }
+    final before = _pinnedCaps(provider, modelId);
     final wrote = await _upsertConfigYaml(
       ['models', 'overrides', provider, modelId, field],
       value,
       projectScope: false,
       validate: ModelsConfig.fromYaml,
     );
-    if (wrote) await _applyCapabilityEdit(provider, modelId);
+    if (wrote) await _applyCapabilityEdit(provider, modelId, before);
   }
 
   /// Removes one pinned FIELD from an override (the validated remove).
@@ -412,7 +520,11 @@ extension ModelCapabilityCapsSettings on AgentCli {
     }
     await _notifyUserConfigFileChanged();
     io.writeln('$message → $path (${applicationNote('models')})');
-    await _applyCapabilityEdit(segments[2], segments[3]);
+    await _applyCapabilityEdit(
+      segments[2],
+      segments[3],
+      _pinnedCaps(segments[2], segments[3]),
+    );
   }
 
   /// The live apply after every capability write (E6): re-read the saved
@@ -420,7 +532,16 @@ extension ModelCapabilityCapsSettings on AgentCli {
   /// and the host's live [ModelsConfig], drop the roles resolver's cached
   /// wrappers so the next run rebuilds through the new caps, and print the
   /// resolver's notes for the edited model (gate + divergence, loud).
-  Future<void> _applyCapabilityEdit(String provider, String modelId) async {
+  /// [before] is the pre-write pin snapshot — a dimension the write
+  /// UNPINNED must re-resolve through the chain (the live model still
+  /// carries the stale pin), while an UNTOUCHED dimension inherits the
+  /// live model's carried value (the boot build merges layers this flow
+  /// cannot see — env-preconfig, gh-1471 D4).
+  Future<void> _applyCapabilityEdit(
+    String provider,
+    String modelId,
+    ModelCapabilityOverride? before,
+  ) async {
     final path = _userConfigPath();
     if (path != null) {
       switch (await _env.readTextFile(path)) {
@@ -443,11 +564,14 @@ extension ModelCapabilityCapsSettings on AgentCli {
     }
     config.modelRolesResolver?.refreshCapabilities();
     // The rebuild resolves through the SAME layered call the display uses
-    // (_effectiveCapsFor — pin > role slot > endpoint-detected > catalog):
-    // a rebuild must never swap values the user did not edit (a role
-    // chain entry's caps or a served window the session detected ride
-    // through untouched; only the pin's fields move).
-    final caps = _effectiveCapsFor(provider, modelId);
+    // (_effectiveCapsFor — pin > role slot > endpoint-detected > carried >
+    // catalog). Per dimension: a dimension the pin SETS takes the pin's
+    // resolved value; a dimension the write UNPINNED re-resolves through
+    // the chain (the live model still carries the stale pin); an
+    // UNTOUCHED dimension inherits the live model's carried value — a
+    // rebuild must never swap values the user did not edit.
+    final after = _pinnedCaps(provider, modelId);
+    final caps = _effectiveCapsFor(provider, modelId, before: before);
     // Pin-apply is live (issue #1515 AC5): when the edit targets the
     // ACTIVE model, rebuild it from the resolved caps — the retired
     // /model-edit flow's live-mutation semantics, now backed by
@@ -457,6 +581,15 @@ extension ModelCapabilityCapsSettings on AgentCli {
     // field incl. the catalog image cap.
     final current = _agent.state.model;
     if (current.provider == provider && current.id == modelId) {
+      final windowUntouched =
+          after?.contextWindow == null && before?.contextWindow == null;
+      final maxTokensUntouched =
+          after?.maxTokens == null && before?.maxTokens == null;
+      final thinkingUntouched =
+          after?.thinkingLevel == null && before?.thinkingLevel == null;
+      final omitUntouched =
+          after?.omitMaxOutputTokens == null &&
+          before?.omitMaxOutputTokens == null;
       _agent.state.model = Model(
         id: current.id,
         name: current.name,
@@ -465,12 +598,18 @@ extension ModelCapabilityCapsSettings on AgentCli {
         baseUrl: current.baseUrl,
         reasoning: current.reasoning,
         input: current.input,
-        thinkingLevel: caps.thinkingLevel,
+        thinkingLevel: thinkingUntouched
+            ? current.thinkingLevel
+            : caps.thinkingLevel,
         cost: current.cost,
-        contextWindow: caps.contextWindow,
-        maxTokens: caps.maxTokens,
+        contextWindow: windowUntouched
+            ? current.contextWindow
+            : caps.contextWindow,
+        maxTokens: maxTokensUntouched ? current.maxTokens : caps.maxTokens,
         headers: current.headers,
-        compat: caps.omitMaxOutputTokens
+        compat: omitUntouched
+            ? current.compat
+            : (after?.omitMaxOutputTokens ?? false)
             ? const OpenAICompletionsCompat(omitMaxOutputTokens: true)
             : null,
         authHeader: current.authHeader,
@@ -488,18 +627,17 @@ extension ModelCapabilityCapsSettings on AgentCli {
       // fall back to the model's carried window).
       final role = _currentRoleRef(provider, modelId);
       final detectedWindow = _modelContextWindows[modelId];
-      if (_pinnedCaps(provider, modelId)?.contextWindow != null ||
-          role?.contextWindow != null) {
+      if (after?.contextWindow != null || role?.contextWindow != null) {
         contextWindowRegistry.publish(
           model: _agent.state.model,
-          window: caps.contextWindow,
+          window: _agent.state.model.contextWindow,
           source: ContextWindowSource.userPin,
         );
       } else if (detectedWindow != null &&
-          detectedWindow == caps.contextWindow) {
+          detectedWindow == _agent.state.model.contextWindow) {
         contextWindowRegistry.publish(
           model: _agent.state.model,
-          window: caps.contextWindow,
+          window: _agent.state.model.contextWindow,
           source: ContextWindowSource.endpointReport,
         );
       } else {

@@ -186,7 +186,9 @@ void main() {
       await waitForIt(
         () => io.out.toString().contains('contextWindow in tokens'),
       );
-      io.sendLine('9'); // Custom… (8 presets, then the free input)
+      io.sendLine(
+        '7',
+      ); // Custom… (floor-trimmed ladder: 6 presets, then free input)
       await waitForIt(
         () => io.out.toString().contains('contextWindow in tokens (min 16384'),
       );
@@ -527,7 +529,7 @@ models:
     await waitForIt(
       () => io.out.toString().contains('contextWindow in tokens'),
     );
-    io.sendLine('6'); // the 131072 preset
+    io.sendLine('4'); // the 131072 preset (floor-trimmed ladder, row 4)
     await waitForIt(
       () => io.out.toString().contains(
         'models.overrides.test-provider.test-model.contextWindow = 131072',
@@ -720,4 +722,124 @@ models:
     expect(rebuilt?.maxTokens, 65536);
     expect(rebuilt?.maxImages, catalogMaxImages['gemini-4-argon']);
   });
+
+  test('the lowest window preset pins exactly the parse floor', () async {
+    // Review round 2: the ladder was trimmed to the parse floor (4K/8K
+    // were dead rows — the validated upsert rejects below 16384); row 1
+    // must land right on the boundary.
+    const seed = '''
+provider: openrouter
+models:
+  overrides:
+    test-provider:
+      test-model:
+        maxTokens: 65536
+''';
+    await env.writeFile('/home/u/.fah/config.yaml', seed);
+    final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      homeDir: '/home/u',
+      modelsConfig: ModelsConfig.fromYaml((loadYaml(seed) as Map)['models']),
+    );
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('2'); // the entry row
+    await waitForIt(
+      () =>
+          io.out.toString().contains('capabilities — test-provider/test-model'),
+    );
+    io.sendLine('1'); // context window
+    await waitForIt(
+      () => io.out.toString().contains('contextWindow in tokens'),
+    );
+    io.sendLine('1'); // 16384 — the compaction reserve itself
+    await waitForIt(
+      () => io.out.toString().contains(
+        'models.overrides.test-provider.test-model.contextWindow = 16384',
+      ),
+    );
+    io.sendLine('6'); // done (caps loop)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('3'); // done (flow menu)
+    await flow;
+    expect(
+      modelCapabilityOverrides
+          ?.lookup('test-provider', 'test-model')
+          ?.contextWindow,
+      16384,
+    );
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test(
+    'pinning one field keeps the boot-carried caps of the live model',
+    () async {
+      // Review round 2: a model whose caps came from a layer the resolver
+      // cannot see (FA_PROVIDER_CONFIG preconfig, merged into the built
+      // model at boot) must not have its untouched dimensions swapped to
+      // catalog defaults when an unrelated field is pinned — display AND
+      // rebuild read the carried value.
+      const seed = '''
+provider: openrouter
+models:
+  overrides:
+    test-provider:
+      test-model:
+        maxTokens: 16384
+''';
+      await env.writeFile('/home/u/.fah/config.yaml', seed);
+      final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        homeDir: '/home/u',
+        modelsConfig: ModelsConfig.fromYaml((loadYaml(seed) as Map)['models']),
+        // The shape the preconfig build produces: declared caps on the
+        // booted model, no resolver layer backing them.
+        model: const Model(
+          id: 'test-model',
+          api: 'test-api',
+          provider: 'test-provider',
+          baseUrl: 'https://example.test',
+          contextWindow: 5000,
+          maxTokens: 32768,
+        ),
+      );
+      final run = cli.run();
+
+      final flow = cli.startModelCapsFlow();
+      await waitForIt(() => io.out.toString().contains('model capabilities'));
+      io.sendLine('2'); // the entry row
+      await waitForIt(
+        () => io.out.toString().contains(
+          'capabilities — test-provider/test-model',
+        ),
+      );
+      // The display advertises the CARRIED window before any edit.
+      await waitForIt(
+        () => io.out.toString().contains('Context window — 5000 (carried)'),
+      );
+      io.sendLine('2'); // max output tokens
+      await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+      io.sendLine('5'); // the 65536 preset
+      await waitForIt(
+        () => io.out.toString().contains(
+          'models.overrides.test-provider.test-model.maxTokens = 65536',
+        ),
+      );
+      io.sendLine('6'); // done (caps loop)
+      await waitForCount('Pin or edit', 2);
+      io.sendLine('3'); // done (flow menu)
+      await flow;
+      // The rebuild moved ONLY maxTokens — the carried window survives.
+      io.sendLine('/model-edit');
+      await waitForIt(() => io.out.toString().contains('contextWindow 5000'));
+      await waitForIt(() => io.out.toString().contains('maxTokens 65536'));
+      io.sendLine('/exit');
+      await run;
+    },
+  );
 }
