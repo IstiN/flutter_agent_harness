@@ -76,7 +76,25 @@ factual: paths, commands, invariants — no essays.
   armed after the child exits because an orphaned descendant can hold
   the pipes — a drain that outlives the deadline marks the call
   `timedOut` even when the child exited 0). Background jobs (issue #517)
-  keep their own group + `stop()` semantics.
+  keep their own group + `stop()` semantics. Self-signal immunity
+  (gh-1763): POSIX scripts are delivered from a per-exec private temp
+  file (`sh -c '. "$1"' sh <script>` — prelude restores `sh -c`
+  positional-param parity, so `$0`/`$#`/exit codes/`set -e`/stdin are
+  unchanged; legacy `sh -c <command>` fallback when the temp dir cannot
+  be created) so the wrapper argv never carries the script body —
+  `pkill -f <pat>` inside a command cannot match its own shell; a
+  provisioned-once guard (`lib/src/env/bash_guard_io.dart`) puts
+  `pkill`/`killall` PATH shims at the head of PATH plus a `kill()`
+  prelude function, both excluding the harness pid chain + process group
+  (exported as `FA_PROTECTED_PIDS`, overridable per exec via
+  `ShellExecOptions.env` for tests) and the invoking shell, while
+  legitimate victims stay killable; Windows keeps `cmd /c` verbatim.
+  Residual caveat: shapes the shim cannot model — output modes
+  (`-c`, `-v`, `-l`, `-a`, `--count`, any other long option), a signal
+  spelled after the pattern, extra operands, or a selection pgrep
+  rejects — exec the real, unshimed binary and are NOT covered by the
+  exemption (keep the pattern away from the harness cmdline in those
+  spellings).
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.
