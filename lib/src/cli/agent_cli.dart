@@ -1729,7 +1729,7 @@ class AgentCli {
   /// "keeping last good" serves when the project section turns broken
   /// (issue #1151 review; mirrors the tools scope cache).
   Map<String, bool>? _lastGoodProjectSkillToggles;
-  List<ProjectContextFile> _contextFiles = const [];
+  LoadedProjectContext _context = LoadedProjectContext.empty;
 
   /// Consent for third-party (Claude/Copilot/Codex) skill & agent roots.
   /// Mutable: the startup consent dialog and `/skills access` change it;
