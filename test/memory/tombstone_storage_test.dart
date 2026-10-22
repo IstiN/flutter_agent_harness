@@ -104,6 +104,26 @@ void main() {
         expect(await storage.purgeTombstones(), isEmpty);
       },
     );
+
+    test('deleteEntityById unlinks one existing entity, unknown id is false', () async {
+      // The scan walks question → answer → note; the note file lives in
+      // the last type, so the miss-continue arms and the hit both run.
+      await env.writeFile(
+        '/.fah/memory/note/n_0003_cafe.md',
+        '---\nid: n_0003_cafe\n---\n# Entity: n_0003_cafe\nlive note\n',
+      );
+      expect(await storage.deleteEntityById('n_0003_cafe'), isTrue);
+      expect(
+        (await env.exists('/.fah/memory/note/n_0003_cafe.md')).valueOrNull,
+        isFalse,
+      );
+      // Unknown id: no type holds it — false, and nothing was touched.
+      expect(await storage.deleteEntityById('n_0004_baad'), isFalse);
+      expect(
+        (await env.exists('/.fah/memory/note/n_0002_beef.md')).valueOrNull,
+        isTrue,
+      );
+    });
   });
 
   group('cross-tool tombstone consistency (AC2)', () {

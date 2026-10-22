@@ -253,24 +253,7 @@ String formatRateLimitMessage(
 }) {
   final ru = localeCode.toLowerCase().startsWith('ru');
   final buffer = StringBuffer(_rateLimitTitle(info, ru));
-  final stamp = info.resetsAt == null
-      ? null
-      : formatResetStamp(info.resetsAt!.toLocal(), localeCode: localeCode);
-  final countdown = _resetCountdown(info, now);
-  if (stamp != null) {
-    buffer.write(' ${ru ? 'Обновится' : 'Resets'} $stamp');
-    if (countdown != null) {
-      buffer.write(
-        ' — ${formatHumanCountdown(countdown, localeCode: localeCode)}',
-      );
-    }
-    buffer.write('.');
-  } else if (countdown != null) {
-    final phrase = formatHumanCountdown(countdown, localeCode: localeCode);
-    buffer.write(' ${ru ? 'Повтор' : 'Try again'} $phrase.');
-  } else {
-    buffer.write(' ${ru ? 'Попробуйте позже.' : 'Try again later.'}');
-  }
+  buffer.write(_resetSentence(info, ru, localeCode, now));
   if (info.eligiblePromo case final promo? when promo.isNotEmpty) {
     buffer.write(' ${ru ? 'Доступно промо' : 'Promo available'}: $promo.');
   }
@@ -285,6 +268,36 @@ String formatRateLimitMessage(
               '(/model in the CLI, or provider settings in the app).',
   );
   return buffer.toString();
+}
+
+/// The reset/status sentence: when the server derived a reset time, the
+/// human stamp plus countdown; otherwise a bare countdown, or the plain
+/// "try again later" when nothing reset-shaped was advertised.
+String _resetSentence(
+  RateLimitInfo info,
+  bool ru,
+  String localeCode,
+  DateTime? now,
+) {
+  final stamp = info.resetsAt == null
+      ? null
+      : formatResetStamp(info.resetsAt!.toLocal(), localeCode: localeCode);
+  final countdown = _resetCountdown(info, now);
+  if (stamp != null) {
+    final buffer = StringBuffer(' ${ru ? 'Обновится' : 'Resets'} $stamp');
+    if (countdown != null) {
+      buffer.write(
+        ' — ${formatHumanCountdown(countdown, localeCode: localeCode)}',
+      );
+    }
+    buffer.write('.');
+    return buffer.toString();
+  } else if (countdown != null) {
+    final phrase = formatHumanCountdown(countdown, localeCode: localeCode);
+    return ' ${ru ? 'Повтор' : 'Try again'} $phrase.';
+  } else {
+    return ' ${ru ? 'Попробуйте позже.' : 'Try again later.'}';
+  }
 }
 
 /// Countdown for the reset: server-derived values only ([E2] clock-skew
