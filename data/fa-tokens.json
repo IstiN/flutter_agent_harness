@@ -4933,6 +4933,15 @@
       "total": 335115,
       "cacheRead": 11734400,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-22T05:29:24Z",
+      "prompt": 143892,
+      "completion": 21244,
+      "total": 165136,
+      "cacheRead": 4092608,
+      "model": "glm-5.3-flash"
     }
   ],
   "pr-1774": [
