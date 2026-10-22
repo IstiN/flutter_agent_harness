@@ -8,23 +8,7 @@
       "total": 104194
     }
   ],
-  "pr-1416": [
-    {
-      "leg": "review",
-      "at": "2026-10-08T14:04:54Z",
-      "prompt": 66580,
-      "completion": 21041,
-      "total": 87621
-    }
-  ],
   "issue-1412": [
-    {
-      "leg": "dev",
-      "at": "2026-10-08T14:06:26Z",
-      "prompt": 388018,
-      "completion": 97312,
-      "total": 485330
-    },
     {
       "leg": "review",
       "at": "2026-10-08T15:22:15Z",
@@ -38,15 +22,6 @@
       "prompt": 163283,
       "completion": 36933,
       "total": 200216
-    }
-  ],
-  "pr-1414": [
-    {
-      "leg": "review",
-      "at": "2026-10-08T14:15:18Z",
-      "prompt": 31021,
-      "completion": 6823,
-      "total": 37844
     }
   ],
   "issue-1415": [
@@ -5132,6 +5107,15 @@
       "completion": 17347,
       "total": 72140,
       "cacheRead": 1131840,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-22T14:15:39Z",
+      "prompt": 115898,
+      "completion": 41160,
+      "total": 157058,
+      "cacheRead": 6727296,
       "model": "glm-5.3-flash"
     }
   ]
