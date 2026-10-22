@@ -1,20 +1,28 @@
 name: android-ndk-preinstall
 description: >-
-  Pre-install the Flutter-pinned Android NDK so Gradle configuration never
-  triggers an on-demand sdkmanager download mid-build. gh-1655: one
-  truncated android-ndk-r28c-linux download ("Error on ZipFile unknown
-  archive" at 33%) red'd the ci.yml build-android leg — and the aggregate
-  Quality gate with it — because AGP's in-configuration auto-install path
-  has NO retry. The NDK version is resolved from the pinned Flutter SDK's
-  own gradle plugin source (the exact value flutter.ndkVersion resolves
-  to — no second pin to drift), the install is skipped when the NDK is
-  already present, and the download itself is bounded-retried — the same
-  hardening the flutter_gemma Android seed carries (gh-1468). Companion
-  guard: test/ci_android_ndk_preinstall_guard_test.dart.
+  Pre-install the Flutter-pinned Android NDK and the AGP-default CMake so
+  Gradle configuration never triggers an on-demand sdkmanager download
+  mid-build. gh-1655: one truncated android-ndk-r28c-linux download
+  ("Error on ZipFile unknown archive" at 33%) red'd the ci.yml build-android
+  leg — and the aggregate Quality gate with it — because AGP's
+  in-configuration auto-install path has NO retry. gh-1757: the same leg
+  died the same way on the sibling component — the `:jni` module
+  (transitive `jni` package via path_provider_android) wires
+  externalNativeBuild.cmake with no version, so AGP auto-installs its
+  default cmake;3.22.1 mid-configuration and one corrupt archive
+  ("Archive is not a ZIP archive") red'd v1.0.619's build-android leg, the
+  aggregate Quality gate, and the Advance vpinned marker job with it. The
+  NDK version is resolved from the pinned Flutter SDK's own gradle plugin
+  source (the exact value flutter.ndkVersion resolves to — no second pin
+  to drift), the CMake version is the AGP default cross-checked against
+  the AGP pin by the guard test, both installs are skipped when the
+  component is already present, and each download is bounded-retried —
+  the same hardening the flutter_gemma Android seed carries (gh-1468).
+  Companion guard: test/ci_android_ndk_preinstall_guard_test.dart.
 runs:
   using: composite
   steps:
-    - name: Pre-install the Flutter-pinned Android NDK (bounded retry)
+    - name: Pre-install the Flutter-pinned Android NDK + AGP-default CMake (bounded retry)
       shell: bash
       run: |
         set -euo pipefail
@@ -52,9 +60,30 @@ runs:
         fi
         # Idempotence: AGP resolves `ndkVersion` against
         # $ANDROID_HOME/ndk/<version> — source.properties present means
-        # the NDK is fully installed; skip the download entirely.
+        # the NDK is fully installed. gh-1757: the same Gradle
+        # configuration step also provisions CMake — the `:jni` module
+        # (transitive `jni` package via path_provider_android) wires
+        # externalNativeBuild.cmake with no version, so AGP falls back
+        # to its default 3.22.1 (the AGP pin lives in
+        # flutter_app/android/settings.gradle.kts; the guard test
+        # cross-checks the coupling) and auto-installs it
+        # mid-configuration with no retry when
+        # $ANDROID_HOME/cmake/<version> is missing. Both lookups mirror
+        # exactly what AGP performs: a provisioned component means the
+        # pre-install is a no-op.
+        NEEDS_NDK=1
         if [ -f "$ANDROID_SDK/ndk/$NDK_VERSION/source.properties" ]; then
           echo "NDK $NDK_VERSION already installed — skipping pre-install"
+          NEEDS_NDK=0
+        fi
+        CMAKE_VERSION="3.22.1"
+        NEEDS_CMAKE=1
+        if [ -x "$ANDROID_SDK/cmake/$CMAKE_VERSION/bin/cmake" ]; then
+          echo "CMake $CMAKE_VERSION already installed — skipping pre-install"
+          NEEDS_CMAKE=0
+        fi
+        if [ "$NEEDS_NDK" = "0" ] && [ "$NEEDS_CMAKE" = "0" ]; then
+          echo "NDK and CMake already provisioned — nothing to pre-install"
           exit 0
         fi
         # Accept any license the image has not pre-accepted so the
@@ -65,15 +94,41 @@ runs:
         # run inside configuration) has no retry — one truncated download
         # unzips as "Error on ZipFile unknown archive" and the build dies.
         # Here the same download gets three attempts with backoff.
-        for attempt in 1 2 3; do
-          echo "installing NDK $NDK_VERSION (attempt $attempt/3)"
-          rm -rf "$ANDROID_SDK/ndk/$NDK_VERSION"
-          if "$SDKMANAGER" --install "ndk;$NDK_VERSION"; then
-            echo "NDK $NDK_VERSION installed"
-            exit 0
+        # gh-1757 first: CMake is the smaller download and the failure
+        # v1.0.619 actually hit (`:jni:configureCMakeDebug`).
+        if [ "$NEEDS_CMAKE" = "1" ]; then
+          CMAKE_OK=0
+          for attempt in 1 2 3; do
+            echo "installing CMake $CMAKE_VERSION (attempt $attempt/3)"
+            rm -rf "$ANDROID_SDK/cmake/$CMAKE_VERSION"
+            if "$SDKMANAGER" --install "cmake;$CMAKE_VERSION" && [ -x "$ANDROID_SDK/cmake/$CMAKE_VERSION/bin/cmake" ]; then
+              echo "CMake $CMAKE_VERSION installed"
+              CMAKE_OK=1
+              break
+            fi
+            echo "::warning::sdkmanager CMake install failed or bin/cmake missing (attempt $attempt/3) — retrying in 10s"
+            sleep 10
+          done
+          if [ "$CMAKE_OK" = "0" ]; then
+            echo "::error::CMake $CMAKE_VERSION install failed after 3 attempts — gh-1757: the :jni module auto-installs it mid-build with no retry, and one corrupt archive (\"Archive is not a ZIP archive\") red'd v1.0.619's build-android leg; inspect the sdkmanager output above"
+            exit 1
           fi
-          echo "::warning::sdkmanager NDK install failed (attempt $attempt/3) — retrying in 10s"
-          sleep 10
-        done
-        echo "::error::NDK $NDK_VERSION install failed after 3 attempts — gh-1655 red'd the leg on a single truncated archive; inspect the sdkmanager output above"
-        exit 1
+        fi
+        if [ "$NEEDS_NDK" = "1" ]; then
+          NDK_OK=0
+          for attempt in 1 2 3; do
+            echo "installing NDK $NDK_VERSION (attempt $attempt/3)"
+            rm -rf "$ANDROID_SDK/ndk/$NDK_VERSION"
+            if "$SDKMANAGER" --install "ndk;$NDK_VERSION"; then
+              echo "NDK $NDK_VERSION installed"
+              NDK_OK=1
+              break
+            fi
+            echo "::warning::sdkmanager NDK install failed (attempt $attempt/3) — retrying in 10s"
+            sleep 10
+          done
+          if [ "$NDK_OK" = "0" ]; then
+            echo "::error::NDK $NDK_VERSION install failed after 3 attempts — gh-1655 red'd the leg on a single truncated archive; inspect the sdkmanager output above"
+            exit 1
+          fi
+        fi
