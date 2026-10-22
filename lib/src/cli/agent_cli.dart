@@ -144,6 +144,7 @@ import '../mcp/mcp_config.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
+import '../model_roles/provider_model_binding.dart';
 import '../session_deadline.dart';
 import 'tool_phase_labels.dart';
 import 'tool_rows.dart';
@@ -163,8 +164,10 @@ import '../agent/image_registry.dart'
         imageCapLearnedNotice,
         imageDropNotice,
         imageRegistryConfig;
+import '../event_stream.dart';
 import '../providers/provider_common.dart'
     show
+        ProviderStreamState,
         authExpiredProvider,
         effectiveProviderConnectTimeout,
         effectiveProviderStreamIdleTimeout,
@@ -203,6 +206,7 @@ import 'startup.dart';
 import 'cli_config.dart';
 import 'pi_mode.dart';
 import 'custom_providers.dart';
+import 'model_switch_coherence.dart';
 import 'folder_model_state.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
@@ -1828,9 +1832,11 @@ class AgentCli {
   /// episode instead of one per watchdog tick.
   bool _runStalledPushed = false;
 
-  /// Model ids shown by the most recent `/model` picker, so `/model N` can
-  /// select by number without retyping the full id.
-  List<String>? _lastModelList;
+  /// The `(providerIdentity, modelId)` rows of the most recent `/model`
+  /// listing, so `/model N` can select by number — each row carries its
+  /// provider identity (gh-178 G1: a numbered pick of a cross-provider row
+  /// moves the whole triple, never reuses the current one).
+  List<(String, String)>? _lastModelList;
 
   /// Cache of model ids fetched from an OpenAI-compatible `/models` endpoint,
   /// plus the in-flight refresh future so concurrent callers coalesce.

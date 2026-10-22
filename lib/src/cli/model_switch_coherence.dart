@@ -214,6 +214,7 @@ final class RequestCoherenceInput {
     required this.headerAuth,
     required this.activeFamilyResolvesSameKey,
     required this.foreignFamilyResolvesSameKey,
+    this.mismatch,
   });
 
   /// The provider name the live model claims.
