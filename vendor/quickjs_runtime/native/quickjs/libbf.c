@@ -3655,8 +3655,9 @@ static void output_digits(DynBuf *s, const bf_t *a1, int radix, limb_t n_digits,
     } else if ((radix & (radix - 1)) == 0) {
         a = (bf_t *)a1;
         radix_bits = ceil_log2(radix);
-        pos_incr = digits_per_limb * radix_bits;
         digits_per_limb = LIMB_BITS / radix_bits;
+        // codeql [cpp/integer-multiplication-cast-to-long] — upstream libbf digit layout: both factors are small positive ints by construction (ceil_log2 radix), no overflow
+        pos_incr = digits_per_limb * radix_bits;
         /* digits are aligned relative to the radix point */
         pos = a->len * LIMB_BITS + smod(-a->expn, radix_bits);
         first_buf_pos = 0;

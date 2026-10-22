@@ -183,47 +183,60 @@ void main() {
       // must match the query's @id — NOT the check-run title slug.
       const suppression =
           '// codeql [cpp/integer-multiplication-cast-to-long]';
-      final flagged = <(String, int, String)>[
+      final flagged = <(String, String)>[
         // `r -= q * q;` — dlimb_t limb product in the div/rem fast path.
-        ('$vendorDir/native/quickjs/libbf.c', 1981, 'r -= q * q;'),
-        // `pos_incr = digits_per_limb * radix_bits;` — int → size_t widen.
-        ('$vendorDir/native/quickjs/libbf.c', 3658,
-            'pos_incr = digits_per_limb * radix_bits;'),
-        // `*psize * 3 / 2` — upstream carries its own XXX overflow remark.
-        ('$vendorDir/native/quickjs/quickjs.c', 1434,
-            'new_size = max_int(req_size, *psize * 3 / 2);'),
+        // The idiom appears 3x in libbf.c; CodeQL flags only the :1982 one
+        // (range analysis clears the others) — at least one occurrence
+        // must carry the suppression or the check goes red on re-vendor.
+        (
+          '$vendorDir/native/quickjs/libbf.c',
+          'r -= q * q;',
+        ),
+        // `digits_per_limb * radix_bits` — int → size_t widen.
+        (
+          '$vendorDir/native/quickjs/libbf.c',
+          'pos_incr = digits_per_limb * radix_bits;',
+        ),
+        // `new_size * elem_size` in the js_realloc2 call — int → size_t
+        // widen; upstream carries its own XXX overflow remark on :1433.
+        (
+          '$vendorDir/native/quickjs/quickjs.c',
+          'new_array = js_realloc2(ctx, *parray, new_size * elem_size, '
+              '&slack);',
+        ),
       ];
-      for (final (path, line, snippet) in flagged) {
+      for (final (path, snippet) in flagged) {
         final lines = File(path).readAsLinesSync();
+        final occurrences = <int>[];
+        for (var i = 0; i < lines.length; i++) {
+          if (lines[i].contains(snippet)) occurrences.add(i);
+        }
         expect(
-          lines.length,
-          greaterThanOrEqualTo(line),
-          reason: '$path shrunk below the flagged line $line — re-check the '
-              'alert locations on the re-vendored upstream copy',
-        );
-        expect(
-          lines[line - 1],
-          contains(snippet),
-          reason: '$path:$line drifted from the CodeQL-flagged statement '
+          occurrences,
+          isNotEmpty,
+          reason: '$path no longer contains the CodeQL-flagged statement '
               '`$snippet` — re-check the alert locations on the re-vendored '
               'upstream copy before trusting the suppression placement',
         );
-        expect(
-          lines[line - 1],
-          isNot(contains('// codeql [')),
-          reason: '$path:$line already carries a suppression comment directly '
-              'ON it — the built-in cpp/alert-suppression query only covers '
-              'the NEXT line; move it above',
+        final covered = occurrences.any(
+          (i) =>
+              i > 0 &&
+              lines[i - 1].trim().startsWith(
+                '// codeql [cpp/integer-multiplication-cast-to-long]',
+              ),
         );
         expect(
-          lines[line - 2].trim(),
-          suppression,
+          covered,
+          isTrue,
           reason:
-              '$path:${line - 1} must be exactly `$suppression` — the line '
-              'immediately above the flagged line $line. Without it the '
-              'CodeQL check goes red on the PR (3 high alerts), and the '
-              'annotation must use the query @id '
-              'cpp/integer-multiplication-cast-to-long, not the alert title.',
+              'no `$snippet` occurrence in $path is preceded by a '
+              '`$suppression` comment line. The built-in '
+              'cpp/alert-suppression query only covers the line DIRECTLY '
+              'BELOW a comment that is the first thing on its own line, and '
+              'the annotation must use the query @id '
+              'cpp/integer-multiplication-cast-to-long (not the alert title '
+              '"multiplication result converted to larger type") — otherwise '
+              'the CodeQL check goes red on the PR.',
         );
       }
     });

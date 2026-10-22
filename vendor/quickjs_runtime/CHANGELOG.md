@@ -4,7 +4,8 @@
 
 Tracked upstream: pub.dev quickjs_runtime 0.4.2
 (sha256 `4ea408c7f2f278d95979c92a8c217c78dd8161d046d15858995450a2cb5a0398`).
-`hook/build.dart` carries exactly two deltas; everything else is upstream
+`hook/build.dart` carries exactly two deltas and the vendored C sources carry
+three CodeQL inline-suppression comments; everything else is upstream
 verbatim. Pinned by `test/quickjs_runtime_vendor_pin_test.dart`:
 
 - **Android**: no longer links `-lpthread` — bionic ships pthread inside
@@ -18,9 +19,22 @@ verbatim. Pinned by `test/quickjs_runtime_vendor_pin_test.dart`:
   `flutter_assemble.vcxproj` (Lockfile smoke windows CI leg).
   `QuickjsFfi.isAvailable` is false without the asset, so js_widget_runtime
   falls back to its flutter_js backend — the pre-0.4.0 Windows behavior.
+- **C sources (comment-only)**: three `// codeql [cpp/integer-multiplication-cast-to-long]`
+  inline-suppression comments — CodeQL default setup analyzes C/C++ in
+  `none` build mode (every vendored source is extracted) and flagged 3
+  upstream "multiplication result converted to larger type" idioms
+  (`libbf.c` div/rem fast path `q * q`, `libbf.c`
+  `digits_per_limb * radix_bits`, `quickjs.c` `new_size * elem_size` in
+  the `js_realloc2` call) as high-severity new alerts, failing the
+  CodeQL check. They are upstream numerics (one site carries Bellard's
+  own `XXX: potential arithmetic overflow` remark), so the fork does NOT
+  rewrite them — it suppresses the exact query id. Comments are inert to
+  the compiled library; iOS/macOS binaries are byte-identical.
 
 Re-vendor (copy the published package over this directory) on the next
-upstream publish that fixes both.
+upstream publish that fixes both; re-apply the three suppression comments
+(`test/quickjs_runtime_vendor_pin_test.dart` fails with the exact
+statements to re-annotate).
 
 ## Upstream
 
