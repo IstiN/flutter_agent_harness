@@ -765,8 +765,8 @@ List<String> successorArgs(List<String> args, String? sessionId) {
 /// null when the host has no home directory (guard disabled, disclosed).
 String? _convergenceStatePath() {
   final home =
-      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
-  if (home == null || home.isEmpty) return null;
+      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '';
+  if (home.isEmpty) return null;
   return '$home/.fah/update-state.json';
 }
 
