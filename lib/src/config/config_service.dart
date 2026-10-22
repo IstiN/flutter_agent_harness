@@ -1402,6 +1402,21 @@ void _validateImagesSection(Object? node) {
             '"images.maxPerRequest" must be a positive integer',
           );
         }
+      case 'perModel':
+        final value = entry.value;
+        if (value is! YamlMap) {
+          throw ConfigException(
+            '"images.perModel" must be a map of model id → cap, got: $value',
+          );
+        }
+        for (final model in value.entries) {
+          final cap = model.value;
+          if (cap is! int || cap <= 0) {
+            throw ConfigException(
+              '"images.perModel.${model.key}" must be a positive integer',
+            );
+          }
+        }
       default:
         throw ConfigException('unknown "images" key: $key');
     }

@@ -1274,6 +1274,7 @@ extension on AgentCli {
       headers: current.headers,
       compat: current.compat,
       authHeader: current.authHeader,
+      maxImages: catalogMaxImages[modelId],
     );
     await _session?.appendModelChange(
       provider: current.provider,

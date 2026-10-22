@@ -815,6 +815,39 @@ void main() {
       );
     });
 
+    test('images.perModel validates strictly (issue #1750 AC7)', () async {
+      // A valid section parses clean.
+      await env.writeFile(
+        _globalConfig,
+        'images:\n  perModel:\n    gemini-4-argon: 10\n',
+      );
+      expect((await service.check()).errors, isEmpty);
+      // A non-int value is rejected, naming the file's key.
+      await env.writeFile(
+        _globalConfig,
+        'images:\n  perModel:\n    gemini-4-argon: "ten"\n',
+      );
+      expect(
+        (await service.check()).errors.single.message,
+        contains('"images.perModel.gemini-4-argon" must be a positive integer'),
+      );
+      // A negative value is rejected too.
+      await env.writeFile(
+        _globalConfig,
+        'images:\n  perModel:\n    gemini-4-argon: -1\n',
+      );
+      expect(
+        (await service.check()).errors.single.message,
+        contains('"images.perModel.gemini-4-argon" must be a positive integer'),
+      );
+      // A non-map section is rejected.
+      await env.writeFile(_globalConfig, 'images:\n  perModel: 10\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('"images.perModel" must be a map'),
+      );
+    });
+
     test('power rejects bad values and unknown keys (issue #325)', () async {
       await env.writeFile(
         _globalConfig,
