@@ -278,8 +278,9 @@ void main() {
             'surfaces — the scanner is undercounting',
       );
       for (final (path, line, args) in sites) {
+        final topArgs = topLevelArgs(args);
         expect(
-          topLevelArgs(args),
+          topArgs,
           contains('voxelWorld:'),
           reason:
               '$path builds JsonWidgetRenderer at :$line without '
@@ -289,6 +290,17 @@ void main() {
               '`voxelWorld: engine.voxelWorld` (mirrors the webViewHost/'
               'js3dHost wiring; a voxelWorld: only inside a nested call '
               'does not count).',
+        );
+        expect(
+          topArgs,
+          contains('onGestureEvent:'),
+          reason:
+              '$path builds JsonWidgetRenderer at :$line without '
+              '`onGestureEvent:` — high-frequency gesture streams '
+              '(onPanUpdate, onLongPressMoveUpdate, onScroll) fall back to '
+              'the serialized callEvent queue and cause touch/drag stutter '
+              '(gh-1784). Wire `onGestureEvent: (actionId, payload) => '
+              'engine.dispatchHostEvent(\'gesture:\$actionId\', payload)`.',
         );
       }
     });
