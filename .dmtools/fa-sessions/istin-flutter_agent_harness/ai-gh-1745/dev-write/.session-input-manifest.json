@@ -1,0 +1,339 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-21T23:54:52.593Z",
+  "ticketKey": "pr-1765",
+  "headSha": "700976938c38f09cd45905b7338e979d60b777f9",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:4b37272bcd55b2c6",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:906a15358a9ce2ba",
+      "size": 29796
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:0ddc36b6c06fbea7",
+      "size": 13786
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:f4bbce1884c4f301",
+      "size": 2224
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:ef7a25c6734f67a1",
+      "size": 2595
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:82105854c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:61c720ec2d937572",
+      "size": 1969
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:0d5601354bb05b16",
+      "size": 1885
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6u-Vfu",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/services/agent_service_events.dart:297",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: Spilled request detail is unreachable from the app UI — only the CLI got a viewer**\n\nThe PR wires spilling into the app host (`AgentService._persistModelRequest`) and adds a `request blob` section to the **CLI** `/trajectory inspect` (`lib/src/cli/trajectory_tui.dart`), but the app's Request tab got nothing:\n\n- `packages/fa_ui/lib/src/trajectory/trajectory_details_tabs.dart` (`_requestPage`) renders `message.preview` — now always `''` for new sessions — and `message.blocks` — now absent — with no `spillFile` row. `grep spillFile packages/fa_ui/lib flutter_app/lib` finds only the writer side.\n- `lib/src/trajectory/trajectory_export.dart:147` renders `'…: ${message.preview…}'` → spilled sessions export as `role · N chars: ` with a dangling colon.\n\nNet effect: for every new app-hosted session the per-message drill-in data still exists on disk (the blob) but is unreachable from the app — a quiet UX regression the CLI half of this PR solved for itself. Please add the same pointer to the app Request tab (a `spillFile` row, or resolve the blob via the exported `TrajectoryRequestBlobStore.readDetail`), or scope this PR to the CLI host until the app viewer exists."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6u-Vi-",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/trajectory/trajectory_request_blobs.dart:8",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: \"Closes #1745\" — but `shell_job_registry` (216 MB of the cited ~875 MB) is untouched**\n\nThe ticket (input/ticket.md, Problem Summary) cites two unrotated record kinds in the 1 GB session: `model_request_summary` at 658.75 MB **and `shell_job_registry` at 215.92 MB (2487 records)**. This PR remediates only `model_request_summary`; nothing here touches `shell_job_registry`, so a marathon session still grows unboundedly — just ~4× slower — while the issue auto-closes.\n\nThe ticket's Proposed Fix section only describes the `model_request_summary` remediation, so the implementation matches the fix plan — please just confirm the `shell_job_registry` half has a follow-up issue (or extend the blob/TTL policy to it here) so \"Closes #1745\" doesn't retire the ticket with a quarter of the cited disk growth still open."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6u-VlX",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/trajectory/trajectory_request_blobs.dart:183",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: TTL never advances for ended sessions — no boot-time/global sweep**\n\n`enforceBudget()` is only ever called from `_maybeSweep()` inside [write] — i.e. rotation runs only while *that session* keeps receiving requests. Once a session ends, its `.fah/trajectories/<sid>/requests/` dir stops aging: 30-day-old blobs of dead sessions stay forever, and `.fah/trajectories/` accumulates up to 50 MB × N sessions with no reaper. The ticket's letter is per-session (\"max 50MB per session\"), so this isn't blocking — but the disk-footprint tail the ticket complains about partially survives at the directory level.\n\nCheap fix: on host boot (or session open), sweep every sibling `requests/` dir under `.fah/trajectories/` against the same TTL — `enforceBudget` already has the age math, it just needs a variant that takes the dir explicitly."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6u-Vod",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/cli_config.dart:129",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `TrajectorySection.requestBlobMaxBytes` is dead code — use it**\n\nThe getter (`cli_config.dart:129`) is never referenced: both hosts re-derive the byte budget inline —\n\n- `lib/src/cli/trajectory_commands.dart`: `maxBytes: config.trajectoryRequestBlobMaxMb << 20`\n- `flutter_app/lib/services/agent_service_lifecycle.dart`: `maxBytes: trajectoryRequestBlobMaxMb << 20`\n\nTwo copies of the MB→bytes shift with the canonical one unused. Either thread `section.requestBlobMaxBytes` through `CliConfig`/`AgentCliConfig` (a `trajectoryRequestBlobMaxBytes` field) so both call sites consume the getter, or drop the getter."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6u-Vsc",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/cli_config.dart:1453",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the config SAVE path (`_trajectoryYaml`) is untested**\n\nThe new tests cover parsing (`requestBlobs` defaults, knob validation, strict unknown keys) and `loadProjectTrajectorySection`, but nothing round-trips a save: `_trajectoryYaml()` writes `requestBlobs: false` / non-default knobs only-when-non-default (defaults never written — the file-stays-minimal convention). One assertion like:\n\n```dart\nfinal saved = config.copyWith(trajectoryRequestBlobs: false).toYamlString();\nexpect(saved, contains('requestBlobs: false'));\n```\n\nwould pin the save shape (the sibling sections each have one). Low risk — the parse tests would catch a malformed key on the next load — but the asymmetry is free to close."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6u_a4R",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/services/agent_service_events.dart:299",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT (re-raised, still valid on this head): spilled request detail is unreachable from the app UI — only the CLI got a viewer**\n\nThis hunk wires spilling into the app host and stubs the buffered detail to role+chars (`preview: ''`, no blocks, `spillFile` pointer), but the app-side readers were not updated:\n\n- `packages/fa_ui/lib/src/trajectory/trajectory_details_tabs.dart` `_requestPage` renders `message.preview` (now always `''` for every new session) and `message.blocks` (now always empty) — with no `spillFile` row and no blob resolution. Verified: `grep -rn spillFile packages/fa_ui/lib flutter_app/lib` finds only this writer side.\n- `_requestSummaryText` (the Request tab's copy-to-clipboard) renders `'${message.role} · N chars: '` + empty preview → every line ends in a dangling `: `.\n- `lib/src/trajectory/trajectory_export.dart` (Markdown export, per-message list) has the same dangling-colon shape for spilled sessions.\n\nNet effect: for every new app-hosted session the per-message drill-in data still exists on disk (the blob) but is unreachable from the app — a quiet UX regression the CLI half of this PR solved for itself (`/trajectory inspect` names the blob). Old sessions keep rendering (inline previews intact), so this is degradation, not breakage — hence not blocking.\n\nPlease add the same pointer to the app Request tab (a `spillFile` row, or resolve the blob via the exported `TrajectoryRequestBlobStore.readDetail`), and fix the two `': '` dangling-colon renderers for the stubbed shape (guard on `preview.isEmpty`)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6u_a5h",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/trajectory/trajectory_request_blobs.dart:8",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT (re-raised, narrowed after reading the linked issue): \"Closes #1745\" vs the issue's own triage plan**\n\nThe linked issue (github.com/IstiN/flutter_agent_harness#1745, Problem Summary, read this run) cites two unrotated record kinds: `model_request_summary` at **658.75 MB** (1101 records) and `shell_job_registry` at **215.92 MB** (2487 records). This PR remediates the dominant first one — good — but two scope facts are worth settling before the issue auto-closes:\n\n1. The issue's own triage comment (ai-teammate, 2026-10-21) demotes exactly this remediation: *\"blob offload + per-session TTL/rotation — the original proposal — moves to second tier (long audit retention), not a prerequisite\"* in favor of delta-encoding consecutive summaries as the core fix (measured 99% duplicate payloads, estimated 345 MB → ~3.4 MB). This PR ships the second-tier blob offload; the delta-encoding tier is not here. Merging with \"Closes #1745\" would retire the ticket with the triage's stated core fix unimplemented.\n2. The `shell_job_registry` half is already bounded for new runs by #1594's persist-window + dedupe (per the same triage comment) — so no extra work is needed there, but the \"quarter of the cited disk growth still open\" framing from the earlier review round is resolved by that prior fix.\n\nNeither point blocks: the implementation matches the issue's *Proposed Fix* section verbatim (lightweight metadata in the JSONL + `.fah/trajectories/<sid>/requests/` with TTL/rotation), it reduces the dominant 658.75 MB class, and the measured growth is real. Please just confirm the intent: either keep \"Closes #1745\" and state that delta-encoding is dropped/deferred deliberately, or drop the closing keyword so the issue stays open for the delta-encoding tier."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6u_a7F",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/trajectory/trajectory_request_blobs.dart:153",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-raised, still valid): TTL never advances for ended sessions — no boot-time/global sweep**\n\n`enforceBudget()` is only ever invoked from `_maybeSweep()` inside `write` — rotation runs only while *that session* keeps receiving requests. Once a session ends, its `.fah/trajectories/<sid>/requests/` dir stops aging: 30-day-old blobs of dead sessions stay forever, and `.fah/trajectories/` accumulates up to 50 MB × N sessions with no reaper. The ticket's letter is per-session (\"max 50MB per session\"), so this is not blocking — but the disk-footprint tail the ticket complains about partially survives at the directory level.\n\nCheap fix: on host boot (or session open), sweep every sibling `requests/` dir under `.fah/trajectories/` against the same TTL — `enforceBudget` already has the age math, it just needs a variant that takes the dir explicitly."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6u_a9t",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/cli_config.dart:129",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-raised, still valid): `TrajectorySection.requestBlobMaxBytes` is dead code — use it**\n\nThe getter (`cli_config.dart:129`) is never referenced: both hosts re-derive the byte budget inline —\n\n- `lib/src/cli/trajectory_commands.dart`: `maxBytes: config.trajectoryRequestBlobMaxMb << 20`\n- `flutter_app/lib/services/agent_service_lifecycle.dart`: `maxBytes: trajectoryRequestBlobMaxMb << 20`\n\nTwo copies of the MB→bytes shift with the canonical one unused. Either thread `section.requestBlobMaxBytes` through `CliConfig`/`AgentCliConfig` (a `trajectoryRequestBlobMaxBytes` field) so both call sites consume the getter, or drop the getter."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6u_a_o",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/cli_config.dart:1453",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-raised, still valid): the config SAVE path (`_trajectoryYaml`) is untested**\n\nThe new tests cover parsing (`requestBlobs` defaults, knob validation, strict unknown keys) and `loadProjectTrajectorySection`, but nothing round-trips a save: `_trajectoryYaml()` writes `requestBlobs: false` / non-default knobs only-when-non-default (defaults never written — the file-stays-minimal convention). One assertion like:\n\n```dart\nfinal saved = config.copyWith(trajectoryRequestBlobs: false).toYamlString();\nexpect(saved, contains('requestBlobs: false'));\n```\n\nwould pin the save shape (the sibling sections each have one). Low risk — the parse tests would catch a malformed key on the next load — but the asymmetry is free to close."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6u_bBH",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/trajectory/trajectory_record.dart:295",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: unrelated reformat of `capTrajectoryRequestDetail`'s weight expression**\n\nThis hunk (`trajectory_record.dart`, inside `capTrajectoryRequestDetail`) is pure line-wrapping churn on an expression the PR otherwise doesn't change:\n\n```dart\n-        [for (final b in message.blocks) b.text.length].fold<int>(\n-          0,\n-          (a, b) => a + b,\n-        );\n+        [\n+          for (final b in message.blocks) b.text.length,\n+        ].fold<int>(0, (a, b) => a + b);\n```\n\nNo behavior change, not required by gh-1745 — it widens the diff for anyone bisecting this file's history. (Same class as the `_CliMessageCapPolicy.learnedCapFor` reformat flagged in the previous round, which the base merges have since dropped from the diff.) Note the local `dart format` disagrees with the committed constructor style in `trajectory_request_blobs.dart` too (`}) : // ignore:` vs the split form) — that one is the repo-wide pattern, so leave it; this cap hunk is the only real churn. Revert it so the PR stays single-purpose."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:2db5ad7f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: Spilled request detail is unreachable from the app UI — only the CLI got a viewer**\n\nThe PR wires spilling into the app host (`AgentService._persistModelRequest`) and adds a `request blob` section to the **CLI** `/trajectory inspect` (`lib/src/cli/trajectory_tui.dart`), but the app's Request tab got nothing:\n\n- `packages/fa_ui/lib/src/trajectory/trajectory_details_tabs.dart` (`_requestPage`) renders `message.preview` — now always `''` for new sessions — and `message.blocks` — now absent — with no `spillFile` row. `grep spillFile packages/fa_ui/lib flutter_app/lib` finds only the writer side.\n- `lib/src/trajectory/trajectory_export.dart:147` renders `'…: ${message.preview…}'` → spilled sessions export as `role · N chars: ` with a dangling colon.\n\nNet effect: for every new app-hosted session the per-message drill-in data still exists on disk (the blob) but is unreachable from the app — a quiet UX regression the CLI half of this PR solved for itself. Please add the same pointer to the app Request tab (a `spillFile` row, or resolve the blob via the exported `TrajectoryRequestBlobStore.readDetail`), or scope this PR to the CLI host until the app viewer exists."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:6aad8c42",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: \"Closes #1745\" — but `shell_job_registry` (216 MB of the cited ~875 MB) is untouched**\n\nThe ticket (input/ticket.md, Problem Summary) cites two unrotated record kinds in the 1 GB session: `model_request_summary` at 658.75 MB **and `shell_job_registry` at 215.92 MB (2487 records)**. This PR remediates only `model_request_summary`; nothing here touches `shell_job_registry`, so a marathon session still grows unboundedly — just ~4× slower — while the issue auto-closes.\n\nThe ticket's Proposed Fix section only describes the `model_request_summary` remediation, so the implementation matches the fix plan — please just confirm the `shell_job_registry` half has a follow-up issue (or extend the blob/TTL policy to it here) so \"Closes #1745\" doesn't retire the ticket with a quarter of the cited disk growth still open."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:2a084fc4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: TTL never advances for ended sessions — no boot-time/global sweep**\n\n`enforceBudget()` is only ever called from `_maybeSweep()` inside [write] — i.e. rotation runs only while *that session* keeps receiving requests. Once a session ends, its `.fah/trajectories/<sid>/requests/` dir stops aging: 30-day-old blobs of dead sessions stay forever, and `.fah/trajectories/` accumulates up to 50 MB × N sessions with no reaper. The ticket's letter is per-session (\"max 50MB per session\"), so this isn't blocking — but the disk-footprint tail the ticket complains about partially survives at the directory level.\n\nCheap fix: on host boot (or session open), sweep every sibling `requests/` dir under `.fah/trajectories/` against the same TTL — `enforceBudget` already has the age math, it just needs a variant that takes the dir explicitly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:c9b477ec",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `TrajectorySection.requestBlobMaxBytes` is dead code — use it**\n\nThe getter (`cli_config.dart:129`) is never referenced: both hosts re-derive the byte budget inline —\n\n- `lib/src/cli/trajectory_commands.dart`: `maxBytes: config.trajectoryRequestBlobMaxMb << 20`\n- `flutter_app/lib/services/agent_service_lifecycle.dart`: `maxBytes: trajectoryRequestBlobMaxMb << 20`\n\nTwo copies of the MB→bytes shift with the canonical one unused. Either thread `section.requestBlobMaxBytes` through `CliConfig`/`AgentCliConfig` (a `trajectoryRequestBlobMaxBytes` field) so both call sites consume the getter, or drop the getter."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:b7059339",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the config SAVE path (`_trajectoryYaml`) is untested**\n\nThe new tests cover parsing (`requestBlobs` defaults, knob validation, strict unknown keys) and `loadProjectTrajectorySection`, but nothing round-trips a save: `_trajectoryYaml()` writes `requestBlobs: false` / non-default knobs only-when-non-default (defaults never written — the file-stays-minimal convention). One assertion like:\n\n```dart\nfinal saved = config.copyWith(trajectoryRequestBlobs: false).toYamlString();\nexpect(saved, contains('requestBlobs: false'));\n```\n\nwould pin the save shape (the sibling sections each have one). Low risk — the parse tests would catch a malformed key on the next load — but the asymmetry is free to close."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:2b626cf5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: unrelated reformat of `_CliMessageCapPolicy.learnedCapFor`**\n\nThis hunk (`agent_cli.dart`, `_CliMessageCapPolicy`) is pure whitespace/line-wrapping churn — no behavior change, not required by gh-1745. It widens the diff for anyone bisecting or re-running this file's history. Revert it so the PR stays single-purpose (the local `dart format` version here disagrees with the committed style anyway — the pre-existing lines around it trigger the same delta, so it's a formatter-version artifact, not a real lint fix)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:c44f03a2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT (re-raised, still valid on this head): spilled request detail is unreachable from the app UI — only the CLI got a viewer**\n\nThis hunk wires spilling into the app host and stubs the buffered detail to role+chars (`preview: ''`, no blocks, `spillFile` pointer), but the app-side readers were not updated:\n\n- `packages/fa_ui/lib/src/trajectory/trajectory_details_tabs.dart` `_requestPage` renders `message.preview` (now always `''` for every new session) and `message.blocks` (now always empty) — with no `spillFile` row and no blob resolution. Verified: `grep -rn spillFile packages/fa_ui/lib flutter_app/lib` finds only this writer side.\n- `_requestSummaryText` (the Request tab's copy-to-clipboard) renders `'${message.role} · N chars: '` + empty preview → every line ends in a dangling `: `.\n- `lib/src/trajectory/trajectory_export.dart` (Markdown export, per-message list) has the same dangling-colon shape for spilled sessions.\n\nNet effect: for every new app-hosted session the per-message drill-in data still exists on disk (the blob) but is unreachable from the app — a quiet UX regression the CLI half of this PR solved for itself (`/trajectory inspect` names the blob). Old sessions keep rendering (inline previews intact), so this is degradation, not breakage — hence not blocking.\n\nPlease add the same pointer to the app Request tab (a `spillFile` row, or resolve the blob via the exported `TrajectoryRequestBlobStore.readDetail`), and fix the two `': '` dangling-colon renderers for the stubbed shape (guard on `preview.isEmpty`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:0e1c1465",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT (re-raised, narrowed after reading the linked issue): \"Closes #1745\" vs the issue's own triage plan**\n\nThe linked issue (github.com/IstiN/flutter_agent_harness#1745, Problem Summary, read this run) cites two unrotated record kinds: `model_request_summary` at **658.75 MB** (1101 records) and `shell_job_registry` at **215.92 MB** (2487 records). This PR remediates the dominant first one — good — but two scope facts are worth settling before the issue auto-closes:\n\n1. The issue's own triage comment (ai-teammate, 2026-10-21) demotes exactly this remediation: *\"blob offload + per-session TTL/rotation — the original proposal — moves to second tier (long audit retention), not a prerequisite\"* in favor of delta-encoding consecutive summaries as the core fix (measured 99% duplicate payloads, estimated 345 MB → ~3.4 MB). This PR ships the second-tier blob offload; the delta-encoding tier is not here. Merging with \"Closes #1745\" would retire the ticket with the triage's stated core fix unimplemented.\n2. The `shell_job_registry` half is already bounded for new runs by #1594's persist-window + dedupe (per the same triage comment) — so no extra work is needed there, but the \"quarter of the cited disk growth still open\" framing from the earlier review round is resolved by that prior fix.\n\nNeither point blocks: the implementation matches the issue's *Proposed Fix* section verbatim (lightweight metadata in the JSONL + `.fah/trajectories/<sid>/requests/` with TTL/rotation), it reduces the dominant 658.75 MB class, and the measured growth is real. Please just confirm the intent: either keep \"Closes #1745\" and state that delta-encoding is dropped/deferred deliberately, or drop the closing keyword so the issue stays open for the delta-encoding tier."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:d00b6ee0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-raised, still valid): TTL never advances for ended sessions — no boot-time/global sweep**\n\n`enforceBudget()` is only ever invoked from `_maybeSweep()` inside `write` — rotation runs only while *that session* keeps receiving requests. Once a session ends, its `.fah/trajectories/<sid>/requests/` dir stops aging: 30-day-old blobs of dead sessions stay forever, and `.fah/trajectories/` accumulates up to 50 MB × N sessions with no reaper. The ticket's letter is per-session (\"max 50MB per session\"), so this is not blocking — but the disk-footprint tail the ticket complains about partially survives at the directory level.\n\nCheap fix: on host boot (or session open), sweep every sibling `requests/` dir under `.fah/trajectories/` against the same TTL — `enforceBudget` already has the age math, it just needs a variant that takes the dir explicitly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:dd54b205",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-raised, still valid): `TrajectorySection.requestBlobMaxBytes` is dead code — use it**\n\nThe getter (`cli_config.dart:129`) is never referenced: both hosts re-derive the byte budget inline —\n\n- `lib/src/cli/trajectory_commands.dart`: `maxBytes: config.trajectoryRequestBlobMaxMb << 20`\n- `flutter_app/lib/services/agent_service_lifecycle.dart`: `maxBytes: trajectoryRequestBlobMaxMb << 20`\n\nTwo copies of the MB→bytes shift with the canonical one unused. Either thread `section.requestBlobMaxBytes` through `CliConfig`/`AgentCliConfig` (a `trajectoryRequestBlobMaxBytes` field) so both call sites consume the getter, or drop the getter."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:accdafe4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-raised, still valid): the config SAVE path (`_trajectoryYaml`) is untested**\n\nThe new tests cover parsing (`requestBlobs` defaults, knob validation, strict unknown keys) and `loadProjectTrajectorySection`, but nothing round-trips a save: `_trajectoryYaml()` writes `requestBlobs: false` / non-default knobs only-when-non-default (defaults never written — the file-stays-minimal convention). One assertion like:\n\n```dart\nfinal saved = config.copyWith(trajectoryRequestBlobs: false).toYamlString();\nexpect(saved, contains('requestBlobs: false'));\n```\n\nwould pin the save shape (the sibling sections each have one). Low risk — the parse tests would catch a malformed key on the next load — but the asymmetry is free to close."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:369ea17c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: unrelated reformat of `capTrajectoryRequestDetail`'s weight expression**\n\nThis hunk (`trajectory_record.dart`, inside `capTrajectoryRequestDetail`) is pure line-wrapping churn on an expression the PR otherwise doesn't change:\n\n```dart\n-        [for (final b in message.blocks) b.text.length].fold<int>(\n-          0,\n-          (a, b) => a + b,\n-        );\n+        [\n+          for (final b in message.blocks) b.text.length,\n+        ].fold<int>(0, (a, b) => a + b);\n```\n\nNo behavior change, not required by gh-1745 — it widens the diff for anyone bisecting this file's history. (Same class as the `_CliMessageCapPolicy.learnedCapFor` reformat flagged in the previous round, which the base merges have since dropped from the diff.) Note the local `dart format` disagrees with the committed constructor style in `trajectory_request_blobs.dart` too (`}) : // ignore:` vs the split form) — that one is the repo-wide pattern, so leave it; this cap hunk is the only real churn. Revert it so the PR stays single-purpose."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:5094b5da",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: gh-1745 correctly moves the heavy `model_request_summary` payloads (per-message block texts, raw wire dumps) out of the session JSONL into a rotated `.fah/trajectories/<sid>/requests/` blob dir with a working kill switch, graceful inline fallback, and preserved usage-fold basis (Σ `chars` survives the stub). Verified: 156 cli/trajectory/config tests, 225 trajectory tests, 152 usage/CLI-e2e tests, and both new app tests pass; `dart analyze` clean.\n\n**Key Issues**:\n- ⚠️ App host spills but its UI can't reach the blob — the Request tab renders empty previews and only the CLI `/trajectory inspect` names the spill file (comment 1)\n- ⚠️ Ticket also cites `shell_job_registry` at 215.92 MB; PR says \"Closes #1745\" without touching it (comment 2)\n- 💡 Ended sessions' blobs never age out (TTL advances only on writes); dead `requestBlobMaxBytes` getter; untested `_trajectoryYaml` save path; one unrelated reformat (comments 3–6)\n\n**Next Steps**:\n1. Surface the spill pointer (or blob content) in the app/fa_ui Request tab\n2. Confirm a follow-up issue covers `shell_job_registry` growth before auto-closing gh-1745\n3. Optional polish: boot-time TTL sweep, use `requestBlobMaxBytes`, save-path test, revert the formatting-only hunk"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:b9ae024a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 69441250a367d00910bf58efb687262a93616375 — run 39688817322 still queued at 2026-10-21T22:56:32.654Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:70919b24",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 69441250a367d00910bf58efb687262a93616375 — stale base at 2026-10-21T22:56:33.992Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-21:d2ab7baf",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: Re-review of the refreshed head (base merges only, no rework since the last round): gh-1745 still correctly moves the heavy `model_request_summary` payloads (per-message previews/block texts, raw wire dumps) out of the session JSONL into a rotated `.fah/trajectories/<sid>/requests/` blob dir with a working kill switch, graceful inline fallback, and a preserved usage-fold basis (Σ `chars` survives the stub). Verified on this head: the 3 named core suites (156 tests), all 225 trajectory tests, and the gh-1745 app test pass; `dart analyze` clean on every changed file (the 5 flutter_app infos are pre-existing on `main`).\n\n**Key Issues**:\n- ⚠️ App host spills but the app/fa_ui Request tab still can't reach the blob — it renders empty previews/dangling colons and no `spillFile` row; only the CLI `/trajectory inspect` names the spill file (comment 1)\n- ⚠️ \"Closes #1745\" retires the ticket while the issue's own triage comment demotes this blob offload to \"second tier\" behind delta-encoding, which is not in this PR; the `shell_job_registry` half is already bounded by #1594 (comment 2, issue read this run)\n- 💡 Ended sessions' blobs never age out (no boot-time sweep); dead `requestBlobMaxBytes` getter; untested `_trajectoryYaml` save path; one formatter-only hunk in `capTrajectoryRequestDetail` (comments 3–6; the previous round's `learnedCapFor` reformat is gone from the diff — resolved)\n\n**Next Steps**:\n1. Surface the spill pointer (or blob content) in the app/fa_ui Request tab and fix the two dangling-`\": \"` renderers\n2. Confirm the gh-1745 closing intent (delta-encoding tier) before merge\n3. Optional polish: boot-time TTL sweep, use `requestBlobMaxBytes`, add the save-path test, revert the formatting hunk"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-21:79264702",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-21",
+      "updatedAt": "2026-10-21",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 3f0d0b3ed458b9c25b3e0d17187800e8a0f5c3f3 — run 39693638832 still queued at 2026-10-21T23:39:31.684Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    }
+  ]
+}
