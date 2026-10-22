@@ -197,6 +197,18 @@ class AgentService extends ChangeNotifier
     /// (`provider: aiai`). The [_withEnv] boot maps the live
     /// [ProviderRegistry] instead.
     @visibleForTesting List<CustomProviderEntry> customProviders = const [],
+
+    /// gh-1745 request-blob spilling (`trajectory.requestBlobs` in the
+    /// CLI; the app host carries the same policy with the same default).
+    /// `false` restores the legacy inline persistence.
+    this.trajectoryRequestBlobs = true,
+
+    /// `trajectory.requestBlobMaxMb` — the per-session blob-dir byte
+    /// budget in MB.
+    this.trajectoryRequestBlobMaxMb = 50,
+
+    /// `trajectory.requestBlobTtlDays` — blob age bound in days.
+    this.trajectoryRequestBlobTtlDays = 30,
   }) : _resolveSecretName = null,
        _providerRegistry = null,
        // ignore: prefer_initializing_formals
@@ -518,6 +530,12 @@ class AgentService extends ChangeNotifier
 
     /// The `~/.fah` home the yaml loader reads (issue #1078).
     String? configHomeDir,
+
+    /// gh-1745 spill policy — `_withEnv` boots with the defaults (the
+    /// app's yaml surface carries no trajectory section yet).
+    bool trajectoryRequestBlobs = true,
+    int trajectoryRequestBlobMaxMb = 50,
+    int trajectoryRequestBlobTtlDays = 30,
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
     : _skillsHomeDir = skillsHomeDir,
@@ -525,6 +543,12 @@ class AgentService extends ChangeNotifier
        _watchExternalSessions = watchExternalSessions,
        // ignore: prefer_initializing_formals
        _includeSharedSessionRoots = includeSharedSessionRoots,
+       // ignore: prefer_initializing_formals
+       trajectoryRequestBlobs = trajectoryRequestBlobs,
+       // ignore: prefer_initializing_formals
+       trajectoryRequestBlobMaxMb = trajectoryRequestBlobMaxMb,
+       // ignore: prefer_initializing_formals
+       trajectoryRequestBlobTtlDays = trajectoryRequestBlobTtlDays,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
        _skillToggles = initialSkillToggles,
@@ -1854,6 +1878,23 @@ class AgentService extends ChangeNotifier
   /// dump is redacted under the config active at capture time (E1).
   TrajectoryBlobPersister? _trajectoryBlobPersister;
   Session? _trajectoryBlobPersisterSession;
+
+  /// gh-1745 request-blob store (the session's spill dir + rotation
+  /// policy); built lazily on the first spilled capture. The service's
+  /// env resolves `.fah/trajectories/<sid>/requests/` next to the same
+  /// project `.fah` the session lives in.
+  TrajectoryRequestBlobStore? _requestBlobStore;
+
+  /// gh-1745 spill policy (ctor seams — the app host carries the CLI's
+  /// `trajectory.requestBlobs` config with the same defaults).
+  final bool trajectoryRequestBlobs;
+  final int trajectoryRequestBlobMaxMb;
+  final int trajectoryRequestBlobTtlDays;
+
+  /// The per-session blob-dir byte budget ([TrajectorySection]
+  /// `.requestBlobMaxBytes` shape — the canonical MB→bytes derivation,
+  /// consumed by the store instead of a call-site shift).
+  int get trajectoryRequestBlobMaxBytes => trajectoryRequestBlobMaxMb << 20;
 
   /// The producer behind [trajectory]: rebuilt from the active branch on
   /// session open/switch, mirrored live from agent events, and fed the

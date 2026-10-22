@@ -74,6 +74,7 @@ final class AgentCliConfig {
     this.redactionPipeline,
     this.jobLogDir,
     this.spills,
+    this.projectContext,
     this.modelsConfig,
     this.onModelsConfigChanged,
     this.onModelChanged,
@@ -158,6 +159,10 @@ final class AgentCliConfig {
     this.machineName,
     this.persistAbortedPartials = false,
     this.wireDump = false,
+    this.trajectoryRequestBlobs = true,
+    this.trajectoryRequestBlobMaxMb = 50,
+    this.trajectoryRequestBlobMaxBytes = 50 << 20,
+    this.trajectoryRequestBlobTtlDays = 30,
     this.updateCommand,
     this.autoUpdate = AutoUpdateMode.notify,
   });
@@ -182,6 +187,27 @@ final class AgentCliConfig {
   /// captured per request, redacted through the active pipeline, capped,
   /// and persisted as a `trajectory_wire_dump` session record.
   final bool wireDump;
+
+  /// gh-1745 request-blob spilling (`trajectory.requestBlobs` yaml,
+  /// default true): the heavy half of every request capture — per-message
+  /// previews/block texts, the raw wire dump — is persisted to
+  /// `.fah/trajectories/<sid>/requests/` instead of the session JSONL,
+  /// whose `model_request_summary` record keeps lightweight metadata plus
+  /// a `spillFile` pointer. `false` restores the legacy inline
+  /// persistence byte-identically.
+  final bool trajectoryRequestBlobs;
+
+  /// `trajectory.requestBlobMaxMb` — the per-session blob-dir byte budget
+  /// (default 50 MB).
+  final int trajectoryRequestBlobMaxMb;
+
+  /// The same budget in bytes ([TrajectorySection.requestBlobMaxBytes]
+  /// threaded through [CliConfig] at boot, gh-1745 rework): the blob
+  /// store consumes this instead of re-shifting MB inline.
+  final int trajectoryRequestBlobMaxBytes;
+
+  /// `trajectory.requestBlobTtlDays` — blob age bound (default 30 days).
+  final int trajectoryRequestBlobTtlDays;
 
   /// The self-update policy (issue #1377, `auto_update` yaml key), plumbed
   /// from [CliConfig.autoUpdate] by the host at boot. Mutable: the
@@ -526,6 +552,11 @@ final class AgentCliConfig {
   /// the user one, wholesale. Null or inactive (`enabled: false` /
   /// `threshold: 0`) = no spill hooks attached, byte-identical legacy.
   final SpillsConfig? spills;
+
+  /// The resolved `projectContext:` section (issue #1761) — the merged
+  /// project-context budget. Null = the 32KB default; `maxBytes: 0`
+  /// disables the section and skips every file read.
+  final ProjectContextConfig? projectContext;
 
   /// The live models config (the `models:` section of `~/.fah/config.yaml`),
   /// shared with the executable: `/models set`/`/models remove` mutate its

@@ -177,6 +177,7 @@ const _nestedKeySources = <String, String>{
   'spills.threshold': 'lib/src/spill/spill.dart',
   'spills.headChars': 'lib/src/spill/spill.dart',
   'spills.tailChars': 'lib/src/spill/spill.dart',
+  'projectContext.maxBytes': 'lib/src/prompts/project_context.dart',
   'subagents.heartbeatMinutes': 'lib/src/task/subagent_heartbeat.dart',
   'subagents.stallMinutes': 'lib/src/task/subagent_heartbeat.dart',
   'output.streamThinking': 'lib/src/cli/cli_config.dart',

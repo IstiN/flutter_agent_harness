@@ -732,14 +732,32 @@ extension on AgentCli {
     return (window: false, cap: false);
   }
 
-  /// Applies the endpoint-reported context window for [model] when it
-  /// differs from the carried one (called from [_refreshModelCache];
-  /// [_rolesPinnedLimits] keeps user-pinned `roles:` limits winning).
+  /// Applies the endpoint-reported context window for [model] (called
+  /// from [_refreshModelCache]; [_rolesPinnedLimits] keeps user-pinned
+  /// `roles:` limits winning). A DIFFERING report rebuilds the model and
+  /// notes the swap; a CONFIRMING report (the well-catalogued common
+  /// case) leaves the model alone but still publishes the verification
+  /// into the shared registry — gh-1742 review round 1, comment 4: the
+  /// provider just verified the window, so the AC6 badge must not keep
+  /// marking it unverified.
   void _applyDetectedContextWindow(Model model) {
     final detected = _modelContextWindows[model.id];
-    if (detected != null && detected != model.contextWindow) {
-      _replaceModelLimits(contextWindow: detected);
+    if (detected == null) return;
+    if (detected != model.contextWindow) {
+      _replaceModelLimits(
+        contextWindow: detected,
+        // gh-1742 invariant 2: the detection publishes into the shared
+        // registry so children spawned afterwards ride the SERVED
+        // window, not the advertised one.
+        windowSource: ContextWindowSource.endpointReport,
+      );
       io.writeln(_style.dim('model context window: $detected (from endpoint)'));
+    } else {
+      contextWindowRegistry.publish(
+        model: model,
+        window: detected,
+        source: ContextWindowSource.endpointReport,
+      );
     }
   }
 
@@ -1256,6 +1274,7 @@ extension on AgentCli {
       headers: current.headers,
       compat: current.compat,
       authHeader: current.authHeader,
+      maxImages: catalogMaxImages[modelId],
     );
     await _session?.appendModelChange(
       provider: current.provider,
@@ -1360,6 +1379,7 @@ extension on AgentCli {
     _replaceModelLimits(
       contextWindow: isContext ? value : null,
       maxTokens: isContext ? null : value,
+      windowSource: isContext ? ContextWindowSource.userPin : null,
     );
   }
 
@@ -1378,7 +1398,10 @@ extension on AgentCli {
   void _applyModelLimitEdit(String field, int value) {
     switch (field) {
       case 'contextWindow':
-        _replaceModelLimits(contextWindow: value);
+        _replaceModelLimits(
+          contextWindow: value,
+          windowSource: ContextWindowSource.userPin,
+        );
         io.writeln('model context window set to $value');
       case 'maxTokens':
         _replaceModelLimits(maxTokens: value);
@@ -1388,25 +1411,32 @@ extension on AgentCli {
     }
   }
 
-  /// Rebuilds the active model with new token limits, preserving every other
-  /// field (endpoint detection and `/model-edit`).
-  void _replaceModelLimits({int? contextWindow, int? maxTokens}) {
+  /// Rebuilds the active model with new token limits, preserving every
+  /// other field (endpoint detection and `/model-edit`). The copy rides
+  /// [Model.copyWith] — the one field list (gh-1742 review round 1,
+  /// comment 5) — so the recent fields (thinkingLevel, capabilityNotes,
+  /// the scoped watchdogs) survive the swap.
+  void _replaceModelLimits({
+    int? contextWindow,
+    int? maxTokens,
+    ContextWindowSource? windowSource,
+  }) {
     final current = _agent.state.model;
-    _agent.state.model = Model(
-      id: current.id,
-      name: current.name,
-      api: current.api,
-      provider: current.provider,
-      baseUrl: current.baseUrl,
-      reasoning: current.reasoning,
-      input: current.input,
-      cost: current.cost,
-      contextWindow: contextWindow ?? current.contextWindow,
-      maxTokens: maxTokens ?? current.maxTokens,
-      headers: current.headers,
-      compat: current.compat,
-      authHeader: current.authHeader,
+    _agent.state.model = current.copyWith(
+      contextWindow: contextWindow,
+      maxTokens: maxTokens,
     );
+    // gh-1742 invariant 2: a window write publishes into the shared
+    // registry (endpoint report or user pin — the pin wins by publish
+    // order), so main, children, and the meter resolve ONE window per
+    // model identity.
+    if (contextWindow != null && windowSource != null) {
+      contextWindowRegistry.publish(
+        model: _agent.state.model,
+        window: contextWindow,
+        source: windowSource,
+      );
+    }
     unawaited(config.onModelChanged?.call(_agent.state.model));
   }
 }

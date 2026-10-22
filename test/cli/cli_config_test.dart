@@ -1054,7 +1054,9 @@ prompts:
             StuckFollowUpMode.autonomous,
             reason: 'fa run: unattended — the autonomous default',
           );
-          const explicit = StuckToolConfig(followUp: StuckFollowUpMode.advisory);
+          const explicit = StuckToolConfig(
+            followUp: StuckFollowUpMode.advisory,
+          );
           expect(
             cli(headless: true, stuck: explicit).effectiveStuckTool(),
             same(explicit),
@@ -1231,6 +1233,61 @@ prompts:
     test('non-map yaml doc loads as null', () {
       writeProjectConfig('just-a-string\n');
       expect(loadProjectSpillsConfig(tmp.path), isNull);
+    });
+  });
+
+  group('projectContext section (issue #1761)', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-config-test-');
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    test('loads as null when the section is absent (default budget)', () {
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.projectContext, isNull);
+    });
+
+    test('round-trips a custom maxBytes', () async {
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(projectContext: const ProjectContextConfig(maxBytes: 65536)),
+      );
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.projectContext?.maxBytes, 65536);
+      // Full yaml fidelity: emitting again reproduces the same document.
+      expect(
+        loaded.toYaml(),
+        CliConfig(
+          projectContext: const ProjectContextConfig(maxBytes: 65536),
+        ).toYaml(),
+      );
+    });
+
+    test('maxBytes 0 survives the save (explicit opt-out)', () async {
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(projectContext: const ProjectContextConfig(maxBytes: 0)),
+      );
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.projectContext?.maxBytes, 0);
+      expect(loaded.projectContext?.isDisabled, isTrue);
+    });
+
+    test('unknown keys are tolerated with a note, never a boot failure', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('projectContext:\n  bogus: 1\n');
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.projectContext?.maxBytes, 32768);
+      expect(
+        loaded.projectContext?.notes,
+        contains('projectContext.bogus: unknown key (ignored)'),
+      );
     });
   });
 
@@ -1551,6 +1608,138 @@ memory:
       file.createSync(recursive: true);
       file.writeAsStringSync('trajectory:\n');
       expect(loadCliConfig(tmp.path).wireDump, isFalse);
+    });
+
+    test('gh-1745: requestBlobs defaults ON; the rotation knobs parse', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory:\n');
+      var config = loadCliConfig(tmp.path);
+      expect(config.trajectoryRequestBlobs, isTrue);
+      expect(config.trajectoryRequestBlobMaxMb, 50);
+      expect(config.trajectoryRequestBlobTtlDays, 30);
+
+      file.writeAsStringSync(
+        'trajectory:\n'
+        '  requestBlobs: false\n'
+        '  requestBlobMaxMb: 10\n'
+        '  requestBlobTtlDays: 7\n',
+      );
+      config = loadCliConfig(tmp.path);
+      expect(config.trajectoryRequestBlobs, isFalse);
+      expect(config.trajectoryRequestBlobMaxMb, 10);
+      expect(config.trajectoryRequestBlobTtlDays, 7);
+    });
+
+    test('gh-1745: rejects bad requestBlob scalars and keys stay strict', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory:\n  requestBlobMaxMb: 0\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"trajectory.requestBlobMaxMb" must be a positive '
+                'integer'),
+          ),
+        ),
+      );
+      file.writeAsStringSync('trajectory:\n  requestBlobTtlDays: soon\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"trajectory.requestBlobTtlDays" must be a positive '
+                'integer'),
+          ),
+        ),
+      );
+      file.writeAsStringSync('trajectory:\n  requestBlobs: 1\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"trajectory.requestBlobs" must be a boolean'),
+          ),
+        ),
+      );
+    });
+
+    test('gh-1745 rework: the byte budget threads the section getter '
+        '(requestBlobMaxBytes)', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory:\n  requestBlobMaxMb: 10\n');
+      expect(loadCliConfig(tmp.path).trajectoryRequestBlobMaxBytes, 10 << 20);
+      // The default budget matches the store's default.
+      file.writeAsStringSync('trajectory:\n');
+      expect(loadCliConfig(tmp.path).trajectoryRequestBlobMaxBytes, 50 << 20);
+      // The bytes value is DERIVED from the Mb knob — the save path never
+      // emits it (the file stays minimal, Mb remains the yaml surface).
+      expect(
+        CliConfig(trajectoryRequestBlobMaxMb: 10).toYaml(),
+        isNot(contains('requestBlobMaxBytes')),
+      );
+    });
+
+    test('gh-1745: the save path emits requestBlobs/knobs only when '
+        'non-default, and they round-trip', () async {
+      // Defaults are never written — the file-stays-minimal convention.
+      expect(CliConfig().toYaml(), isNot(contains('trajectory:')));
+      // The kill switch saves (the reviewer's pinned shape).
+      final off = CliConfig(trajectoryRequestBlobs: false).toYaml();
+      expect(off, contains('trajectory:\n  requestBlobs: false'));
+      // Non-default knobs save; the derived bytes value never does.
+      final tuned = CliConfig(
+        trajectoryRequestBlobs: false,
+        trajectoryRequestBlobMaxMb: 10,
+        trajectoryRequestBlobTtlDays: 7,
+      ).toYaml();
+      expect(tuned, contains('requestBlobs: false'));
+      expect(tuned, contains('requestBlobMaxMb: 10'));
+      expect(tuned, contains('requestBlobTtlDays: 7'));
+      // Full save→load round-trip: what the emitter writes parses back.
+      await saveCliConfig(tmp.path, CliConfig(trajectoryRequestBlobs: false));
+      final reloaded = loadCliConfig(tmp.path);
+      expect(reloaded.trajectoryRequestBlobs, isFalse);
+      expect(reloaded.trajectoryRequestBlobMaxMb, 50);
+      expect(reloaded.trajectoryRequestBlobTtlDays, 30);
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(
+          trajectoryRequestBlobs: true,
+          trajectoryRequestBlobMaxMb: 10,
+          trajectoryRequestBlobTtlDays: 7,
+        ),
+      );
+      final tunedReloaded = loadCliConfig(tmp.path);
+      expect(tunedReloaded.trajectoryRequestBlobs, isTrue);
+      expect(tunedReloaded.trajectoryRequestBlobMaxMb, 10);
+      expect(tunedReloaded.trajectoryRequestBlobTtlDays, 7);
+    });
+
+    test('gh-1745: loadProjectTrajectorySection carries the whole section',
+        () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('other: 1\n');
+      expect(loadProjectTrajectorySection(tmp.path), isNull);
+      file.writeAsStringSync(
+        'trajectory:\n  requestBlobs: false\n  requestBlobMaxMb: 5\n',
+      );
+      final section = loadProjectTrajectorySection(tmp.path);
+      expect(section, isNotNull);
+      expect(section!.requestBlobs, isFalse);
+      expect(section.requestBlobMaxMb, 5);
+      expect(section.requestBlobTtlDays, 30);
+      // The legacy wireDump loader still resolves through the same parse.
+      expect(loadProjectWireDump(tmp.path), isFalse);
     });
 
     test('rejects unknown trajectory keys', () {

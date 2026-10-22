@@ -25,17 +25,16 @@ extension AgentCliPromptComposition on AgentCli {
       // refilterMcpTools, so recomposing here stays bare.
       _agent.state.systemPrompt = _mcp.composePrompt(
         _withFinalizeGate(cliPiModePrompt),
-        contextSection: formatProjectContext(_contextFiles),
+        contextSection: formatProjectContext(_context),
         skillsSection: '',
       );
       return;
     }
     _agent.state.systemPrompt = _mcp.composePrompt(
       _withFinalizeGate(
-        config.systemPrompt ??
-            _withRecallContract(_currentMode.systemPrompt),
+        config.systemPrompt ?? _withRecallContract(_currentMode.systemPrompt),
       ),
-      contextSection: formatProjectContext(_contextFiles),
+      contextSection: formatProjectContext(_context),
       skillsSection: formatSkillsForPrompt(
         _enabledSkills,
         touchedPaths: _touchedPaths,

@@ -31,6 +31,7 @@ import '../agent/misuse_breaker.dart';
 import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
 import 'ansi_markdown.dart';
+import 'live_token_rate_meter.dart';
 import 'path_candidates.dart';
 import 'slash_args.dart';
 import 'status_line_git_probe.dart';
@@ -39,6 +40,7 @@ import 'tui_status_line.dart'
         StatusLineConfig,
         StatusLineSnapshot,
         TuiStatusLine,
+        formatTokenRate,
         resolveStatusLineSpec;
 import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
@@ -58,8 +60,10 @@ import '../agent/finalize_gate.dart';
 import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
     show TrajectoryHiddenRecordPreview, projectHiddenRecordPreviews;
-import '../trajectory/trajectory_record.dart' show TrajectoryCompactedRecord;
+import '../trajectory/trajectory_record.dart'
+    show TrajectoryCompactedRecord, stripTrajectoryRequestDetail;
 import '../trajectory/trajectory_blobs.dart';
+import '../trajectory/trajectory_request_blobs.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
 import '../agent/message_cap.dart';
@@ -121,6 +125,7 @@ import '../env/cwd_override_env.dart';
 import '../env/execution_env.dart';
 import '../env/session_vars_execution_env.dart';
 import '../hosts/host_agent_wiring.dart';
+import '../compaction/context_window_registry.dart';
 import '../hosts/host_capability_profile.dart';
 import '../hosts/host_extension_api.dart';
 import '../hosts/host_wiring_builder.dart';
@@ -153,7 +158,11 @@ import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../providers/thinking.dart';
 import '../agent/image_registry.dart'
-    show ImageRegistryConfig, imageDropNotice, imageRegistryConfig;
+    show
+        ImageRegistryConfig,
+        imageCapLearnedNotice,
+        imageDropNotice,
+        imageRegistryConfig;
 import '../providers/provider_common.dart'
     show
         authExpiredProvider,
@@ -346,6 +355,13 @@ const String headlessIncompleteMarker = '__FA_INCOMPLETE';
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
 class AgentCli {
+  /// The shared per-model context-window registry (gh-1742 invariant 2):
+  /// live endpoint detections and `/model-edit` pins publish here, and
+  /// every `task` child spawned afterwards resolves its compaction
+  /// window from the SAME entry — the 131,072-advertised-vs-478k-served
+  /// asymmetry can no longer fork main from its children.
+  final ContextWindowRegistry contextWindowRegistry = ContextWindowRegistry();
+
   /// Creates an [AgentCli]. [streamFunction] overrides the provider adapter
   /// (used in tests); otherwise one is built from
   /// [AgentCliConfig.providerKind] and [AgentCliConfig.apiKey].
@@ -554,6 +570,10 @@ class AgentCli {
         // (constructed inside the builder) may not exist yet.
         mainMailbox: () => _subagentManager.mailboxOf('main'),
         subagents: SubagentServices(
+          // gh-1742: children resolve the same registered windows the
+          // CLI publishes on detection/pin (invariant 2), under the
+          // same owner cap.
+          contextWindowRegistry: contextWindowRegistry,
           homeDir: config.homeDir,
           machineName: config.machineName,
           a2a: config.a2aConfig,
@@ -1439,6 +1459,16 @@ class AgentCli {
   var _rolesDriven = false;
   final _usage = UsageAccumulator();
 
+  /// gh-1762: the live token-rate meter — fed by the agent event tap
+  /// (text/thinking/tool-call-arg deltas + per-response usage), read by
+  /// the band snapshot and the classic footer. `ledgerClock` keeps the
+  /// rate exact on a scripted clock in tests; the window comes from
+  /// `tui.statusLine.rateWindowMs` (default 5000).
+  late final LiveTokenRateMeter _meter = LiveTokenRateMeter(
+    now: ledgerClock ?? DateTime.now,
+    windowMs: config.statusLine?.rateWindowMs ?? kDefaultRateWindowMs,
+  );
+
   // Issue #277 hub driver state (see agent_hub_cli.dart): the projection
   // accumulates running spans; the panel log keeps deferred (btw) history;
   // lazy subscriptions keep task-block rendering for hub-less sessions.
@@ -1596,6 +1626,10 @@ class AgentCli {
   TrajectoryBlobPersister? _trajectoryBlobPersister;
   Session? _trajectoryBlobPersisterSession;
 
+  /// gh-1745 request-blob store (the session's spill dir + rotation
+  /// policy); built lazily on the first spilled capture.
+  TrajectoryRequestBlobStore? _requestBlobStore;
+
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass
   /// to bracket runs with frames.
@@ -1705,7 +1739,7 @@ class AgentCli {
   /// "keeping last good" serves when the project section turns broken
   /// (issue #1151 review; mirrors the tools scope cache).
   Map<String, bool>? _lastGoodProjectSkillToggles;
-  List<ProjectContextFile> _contextFiles = const [];
+  LoadedProjectContext _context = LoadedProjectContext.empty;
 
   /// Consent for third-party (Claude/Copilot/Codex) skill & agent roots.
   /// Mutable: the startup consent dialog and `/skills access` change it;
@@ -2467,14 +2501,11 @@ final class _CliMessageCapPolicy implements MessageCapPolicy {
   final AgentCli _cli;
   @override
   int? learnedCapFor(Model model) => ModelCapsStore.learnedCapOr(
-        _cli._modelCaps.recordFor(model.provider, model.id),
-        _cli
-            .config
-            .modelsConfig
-            ?.overrides
-            .lookup(model.provider, model.id)
-            ?.messageCap,
-      );
+    _cli._modelCaps.recordFor(model.provider, model.id),
+    _cli.config.modelsConfig?.overrides
+        .lookup(model.provider, model.id)
+        ?.messageCap,
+  );
 
   @override
   void learnFromRefusal(Model model, MessageCapRefusal refusal) {

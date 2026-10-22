@@ -621,7 +621,20 @@ Future<void> _runApp(List<String> args) async {
 
   // Raw wire dumps (issue #385 F5): opt-in only — the project
   // `.fah/config.yaml` `trajectory:` section wins over the user one.
-  final wireDump = loadProjectWireDump(cwd) ?? saved.wireDump;
+  // gh-1745: the same section carries the request-blob spill policy
+  // (default ON; a project kill switch wins over the user default too).
+  final trajectorySection = loadProjectTrajectorySection(cwd);
+  final wireDump = trajectorySection?.wireDump ?? saved.wireDump;
+  final trajectoryRequestBlobs =
+      trajectorySection?.requestBlobs ?? saved.trajectoryRequestBlobs;
+  final trajectoryRequestBlobMaxMb =
+      trajectorySection?.requestBlobMaxMb ?? saved.trajectoryRequestBlobMaxMb;
+  final trajectoryRequestBlobMaxBytes =
+      trajectorySection?.requestBlobMaxBytes ??
+      saved.trajectoryRequestBlobMaxBytes;
+  final trajectoryRequestBlobTtlDays =
+      trajectorySection?.requestBlobTtlDays ??
+      saved.trajectoryRequestBlobTtlDays;
 
   // Remote provider catalog (fa1.dev/models-catalog.json): default model
   // ids and per-provider context-window tables for endpoints that don't
@@ -905,6 +918,9 @@ Future<void> _runApp(List<String> args) async {
   // one (same merge as the other project sections). Null = absent —
   // no spill hooks, byte-identical legacy boot.
   final spillsConfig = loadProjectSpillsConfig(cwd) ?? saved.spills;
+  // The projectContext budget (issue #1761): user-level `projectContext:`
+  // section only — a global resource knob, not a repo-traveling one.
+  final projectContextConfig = saved.projectContext;
   final redactor = buildSecretRedactor(
     roleSecrets: roleSecrets,
     keys: keyCache,
@@ -1391,6 +1407,7 @@ Future<void> _runApp(List<String> args) async {
         // runner's $RUNNER_TEMP). Null keeps <cwd>/.fah/bash_jobs.
         jobLogDir: jobLogDirOverride(Platform.environment),
         spills: spillsConfig,
+        projectContext: projectContextConfig,
         // Shared by the env config and the presence store below.
         env: cliEnv,
         // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the
@@ -1536,6 +1553,10 @@ Future<void> _runApp(List<String> args) async {
         compactionEngine: compactionEngine,
         compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
         wireDump: wireDump,
+        trajectoryRequestBlobs: trajectoryRequestBlobs,
+        trajectoryRequestBlobMaxMb: trajectoryRequestBlobMaxMb,
+        trajectoryRequestBlobMaxBytes: trajectoryRequestBlobMaxBytes,
+        trajectoryRequestBlobTtlDays: trajectoryRequestBlobTtlDays,
         contextWindowCap: saved.contextWindowCap,
         stuckTool: saved.stuckTool,
         subagents: saved.subagents,
