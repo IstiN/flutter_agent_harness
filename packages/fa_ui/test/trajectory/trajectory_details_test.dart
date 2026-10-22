@@ -432,6 +432,28 @@ void main() {
     expect(_clipboardText, contains('"recordId": "details/assistant"'));
   });
 
+  testWidgets('gh-1745: a spilled request names its blob; the stub '
+      'messages carry no dangling colon', (tester) async {
+    _mockClipboard();
+    await _openRecord(tester, spilledAssistant);
+
+    await _openTab(tester, 'Request');
+    // The spill pointer is surfaced — the same blob `/trajectory inspect`
+    // names on the CLI side (review: the app host spilled but its UI
+    // could not reach the blob).
+    expect(find.text('Request blob'), findsOneWidget);
+    expect(
+      find.textContaining('.fah/trajectories/s1/requests/1.json'),
+      findsOneWidget,
+    );
+    // The copy text keeps the role+chars stubs, without a dangling `: `
+    // (the preview lives in the blob, not this record).
+    await _copy(tester);
+    expect(_clipboardText, contains('user · 9 chars'));
+    expect(_clipboardText, contains('assistant · 30 chars'));
+    expect(_clipboardText, isNot(contains('chars: ')));
+  });
+
   testWidgets('copy buttons place tool payloads on the clipboard', (
     tester,
   ) async {
