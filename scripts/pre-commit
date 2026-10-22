@@ -65,7 +65,10 @@ if command -v dart >/dev/null 2>&1; then
     # uses 0.11.0-only keys (ignore_locals/ignorable); the strict config
     # parser throws ConfigException on unknown keys, so older pins fail
     # rather than silently run without Type-2 detection.
-    0.1[1-9].*|0.[2-9][0-9].*|[1-9].*)
+    # gh-1738: floor 0.15.0 — the root config now carries the similarity
+    # gate (gates.similarity); 0.11.0-0.14.x parsers ConfigException on
+    # the unknown gate id, bricking every commit.
+    0.1[5-9].*|0.[2-9][0-9].*|[1-9].*)
       echo "🧪 crap4dart gates (staged core files)..."
       # gh-1106: --baseline — the Type-2 duplication gate ships with a
       # committed snapshot of pre-existing findings; hooks must flag only
@@ -86,8 +89,8 @@ if command -v dart >/dev/null 2>&1; then
     "")
       ;; # not activated — skip silently (CI and the fast gate cover it)
     *)
-      echo "⚠️  crap4dart $C4D_VER is too old for the gates (need >= 0.11.0);" \
-           "skipping — run: dart pub global activate crap4dart '>=0.11.0 <0.12.0'" >&2
+      echo "⚠️  crap4dart $C4D_VER is too old for the gates (need >= 0.15.0 — gh-1738 similarity keys);" \
+           "skipping — run: dart pub global activate crap4dart '>=0.15.0 <0.16.0'" >&2
       ;;
   esac
 fi

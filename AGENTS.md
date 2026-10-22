@@ -1796,10 +1796,11 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   `ci_fast_gate.sh` (ratchet — only tighten; the per-package gates above
   cannot see across module boundaries).
 - CRAP ratchet (`crap4dart analyze`, tool pinned as
-  `dart pub global activate crap4dart ">=0.11.0 <0.12.0"` — gh-1106
-  superseded the old 0.10 bound; gates/baselines need 0.11), one config
-  per package, thresholds are the current per-package max — only down
-  from here:
+  `dart pub global activate crap4dart ">=0.15.0 <0.16.0"` — gh-1738
+  superseded the old 0.11.0 bound: the root config's `gates.similarity`
+  block ConfigExceptions on <0.15.0 parsers; gates/baselines need 0.15),
+  one config per package, thresholds are the current per-package max —
+  only down from here:
   - core (`crap4dart.yaml`, sources `[lib, bin]`): **12.0** (issue #1234:
     the named census offenders moved — CC-12 trio + readPasteboardImage
     16.32 split, the 0%-cov CC-3 quartet and the named CC-9 tier covered

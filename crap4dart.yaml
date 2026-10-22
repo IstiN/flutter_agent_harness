@@ -169,3 +169,76 @@ gates:
       # contains a yellow/black pattern. Not golden images — excluded,
       # not a detector bug to chase.
       - 'test/integration/**'
+
+  # File-level near-duplicate gate (issue #1738, crap4dart 0.15.0).
+  # Guard rails from the measured inventory on this repo (3498 scanned →
+  # exactly the card's 25 files / 12 clusters after the excludes below):
+  # only NEW near-duplicates fail — the historical clusters live in
+  # .crap-baseline.json (via `check --save-baseline`), here is WHY each
+  # stays, not fixed in this card:
+  #   test/ci_*_upload_retry_guard_test triple — sibling CI-shard retry
+  #     guards; shared scaffolding to extract (follow-up triage debt).
+  #   flutter_app/integration_test/{bash,edit}_tool_test — card-named
+  #     shared integration scaffolding.
+  #   test/integration/provider_{ollama,openrouter}_test — card-named
+  #     shared provider scaffolding (the anthropic leg drifted below
+  #     threshold since the card's measurement).
+  #   flutter_app/lib/network/ws_connector_{io,web} — platform-split
+  #     twins (conditional-export io/web halves of one connector).
+  #   flutter_app/lib/services/{folder,upload}_picker_web — platform
+  #     twins, same pattern, one web picker family.
+  #   app_preflight_probe_io ⇄ test/native_test_guard — the probe and
+  #     its native-test guard share the probe script by design.
+  #   media_slot_picker_page / provider_registry tests across
+  #     flutter_app ⇄ packages/fa_ui — drifted cross-package test
+  #     siblings (containment 1.00 on provider_registry: the fa_ui copy
+  #     is a superset; unifying is a refactor card).
+  #   {transformers_js,webllm}_cache_section tests + the two no_tools
+  #     prompt notes — provider twins differing by provider name;
+  #     parameterizing the notes/generators is the prompt-corpus
+  #     refactor card (gh-1738 sanctioned baseline-with-comment here).
+  #   test/cli/agent_cli_tui_{adapter,socket}403 — two flavours of the
+  #     same 403 regression test.
+  #   test/integration/fa_cli_thinking_{abort,livestream_pty} — shared
+  #     thinking-stream scaffolding.
+  # Baseline entries are keyed on the exact finding message (incl. the
+  # jaccard/containment values): ANY drift in a clustered file re-fails
+  # the gate and forces a deliberate re-baseline.
+  similarity:
+    enabled: true
+    # 8-token shingles, file-level; 0.5/0.85 are the card's measured
+    # operating point (caught every real cluster, no noise).
+    jaccard: 0.5
+    containment: 0.85
+    include: # md docs + dart sources (default is md-only)
+      - '**.md'
+      - '**.dart'
+    exclude:
+      # BY-DESIGN twins — excluded via glob per gh-1738 AC2, never
+      # baselined (a baseline entry would silently mask edits to them):
+      # FlutterFire CLI output and the template it is stamped from —
+      # regenerate the real file, never hand-edit either side.
+      - 'flutter_app/firebase_options.template.dart'
+      - 'flutter_app/firebase_options.dart'
+      - 'flutter_app/lib/firebase_options.dart'
+      # gen-l10n output: per-locale classes from app_en/app_ru.arb,
+      # generated, structurally near-identical by construction.
+      - 'flutter_app/lib/l10n/app_localizations_*.dart'
+      # Vendored third-party packages — every other gate excludes them
+      # (duplication, loc, CRAP); their internal duplication is
+      # upstream's business, not this repo's corpus.
+      - 'vendor/**'
+      # Generated deploy output (site/ is built from blog/ + templates —
+      # regen_assetlinks.sh, check_install_pin.sh guard pieces of it);
+      # a near-duplicate of its source is the definition of generated.
+      - 'site/**'
+      # Installed runtime copies of the bundled prompts/skills sources —
+      # the agent runtime loads .fah/skills; the mirror is the feature.
+      - '.fah/**'
+      # Frozen fixture preserving a RETIRED js-apps skill revision —
+      # intentionally an old copy; it must not track the living skill.
+      - 'flutter_app/test/fixtures/retired_*.md'
+      # Local scratch from the standalone-SDK lane recipe (untracked,
+      # never present on CI runners) — kept out so local runs match CI.
+      - '.dart-tools/**'
+      - '.dart-home/**'
