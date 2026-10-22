@@ -1054,7 +1054,9 @@ prompts:
             StuckFollowUpMode.autonomous,
             reason: 'fa run: unattended — the autonomous default',
           );
-          const explicit = StuckToolConfig(followUp: StuckFollowUpMode.advisory);
+          const explicit = StuckToolConfig(
+            followUp: StuckFollowUpMode.advisory,
+          );
           expect(
             cli(headless: true, stuck: explicit).effectiveStuckTool(),
             same(explicit),
@@ -1231,6 +1233,61 @@ prompts:
     test('non-map yaml doc loads as null', () {
       writeProjectConfig('just-a-string\n');
       expect(loadProjectSpillsConfig(tmp.path), isNull);
+    });
+  });
+
+  group('projectContext section (issue #1761)', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-config-test-');
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    test('loads as null when the section is absent (default budget)', () {
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.projectContext, isNull);
+    });
+
+    test('round-trips a custom maxBytes', () async {
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(projectContext: const ProjectContextConfig(maxBytes: 65536)),
+      );
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.projectContext?.maxBytes, 65536);
+      // Full yaml fidelity: emitting again reproduces the same document.
+      expect(
+        loaded.toYaml(),
+        CliConfig(
+          projectContext: const ProjectContextConfig(maxBytes: 65536),
+        ).toYaml(),
+      );
+    });
+
+    test('maxBytes 0 survives the save (explicit opt-out)', () async {
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(projectContext: const ProjectContextConfig(maxBytes: 0)),
+      );
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.projectContext?.maxBytes, 0);
+      expect(loaded.projectContext?.isDisabled, isTrue);
+    });
+
+    test('unknown keys are tolerated with a note, never a boot failure', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('projectContext:\n  bogus: 1\n');
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.projectContext?.maxBytes, 32768);
+      expect(
+        loaded.projectContext?.notes,
+        contains('projectContext.bogus: unknown key (ignored)'),
+      );
     });
   });
 

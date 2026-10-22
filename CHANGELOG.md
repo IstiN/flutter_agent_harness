@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- feat(#1761): the 32KB project-context budget never cuts silently again.
+  A file truncated to its head excerpt now carries an extended
+  `<!-- From: path — N bytes, only the first M shown -->` marker plus an
+  explicit MUST-read-the-full-file instruction (offset/limit/ranges,
+  prompt copy in `prompts/context/project_context_read_full.md`); a file
+  dropped entirely leaves a one-line tombstone naming its path instead of
+  vanishing; and the user gets a dim boot line per truncated/dropped file
+  (CLI line mode prints directly, TUI re-prints after the banner, the app
+  logs through its AppLog boot-notice seam). New `projectContext:` config
+  section: `maxBytes` (default 32768) — `0` disables the section entirely
+  and reads no files (fast boot); unknown keys are tolerated with a note.
+  Leaf-first allocation is unchanged.
+
 - fix(gh-1757): the Android build no longer re-enters the sdkmanager
   download roulette for CMake. v1.0.619's `build-android` leg died at
   `:jni:configureCMakeDebug[arm64-v8a]` — the `:jni` module (transitive
@@ -24,6 +37,7 @@ block a release again.
   pre-installs `cmake;3.22.1` with bounded retry + idempotent skip (same
   hardening the NDK path already carries); the guard test pins the new
   AC6 assertions and the AGP-version coupling (AC7).
+
 
 - fix(gh-1743): a structured compaction that hits its total-budget
   watchdog (the factory's 300s `totalBudget`) no longer aborts the

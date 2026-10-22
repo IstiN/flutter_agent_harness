@@ -97,6 +97,13 @@ enum SharedSetting {
   /// boot notes, not an interactive preference on any surface.
   spillHooks,
 
+  /// The merged project-context budget (`projectContext.maxBytes`,
+  /// issue #1761): the 32KB byte budget over AGENTS.md/CLAUDE.md and
+  /// friends, allocated leaf-first. Truncation is never silent on EITHER
+  /// surface — a head excerpt + read-the-full-file instruction for the
+  /// model, a dim/AppLog boot notice per truncated or dropped file.
+  projectContextBudget,
+
   /// The layered redaction pipeline's `redact:` section (enabled/blockMode,
   /// per-layer toggles, allowlist regexes, entropy knobs, per-tool policy,
   /// issue #391).
@@ -597,6 +604,16 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'Spill hooks live in the CLI host process\'s agent loop; no app '
         'surface has a hook chain to configure.',
   ),
+  SharedSetting.projectContextBudget: SettingSurfaces(
+    macos: true,
+    ios: true,
+    web: true,
+    extensionPanel: false,
+    gapWhy:
+        'The truncation notices ride the fa agent boot (AppLog seam); the '
+        'extension panel has no fa agent boot with project-context '
+        'loading to announce.',
+  ),
   SharedSetting.tuiTheme: SettingSurfaces(
     macos: false,
     ios: false,
@@ -832,6 +849,16 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — hook chain lives in the CLI host (see above).
     yamlKeys: ['spills'],
     description: 'Automatic tool-result spilling wiring (issue #678).',
+  ),
+  SharedSetting.projectContextBudget: _SettingMeta(
+    cliRef: 'projectContext?.maxBytes',
+    // The app honors the never-silent contract through its boot notice
+    // seam: the loader's notices surface via AppLog (agent_service_skills).
+    appRef: "AppLog.i('context'",
+    yamlKeys: ['projectContext'],
+    description:
+        'Merged project-context budget + never-silent truncation notices '
+        '(issue #1761).',
   ),
   SharedSetting.tuiTheme: _SettingMeta(
     cliRef: 'tuiTheme',
