@@ -1560,9 +1560,11 @@ final class SessionCliCommand {
 
 const String _sessionUsage =
     'usage: fa session list [--json] [--flat]\n'
-    '       fa session repair <sessionId|path> [--dry-run]';
+    '       fa session repair <sessionId|path> [--dry-run]'
+    '\n'
+    '       fa session clean [--dry-run]';
 
-const Set<String> sessionVerbs = {'list', 'repair'};
+const Set<String> sessionVerbs = {'list', 'repair', 'clean'};
 
 CliArgsResult _parseSessionArgs(List<String> args) {
   if (args.contains('--help') || args.contains('-h')) {
@@ -1614,7 +1616,7 @@ _parseSessionVerbArgs(String verb, List<String> args) {
         json = true;
       case '--flat' when verb == 'list':
         flat = true;
-      case '--dry-run' when verb == 'repair':
+      case '--dry-run' when verb == 'repair' || verb == 'clean':
         dryRun = true;
       default:
         if (verb == 'repair' &&

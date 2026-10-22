@@ -172,6 +172,33 @@ Future<void> _runApp(List<String> args) async {
       cwd: parsed.cwd ?? Directory.current.path,
     );
     final sessionRoot = parsed.sessionRoot ?? _defaultSessionRoot();
+    // One presence store shared by the repair and clean verbs (gh-1746
+    // review: the wiring must not drift between the branches).
+    final sessionPresenceStore = FileSessionPresenceStore(
+      env: listEnv,
+      root: sessionRoot,
+      // gh-1660: the sweep deletes a stale presence file only when the
+      // pid probe pronounces its process dead (or past the cleanup grace
+      // without a pid) — wire the POSIX probe so live-but-stale rows are
+      // never swept under a listing run.
+      pidAlive: probePidAlive,
+    );
+    // The user's `sessions.retention` policy (gh-1746), read once for
+    // both verbs: the clean verb enforces it, the list verb prints the
+    // usage footer under a cap (Visibility; REG-1: absent = no footer).
+    SessionRetentionConfig readRetention() {
+      final cleanHome = homeDirectory();
+      if (cleanHome == null || cleanHome.isEmpty) {
+        return const SessionRetentionConfig();
+      }
+      try {
+        return loadCliConfig(cleanHome).sessions?.retention ??
+            const SessionRetentionConfig();
+      } on ConfigException catch (error) {
+        _fail('invalid ~/.fah/config.yaml: ${error.message}');
+      }
+    }
+
     if (sessionList.verb == 'repair') {
       exit(
         await runSessionRepairCliCommand(
@@ -181,15 +208,25 @@ Future<void> _runApp(List<String> args) async {
           sessionRoot: sessionRoot,
           sessionId: sessionList.repairTarget,
           dryRun: sessionList.dryRun,
-          presenceStore: FileSessionPresenceStore(
-            env: listEnv,
-            root: sessionRoot,
-            // gh-1660: the sweep deletes a stale presence file only when
-            // the pid probe pronounces its process dead (or past the
-            // cleanup grace without a pid) — wire the POSIX probe so
-            // live-but-stale rows are never swept under a listing run.
-            pidAlive: probePidAlive,
-          ),
+          presenceStore: sessionPresenceStore,
+        ),
+      );
+    }
+    if (sessionList.verb == 'clean') {
+      // gh-1746 AC6: `fa session clean [--dry-run]` — one retention sweep
+      // pass, intercepted like repair: no agent boot. The policy comes
+      // from the user config (`sessions.retention`, tolerant parse).
+      // Reuses the enclosing io/env/root + the shared presence store so
+      // the verbs cannot drift (gh-1746 review).
+      exit(
+        await runSessionCleanCliCommand(
+          write: io.write,
+          writeln: io.writeln,
+          env: listEnv,
+          sessionRoot: sessionRoot,
+          retention: readRetention(),
+          dryRun: sessionList.dryRun,
+          presenceStore: sessionPresenceStore,
         ),
       );
     }
@@ -202,6 +239,7 @@ Future<void> _runApp(List<String> args) async {
         cwd: listEnv.cwd,
         json: sessionList.json,
         flat: sessionList.flat,
+        retention: readRetention(),
       ),
     );
   }
@@ -1407,6 +1445,9 @@ Future<void> _runApp(List<String> args) async {
         // runner's $RUNNER_TEMP). Null keeps <cwd>/.fah/bash_jobs.
         jobLogDir: jobLogDirOverride(Platform.environment),
         spills: spillsConfig,
+        // gh-1746: the opt-in sessions retention policy (user config);
+        // null = the section is absent — no sweep, no note (AC1).
+        sessionsRetention: saved.sessions,
         projectContext: projectContextConfig,
         // Shared by the env config and the presence store below.
         env: cliEnv,

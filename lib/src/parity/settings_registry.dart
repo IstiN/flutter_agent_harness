@@ -414,6 +414,13 @@ const fileOnlyConfigKeys = <String, String>{
       'presentation choice (fa --stream-thinking or the file); the app '
       'renders thinking in its own UI and has no console output to '
       'configure.',
+
+  // Session disk retention (gh-1746): boot-time hygiene over the CLI's
+  // own sessions root — the app never opens that root, so there is no
+  // app surface to edit it; file-only by design.
+  'sessions':
+      'Session retention (gh-1746) is boot-time disk hygiene for the '
+      'CLI-owned sessions root; no app surface edits it interactively.',
 };
 
 /// Which app surfaces carry a shared setting: the Flutter app on macOS,

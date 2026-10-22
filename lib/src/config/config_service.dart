@@ -45,6 +45,7 @@ import '../prompts/project_context.dart' show ProjectContextConfig;
 import '../skills/skill_availability.dart';
 import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
+import '../session_retention.dart';
 import '../spill/spill.dart';
 import '../cli/links_config.dart';
 import '../cli/output_config.dart';
@@ -77,6 +78,7 @@ const configTopLevelKeys = <String>{
   'tools',
   'redact',
   'spills',
+  'sessions',
   'projectContext',
   'compaction',
   'customProviders',
@@ -1039,6 +1041,10 @@ String applicationNote(String section) => switch (section) {
   'mcp' => 'applies live after /mcp reload',
   'cube' => 'applies live via /cube reload, otherwise at next boot',
   'compaction' => 'applies at the next compaction (session override: flag)',
+  // gh-1746: the retention sweep runs at boot only — a save can never
+  // retro-enforce it mid-session.
+  'sessions' =>
+    'applies at next boot (the sweep runs before the session opens)',
   'ttsr' =>
     'rule edits apply live when the stream-rule engine is running, '
         'otherwise at next boot (issue #392)',
@@ -1195,6 +1201,9 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   // unknown keys and mistyped scalars become notes on the config, never
   // schema errors — so the validator never throws.
   'spills': (value, _) => SpillsConfig.fromYaml(value),
+  // The sessions section (gh-1746) parses tolerantly like spills —
+  // unknown keys and mistyped scalars become notes, never boot failures.
+  'sessions': (value, _) => SessionsConfig.fromYaml(value),
   // Same rule for the projectContext section (issue #1761).
   'projectContext': (value, _) => ProjectContextConfig.fromYaml(value),
   'tools': (value, _) => ToolsConfig.fromYaml(value),
