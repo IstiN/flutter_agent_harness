@@ -203,7 +203,11 @@ void main() {
       );
       final keys = SecureKeyCache(FakeSecureKeyStore());
       await keys.preload(
-        secureKeyPreloadNames(CliConfig(), baseUrl: null, queueEntries: queue.entries),
+        secureKeyPreloadNames(
+          CliConfig(),
+          baseUrl: null,
+          queueEntries: queue.entries,
+        ),
       );
       // The queue runtime build throws BEFORE the legacy gate would —
       // naming the entry's env var, never OPENROUTER_API_KEY.

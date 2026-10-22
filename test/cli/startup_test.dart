@@ -1397,7 +1397,10 @@ void main() {
             apiKeyEnv: 'MY_CUSTOM_QUEUE_KEY',
             refreshTokenEnv: 'MY_REFRESH_TOKEN',
           ),
-          ProviderQueueEntry(providerType: 'chatgpt-codex', model: 'gpt-5-codex'),
+          ProviderQueueEntry(
+            providerType: 'chatgpt-codex',
+            model: 'gpt-5-codex',
+          ),
         ],
       );
       expect(
@@ -1442,7 +1445,7 @@ void main() {
       );
       expect(
         pipeline!.redact('leak custom-secret-value-2 here'),
-        'leak *** here',
+        contains('[REDACTED:Registered Secret]'),
       );
     });
 
@@ -1458,13 +1461,14 @@ void main() {
         ),
         isTrue,
       );
-      for (final (modelFlag, providerFlag, baseUrlFlag, preconfig, folder) in const [
-        (true, false, false, false, false),
-        (false, true, false, false, false),
-        (false, false, true, false, false),
-        (false, false, false, true, false),
-        (false, false, false, false, true),
-      ]) {
+      for (final (modelFlag, providerFlag, baseUrlFlag, preconfig, folder)
+          in const [
+            (true, false, false, false, false),
+            (false, true, false, false, false),
+            (false, false, true, false, false),
+            (false, false, false, true, false),
+            (false, false, false, false, true),
+          ]) {
         expect(
           queueOwnsBootModel(
             modelFlag: modelFlag,

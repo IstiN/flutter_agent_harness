@@ -139,24 +139,30 @@ without a replacement wiring.
     final preload = exeSource.indexOf('keyCache.preload(');
     final queueBuild = exeSource.indexOf('ProviderQueueRuntime.build(');
     final keyGate = exeSource.indexOf('startupApiKey(');
-    expect(queueResolve, greaterThan(0),
-        reason: 'queue scope resolution wired');
+    expect(
+      queueResolve,
+      greaterThan(0),
+      reason: 'queue scope resolution wired',
+    );
     expect(
       preload,
       greaterThan(queueResolve),
-      reason: 'keyCache.preload must run AFTER the queue resolution so '
+      reason:
+          'keyCache.preload must run AFTER the queue resolution so '
           'queue key names feed the preload set (I4)',
     );
     expect(
       queueBuild,
       greaterThan(preload),
-      reason: 'ProviderQueueRuntime.build consumes collectQueueSecrets, '
+      reason:
+          'ProviderQueueRuntime.build consumes collectQueueSecrets, '
           'which reads the preloaded store snapshot',
     );
     expect(
       keyGate,
       greaterThan(queueBuild),
-      reason: 'the legacy key gate must see the built queue (queueResolved) '
+      reason:
+          'the legacy key gate must see the built queue (queueResolved) '
           'and lose to the queue error when every entry is keyless (I3)',
     );
   });
@@ -186,8 +192,11 @@ without a replacement wiring.
     final assign = exeSource.indexOf(
       'model = queueRuntime.streamFunction.currentModel',
     );
-    expect(override, greaterThan(0),
-        reason: 'the boot-model override must ride the shared pure predicate');
+    expect(
+      override,
+      greaterThan(0),
+      reason: 'the boot-model override must ride the shared pure predicate',
+    );
     expect(
       assign,
       greaterThan(override),

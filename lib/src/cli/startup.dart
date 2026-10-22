@@ -820,8 +820,8 @@ List<String> secureKeySaveDegradationLines({
   return [
     for (final name in names)
       'warning: key "$name" did not reach the $label '
-      '(${degraded[name]}) — the provider boots keyless for it; fix the '
-      'store, then /key set $name <value>',
+          '(${degraded[name]}) — the provider boots keyless for it; fix the '
+          'store, then /key set $name <value>',
   ];
 }
 
@@ -946,8 +946,8 @@ String startupApiKey(
   // the legacy single-provider key never reaches the queue lane's streams,
   // so the gate degrades to an optional lookup (the queue's own entries'
   // gates already ran in ProviderQueueRuntime.build).
-  final key = defaultRoleResolved || customEndpoint || interactive ||
-          queueResolved
+  final key =
+      defaultRoleResolved || customEndpoint || interactive || queueResolved
       ? (optionalProviderApiKey(
               provider,
               keys,
