@@ -283,10 +283,12 @@ extension AgentCliPersist on AgentCli {
   /// the persist with the writer's CURRENT full payload — the window has
   /// elapsed, so the gate passes naturally.
   Future<void> _flushCoalescedObligations() async {
-    final session = _session;
-    final writer = _obligationsWriter;
-    if (session == null || writer == null) return;
-    await _appendObligationsSnapshot(session, writer.ledger.toPayload());
+    if ((_session, _obligationsWriter) case (
+      final Session session,
+      final ObligationsLedgerWriter writer,
+    )) {
+      await _appendObligationsSnapshot(session, writer.ledger.toPayload());
+    }
   }
 
   /// gh-1590: the shutdown flush for the obligations ledger — a
