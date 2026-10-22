@@ -172,6 +172,7 @@ export 'src/messaging/fabric_config.dart';
 export 'src/messaging/hub_identity.dart';
 export 'src/messaging/hub_transport.dart';
 export 'src/messaging/hub_messaging_repository.dart';
+export 'src/image_overflow.dart';
 export 'src/model.dart';
 export 'src/model_roles/model_roles.dart';
 export 'src/model_roles/provider_model_binding.dart';

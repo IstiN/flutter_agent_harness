@@ -400,10 +400,11 @@ bool _isGhostProviderEntry(Object? node) =>
     node is Map && isReservedCustomProviderName('${node['name']}');
 
 /// Parses the `images:` section (session image registry, issue #171):
-/// `registry` (kill switch) and `maxPerRequest` (per-request unique-image
-/// cap). Strict — a bad schema throws [ConfigException] instead of
-/// silently keeping the defaults. Public so the settings flow's
-/// reload-after-write (issue #395) reuses the same parser the boot runs.
+/// `registry` (kill switch), `maxPerRequest` (per-request unique-image
+/// cap) and `perModel` (per-model cap overrides, issue #1750). Strict —
+/// a bad schema throws [ConfigException] instead of silently keeping the
+/// defaults. Public so the settings flow's reload-after-write (issue
+/// #395) reuses the same parser the boot runs.
 ImageRegistryConfig? parseImagesSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
@@ -425,22 +426,50 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
     return value;
   }
 
+  int readPerModelCap(Object? key, Object? value) {
+    if (value is! int || value <= 0) {
+      throw ConfigException(
+        '"images.perModel.$key" must be a positive integer',
+      );
+    }
+    return value;
+  }
+
+  Map<String, int> readPerModel() {
+    final value = node['perModel'];
+    if (value is! YamlMap) {
+      throw ConfigException(
+        '"images.perModel" must be a map of model id → cap, got: $value',
+      );
+    }
+    return {
+      for (final entry in value.entries)
+        '${entry.key}': readPerModelCap(entry.key, entry.value),
+    };
+  }
+
   bool? registry;
   int? maxPerRequest;
+  Map<String, int>? perModel;
   for (final key in node.keys) {
     switch (key) {
       case 'registry':
         registry = readBool('$key');
       case 'maxPerRequest':
         maxPerRequest = readPositiveInt('$key');
+      case 'perModel':
+        perModel = readPerModel();
       default:
         throw ConfigException('unknown "images" key: $key');
     }
   }
-  if (registry == null && maxPerRequest == null) return null;
+  if (registry == null && maxPerRequest == null && perModel == null) {
+    return null;
+  }
   return ImageRegistryConfig(
     enabled: registry ?? true,
     maxPerRequest: maxPerRequest ?? defaultMaxImagesPerRequest,
+    perModel: perModel ?? const {},
   );
 }
 
