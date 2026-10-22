@@ -1431,8 +1431,15 @@ static no_inline int js_realloc_array(JSContext *ctx, void **parray,
     void *new_array;
     /* XXX: potential arithmetic overflow */
     new_size = max_int(req_size, *psize * 3 / 2);
-    // codeql [cpp/integer-multiplication-cast-to-long] — upstream growth heuristic guarded by max_int(req_size, ...); matches upstream QuickJS 2024-01-13 semantics
-    new_array = js_realloc2(ctx, *parray, new_size * elem_size, &slack);
+    /* fork delta (vs upstream 2024-01-13): explicit widen before the
+       multiply — identical byte count for every input where the original
+       int product was defined; the theoretical >INT_MAX path (upstream's
+       own `XXX: potential arithmetic overflow` above) becomes a clean
+       OOM in js_realloc2 instead of signed overflow UB; silences CodeQL
+       cpp/integer-multiplication-cast-to-long (inline // codeql comments
+       are NOT honored by GitHub code scanning — github/codeql#11427). */
+    new_array = js_realloc2(ctx, *parray, (size_t)new_size * elem_size,
+                            &slack);
     if (!new_array)
         return -1;
     new_size += slack / elem_size;

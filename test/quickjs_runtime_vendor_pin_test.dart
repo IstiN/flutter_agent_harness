@@ -168,75 +168,88 @@ void main() {
       );
     });
 
-    test('CodeQL-flagged C lines carry inline suppression comments', () {
+    test('CodeQL-flagged C expressions use explicit widening casts', () {
       // CodeQL default setup analyzes C/C++ in `none` build mode — every
       // vendored QuickJS source is extracted and scanned, and 3 upstream
       // `cpp/integer-multiplication-cast-to-long` ("multiplication result
       // converted to larger type") alerts fail the CodeQL check on the PR.
-      // These are upstream QuickJS/libbf numeric idioms (one carries
-      // Bellard's own `XXX: potential arithmetic overflow` remark); the
-      // vendored fork does NOT rewrite upstream numerics, it suppresses
-      // the exact alert with CodeQL inline-suppression comments. The
-      // built-in `cpp/alert-suppression` query covers the NEXT line when
-      // the comment is the first thing on its own line (shared/
-      // codeql/util/suppression/AlertSuppression.qll), and the annotation
-      // must match the query's @id — NOT the check-run title slug.
-      const suppression =
-          '// codeql [cpp/integer-multiplication-cast-to-long]';
-      final flagged = <(String, String)>[
-        // `r -= q * q;` — dlimb_t limb product in the div/rem fast path.
-        // The idiom appears 3x in libbf.c; CodeQL flags only the :1982 one
-        // (range analysis clears the others) — at least one occurrence
-        // must carry the suppression or the check goes red on re-vendor.
+      //
+      // Inline suppression comments are NOT an option: GitHub's code
+      // scanning service does not honor `// codeql [...]` / `// lgtm [...]`
+      // comments (github/codeql#11427 has been open for exactly that since
+      // 2022 — the AlertSuppression.qll library is third-party/legacy), and
+      // default-setup configuration (paths-ignore) is admin-only.
+      //
+      // The fix is cast-before-multiply at the 3 flagged sites — each is
+      // VALUE-IDENTICAL to upstream under its existing guard/invariant:
+      //   1. `r -= (dlimb_t)q * q;` — the else arm of `if ((q >> l) != 0)`
+      //      guarantees q < 2^l, so the limb_t product never wraps and the
+      //      widened product is the same number.
+      //   2. `pos_incr = (slimb_t)digits_per_limb * radix_bits;` — the
+      //      product is exactly LIMB_BITS (≤ 64) by construction.
+      //   3. `(size_t)new_size * elem_size` — identical for every input
+      //      where the original int product was defined; the theoretical
+      //      >INT_MAX path becomes a clean OOM instead of signed UB
+      //      (upstream carries its own `XXX: potential arithmetic
+      //      overflow` remark on that line).
+      final casts = <(String, String, String)>[
         (
           '$vendorDir/native/quickjs/libbf.c',
+          'r -= (dlimb_t)q * q;',
           'r -= q * q;',
         ),
-        // `digits_per_limb * radix_bits` — int → size_t widen.
         (
           '$vendorDir/native/quickjs/libbf.c',
+          'pos_incr = (slimb_t)digits_per_limb * radix_bits;',
           'pos_incr = digits_per_limb * radix_bits;',
         ),
-        // `new_size * elem_size` in the js_realloc2 call — int → size_t
-        // widen; upstream carries its own XXX overflow remark on :1433.
         (
           '$vendorDir/native/quickjs/quickjs.c',
+          'new_array = js_realloc2(ctx, *parray, (size_t)new_size * '
+              'elem_size, &slack);',
           'new_array = js_realloc2(ctx, *parray, new_size * elem_size, '
               '&slack);',
         ),
       ];
-      for (final (path, snippet) in flagged) {
-        final lines = File(path).readAsLinesSync();
-        final occurrences = <int>[];
-        for (var i = 0; i < lines.length; i++) {
-          if (lines[i].contains(snippet)) occurrences.add(i);
-        }
+      // Match on whitespace-normalized text: the C sources may wrap long
+      // statements across lines.
+      String norm(String s) => s.replaceAll(RegExp(r'\s+'), ' ');
+      for (final (path, castForm, narrowForm) in casts) {
+        final source = norm(File(path).readAsStringSync());
         expect(
-          occurrences,
-          isNotEmpty,
-          reason: '$path no longer contains the CodeQL-flagged statement '
-              '`$snippet` — re-check the alert locations on the re-vendored '
-              'upstream copy before trusting the suppression placement',
-        );
-        final covered = occurrences.any(
-          (i) =>
-              i > 0 &&
-              lines[i - 1].trim().startsWith(
-                '// codeql [cpp/integer-multiplication-cast-to-long]',
-              ),
-        );
-        expect(
-          covered,
+          source.contains(castForm),
           isTrue,
           reason:
-              'no `$snippet` occurrence in $path is preceded by a '
-              '`$suppression` comment line. The built-in '
-              'cpp/alert-suppression query only covers the line DIRECTLY '
-              'BELOW a comment that is the first thing on its own line, and '
-              'the annotation must use the query @id '
-              'cpp/integer-multiplication-cast-to-long (not the alert title '
-              '"multiplication result converted to larger type") — otherwise '
-              'the CodeQL check goes red on the PR.',
+              '$path must contain the widening-cast form `$castForm` — the '
+              'narrow product is a cpp/integer-multiplication-cast-to-long '
+              'alert and inline `// codeql [...]` comments are not honored '
+              'by GitHub code scanning (github/codeql#11427), so the CodeQL '
+              'check goes red on the PR without the cast.',
+        );
+        expect(
+          source.contains(narrowForm),
+          isFalse,
+          reason:
+              '$path still contains the narrow form `$narrowForm` — it '
+              'raises a fresh cpp/integer-multiplication-cast-to-long alert '
+              'on every re-analysis; keep only the widening-cast form '
+              '`$castForm`.',
+        );
+      }
+      // The suppression comments were inert (the service never read them)
+      // — make sure none survive to mislead the next re-vendor.
+      for (final c in const ['libbf.c', 'quickjs.c']) {
+        final source = norm(
+          File('$vendorDir/native/quickjs/$c').readAsStringSync(),
+        );
+        expect(
+          source.contains('// codeql ['),
+          isFalse,
+          reason:
+              '$c contains an inert `// codeql [...]` suppression comment — '
+              'GitHub code scanning does not honor inline suppression '
+              'comments; the widening casts above are the actual fix. Drop '
+              'the stale comment.',
         );
       }
     });

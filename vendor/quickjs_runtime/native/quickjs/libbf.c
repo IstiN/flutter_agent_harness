@@ -1978,8 +1978,13 @@ static limb_t mp_sqrtrem2(limb_t *tabs, limb_t *taba)
     if (unlikely((q >> l) != 0))
         r -= (dlimb_t)1 << LIMB_BITS; /* special case when q=2^l */
     else
-        // codeql [cpp/integer-multiplication-cast-to-long] — upstream libbf div/rem fast path: q is bounded by the limb mask above, the narrow product is intentional; do not rewrite upstream numerics
-        r -= q * q;
+        /* fork delta (vs upstream 2024-01-13): explicit widen — the else arm
+           of the (q >> l) != 0 guard above bounds q < 2^l, so the product
+           never wraps in limb_t and this is value-identical to upstream's
+           `r -= q * q;`; silences CodeQL cpp/integer-multiplication-cast-
+           to-long (inline // codeql comments are NOT honored by GitHub code
+           scanning — github/codeql#11427). */
+        r -= (dlimb_t)q * q;
     if ((slimb_t)(r >> LIMB_BITS) < 0) {
         s--;
         r += 2 * (dlimb_t)s + 1;
@@ -3656,8 +3661,12 @@ static void output_digits(DynBuf *s, const bf_t *a1, int radix, limb_t n_digits,
         a = (bf_t *)a1;
         radix_bits = ceil_log2(radix);
         digits_per_limb = LIMB_BITS / radix_bits;
-        // codeql [cpp/integer-multiplication-cast-to-long] — upstream libbf digit layout: both factors are small positive ints by construction (ceil_log2 radix), no overflow
-        pos_incr = digits_per_limb * radix_bits;
+        /* fork delta (vs upstream 2024-01-13): explicit widen — the product
+           is exactly LIMB_BITS (≤ 64) by construction, value-identical to
+           upstream; silences CodeQL cpp/integer-multiplication-cast-to-long
+           (inline // codeql comments are NOT honored by GitHub code
+           scanning — github/codeql#11427). */
+        pos_incr = (slimb_t)digits_per_limb * radix_bits;
         /* digits are aligned relative to the radix point */
         pos = a->len * LIMB_BITS + smod(-a->expn, radix_bits);
         first_buf_pos = 0;
