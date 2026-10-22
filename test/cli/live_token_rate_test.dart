@@ -78,6 +78,32 @@ void main() {
       meter.observeDelta(-3);
       expect(meter.tokensPerSecond, isNull);
     });
+
+    test('cold start: no spike while the first span is under 250ms', () {
+      // The reviewer's sim: 50 real tokens burst in the first 40ms of a
+      // response — burst/span would flash 1250 t/s for a 50 t/s stream.
+      final clock = _ScriptClock(0);
+      final meter = _meter(clock);
+      meter.observeDelta(200); // 50 tok at t0
+      clock.ms = 40;
+      expect(meter.tokensPerSecond, isNull);
+      clock.ms = 249;
+      expect(meter.tokensPerSecond, isNull);
+      // The moment the span is honest, the window math takes over.
+      clock.ms = 250;
+      expect(meter.tokensPerSecond, closeTo(50 * 1000 / 250, 1e-9));
+    });
+
+    test('cold start: a whole-message burst hides through warm-up too', () {
+      final clock = _ScriptClock(0);
+      final meter = _meter(clock);
+      meter.startMessage();
+      meter.endMessage(200); // whole arrival at t0 — no 31k t/s flash
+      clock.ms = 100;
+      expect(meter.tokensPerSecond, isNull);
+      clock.ms = 250;
+      expect(meter.tokensPerSecond, closeTo(200 * 1000 / 250, 1e-9));
+    });
   });
 
   group('LiveTokenRateMeter calibration (AC4)', () {
@@ -149,6 +175,28 @@ void main() {
       expect(meter.tokensPerSecondAvg(100), 50.0); // 100 tok / 2s
     });
 
+    test('sub-measurable active time (scheduler noise) hides the average', () {
+      // An instant scripted turn straddling one wall-clock ms accrues
+      // 1ms — pricing 100 tok over it would read `avg 100000`.
+      final clock = _ScriptClock(0);
+      final meter = _meter(clock);
+      meter.observeDelta(40); // t0
+      clock.ms = 1;
+      meter.observeDelta(40); // +1ms of microtask noise
+      expect(meter.tokensPerSecondAvg(100), isNull);
+      meter.calibrate(100);
+      expect(meter.settledAverageTokensPerSecond(100), isNull);
+      // Real measured print time crosses the floor and both appear.
+      clock.ms = 251;
+      meter.observeDelta(40); // +250ms
+      expect(meter.tokensPerSecondAvg(100), closeTo(100 * 1000 / 251, 1e-9));
+      meter.calibrate(100);
+      expect(
+        meter.settledAverageTokensPerSecond(100),
+        meter.tokensPerSecondAvg(100),
+      );
+    });
+
     test('UT-RATE-6: long tool gaps are capped out of the denominator', () {
       final clock = _ScriptClock(0);
       final meter = _meter(clock);
@@ -206,9 +254,9 @@ void main() {
       meter.calibrate(100); // settle: the denominator freezes at 1000
       clock.ms = 2000;
       meter.observeDelta(40); // the next turn keeps accruing
-      expect(meter.activeMsSettled, 1000);
+      // The settled average still prices 100 tok over the frozen 1s,
+      // while the band's live average moved on (2s active now).
       expect(meter.settledAverageTokensPerSecond(100), 100.0);
-      // The band's live average moved on (2s active now).
       expect(meter.tokensPerSecondAvg(100), closeTo(100 * 1000 / 2000, 1e-9));
     });
 
@@ -231,7 +279,6 @@ void main() {
       meter.observeDelta(40);
       meter.calibrate(100);
       meter.reset();
-      expect(meter.activeMsSettled, 0);
       expect(meter.settledAverageTokensPerSecond(100), isNull);
     });
   });

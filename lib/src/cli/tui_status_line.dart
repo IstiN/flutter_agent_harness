@@ -502,11 +502,12 @@ kStatusLinePresets = {
       // unarmed band renders byte-identically.
       'timer',
     ],
-    // gh-1762: the duplicated trailing context-window label gives way to
-    // the live rate pair — idle (no stream yet) both render hidden, so an
-    // unarmed band stays clean, and while streaming the band shows
-    // `42 t/s · avg 38 t/s`. Custom configs referencing `context_total`
-    // keep working (the id stays in the table + registry).
+    // gh-1762: the default band gains the live rate pair after the
+    // session name (the card's «replace the trailing context-window
+    // label» intent — fa's default preset never carried `context_total`;
+    // custom configs referencing it keep working, the id stays in the
+    // table + registry). Without data both render hidden, so an unarmed
+    // band stays clean; while streaming it reads `42 t/s · avg 38 t/s`.
     right: ['session_name', 'token_rate', 'token_rate_avg'],
     separator: StatusLineSeparatorStyle.powerlineThin,
     nerd: false,
