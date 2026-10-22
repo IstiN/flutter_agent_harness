@@ -2280,12 +2280,22 @@ extension SettingsFlow on AgentCli {
       segments,
       configLeafLines(value, depth: segments.length - 1),
     );
-    // Never persist a file the next boot would reject.
-    final doc = loadYaml(edited);
-    final section = doc is YamlMap ? doc[segments.first] : null;
+    // Never persist a file the next boot would reject. The PARSE sits
+    // inside the guard too (gh-1787): a malformed edit is a "not saved"
+    // print, never a throw escaping up the submit path as a raw stack
+    // (the incident: a duplicated-key chain threw YamlException here,
+    // before the write, and crashed the TUI submit boundary).
+    final Object? parsed;
+    try {
+      parsed = loadYaml(edited);
+    } on Object catch (error) {
+      io.writeln('not saved: $error');
+      return false;
+    }
+    final section = parsed is YamlMap ? parsed[segments.first] : null;
     try {
       validate?.call(section);
-      if (doc is YamlMap) validateDoc?.call(doc);
+      if (parsed is YamlMap) validateDoc?.call(parsed);
     } on Object catch (error) {
       io.writeln('not saved: $error');
       return false;

@@ -98,18 +98,39 @@ models:
       expect((caps['glm-5.3-flash'] as YamlMap)['thinkingLevel'], 'high');
     });
 
-    test('rewriting an existing quoted leaf keeps its spelling', () {
+    test('rewriting an existing bare leaf keeps the bare spelling', () {
       final edited = upsertYamlPath(
         _incidentConfig,
         ['models', 'overrides', 'copilot', 'gemini-4-argon', 'contextWindow'],
         ['131072'],
       );
-      expect(edited, contains('"contextWindow": 131072'));
+      expect(edited, contains('contextWindow: 131072'));
       final doc = loadYaml(edited) as YamlMap;
       final caps =
           ((doc['models'] as YamlMap)['overrides'] as YamlMap)['copilot']
               as YamlMap;
       expect((caps['gemini-4-argon'] as YamlMap)['contextWindow'], 131072);
+    });
+
+    test('rewriting an existing quoted leaf keeps its quoted spelling', () {
+      const quotedLeaf = '''
+models:
+  overrides:
+    "copilot":
+      "gemini-4-argon":
+        "maxTokens": 4096
+''';
+      final edited = upsertYamlPath(
+        quotedLeaf,
+        ['models', 'overrides', 'copilot', 'gemini-4-argon', 'maxTokens'],
+        ['65536'],
+      );
+      expect(edited, contains('"maxTokens": 65536'));
+      final doc = loadYaml(edited) as YamlMap;
+      final caps =
+          ((doc['models'] as YamlMap)['overrides'] as YamlMap)['copilot']
+              as YamlMap;
+      expect((caps['gemini-4-argon'] as YamlMap)['maxTokens'], 65536);
     });
 
     test('a quoted custom-model name is found (models.custom)', () {
@@ -156,8 +177,18 @@ models:
   });
 
   group('removeYamlPath on a quoted block (gh-1787)', () {
-    test('a field remove edits the quoted entry in place', () {
-      final edited = removeYamlPath(_incidentConfig, [
+    test('a field remove edits the quoted entry, the sibling survives', () {
+      const twoFields = '''
+provider: copilot
+model: gemini-4-argon
+models:
+  overrides:
+    "copilot":
+      "gemini-4-argon":
+        contextWindow: 204800
+        maxTokens: 65536
+''';
+      final edited = removeYamlPath(twoFields, [
         'models',
         'overrides',
         'copilot',
@@ -169,6 +200,7 @@ models:
       final caps =
           (overrides['copilot'] as YamlMap)['gemini-4-argon'] as YamlMap;
       expect(caps.containsKey('contextWindow'), isFalse);
+      expect(caps['maxTokens'], 65536);
     });
 
     test('the last field remove drops the emptied quoted blocks', () {
@@ -179,11 +211,11 @@ models:
         'gemini-4-argon',
         'contextWindow',
       ]);
-      // Only that one field was pinned — the whole chain empties.
-      expect(edited, isNot(contains('gemini-4-argon')));
+      // Only that one field was pinned — the whole chain empties away.
+      expect(edited, isNot(contains('"gemini-4-argon":')));
+      expect(edited, isNot(contains('overrides')));
       final doc = loadYaml(edited) as YamlMap;
-      final overrides = (doc['models'] as YamlMap)['overrides'] as YamlMap;
-      expect(overrides.isEmpty, isTrue);
+      expect(doc.containsKey('models'), isFalse);
     });
   });
 }
