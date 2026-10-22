@@ -342,59 +342,7 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('images must be a map, got: $node');
   }
-  bool readBool(String key) {
-    final value = node[key];
-    if (value is! bool) {
-      throw ConfigException('"images.$key" must be a boolean');
-    }
-    return value;
-  }
-
-  int readPositiveInt(String key) {
-    final value = node[key];
-    if (value is! int || value <= 0) {
-      throw ConfigException('"images.$key" must be a positive integer');
-    }
-    return value;
-  }
-
-  int readPerModelCap(Object? key, Object? value) {
-    if (value is! int || value <= 0) {
-      throw ConfigException(
-        '"images.perModel.$key" must be a positive integer',
-      );
-    }
-    return value;
-  }
-
-  Map<String, int> readPerModel() {
-    final value = node['perModel'];
-    if (value is! YamlMap) {
-      throw ConfigException(
-        '"images.perModel" must be a map of model id → cap, got: $value',
-      );
-    }
-    return {
-      for (final entry in value.entries)
-        '${entry.key}': readPerModelCap(entry.key, entry.value),
-    };
-  }
-
-  bool? registry;
-  int? maxPerRequest;
-  Map<String, int>? perModel;
-  for (final key in node.keys) {
-    switch (key) {
-      case 'registry':
-        registry = readBool('$key');
-      case 'maxPerRequest':
-        maxPerRequest = readPositiveInt('$key');
-      case 'perModel':
-        perModel = readPerModel();
-      default:
-        throw ConfigException('unknown "images" key: $key');
-    }
-  }
+  final (registry, maxPerRequest, perModel) = _parseImagesEntries(node);
   if (registry == null && maxPerRequest == null && perModel == null) {
     return null;
   }
@@ -403,6 +351,63 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
     maxPerRequest: maxPerRequest ?? defaultMaxImagesPerRequest,
     perModel: perModel ?? const {},
   );
+}
+
+/// The three optional images knobs parsed from [node]; unset keys stay
+/// null (gh-1713 split of [parseImagesSection]).
+(bool?, int?, Map<String, int>?) _parseImagesEntries(YamlMap node) {
+  bool? registry;
+  int? maxPerRequest;
+  Map<String, int>? perModel;
+  for (final key in node.keys) {
+    switch (key) {
+      case 'registry':
+        registry = _readImagesBool(node, '$key');
+      case 'maxPerRequest':
+        maxPerRequest = _readImagesPositiveInt(node, '$key');
+      case 'perModel':
+        perModel = _readImagesPerModel(node);
+      default:
+        throw ConfigException('unknown "images" key: $key');
+    }
+  }
+  return (registry, maxPerRequest, perModel);
+}
+
+bool _readImagesBool(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! bool) {
+    throw ConfigException('"images.$key" must be a boolean');
+  }
+  return value;
+}
+
+int _readImagesPositiveInt(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! int || value <= 0) {
+    throw ConfigException('"images.$key" must be a positive integer');
+  }
+  return value;
+}
+
+int _readImagesPerModelCap(Object? key, Object? value) {
+  if (value is! int || value <= 0) {
+    throw ConfigException('"images.perModel.$key" must be a positive integer');
+  }
+  return value;
+}
+
+Map<String, int> _readImagesPerModel(YamlMap node) {
+  final value = node['perModel'];
+  if (value is! YamlMap) {
+    throw ConfigException(
+      '"images.perModel" must be a map of model id → cap, got: $value',
+    );
+  }
+  return {
+    for (final entry in value.entries)
+      '${entry.key}': _readImagesPerModelCap(entry.key, entry.value),
+  };
 }
 
 /// Persisted CLI configuration.

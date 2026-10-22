@@ -518,15 +518,16 @@ Future<int> _binaryUpdate(
   return 1;
 }
 
-/// The stable zip asset name for macOS (uploaded by build-macos.yml).
-String? _zipAssetName() {
-  final abi = Abi.current().toString();
-  return switch (abi) {
-    'macos_arm64' => 'fa-macos-arm64-mac.zip',
-    'macos_x64' => 'fa-macos-x64-mac.zip',
-    _ => null,
-  };
-}
+/// The macOS zip assets by ABI (uploaded by build-macos.yml).
+const _macZipAssets = {
+  'macos_arm64': 'fa-macos-arm64-mac.zip',
+  'macos_x64': 'fa-macos-x64-mac.zip',
+};
+
+/// The stable zip asset name for macOS. The caller reaches this only on
+/// macOS; the const-table lookup keeps non-macOS runners cost-free
+/// (gh-1713).
+String? _zipAssetName() => _macZipAssets[Abi.current().toString()];
 
 /// Extracts the `Fa.app/Contents/MacOS/Fa` binary bytes from a decoded
 /// macOS `.zip` archive, or `null` if the entry is missing.
