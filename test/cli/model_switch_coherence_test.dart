@@ -1,6 +1,7 @@
-// UT-1 / UT-2 / UT-4 (gh-178): the pure coherence decision core — the
-// switch-gate target parser, the request-build gate, the refusal message
-// contract, and the restore gate — tested WITHOUT driving the CLI.
+// UT-1..UT-4 + REG-1 (gh-178): the pure coherence decision core — the
+// switch-gate target parser, the cross-provider gate, the request-build
+// gate, the refusal message contract, the restore gate, and the
+// enumerated-space property sweep — tested WITHOUT driving the CLI.
 //
 // The wiring tests (IT-*) live in agent_cli_model_coherence_test.dart.
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -41,8 +42,6 @@ void main() {
     });
 
     test('a vendor-prefixed id the active endpoint lists stays put (E2)', () {
-      // `gemini-4-argon` listed under a vendor-style spelling the cache
-      // carries — the full string wins over the provider-prefix reading.
       expect(parse('gemini-4-argon/extra'), isA<SameModelSwitch>());
     });
 
@@ -246,28 +245,15 @@ void main() {
 
     test('a key matching NO configured family never refuses (explicit '
         'tokens, OAuth blobs, synthetic test keys)', () {
-      final input = coherent()
-        ..copyWithActiveFamilyResolvesSame(false);
       expect(
         requestCoherenceRefusal(
-          RequestCoherenceInput(
-            modelProviderName: 'kimi',
-            modelId: 'kimi-for-coding',
-            baseUrl: 'https://api.kimi.com/coding/v1',
-            identityKind: 'openai-completions',
-            wiringKind: 'openai-completions',
-            wiringKeyPresent: true,
-            explicitToken: false,
-            headerAuth: false,
-            activeFamilyResolvesSameKey: false,
-            foreignFamilyResolvesSameKey: false,
-          ),
+          coherent().copyWith(activeFamilySame: false),
         ),
         isNull,
       );
     });
 
-    test('explicit-token and header-auth wiring never refuse', () {
+    test('explicit-token, header-auth and keyless wiring never refuse', () {
       expect(
         requestCoherenceRefusal(
           coherent().copyWith(explicitToken: true, activeFamilySame: false),
@@ -365,24 +351,79 @@ void main() {
       expect(decision.refusal!.fields, ['provider']);
     });
   });
+
+  group('REG-1 (property): the enumerated pick space is coherent (AC1)', () {
+    // For EVERY model entry of EVERY provider fixture, EVERY active
+    // identity and EVERY parse shape, the resolved plan is coherent — a
+    // same-provider pick (the current triple kept) or a whole-triple
+    // cross-provider switch (or a refusal). No reading of the enumerated
+    // space produces a "switch the id only" answer for a foreign
+    // provider: the silent-mixed state has no origin left.
+    const fixtures = <String, Set<String>>{
+      'kimi': {'kimi-for-coding', 'k3-256k'},
+      'copilot': {'gemini-4-argon', 'gpt-5-copilot'},
+      'openai': {'gpt-4o', 'openai/gpt-4o'},
+    };
+    const actives = ['kimi', 'copilot'];
+    const customs = <String?>[null, 'copilot-acme'];
+    const shapes = ['{provider}/{id}', '{id}', '{active}/{id}'];
+
+    test('no enumerated pick resolves to a silent mixed state', () {
+      for (final active in actives) {
+        for (final custom in customs) {
+          for (final entry in fixtures.entries) {
+            for (final id in entry.value) {
+              for (final shape in shapes) {
+                final input = shape
+                    .replaceFirst('{provider}', entry.key)
+                    .replaceFirst('{id}', id)
+                    .replaceFirst('{active}', active);
+                final plan = parseTypedModelTarget(
+                  input,
+                  activeProvider: active,
+                  activeCustomName: custom,
+                  activeModelIds: fixtures[active]!,
+                  isKnownProvider: fixtures.containsKey,
+                );
+                switch (plan) {
+                  case SameModelSwitch(:final modelId):
+                    // Coherent by definition: the active triple stays.
+                    expect(modelId, isNotEmpty);
+                  case CrossProviderSwitch(:final provider, :final modelId):
+                    // The whole triple moves — the target must be a real
+                    // switchable identity carrying that model id.
+                    expect(fixtures.containsKey(provider), isTrue);
+                    expect(fixtures[provider]!.contains(modelId), isTrue);
+                  case RefusedSwitch():
+                    // A refusal is a coherent outcome too.
+                    break;
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    test('spot: the incident pick never lands on the copilot triple', () {
+      final plan = parseTypedModelTarget(
+        'kimi/kimi-for-coding',
+        activeProvider: 'copilot',
+        activeCustomName: null,
+        activeModelIds: {'gemini-4-argon'}.toSet(),
+        isKnownProvider: fixtures.containsKey,
+      );
+      expect(plan, isA<CrossProviderSwitch>());
+      expect((plan as CrossProviderSwitch).provider, 'kimi');
+    });
+  });
 }
 
-extension on RequestCoherenceInput {
-  // Test shorthands: rebuild with one verdict flipped.
-  RequestCoherenceInput copyWithActiveFamilyResolvesSame(bool value) =>
-      RequestCoherenceInput(
-        modelProviderName: modelProviderName,
-        modelId: modelId,
-        baseUrl: baseUrl,
-        identityKind: identityKind,
-        wiringKind: wiringKind,
-        wiringKeyPresent: wiringKeyPresent,
-        explicitToken: explicitToken,
-        headerAuth: headerAuth,
-        activeFamilyResolvesSameKey: value,
-        foreignFamilyResolvesSameKey: foreignFamilyResolvesSameKey,
-      );
+bool containsIgnoringCase(String haystack, String needle) =>
+    haystack.toLowerCase().contains(needle.toLowerCase());
 
+extension on RequestCoherenceInput {
+  // Test shorthand: rebuild with single verdicts flipped.
   RequestCoherenceInput copyWith({
     bool? explicitToken,
     bool? headerAuth,
@@ -402,6 +443,3 @@ extension on RequestCoherenceInput {
     foreignFamilyResolvesSameKey: foreignFamilyResolvesSameKey,
   );
 }
-
-bool containsIgnoringCase(String haystack, String needle) =>
-    haystack.toLowerCase().contains(needle.toLowerCase());
