@@ -1,0 +1,8 @@
+2026-10-22T08:50:22Z	Let me also make sure I comply with the hard gate ordering: "Your FIRST code-investigation action MUST be codegraph context ... before any grep / glob / file read of source code." In THIS session I haven't read source files yet (only pack/JS files under ~/.dmtools — those are tooling, not the repo's source). So running codegraph now, before touching repo source, complies.
+2026-10-22T08:50:22Z	│ • bash · codegraph status
+2026-10-22T08:50:22Z	│ codegraph status                                                                                                   
+2026-10-22T08:50:22Z	│ • bash · codegraph context "gh-1735 daily-publish testflight leg build-mobile iOS"; echo "rc=$?"
+2026-10-22T08:50:22Z	│ ✓ bash · codegraph context "gh-1735 daily-publish testflight leg build-mobile iOS"; echo "rc=$?" 0s
+2026-10-22T08:50:22Z	│ • bash · codegraph query "dispatch_and_watch queue_stall"; echo "rc=$?"; codegraph impact "build-mobile.yml build-ios"; echo "rc=$?"
+2026-10-22T08:50:22Z	│ ✓ bash · codegraph query "dispatch_and_watch queue_stall"; echo "rc=$?"; codegraph impact "build-mobile.yml build-ios"; echo "rc=$?" 0s
+2026-10-22T08:50:22Z	  command: codegraph status; codegraph context "gh-1735 ..."; codegraph query "..."; codegraph impact "..." (all in transcript)
