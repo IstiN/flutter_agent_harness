@@ -1389,37 +1389,41 @@ void _validateImagesSection(Object? node) {
     throw ConfigException('must be a map, got: $node');
   }
   for (final entry in node.entries) {
-    final key = '${entry.key}';
-    switch (key) {
-      case 'registry':
-        if (entry.value is! bool) {
-          throw ConfigException('"images.registry" must be a boolean');
-        }
-      case 'maxPerRequest':
-        final value = entry.value;
-        if (value is! int || value <= 0) {
-          throw ConfigException(
-            '"images.maxPerRequest" must be a positive integer',
-          );
-        }
-      case 'perModel':
-        final value = entry.value;
-        if (value is! YamlMap) {
-          throw ConfigException(
-            '"images.perModel" must be a map of model id → cap, got: $value',
-          );
-        }
-        for (final model in value.entries) {
-          final cap = model.value;
-          if (cap is! int || cap <= 0) {
-            throw ConfigException(
-              '"images.perModel.${model.key}" must be a positive integer',
-            );
-          }
-        }
-      default:
-        throw ConfigException('unknown "images" key: $key');
-    }
+    _validateImagesEntry('${entry.key}', entry.value);
+  }
+}
+
+/// One `images:` key's value against its schema (gh-1713 split).
+void _validateImagesEntry(String key, Object? value) {
+  switch (key) {
+    case 'registry':
+      if (value is! bool) {
+        throw ConfigException('"images.registry" must be a boolean');
+      }
+    case 'maxPerRequest':
+      _validateImagesPositiveInt('"images.maxPerRequest"', value);
+    case 'perModel':
+      _validateImagesPerModel(value);
+    default:
+      throw ConfigException('unknown "images" key: $key');
+  }
+}
+
+/// A strict positive-int check; [what] names the key in the error.
+void _validateImagesPositiveInt(String what, Object? value) {
+  if (value is! int || value <= 0) {
+    throw ConfigException('$what must be a positive integer');
+  }
+}
+
+void _validateImagesPerModel(Object? value) {
+  if (value is! YamlMap) {
+    throw ConfigException(
+      '"images.perModel" must be a map of model id → cap, got: $value',
+    );
+  }
+  for (final model in value.entries) {
+    _validateImagesPositiveInt('"images.perModel.${model.key}"', model.value);
   }
 }
 

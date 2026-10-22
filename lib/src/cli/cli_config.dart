@@ -137,59 +137,47 @@ TrajectorySection _parseTrajectorySection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('trajectory must be a map, got: $node');
   }
-  var section = const TrajectorySection();
+  bool? wireDump;
+  bool? requestBlobs;
+  int? requestBlobMaxMb;
+  int? requestBlobTtlDays;
   for (final key in node.keys) {
-    final value = node[key];
     switch (key) {
       case 'wireDump':
-        if (value is! bool) {
-          throw ConfigException('"trajectory.wireDump" must be a boolean');
-        }
-        section = TrajectorySection(
-          wireDump: value,
-          requestBlobs: section.requestBlobs,
-          requestBlobMaxMb: section.requestBlobMaxMb,
-          requestBlobTtlDays: section.requestBlobTtlDays,
-        );
+        wireDump = _readTrajectoryBool(node, '$key');
       case 'requestBlobs':
-        if (value is! bool) {
-          throw ConfigException('"trajectory.requestBlobs" must be a boolean');
-        }
-        section = TrajectorySection(
-          wireDump: section.wireDump,
-          requestBlobs: value,
-          requestBlobMaxMb: section.requestBlobMaxMb,
-          requestBlobTtlDays: section.requestBlobTtlDays,
-        );
+        requestBlobs = _readTrajectoryBool(node, '$key');
       case 'requestBlobMaxMb':
-        if (value is! int || value < 1) {
-          throw ConfigException(
-            '"trajectory.requestBlobMaxMb" must be a positive integer',
-          );
-        }
-        section = TrajectorySection(
-          wireDump: section.wireDump,
-          requestBlobs: section.requestBlobs,
-          requestBlobMaxMb: value,
-          requestBlobTtlDays: section.requestBlobTtlDays,
-        );
+        requestBlobMaxMb = _readTrajectoryPositiveInt(node, '$key');
       case 'requestBlobTtlDays':
-        if (value is! int || value < 1) {
-          throw ConfigException(
-            '"trajectory.requestBlobTtlDays" must be a positive integer',
-          );
-        }
-        section = TrajectorySection(
-          wireDump: section.wireDump,
-          requestBlobs: section.requestBlobs,
-          requestBlobMaxMb: section.requestBlobMaxMb,
-          requestBlobTtlDays: value,
-        );
+        requestBlobTtlDays = _readTrajectoryPositiveInt(node, '$key');
       default:
         throw ConfigException('unknown "trajectory" key: $key');
     }
   }
-  return section;
+  // Unset keys keep the class defaults; duplicates last-win (as before).
+  return TrajectorySection(
+    wireDump: wireDump ?? false,
+    requestBlobs: requestBlobs ?? true,
+    requestBlobMaxMb: requestBlobMaxMb ?? 50,
+    requestBlobTtlDays: requestBlobTtlDays ?? 30,
+  );
+}
+
+bool _readTrajectoryBool(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! bool) {
+    throw ConfigException('"trajectory.$key" must be a boolean');
+  }
+  return value;
+}
+
+int _readTrajectoryPositiveInt(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! int || value < 1) {
+    throw ConfigException('"trajectory.$key" must be a positive integer');
+  }
+  return value;
 }
 
 /// The parsed `quota:` section (issue #823): the status-line badge opt-in
