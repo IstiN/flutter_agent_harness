@@ -87,14 +87,14 @@ String _executableSource() {
 }
 
 void main() {
+  final exeSource = _executableSource();
   test('bin main keeps every boot-wiring symbol (gh-1000 rework reg)', () {
     final violations = <String>[];
     _requiredReferences.forEach((path, symbols) {
       if (path == 'bin/fah.dart') {
         // The executable library: primary + its bin/ part files.
-        final source = _executableSource();
         for (final symbol in symbols) {
-          if (!source.contains(symbol)) {
+          if (!exeSource.contains(symbol)) {
             violations.add('$path: no reference to `$symbol`');
           }
         }
@@ -125,6 +125,82 @@ toggles, resume parity). If the symbol moved INTENTIONALLY, update
 _requiredReferences in the same commit — never delete the reference
 without a replacement wiring.
 ''',
+    );
+  });
+
+  test('REG-preconfig-and-queue: the queue is resolved before '
+      'keyCache.preload and the key gate (gh-1781 AC1/AC3)', () {
+    // Boot order: the queue scope resolution precedes BOTH the preload and
+    // the key gate (a queue-only boot satisfies the gate — AC1); the queue
+    // runtime build sits between the preload (it consumes the secrets
+    // snapshot) and the gate (an all-keyless queue fails with the loud
+    // queue error first — AC3).
+    final queueResolve = exeSource.indexOf('resolveProviderQueueAtBoot(');
+    final preload = exeSource.indexOf('keyCache.preload(');
+    final queueBuild = exeSource.indexOf('ProviderQueueRuntime.build(');
+    final keyGate = exeSource.indexOf('startupApiKey(');
+    expect(
+      queueResolve,
+      greaterThan(0),
+      reason: 'queue scope resolution wired',
+    );
+    expect(
+      preload,
+      greaterThan(queueResolve),
+      reason:
+          'keyCache.preload must run AFTER the queue resolution so '
+          'queue key names feed the preload set (I4)',
+    );
+    expect(
+      queueBuild,
+      greaterThan(preload),
+      reason:
+          'ProviderQueueRuntime.build consumes collectQueueSecrets, '
+          'which reads the preloaded store snapshot',
+    );
+    expect(
+      keyGate,
+      greaterThan(queueBuild),
+      reason:
+          'the legacy key gate must see the built queue (queueResolved) '
+          'and lose to the queue error when every entry is keyless (I3)',
+    );
+  });
+
+  test('REG-preconfig-and-queue: queueResolved threads into startupApiKey '
+      'and queueSecrets into buildSecretRedactor (gh-1781 I1/I5)', () {
+    expect(
+      exeSource.contains('queueResolved: queueRuntime != null'),
+      isTrue,
+      reason: 'startupApiKey must receive the queue presence',
+    );
+    expect(
+      exeSource.contains('queueSecrets: queueSecrets'),
+      isTrue,
+      reason: 'buildSecretRedactor must receive the queue secrets snapshot',
+    );
+    expect(
+      exeSource.contains('queueEntries: queueResolution?.entries'),
+      isTrue,
+      reason: 'secureKeyPreloadNames must receive the resolved queue entries',
+    );
+  });
+
+  test('REG-preconfig-and-queue: the boot model identity follows the queue '
+      'head when the launch pinned nothing (gh-1781 I6)', () {
+    final override = exeSource.indexOf('queueOwnsBootModel(');
+    final assign = exeSource.indexOf(
+      'model = queueRuntime.streamFunction.currentModel',
+    );
+    expect(
+      override,
+      greaterThan(0),
+      reason: 'the boot-model override must ride the shared pure predicate',
+    );
+    expect(
+      assign,
+      greaterThan(override),
+      reason: 'the queue-head assignment must be gated by the predicate',
     );
   });
 }
