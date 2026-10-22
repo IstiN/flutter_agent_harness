@@ -207,10 +207,10 @@ providersQueue:
       expect(boot.runtime, isNotNull);
       expect(boot.runtime!.streamFunction.currentModel.id, 'glm-5.3-airx');
       expect(boot.bootDiagnostics, hasLength(1));
-      expect(boot.bootDiagnostics.single, allOf(
-        contains('1 provider key(s)'),
-        contains('resolved NOTHING'),
-      ));
+      expect(
+        boot.bootDiagnostics.single,
+        allOf(contains('1 provider key(s)'), contains('resolved NOTHING')),
+      );
     });
   });
 

@@ -233,8 +233,79 @@ void main() {
     expect(
       io.out.toString(),
       isNot(contains('provider queue skipped')),
-      reason: 'the rebind rebuilds the SAME queue the boot already '
+      reason:
+          'the rebind rebuilds the SAME queue the boot already '
           'rendered — no second print',
     );
+  });
+
+  // gh-1781 review r1 (IMPORTANT): the boot-time quota-feed rebind (and a
+  // loud `/providers queue` edit reload) rebuilds the runtime through
+  // `_queueSecrets` — whose env view carried ONLY the base key names, so
+  // `collectQueueSecrets`'s rotation-stack sweep (`NAME_2`, `NAME_3`, …)
+  // never fired on the rebuild: the config-level runtime silently dropped
+  // to single-key rings where the boot build had the full stack. The
+  // rebuild must resolve the SAME secret snapshot the boot did.
+  test('the queue rebuild resolves the SAME secret snapshot as the boot — '
+      'the rotation stack survives (UT-queue-secrets-rotation-stack '
+      'through attachProviderQueueQuotaFeed)', () async {
+    // The boot's secret snapshot: K_A from env PLUS its K_A_2 rotation
+    // stack entry — the boot build wired a 2-credential ApiKeyRing.
+    final runtime = ProviderQueueRuntime.build(
+      ProviderQueueResolution(
+        scope: ProviderQueueScope.env,
+        entries: [
+          ProviderQueueEntry(
+            providerType: 'anthropic',
+            model: 'queue-a',
+            apiKeyEnv: 'K_A',
+            baseUrl: 'https://a.test/v1',
+          ),
+        ],
+        notices: const [],
+      ),
+      secrets: const {'K_A': 'v1', 'K_A_2': 'v2'},
+      streamFactory: failoverFactory(),
+    );
+    final entries = runtime.resolution.entries;
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        providersQueueRuntime: runtime,
+        // The rebuild's env view: the same values the boot's process env
+        // carried — the queue blob AND the base name plus its K_A_2 stack
+        // entry. Production bin hands Platform.environment here (the view
+        // the boot swept).
+        providerQueueEnv: const {
+          'FA_PROVIDERS_QUEUE':
+              '[{"provider_type":"anthropic","provider_config":'
+              '{"baseUrl":"https://a.test/v1","model":"queue-a",'
+              '"apiKeyEnv":"K_A"}}]',
+          'K_A': 'v1',
+          'K_A_2': 'v2',
+        },
+        envVarValue: (name) => name == 'K_A' ? 'v1' : null,
+        secureKeys: SecureKeyCache(null),
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    // The rebind under test: every queue boot takes this path (warn:
+    // false) — it must resolve the boot's FULL snapshot, stack included.
+    await cli.attachProviderQueueQuotaFeed();
+    expect(cli.config.providersQueueRuntime, isNotNull);
+    expect(
+      cli.config.providersQueueRuntime!.streamFunction.currentModel.id,
+      'queue-a',
+      reason: 'the rebuild re-resolved the same single-entry queue',
+    );
+    // The same snapshot the rebuild just consumed (one `_queueSecrets`
+    // call feeds both the rebind build and this probe): K_A from the
+    // lookup AND K_A_2 swept from the env view. Pre-fix the map carried
+    // only base names, so this expects the failing shape.
+    expect(cli.queueSecretsForTest(entries), {'K_A': 'v1', 'K_A_2': 'v2'});
   });
 }

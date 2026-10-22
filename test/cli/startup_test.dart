@@ -1533,11 +1533,13 @@ void main() {
       );
       // Env-resolved name drops out; an EMPTY env value is not a
       // resolution (freshInstallProviderState's rule) — the name stays;
-      // the env-unset refreshTokenEnv name stays.
-      expect(names, {'EMPTY_ENV_QUEUE_KEY', 'STORE_ONLY_REFRESH'});
-      // The chatgpt default Keychain slot (no apiKeyEnv named) is
-      // env-unset here, so it stays store-referenced too.
-      expect(names, contains(chatGptOAuthCredentialsEnvName));
+      // the env-unset refreshTokenEnv name and the chatgpt default
+      // Keychain slot (no apiKeyEnv named) stay store-referenced too.
+      expect(names, {
+        'EMPTY_ENV_QUEUE_KEY',
+        'STORE_ONLY_REFRESH',
+        chatGptOAuthCredentialsEnvName,
+      });
     });
 
     test('the env filter scopes to queue names only — legacy referenced '

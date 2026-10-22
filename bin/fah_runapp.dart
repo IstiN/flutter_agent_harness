@@ -1530,6 +1530,15 @@ Future<void> _runApp(List<String> args) async {
           if (value != null && value.isNotEmpty) return value;
           return keyCache.read(name);
         },
+        // The enumerable env view the provider-queue scope AND its secret
+        // sweep re-resolve through (gh-1781 review r1): the quota-feed
+        // rebind and the queue-edit reload rebuild the runtime from this
+        // view — handing the same map the boot resolved (`Platform.
+        // environment`) keeps the rotation stack (`NAME_2`, `NAME_3`, …)
+        // in the rebuilt `ApiKeyRing`s instead of silently dropping to
+        // single-key rings. Resolution behavior is unchanged (null would
+        // read the same process environment).
+        providerQueueEnv: Platform.environment,
         // herdr pane self-report (issue #1481): the gate reads the pane env
         // herdr exports to every pane process; each report spawns the pane's
         // herdr binary fire-and-forget (reporter-side short timeout, silent

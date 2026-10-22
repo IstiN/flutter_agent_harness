@@ -917,6 +917,16 @@ Map<String, String> collectRoleSecrets(
 /// gh-1000) resolves BEFORE both — it names the account the session
 /// actually ran on.
 ///
+/// [queueResolved] (gh-1781): an active provider queue replaces the
+/// main-model resolution — the gate degrades from "missing key = hard
+/// startup failure" to an OPTIONAL key lookup (a missing key resolves to
+/// the empty string, never throws). The queue's own entries already
+/// passed their key gates in `ProviderQueueRuntime.build` (an all-keyless
+/// queue failed there with the loud queue error), and the legacy
+/// single-provider key never reaches the queue lane's streams — so the
+/// headless boot stays fail-loud exactly where a missing key still
+/// matters.
+///
 /// Throws [ConfigException] when the key is required and missing — the
 /// executable maps that to its `fa:` usage failure.
 String startupApiKey(
@@ -1207,13 +1217,9 @@ Map<String, String> collectQueueSecrets(
   final environment = env ?? Platform.environment;
   final secrets = <String, String>{};
   for (final entry in entries) {
-    final names = [
-      ?entry.apiKeyEnv,
-      ?entry.refreshTokenEnv,
-      if (entry.apiKeyEnv == null && entry.providerType == 'chatgpt-codex')
-        chatGptOAuthCredentialsEnvName,
-    ];
-    for (final name in names) {
+    // gh-1781 review r1: one ladder for "which key names does a queue
+    // entry reference" — [queueEntryKeyNames] is the source of truth.
+    for (final name in queueEntryKeyNames([entry])) {
       if (secrets.containsKey(name)) continue;
       final fromEnv = environment[name];
       if (fromEnv != null && fromEnv.isNotEmpty) {

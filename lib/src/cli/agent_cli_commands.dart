@@ -965,31 +965,54 @@ extension ProviderQueueEditor on AgentCli {
   }
 
   /// Secrets for [entries]: the injected env lookup first (tests, embedders),
-  /// then the process environment, then the secure-key cache. The names
-  /// mirror [collectQueueSecrets]: `apiKeyEnv`, `refreshTokenEnv`, and the
-  /// default ChatGPT slot for a `chatgpt-codex` entry with no `apiKeyEnv`
-  /// (issue #1704).
+  /// then the secure-key cache. The names come from [queueEntryKeyNames]
+  /// (gh-1781 review r1 — one ladder: `apiKeyEnv`, `refreshTokenEnv`, and
+  /// the default ChatGPT slot for a `chatgpt-codex` entry with no
+  /// `apiKeyEnv`, issue #1704). The map also carries each base name's
+  /// ROTATION STACK (`NAME_2`, `NAME_3`, …) swept from the same enumerable
+  /// env view the queue scope re-resolves through
+  /// ([AgentCliConfig.providerQueueEnv] — bin hands `Platform.environment`,
+  /// the view the boot swept): the lookup cannot enumerate names, and
+  /// without the stack entries [collectQueueSecrets]'s sweep never fired on
+  /// the rebuild path, silently dropping boot-built multi-key `ApiKeyRing`s
+  /// to single keys (gh-1781 review r1). A null lookup keeps the old
+  /// behavior — [collectQueueSecrets] sweeps the process environment itself.
   Map<String, String> _queueSecrets(List<ProviderQueueEntry> entries) {
     final lookup = config.envVarValue;
     final env = lookup == null
         ? null
-        : {
-            for (final entry in entries) ...{
-              for (final name in [
-                ?entry.apiKeyEnv,
-                ?entry.refreshTokenEnv,
-                if (entry.apiKeyEnv == null &&
-                    entry.providerType == 'chatgpt-codex')
-                  chatGptOAuthCredentialsEnvName,
-              ])
-                name: lookup(name) ?? '',
-            },
-          };
+        : _queueSecretsEnv(entries, lookup, config.providerQueueEnv);
     return collectQueueSecrets(
       entries,
       config.secureKeys ?? _secureKeysMissing,
       env: env,
     );
+  }
+
+  /// The env map the rebuild hands to [collectQueueSecrets]: every
+  /// referenced base name through [lookup], plus each base name's rotation
+  /// stack swept from the enumerable [view] (null = nothing to sweep).
+  /// [collectQueueSecrets] re-filters the stack shape (`^NAME_\d+$`,
+  /// non-empty values) exactly like the boot sweep does.
+  Map<String, String> _queueSecretsEnv(
+    List<ProviderQueueEntry> entries,
+    String? Function(String name) lookup,
+    Map<String, String>? view,
+  ) {
+    final names = {
+      for (final entry in entries) ...queueEntryKeyNames([entry]),
+    };
+    final env = {for (final name in names) name: lookup(name) ?? ''};
+    if (view == null) return env;
+    final stackSuffix = RegExp(r'_(\d+)$');
+    for (final candidate in view.entries) {
+      if (candidate.value.isEmpty || !stackSuffix.hasMatch(candidate.key)) {
+        continue;
+      }
+      final base = candidate.key.substring(0, candidate.key.lastIndexOf('_'));
+      if (names.contains(base)) env[candidate.key] = candidate.value;
+    }
+    return env;
   }
 
   /// No secure store on this host: the env is the only key source (the
