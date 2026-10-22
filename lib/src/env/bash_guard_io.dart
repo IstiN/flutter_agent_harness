@@ -128,6 +128,7 @@ FA_REAL_PGREP='__FA_REAL_PGREP__'
 
 sig=''
 sel=''
+fa_dd=0
 # Flags that would corrupt the victim set never enter the guarded path —
 # the real pkill decides:
 # - output modes (c = count prints a number the victim loop would read as
@@ -156,9 +157,12 @@ for a in "$@"; do
 done
 while [ $# -gt 0 ]; do
   case "$1" in
-    --signal) sig="${2-}"; shift 2 ;;
+    --signal)
+      if [ "$#" -ge 2 ]; then sig="$2"; shift 2
+      else exec "$FA_REAL_PKILL" "$@"; fi
+      ;;
     --signal=*) sig="${1#--signal=}"; shift ;;
-    --) shift; break ;;
+    --) fa_dd=1; shift; break ;;
     -[0-9]*) sig="$1"; shift ;;
     -[Ss][Ii][Gg][A-Za-z]*|-[A-Z][A-Z]*) sig="$1"; shift ;;
     # Value-taking selection flags (procps: -u -U -g -s -t -P -G -r -O -q
@@ -182,6 +186,7 @@ done
 # Exactly one operand (the pattern) must remain; anything else — unknown
 # flags interleaved with it, extra operands — is the real pkill's call.
 if [ "$#" -ne 1 ]; then
+  if [ "$fa_dd" = 1 ]; then exec "$FA_REAL_PKILL" -- "$@"; fi
   exec "$FA_REAL_PKILL" "$@"
 fi
 
@@ -190,7 +195,9 @@ pids=$("$FA_REAL_PGREP" $sel "$@" 2>/dev/null)
 rc=$?
 if [ "$rc" -ge 2 ]; then
   # pgrep rejected the selection (a flag it does not share): the real
-  # pkill decides, semantics stay honest.
+  # pkill decides, semantics stay honest. A consumed `--` is re-emitted
+  # so the surviving operands stay operands (`pkill -- -<pat>`).
+  if [ "$fa_dd" = 1 ]; then exec "$FA_REAL_PKILL" -- "$@"; fi
   exec "$FA_REAL_PKILL" "$@"
 fi
 [ "$rc" -eq 0 ] || exit 1
@@ -199,6 +206,9 @@ fi
 # rows like "pid name" would turn the name column into a phantom kill
 # target.
 pids=$(printf '%s\n' "$pids" | cut -d' ' -f1)
+# --signal/--signal= store the NAME without the leading dash; normalize
+# so `kill "$sig" <pid>` works for TERM, KILL and 9 alike.
+case "$sig" in -*) ;; ?*) sig="-$sig" ;; esac
 
 self=$$
 parent="${PPID:-}"
@@ -237,7 +247,10 @@ sig=''
 names=''
 while [ $# -gt 0 ]; do
   case "$1" in
-    --signal) sig="${2-}"; shift 2 ;;
+    --signal)
+      if [ "$#" -ge 2 ]; then sig="$2"; shift 2
+      else exec "$FA_REAL_KILLALL" "$@"; fi
+      ;;
     --signal=*) sig="${1#--signal=}"; shift ;;
     -[0-9]*) sig="$1"; shift ;;
     -[Ss][Ii][Gg][A-Za-z]*|-[A-Z][A-Z]*) sig="$1"; shift ;;
@@ -246,6 +259,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$names" ] || exec "$FA_REAL_KILLALL" "$@"
+# --signal/--signal= store the NAME without the leading dash; normalize
+# so `kill "$sig" <pid>` works for TERM, KILL and 9 alike.
+case "$sig" in -*) ;; ?*) sig="-$sig" ;; esac
 
 self=$$
 parent="${PPID:-}"

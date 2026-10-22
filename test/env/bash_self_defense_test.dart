@@ -442,6 +442,147 @@ void main() {
     );
   });
 
+  group('AC2d: review-rework-2 --signal + terminator shapes (gh-1763)', () {
+    test(
+      'pkill --signal=KILL -f reaps its victim (dash-less signal names '
+      'normalized)',
+      skip: posixSkip,
+      () async {
+        final victim = await Process.start('sleep', const ['271']);
+        addTearDown(victim.kill);
+        final result = await const LocalShell().exec(
+          'pkill --signal=KILL -f "sleep 271"; echo "rc=\$?"',
+        );
+        expect(
+          result.getOrThrow().stdout.trim(),
+          'rc=0',
+          reason: 'the real pkill reaps with rc=0; the shim must match',
+        );
+        final alive = await stillAlive(victim.pid);
+        expect(
+          alive,
+          isFalse,
+          reason:
+              'the --signal arms stored the name WITHOUT the leading dash, '
+              'so the victim loop ran `kill KILL <pid>` (dash: "Illegal '
+              'number: KILL") — nothing was signaled and the caller got '
+              'rc=1 ("no processes matched"): the E2 regression for this '
+              'spelling',
+        );
+      },
+    );
+
+    test(
+      'pkill --signal TERM (split form) reaps its victim',
+      skip: posixSkip,
+      () async {
+        final victim = await Process.start('sleep', const ['271']);
+        addTearDown(victim.kill);
+        final result = await const LocalShell().exec(
+          'pkill --signal TERM -f "sleep 271"; echo "rc=\$?"',
+        );
+        expect(result.getOrThrow().stdout.trim(), 'rc=0');
+        expect(
+          await stillAlive(victim.pid),
+          isFalse,
+          reason: 'the dash-less signal name must be normalized to -TERM',
+        );
+      },
+    );
+
+    test(
+      'killall --signal TERM reaps its victim (unique comm name)',
+      skip: Platform.isWindows || !hostHasPgrep
+          ? 'POSIX procps process semantics only'
+          : false,
+      () async {
+        // killall matches the comm name (15-char cap on Linux): give the
+        // victim a unique name by copying the sleep binary.
+        final binDir = Directory.systemTemp.createTempSync('fa-killall-');
+        addTearDown(() => binDir.deleteSync(recursive: true));
+        final sleepBin = Process.runSync(
+          'sh',
+          <String>['-c', 'command -v sleep'],
+        ).stdout.trim();
+        final victimPath = '${binDir.path}/fa_kl_271';
+        File(sleepBin).copySync(victimPath);
+        Process.runSync('chmod', <String>['755', victimPath]);
+        final victim = await Process.start(victimPath, const ['271']);
+        addTearDown(victim.kill);
+        final result = await const LocalShell().exec(
+          'killall --signal TERM fa_kl_271; echo "rc=\$?"',
+        );
+        expect(result.getOrThrow().stdout.trim(), 'rc=0');
+        expect(
+          await stillAlive(victim.pid),
+          isFalse,
+          reason:
+              'the killall shim shares the pkill victim loop — the dash-less '
+              'signal name must be normalized or the reap silently no-ops',
+        );
+      },
+    );
+
+    test(
+      'pkill --signal / killall --signal (dangling, last arg) terminate '
+      'under bash-as-sh instead of looping forever',
+      skip: Platform.isWindows || !hostHasPgrep
+          ? 'POSIX procps process semantics only'
+          : false,
+      () async {
+        final provision = await provisionBashGuard();
+        expect(provision?.shimDir, isNotNull);
+        // bash-as-sh (macOS /bin/sh) never escapes the unguarded
+        // `shift 2` with $# = 1 — the arm repeats forever (rc=124 under
+        // timeout). dash exits 2; the fixed shape execs the real binary
+        // for the honest usage error (rc=2) on every shell.
+        for (final tool in <String>['pkill', 'killall']) {
+          final r = await Process.run('timeout', <String>[
+            '10',
+            'bash',
+            '${provision!.shimDir}/$tool',
+            '--signal',
+          ]);
+          expect(
+            r.exitCode,
+            isNot(124),
+            reason: '$tool --signal hung: the dangling --signal arm '
+                'repeats `shift 2` forever under bash-as-sh',
+          );
+          // The honest outcome: whatever the real binary does with a
+          // dangling --signal (pkill usage-errors rc=2, killall rc=1).
+          final real = await Process.run('timeout', <String>[
+            '10',
+            tool,
+            '--signal',
+          ]);
+          expect(
+            r.exitCode,
+            real.exitCode,
+            reason: '$tool --signal (dangling) must exit like the real '
+                'binary',
+          );
+        }
+      },
+    );
+
+    test(
+      'pkill -- -<dash-leading pattern> matches the real exit code '
+      '(terminator re-emitted on the pgrep-reject fallback)',
+      skip: posixSkip,
+      () async {
+        final result = await const LocalShell().exec(
+          'pkill -- -zz_nope_1763; echo "rc=\$?"',
+        );
+        // Real pkill treats the operand after `--` as a pattern → no
+        // match → rc=1. Pre-fix the shim consumed the terminator, pgrep
+        // rejected the option-looking pattern (rc=2) and the fallback
+        // execed the real pkill WITHOUT `--` → usage error rc=2.
+        expect(result.getOrThrow().stdout.trim(), 'rc=1');
+      },
+    );
+  });
+
   group('AC2c: guard provisioning hardening (gh-1763 review)', () {
     test(
       'a failing chmod degrades to a shimless provision instead of '
