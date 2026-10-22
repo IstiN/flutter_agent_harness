@@ -84,13 +84,17 @@ void main() {
   group('gh-1778 — test-core budget survives a degraded cache service', () {
     final coreJob = job(coreJobId);
     final steps = jobSteps(coreJobId);
-    final caches = [for (final s in steps) if (isCacheStep(s)) s];
+    final caches = [
+      for (final s in steps)
+        if (isCacheStep(s)) s,
+    ];
 
     test('the leg carries the pub and native-assets hook caches', () {
       expect(
         caches,
         hasLength(2),
-        reason: 'pub-cache + hooks-shared — the guards below key on '
+        reason:
+            'pub-cache + hooks-shared — the guards below key on '
             'exactly these; a new cache step must opt into the same '
             'best-effort contract',
       );
@@ -101,13 +105,15 @@ void main() {
       expect(
         timeout,
         isNotNull,
-        reason: 'test-core must keep a job-level timeout — it is the '
+        reason:
+            'test-core must keep a job-level timeout — it is the '
             'backstop that kills a genuinely hung shard loudly',
       );
       expect(
         timeout,
         greaterThanOrEqualTo(minJobTimeoutMinutes),
-        reason: 'test-core timeout-minutes is $timeout — a warm shard '
+        reason:
+            'test-core timeout-minutes is $timeout — a warm shard '
             'wall is $warmWallSeconds s and the observed degraded-cache '
             'run needed ~$degradedWallMinutes min before being cancelled '
             'mid-green-run (gh-1778); the budget must clear that worst '
@@ -120,7 +126,8 @@ void main() {
         expect(
           step['continue-on-error'],
           true,
-          reason: 'cache step "${step['name'] ?? step['uses']}" must carry '
+          reason:
+              'cache step "${step['name'] ?? step['uses']}" must carry '
               'continue-on-error: true — a failed restore means a slower '
               'setup, never a product failure; reding the shard on it '
               'is the gh-1778 release-kill shape',
@@ -134,7 +141,8 @@ void main() {
         expect(
           timeout,
           isNotNull,
-          reason: 'cache step "${step['name'] ?? step['uses']}" must carry '
+          reason:
+              'cache step "${step['name'] ?? step['uses']}" must carry '
               'a step-level timeout-minutes — the gh-1778 run stalled '
               '~133 s per step on a degraded cache service with no bound',
         );
@@ -147,7 +155,8 @@ void main() {
         expect(
           minutes,
           lessThanOrEqualTo(maxCacheStepTimeoutMinutes),
-          reason: 'cache step "${step['name']}" stalls are capped at '
+          reason:
+              'cache step "${step['name']}" stalls are capped at '
               '$maxCacheStepTimeoutMinutes min — both capped steps plus '
               'the cold-cache builds must stay inside AC1',
         );
