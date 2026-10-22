@@ -372,9 +372,7 @@ void main() {
     // Measurement call order (interleaved, PR #1783 red): per attempt,
     // s,d,s,d,s,d,s,d,s,d — the doubled timed runs sit at calls
     // 2,4,6,8,10 within each attempt (3 spiked per attempt below).
-    final sustained = ContendedClock(
-      spiked: {2, 4, 6, 12, 14, 16, 22, 24, 26},
-    );
+    final sustained = ContendedClock(spiked: {2, 4, 6, 12, 14, 16, 22, 24, 26});
     expectLinearGrowth(
       asciiProse,
       100000,
@@ -452,4 +450,3 @@ void main() {
     );
   });
 }
-
