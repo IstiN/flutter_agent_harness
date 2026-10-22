@@ -57,7 +57,7 @@ extension ComposerChipsSubmit on AgentCli {
         // for the whole stream instead of flashing for one frame.
         await _settled;
         await _drainTuiQueue(controller);
-      }, (error) => io.writeln(_style.red(submitErrorPanelLine(error))));
+      }, (error) => io.writeln(tuiError(submitErrorPanelLine(error))));
     } finally {
       _abortRequested = false;
       controller.sendBusy(false, source: 'submit');
