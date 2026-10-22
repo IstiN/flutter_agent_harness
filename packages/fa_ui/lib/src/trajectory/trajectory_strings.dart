@@ -188,6 +188,10 @@ abstract class TrajectoryStrings {
   /// Request-tab blob pointer rows (issue #385 F1/F2).
   String get requestPromptHash;
   String get requestManifestHash;
+
+  /// The gh-1745 request-blob file carrying the request's full per-message
+  /// detail (null on legacy/inline sessions).
+  String get requestSpillFile;
   String searchMatchPosition(int current, int total);
   String get searchPreviousMatch;
   String get searchNextMatch;
@@ -524,6 +528,9 @@ class TrajectoryStringsEn extends TrajectoryStrings {
 
   @override
   String get requestManifestHash => 'Tool manifest hash';
+
+  @override
+  String get requestSpillFile => 'Request blob';
   @override
   String searchMatchPosition(int current, int total) => '$current of $total';
   @override
@@ -921,6 +928,9 @@ class TrajectoryStringsRu extends TrajectoryStrings {
 
   @override
   String get requestManifestHash => 'Хеш манифеста инструментов';
+
+  @override
+  String get requestSpillFile => 'Блоб запроса';
   @override
   String searchMatchPosition(int current, int total) => '$current из $total';
   @override

@@ -127,6 +127,35 @@ final failedTool = TrajectoryToolRecord(
   startedAt: _at(2500),
 );
 
+/// gh-1745 spilled request: role+chars stubs only (the previews and block
+/// texts ride the request blob) plus the `spillFile` pointer — the shape
+/// every NEW session's Request tab renders.
+final spilledAssistant = TrajectoryAssistantRecord(
+  index: 9,
+  recordId: 'details/assistant-spilled',
+  messageId: 'm9',
+  turn: 3,
+  step: 1,
+  provider: 'anthropic',
+  model: 'claude-test',
+  isError: false,
+  requestDetail: const TrajectoryRequestDetail(
+    messageCount: 2,
+    systemPromptChars: 40,
+    toolCount: 1,
+    toolNames: ['bash'],
+    spillFile: '.fah/trajectories/s1/requests/1.json',
+    messages: [
+      TrajectoryRequestMessageSummary(role: 'user', chars: 9, preview: ''),
+      TrajectoryRequestMessageSummary(
+        role: 'assistant',
+        chars: 30,
+        preview: '',
+      ),
+    ],
+  ),
+);
+
 /// Running tool call — no Result tab, Pending status.
 final runningTool = TrajectoryToolRecord(
   index: 5,
