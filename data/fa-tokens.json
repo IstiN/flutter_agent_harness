@@ -5060,6 +5060,15 @@
       "total": 182850,
       "cacheRead": 10147584,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-22T10:21:55Z",
+      "prompt": 181272,
+      "completion": 20064,
+      "total": 201336,
+      "cacheRead": 3506624,
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-1735": [
