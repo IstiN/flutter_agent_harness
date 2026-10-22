@@ -270,6 +270,7 @@ extension on AgentCli {
       maxTokens: builtModel.maxTokens,
       headers: builtModel.headers,
       compat: builtModel.compat,
+      maxImages: builtModel.maxImages,
     );
     _modelCache = const [];
     _modelContextWindows = const {};
@@ -413,6 +414,7 @@ extension on AgentCli {
       maxTokens: model.maxTokens,
       headers: {'cookie': cookie},
       compat: model.compat,
+      maxImages: model.maxImages,
     );
   }
 } // extension on AgentCli

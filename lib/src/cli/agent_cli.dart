@@ -156,7 +156,11 @@ import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../providers/thinking.dart';
 import '../agent/image_registry.dart'
-    show ImageRegistryConfig, imageDropNotice, imageRegistryConfig;
+    show
+        ImageRegistryConfig,
+        imageCapLearnedNotice,
+        imageDropNotice,
+        imageRegistryConfig;
 import '../providers/provider_common.dart'
     show
         authExpiredProvider,
