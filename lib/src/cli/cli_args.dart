@@ -557,13 +557,7 @@ _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
         }
         i++;
       default:
-        if (arg.startsWith('-')) {
-          throw CliArgsException('unknown argument: $arg');
-        }
-        if (positionals.length >= 2) {
-          throw CliArgsException('unexpected argument: $arg');
-        }
-        positionals.add(arg);
+        _addTrajectoryPositional(positionals, arg);
     }
   }
   return (
@@ -576,6 +570,18 @@ _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
     formatSet: formatSet,
     output: output,
   );
+}
+
+/// Appends [arg] to [positionals], rejecting unknown flags and a third
+/// operand (trajectory verbs take at most two).
+void _addTrajectoryPositional(List<String> positionals, String arg) {
+  if (arg.startsWith('-')) {
+    throw CliArgsException('unknown argument: $arg');
+  }
+  if (positionals.length >= 2) {
+    throw CliArgsException('unexpected argument: $arg');
+  }
+  positionals.add(arg);
 }
 
 /// The value following a `--cwd`/`--session-root` flag at index [i].
@@ -1408,19 +1414,7 @@ final class _CliArgValues {
         'cannot combine --system-prompt and --system-prompt-file',
       );
     }
-    if (prompt != null && positionals.isNotEmpty) {
-      throw CliArgsException(
-        'cannot combine -p/--prompt with positional prompt arguments',
-      );
-    }
-    if (promptFile != null && prompt != null) {
-      throw CliArgsException('cannot combine --prompt-file with -p/--prompt');
-    }
-    if (promptFile != null && positionals.isNotEmpty) {
-      throw CliArgsException(
-        'cannot combine --prompt-file with positional prompt arguments',
-      );
-    }
+    _validatePromptFlags();
     if (streamThinking && noStreamThinking) {
       throw const CliArgsException(
         'cannot combine --stream-thinking and --no-stream-thinking',
@@ -1467,6 +1461,26 @@ final class _CliArgValues {
       deadline: deadline,
       attachments: List.unmodifiable(attachments),
     );
+  }
+
+  /// Prompt-source combination validation, split out of [finish] to keep
+  /// its complexity under the repo's CRAP gate (same rationale as
+  /// [_validateDeadlineFlags]): at most one prompt source may be set —
+  /// `-p/--prompt`, `--prompt-file`, or positional prompt arguments.
+  void _validatePromptFlags() {
+    if (prompt != null && positionals.isNotEmpty) {
+      throw CliArgsException(
+        'cannot combine -p/--prompt with positional prompt arguments',
+      );
+    }
+    if (promptFile != null && prompt != null) {
+      throw CliArgsException('cannot combine --prompt-file with -p/--prompt');
+    }
+    if (promptFile != null && positionals.isNotEmpty) {
+      throw CliArgsException(
+        'cannot combine --prompt-file with positional prompt arguments',
+      );
+    }
   }
 
   /// gh-1556 deadline-flag validation, split out of [finish] to keep its
@@ -1600,6 +1614,12 @@ CliArgsResult _parseSessionArgs(List<String> args) {
   );
 }
 
+/// Whether [arg] is the positional repair target of `fa session repair`:
+/// the first non-flag operand (a later one stays a usage error). Split out
+/// of [_parseSessionVerbArgs] to keep it under the CRAP ratchet.
+bool _isSessionRepairTarget(String verb, String arg, String? current) =>
+    verb == 'repair' && current == null && !arg.startsWith('-');
+
 /// The flags and operands after `fa session <verb>`: `--json`/`--flat`
 /// for `list`, `--dry-run` and the single repair target for `repair`.
 /// Anything else is a usage error. Split out of [_parseSessionArgs] so
@@ -1619,9 +1639,7 @@ _parseSessionVerbArgs(String verb, List<String> args) {
       case '--dry-run' when verb == 'repair' || verb == 'clean':
         dryRun = true;
       default:
-        if (verb == 'repair' &&
-            repairTarget == null &&
-            !args[i].startsWith('-')) {
+        if (_isSessionRepairTarget(verb, args[i], repairTarget)) {
           repairTarget = args[i];
           continue;
         }

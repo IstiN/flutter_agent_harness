@@ -87,6 +87,24 @@ FaTuiModel updateMenuForInput(FaTuiModel model, FaTuiCallbacks callbacks) {
   return model.copyWith(menuOpen: false, menuTokenStart: -1);
 }
 
+/// Word-boundary whitespace for completion tokens.
+bool _isSpace(String ch) => ch == ' ' || ch == '\t' || ch == '\n';
+
+/// The trailing shell word of a `!` line ending at [cursor]:
+/// (tokenStart, fragment) or null when nothing completes here. `start`
+/// stays >= 1: the leading '!' is never part of the completed token.
+(int, String)? _shellWordToken(String text, String before, int cursor) {
+  if (text.startsWith('!') && cursor >= 1 && !_isSpace(before[cursor - 1])) {
+    var start = cursor;
+    while (start > 1 && !_isSpace(before[start - 1])) {
+      start--;
+    }
+    final fragment = before.substring(start);
+    if (fragment.isNotEmpty) return (start, fragment);
+  }
+  return null;
+}
+
 /// The completion token ending at [cursor]: an `@`-token (`@` at line
 /// start or after whitespace; the fragment may be empty → browse-all) or
 /// the trailing shell word of a `!` line. Returns (tokenStart, fragment)
@@ -94,24 +112,14 @@ FaTuiModel updateMenuForInput(FaTuiModel model, FaTuiCallbacks callbacks) {
 (int, String)? completionToken(String text, int cursor) {
   if (cursor > text.length) cursor = text.length;
   final before = text.substring(0, cursor);
-  bool space(String ch) => ch == ' ' || ch == '\t' || ch == '\n';
   final at = before.lastIndexOf('@');
-  if (at >= 0 && (at == 0 || space(before[at - 1]))) {
+  if (at >= 0 && (at == 0 || _isSpace(before[at - 1]))) {
     final fragment = before.substring(at + 1);
     if (!fragment.contains(RegExp(r'[\s@]'))) {
       return (at + 1, fragment);
     }
   }
-  if (text.startsWith('!') && cursor >= 1 && !space(before[cursor - 1])) {
-    var start = cursor;
-    while (start > 1 && !space(before[start - 1])) {
-      start--;
-    }
-    // start >= 1: the leading '!' is never part of the completed token.
-    final fragment = before.substring(start);
-    if (fragment.isNotEmpty) return (start, fragment);
-  }
-  return null;
+  return _shellWordToken(text, before, cursor);
 }
 
 /// Fuzzy-ranks [items] by how well [needle] matches their label, keeps

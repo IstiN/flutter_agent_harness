@@ -110,25 +110,7 @@ Future<void> _runCopilotStream(
       // tenants (incl. dedicated endpoints) must not be pinned to the
       // plan-picker's tier host (pi getGitHubCopilotBaseUrl parity).
       final derivedBaseUrl = copilotApiBaseUrlFromToken(token);
-      final effectiveModel =
-          derivedBaseUrl != null && derivedBaseUrl != model.baseUrl
-          ? Model(
-              id: model.id,
-              name: model.name,
-              api: model.api,
-              provider: model.provider,
-              baseUrl: derivedBaseUrl,
-              reasoning: model.reasoning,
-              input: model.input,
-              cost: model.cost,
-              contextWindow: model.contextWindow,
-              maxTokens: model.maxTokens,
-              headers: model.headers,
-              compat: model.compat,
-              authHeader: model.authHeader,
-              maxImages: model.maxImages,
-            )
-          : model;
+      final effectiveModel = _effectiveCopilotModel(model, derivedBaseUrl);
       final inner = streamOpenAICompletions(
         effectiveModel,
         context,
@@ -190,6 +172,29 @@ OpenAICompletionsOptions _completionsOptions(
     cacheRetention: options.cacheRetention,
   );
 }
+
+/// The request model, rebuilt against the token's tenant API host when the
+/// token redirects it (enterprise/proxy-ep tenants must not be pinned to
+/// the plan-picker's tier host — pi getGitHubCopilotBaseUrl parity).
+Model _effectiveCopilotModel(Model model, String? derivedBaseUrl) =>
+    derivedBaseUrl != null && derivedBaseUrl != model.baseUrl
+    ? Model(
+        id: model.id,
+        name: model.name,
+        api: model.api,
+        provider: model.provider,
+        baseUrl: derivedBaseUrl,
+        reasoning: model.reasoning,
+        input: model.input,
+        cost: model.cost,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+        headers: model.headers,
+        compat: model.compat,
+        authHeader: model.authHeader,
+        maxImages: model.maxImages,
+      )
+    : model;
 
 /// Records response status codes so the wrapper can spot a 401/403 without
 /// touching adapter internals (the adapter throws its HTTP error before its

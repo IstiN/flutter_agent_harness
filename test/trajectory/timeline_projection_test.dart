@@ -511,4 +511,100 @@ void main() {
       expect(formatTimelineOffset(-5), '0');
     });
   });
+
+  group('timed-mode cell ranges: kinds and edges (gh-1713)', () {
+    test('every anchored kind projects a start marker on the wall clock', () {
+      final model = deriveTrajectoryTimeline([
+        _turn(1, [
+          _user(0),
+          _assistant(
+            1,
+            turn: 1,
+            step: 1,
+            startedAt: _at(1),
+            timeSeconds: const Duration(seconds: 3),
+          ),
+          _tool(
+            2,
+            't1',
+            startedAt: _at(4),
+            timeSeconds: const Duration(seconds: 2),
+          ),
+          TrajectoryCompactedRecord(
+            index: 3,
+            recordId: 'cp3',
+            text: 'compacted',
+            summary: 'compacted',
+            startedAt: _at(6),
+            timeSeconds: const Duration(seconds: 1),
+          ),
+          TrajectorySystemRecord(
+            index: 4,
+            recordId: 's4',
+            text: 'system note',
+            change: TrajectorySystemChange.contextInject,
+            time: _at(7),
+          ),
+        ]),
+      ], TrajectoryTimelineMode.time)!;
+      final starts = [for (final span in model.spans) span.start];
+      expect(starts, [
+        _ms(_at(0)),
+        _ms(_at(1)),
+        _ms(_at(4)),
+        _ms(_at(6)),
+        _ms(_at(7)),
+      ]);
+      // `time` mode: every span is a zero-width start marker.
+      for (final span in model.spans) {
+        expect(span.end, span.start);
+      }
+    });
+
+    test('unanchored records drop from timed modes entirely', () {
+      final model = deriveTrajectoryTimeline([
+        _turn(1, [
+          _assistant(1, turn: 1, step: 1),
+          TrajectoryContextRecord(index: 2, recordId: 'c2', text: 'ctx'),
+          _tool(3, 't1', startedAt: _at(5)),
+        ]),
+      ], TrajectoryTimelineMode.time)!;
+      expect([for (final span in model.spans) span.index], [3]);
+      expect(
+        deriveTrajectoryTimeline([
+          _turn(1, [_assistant(1, turn: 1, step: 1)]),
+        ], TrajectoryTimelineMode.time),
+        isNull,
+        reason: 'no anchored record means no timed model',
+      );
+    });
+
+    test('missing and negative recorded durations clamp to zero width', () {
+      final model = deriveTrajectoryTimeline([
+        _turn(1, [
+          _assistant(
+            1,
+            turn: 1,
+            step: 1,
+            startedAt: _at(2),
+            timeSeconds: const Duration(seconds: -5),
+          ),
+          _assistant(2, turn: 1, step: 2, startedAt: _at(3), timeSeconds: null),
+        ]),
+      ], TrajectoryTimelineMode.duration)!;
+      for (final span in model.spans) {
+        expect(
+          span.end,
+          span.start,
+          reason: 'non-positive duration is a start marker',
+        );
+      }
+      expect(model.spans[0].start, _ms(_at(2)));
+      expect(
+        model.spans[1].start,
+        _ms(_at(2)),
+        reason: 'the one-second idle gap before it compresses away',
+      );
+    });
+  });
 }

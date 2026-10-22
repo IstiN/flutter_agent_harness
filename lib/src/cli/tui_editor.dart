@@ -302,8 +302,7 @@ class TuiLineEditor {
   @override
   bool operator ==(Object other) =>
       other is TuiLineEditor &&
-      other.buffer.text == buffer.text &&
-      other.buffer.cursor == buffer.cursor;
+      (other.buffer.text, other.buffer.cursor) == (buffer.text, buffer.cursor);
 
   @override
   int get hashCode => Object.hash(buffer.text, buffer.cursor);

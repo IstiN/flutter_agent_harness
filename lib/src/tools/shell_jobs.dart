@@ -627,18 +627,7 @@ Future<({int groups, int processes})> reapOrphanJobGroups({
   // 35213198081). The `kill` below stays a real shell action.
   final listed = await (groupTableOverride ?? processGroupTableSnapshot)();
   if (listed == null) return zero;
-  final livePids = <int>{};
-  final groupOf = <int, int>{};
-  for (final line in listed.split('\n')) {
-    final cols = line.trim().split(RegExp(r'\s+'));
-    if (cols.length < 2) continue;
-    final pid = int.tryParse(cols[0]);
-    final pgid = int.tryParse(cols[1]);
-    if (pid != null && pgid != null) {
-      livePids.add(pid);
-      groupOf[pid] = pgid;
-    }
-  }
+  final (:livePids, :groupOf) = _parseProcessGroupTable(listed);
   var groups = 0;
   var processes = 0;
   for (final pid in pids) {
@@ -662,4 +651,25 @@ Future<({int groups, int processes})> reapOrphanJobGroups({
     );
   }
   return (groups: groups, processes: processes);
+}
+
+/// Parses a `pid pgid` process-table snapshot (whitespace-separated
+/// columns, one process per line; malformed lines are skipped) into the
+/// live pid set and each live pid's process group.
+({Set<int> livePids, Map<int, int> groupOf}) _parseProcessGroupTable(
+  String listed,
+) {
+  final livePids = <int>{};
+  final groupOf = <int, int>{};
+  for (final line in listed.split('\n')) {
+    final cols = line.trim().split(RegExp(r'\s+'));
+    if (cols.length < 2) continue;
+    final pid = int.tryParse(cols[0]);
+    final pgid = int.tryParse(cols[1]);
+    if (pid != null && pgid != null) {
+      livePids.add(pid);
+      groupOf[pid] = pgid;
+    }
+  }
+  return (livePids: livePids, groupOf: groupOf);
 }

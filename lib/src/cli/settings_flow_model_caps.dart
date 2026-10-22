@@ -542,26 +542,7 @@ extension ModelCapabilityCapsSettings on AgentCli {
     String modelId,
     ModelCapabilityOverride? before,
   ) async {
-    final path = _userConfigPath();
-    if (path != null) {
-      switch (await _env.readTextFile(path)) {
-        case Ok(:final value):
-          final doc = loadYaml(value);
-          // The `models:` section is optional at boot: removing the last
-          // override drops the whole block, and the live layer must then
-          // reinstall EMPTY (nothing pinned), not throw.
-          final section = doc is YamlMap ? doc['models'] : null;
-          final models = section == null
-              ? ModelsConfig()
-              : ModelsConfig.fromYaml(section);
-          modelCapabilityOverrides = models.overrides;
-          config.modelsConfig?.overrides = models.overrides;
-        case Err():
-          // The write just succeeded; a read race keeps the current live
-          // layer — the next write re-syncs.
-          break;
-      }
-    }
+    await _reloadOverrideLayer();
     config.modelRolesResolver?.refreshCapabilities();
     // The rebuild resolves through the SAME layered call the display uses
     // (_effectiveCapsFor — pin > role slot > endpoint-detected > carried >
@@ -572,81 +553,124 @@ extension ModelCapabilityCapsSettings on AgentCli {
     // rebuild must never swap values the user did not edit.
     final after = _pinnedCaps(provider, modelId);
     final caps = _effectiveCapsFor(provider, modelId, before: before);
-    // Pin-apply is live (issue #1515 AC5): when the edit targets the
-    // ACTIVE model, rebuild it from the resolved caps — the retired
-    // /model-edit flow's live-mutation semantics, now backed by
-    // models.overrides so the numbers survive a model/provider switch.
-    // The full constructor (not [Model.copyWith] — it null-KEEPS, and an
-    // unpin must be able to CLEAR thinkingLevel/compat) enumerates every
-    // field incl. the catalog image cap.
     final current = _agent.state.model;
     if (current.provider == provider && current.id == modelId) {
-      final windowUntouched =
-          after?.contextWindow == null && before?.contextWindow == null;
-      final maxTokensUntouched =
-          after?.maxTokens == null && before?.maxTokens == null;
-      final thinkingUntouched =
-          after?.thinkingLevel == null && before?.thinkingLevel == null;
-      final omitUntouched =
-          after?.omitMaxOutputTokens == null &&
-          before?.omitMaxOutputTokens == null;
-      _agent.state.model = Model(
-        id: current.id,
-        name: current.name,
-        api: current.api,
-        provider: current.provider,
-        baseUrl: current.baseUrl,
-        reasoning: current.reasoning,
-        input: current.input,
-        thinkingLevel: thinkingUntouched
-            ? current.thinkingLevel
-            : caps.thinkingLevel,
-        cost: current.cost,
-        contextWindow: windowUntouched
-            ? current.contextWindow
-            : caps.contextWindow,
-        maxTokens: maxTokensUntouched ? current.maxTokens : caps.maxTokens,
-        headers: current.headers,
-        compat: omitUntouched
-            ? current.compat
-            : (after?.omitMaxOutputTokens ?? false)
-            ? const OpenAICompletionsCompat(omitMaxOutputTokens: true)
-            : null,
-        authHeader: current.authHeader,
-        capabilityNotes: caps.notes,
-        connectTimeout: current.connectTimeout,
-        streamIdleTimeout: current.streamIdleTimeout,
-        timeoutScopeLabel: current.timeoutScopeLabel,
-        maxImages: catalogMaxImages[modelId],
-      );
-      // gh-1742 invariant 2, both directions: the registry must agree
-      // with the rebuilt model — publish when an honest source stands
-      // (the pin, a roles-chain pin, an endpoint detection that still
-      // wins the resolution), DROP the stale entry when none does (a
-      // bare unpin leaves the window unverified; children and the meter
-      // fall back to the model's carried window).
-      final role = _currentRoleRef(provider, modelId);
-      final detectedWindow = _modelContextWindows[modelId];
-      if (after?.contextWindow != null || role?.contextWindow != null) {
-        contextWindowRegistry.publish(
-          model: _agent.state.model,
-          window: _agent.state.model.contextWindow,
-          source: ContextWindowSource.userPin,
-        );
-      } else if (detectedWindow != null &&
-          detectedWindow == _agent.state.model.contextWindow) {
-        contextWindowRegistry.publish(
-          model: _agent.state.model,
-          window: _agent.state.model.contextWindow,
-          source: ContextWindowSource.endpointReport,
-        );
-      } else {
-        contextWindowRegistry.remove(_agent.state.model);
-      }
+      _rebuildActiveModel(current, before, after, caps, modelId);
+      _reconcileWindowRegistry(provider, modelId, after);
       unawaited(config.onModelChanged?.call(_agent.state.model));
     }
     for (final note in caps.notes) {
       io.writeln(_style.dim('note: $note'));
+    }
+  }
+
+  /// The live layer reload after every capability write (E6): re-read the
+  /// saved file with the boot parser and reinstall the process-wide
+  /// override layer plus the host's live [ModelsConfig].
+  Future<void> _reloadOverrideLayer() async {
+    final path = _userConfigPath();
+    if (path == null) return;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        final doc = loadYaml(value);
+        // The `models:` section is optional at boot: removing the last
+        // override drops the whole block, and the live layer must then
+        // reinstall EMPTY (nothing pinned), not throw.
+        final section = doc is YamlMap ? doc['models'] : null;
+        final models = section == null
+            ? ModelsConfig()
+            : ModelsConfig.fromYaml(section);
+        modelCapabilityOverrides = models.overrides;
+        config.modelsConfig?.overrides = models.overrides;
+      case Err():
+        // The write just succeeded; a read race keeps the current live
+        // layer — the next write re-syncs.
+        break;
+    }
+  }
+
+  /// Pin-apply is live (issue #1515 AC5): rebuilds the ACTIVE model from
+  /// the resolved caps — the retired /model-edit flow's live-mutation
+  /// semantics, now backed by models.overrides so the numbers survive a
+  /// model/provider switch. The full constructor (not [Model.copyWith] —
+  /// it null-KEEPS, and an unpin must be able to CLEAR
+  /// thinkingLevel/compat) enumerates every field incl. the catalog image
+  /// cap. An UNTOUCHED dimension keeps the current value.
+  void _rebuildActiveModel(
+    Model current,
+    ModelCapabilityOverride? before,
+    ModelCapabilityOverride? after,
+    EffectiveCaps caps,
+    String modelId,
+  ) {
+    final windowUntouched =
+        after?.contextWindow == null && before?.contextWindow == null;
+    final maxTokensUntouched =
+        after?.maxTokens == null && before?.maxTokens == null;
+    final thinkingUntouched =
+        after?.thinkingLevel == null && before?.thinkingLevel == null;
+    final omitUntouched =
+        after?.omitMaxOutputTokens == null &&
+        before?.omitMaxOutputTokens == null;
+    _agent.state.model = Model(
+      id: current.id,
+      name: current.name,
+      api: current.api,
+      provider: current.provider,
+      baseUrl: current.baseUrl,
+      reasoning: current.reasoning,
+      input: current.input,
+      thinkingLevel: thinkingUntouched
+          ? current.thinkingLevel
+          : caps.thinkingLevel,
+      cost: current.cost,
+      contextWindow: windowUntouched
+          ? current.contextWindow
+          : caps.contextWindow,
+      maxTokens: maxTokensUntouched ? current.maxTokens : caps.maxTokens,
+      headers: current.headers,
+      compat: omitUntouched
+          ? current.compat
+          : (after?.omitMaxOutputTokens ?? false)
+          ? const OpenAICompletionsCompat(omitMaxOutputTokens: true)
+          : null,
+      authHeader: current.authHeader,
+      capabilityNotes: caps.notes,
+      connectTimeout: current.connectTimeout,
+      streamIdleTimeout: current.streamIdleTimeout,
+      timeoutScopeLabel: current.timeoutScopeLabel,
+      maxImages: catalogMaxImages[modelId],
+    );
+  }
+
+  /// gh-1742 invariant 2, both directions: the registry must agree with
+  /// the rebuilt model — publish when an honest source stands (the pin, a
+  /// roles-chain pin, an endpoint detection that still wins the
+  /// resolution), DROP the stale entry when none does (a bare unpin
+  /// leaves the window unverified; children and the meter fall back to
+  /// the model's carried window).
+  void _reconcileWindowRegistry(
+    String provider,
+    String modelId,
+    ModelCapabilityOverride? after,
+  ) {
+    final role = _currentRoleRef(provider, modelId);
+    final detectedWindow = _modelContextWindows[modelId];
+    if (after?.contextWindow != null || role?.contextWindow != null) {
+      contextWindowRegistry.publish(
+        model: _agent.state.model,
+        window: _agent.state.model.contextWindow,
+        source: ContextWindowSource.userPin,
+      );
+    } else if (detectedWindow != null &&
+        detectedWindow == _agent.state.model.contextWindow) {
+      contextWindowRegistry.publish(
+        model: _agent.state.model,
+        window: _agent.state.model.contextWindow,
+        source: ContextWindowSource.endpointReport,
+      );
+    } else {
+      contextWindowRegistry.remove(_agent.state.model);
     }
   }
 }

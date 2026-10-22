@@ -141,20 +141,26 @@ HideJudgeFn streamFunctionHideJudge(
         });
       }
       final response = await stream.result;
-      switch (response.stopReason) {
-        case StopReason.aborted:
-        case StopReason.error:
-          return null;
-        default:
-          final text = response.content
-              .whereType<TextContent>()
-              .map((block) => block.text)
-              .join('\n')
-              .trim();
-          return text.isEmpty ? null : text;
-      }
+      return _hideJudgeResponseText(response);
     } catch (_) {
       return null;
     }
   };
+}
+
+/// Judge response to hide-list text: `null` on aborted/errored calls or
+/// when no non-empty text block came back (F1), else the joined text.
+String? _hideJudgeResponseText(AssistantMessage response) {
+  switch (response.stopReason) {
+    case StopReason.aborted:
+    case StopReason.error:
+      return null;
+    default:
+      final text = response.content
+          .whereType<TextContent>()
+          .map((block) => block.text)
+          .join('\n')
+          .trim();
+      return text.isEmpty ? null : text;
+  }
 }

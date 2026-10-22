@@ -34,6 +34,19 @@ List<String> taskJobLines(
   ];
 }
 
+/// The folded generations for [id], newest predecessor first, with the
+/// cycle guard: a chain that loops back on itself stops rather than
+/// spinning (`x ← y ← x`).
+List<String> _supersedesChain(String id, Map<String, String> supersedesOf) {
+  final chain = <String>[];
+  String? previous = supersedesOf[id];
+  while (previous != null && !chain.contains(previous)) {
+    chain.add(previous);
+    previous = supersedesOf[previous];
+  }
+  return chain;
+}
+
 /// One task-list row: status marker, id, agent, status name, elapsed time,
 /// task preview, and the agent:// ref. With [supersedesOf] the row also
 /// carries the respawn chain it folds (see [taskJobLines]).
@@ -57,12 +70,7 @@ String taskJobLine(
   if (task.length > 60) task = '${task.substring(0, 60)}…';
   // The folded generations, newest predecessor first (`x ← y` reads "this
   // entry supersedes x, which superseded y").
-  final chain = <String>[];
-  String? previous = supersedesOf[job.id];
-  while (previous != null && !chain.contains(previous)) {
-    chain.add(previous);
-    previous = supersedesOf[previous];
-  }
+  final chain = _supersedesChain(job.id, supersedesOf);
   final supersedesNote = chain.isEmpty
       ? ''
       : ' · supersedes ${chain.join(' ← ')}';

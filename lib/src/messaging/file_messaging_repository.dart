@@ -366,50 +366,67 @@ final class FileMessagingRepository implements MessagingRepository {
     final slugDirs = (await _env.listDir(sessionRoot)).valueOrNull ?? const [];
     for (final slugDir in slugDirs) {
       if (slugDir.kind != FileKind.directory) continue;
-      final messagesDir = _peerMessagesRoot(slugDir);
-      final mbDirs = (await _env.listDir(messagesDir)).valueOrNull ?? const [];
-      for (final mbDir in mbDirs) {
-        if (mbDir.kind != FileKind.directory) continue;
-        // Reserved names are not agent mailboxes: dot-dirs are hidden
-        // state, `_scheduled` is the delayed-message store.
-        if (mbDir.name.startsWith('.') || mbDir.name.startsWith('_')) {
-          continue;
-        }
-        final idMarker = (await _env.readTextFile(
-          '${mbDir.path}/.id',
-        )).valueOrNull?.trim();
-        final id = (idMarker != null && idMarker.isNotEmpty)
-            ? idMarker
-            : mbDir.name;
-        final nameMarker = (await _env.readTextFile(
-          '${mbDir.path}/.name',
-        )).valueOrNull?.trim();
-        // Shape-guarded (gh-1744 review): an entry that is valid JSON but
-        // not an object (e.g. a plain string written by another tool) must
-        // not crash the whole listing with a NoSuchMethodError — the slug
-        // decode answers instead.
-        final entry = registry?[id];
-        final registryCwd = entry is Map<String, dynamic> ? entry['cwd'] : null;
-        final cwd = (registryCwd is String && registryCwd.isNotEmpty)
-            ? registryCwd
-            : _decodeSessionCwd?.call(slugDir.name);
-        entries.add(
-          MailboxEntry(
-            id: id,
-            name: (nameMarker != null && nameMarker.isNotEmpty)
-                ? nameMarker
-                : null,
-            slug: _peerSlug(slugDir),
-            cwd: cwd,
-            lastActivity: await _lastActivity(mbDir.path),
-            presence: await _busyPresence(mbDir.path),
-            capabilities: await _capabilities(mbDir.path),
-          ),
-        );
-      }
+      entries.addAll(await _mailboxEntries(slugDir, registry));
     }
     return entries;
   }
+
+  /// Every agent mailbox under one `<slug>/messages` root, in directory
+  /// order (reserved names skipped — see [_mailboxEntry]).
+  Future<List<MailboxEntry>> _mailboxEntries(
+    FileInfo slugDir,
+    Map<String, dynamic>? registry,
+  ) async {
+    final mbDirs =
+        (await _env.listDir(_peerMessagesRoot(slugDir))).valueOrNull ??
+        const [];
+    final entries = <MailboxEntry>[];
+    for (final mbDir in mbDirs) {
+      if (mbDir.kind != FileKind.directory) continue;
+      final entry = await _mailboxEntry(slugDir, mbDir, registry);
+      if (entry != null) entries.add(entry);
+    }
+    return entries;
+  }
+
+  /// One mailbox's directory entry, or null for reserved names: dot-dirs
+  /// are hidden state, `_scheduled` is the delayed-message store.
+  Future<MailboxEntry?> _mailboxEntry(
+    FileInfo slugDir,
+    FileInfo mbDir,
+    Map<String, dynamic>? registry,
+  ) async {
+    if (mbDir.name.startsWith('.') || mbDir.name.startsWith('_')) {
+      return null;
+    }
+    final id = _nonEmpty(await _markerText('${mbDir.path}/.id')) ?? mbDir.name;
+    // Shape-guarded (gh-1744 review): an entry that is valid JSON but
+    // not an object (e.g. a plain string written by another tool) must
+    // not crash the whole listing with a NoSuchMethodError — the slug
+    // decode answers instead.
+    final entry = registry?[id];
+    final registryCwd = entry is Map<String, dynamic> ? entry['cwd'] : null;
+    final cwd =
+        _nonEmpty(registryCwd is String ? registryCwd : null) ??
+        _decodeSessionCwd?.call(slugDir.name);
+    return MailboxEntry(
+      id: id,
+      name: _nonEmpty(await _markerText('${mbDir.path}/.name')),
+      slug: _peerSlug(slugDir),
+      cwd: cwd,
+      lastActivity: await _lastActivity(mbDir.path),
+      presence: await _busyPresence(mbDir.path),
+      capabilities: await _capabilities(mbDir.path),
+    );
+  }
+
+  /// The trimmed content of one mailbox marker file, null when absent.
+  Future<String?> _markerText(String path) async =>
+      (await _env.readTextFile(path)).valueOrNull?.trim();
+
+  /// [value] when it is a non-empty string, null otherwise.
+  static String? _nonEmpty(String? value) =>
+      (value != null && value.isNotEmpty) ? value : null;
 
   /// The newest dated file inside [mailboxDir]: the `.heartbeat` marker at
   /// the top level plus everything in `inbox/` and `read/`. The `.id`

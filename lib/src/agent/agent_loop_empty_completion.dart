@@ -121,9 +121,7 @@ Future<(AssistantMessage, Context)> retryEmptyCompletion(
   // instead — never the hiccup error, never a silent empty success. An
   // already-aborted terminal (the `_streamAssistantResponse` short-circuit)
   // is left as-is: converting it again would duplicate the emission.
-  if (cancelled &&
-      current.stopReason != StopReason.aborted &&
-      isEmptyAssistantCompletion(current)) {
+  if (_needsAbortedTerminal(cancelled, current)) {
     current = await _finishWithoutStream(
       out,
       emit,
@@ -132,3 +130,11 @@ Future<(AssistantMessage, Context)> retryEmptyCompletion(
   }
   return (current, out);
 }
+
+/// The E5 settle condition: the run was cancelled after (or with) the last
+/// empty completion, and the current terminal is not already the explicit
+/// aborted one — it is a silent empty shape the abort must win over.
+bool _needsAbortedTerminal(bool cancelled, AssistantMessage current) =>
+    cancelled &&
+    current.stopReason != StopReason.aborted &&
+    isEmptyAssistantCompletion(current);

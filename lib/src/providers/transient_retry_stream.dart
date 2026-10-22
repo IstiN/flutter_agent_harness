@@ -1571,73 +1571,105 @@ AssistantMessageEvent _resumeEvent(
   AssistantMessage prefixed(AssistantMessage tail) =>
       tail.copyWith(content: [...resume.blocks, ...tail.content]);
 
-  return switch (event) {
-    // Unreachable — the tail's start event is swallowed in [_runAttempt] —
-    // but the switch must stay exhaustive.
-    StartEvent() => event,
-    TextStartEvent(:final contentIndex, :final partial) => TextStartEvent(
+  return _resumedTextEvent(event, shift, prefixed) ??
+      _resumedThinkingEvent(event, shift, prefixed) ??
+      _resumedToolCallEvent(event, shift, prefixed) ??
+      switch (event) {
+        DoneEvent(:final reason, :final message) => DoneEvent(
+          // The dead attempts' usage lands here, exactly once.
+          reason: reason,
+          message: prefixed(
+            message,
+          ).copyWith(usage: _sumUsage(resume.usage, message.usage)),
+        ),
+        ErrorEvent(:final reason, :final error, :final retryAfter) =>
+          ErrorEvent(
+            reason: reason,
+            retryAfter: retryAfter,
+            error: prefixed(
+              error,
+            ).copyWith(usage: _sumUsage(resume.usage, error.usage)),
+          ),
+        // StartEvent passes through (unreachable — the tail's start event
+        // is swallowed in [_runAttempt] — kept for exhaustiveness).
+        _ => event,
+      };
+}
+
+/// The text-family events shifted onto the resume anchor; null when
+/// [event] is another family.
+AssistantMessageEvent? _resumedTextEvent(
+  AssistantMessageEvent event,
+  int shift,
+  AssistantMessage Function(AssistantMessage) prefixed,
+) => switch (event) {
+  TextStartEvent(:final contentIndex, :final partial) => TextStartEvent(
+    contentIndex: contentIndex + shift,
+    partial: prefixed(partial),
+  ),
+  TextDeltaEvent(:final contentIndex, :final delta, :final partial) =>
+    TextDeltaEvent(
       contentIndex: contentIndex + shift,
+      delta: delta,
       partial: prefixed(partial),
     ),
-    TextDeltaEvent(:final contentIndex, :final delta, :final partial) =>
-      TextDeltaEvent(
-        contentIndex: contentIndex + shift,
-        delta: delta,
-        partial: prefixed(partial),
-      ),
-    TextEndEvent(:final contentIndex, :final content, :final partial) =>
-      TextEndEvent(
-        contentIndex: contentIndex + shift,
-        content: content,
-        partial: prefixed(partial),
-      ),
-    ThinkingStartEvent(:final contentIndex, :final partial) =>
-      ThinkingStartEvent(
-        contentIndex: contentIndex + shift,
-        partial: prefixed(partial),
-      ),
-    ThinkingDeltaEvent(:final contentIndex, :final delta, :final partial) =>
-      ThinkingDeltaEvent(
-        contentIndex: contentIndex + shift,
-        delta: delta,
-        partial: prefixed(partial),
-      ),
-    ThinkingEndEvent(:final contentIndex, :final content, :final partial) =>
-      ThinkingEndEvent(
-        contentIndex: contentIndex + shift,
-        content: content,
-        partial: prefixed(partial),
-      ),
-    ToolCallStartEvent(:final contentIndex, :final partial) =>
-      ToolCallStartEvent(
-        contentIndex: contentIndex + shift,
-        partial: prefixed(partial),
-      ),
-    ToolCallDeltaEvent(:final contentIndex, :final delta, :final partial) =>
-      ToolCallDeltaEvent(
-        contentIndex: contentIndex + shift,
-        delta: delta,
-        partial: prefixed(partial),
-      ),
-    ToolCallEndEvent(:final contentIndex, :final toolCall, :final partial) =>
-      ToolCallEndEvent(
-        contentIndex: contentIndex + shift,
-        toolCall: toolCall,
-        partial: prefixed(partial),
-      ),
-    DoneEvent(:final reason, :final message) => DoneEvent(
-      // The dead attempts' usage lands here, exactly once.
-      reason: reason,
-      message: prefixed(
-        message,
-      ).copyWith(usage: _sumUsage(resume.usage, message.usage)),
+  TextEndEvent(:final contentIndex, :final content, :final partial) =>
+    TextEndEvent(
+      contentIndex: contentIndex + shift,
+      content: content,
+      partial: prefixed(partial),
     ),
-    ErrorEvent(:final reason, :final error, :final retryAfter) => ErrorEvent(
-      reason: reason,
-      retryAfter: retryAfter,
-      error: prefixed(
-        error,
-      ).copyWith(usage: _sumUsage(resume.usage, error.usage)),
+  _ => null,
+};
+
+/// The thinking-family events shifted onto the resume anchor; null when
+/// [event] is another family.
+AssistantMessageEvent? _resumedThinkingEvent(
+  AssistantMessageEvent event,
+  int shift,
+  AssistantMessage Function(AssistantMessage) prefixed,
+) => switch (event) {
+  ThinkingStartEvent(:final contentIndex, :final partial) => ThinkingStartEvent(
+    contentIndex: contentIndex + shift,
+    partial: prefixed(partial),
+  ),
+  ThinkingDeltaEvent(:final contentIndex, :final delta, :final partial) =>
+    ThinkingDeltaEvent(
+      contentIndex: contentIndex + shift,
+      delta: delta,
+      partial: prefixed(partial),
     ),
-  };
-}
+  ThinkingEndEvent(:final contentIndex, :final content, :final partial) =>
+    ThinkingEndEvent(
+      contentIndex: contentIndex + shift,
+      content: content,
+      partial: prefixed(partial),
+    ),
+  _ => null,
+};
+
+/// The tool-call-family events shifted onto the resume anchor; null when
+/// [event] is another family.
+AssistantMessageEvent? _resumedToolCallEvent(
+  AssistantMessageEvent event,
+  int shift,
+  AssistantMessage Function(AssistantMessage) prefixed,
+) => switch (event) {
+  ToolCallStartEvent(:final contentIndex, :final partial) => ToolCallStartEvent(
+    contentIndex: contentIndex + shift,
+    partial: prefixed(partial),
+  ),
+  ToolCallDeltaEvent(:final contentIndex, :final delta, :final partial) =>
+    ToolCallDeltaEvent(
+      contentIndex: contentIndex + shift,
+      delta: delta,
+      partial: prefixed(partial),
+    ),
+  ToolCallEndEvent(:final contentIndex, :final toolCall, :final partial) =>
+    ToolCallEndEvent(
+      contentIndex: contentIndex + shift,
+      toolCall: toolCall,
+      partial: prefixed(partial),
+    ),
+  _ => null,
+};

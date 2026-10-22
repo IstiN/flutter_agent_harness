@@ -33,6 +33,12 @@ import 'package:fa/sandbox/web_git.dart';
 import 'package:fa/sandbox/web_interpreters_stub.dart'
     if (dart.library.html) 'web_interpreters_web.dart';
 
+/// The normalized command handler signature of `MemoryShell`'s route
+/// table (`_commandRoutes`): one `(shell, ctx)` closure per advertised
+/// command (issue #1713, the #558 route-table pattern).
+typedef _CommandRoute =
+    Future<_StageResult> Function(MemoryShell shell, _Context ctx);
+
 /// A pure-Dart [Shell] that operates on a [MemoryFileSystem].
 ///
 /// This is the web fallback for the WASM-backed `WasiSandboxShell`: the
@@ -416,6 +422,99 @@ final class MemoryShell implements Shell, BackgroundShell {
     }
   }
 
+  /// Route table: command name → handler (issue #1713, the #558
+  /// route-table pattern). One entry per advertised command — aliases
+  /// (`[`/`test`, `python`/`python3`, `xz`/`unxz`, …) get their own
+  /// entries — and the checksum family is appended by
+  /// [_buildCommandRoutes]. Handlers normalize to `(shell, ctx)` so the
+  /// dispatch itself stays branch-free.
+  static final Map<String, _CommandRoute> _commandRoutes =
+      _buildCommandRoutes();
+
+  static Map<String, _CommandRoute> _buildCommandRoutes() {
+    final routes = <String, _CommandRoute>{
+      'true': (_, _) async => MemoryShell._ok,
+      'false': (_, _) async =>
+          const _StageResult(stdout: [], stderr: [], exitCode: 1),
+      'echo': (shell, ctx) async => shell._echo(ctx.args),
+      'cat': (shell, ctx) async => shell._cat(ctx),
+      'ls': (shell, ctx) async => shell._ls(ctx),
+      'mkdir': (shell, ctx) async => shell._mkdir(ctx),
+      'rmdir': (shell, ctx) async => shell._rmdir(ctx),
+      'touch': (shell, ctx) async => shell._touch(ctx),
+      'cp': (shell, ctx) async => shell._cp(ctx),
+      'mv': (shell, ctx) async => shell._mv(ctx),
+      'rm': (shell, ctx) async => shell._rm(ctx),
+      'pwd': (shell, ctx) async => shell._text('${ctx.cwd}\n'),
+      'cd': (shell, ctx) async => shell._cd(ctx),
+      'grep': (shell, ctx) async => shell._grep(ctx),
+      'head': (shell, ctx) async => shell._headTail(ctx, head: true),
+      'tail': (shell, ctx) async => shell._headTail(ctx, head: false),
+      'wc': (shell, ctx) async => shell._wc(ctx),
+      'sort': (shell, ctx) async => shell._sort(ctx),
+      'tr': (shell, ctx) async => shell._tr(ctx),
+      'which': (shell, ctx) async => shell._which(ctx.args),
+      'command': (shell, ctx) async => shell._command(ctx.args),
+      'test': (shell, ctx) async => shell._test('test', ctx),
+      '[': (shell, ctx) async => shell._test('[', ctx),
+      'env': (shell, ctx) async => shell._env(ctx),
+      'export': (shell, ctx) async => shell._export(ctx.args),
+      'unset': (shell, ctx) async => shell._unset(ctx.args),
+      'git': (shell, ctx) async => shell._git(ctx),
+      'curl': (shell, ctx) async => shell._curl(ctx),
+      'wget': (shell, ctx) async => shell._wget(ctx),
+      'jq': (shell, ctx) async => shell._jq(ctx),
+      'yq': (shell, ctx) async => shell._yq(ctx),
+      'diff': (shell, ctx) async => shell._diff(ctx),
+      'dig': (shell, ctx) async => shell._dig(ctx),
+      'patch': (shell, ctx) async => shell._patch(ctx),
+      'nslookup': (shell, ctx) async => shell._nslookup(ctx),
+      'whois': (shell, ctx) async => shell._whois(ctx),
+      'tree': (shell, ctx) async =>
+          shell._toStage(shell._builtinsFor(ctx).tree(ctx.args)),
+      'file': (shell, ctx) async =>
+          shell._toStage(shell._builtinsFor(ctx).file(ctx.args)),
+      'xz': (shell, ctx) async => shell._xz(ctx, decompress: false),
+      'unxz': (shell, ctx) async => shell._xz(ctx, decompress: true),
+      'bzip2': (shell, ctx) async => shell._bzip2(ctx, decompress: false),
+      'bunzip2': (shell, ctx) async => shell._bzip2(ctx, decompress: true),
+      'base64': (shell, ctx) async => shell._toStage(
+        shell._builtinsFor(ctx).base64(ctx.args, stdin: ctx.stdin),
+      ),
+      'rg': (shell, ctx) async => shell._grep(ctx),
+      'sed': (shell, ctx) async => shell._sed(ctx),
+      'awk': (shell, ctx) async => shell._awk(ctx),
+      'find': (shell, ctx) async => shell._find(ctx),
+      'xargs': (shell, ctx) async => shell._xargs(ctx),
+      'printf': (shell, ctx) async => shell._printf(ctx),
+      'realpath': (shell, ctx) async => shell._realpath(ctx),
+      'tar': (shell, ctx) async => shell._tar(ctx),
+      'gzip': (shell, ctx) async => shell._gzip(ctx, decompress: false),
+      'gunzip': (shell, ctx) async => shell._gzip(ctx, decompress: true),
+      'zip': (shell, ctx) async => shell._zip(ctx),
+      'unzip': (shell, ctx) async =>
+          shell._toStage(shell._builtinsFor(ctx).unzip(ctx.args)),
+      'sqlite3': (shell, ctx) async => shell._runSqlite(ctx),
+      'python': (shell, ctx) async => shell._runPython(ctx),
+      'python3': (shell, ctx) async => shell._runPython(ctx),
+      'pip': (shell, ctx) async => shell._runPip(ctx),
+      'pip3': (shell, ctx) async => shell._runPip(ctx),
+      'qjs': (shell, ctx) async => shell._runQjs(ctx),
+      'js': (shell, ctx) async => shell._runQjs(ctx),
+      'lua': (shell, _) async => shell._interpreterUnavailable('lua'),
+      'whoami': (shell, ctx) async =>
+          shell._text('${shell._effectiveEnv(ctx.options)['USER']}\n'),
+      'basename': (shell, ctx) async => shell._basename(ctx),
+      'dirname': (shell, ctx) async => shell._dirname(ctx),
+      'ssh': (shell, ctx) async => shell._sshUnavailable('ssh'),
+      'scp': (shell, ctx) async => shell._sshUnavailable('scp'),
+      'sftp': (shell, ctx) async => shell._sshUnavailable('sftp'),
+      for (final command in _hashCommands)
+        command: (shell, ctx) async => shell._hashsum(command, ctx),
+    };
+    return routes;
+  }
+
   Future<_StageResult> _runCommand(
     String command,
     List<String> args,
@@ -436,77 +535,16 @@ final class MemoryShell implements Shell, BackgroundShell {
       stdin: stdinText,
       cwd: cwd,
     );
-    return switch (command) {
-      'true' => _ok,
-      'false' => const _StageResult(stdout: [], stderr: [], exitCode: 1),
-      'echo' => _echo(args),
-      'cat' => _cat(ctx),
-      'ls' => _ls(ctx),
-      'mkdir' => _mkdir(ctx),
-      'rmdir' => _rmdir(ctx),
-      'touch' => _touch(ctx),
-      'cp' => _cp(ctx),
-      'mv' => _mv(ctx),
-      'rm' => _rm(ctx),
-      'pwd' => _text('${ctx.cwd}\n'),
-      'cd' => _cd(ctx),
-      'grep' => _grep(ctx),
-      'head' => _headTail(ctx, head: true),
-      'tail' => _headTail(ctx, head: false),
-      'wc' => _wc(ctx),
-      'sort' => _sort(ctx),
-      'tr' => _tr(ctx),
-      'which' => _which(args),
-      'command' => _command(args),
-      'test' || '[' => _test(command, ctx),
-      'env' => _env(ctx),
-      'export' => _export(args),
-      'unset' => _unset(args),
-      'git' => _git(ctx),
-      'curl' => _curl(ctx),
-      'wget' => _wget(ctx),
-      'jq' => _jq(ctx),
-      'yq' => _yq(ctx),
-      'diff' => _diff(ctx),
-      'dig' => _dig(ctx),
-      'patch' => _patch(ctx),
-      'nslookup' => _nslookup(ctx),
-      'whois' => _whois(ctx),
-      'tree' => _toStage(_builtinsFor(ctx).tree(ctx.args)),
-      'file' => _toStage(_builtinsFor(ctx).file(ctx.args)),
-      'xz' || 'unxz' => _xz(ctx, decompress: command == 'unxz'),
-      'bzip2' || 'bunzip2' => _bzip2(ctx, decompress: command == 'bunzip2'),
-      'base64' => _toStage(
-        _builtinsFor(ctx).base64(ctx.args, stdin: ctx.stdin),
-      ),
-      _ when _hashCommands.contains(command) => _hashsum(command, ctx),
-      'rg' => _grep(ctx),
-      'sed' => _sed(ctx),
-      'awk' => _awk(ctx),
-      'find' => _find(ctx),
-      'xargs' => _xargs(ctx),
-      'printf' => _printf(ctx),
-      'realpath' => _realpath(ctx),
-      'tar' => _tar(ctx),
-      'gzip' => _gzip(ctx, decompress: false),
-      'gunzip' => _gzip(ctx, decompress: true),
-      'zip' => _zip(ctx),
-      'unzip' => _toStage(_builtinsFor(ctx).unzip(ctx.args)),
-      'sqlite3' => _runSqlite(ctx),
-      'python' || 'python3' => _runPython(ctx),
-      'pip' || 'pip3' => _runPip(ctx),
-      'qjs' || 'js' => _runQjs(ctx),
-      'lua' => _interpreterUnavailable('lua'),
-      'whoami' => _text('${_effectiveEnv(ctx.options)['USER']}\n'),
-      'basename' => _basename(ctx),
-      'dirname' => _dirname(ctx),
-      'ssh' || 'scp' || 'sftp' => _sshUnavailable(command),
-      _ => _StageResult(
+    final handler = _commandRoutes[command];
+    if (handler == null) {
+      // Defensive: the route table must cover every advertised command.
+      return _StageResult(
         stdout: const [],
         stderr: utf8.encode('$command: command not found\n'),
         exitCode: 127,
-      ),
-    };
+      );
+    }
+    return handler(this, ctx);
   }
 
   Future<_StageResult> _git(_Context ctx) async {
@@ -1103,28 +1141,34 @@ final class MemoryShell implements Shell, BackgroundShell {
     return _text(newline ? '$out\n' : out);
   }
 
+  /// POSIX `echo -e` escape char → literal (the subset the sandbox
+  /// honors; issue #1713 data table).
+  static const _echoEscapes = {
+    'n': '\n',
+    't': '\t',
+    'r': '\r',
+    '\\': '\\',
+    '0': '\x00',
+  };
+
   String _interpretEchoEscapes(String input) {
     final buffer = StringBuffer();
     for (var i = 0; i < input.length; i++) {
-      if (input[i] == '\\' && i + 1 < input.length) {
-        final next = input[i + 1];
-        final escape = switch (next) {
-          'n' => '\n',
-          't' => '\t',
-          'r' => '\r',
-          '\\' => '\\',
-          '0' => '\x00',
-          _ => null,
-        };
-        if (escape != null) {
-          buffer.write(escape);
-          i++;
-          continue;
-        }
+      final escape = _echoEscapeAt(input, i);
+      if (escape == null) {
+        buffer.write(input[i]);
+        continue;
       }
-      buffer.write(input[i]);
+      buffer.write(escape);
+      i++;
     }
     return buffer.toString();
+  }
+
+  /// The escape sequence starting at [input] index [i], or `null`.
+  String? _echoEscapeAt(String input, int i) {
+    if (input[i] != '\\' || i + 1 >= input.length) return null;
+    return _echoEscapes[input[i + 1]];
   }
 
   Future<_StageResult> _cat(_Context ctx) async {
@@ -1543,17 +1587,17 @@ final class MemoryShell implements Shell, BackgroundShell {
   /// The exit-2 message for a short letter the Dart engine cannot honor
   /// faithfully, or null when the letter maps to engine behavior.
   String? _unsupportedGrepLetter(String letter) => switch (letter) {
-        'A' || 'B' || 'C' =>
-          'grep: the sandbox grep engine does not support the context '
+    'A' || 'B' || 'C' =>
+      'grep: the sandbox grep engine does not support the context '
           "option -$letter\n",
-        'L' =>
-          'grep: the sandbox grep engine does not support -L '
+    'L' =>
+      'grep: the sandbox grep engine does not support -L '
           '(--files-without-match)\n',
-        'P' =>
-          'grep: the sandbox grep engine does not support -P '
+    'P' =>
+      'grep: the sandbox grep engine does not support -P '
           '(--perl-regexp)\n',
-        _ => null,
-      };
+    _ => null,
+  };
 
   /// Operand expansion for grep: a directory operand with -r walks the
   /// subtree (gh-1393 AC1 — `grep -rl 'счёт' apps` matches on every
@@ -2028,8 +2072,8 @@ final class _GrepEnginePlan {
   const _GrepEnginePlan(this.flags, this.maxCount) : error = null;
 
   const _GrepEnginePlan.invalid(this.error)
-      : flags = const <String>{},
-        maxCount = null;
+    : flags = const <String>{},
+      maxCount = null;
 
   final Set<String> flags;
   final int? maxCount;

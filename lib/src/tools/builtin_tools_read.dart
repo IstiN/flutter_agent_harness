@@ -83,6 +83,29 @@ String _readDescription({SqliteEngine? sqlite}) {
 /// resource (gh-1444 AC2/E5) — never a silent empty success. [builtinText]
 /// overrides the embedded-text lookup (the AC2 fault-injection seam for
 /// tests); production callers omit it.
+/// gh-1444 AC2: a builtin resource that resolves EMPTY is retried once,
+/// then fails loudly naming the resource — an empty payload on a
+/// non-empty resource is never a silent success. [builtinText] overrides
+/// the embedded-text lookup (the AC2 fault-injection seam for tests);
+/// production callers omit it.
+String? _resolveBuiltinText(
+  String path,
+  String? Function(String path)? builtinText,
+) {
+  var embedded = (builtinText ?? builtinSkillTextAt)(path);
+  if (embedded != null && embedded.isEmpty) {
+    embedded = (builtinText ?? builtinSkillTextAt)(path);
+    if (embedded == null || embedded.isEmpty) {
+      throw StateError(
+        'read $path: builtin resource resolved empty after retry — '
+        'the compiled-in skill content is missing; report this as a '
+        'harness defect',
+      );
+    }
+  }
+  return embedded;
+}
+
 AgentTool readFileTool(
   ExecutionEnv env, {
   HashlineSnapshotStore? snapshots,
@@ -156,21 +179,8 @@ AgentTool readFileTool(
 
       final path = split.path;
       // Built-in skills (issue #1151): builtin:// paths resolve from the
-      // embedded copy before any filesystem access. gh-1444 AC2: a builtin
-      // resource that resolves EMPTY is retried once, then fails loudly
-      // naming the resource — an empty payload on a non-empty resource is
-      // never a silent success.
-      var embedded = (builtinText ?? builtinSkillTextAt)(path);
-      if (embedded != null && embedded.isEmpty) {
-        embedded = (builtinText ?? builtinSkillTextAt)(path);
-        if (embedded == null || embedded.isEmpty) {
-          throw StateError(
-            'read $path: builtin resource resolved empty after retry — '
-            'the compiled-in skill content is missing; report this as a '
-            'harness defect',
-          );
-        }
-      }
+      // embedded copy before any filesystem access.
+      final embedded = _resolveBuiltinText(path, builtinText);
       if (embedded == null) {
         final binaryRead = await env.readBinaryFile(path);
         if (binaryRead.isErr) {
@@ -186,11 +196,22 @@ AgentTool readFileTool(
           );
           switch (followed) {
             case SkillPointerResolved(:final text):
-              embedded = text;
-            case SkillPointerRefused(:final reason):
-              throw StateError(
-                'read $path: skill pointer refused: $reason',
+              return _withNotice(
+                await _readTextContent(
+                  env,
+                  store,
+                  path,
+                  parsed,
+                  offset,
+                  limit,
+                  text,
+                  hashlineMode,
+                  cancelToken,
+                ),
+                windowNotice,
               );
+            case SkillPointerRefused(:final reason):
+              throw StateError('read $path: skill pointer refused: $reason');
             case SkillPointerAbsent():
               throw StateError('${binaryRead.errorOrNull}');
           }
@@ -199,7 +220,9 @@ AgentTool readFileTool(
           cancelToken?.throwIfCancelled();
 
           final imageResult = _readImageResult(path, bytes, parsed, model);
-          if (imageResult != null) return _withNotice(imageResult, windowNotice);
+          if (imageResult != null) {
+            return _withNotice(imageResult, windowNotice);
+          }
         }
       }
 

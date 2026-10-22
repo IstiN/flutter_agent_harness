@@ -244,24 +244,20 @@ Future<AiinOAuthTokens> exchangeAiinOAuthCode({
   }
   return AiinOAuthTokens(
     accessToken: access,
-    refreshToken: switch (parsed['refresh_token']) {
-      String value when value.isNotEmpty => value,
-      _ => '',
-    },
-    tokenType: switch (parsed['token_type']) {
-      String value when value.isNotEmpty => value,
-      _ => 'Bearer',
-    },
-    expiresIn: switch (parsed['expires_in']) {
-      int value => value,
-      _ => 0,
-    },
-    refreshExpiresIn: switch (parsed['refresh_expires_in']) {
-      int value => value,
-      _ => 0,
-    },
+    refreshToken: _stringOr(parsed['refresh_token'], ''),
+    tokenType: _stringOr(parsed['token_type'], 'Bearer'),
+    expiresIn: _intOr(parsed['expires_in'], 0),
+    refreshExpiresIn: _intOr(parsed['refresh_expires_in'], 0),
   );
 }
+
+/// The field's string value, or [fallback] when it is absent, not a
+/// string, or empty.
+String _stringOr(Object? value, String fallback) =>
+    value is String && value.isNotEmpty ? value : fallback;
+
+/// The field's int value, or [fallback] when it is absent or not an int.
+int _intOr(Object? value, int fallback) => value is int ? value : fallback;
 
 /// A registered AIIN API key. The raw secret ([raw]) is shown exactly once —
 /// store it before leaving the flow.
@@ -373,20 +369,27 @@ Map<String, Object?> _decode(http.Response response) {
     );
   }
   if (response.statusCode >= 400) {
-    throw AiinAuthException(
-      switch (parsed['message']) {
-        String value when value.isNotEmpty => value,
-        _ => 'AIIN request failed (HTTP ${response.statusCode})',
-      },
-      code: switch (parsed['error']) {
-        String value when value.isNotEmpty => value,
-        _ => 'http_error',
-      },
-      statusCode: response.statusCode,
-    );
+    throw _httpError(response, parsed);
   }
   return Map<String, Object?>.from(parsed);
 }
+
+/// The failure named by the service's `error`/`message` fields (the body
+/// parsed); the bare HTTP line is the fallback.
+AiinAuthException _httpError(
+  http.Response response,
+  Map<Object?, Object?> parsed,
+) => AiinAuthException(
+  switch (parsed['message']) {
+    String value when value.isNotEmpty => value,
+    _ => 'AIIN request failed (HTTP ${response.statusCode})',
+  },
+  code: switch (parsed['error']) {
+    String value when value.isNotEmpty => value,
+    _ => 'http_error',
+  },
+  statusCode: response.statusCode,
+);
 
 Future<http.Response> _postOrGet({
   required String method,

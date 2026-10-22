@@ -28,11 +28,7 @@ Future<ProviderRegistry> _registry() async {
     modelId: 'z-ai/glm-5.3-flash',
   );
   registry.rememberKey(openRouter.id, 'sk-or-test');
-  await registry.add(
-    name: 'CodeMie',
-    baseUrl: _codeMieUrl,
-    modelId: 'gpt-4o',
-  );
+  await registry.add(name: 'CodeMie', baseUrl: _codeMieUrl, modelId: 'gpt-4o');
   return registry;
 }
 
@@ -66,13 +62,12 @@ AgentConfig _config(String baseUrl, String model, {String apiKey = 'k'}) =>
       apiKey: apiKey,
     );
 
-Future<AgentService> _service(ProviderRegistry registry) =>
-    AgentService.create(
-      config: _config(_codeMieUrl, 'gpt-4o'),
-      env: MemoryExecutionEnv(cwd: '/'),
-      providerRegistry: registry,
-      streamFunction: _okResponse(),
-    );
+Future<AgentService> _service(ProviderRegistry registry) => AgentService.create(
+  config: _config(_codeMieUrl, 'gpt-4o'),
+  env: MemoryExecutionEnv(cwd: '/'),
+  providerRegistry: registry,
+  streamFunction: _okResponse(),
+);
 
 void main() {
   group('UT-mismatch: model/auth resolve from the same registry row', () {
@@ -110,58 +105,62 @@ void main() {
       await service.reconfigure(_config(_openRouterUrl, 'z-ai/glm-5.3-flash'));
     });
 
-    test('E1: an active third entry with a contested model names both', () async {
-      final registry = await _registry();
-      final mirror = await registry.add(
-        name: 'Mirror',
-        baseUrl: _localUrl,
-        modelId: 'z-ai/glm-5.3-flash',
-      );
-      registry.rememberKey(mirror.id, 'sk-mirror');
-      final service = await _service(registry);
-      addTearDown(service.dispose);
-      await expectLater(
-        service.reconfigure(_config(_codeMieUrl, 'z-ai/glm-5.3-flash')),
-        throwsA(
-          isA<ProviderConnectionException>().having(
-            (e) => e.message,
-            'message',
-            allOf(contains("'OpenRouter'"), contains("'Mirror'")),
+    test(
+      'E1: an active third entry with a contested model names both',
+      () async {
+        final registry = await _registry();
+        final mirror = await registry.add(
+          name: 'Mirror',
+          baseUrl: _localUrl,
+          modelId: 'z-ai/glm-5.3-flash',
+        );
+        registry.rememberKey(mirror.id, 'sk-mirror');
+        final service = await _service(registry);
+        addTearDown(service.dispose);
+        await expectLater(
+          service.reconfigure(_config(_codeMieUrl, 'z-ai/glm-5.3-flash')),
+          throwsA(
+            isA<ProviderConnectionException>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains("'OpenRouter'"), contains("'Mirror'")),
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   });
 
   group('UT-keyless: credential-bearing endpoints fail loudly', () {
-    test('a hosted preset without a key on this surface names the row',
-        () async {
-      final registry = ProviderRegistry.inMemory();
-      final openRouter = await registry.add(
-        name: 'OpenRouter',
-        baseUrl: _openRouterUrl,
-        modelId: 'z-ai/glm-5.3-flash',
-      );
-      // The add-in partition reload: the key did not survive the hop.
-      registry.rememberKey(openRouter.id, '');
-      final service = await _service(registry);
-      addTearDown(service.dispose);
-      await expectLater(
-        service.reconfigure(
-          _config(_openRouterUrl, 'z-ai/glm-5.3-flash', apiKey: ''),
-        ),
-        throwsA(
-          isA<ProviderConnectionException>().having(
-            (e) => e.message,
-            'message',
-            contains('OpenRouter: no API key on this surface'),
+    test(
+      'a hosted preset without a key on this surface names the row',
+      () async {
+        final registry = ProviderRegistry.inMemory();
+        final openRouter = await registry.add(
+          name: 'OpenRouter',
+          baseUrl: _openRouterUrl,
+          modelId: 'z-ai/glm-5.3-flash',
+        );
+        // The add-in partition reload: the key did not survive the hop.
+        registry.rememberKey(openRouter.id, '');
+        final service = await _service(registry);
+        addTearDown(service.dispose);
+        await expectLater(
+          service.reconfigure(
+            _config(_openRouterUrl, 'z-ai/glm-5.3-flash', apiKey: ''),
           ),
-        ),
-      );
-    });
+          throwsA(
+            isA<ProviderConnectionException>().having(
+              (e) => e.message,
+              'message',
+              contains('OpenRouter: no API key on this surface'),
+            ),
+          ),
+        );
+      },
+    );
 
-    test('a CodeMie entry without its cookie names the sign-in hint',
-        () async {
+    test('a CodeMie entry without its cookie names the sign-in hint', () async {
       final service = await _service(await _registry());
       addTearDown(service.dispose);
       await expectLater(
@@ -185,55 +184,57 @@ void main() {
       );
       final service = await _service(registry);
       addTearDown(service.dispose);
-      await service.reconfigure(
-        _config(_localUrl, 'llama-3.2', apiKey: ''),
-      );
+      await service.reconfigure(_config(_localUrl, 'llama-3.2', apiKey: ''));
     });
   });
 
   group('boot restore never assembles a broken connection', () {
-    test('keyless CodeMie entry: setup shows instead of a keyless boot',
-        () async {
-      final registry = ProviderRegistry.inMemory();
-      await registry.add(
-        name: 'CodeMie',
-        baseUrl: _codeMieUrl,
-        modelId: 'gpt-4o',
-      );
-      expect(
-        restorableBootConfig(
+    test(
+      'keyless CodeMie entry: setup shows instead of a keyless boot',
+      () async {
+        final registry = ProviderRegistry.inMemory();
+        await registry.add(
+          name: 'CodeMie',
+          baseUrl: _codeMieUrl,
+          modelId: 'gpt-4o',
+        );
+        expect(
+          restorableBootConfig(
+            connection: const LastConnection(
+              providerKind: 'openai-completions',
+              modelId: 'gpt-4o',
+              baseUrl: _codeMieUrl,
+            ),
+            registry: registry,
+            sessionKeysStore: SessionKeysStore.inMemory(),
+          ),
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'a model of entry X persisted onto entry Y restores degraded - '
+      'the row-naming refusal moves to request time (review MAJOR 2)',
+      () async {
+        final registry = await _registry();
+        final config = restorableBootConfig(
           connection: const LastConnection(
             providerKind: 'openai-completions',
-            modelId: 'gpt-4o',
+            modelId: 'z-ai/glm-5.3-flash',
             baseUrl: _codeMieUrl,
           ),
           registry: registry,
           sessionKeysStore: SessionKeysStore.inMemory(),
-        ),
-        isNull,
-      );
-    });
-
-    test('a model of entry X persisted onto entry Y restores degraded - '
-        'the row-naming refusal moves to request time (review MAJOR 2)',
-        () async {
-      final registry = await _registry();
-      final config = restorableBootConfig(
-        connection: const LastConnection(
-          providerKind: 'openai-completions',
-          modelId: 'z-ai/glm-5.3-flash',
-          baseUrl: _codeMieUrl,
-        ),
-        registry: registry,
-        sessionKeysStore: SessionKeysStore.inMemory(),
-      );
-      // The mismatched connection must not brick the session (a stale
-      // persisted row would otherwise erase the transcript): it boots,
-      // and the first request is refused with the same row-naming
-      // message.
-      expect(config, isNotNull);
-      expect(config!.modelId, 'z-ai/glm-5.3-flash');
-    });
+        );
+        // The mismatched connection must not brick the session (a stale
+        // persisted row would otherwise erase the transcript): it boots,
+        // and the first request is refused with the same row-naming
+        // message.
+        expect(config, isNotNull);
+        expect(config!.modelId, 'z-ai/glm-5.3-flash');
+      },
+    );
 
     test('REG: keyless local entries still restore', () async {
       final registry = ProviderRegistry.inMemory();
@@ -346,109 +347,113 @@ void main() {
       expect(events.whereType<ErrorEvent>(), isEmpty);
     });
   });
-  group('review fixes: the guard breaks nothing it should not (issue #327)',
-      () {
-    test('MAJOR 1: extension-host CodeMie cookie sign-in keeps its empty '
-        'key - plain web still refuses it', () async {
-      final registry = ProviderRegistry.inMemory();
-      await registry.add(
-        name: 'CodeMie',
-        baseUrl: _codeMieUrl,
-        modelId: 'gpt-4o',
-      );
-      final config = _config(_codeMieUrl, 'gpt-4o', apiKey: '');
-      // The extension hosts the app web build; its cookie sign-in stores
-      // an EMPTY key BY DESIGN (the SW fetch attaches the shared jar).
-      expect(
-        providerConnectionProblem(registry, config, extensionHost: true),
-        isNull,
-      );
-      // A plain web/desktop surface has no cookie jar on the fetch -
-      // keyless CodeMie still refuses.
-      expect(
-        providerConnectionProblem(registry, config, extensionHost: false),
-        isNotNull,
-      );
-    });
+  group(
+    'review fixes: the guard breaks nothing it should not (issue #327)',
+    () {
+      test('MAJOR 1: extension-host CodeMie cookie sign-in keeps its empty '
+          'key - plain web still refuses it', () async {
+        final registry = ProviderRegistry.inMemory();
+        await registry.add(
+          name: 'CodeMie',
+          baseUrl: _codeMieUrl,
+          modelId: 'gpt-4o',
+        );
+        final config = _config(_codeMieUrl, 'gpt-4o', apiKey: '');
+        // The extension hosts the app web build; its cookie sign-in stores
+        // an EMPTY key BY DESIGN (the SW fetch attaches the shared jar).
+        expect(
+          providerConnectionProblem(registry, config, extensionHost: true),
+          isNull,
+        );
+        // A plain web/desktop surface has no cookie jar on the fetch -
+        // keyless CodeMie still refuses.
+        expect(
+          providerConnectionProblem(registry, config, extensionHost: false),
+          isNotNull,
+        );
+      });
 
-    test('MAJOR 3: same-host rows are one provider - a path variant does '
-        'not flag', () async {
-      final registry = await _registry();
-      // Two rows on the SAME host serving the same model: picking the
-      // row on the same host is the endpoint's own business. (The id is
-      // served by the mirror only - the CodeMie row serves gpt-4o.)
-      await registry.add(
-        name: 'OpenRouter mirror',
-        baseUrl: 'https://openrouter.ai/api/v1/',
-        modelId: 'gpt-4o-mini',
-      );
-      expect(
-        providerConnectionProblem(
-          registry,
-          _config(_openRouterUrl, 'gpt-4o-mini'),
-        ),
-        isNull,
-      );
-    });
+      test('MAJOR 3: same-host rows are one provider - a path variant does '
+          'not flag', () async {
+        final registry = await _registry();
+        // Two rows on the SAME host serving the same model: picking the
+        // row on the same host is the endpoint's own business. (The id is
+        // served by the mirror only - the CodeMie row serves gpt-4o.)
+        await registry.add(
+          name: 'OpenRouter mirror',
+          baseUrl: 'https://openrouter.ai/api/v1/',
+          modelId: 'gpt-4o-mini',
+        );
+        expect(
+          providerConnectionProblem(
+            registry,
+            _config(_openRouterUrl, 'gpt-4o-mini'),
+          ),
+          isNull,
+        );
+      });
 
-    test('MAJOR 3: the incident shape stays flagged (different host)',
+      test(
+        'MAJOR 3: the incident shape stays flagged (different host)',
         () async {
-      final registry = await _registry();
-      expect(
-        providerConnectionProblem(
-          registry,
-          _config(_codeMieUrl, 'z-ai/glm-5.3-flash'),
-        ),
-        isNotNull,
+          final registry = await _registry();
+          expect(
+            providerConnectionProblem(
+              registry,
+              _config(_codeMieUrl, 'z-ai/glm-5.3-flash'),
+            ),
+            isNotNull,
+          );
+        },
       );
-    });
 
-    test('MAJOR 2: a boot-restored mismatched connection refuses the '
-        'REQUEST, not the boot', () async {
-      final registry = await _registry();
-      // Simulates the degraded restore: the agent boots on the
-      // mismatched pairing (CodeMie endpoint, OpenRouter's model).
-      final service = await AgentService.create(
-        config: _config(_codeMieUrl, 'z-ai/glm-5.3-flash'),
-        env: MemoryExecutionEnv(cwd: '/'),
-        providerRegistry: registry,
-        streamFunction: _okResponse(),
-      );
-      addTearDown(service.dispose);
-      await service.sendText('hi');
-      expect(
-        service.error,
-        allOf(
-          contains('z-ai/glm-5.3-flash'),
-          contains('OpenRouter'),
-          contains('CodeMie'),
-        ),
-      );
-    });
+      test('MAJOR 2: a boot-restored mismatched connection refuses the '
+          'REQUEST, not the boot', () async {
+        final registry = await _registry();
+        // Simulates the degraded restore: the agent boots on the
+        // mismatched pairing (CodeMie endpoint, OpenRouter's model).
+        final service = await AgentService.create(
+          config: _config(_codeMieUrl, 'z-ai/glm-5.3-flash'),
+          env: MemoryExecutionEnv(cwd: '/'),
+          providerRegistry: registry,
+          streamFunction: _okResponse(),
+        );
+        addTearDown(service.dispose);
+        await service.sendText('hi');
+        expect(
+          service.error,
+          allOf(
+            contains('z-ai/glm-5.3-flash'),
+            contains('OpenRouter'),
+            contains('CodeMie'),
+          ),
+        );
+      });
 
-    test('MINOR: the OpenRouter env key no longer launders onto other '
-        'endpoints', () async {
-      final keys = SessionKeysStore.inMemory();
-      await keys.set('OPENROUTER_API_KEY', 'sk-or-env');
-      final registry = ProviderRegistry.inMemory();
-      await registry.add(
-        name: 'Local',
-        baseUrl: _localUrl,
-        modelId: 'llama-3.2',
-      );
-      final config = restorableBootConfig(
-        connection: LastConnection(
-          providerKind: 'openai-completions',
-          modelId: 'llama-3.2',
+      test('MINOR: the OpenRouter env key no longer launders onto other '
+          'endpoints', () async {
+        final keys = SessionKeysStore.inMemory();
+        await keys.set('OPENROUTER_API_KEY', 'sk-or-env');
+        final registry = ProviderRegistry.inMemory();
+        await registry.add(
+          name: 'Local',
           baseUrl: _localUrl,
-        ),
-        registry: registry,
-        sessionKeysStore: keys,
-      );
-      expect(config, isNotNull);
-      expect(config!.apiKey, isEmpty);
-    });
-  });
+          modelId: 'llama-3.2',
+        );
+        final config = restorableBootConfig(
+          connection: LastConnection(
+            providerKind: 'openai-completions',
+            modelId: 'llama-3.2',
+            baseUrl: _localUrl,
+          ),
+          registry: registry,
+          sessionKeysStore: keys,
+        );
+        expect(config, isNotNull);
+        expect(config!.apiKey, isEmpty);
+      });
+    },
+  );
 
   group('add-in send guards (issue #633 AC2)', () {
     test('an empty model id refuses the send by name — the provider is '
@@ -473,24 +478,54 @@ void main() {
       expect(service.error, contains('no model selected'));
     });
 
-    test('a hosted preset without a key refuses the send at request time',
-        () async {
-      var calls = 0;
-      final service = await AgentService.create(
-        config: _config(_openRouterUrl, 'z-ai/glm-5.3-flash', apiKey: ''),
-        env: MemoryExecutionEnv(cwd: '/'),
-        providerRegistry: await _registry(),
-        streamFunction: (model, context, {cancelToken}) {
-          calls++;
-          return _okResponse()(model, context, cancelToken: cancelToken);
-        },
+    test(
+      'a hosted preset without a key refuses the send at request time',
+      () async {
+        var calls = 0;
+        final service = await AgentService.create(
+          config: _config(_openRouterUrl, 'z-ai/glm-5.3-flash', apiKey: ''),
+          env: MemoryExecutionEnv(cwd: '/'),
+          providerRegistry: await _registry(),
+          streamFunction: (model, context, {cancelToken}) {
+            calls++;
+            return _okResponse()(model, context, cancelToken: cancelToken);
+          },
+        );
+        addTearDown(service.dispose);
+
+        await service.sendText('hi');
+
+        expect(calls, 0, reason: 'no network traffic without a credential');
+        expect(service.error, contains('no API key on this surface'));
+      },
+    );
+  });
+
+  group('UT-display-name: the row serving the url names itself (gh-1713)', () {
+    test('a hosted-preset row renders its display name', () async {
+      // The gemini endpoint serves no registry row; the model id is owned
+      // by the OpenRouter row. The guard must name the serving row via
+      // the preset display table ("Google Gemini", not "gemini").
+      final problem = modelRowMismatch(
+        await _registry(),
+        _config(
+          'https://generativelanguage.googleapis.com/v1beta',
+          'z-ai/glm-5.3-flash',
+        ),
       );
-      addTearDown(service.dispose);
+      expect(problem, isNotNull);
+      expect(problem, contains('Google Gemini'));
+    });
 
-      await service.sendText('hi');
-
-      expect(calls, 0, reason: 'no network traffic without a credential');
-      expect(service.error, contains('no API key on this surface'));
+    test('a custom registry row renders its own name', () async {
+      // The CodeMie row serves the endpoint its row owns; the display
+      // name is the row's own name (custom branch, servingRef format).
+      final problem = modelRowMismatch(
+        await _registry(),
+        _config(_codeMieUrl, 'z-ai/glm-5.3-flash'),
+      );
+      expect(problem, isNotNull);
+      expect(problem, contains('active connection is CodeMie ('));
     });
   });
 }

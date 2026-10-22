@@ -22,21 +22,27 @@ class ProviderConnectionException implements Exception {
   String toString() => message;
 }
 
+/// Hosted-preset display names (data table, issue #1713); unmapped
+/// presets fall back to the enum name.
+const Map<ProviderPreset, String> _presetDisplayNames = {
+  ProviderPreset.openrouter: 'OpenRouter',
+  ProviderPreset.ollamaCloud: 'Ollama Cloud',
+  ProviderPreset.gemini: 'Google Gemini',
+  ProviderPreset.aiin: 'AIIN',
+  ProviderPreset.dial: 'DIAL',
+  ProviderPreset.minimax: 'MiniMax',
+};
+
+String _presetDisplayName(ProviderPreset preset) =>
+    _presetDisplayNames[preset] ?? preset.name;
+
 /// The display name of the row serving [baseUrl]: the custom registry
 /// entry, else the built-in hosted preset (name capitalized), else null.
 String? _connectionDisplayName(ProviderRegistry? registry, String baseUrl) {
   final provider = providerForBaseUrl(baseUrl, registry);
   if (provider == null) return null;
   return switch (provider) {
-    ProviderPreset preset => switch (preset) {
-      ProviderPreset.openrouter => 'OpenRouter',
-      ProviderPreset.ollamaCloud => 'Ollama Cloud',
-      ProviderPreset.gemini => 'Google Gemini',
-      ProviderPreset.aiin => 'AIIN',
-      ProviderPreset.dial => 'DIAL',
-      ProviderPreset.minimax => 'MiniMax',
-      _ => preset.name,
-    },
+    ProviderPreset preset => _presetDisplayName(preset),
     final CustomProvider custom => custom.name,
     _ => provider.toString(),
   };

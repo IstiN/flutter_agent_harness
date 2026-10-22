@@ -733,45 +733,53 @@ ToolExecutionResult _bashJobStatusResult(
   ShellJobRegistry jobs,
   String? id, {
   required bool all,
-}) {
-  if (id == null) {
-    final everything = jobs.jobs;
-    if (everything.isEmpty) {
-      return ToolExecutionResult.text('No background jobs this session.');
-    }
-    // gh-1459 ask #4: a no-id status sweep is the model looking at every
-    // running job — each counts as a probe for the headless drain's
-    // liveness leg.
-    for (final entry in everything) {
-      if (entry.isRunning) entry.markProbed();
-    }
-    if (all) {
-      return ToolExecutionResult.text(
-        everything.map(_shellJobStatusLine).join('\n'),
-      );
-    }
-    final running = [
-      for (final entry in everything)
-        if (entry.isRunning) entry,
-    ];
-    final exited = [
-      for (final entry in everything)
-        if (!entry.isRunning) entry,
-    ]..sort(_bySettledDescending);
-    final shown = exited.take(_statusExitedLimit).toList();
-    final lines = [
-      ...running.map(_shellJobStatusLine),
-      ...shown.map(_shellJobStatusLine),
-      if (exited.length > shown.length)
-        '… ${exited.length - shown.length} more exited job(s) not shown '
-            '(${exited.length} exited total, logs stay in .fah/bash_jobs/) — '
-            'pass all: true to list every job.',
-    ];
-    return ToolExecutionResult.text(lines.join('\n'));
+}) => id == null
+    ? _bashJobStatusListing(jobs, all)
+    : _bashJobStatusLookup(jobs, id);
+
+/// The no-id `status` listing: every running job, plus the most recent
+/// exited ones up to [_statusExitedLimit] unless [all] — gh-1438 AC3, the
+/// production storm dumped 1600+ exited rows.
+ToolExecutionResult _bashJobStatusListing(ShellJobRegistry jobs, bool all) {
+  final everything = jobs.jobs;
+  if (everything.isEmpty) {
+    return ToolExecutionResult.text('No background jobs this session.');
   }
+  // gh-1459 ask #4: a no-id status sweep is the model looking at every
+  // running job — each counts as a probe for the headless drain's
+  // liveness leg.
+  for (final entry in everything) {
+    if (entry.isRunning) entry.markProbed();
+  }
+  if (all) {
+    return ToolExecutionResult.text(
+      everything.map(_shellJobStatusLine).join('\n'),
+    );
+  }
+  final running = [
+    for (final entry in everything)
+      if (entry.isRunning) entry,
+  ];
+  final exited = [
+    for (final entry in everything)
+      if (!entry.isRunning) entry,
+  ]..sort(_bySettledDescending);
+  final shown = exited.take(_statusExitedLimit).toList();
+  final lines = [
+    ...running.map(_shellJobStatusLine),
+    ...shown.map(_shellJobStatusLine),
+    if (exited.length > shown.length)
+      '… ${exited.length - shown.length} more exited job(s) not shown '
+          '(${exited.length} exited total, logs stay in .fah/bash_jobs/) — '
+          'pass all: true to list every job.',
+  ];
+  return ToolExecutionResult.text(lines.join('\n'));
+}
+
+/// The with-id `status` result. gh-1459 ask #4: a status probe of a
+/// resolved job counts as liveness for the headless drain's liveness leg.
+ToolExecutionResult _bashJobStatusLookup(ShellJobRegistry jobs, String id) {
   final lookup = jobs.lookup(id);
-  // gh-1459 ask #4: a status probe of a resolved job counts as liveness
-  // for the headless drain's liveness leg.
   switch (lookup) {
     case ShellJobHit(:final entry):
       entry.markProbed();

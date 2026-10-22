@@ -209,16 +209,8 @@ final class _WaitingCoordinator {
   /// neither, and leaves the watch untouched.
   void streamHeartbeatProgress(AgentEvent event) {
     switch (event) {
-      case MessageUpdateEvent(:final assistantMessageEvent):
-        final rendered =
-            assistantMessageEvent is TextDeltaEvent ||
-            (assistantMessageEvent is ThinkingDeltaEvent &&
-                _cli._streamsThinking);
-        if (rendered) {
-          streamHeartbeat.renderedOutput();
-        } else {
-          streamHeartbeat.unrenderedEvent();
-        }
+      case MessageUpdateEvent():
+        _streamHeartbeatMessageUpdate(event);
       case MessageStartEvent():
         // Mirrors the provider stream's StartEvent: the first byte landed.
         streamHeartbeat.unrenderedEvent();
@@ -229,6 +221,24 @@ final class _WaitingCoordinator {
         streamHeartbeat.renderedOutput();
       default:
         break;
+    }
+  }
+
+  /// The MessageUpdateEvent arm of [streamHeartbeatProgress] (split out to
+  /// keep the dispatcher under the CRAP ratchet): rendered deltas disarm
+  /// (text deltas print live in raw mode; styled surfaces flush at message
+  /// end — either way the answer is on its way, E1; streamed thinking
+  /// deltas render with `--stream-thinking`), unrendered stream events
+  /// headless does not draw still prove aliveness.
+  void _streamHeartbeatMessageUpdate(MessageUpdateEvent event) {
+    final rendered =
+        event.assistantMessageEvent is TextDeltaEvent ||
+        (event.assistantMessageEvent is ThinkingDeltaEvent &&
+            _cli._streamsThinking);
+    if (rendered) {
+      streamHeartbeat.renderedOutput();
+    } else {
+      streamHeartbeat.unrenderedEvent();
     }
   }
 

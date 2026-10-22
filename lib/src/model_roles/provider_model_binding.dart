@@ -65,16 +65,9 @@ enum BindingProvenance {
   media,
   app;
 
-  /// The label reports render.
-  String get label => switch (this) {
-    BindingProvenance.env => 'env',
-    BindingProvenance.flag => 'flag',
-    BindingProvenance.restore => 'restore',
-    BindingProvenance.command => 'command',
-    BindingProvenance.queue => 'queue',
-    BindingProvenance.media => 'media',
-    BindingProvenance.app => 'app',
-  };
+  /// The label reports render — the enum name itself (issue #1713; the
+  /// former switch duplicated it arm for arm).
+  String get label => name;
 }
 
 /// The complete identity of one provider+model choice: the catalog

@@ -673,37 +673,41 @@ ToolExecutionResult _spawnBackground(
   );
 }
 
+/// Whether a spawn phase is settled — the job reached a terminal state.
+bool _isSettledPhase(TaskSpawnPhase? phase) =>
+    phase == TaskSpawnPhase.completed ||
+    phase == TaskSpawnPhase.failed ||
+    phase == TaskSpawnPhase.aborted;
+
+String _progressMarker(TaskSpawnPhase? phase) => switch (phase) {
+  TaskSpawnPhase.completed => '✓',
+  TaskSpawnPhase.failed || TaskSpawnPhase.aborted => '✗',
+  TaskSpawnPhase.running => '…',
+  null => '·',
+};
+
+String _progressLabel(TaskSpawnPhase? phase) => switch (phase) {
+  TaskSpawnPhase.completed => 'done',
+  TaskSpawnPhase.failed => 'failed',
+  TaskSpawnPhase.aborted => 'aborted',
+  TaskSpawnPhase.running => 'running',
+  null => 'waiting',
+};
+
 String _renderProgress(
   List<TaskItem> items,
   List<TaskSpawnPhase?> phases,
   Map<int, String> ids,
 ) {
-  final settled = phases
-      .where(
-        (phase) =>
-            phase == TaskSpawnPhase.completed ||
-            phase == TaskSpawnPhase.failed ||
-            phase == TaskSpawnPhase.aborted,
-      )
-      .length;
+  final settled = phases.where(_isSettledPhase).length;
   final lines = StringBuffer('task: $settled/${items.length} settled');
   for (var i = 0; i < items.length; i++) {
+    final phase = phases[i];
     final id = ids[i] ?? taskItemNameBase(items[i]);
     final agent = taskItemAgentName(items[i]);
-    final marker = switch (phases[i]) {
-      TaskSpawnPhase.completed => '✓',
-      TaskSpawnPhase.failed || TaskSpawnPhase.aborted => '✗',
-      TaskSpawnPhase.running => '…',
-      null => '·',
-    };
-    final label = switch (phases[i]) {
-      TaskSpawnPhase.completed => 'done',
-      TaskSpawnPhase.failed => 'failed',
-      TaskSpawnPhase.aborted => 'aborted',
-      TaskSpawnPhase.running => 'running',
-      null => 'waiting',
-    };
-    lines.write('\n  $marker $id ($agent) — $label');
+    lines.write(
+      '\n  ${_progressMarker(phase)} $id ($agent) — ${_progressLabel(phase)}',
+    );
   }
   return lines.toString();
 }
