@@ -31,6 +31,7 @@ import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
 import '../agent/image_registry.dart';
 import '../agent/stuck_tool.dart';
+import '../agent/foreground_call_budget.dart';
 import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
@@ -349,6 +350,7 @@ int _parseAgentContextWindowCapValue(Object? value) {
   String? agentMode,
   bool? misuseBreaker,
   StuckToolConfig? stuckTool,
+  ForegroundCallBudgetConfig? foregroundCall,
 })?
 _parseAgentSection(Object? node) {
   if (node == null) return null;
@@ -359,6 +361,8 @@ _parseAgentSection(Object? node) {
   String? mode;
   bool? misuseBreaker;
   StuckToolConfig? stuckTool;
+  Object? fgBudgetSeconds;
+  Object? fgAutoConvert;
   for (final key in node.keys) {
     switch (key) {
       case 'contextWindowCap':
@@ -369,6 +373,13 @@ _parseAgentSection(Object? node) {
         misuseBreaker = _parseAgentMisuseBreakerValue(node[key]);
       case 'stuckTool':
         stuckTool = StuckToolConfig.fromYaml(node[key]);
+      // Issue #1786: the two flat leaves are kept raw here and composed
+      // once below — one [ForegroundCallBudgetConfig] per section, strict
+      // like every agent key (a bad schema throws [ConfigException]).
+      case 'foregroundCallBudgetSeconds':
+        fgBudgetSeconds = node[key];
+      case 'foregroundCallAutoConvert':
+        fgAutoConvert = node[key];
       default:
         throw ConfigException('unknown "agent" key: $key');
     }
@@ -379,6 +390,14 @@ _parseAgentSection(Object? node) {
     agentMode: mode == 'pi' ? 'pi' : null,
     misuseBreaker: misuseBreaker,
     stuckTool: stuckTool,
+    // Both leaves absent → null (the loop's defaults apply); one present
+    // keeps the other's default via fromLeaves.
+    foregroundCall: fgBudgetSeconds == null && fgAutoConvert == null
+        ? null
+        : ForegroundCallBudgetConfig.fromLeaves(
+            budgetSeconds: fgBudgetSeconds,
+            autoConvert: fgAutoConvert,
+          ),
   );
 }
 
@@ -486,6 +505,7 @@ final class CliConfig {
     this.ttsr,
     this.contextWindowCap,
     this.stuckTool,
+    this.foregroundCall,
     this.agentLoadMode,
     this.customProviders = const [],
     this.models,
@@ -671,6 +691,7 @@ final class CliConfig {
       // #273/#679/#680) is strict too.
       contextWindowCap: agentSection?.contextWindowCap,
       stuckTool: agentSection?.stuckTool,
+      foregroundCall: agentSection?.foregroundCall,
       agentMode: agentSection?.agentMode,
       agentLoadMode: agentSection?.mode,
       misuseBreaker: agentSection?.misuseBreaker ?? true,
@@ -955,6 +976,13 @@ final class CliConfig {
   /// cancel/retry/convert follow-up. `null` = unsupervised.
   final StuckToolConfig? stuckTool;
 
+  /// Foreground tool-call budget (`agent.foregroundCallBudgetSeconds` +
+  /// `agent.foregroundCallAutoConvert`, issue #1786): bounds the
+  /// wall-clock window a running foreground call can escape steering
+  /// through (offer at B/2, force-escalate at B). Both leaves absent →
+  /// `null` — the loop applies its own defaults (600s, offer).
+  final ForegroundCallBudgetConfig? foregroundCall;
+
   /// The parsed harness mode preset (`agent.mode`, issue #679): `'pi'` or
   /// null (absent or explicit `default`). Resolved against the flag/env
   /// tiers by the executable via `resolveHarnessMode`.
@@ -1076,6 +1104,7 @@ final class CliConfig {
     TtsrConfig? ttsr,
     int? contextWindowCap,
     StuckToolConfig? stuckTool,
+    ForegroundCallBudgetConfig? foregroundCall,
     String? agentLoadMode,
     List<CustomProviderEntry>? customProviders,
     ModelsConfig? models,
@@ -1131,6 +1160,7 @@ final class CliConfig {
       ttsr: ttsr ?? this.ttsr,
       contextWindowCap: contextWindowCap ?? this.contextWindowCap,
       stuckTool: stuckTool ?? this.stuckTool,
+      foregroundCall: foregroundCall ?? this.foregroundCall,
       agentLoadMode: agentLoadMode ?? this.agentLoadMode,
       customProviders: customProviders ?? this.customProviders,
       models: models ?? this.models,
@@ -1300,14 +1330,17 @@ final class CliConfig {
       streamThinking ? 'output:\n  streamThinking: true\n' : '';
 
   /// The `agent:` section, only when a cap, a load mode, a stuck-tool
-  /// config, or the misuse-breaker kill switch is persisted; defaults are
-  /// never written so the file stays minimal.
+  /// config, the foreground-call budget, or the misuse-breaker kill
+  /// switch is persisted; defaults are never written so the file stays
+  /// minimal.
   String _agentSectionYaml() {
     final stuckYaml = _stuckToolYaml();
+    final fgYaml = _foregroundCallYaml();
     if (contextWindowCap == null &&
         agentLoadMode == null &&
         misuseBreaker &&
-        stuckYaml.isEmpty) {
+        stuckYaml.isEmpty &&
+        fgYaml.isEmpty) {
       return '';
     }
     final section = StringBuffer('agent:\n');
@@ -1321,7 +1354,26 @@ final class CliConfig {
       section.write('  misuseBreaker: false\n');
     }
     section.write(stuckYaml);
+    section.write(fgYaml);
     return section.toString();
+  }
+
+  /// The `agent.foregroundCallBudgetSeconds` / `agent.
+  /// foregroundCallAutoConvert` leaves (issue #1786), only when
+  /// non-default (600 / offer) — defaults are never written so the file
+  /// stays minimal.
+  String _foregroundCallYaml() {
+    final fg = foregroundCall;
+    if (fg == null) return '';
+    final budget = fg.budget.inSeconds;
+    final buffer = StringBuffer();
+    if (budget != defaultForegroundCallBudgetSeconds) {
+      buffer.write('  foregroundCallBudgetSeconds: $budget\n');
+    }
+    if (fg.autoConvert) {
+      buffer.write('  foregroundCallAutoConvert: auto\n');
+    }
+    return buffer.toString();
   }
 
   /// The `agent.stuckTool:` sub-map, only when explicitly configured

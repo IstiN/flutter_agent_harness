@@ -121,6 +121,7 @@ final class AgentCliConfig {
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
     this.stuckTool,
+    this.foregroundCall,
     // gh-1577: the empty-hiccup retry knobs, threaded next to the loop's
     // maxEmptyRetries so hosts/tests can tune the budget and pin the
     // backoff (tests pass Duration.zero). Defaults match the loop's.
@@ -255,6 +256,13 @@ final class AgentCliConfig {
   /// cancel/retry/convert follow-up. `null` = unsupervised (the loop runs
   /// byte-identically to before).
   final StuckToolConfig? stuckTool;
+
+  /// Foreground tool-call budget (`agent.foregroundCallBudgetSeconds` +
+  /// `agent.foregroundCallAutoConvert`, issue #1786), a pass-through into
+  /// the [Agent] — defaults live in
+  /// [ForegroundCallBudgetConfig.fromLeaves]/the loop. `null` =
+  /// unconfigured (the loop's defaults apply).
+  final ForegroundCallBudgetConfig? foregroundCall;
 
   /// gh-1577: empty-hiccup retry budget (see
   /// [AgentLoopConfig.emptyHiccupRetries]).

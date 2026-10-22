@@ -14,6 +14,7 @@ export 'src/agent/misuse_breaker.dart';
 export 'src/agent/image_registry.dart';
 export 'src/agent/message_cap.dart';
 export 'src/agent/stuck_tool.dart';
+export 'src/agent/foreground_call_budget.dart';
 export 'src/agent/tool_pairing.dart';
 export 'src/agent/auto_compactor.dart'
     show

@@ -69,6 +69,7 @@ import '../agent/auto_compactor.dart';
 import '../agent/message_cap.dart';
 import '../overflow.dart' show MessageCapRefusal;
 import '../agent/stuck_tool.dart';
+import '../agent/foreground_call_budget.dart';
 import '../agent/tool_pairing.dart';
 import '../providers/models_for_endpoint.dart';
 import '../providers/stream_trace.dart';
@@ -327,6 +328,7 @@ part 'agent_cli_hep_io.dart';
 part 'agent_cli_headless_exit.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_waiting.dart';
+part 'agent_cli_budget.dart';
 part 'agent_cli_subagent_board.dart';
 part 'agent_cli_mcp_print.dart';
 part 'agent_cli_commands.dart';
@@ -713,6 +715,7 @@ class AgentCli {
         ),
         contextWindowCap: config.contextWindowCap,
         stuckTool: config.effectiveStuckTool(),
+        foregroundCall: config.foregroundCall,
         wireDump: config.wireDump,
         // Issue #387: the loop's over-window guard hands the transcript to
         // this relief before refusing — one synchronous compaction pass.
@@ -731,6 +734,9 @@ class AgentCli {
     );
     _toolRegistry = stack.registry;
     _agent = stack.agent;
+    // Issue #1786: the one-key accept + the watchdog's escalate rung call
+    // into the loop's budget ladder through these controls.
+    _agent.foregroundBudgetControls = _foregroundBudgetControls;
     // gh-1556: the session deadline's per-turn budget line rides every
     // LLM request payload while armed (`time-left: 5min`); unarmed keeps
     // the request byte-for-byte (the provider returns null).
@@ -1693,6 +1699,19 @@ class AgentCli {
   /// user. While set, [_handleLine] routes typed lines here instead of
   /// steering them into the agent.
   Completer<String>? _pendingApprovalAnswer;
+
+  /// The budget ladder's CLI→loop controls (issue #1786): the loop
+  /// registers per-call closures while a budgeted call is in flight; the
+  /// one-key `b` accept and the liveness watchdog's escalate rung invoke
+  /// them (see agent_cli_budget.dart).
+  final ForegroundCallBudgetControls _foregroundBudgetControls =
+      ForegroundCallBudgetControls();
+
+  /// The outstanding one-key budget offer's tool call id, if any — set by
+  /// the `action: offer` budget record, cleared by any terminal action or
+  /// the call's end. State lives HERE (extensions cannot hold fields);
+  /// the affordance methods live in agent_cli_budget.dart.
+  String? _outstandingBudgetOffer;
 
   /// The pending ask-menu input line, if an `ask` tool call is waiting on
   /// the user. Unlike the approval prompt, EMPTY lines are routed here too:

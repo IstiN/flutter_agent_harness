@@ -30,6 +30,10 @@ import 'dart:convert';
 
 import '../agent/agent_loop.dart';
 import '../agent/finalize_gate.dart';
+// The budget enums (rung/action labels) live in the pure-data module the
+// loop re-uses; imported directly so the decoder table can resolve labels
+// without widening agent_loop.dart's export surface.
+import '../agent/foreground_call_budget.dart';
 import '../agent/tool_pairing.dart';
 import '../approval/approval.dart';
 import '../context.dart';
@@ -517,6 +521,20 @@ class AgentWireProtocol {
         'timestamp': e.timestamp.millisecondsSinceEpoch,
       };
     },
+    ToolCallBudgetEvent: (event) {
+      final e = event as ToolCallBudgetEvent;
+      return {
+        'toolCallId': e.toolCallId,
+        'toolName': e.toolName,
+        'args': e.args,
+        'elapsedMs': e.elapsed.inMilliseconds,
+        'rung': e.rung.label,
+        'action': e.action.label,
+        'steeringCount': e.steeringCount,
+        'detail': e.detail,
+        'timestamp': e.timestamp.millisecondsSinceEpoch,
+      };
+    },
   };
 
   /// Encodes the nested provider-event discriminator of a
@@ -640,6 +658,7 @@ class AgentWireProtocol {
     'task_ledger': _decodeTaskLedger,
     'tool_call_heartbeat': _decodeToolCallHeartbeat,
     'tool_call_stuck': _decodeToolCallStuck,
+    'tool_call_budget': _decodeToolCallBudget,
     'approval_request': _decodeApprovalRequest,
     'ask_request': _decodeAskRequest,
     'secret_request': _decodeSecretRequest,
@@ -879,6 +898,43 @@ class AgentWireProtocol {
             'unknown action "${frame['action']}"',
           ),
         ),
+        // Optional with the constructor default, like the event itself.
+        detail: frame['detail'] as String? ?? '',
+        timestamp: DateTime.fromMillisecondsSinceEpoch(
+          _requireInt(frame['timestamp'], 'timestamp'),
+        ),
+      ),
+      frame,
+    );
+  }
+
+  static KnownWireEvent _decodeToolCallBudget(Map<String, dynamic> frame) {
+    _requireKind(frame, 'tool_call_budget');
+    ForegroundBudgetRung rungOf(String raw) =>
+        ForegroundBudgetRung.values.firstWhere(
+          (rung) => rung.label == raw,
+          orElse: () => throw WireProtocolException(
+            'malformed "tool_call_budget" event frame: unknown rung "$raw"',
+          ),
+        );
+    ForegroundBudgetAction actionOf(String raw) =>
+        ForegroundBudgetAction.values.firstWhere(
+          (action) => action.label == raw,
+          orElse: () => throw WireProtocolException(
+            'malformed "tool_call_budget" event frame: unknown action "$raw"',
+          ),
+        );
+    return KnownWireEvent(
+      ToolCallBudgetEvent(
+        toolCallId: _requireString(frame['toolCallId'], 'toolCallId'),
+        toolName: _requireString(frame['toolName'], 'toolName'),
+        args: _requireMap(frame['args'], 'args'),
+        elapsed: Duration(
+          milliseconds: _requireInt(frame['elapsedMs'], 'elapsedMs'),
+        ),
+        rung: rungOf(_requireString(frame['rung'], 'rung')),
+        action: actionOf(_requireString(frame['action'], 'action')),
+        steeringCount: _requireInt(frame['steeringCount'], 'steeringCount'),
         // Optional with the constructor default, like the event itself.
         detail: frame['detail'] as String? ?? '',
         timestamp: DateTime.fromMillisecondsSinceEpoch(
@@ -1238,6 +1294,7 @@ class AgentWireProtocol {
     TaskLedgerEvent: 'task_ledger',
     ToolCallHeartbeatEvent: 'tool_call_heartbeat',
     ToolCallStuckEvent: 'tool_call_stuck',
+    ToolCallBudgetEvent: 'tool_call_budget',
   };
 
   String _kindOf(AgentEvent event) => _eventKinds[event.runtimeType]!;

@@ -42,14 +42,14 @@ import '../agent/agent_tool.dart';
 import '../agent/message_cap.dart' show MessageCapPolicy;
 import '../agent/misuse_breaker.dart';
 import '../agent/stuck_tool.dart' show StuckToolConfig;
+import '../agent/foreground_call_budget.dart' show ForegroundCallBudgetConfig;
 import '../agent/tool_registry.dart';
 import '../a2a/a2a_config.dart' show A2aConfig;
 import '../a2a/a2a_mail_gateway.dart' show A2aMailGateway;
 import '../a2a/a2a_manager.dart' show A2aManager;
 import '../browser/browser_tools.dart';
 import '../compaction/compaction_engine.dart' show CompactionEngine;
-import '../compaction/context_window_registry.dart'
-    show ContextWindowRegistry;
+import '../compaction/context_window_registry.dart' show ContextWindowRegistry;
 import '../config/config_service.dart';
 import '../cube/config/cube_spec.dart';
 import '../cube/config/fs_policy.dart';
@@ -494,6 +494,10 @@ final class AgentWiringSpec {
   final void Function()? onRunWatchdogPaused;
   final int? contextWindowCap;
   final StuckToolConfig? stuckTool;
+
+  /// Foreground tool-call budget (issue #1786); `null` = the loop's
+  /// defaults (600s budget, offer at B/2).
+  final ForegroundCallBudgetConfig? foregroundCall;
   final bool wireDump;
   final OverWindowRelief? overWindowRelief;
   final ToolMisuseBreaker? toolMisuseBreaker;
@@ -511,6 +515,7 @@ final class AgentWiringSpec {
     this.onRunWatchdogPaused,
     this.contextWindowCap,
     this.stuckTool,
+    this.foregroundCall,
     this.wireDump = false,
     this.overWindowRelief,
     this.toolMisuseBreaker,
@@ -664,6 +669,7 @@ final class WiredAgentCore {
       onRunWatchdogPaused: spec.onRunWatchdogPaused,
       contextWindowCap: spec.contextWindowCap,
       stuckTool: spec.stuckTool,
+      foregroundCall: spec.foregroundCall,
       wireDump: spec.wireDump,
       overWindowRelief: spec.overWindowRelief,
       toolMisuseBreaker: spec.toolMisuseBreaker,

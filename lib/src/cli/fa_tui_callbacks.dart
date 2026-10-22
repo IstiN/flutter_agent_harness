@@ -21,6 +21,7 @@ final class FaTuiCallbacks {
     this.onPickerSelected,
     this.onPickerCancelled,
     this.onSteer,
+    this.onBudgetAccept,
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
@@ -102,6 +103,14 @@ final class FaTuiCallbacks {
   /// kimi-cli semantics): each message is injected as a separate user
   /// message mid-turn.
   final Future<void> Function(List<String> messages)? onSteer;
+
+  /// The one-key budget-offer accept (issue #1786, the `b` key beside
+  /// esc): returns true when an outstanding offer was accepted — ONLY
+  /// then is the key consumed; false lets `b` keep reaching the composer
+  /// (typing a `b` into steering text must never regress). Synchronous by
+  /// contract: [ForegroundCallBudgetControls.acceptOffer] resolves the
+  /// escalation without awaiting the call's unwind.
+  final bool Function()? onBudgetAccept;
 
   /// Workspace file paths for the composer's fuzzy path completion
   /// (`@token` and shell words on a `!` line, issue #275 AC1). Called per

@@ -1192,6 +1192,47 @@ extension ApprovalCommands on AgentCli {
           '[stuck-call] $toolName: ${action.label} after '
           '${elapsed.inSeconds}s${shownDetail.isEmpty ? '' : ' — $shownDetail'}',
         );
+      case ToolCallBudgetEvent(
+        :final toolCallId,
+        :final toolName,
+        :final elapsed,
+        :final rung,
+        :final action,
+        :final steeringCount,
+        :final detail,
+      ):
+        // Foreground budget (issue #1786): every rung lands here, so no
+        // escalation is silent. An `offer` arms the one-key `b` accept;
+        // any terminal action (background/abort) clears it.
+        _logDiagnostic(
+          'tool budget sid=$_logSid name=$toolName rung=${rung.label} '
+          'action=${action.label} elapsed=${elapsed.inSeconds}s '
+          'steering=$steeringCount',
+        );
+        await _persistToolLivenessRecord(foregroundBudgetRecordType, {
+          'tool': toolName,
+          'toolCallId': toolCallId,
+          'elapsedMs': elapsed.inMilliseconds,
+          'rung': rung.label,
+          'action': action.label,
+          'steeringCount': steeringCount,
+          'detail': detail,
+        });
+        if (action == ForegroundBudgetAction.offer) {
+          budgetOfferSurfaced(toolCallId);
+        } else {
+          budgetOfferCleared();
+        }
+        // The terminal line carries the deterministic announcement (the
+        // detail IS the `[foreground-budget] …` line) — redacted the same
+        // way the stuck case redacts captured output.
+        final shownBudgetDetail =
+            config.redactionPipeline?.redact(detail) ?? detail;
+        io.writeln(
+          '[foreground-budget] $toolName: ${action.label} after '
+          '${elapsed.inSeconds}s'
+          '${shownBudgetDetail.isEmpty ? '' : ' — $shownBudgetDetail'}',
+        );
       case ToolPairingRepairEvent(:final report):
         // gh-1449 AC6: a batch of FIRST-TIME orphan notes is persisted as
         // the hidden `orphan_report` record — a resumed session seeds its
@@ -1645,6 +1686,9 @@ extension ApprovalCommands on AgentCli {
   }) {
     final (started, startDetail) = _toolStarts.remove(toolCallId) ?? (null, '');
     _waiting.toolCallEnded(toolCallId);
+    // No offer may outlive its call (issue #1786): the call ending is the
+    // last chance to clear a stale outstanding `b` affordance.
+    budgetOfferCleared();
     final elapsed = started == null
         ? ''
         : '${DateTime.now().difference(started).inSeconds}s';
