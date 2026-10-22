@@ -115,6 +115,7 @@ final class Model {
     this.connectTimeout,
     this.streamIdleTimeout,
     this.timeoutScopeLabel,
+    this.maxImages,
   });
 
   /// The model id sent to the provider (e.g. `gpt-4o-mini`,
@@ -198,6 +199,12 @@ final class Model {
   /// looks like a hang. Null when the model carries no scoped windows.
   final String? timeoutScopeLabel;
 
+  /// The per-model unique-image cap (`images.perModel` config beats it;
+  /// issue #1750). Null = no catalog knowledge, the global
+  /// `images.maxPerRequest` default applies. A ceiling-setter only —
+  /// nothing raises a cap above provider reality.
+  final int? maxImages;
+
   /// A copy of this model with the given fields replaced (null = keep).
   /// The ONE hand-rolled field list for limit/window swaps — the registry
   /// (`withRegisteredContextWindow`) and the CLI's limit editors build
@@ -224,6 +231,7 @@ final class Model {
     Duration? connectTimeout,
     Duration? streamIdleTimeout,
     String? timeoutScopeLabel,
+    int? maxImages,
   }) {
     return Model(
       id: id ?? this.id,
@@ -244,6 +252,7 @@ final class Model {
       connectTimeout: connectTimeout ?? this.connectTimeout,
       streamIdleTimeout: streamIdleTimeout ?? this.streamIdleTimeout,
       timeoutScopeLabel: timeoutScopeLabel ?? this.timeoutScopeLabel,
+      maxImages: maxImages ?? this.maxImages,
     );
   }
 }

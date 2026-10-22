@@ -39,6 +39,7 @@ import 'dart:convert';
 
 import '../cancel_token.dart';
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
+import '../image_overflow.dart' show classifyImageCapError;
 import '../overflow.dart' show classifyMessageCapError;
 // The supervisor's cancel marker + the soft-yield hand-back marker live in
 // the pure-data stuck_tool module (gh-1054 review) so the tool layer can
@@ -436,6 +437,7 @@ final class AgentLoopConfig {
     this.operativeSkills = const [],
     this.reportedOrphanKeys,
     this.budgetLineProvider,
+    this.imageCapLatches,
   });
 
   /// The model to call each turn.
@@ -581,6 +583,15 @@ final class AgentLoopConfig {
   /// legacy always-note behavior.
   final Set<String>? reportedOrphanKeys;
 
+  /// Issue #1750: the run-lifetime latch of learned per-model image caps,
+  /// keyed by [imageCapLatchKey] (`provider|modelId`). A classified
+  /// image-count refusal writes the learned cap here (runtime-only,
+  /// never persisted) and every later request build for the same pair
+  /// rides it. Hosts own the map (same pattern as [reportedOrphanKeys]);
+  /// `null` keeps the re-send working within one response but the cap is
+  /// not remembered across turns.
+  final Map<String, int>? imageCapLatches;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -608,6 +619,7 @@ final class AgentLoopConfig {
       operativeSkills: operativeSkills,
       reportedOrphanKeys: reportedOrphanKeys,
       budgetLineProvider: budgetLineProvider,
+      imageCapLatches: imageCapLatches,
     );
   }
 }
@@ -1454,6 +1466,9 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
   // gh-1680: one-shot message-cap heal state; when armed, the next
   // rebuilt payload coalesces toward its target.
   final capState = _CapHealState();
+  // Issue #1750: one-shot image-cap heal state; the learned cap rides
+  // the retried request build and latches for the run.
+  final imageCapState = _ImageCapHealState();
   // Issue #862: drain the armed corrective note once per streamed response
   // (not per built context) so a mid-turn retry re-attaches it.
   final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
@@ -1471,6 +1486,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       cancelToken,
       misuseNote: misuseNote,
       capState: capState,
+      imageCapState: imageCapState,
       reliefUsed: reliefUsed,
       pairingHealed: pairingHealed,
     );
@@ -1672,6 +1688,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   CancelToken? cancelToken, {
   String? misuseNote,
   int? capCoalesceTarget,
+  int? imageCapOverride,
 }) async {
   // pi applies transformContext (then convertToLlm) before each provider
   // call; only the request payload is rewritten, never the transcript.
@@ -1687,10 +1704,19 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   // Session image registry (#171): unique history images ride once as
   // `[Image N]` carriers; every other occurrence becomes a text ref.
   // Payload-only rewrite — the transcript is never touched, and the
-  // kill switch (`images.registry: false`) skips it entirely.
+  // kill switch (`images.registry: false`) skips it entirely. Issue
+  // #1750: the cap resolves per model (latched > perModel config >
+  // catalog maxImages > the global maxPerRequest) so a request never
+  // carries more unique images than the target model accepts.
   if (imageRegistryConfig.enabled) {
     final rewritten = rewriteHistoryImages(
       requestContext.messages,
+      maxPerRequest:
+          imageCapOverride ??
+          resolveImageCap(
+            modelId: config.model.id,
+            catalogMaxImages: config.model.maxImages,
+          ),
       onDrop: imageDropNotice,
     );
     if (!identical(rewritten, requestContext.messages)) {

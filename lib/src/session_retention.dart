@@ -269,7 +269,6 @@ final class SessionDiskUsage {
     required this.lastUsedAt,
     this.cwd,
     this.spillBytes = 0,
-    this.name,
   });
 
   /// Session id (from the file basename; the header must parse for the
@@ -299,10 +298,6 @@ final class SessionDiskUsage {
   /// Last used: the file mtime, floored at the header creation time (E3:
   /// a backup restore or clock skew can push mtime before createdAt).
   final DateTime lastUsedAt;
-
-  /// The session's display name, when already known. Null = unresolved
-  /// (the sweeper resolves lazily, only for deletion candidates).
-  final String? name;
 
   /// Age in whole days as of [asOf].
   int ageDaysAt(DateTime asOf) => asOf.difference(lastUsedAt).inDays;
@@ -451,7 +446,9 @@ final class SessionSweepReport {
   List<SessionSweepAction> get deletions =>
       actions.where((action) => action.isDeletion).toList();
 
-  /// Exempt sessions named by the loud over-cap note (largest first).
+  /// The exempt sessions the over-cap note names — the MINIMAL set that
+  /// explains the overflow (largest first until the held bytes exceed it;
+  /// gh-1746 review), never every exempt unit in the walk.
   List<SessionSweepAction> get blockers =>
       actions.where((action) => !action.isDeletion).toList();
 
@@ -559,7 +556,11 @@ final class SessionRetentionSweeper {
     final topLevel = await _listDirOrNull(_root);
     if (topLevel == null) {
       notes.add('retention: sessions root unreadable: $_root');
-      return SessionUsageSnapshot(sessions: const [], totalBytes: 0, notes: notes);
+      return SessionUsageSnapshot(
+        sessions: const [],
+        totalBytes: 0,
+        notes: notes,
+      );
     }
     topLevel.sort((a, b) => a.name.compareTo(b.name));
     // Top-level dirs: `--slug--` workspace folders hold the transcripts;
@@ -617,6 +618,28 @@ final class SessionRetentionSweeper {
         // A file we cannot identify is never sweep food (only
         // positively-identified sessions are candidates).
         notes.add('retention: skipped unidentified ${entry.path}');
+        continue;
+      }
+      // Identity check: the FILENAME sid keys the sweep unit — a header
+      // claiming a different id is foreign/mismatched and never becomes
+      // a sweepable unit keyed by its filename (gh-1746 review).
+      if (header.id != sessionId) {
+        notes.add(
+          'retention: skipped ${entry.path} — header id '
+          '"${header.id}" does not match filename id "$sessionId"',
+        );
+        continue;
+      }
+      // The header is untrusted input: a corrupted or planted cwd must
+      // never steer the recursive spill delete outside any root. An
+      // unsafe cwd disqualifies the unit entirely (fail closed) — the
+      // same guard covers this measurement walk and the sweep's
+      // removeTree.
+      if (!isSafeSpillCwd(header.cwd)) {
+        notes.add(
+          'retention: skipped ${entry.path} — unsafe header cwd '
+          '"${header.cwd}" (E4)',
+        );
         continue;
       }
       final mtime = DateTime.fromMillisecondsSinceEpoch(entry.mtimeMs);
@@ -812,14 +835,13 @@ final class SessionRetentionSweeper {
           if (live.contains(session.sessionId)) return false;
           if (!session.lastUsedAt.isBefore(cutoff)) return false;
           return true;
-        }).toList()
-          ..sort((a, b) {
-            final byLastUsed = a.lastUsedAt.compareTo(b.lastUsedAt);
-            if (byLastUsed != 0) return byLastUsed;
-            final byCreated = a.createdAt.compareTo(b.createdAt);
-            if (byCreated != 0) return byCreated;
-            return a.path.compareTo(b.path);
-          });
+        }).toList()..sort((a, b) {
+          final byLastUsed = a.lastUsedAt.compareTo(b.lastUsedAt);
+          if (byLastUsed != 0) return byLastUsed;
+          final byCreated = a.createdAt.compareTo(b.createdAt);
+          if (byCreated != 0) return byCreated;
+          return a.path.compareTo(b.path);
+        });
     final deletions = <SessionSweepAction>[];
     final namedBlockerIds = <String>{};
     var freed = 0;
@@ -827,7 +849,7 @@ final class SessionRetentionSweeper {
     for (final session in deletable) {
       if (usage.totalBytes - freed <= cap) break;
       if (retention.keepNamed) {
-        final name = session.name ?? await _nameOf(session);
+        final name = await _nameOf(session);
         if (name != null && name.isNotEmpty) {
           namedBlockerIds.add(session.sessionId);
           continue;
@@ -864,26 +886,31 @@ final class SessionRetentionSweeper {
       }
     }
     // AC4: when the deletable set cannot bring the root under the cap,
-    // name every exempt blocker (largest first) — never force.
+    // name the blockers — but only the sessions actually NEEDED to
+    // explain the overflow (largest first until the held bytes exceed
+    // it): a 1 KB young session that has nothing to do with the overflow
+    // must not drown the one giant live session in noise (gh-1746
+    // review). Never force.
     final remaining = usage.totalBytes - freed;
     final blockers = <SessionSweepAction>[];
     if (remaining > cap) {
       final deletedIds = deletions.map((a) => a.sessionId).toSet();
-      for (final session in usage.sessions) {
-        if (deletedIds.contains(session.sessionId)) continue;
+      final exempt = [
+        for (final session in usage.sessions)
+          if (!deletedIds.contains(session.sessionId)) session,
+      ]..sort((a, b) => b.bytes.compareTo(a.bytes));
+      final overflow = remaining - cap;
+      var held = 0;
+      for (final session in exempt) {
+        if (held >= overflow) break;
+        held += session.bytes;
         blockers.add(
-          _action(
-            session,
-            now,
-            _exemptionOf(session, live, namedBlockerIds),
-          ),
+          _action(session, now, _exemptionOf(session, live, namedBlockerIds)),
         );
       }
-      blockers.sort((a, b) => b.bytes.compareTo(a.bytes));
-      final held = blockers.fold<int>(0, (sum, b) => sum + b.bytes);
       final note =
           'retention: still over cap by '
-          '${formatRetentionBytes(remaining - cap)} — ${blockers.length} '
+          '${formatRetentionBytes(overflow)} — ${blockers.length} '
           'exempt session(s) hold ${formatRetentionBytes(held)}; '
           'nothing else is deletable';
       logLines.add(note);
@@ -1008,6 +1035,24 @@ bool isSafePathSegment(String segment) =>
     !segment.contains('/') &&
     !segment.contains(r'\');
 
+/// Whether [cwd] from a session header is safe to measure/delete spills
+/// under: non-empty, absolute (POSIX `/…` or Windows `X:\…`/`X:/…`), and
+/// free of `..` segments on either separator. Header data is untrusted —
+/// a planted `cwd` ("../x", a relative path) must never steer the
+/// recursive spill `removeTree` outside any root (gh-1746 review).
+bool isSafeSpillCwd(String? cwd) {
+  if (cwd == null || cwd.isEmpty) return false;
+  final isAbsolute =
+      cwd.startsWith('/') ||
+      cwd.startsWith(r'\') ||
+      RegExp(r'^[A-Za-z]:[/\\]').hasMatch(cwd);
+  if (!isAbsolute) return false;
+  for (final segment in cwd.split(RegExp(r'[/\\]'))) {
+    if (segment == '..') return false;
+  }
+  return true;
+}
+
 final class _SessionHeaderFacts {
   const _SessionHeaderFacts({
     required this.id,
@@ -1093,4 +1138,18 @@ List<String> sessionSweepReportLines(SessionSweepReport report) {
     lines.add(note);
   }
   return lines;
+}
+
+/// The `/sessions` usage footer (gh-1746 Visibility): one dim line —
+/// `total: X across N sessions · cap: Y` — NULL when no cap is
+/// configured, so a cap-free listing stays byte-identical legacy
+/// (REG-1: the footer line is ABSENT without a cap).
+String? sessionUsageFooterLine(
+  SessionUsageSnapshot usage,
+  SessionRetentionConfig retention,
+) {
+  if (!retention.hasCap) return null;
+  return 'total: ${formatRetentionBytes(usage.totalBytes)} across '
+      '${usage.sessions.length} sessions · cap: '
+      '${formatRetentionBytes(retention.maxTotalBytes)}';
 }

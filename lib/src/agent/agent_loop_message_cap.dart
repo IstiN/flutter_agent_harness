@@ -91,6 +91,64 @@ bool _needsCapHeal(
     config.messageCapPolicy != null &&
     classifyMessageCapError(finished.errorMessage) != null;
 
+/// Whether a finished turn needs the one-shot image-cap self-heal
+/// (issue #1750): a classified image-count refusal on an error stop,
+/// before it was used. The kill switch (`images.registry: false`)
+/// disables the whole recovery — the refusal surfaces exactly as today
+/// (AC6, byte-identical legacy shape).
+bool _needsImageCapHeal(
+  bool healed,
+  AssistantMessage finished,
+  AgentLoopConfig config,
+) =>
+    !healed &&
+    finished.stopReason == StopReason.error &&
+    imageRegistryConfig.enabled &&
+    classifyImageCapError(finished.errorMessage) != null;
+
+/// The mutable image-cap heal state of one streamed response (issue
+/// #1750): whether the one-shot heal already ran, and the learned cap
+/// the retried request build rides. A second refusal (AC4) surfaces the
+/// error exactly as today — no loop.
+final class _ImageCapHealState {
+  bool healed = false;
+
+  /// The cap learned from the first refusal; null until healed.
+  int? learnedCap;
+
+  /// The image-cap override the CURRENT request build rides: the
+  /// response-local learned cap, else the run latch for this (provider,
+  /// model) pair, else null (the layered seam decides).
+  int? overrideFor(AgentLoopConfig config) =>
+      learnedCap ??
+      config.imageCapLatches?[imageCapLatchKey(
+        config.model.provider,
+        config.model.id,
+      )];
+
+  /// Runs the one-shot heal when [finished] is a classified image-count
+  /// refusal: latch the learned cap for the (provider, model) pair
+  /// (runtime-only, never persisted), fire the never-silent learned-cap
+  /// notice, and tell the caller to retry ONCE — the retry rebuilds
+  /// through the registry at the smaller cap (never a stale payload,
+  /// E5). A degenerate learned cap (< 1, garbage `is 0`) is
+  /// refusal-family only: no re-send, the error surfaces as today (E3).
+  bool healIfNeeded(AssistantMessage finished, AgentLoopConfig config) {
+    if (!_needsImageCapHeal(healed, finished, config)) return false;
+    healed = true;
+    final refusal = classifyImageCapError(finished.errorMessage)!;
+    if (refusal.learnedCap < 1) return false;
+    learnedCap = refusal.learnedCap;
+    config.imageCapLatches?[imageCapLatchKey(
+          config.model.provider,
+          config.model.id,
+        )] =
+        refusal.learnedCap;
+    imageCapLearnedNotice?.call(refusal.modelId, refusal.learnedCap);
+    return true;
+  }
+}
+
 /// The mutable gh-1680 heal state of one streamed response: whether the
 /// one-shot heal already ran, and the coalesce target the next rebuilt
 /// payload rides toward (armed by the heal, null when the cap is
@@ -249,9 +307,18 @@ Future<_AttemptResult?> _finishedTurnResult(
   AgentEventSink emit,
   CancelToken? cancelToken,
   _CapHealState capState,
+  _ImageCapHealState imageCapState,
   bool pairingHealed,
   int refusedCount,
 ) async {
+  // Issue #1750 self-healing retry: an image-count 400 means the request
+  // carried more unique images than the model accepts — latch the
+  // learned cap and retry ONCE; the retry rebuilds through the registry
+  // at the smaller cap (the drops ride the existing cap-drop notices,
+  // never silent). A second refusal surfaces the terminal error (AC4).
+  if (imageCapState.healIfNeeded(finished, config)) {
+    return _AttemptRetry(context);
+  }
   // gh-1680 self-healing retry: a message-cap 400 means the message
   // ARRAY passed the model's per-request cap — learn, compact +
   // coalesce, retry ONCE (a second refusal is terminal; see the part).
@@ -297,6 +364,7 @@ Future<_AttemptResult> _streamAttempt(
   CancelToken? cancelToken, {
   required String? misuseNote,
   required _CapHealState capState,
+  required _ImageCapHealState imageCapState,
   required bool reliefUsed,
   required bool pairingHealed,
 }) async {
@@ -306,6 +374,7 @@ Future<_AttemptResult> _streamAttempt(
     cancelToken,
     misuseNote: misuseNote,
     capCoalesceTarget: capState.coalesceTarget,
+    imageCapOverride: imageCapState.overrideFor(config),
   );
   // Pairing repairs are always surfaced (issue #85): hosts see exactly
   // what was dropped/synthesized/renamed before the request went out.
@@ -374,6 +443,7 @@ Future<_AttemptResult> _streamAttempt(
       emit,
       cancelToken,
       capState,
+      imageCapState,
       pairingHealed,
       requestMessageCount,
     );

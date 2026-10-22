@@ -16,6 +16,7 @@ import '../env/execution_env.dart';
 import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
 import '../session_io_retry.dart';
+import '../session_retention.dart' show sessionIdFromSessionPath;
 import 'session_chunk_reader.dart';
 import 'session_record.dart';
 import 'session_search.dart';
@@ -139,8 +140,15 @@ final RegExp _slugEscape = RegExp(r'%([0-9A-Fa-f]{2})');
 /// legacy lossy split.
 bool _hasReversibleEscape(String inner) => _slugEscape
     .allMatches(inner)
-    .any((m) => const {'25', '2D', '2F', '5C', '3A'}
-        .contains(m.group(1)!.toUpperCase()));
+    .any(
+      (m) => const {
+        '25',
+        '2D',
+        '2F',
+        '5C',
+        '3A',
+      }.contains(m.group(1)!.toUpperCase()),
+    );
 
 /// Undoes [_encodeCwd]'s percent-escapes in one segment. Unknown `%XX`
 /// sequences stay literal (legacy text).
@@ -750,12 +758,10 @@ final class JsonlSessionRepo implements SessionRepo {
 
   /// The session id encoded in a session file basename
   /// (`<timestamp>_<sessionId>.jsonl`); null when the name has no id part.
-  String? _sessionIdFromPath(String path) {
-    final base = path.split(RegExp(r'[/\\]')).last;
-    if (!base.endsWith('.jsonl')) return null;
-    final parts = base.substring(0, base.length - '.jsonl'.length).split('_');
-    return parts.length < 2 || parts.last.isEmpty ? null : parts.last;
-  }
+  /// Delegates to the shared top-level [sessionIdFromSessionPath]
+  /// (gh-1746 review): ONE parser for the filename encoding — the
+  /// retention walk and this repo can never drift apart.
+  String? _sessionIdFromPath(String path) => sessionIdFromSessionPath(path);
 
   /// The session sweep's file walk (gh-1660 age guard reads the mtime):
   /// every `.jsonl` under [dirPath], carrying each file's [FileInfo].

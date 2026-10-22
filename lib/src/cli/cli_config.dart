@@ -17,6 +17,7 @@ import '../exceptions.dart';
 import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
+import '../prompts/project_context.dart' show ProjectContextConfig;
 import '../cube/config/cube_settings.dart';
 import '../session_retention.dart';
 import 'headless_config.dart';
@@ -332,10 +333,11 @@ bool _isGhostProviderEntry(Object? node) =>
     node is Map && isReservedCustomProviderName('${node['name']}');
 
 /// Parses the `images:` section (session image registry, issue #171):
-/// `registry` (kill switch) and `maxPerRequest` (per-request unique-image
-/// cap). Strict — a bad schema throws [ConfigException] instead of
-/// silently keeping the defaults. Public so the settings flow's
-/// reload-after-write (issue #395) reuses the same parser the boot runs.
+/// `registry` (kill switch), `maxPerRequest` (per-request unique-image
+/// cap) and `perModel` (per-model cap overrides, issue #1750). Strict —
+/// a bad schema throws [ConfigException] instead of silently keeping the
+/// defaults. Public so the settings flow's reload-after-write (issue
+/// #395) reuses the same parser the boot runs.
 ImageRegistryConfig? parseImagesSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
@@ -357,22 +359,50 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
     return value;
   }
 
+  int readPerModelCap(Object? key, Object? value) {
+    if (value is! int || value <= 0) {
+      throw ConfigException(
+        '"images.perModel.$key" must be a positive integer',
+      );
+    }
+    return value;
+  }
+
+  Map<String, int> readPerModel() {
+    final value = node['perModel'];
+    if (value is! YamlMap) {
+      throw ConfigException(
+        '"images.perModel" must be a map of model id → cap, got: $value',
+      );
+    }
+    return {
+      for (final entry in value.entries)
+        '${entry.key}': readPerModelCap(entry.key, entry.value),
+    };
+  }
+
   bool? registry;
   int? maxPerRequest;
+  Map<String, int>? perModel;
   for (final key in node.keys) {
     switch (key) {
       case 'registry':
         registry = readBool('$key');
       case 'maxPerRequest':
         maxPerRequest = readPositiveInt('$key');
+      case 'perModel':
+        perModel = readPerModel();
       default:
         throw ConfigException('unknown "images" key: $key');
     }
   }
-  if (registry == null && maxPerRequest == null) return null;
+  if (registry == null && maxPerRequest == null && perModel == null) {
+    return null;
+  }
   return ImageRegistryConfig(
     enabled: registry ?? true,
     maxPerRequest: maxPerRequest ?? defaultMaxImagesPerRequest,
+    perModel: perModel ?? const {},
   );
 }
 
@@ -407,6 +437,7 @@ final class CliConfig {
     this.redact,
     this.spills,
     this.sessions,
+    this.projectContext,
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
     this.wireDump = false,
@@ -497,6 +528,12 @@ final class CliConfig {
       sessions: map['sessions'] == null
           ? null
           : SessionsConfig.fromYaml(map['sessions']),
+      // The projectContext section (issue #1761); tolerant by design —
+      // unknown keys and mistyped scalars become notes, never boot
+      // failures.
+      projectContext: map['projectContext'] == null
+          ? null
+          : ProjectContextConfig.fromYaml(map['projectContext']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       // Entries named after a built-in catalog provider are dropped (issue
       // #221's ghost "openai"): they shadow `/provider <name>` routing and
@@ -797,6 +834,11 @@ final class CliConfig {
   /// notes, never boot failures); `null` means the section is absent —
   /// boot never sweeps and never notes (AC1's byte-identical legacy).
   final SessionsConfig? sessions;
+  /// Optional `projectContext:` section (issue #1761) — the merged
+  /// project-context budget (`maxBytes`; `0` disables the section and
+  /// skips every file read). Tolerant parse; `null` means the section is
+  /// absent = the 32KB default.
+  final ProjectContextConfig? projectContext;
 
   /// `registry` kill switch + `maxPerRequest` cap. `null` keeps the
   /// defaults (registry on, [defaultMaxImagesPerRequest]).
@@ -953,6 +995,7 @@ final class CliConfig {
     RedactionConfig? redact,
     SpillsConfig? spills,
     SessionsConfig? sessions,
+    ProjectContextConfig? projectContext,
     CompactionEngine? compactionEngine,
     int? compactionJudgeBudgetSeconds,
     bool? wireDump,
@@ -1005,6 +1048,7 @@ final class CliConfig {
       redact: redact ?? this.redact,
       spills: spills ?? this.spills,
       sessions: sessions ?? this.sessions,
+      projectContext: projectContext ?? this.projectContext,
       compactionEngine: compactionEngine ?? this.compactionEngine,
       compactionJudgeBudgetSeconds:
           compactionJudgeBudgetSeconds ?? this.compactionJudgeBudgetSeconds,
@@ -1122,6 +1166,7 @@ final class CliConfig {
     if (images != null) buffer.write(_imagesYaml());
     buffer.write(_spillsYaml());
     buffer.write(_sessionsYaml());
+    buffer.write(_projectContextYaml());
     buffer.write(_agentSectionYaml());
     // The subagents heartbeat section (issue #383), only when explicitly
     // configured; defaults are never written so the file stays minimal.
@@ -1366,6 +1411,10 @@ final class CliConfig {
   /// The `sessions:` section (gh-1746), only when explicitly configured
   /// (defaults are never written so the file stays minimal).
   String _sessionsYaml() => sessions?.toYaml() ?? '';
+  /// The `projectContext:` section (issue #1761), only when explicitly
+  /// configured; the default budget is never written so the file stays
+  /// minimal (same rule as `_spillsYaml`).
+  String _projectContextYaml() => projectContext?.toYaml() ?? '';
 
   String _allowedToolsYaml() {
     if (allowedTools.isEmpty) return 'allowedTools: []\n';
@@ -1810,6 +1859,7 @@ const _diskPreservedSections = {
   // when the caller carries them — caller wins wherever it rendered.
   'spills',
   'sessions',
+  'projectContext',
   'subagents',
   'waiting',
   'jobs',

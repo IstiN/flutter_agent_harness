@@ -26,7 +26,11 @@ void main() {
     _clockNow = DateTime(2026, 1, 10, 12);
     env = MemoryExecutionEnv(cwd: '/work');
     repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    presence = FileSessionPresenceStore(env: env, root: '/sessions', now: _clock);
+    presence = FileSessionPresenceStore(
+      env: env,
+      root: '/sessions',
+      now: _clock,
+    );
   });
 
   /// Seeds a session and returns its id; [sizeBytes] of transcript body
@@ -112,8 +116,7 @@ void main() {
       expect(usage.sessions, hasLength(2));
     });
 
-    test('spill bytes are measured but never counted toward the cap',
-        () async {
+    test('spill bytes are measured but never counted toward the cap', () async {
       final a = await seedSession(sizeBytes: 100, lastUsed: daysAgo(30));
       await env.writeFile('/work/.fah/spills/$a/1.txt', 'spill body');
 
@@ -130,18 +133,77 @@ void main() {
       expect(usage.totalBytes, sum);
     });
 
-    test('E3: an mtime older than the header falls back to the header time',
-        () async {
-      final a = await seedSession(sizeBytes: 10, lastUsed: null);
-      final metadata = (await repo.list()).firstWhere((m) => m.id == a);
-      // Backup tool touched the mtime backwards — before creation.
-      env.setMtime(
-        metadata.path,
-        DateTime(2001).millisecondsSinceEpoch,
+    test(
+      'E3: an mtime older than the header falls back to the header time',
+      () async {
+        final a = await seedSession(sizeBytes: 10, lastUsed: null);
+        final metadata = (await repo.list()).firstWhere((m) => m.id == a);
+        // Backup tool touched the mtime backwards — before creation.
+        env.setMtime(metadata.path, DateTime(2001).millisecondsSinceEpoch);
+        final usage = await sweeper().usage();
+        expect(
+          usage.sessions.single.lastUsedAt,
+          usage.sessions.single.createdAt,
+        );
+        expect(usage.sessions.single.lastUsedAt.year, greaterThan(2020));
+      },
+    );
+
+    test(
+      'a header id that disagrees with the filename is unidentified',
+      () async {
+        // A foreign/planted header: the FILENAME sid keys the sweep unit;
+        // a header claiming a different id must not make that unit
+        // sweepable under the filename key (gh-1746 review).
+        await env.writeFile(
+          '/sessions/--work--/20260101_mismatch.jsonl',
+          '{"type":"session","version":3,"id":"other-id",'
+              '"timestamp":"2025-01-01T00:00:00.000Z","cwd":"/work"}\n',
+        );
+        env.setMtime(
+          '/sessions/--work--/20260101_mismatch.jsonl',
+          daysAgo(60).millisecondsSinceEpoch,
+        );
+        final usage = await sweeper().usage();
+        expect(usage.sessions, isEmpty);
+        final report = await sweeper(
+          retention: const SessionRetentionConfig(
+            maxTotalBytes: 1,
+            minAgeDays: 0,
+          ),
+        ).sweep(dryRun: false);
+        expect(report.deletions, isEmpty);
+        expect(
+          (await env.exists(
+            '/sessions/--work--/20260101_mismatch.jsonl',
+          )).valueOrNull,
+          isTrue,
+        );
+      },
+    );
+
+    test('the shared filename parser and the repo agree on ids', () async {
+      // One parser for the `<timestamp>_<sid>.jsonl` encoding (gh-1746
+      // review): whatever the repo lists must equal what the retention
+      // walk's shared helper decodes from the same paths — the two can
+      // never drift.
+      final a = await seedSession(sizeBytes: 10, lastUsed: daysAgo(5));
+      final b = await seedSession(sizeBytes: 10, lastUsed: daysAgo(4));
+      await env.writeFile('/sessions/--work--/notes.txt', 'not a session');
+      final repoIds = (await repo.list()).map((m) => m.id).toSet();
+      final walkPaths = (await sweeper().usage()).sessions
+          .map((s) => s.path)
+          .toSet();
+      expect(
+        {for (final path in walkPaths) sessionIdFromSessionPath(path)!},
+        repoIds,
+        reason: 'repo-listed ids and shared-helper-decoded ids must match',
       );
-      final usage = await sweeper().usage();
-      expect(usage.sessions.single.lastUsedAt, usage.sessions.single.createdAt);
-      expect(usage.sessions.single.lastUsedAt.year, greaterThan(2020));
+      expect(repoIds, containsAll([a, b]));
+      // Null shapes: a non-jsonl file and a no-id basename decode to null.
+      expect(sessionIdFromSessionPath('/sessions/--work--/notes.txt'), isNull);
+      expect(sessionIdFromSessionPath('/x/20260101_.jsonl'), isNull);
+      expect(sessionIdFromSessionPath('/x/plain.txt'), isNull);
     });
   });
 
@@ -160,8 +222,7 @@ void main() {
       expect((await repo.list()), hasLength(1));
     });
 
-    test('AC3: oldest-last-used deleted first until under the cap',
-        () async {
+    test('AC3: oldest-last-used deleted first until under the cap', () async {
       final oldest = await seedSession(
         createdAt: daysAgo(90),
         sizeBytes: 100,
@@ -192,8 +253,7 @@ void main() {
       expect(report.remainingBytes, lessThanOrEqualTo(cap));
     });
 
-    test('AC3: live, named, young and current sessions are exempt',
-        () async {
+    test('AC3: live, named, young and current sessions are exempt', () async {
       final live = await seedSession(
         createdAt: daysAgo(90),
         sizeBytes: 100,
@@ -216,11 +276,11 @@ void main() {
         lastUsed: daysAgo(58),
       );
       await presence.register(live);
-      final usage = await sweeper().usage();
-      final unit = usage.sessions.first.bytes;
       final report = await sweeper(
         retention: SessionRetentionConfig(
-          maxTotalBytes: usage.totalBytes - unit + 1,
+          // A cap of 1 makes the overflow need EVERY exempt unit — the
+          // minimal-blocker note then names all four exemptions.
+          maxTotalBytes: 1,
           minAgeDays: 14,
         ),
         currentSessionId: current,
@@ -236,6 +296,47 @@ void main() {
       expect(reasons[young], SessionRetentionExemption.tooYoung);
       expect(reasons[current], SessionRetentionExemption.current);
       expect((await repo.list()), hasLength(4));
+    });
+
+    test('AC4: the blocker note names only the sessions that explain the '
+        'overflow, largest first', () async {
+      // One giant LIVE session is the real blocker; several small young
+      // sessions and one deletable old session pad the store. The note
+      // must name the giant — not every exempt unit in the walk.
+      final giant = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 900,
+        lastUsed: daysAgo(0),
+      );
+      for (var i = 0; i < 3; i++) {
+        await seedSession(
+          createdAt: daysAgo(90),
+          sizeBytes: 10,
+          lastUsed: daysAgo(1),
+        );
+      }
+      final deletable = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(80),
+      );
+      await presence.register(giant);
+      final usage = await sweeper().usage();
+      // A cap 400 B below the total: only the small old unit is deletable
+      // (minAgeDays 14 shields the young pads; the giant is live), and the
+      // 16-ish-byte overflow it leaves is far below the giant's unit.
+      final cap = usage.totalBytes - 400;
+      final report = await sweeper(
+        retention: SessionRetentionConfig(maxTotalBytes: cap, minAgeDays: 14),
+      ).sweep(dryRun: false);
+      // The small old unit was deleted; the root is still over the cap.
+      expect(report.deletions.map((d) => d.sessionId), [deletable]);
+      expect(report.hasBlockerOverflow, isTrue);
+      // Only the giant is NEEDED to explain the overflow: its bytes alone
+      // exceed the overflow, so the smaller young pads stay unnamed.
+      expect(report.blockers, hasLength(1));
+      expect(report.blockers.single.sessionId, giant);
+      expect(report.blockers.single.exemption, SessionRetentionExemption.live);
     });
 
     test('keepNamed: false makes named sessions deletable', () async {
@@ -256,51 +357,61 @@ void main() {
       expect(report.deletions.single.sessionId, named);
     });
 
-    test('AC4: exempt-only overflow names each blocker with its size',
-        () async {
-      final a = await seedSession(
-        createdAt: daysAgo(90),
-        sizeBytes: 100,
-        lastUsed: daysAgo(60),
-      );
-      final b = await seedSession(
-        createdAt: daysAgo(90),
-        sizeBytes: 300,
-        lastUsed: daysAgo(1),
-      );
-      await presence.register(a);
-      final usage = await sweeper().usage();
-      final report = await sweeper(
-        retention: SessionRetentionConfig(
-          maxTotalBytes: usage.totalBytes - 1,
-          minAgeDays: 14,
-        ),
-      ).sweep(dryRun: true);
-      expect(report.deletions, isEmpty);
-      expect(report.hasBlockerOverflow, isTrue);
-      // The young 300B session blocks harder than the live 100B one —
-      // blockers sort largest-first.
-      expect(report.blockers.first.bytes, greaterThan(report.blockers.last.bytes));
-      expect(report.blockers.map((bl) => bl.sessionId), containsAll([a, b]));
-    });
+    test(
+      'AC4: exempt-only overflow names each blocker with its size',
+      () async {
+        final a = await seedSession(
+          createdAt: daysAgo(90),
+          sizeBytes: 100,
+          lastUsed: daysAgo(60),
+        );
+        final b = await seedSession(
+          createdAt: daysAgo(90),
+          sizeBytes: 300,
+          lastUsed: daysAgo(1),
+        );
+        await presence.register(a);
+        final report = await sweeper(
+          retention: const SessionRetentionConfig(
+            // A cap of 1: the overflow (total − 1) needs BOTH exempt units
+            // to explain — the minimal-blocker note then names each.
+            maxTotalBytes: 1,
+            minAgeDays: 14,
+          ),
+        ).sweep(dryRun: true);
+        expect(report.deletions, isEmpty);
+        expect(report.hasBlockerOverflow, isTrue);
+        // The young 300B session blocks harder than the live 100B one —
+        // blockers sort largest-first.
+        expect(
+          report.blockers.first.bytes,
+          greaterThan(report.blockers.last.bytes),
+        );
+        expect(report.blockers.map((bl) => bl.sessionId), containsAll([a, b]));
+      },
+    );
 
-    test('E1: a cap smaller than one marathon session still deletes it',
-        () async {
-      final marathon = await seedSession(
-        createdAt: daysAgo(90),
-        sizeBytes: 5000,
-        lastUsed: daysAgo(60),
-      );
-      final report = await sweeper(
-        retention: const SessionRetentionConfig(maxTotalBytes: 1, minAgeDays: 0),
-      ).sweep(dryRun: false);
-      expect(report.deletions.single.sessionId, marathon);
-    });
+    test(
+      'E1: a cap smaller than one marathon session still deletes it',
+      () async {
+        final marathon = await seedSession(
+          createdAt: daysAgo(90),
+          sizeBytes: 5000,
+          lastUsed: daysAgo(60),
+        );
+        final report = await sweeper(
+          retention: const SessionRetentionConfig(
+            maxTotalBytes: 1,
+            minAgeDays: 0,
+          ),
+        ).sweep(dryRun: false);
+        expect(report.deletions.single.sessionId, marathon);
+      },
+    );
   });
 
   group('apply deletes whole units (AC5) + logs (AC7)', () {
-    test('sidecars die with the session; one log line per deletion',
-        () async {
+    test('sidecars die with the session; one log line per deletion', () async {
       final doomed = await seedSession(
         cwd: '/work',
         createdAt: daysAgo(90),
@@ -312,9 +423,7 @@ void main() {
         sizeBytes: 100,
         lastUsed: daysAgo(2),
       );
-      final doomedMeta = (await repo.list()).firstWhere(
-        (m) => m.id == doomed,
-      );
+      final doomedMeta = (await repo.list()).firstWhere((m) => m.id == doomed);
       await env.writeFile('${doomedMeta.path}.part-0001', 'segment');
       await env.writeFile('${doomedMeta.path}.corrupt', 'junk');
       final doomedDir = doomedMeta.path.substring(
@@ -324,10 +433,7 @@ void main() {
       await env.writeFile('$doomedDir/.tools/$doomed.yaml', 'tools: {}');
       await env.writeFile('/sessions/$doomed/usage.json', '{"v":1}');
       await env.writeFile('/work/.fah/spills/$doomed/1.txt', 'spill');
-      await env.writeFile(
-        '/work/.fah/spills/$survivor/1.txt',
-        'keep me',
-      );
+      await env.writeFile('/work/.fah/spills/$survivor/1.txt', 'keep me');
 
       final usage = await sweeper().usage();
       final lines = <String>[];
@@ -420,8 +526,7 @@ void main() {
       expect((await repo.list()).map((m) => m.id), contains(b));
     });
 
-    test('E6: the cap is global across slugs — oldest wins globally',
-        () async {
+    test('E6: the cap is global across slugs — oldest wins globally', () async {
       final oldOther = await seedSession(
         cwd: '/other',
         createdAt: daysAgo(90),
@@ -446,33 +551,34 @@ void main() {
   });
 
   group('boot policy (E5 + posture B)', () {
-    test('no cap: deletions never run; the soft warn fires past the seam',
-        () async {
-      await seedSession(
-        createdAt: daysAgo(90),
-        sizeBytes: 100,
-        lastUsed: daysAgo(60),
-      );
-      final quiet = await sweeper().enforceAtBoot();
-      expect(quiet.capConfigured, isFalse);
-      expect(quiet.overSoftWarn, isFalse);
-      expect(quiet.deletions, isEmpty);
+    test(
+      'no cap: deletions never run; the soft warn fires past the seam',
+      () async {
+        await seedSession(
+          createdAt: daysAgo(90),
+          sizeBytes: 100,
+          lastUsed: daysAgo(60),
+        );
+        final quiet = await sweeper().enforceAtBoot();
+        expect(quiet.capConfigured, isFalse);
+        expect(quiet.overSoftWarn, isFalse);
+        expect(quiet.deletions, isEmpty);
 
-      final usage = await sweeper().usage();
-      final loud = await SessionRetentionSweeper(
-        fs: env,
-        sessionsRoot: '/sessions',
-        presenceStore: presence,
-        now: _clock,
-        softWarnBytes: usage.totalBytes - 1,
-      ).enforceAtBoot();
-      expect(loud.capConfigured, isFalse);
-      expect(loud.overSoftWarn, isTrue);
-      expect(loud.deletions, isEmpty);
-    });
+        final usage = await sweeper().usage();
+        final loud = await SessionRetentionSweeper(
+          fs: env,
+          sessionsRoot: '/sessions',
+          presenceStore: presence,
+          now: _clock,
+          softWarnBytes: usage.totalBytes - 1,
+        ).enforceAtBoot();
+        expect(loud.capConfigured, isFalse);
+        expect(loud.overSoftWarn, isTrue);
+        expect(loud.deletions, isEmpty);
+      },
+    );
 
-    test('E5: cap set with sweep off — over-cap note, no deletions',
-        () async {
+    test('E5: cap set with sweep off — over-cap note, no deletions', () async {
       await seedSession(
         createdAt: daysAgo(90),
         sizeBytes: 100,
@@ -488,9 +594,7 @@ void main() {
       expect(report.deletions, isEmpty);
       expect((await repo.list()), hasLength(1));
       // The manual verb still enforces it.
-      final manual = await sweeper(
-        retention: retention,
-      ).sweep(dryRun: false);
+      final manual = await sweeper(retention: retention).sweep(dryRun: false);
       expect(manual.deletions, hasLength(1));
     });
   });
@@ -501,19 +605,122 @@ void main() {
       await env.writeFile(
         '/sessions/--work--/20260101_...jsonl',
         '{"type":"session","version":3,"id":"../evil",'
-        '"timestamp":"2025-01-01T00:00:00.000Z","cwd":"/work"}\n',
+            '"timestamp":"2025-01-01T00:00:00.000Z","cwd":"/work"}\n',
       );
       final usage = await sweeper().usage();
       expect(usage.sessions, isEmpty);
       final report = await sweeper(
-        retention: const SessionRetentionConfig(maxTotalBytes: 1, minAgeDays: 0),
+        retention: const SessionRetentionConfig(
+          maxTotalBytes: 1,
+          minAgeDays: 0,
+        ),
       ).sweep(dryRun: false);
       expect(report.deletions, isEmpty);
       // Nothing outside the root was touched (the probe file survives).
       expect(
-        (await env.exists('/sessions/--work--/20260101_...jsonl'))
-            .valueOrNull,
+        (await env.exists('/sessions/--work--/20260101_...jsonl')).valueOrNull,
         isTrue,
+      );
+    });
+
+    test('a RELATIVE header cwd is never measured or deleted (spill '
+        'traversal)', () async {
+      // A planted/corrupted header whose cwd is relative: interpolating it
+      // into the spill path would measure/delete OUTSIDE any root.
+      const planted = '/sessions/--work--/20260101_relative.jsonl';
+      await env.writeFile(
+        planted,
+        '{"type":"session","version":3,"id":"relative",'
+        '"timestamp":"2025-01-01T00:00:00.000Z","cwd":"../../etc"}\n',
+      );
+      env.setMtime(planted, daysAgo(60).millisecondsSinceEpoch);
+      await env.writeFile(
+        '/work/etc/.fah/spills/relative/secret.txt',
+        'precious',
+      );
+      final usage = await sweeper().usage();
+      expect(usage.sessions, isEmpty);
+      final report = await sweeper(
+        retention: const SessionRetentionConfig(
+          maxTotalBytes: 1,
+          minAgeDays: 0,
+        ),
+      ).sweep(dryRun: false);
+      expect(report.deletions, isEmpty);
+      // The outside tree survives untouched.
+      expect(
+        (await env.readTextFile(
+          '/work/etc/.fah/spills/relative/secret.txt',
+        )).valueOrNull,
+        'precious',
+      );
+      // The walk explains the skip.
+      expect(
+        usage.notes.any((n) => n.contains('cwd')),
+        isTrue,
+        reason:
+            'the unsafe header cwd is reported, not silent: '
+            '${usage.notes}',
+      );
+    });
+
+    test(
+      'an ABSOLUTE cwd with a `..` segment is never measured or deleted',
+      () async {
+        const planted = '/sessions/--work--/20260101_dotdot.jsonl';
+        await env.writeFile(
+          planted,
+          '{"type":"session","version":3,"id":"dotdot",'
+          '"timestamp":"2025-01-01T00:00:00.000Z","cwd":"/work/../evil"}\n',
+        );
+        env.setMtime(planted, daysAgo(60).millisecondsSinceEpoch);
+        await env.writeFile('/evil/.fah/spills/dotdot/secret.txt', 'precious');
+        final usage = await sweeper().usage();
+        // Fail closed: an unsafe header cwd disqualifies the unit entirely
+        // (no measurement, no deletion decision can rest on it).
+        expect(usage.sessions, isEmpty);
+        final report = await sweeper(
+          retention: const SessionRetentionConfig(
+            maxTotalBytes: 1,
+            minAgeDays: 0,
+          ),
+        ).sweep(dryRun: false);
+        expect(report.deletions, isEmpty);
+        expect(
+          (await env.readTextFile(
+            '/evil/.fah/spills/dotdot/secret.txt',
+          )).valueOrNull,
+          'precious',
+        );
+        expect(
+          usage.notes.any((n) => n.contains('cwd')),
+          isTrue,
+          reason:
+              'the unsafe header cwd is reported, not silent: '
+              '${usage.notes}',
+        );
+      },
+    );
+
+    test('a safe absolute cwd still sweeps normally (the guard does not '
+        'over-block)', () async {
+      final doomed = await seedSession(
+        createdAt: daysAgo(90),
+        sizeBytes: 100,
+        lastUsed: daysAgo(60),
+      );
+      await env.writeFile('/work/.fah/spills/$doomed/1.txt', 'spill body');
+      final report = await sweeper(
+        retention: const SessionRetentionConfig(
+          maxTotalBytes: 1,
+          minAgeDays: 0,
+        ),
+      ).sweep(dryRun: false);
+      expect(report.deletions.map((d) => d.sessionId), contains(doomed));
+      expect(report.spillFreedBytes, 'spill body'.length);
+      expect(
+        (await env.exists('/work/.fah/spills/$doomed/1.txt')).valueOrNull,
+        isFalse,
       );
     });
   });
@@ -554,10 +761,7 @@ void main() {
         final usage = await sweeper().usage();
         final cap = usage.totalBytes * random.nextInt(100) ~/ 100;
         final report = await sweeper(
-          retention: SessionRetentionConfig(
-            maxTotalBytes: cap,
-            minAgeDays: 14,
-          ),
+          retention: SessionRetentionConfig(maxTotalBytes: cap, minAgeDays: 14),
           currentSessionId: currentId,
         ).sweep(dryRun: false);
         for (final deletion in report.deletions) {
@@ -568,8 +772,11 @@ void main() {
             reason: 'named session swept (round $round)',
           );
           expect(shape.live, isFalse, reason: 'live session swept');
-          expect(shape.ageDays, greaterThanOrEqualTo(14),
-              reason: 'young session swept');
+          expect(
+            shape.ageDays,
+            greaterThanOrEqualTo(14),
+            reason: 'young session swept',
+          );
           expect(deletion.sessionId, isNot(currentId));
         }
         // Under the cap afterwards, or honest blockers remain.
@@ -581,8 +788,7 @@ void main() {
   });
 
   group('report rendering', () {
-    test('the dry-run plan prints the exact actions; apply matches',
-        () async {
+    test('the dry-run plan prints the exact actions; apply matches', () async {
       final doomed = await seedSession(
         createdAt: daysAgo(90),
         sizeBytes: 100,
@@ -600,8 +806,10 @@ void main() {
       );
       final plan = await sweeper(retention: retention).sweep(dryRun: true);
       final planLines = sessionSweepReportLines(plan);
-      expect(planLines.any((l) => l.startsWith('sessions clean: dry run')),
-          isTrue);
+      expect(
+        planLines.any((l) => l.startsWith('sessions clean: dry run')),
+        isTrue,
+      );
       expect(
         planLines.any((l) => l.contains('would delete') && l.contains(doomed)),
         isTrue,
@@ -613,10 +821,7 @@ void main() {
         appliedLines.any((l) => l.contains('deleted') && l.contains(doomed)),
         isTrue,
       );
-      expect(
-        appliedLines.any((l) => l.contains('freed:')),
-        isTrue,
-      );
+      expect(appliedLines.any((l) => l.contains('freed:')), isTrue);
     });
 
     test('formatRetentionBytes renders stable human units', () {
@@ -624,6 +829,30 @@ void main() {
       expect(formatRetentionBytes(2048), '2 KB');
       expect(formatRetentionBytes(1536), '1.5 KB');
       expect(formatRetentionBytes(5 * 1024 * 1024 * 1024), '5 GB');
+    });
+
+    test('the /sessions usage footer renders only under a cap', () {
+      const noCap = SessionRetentionConfig();
+      const capped = SessionRetentionConfig(maxTotalBytes: 5 << 30);
+      final when = DateTime(2026, 1, 10);
+      final usage = SessionUsageSnapshot(
+        sessions: [
+          SessionDiskUsage(
+            sessionId: 'a',
+            path: '/sessions/--w--/1_a.jsonl',
+            bytes: 2048,
+            createdAt: when,
+            lastUsedAt: when,
+          ),
+        ],
+        totalBytes: 2048,
+      );
+      // REG-1: no cap → NO footer line (byte-identical legacy listing).
+      expect(sessionUsageFooterLine(usage, noCap), isNull);
+      expect(
+        sessionUsageFooterLine(usage, capped),
+        'total: 2 KB across 1 sessions · cap: 5 GB',
+      );
     });
   });
 }
@@ -670,7 +899,12 @@ final class _FlippingPresence implements SessionPresenceStore {
 }
 
 class _Shape {
-  const _Shape({this.name, this.live = false, this.ageDays = 0, this.current = false});
+  const _Shape({
+    this.name,
+    this.live = false,
+    this.ageDays = 0,
+    this.current = false,
+  });
 
   final String? name;
   final bool live;

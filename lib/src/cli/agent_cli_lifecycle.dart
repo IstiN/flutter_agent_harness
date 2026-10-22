@@ -450,12 +450,21 @@ extension AgentCliLifecycle on AgentCli {
     // `_runTuiRepl` re-prints the hint right after the banner.
     _printThirdPartySkillsDisabledHint();
     _printRolesDropNotice();
-    _contextFiles = await loadProjectContextFiles(
+    // Tolerant-parse notes for the `projectContext:` section (issue #1761
+    // AC5: unknown keys are a note, never a boot failure).
+    for (final note in config.projectContext?.notes ?? const <String>[]) {
+      io.writeln(_style.dim('[projectContext] $note'));
+    }
+    _context = await loadProjectContextFiles(
       _env,
       userFile: config.homeDir == null
           ? null
           : '${config.homeDir}/.fah/AGENTS.md',
+      maxBytes: config.projectContext?.maxBytes ?? projectContextMaxBytes,
     );
+    // Line mode / headless: visible as-is. TUI: the alternate screen wipes
+    // this line — `_runTuiRepl` re-prints the notices after the banner.
+    _printProjectContextNotices();
     _applyPromptComposition();
     // Durable facts from past sessions join the prompt asynchronously
     // (memory stores initialize lazily; recompose on arrival).
@@ -472,6 +481,16 @@ extension AgentCliLifecycle on AgentCli {
     // The gh-1746 retention boot note rides the same notice channel: the
     // TUI re-print after the banner covers the alternate-screen wipe.
     for (final line in _retentionBootLines) {
+      io.writeln(_style.dim(line));
+    }
+  }
+
+  /// The project-context truncation notices (issue #1761 AC2): one dim
+  /// line per truncated/dropped file — silent loss of project rules is
+  /// the worst failure mode of the feature. Line mode prints here; TUI
+  /// re-prints after the banner (same rule as the roles-drop warning).
+  void _printProjectContextNotices() {
+    for (final line in _context.notices) {
       io.writeln(_style.dim(line));
     }
   }

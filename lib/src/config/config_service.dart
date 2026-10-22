@@ -41,6 +41,7 @@ import '../messaging/fabric_config.dart';
 import '../mcp/mcp_config.dart';
 import '../memory_config.dart';
 import '../power_config.dart';
+import '../prompts/project_context.dart' show ProjectContextConfig;
 import '../skills/skill_availability.dart';
 import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
@@ -78,6 +79,7 @@ const configTopLevelKeys = <String>{
   'redact',
   'spills',
   'sessions',
+  'projectContext',
   'compaction',
   'customProviders',
   'models',
@@ -1201,6 +1203,8 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   // The sessions section (gh-1746) parses tolerantly like spills —
   // unknown keys and mistyped scalars become notes, never boot failures.
   'sessions': (value, _) => SessionsConfig.fromYaml(value),
+  // Same rule for the projectContext section (issue #1761).
+  'projectContext': (value, _) => ProjectContextConfig.fromYaml(value),
   'tools': (value, _) => ToolsConfig.fromYaml(value),
   // The links section (issue #691): strict on shape (a bad value throws,
   // nothing persists), tolerant on unknown keys (notes, never errors).
@@ -1389,6 +1393,21 @@ void _validateImagesSection(Object? node) {
           throw ConfigException(
             '"images.maxPerRequest" must be a positive integer',
           );
+        }
+      case 'perModel':
+        final value = entry.value;
+        if (value is! YamlMap) {
+          throw ConfigException(
+            '"images.perModel" must be a map of model id → cap, got: $value',
+          );
+        }
+        for (final model in value.entries) {
+          final cap = model.value;
+          if (cap is! int || cap <= 0) {
+            throw ConfigException(
+              '"images.perModel.${model.key}" must be a positive integer',
+            );
+          }
         }
       default:
         throw ConfigException('unknown "images" key: $key');
