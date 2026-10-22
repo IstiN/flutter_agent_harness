@@ -18,6 +18,7 @@ Future<_Rig> _rig({
   bool? requestBlobs,
   bool wireDump = false,
   int? requestBlobMaxMb,
+  int? requestBlobMaxBytes,
 }) async {
   final env = MemoryExecutionEnv(
     cwd: '/work',
@@ -45,7 +46,8 @@ Future<_Rig> _rig({
       wireDump: wireDump,
       trajectoryRequestBlobs: requestBlobs ?? true,
       trajectoryRequestBlobMaxMb: requestBlobMaxMb ?? 50,
-      trajectoryRequestBlobMaxBytes: (requestBlobMaxMb ?? 50) << 20,
+      trajectoryRequestBlobMaxBytes:
+          requestBlobMaxBytes ?? ((requestBlobMaxMb ?? 50) << 20),
     ),
     io: io,
     streamFunction: fake.call,
@@ -131,13 +133,14 @@ void main() {
     expect(listing.valueOrNull!.length, 2);
   });
 
-  test('requestBlobMaxMb threads its byte budget to the store (the config '
-      'field, not an inline shift)', () async {
-    // A 1-byte budget: every write sweeps the dir down to just the newest
-    // blob — proves the AgentCliConfig.trajectoryRequestBlobMaxBytes
-    // wiring reaches the store (gh-1745 review: the getter used to be
-    // dead code while the hosts re-derived the shift inline).
-    final rig = await _rig(requestBlobMaxMb: 1);
+  test('requestBlobMaxBytes threads its byte budget to the store (the '
+      'config field, not an inline shift)', () async {
+    // A 1-BYTE budget: every write sweeps the dir down to just the newest
+    // blob. The store must consume AgentCliConfig.trajectoryRequestBlobMaxBytes
+    // directly — under the old inline `trajectoryRequestBlobMaxMb << 20`
+    // derivation this stays a 1MB budget and both blobs survive (gh-1745
+    // review: the canonical getter used to be dead code).
+    final rig = await _rig(requestBlobMaxBytes: 1);
     rig.io.sendLine('go');
     await _settle(rig);
     await _exit(rig);
