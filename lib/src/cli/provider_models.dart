@@ -744,12 +744,17 @@ extension on AgentCli {
     final detected = _modelContextWindows[model.id];
     if (detected == null) return;
     if (detected != model.contextWindow) {
-      _replaceModelLimits(
-        contextWindow: detected,
-        // gh-1742 invariant 2: the detection publishes into the shared
-        // registry so children spawned afterwards ride the SERVED
-        // window, not the advertised one.
-        windowSource: ContextWindowSource.endpointReport,
+      // Fire-and-forget: the boot's detection is not a settings flow —
+      // the /model-edit submit path is the one that contains callback
+      // throws into the error panel (gh-1787).
+      unawaited(
+        _replaceModelLimits(
+          contextWindow: detected,
+          // gh-1742 invariant 2: the detection publishes into the shared
+          // registry so children spawned afterwards ride the SERVED
+          // window, not the advertised one.
+          windowSource: ContextWindowSource.endpointReport,
+        ),
       );
       io.writeln(_style.dim('model context window: $detected (from endpoint)'));
     } else {
@@ -783,7 +788,8 @@ extension on AgentCli {
   void _applyDetectedMaxTokens(Model model) {
     final detectedCap = _modelMaxTokens[model.id];
     if (detectedCap != null && detectedCap != model.maxTokens) {
-      _replaceModelLimits(maxTokens: detectedCap);
+      // Fire-and-forget (gh-1787): detection, not a settings flow.
+      unawaited(_replaceModelLimits(maxTokens: detectedCap));
       io.writeln(_style.dim('model max tokens: $detectedCap (from endpoint)'));
     }
   }
@@ -1376,26 +1382,26 @@ extension on AgentCli {
 
   /// `/model-edit <contextWindow|maxTokens> <n>`: validates the value and
   /// applies the override.
-  void _applyModelEditArg(List<String> args) {
+  Future<void> _applyModelEditArg(List<String> args) async {
     final value = args.length == 2 ? int.tryParse(args[1]) : null;
     if (args.length != 2 || value == null || value <= 0) {
       io.writeln('usage: /model-edit <contextWindow|maxTokens> <n>');
       return;
     }
-    _applyModelLimitEdit(args[0], value);
+    await _applyModelLimitEdit(args[0], value);
   }
 
   /// Applies a validated `/model-edit` limit override by field name.
-  void _applyModelLimitEdit(String field, int value) {
+  Future<void> _applyModelLimitEdit(String field, int value) async {
     switch (field) {
       case 'contextWindow':
-        _replaceModelLimits(
+        await _replaceModelLimits(
           contextWindow: value,
           windowSource: ContextWindowSource.userPin,
         );
         io.writeln('model context window set to $value');
       case 'maxTokens':
-        _replaceModelLimits(maxTokens: value);
+        await _replaceModelLimits(maxTokens: value);
         io.writeln('model max tokens set to $value');
       default:
         io.writeln('usage: /model-edit <contextWindow|maxTokens> <n>');
@@ -1407,11 +1413,18 @@ extension on AgentCli {
   /// [Model.copyWith] — the one field list (gh-1742 review round 1,
   /// comment 5) — so the recent fields (thinkingLevel, capabilityNotes,
   /// the scoped watchdogs) survive the swap.
-  void _replaceModelLimits({
+  ///
+  /// The host callback is AWAITED, not unawaited (gh-1787 E1): a detached
+  /// callback's throw can only hit the zone (a raw stack in the
+  /// transcript); awaited, it propagates to the caller — the `/model-edit`
+  /// submit path contains it into the clean error panel, while the boot's
+  /// endpoint-detection callers keep the fire-and-forget semantics with
+  /// an explicit `unawaited`.
+  Future<void> _replaceModelLimits({
     int? contextWindow,
     int? maxTokens,
     ContextWindowSource? windowSource,
-  }) {
+  }) async {
     final current = _agent.state.model;
     _agent.state.model = current.copyWith(
       contextWindow: contextWindow,
@@ -1428,7 +1441,7 @@ extension on AgentCli {
         source: windowSource,
       );
     }
-    unawaited(config.onModelChanged?.call(_agent.state.model));
+    await config.onModelChanged?.call(_agent.state.model);
   }
 }
 

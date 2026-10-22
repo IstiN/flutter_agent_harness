@@ -324,11 +324,15 @@ void main() {
       () async {
         // The fake arms only when the FLOW's apply fires (the boot's
         // endpoint-detection path fires the same callback detached and
-        // must not consume the throw).
+        // must not consume the throw), and disarms after one throw — the
+        // usability step's follow-up write completes benignly.
         var armed = false;
         final (submit, cli) = await openIncidentFlow(
           onModelChanged: (model) async {
-            if (armed) throw StateError('host persist failed');
+            if (armed) {
+              armed = false;
+              throw StateError('host persist failed');
+            }
           },
         );
         armed = true;
