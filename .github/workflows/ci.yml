@@ -852,7 +852,15 @@ jobs:
     if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     permissions:
       contents: read
-    timeout-minutes: 12
+    # gh-1778: 20 min — sized for the degraded-cache worst case, not just
+    # the warm wall. Warm shards take ~460-525 s (run 39703080550) but the
+    # v1.0.621 release run stalled ~133 s on EACH cache step (degraded
+    # GitHub cache service, keys that existed) and needed ~14 min cold —
+    # cancelled at the 12-min wall with 2535/2761 tests green, reding the
+    # whole release. 20 clears that worst case and sits in the sibling
+    # test-leg band (flutter-tests 20, integration-mock 25, pty 40); a
+    # genuinely hung shard is still killed loudly.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -875,6 +883,11 @@ jobs:
         with:
           python-version: '3.x'
 
+      # gh-1778: caches are best-effort — a restore that hangs (degraded
+      # cache service stalled both steps ~133 s on the v1.0.621 release
+      # run) or fails only means slower setup. Step-level 2-min cap bounds
+      # the stall; continue-on-error keeps a dead cache from reding the
+      # shard (unlike the gh-1724 evidence uploads, which stay loud).
       - name: Pub cache
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -882,6 +895,8 @@ jobs:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: pub-${{ runner.os }}-
+        timeout-minutes: 2
+        continue-on-error: true
 
       - run: dart pub get
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -893,6 +908,8 @@ jobs:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+        timeout-minutes: 2
+        continue-on-error: true
 
       # Duration-balanced shards (issue #177 AC3): scripts/test_shards.json
       # maps test FILES to shards (file-level units — test/cli alone was
