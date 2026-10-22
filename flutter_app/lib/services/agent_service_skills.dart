@@ -172,10 +172,16 @@ Future<(String, List<Skill>)> _discoverPromptSuffix(
     scopes: [(SkillToggleScope.project, SkillsConfig(skills: skillToggles))],
   );
   final enabled = enabledSkills(skills, resolution);
-  final contextFiles = await loadProjectContextFiles(env);
+  final context = await loadProjectContextFiles(env);
+  // Issue #1761 AC2: the app's boot notice seam is AppLog (same rule as
+  // the operative-pin notices) — truncation of project rules is never
+  // silent here either.
+  for (final notice in context.notices) {
+    AppLog.i('context', notice);
+  }
+  final contextSection = formatProjectContext(context);
   final suffix = [
-    if (formatProjectContext(contextFiles).isNotEmpty)
-      formatProjectContext(contextFiles),
+    if (contextSection.isNotEmpty) contextSection,
     if (formatSkillsForPrompt(enabled).isNotEmpty)
       formatSkillsForPrompt(enabled),
   ].join('\n\n');

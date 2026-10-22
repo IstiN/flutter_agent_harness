@@ -74,6 +74,7 @@ final class AgentCliConfig {
     this.redactionPipeline,
     this.jobLogDir,
     this.spills,
+    this.projectContext,
     this.modelsConfig,
     this.onModelsConfigChanged,
     this.onModelChanged,
@@ -526,6 +527,11 @@ final class AgentCliConfig {
   /// the user one, wholesale. Null or inactive (`enabled: false` /
   /// `threshold: 0`) = no spill hooks attached, byte-identical legacy.
   final SpillsConfig? spills;
+
+  /// The resolved `projectContext:` section (issue #1761) — the merged
+  /// project-context budget. Null = the 32KB default; `maxBytes: 0`
+  /// disables the section and skips every file read.
+  final ProjectContextConfig? projectContext;
 
   /// The live models config (the `models:` section of `~/.fah/config.yaml`),
   /// shared with the executable: `/models set`/`/models remove` mutate its

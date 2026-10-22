@@ -905,6 +905,9 @@ Future<void> _runApp(List<String> args) async {
   // one (same merge as the other project sections). Null = absent —
   // no spill hooks, byte-identical legacy boot.
   final spillsConfig = loadProjectSpillsConfig(cwd) ?? saved.spills;
+  // The projectContext budget (issue #1761): user-level `projectContext:`
+  // section only — a global resource knob, not a repo-traveling one.
+  final projectContextConfig = saved.projectContext;
   final redactor = buildSecretRedactor(
     roleSecrets: roleSecrets,
     keys: keyCache,
@@ -1391,6 +1394,7 @@ Future<void> _runApp(List<String> args) async {
         // runner's $RUNNER_TEMP). Null keeps <cwd>/.fah/bash_jobs.
         jobLogDir: jobLogDirOverride(Platform.environment),
         spills: spillsConfig,
+        projectContext: projectContextConfig,
         // Shared by the env config and the presence store below.
         env: cliEnv,
         // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the
