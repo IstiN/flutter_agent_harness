@@ -19,6 +19,7 @@ import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../prompts/project_context.dart' show ProjectContextConfig;
 import '../cube/config/cube_settings.dart';
+import '../session_retention.dart';
 import 'headless_config.dart';
 import 'waiting_heartbeat.dart';
 import '../providers/provider_common.dart';
@@ -501,6 +502,7 @@ final class CliConfig {
     this.tools,
     this.redact,
     this.spills,
+    this.sessions,
     this.projectContext,
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
@@ -592,6 +594,12 @@ final class CliConfig {
       spills: map['spills'] == null
           ? null
           : SpillsConfig.fromYaml(map['spills']),
+      // The sessions section (gh-1746); tolerant like spills — unknown
+      // keys and mistyped scalars become notes. Absent keeps the
+      // byte-identical legacy boot (AC1).
+      sessions: map['sessions'] == null
+          ? null
+          : SessionsConfig.fromYaml(map['sessions']),
       // The projectContext section (issue #1761); tolerant by design —
       // unknown keys and mistyped scalars become notes, never boot
       // failures.
@@ -918,6 +926,12 @@ final class CliConfig {
   /// and wins wholesale, like the other project sections).
   final SpillsConfig? spills;
 
+  /// Optional `sessions:` section (gh-1746) — the opt-in retention
+  /// policy for the sessions root. Tolerant parse (deviations become
+  /// notes, never boot failures); `null` means the section is absent —
+  /// boot never sweeps and never notes (AC1's byte-identical legacy).
+  final SessionsConfig? sessions;
+
   /// Optional `projectContext:` section (issue #1761) — the merged
   /// project-context budget (`maxBytes`; `0` disables the section and
   /// skips every file read). Tolerant parse; `null` means the section is
@@ -1078,6 +1092,7 @@ final class CliConfig {
     ToolsConfig? tools,
     RedactionConfig? redact,
     SpillsConfig? spills,
+    SessionsConfig? sessions,
     ProjectContextConfig? projectContext,
     CompactionEngine? compactionEngine,
     int? compactionJudgeBudgetSeconds,
@@ -1134,6 +1149,7 @@ final class CliConfig {
       tools: tools ?? this.tools,
       redact: redact ?? this.redact,
       spills: spills ?? this.spills,
+      sessions: sessions ?? this.sessions,
       projectContext: projectContext ?? this.projectContext,
       compactionEngine: compactionEngine ?? this.compactionEngine,
       compactionJudgeBudgetSeconds:
@@ -1259,6 +1275,7 @@ final class CliConfig {
     buffer.write(_trajectoryYaml());
     if (images != null) buffer.write(_imagesYaml());
     buffer.write(_spillsYaml());
+    buffer.write(_sessionsYaml());
     buffer.write(_projectContextYaml());
     buffer.write(_agentSectionYaml());
     // The subagents heartbeat section (issue #383), only when explicitly
@@ -1500,6 +1517,10 @@ final class CliConfig {
   /// (gh-1572: the emitter used to be unable to render the section at
   /// all, so every save dropped it).
   String _spillsYaml() => spills?.toYaml() ?? '';
+
+  /// The `sessions:` section (gh-1746), only when explicitly configured
+  /// (defaults are never written so the file stays minimal).
+  String _sessionsYaml() => sessions?.toYaml() ?? '';
 
   /// The `projectContext:` section (issue #1761), only when explicitly
   /// configured; the default budget is never written so the file stays
@@ -1973,6 +1994,7 @@ const _diskPreservedSections = {
   // is the only faithful form, like `memory:`/`a2a:`); the rest render
   // when the caller carries them — caller wins wherever it rendered.
   'spills',
+  'sessions',
   'projectContext',
   'subagents',
   'waiting',

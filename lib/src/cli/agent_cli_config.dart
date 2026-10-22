@@ -67,6 +67,10 @@ final class AgentCliConfig {
     // surfaces in the notice stream — stderr alone is invisible inside the
     // TUI's alternate screen. Null = no drop happened.
     this.rolesDropNotice,
+    // The `sessions:` section (gh-1746): the opt-in retention policy.
+    // Null = the section is absent — boot never sweeps and never notes
+    // (AC1's byte-identical legacy).
+    this.sessionsRetention,
     this.providersQueueRuntime,
     this.providerQueueEnv,
     this.ttsr,
@@ -507,6 +511,10 @@ final class AgentCliConfig {
   /// in the notice stream (line mode + the TUI transcript after the
   /// banner), never stderr-only.
   final String? rolesDropNotice;
+
+  /// The `sessions:` section (gh-1746), null when absent. Drives the
+  /// boot retention check: sweep/note only what the user configured.
+  final SessionsConfig? sessionsRetention;
 
   /// The provider-queue runtime (issue #418): when set, the default role
   /// resolves through the queue's stream function — sticky cursor, loud

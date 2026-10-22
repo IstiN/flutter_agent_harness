@@ -193,6 +193,7 @@ import '../env/session_parse_executor.dart';
 import '../session/session_repo.dart';
 import '../session_io_retry.dart';
 import '../session/attach/file_presence_store.dart';
+import '../session_retention.dart';
 import '../session/attach/session_presence.dart';
 import '../session/attach/session_lease.dart';
 import '../session/attach/session_attachment.dart';
@@ -1612,6 +1613,11 @@ class AgentCli {
     parseExecutor: config.parseExecutor,
   );
   Session? _session;
+
+  /// The gh-1746 retention boot note, filled by `_retentionBootCheck`
+  /// before the session opens; printed dim through the roles-drop notice
+  /// channel (line mode + the TUI re-print after the banner).
+  List<String> _retentionBootLines = const [];
 
   /// The herdr pane reporter (issue #1481): fire-and-forget pane-state
   /// reports while this CLI runs inside a herdr pane. The gate is

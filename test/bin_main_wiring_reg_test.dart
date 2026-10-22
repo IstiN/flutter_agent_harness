@@ -35,6 +35,13 @@ const _requiredReferences = <String, List<String>>{
     'splitWireServeArgs',
     // `fa jsr …` pass-through (gh-1033).
     'runJsrCliCommand',
+    // The `fa session` verbs intercepted without an agent boot: list
+    // (issue #198), repair (gh-1073), and clean (gh-1746 AC6). The clean
+    // verb shares the list branch's io/env/root and the presence store
+    // (gh-1746 review: the wiring must not drift between verbs).
+    'runSessionListCliCommand',
+    'runSessionRepairCliCommand',
+    'runSessionCleanCliCommand',
     // Session segment rotation warnings on stderr (gh-1077).
     'onRotationWarning',
     // FA_PROVIDER_TIMEOUT_SECONDS env override fold-in (issue #1036).

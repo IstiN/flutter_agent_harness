@@ -13,6 +13,15 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1746): opt-in session disk retention — `sessions.retention` in
+  `~/.fah/config.yaml` caps the sessions root and sweeps whole session
+  units (transcript + sidecars) oldest-last-used-first at boot, exempting
+  live, named, young, and the current session; nothing is EVER
+  auto-deleted without the section (byte-identical legacy boot). Adds
+  `fa session clean [--dry-run]`, the `/sessions` + `fa session list`
+  usage footer under a cap, and header-cwd/path-escape guards so a
+  planted session header can never steer a delete outside any root.
+
 - fix(gh-1763): a `bash` tool command running broad process kills can no
   longer signal its own shell or the harness. Scripts are delivered from a
   per-exec private temp file (`sh -c '. "$1"' sh <script>`) so the wrapper
@@ -38,6 +47,7 @@ block a release again.
   slower setup, never a red shard. `test/ci_core_shard_timeout_guard_test.dart`
   pins the budget and the best-effort cache contract (RED-first on the old
   YAML).
+
 - feat(#1761): the 32KB project-context budget never cuts silently again.
   A file truncated to its head excerpt now carries an extended
   `<!-- From: path — N bytes, only the first M shown -->` marker plus an

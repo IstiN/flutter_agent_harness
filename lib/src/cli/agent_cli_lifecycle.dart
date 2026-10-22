@@ -477,8 +477,12 @@ extension AgentCliLifecycle on AgentCli {
   /// the banner in `_runTuiRepl` (the alternate screen wipes the original).
   void _printRolesDropNotice() {
     final notice = config.rolesDropNotice;
-    if (notice == null) return;
-    io.writeln(_style.dim(notice));
+    if (notice != null) io.writeln(_style.dim(notice));
+    // The gh-1746 retention boot note rides the same notice channel: the
+    // TUI re-print after the banner covers the alternate-screen wipe.
+    for (final line in _retentionBootLines) {
+      io.writeln(_style.dim(line));
+    }
   }
 
   /// The project-context truncation notices (issue #1761 AC2): one dim

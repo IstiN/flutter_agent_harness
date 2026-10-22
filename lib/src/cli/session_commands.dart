@@ -278,6 +278,21 @@ extension on AgentCli {
     io.writeln(
       _style.dim('switch: /session <name> · rename: /rename-session <name>'),
     );
+    // gh-1746 Visibility: the usage footer, only when the user configured
+    // a retention cap (REG-1: the cap-free listing stays byte-identical).
+    final sessionsRetention = config.sessionsRetention?.retention;
+    if (sessionsRetention != null && sessionsRetention.hasCap) {
+      try {
+        final usage = await SessionRetentionSweeper(
+          fs: _env,
+          sessionsRoot: config.sessionRoot,
+        ).usage();
+        final footer = sessionUsageFooterLine(usage, sessionsRetention);
+        if (footer != null) io.writeln(_style.dim(footer));
+      } on Object {
+        // Best-effort chrome: a failed walk never fails the listing.
+      }
+    }
   }
 
   Future<void> _createNamedSession(String name) async {
@@ -408,14 +423,24 @@ extension on AgentCli {
   }
 
   Future<Session> _initializeSession() async {
-    // gh-1660 boot hygiene: crashed/killed runs leave header-only session
-    // files behind (the clean-exit `deleteSessionIfEmpty` never ran for
-    // them). Fire-and-forget, best-effort — never delays the first turn.
-    unawaited(_sweepHeaderOnlySessions());
+    // gh-1746 boot hygiene: resolve the resume target FIRST, then run the
+    // opt-in sessions retention sweep (AC7). The sweeper must exempt the
+    // session this process is about to open: its presence row registers
+    // only after the load (agent_cli `_registerLivePresence`), so at sweep
+    // time the resolved id is the only protection — sweeping before the
+    // name scan deleted the very transcript `fa --session <id>` was about
+    // to open (and any resume under `keepNamed: false`), silently
+    // replacing it with a fresh empty session. Awaited (unlike the
+    // header-only sweep below): it DELETES files, so it must finish before
+    // this process opens a session the sweep could otherwise race. Only
+    // runs when the user touched `sessions:` in the config — a
+    // section-free boot stays byte-identical legacy (AC1).
     final name = config.sessionName?.trim();
+    var matches = const <SessionMetadata>[];
+    SessionMetadata? metadata;
     if (name != null && name.isNotEmpty) {
-      final matches = await _sessionNameMatches(name);
-      final metadata = _resolveSessionNameMatch(
+      matches = await _sessionNameMatches(name);
+      metadata = _resolveSessionNameMatch(
         matches,
         onAmbiguous: (all) {
           // Interactive prompting is impossible this early (the input pump
@@ -425,6 +450,13 @@ extension on AgentCli {
           _startupAmbiguousName = name;
         },
       );
+    }
+    await _retentionBootCheck(currentSessionId: metadata?.id);
+    // gh-1660 boot hygiene: crashed/killed runs leave header-only session
+    // files behind (the clean-exit `deleteSessionIfEmpty` never ran for
+    // them). Fire-and-forget, best-effort — never delays the first turn.
+    unawaited(_sweepHeaderOnlySessions());
+    if (name != null && name.isNotEmpty) {
       if (metadata != null) {
         if (matches.length > 1) {
           io.writeln(
@@ -457,6 +489,41 @@ extension on AgentCli {
       await repo.cleanupEmptySessions(olderThan: _headerOnlySweepGrace);
     } on Object {
       // Best-effort: never let hygiene delay or fail the boot.
+    }
+  }
+
+  /// The boot retention check (gh-1746): with the `sessions:` config
+  /// section present, run [SessionRetentionSweeper.enforceAtBoot] — cap
+  /// + `sweep: boot` deletes whole units; every outcome renders through
+  /// [sessionSweepReportLines] into the boot log (fa.log, AC7) and the
+  /// dim notice channel (line mode + the TUI re-print after the banner,
+  /// the same surface as the roles-drop warning). Absent section (null)
+  /// returns immediately: no sweep, no note, no walk (AC1). Best-effort:
+  /// a failed check never fails the boot. [currentSessionId] exempts the
+  /// resume target this boot resolved BEFORE sweeping — the one session
+  /// the sweep must never eat (its presence row registers only after the
+  /// load).
+  Future<void> _retentionBootCheck({String? currentSessionId}) async {
+    final sessions = config.sessionsRetention;
+    if (sessions == null) return;
+    try {
+      final report = await SessionRetentionSweeper(
+        fs: _env,
+        sessionsRoot: config.sessionRoot,
+        retention: sessions.retention,
+        presenceStore: config.presenceStore,
+        currentSessionId: currentSessionId,
+        // AC7: one log line per auto-deletion (+ the plan on a boot
+        // apply) lands in fa.log with the other lifecycle lines.
+        log: (line) => _logDiagnostic('[retention] $line'),
+      ).enforceAtBoot();
+      final lines = sessionSweepReportLines(report);
+      for (final line in lines) {
+        _logDiagnostic('[retention] $line');
+      }
+      _retentionBootLines = List.unmodifiable(lines);
+    } on Object catch (error) {
+      _logDiagnostic('[retention] boot check failed: $error');
     }
   }
 
