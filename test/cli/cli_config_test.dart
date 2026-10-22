@@ -1614,6 +1614,23 @@ memory:
       );
     });
 
+    test('gh-1745 rework: the byte budget threads the section getter '
+        '(requestBlobMaxBytes)', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory:\n  requestBlobMaxMb: 10\n');
+      expect(loadCliConfig(tmp.path).trajectoryRequestBlobMaxBytes, 10 << 20);
+      // The default budget matches the store's default.
+      file.writeAsStringSync('trajectory:\n');
+      expect(loadCliConfig(tmp.path).trajectoryRequestBlobMaxBytes, 50 << 20);
+      // The bytes value is DERIVED from the Mb knob — the save path never
+      // emits it (the file stays minimal, Mb remains the yaml surface).
+      expect(
+        CliConfig(trajectoryRequestBlobMaxMb: 10).toYaml(),
+        isNot(contains('requestBlobMaxBytes')),
+      );
+    });
+
     test('gh-1745: loadProjectTrajectorySection carries the whole section',
         () {
       final file = File('${tmp.path}/.fah/config.yaml');

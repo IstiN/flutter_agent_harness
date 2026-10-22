@@ -629,6 +629,9 @@ Future<void> _runApp(List<String> args) async {
       trajectorySection?.requestBlobs ?? saved.trajectoryRequestBlobs;
   final trajectoryRequestBlobMaxMb =
       trajectorySection?.requestBlobMaxMb ?? saved.trajectoryRequestBlobMaxMb;
+  final trajectoryRequestBlobMaxBytes =
+      trajectorySection?.requestBlobMaxBytes ??
+      saved.trajectoryRequestBlobMaxBytes;
   final trajectoryRequestBlobTtlDays =
       trajectorySection?.requestBlobTtlDays ??
       saved.trajectoryRequestBlobTtlDays;
@@ -1548,6 +1551,7 @@ Future<void> _runApp(List<String> args) async {
         wireDump: wireDump,
         trajectoryRequestBlobs: trajectoryRequestBlobs,
         trajectoryRequestBlobMaxMb: trajectoryRequestBlobMaxMb,
+        trajectoryRequestBlobMaxBytes: trajectoryRequestBlobMaxBytes,
         trajectoryRequestBlobTtlDays: trajectoryRequestBlobTtlDays,
         contextWindowCap: saved.contextWindowCap,
         stuckTool: saved.stuckTool,

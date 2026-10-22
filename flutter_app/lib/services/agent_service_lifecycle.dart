@@ -120,7 +120,7 @@ extension AgentServiceLifecycle on AgentService {
     return _requestBlobStore ??= TrajectoryRequestBlobStore(
       env: env,
       sessionId: () => _session?.cachedId,
-      maxBytes: trajectoryRequestBlobMaxMb << 20,
+      maxBytes: trajectoryRequestBlobMaxBytes,
       ttlDays: trajectoryRequestBlobTtlDays,
     );
   }

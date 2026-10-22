@@ -1891,6 +1891,11 @@ class AgentService extends ChangeNotifier
   final int trajectoryRequestBlobMaxMb;
   final int trajectoryRequestBlobTtlDays;
 
+  /// The per-session blob-dir byte budget ([TrajectorySection]
+  /// `.requestBlobMaxBytes` shape — the canonical MB→bytes derivation,
+  /// consumed by the store instead of a call-site shift).
+  int get trajectoryRequestBlobMaxBytes => trajectoryRequestBlobMaxMb << 20;
+
   /// The producer behind [trajectory]: rebuilt from the active branch on
   /// session open/switch, mirrored live from agent events, and fed the
   /// finalized records on every persist.

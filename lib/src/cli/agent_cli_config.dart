@@ -160,6 +160,7 @@ final class AgentCliConfig {
     this.wireDump = false,
     this.trajectoryRequestBlobs = true,
     this.trajectoryRequestBlobMaxMb = 50,
+    this.trajectoryRequestBlobMaxBytes = 50 << 20,
     this.trajectoryRequestBlobTtlDays = 30,
     this.updateCommand,
     this.autoUpdate = AutoUpdateMode.notify,
@@ -198,6 +199,11 @@ final class AgentCliConfig {
   /// `trajectory.requestBlobMaxMb` — the per-session blob-dir byte budget
   /// (default 50 MB).
   final int trajectoryRequestBlobMaxMb;
+
+  /// The same budget in bytes ([TrajectorySection.requestBlobMaxBytes]
+  /// threaded through [CliConfig] at boot, gh-1745 rework): the blob
+  /// store consumes this instead of re-shifting MB inline.
+  final int trajectoryRequestBlobMaxBytes;
 
   /// `trajectory.requestBlobTtlDays` — blob age bound (default 30 days).
   final int trajectoryRequestBlobTtlDays;

@@ -14,7 +14,11 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
-Future<_Rig> _rig({bool? requestBlobs, bool wireDump = false}) async {
+Future<_Rig> _rig({
+  bool? requestBlobs,
+  bool wireDump = false,
+  int? requestBlobMaxMb,
+}) async {
   final env = MemoryExecutionEnv(
     cwd: '/work',
     shell: FakeShell(stdout: 'ok'),
@@ -40,6 +44,8 @@ Future<_Rig> _rig({bool? requestBlobs, bool wireDump = false}) async {
       compactionEngine: CompactionEngine.classic,
       wireDump: wireDump,
       trajectoryRequestBlobs: requestBlobs ?? true,
+      trajectoryRequestBlobMaxMb: requestBlobMaxMb ?? 50,
+      trajectoryRequestBlobMaxBytes: (requestBlobMaxMb ?? 50) << 20,
     ),
     io: io,
     streamFunction: fake.call,
@@ -123,6 +129,23 @@ void main() {
     final dir = trajectoryRequestBlobDir(await _sessionId(rig));
     final listing = await rig.env.listDir(dir);
     expect(listing.valueOrNull!.length, 2);
+  });
+
+  test('requestBlobMaxMb threads its byte budget to the store (the config '
+      'field, not an inline shift)', () async {
+    // A 1-byte budget: every write sweeps the dir down to just the newest
+    // blob — proves the AgentCliConfig.trajectoryRequestBlobMaxBytes
+    // wiring reaches the store (gh-1745 review: the getter used to be
+    // dead code while the hosts re-derived the shift inline).
+    final rig = await _rig(requestBlobMaxMb: 1);
+    rig.io.sendLine('go');
+    await _settle(rig);
+    await _exit(rig);
+
+    final dir = trajectoryRequestBlobDir(await _sessionId(rig));
+    final listing = await rig.env.listDir(dir);
+    expect(listing.valueOrNull!.length, 1);
+    expect(listing.valueOrNull!.single.name, '2.json');
   });
 
   test(

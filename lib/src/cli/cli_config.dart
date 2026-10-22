@@ -479,6 +479,7 @@ final class CliConfig {
     this.wireDump = false,
     this.trajectoryRequestBlobs = true,
     this.trajectoryRequestBlobMaxMb = 50,
+    this.trajectoryRequestBlobMaxBytes = 50 << 20,
     this.trajectoryRequestBlobTtlDays = 30,
     this.images,
     this.agentMode,
@@ -617,6 +618,7 @@ final class CliConfig {
       wireDump: trajectorySection.wireDump,
       trajectoryRequestBlobs: trajectorySection.requestBlobs,
       trajectoryRequestBlobMaxMb: trajectorySection.requestBlobMaxMb,
+      trajectoryRequestBlobMaxBytes: trajectorySection.requestBlobMaxBytes,
       trajectoryRequestBlobTtlDays: trajectorySection.requestBlobTtlDays,
       images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
@@ -861,6 +863,11 @@ final class CliConfig {
   /// in MB (default 50).
   final int trajectoryRequestBlobMaxMb;
 
+  /// The same budget in bytes ([TrajectorySection.requestBlobMaxBytes],
+  /// gh-1745 rework): the canonical MB→bytes derivation — hosts pass it
+  /// to the blob store instead of re-shifting inline.
+  final int trajectoryRequestBlobMaxBytes;
+
   /// `trajectory.requestBlobTtlDays` — blob age bound in days (default
   /// 30).
   final int trajectoryRequestBlobTtlDays;
@@ -1036,6 +1043,7 @@ final class CliConfig {
     bool? wireDump,
     bool? trajectoryRequestBlobs,
     int? trajectoryRequestBlobMaxMb,
+    int? trajectoryRequestBlobMaxBytes,
     int? trajectoryRequestBlobTtlDays,
     ImageRegistryConfig? images,
     String? agentMode,
@@ -1093,6 +1101,8 @@ final class CliConfig {
           trajectoryRequestBlobs ?? this.trajectoryRequestBlobs,
       trajectoryRequestBlobMaxMb:
           trajectoryRequestBlobMaxMb ?? this.trajectoryRequestBlobMaxMb,
+      trajectoryRequestBlobMaxBytes:
+          trajectoryRequestBlobMaxBytes ?? this.trajectoryRequestBlobMaxBytes,
       trajectoryRequestBlobTtlDays:
           trajectoryRequestBlobTtlDays ?? this.trajectoryRequestBlobTtlDays,
       images: images ?? this.images,

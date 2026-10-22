@@ -160,7 +160,9 @@ extension on AgentCli {
           await (_requestBlobStore ??= TrajectoryRequestBlobStore(
             env: _coreToolEnv,
             sessionId: () => _session?.cachedId,
-            maxBytes: config.trajectoryRequestBlobMaxMb << 20,
+            // gh-1745 rework: the canonical bytes derivation threaded
+            // through the config (no inline MB→bytes shift here).
+            maxBytes: config.trajectoryRequestBlobMaxBytes,
             ttlDays: config.trajectoryRequestBlobTtlDays,
           )).write(
             detail: event.detail,
