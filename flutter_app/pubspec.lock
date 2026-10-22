@@ -1133,10 +1133,10 @@ packages:
     dependency: "direct main"
     description:
       name: js_widget_runtime
-      sha256: d8b305fda4d057f64420727ee8d4b85d01b619fd5030460e6150bf7d86c6320e
+      sha256: 45d40b1ed1fc503d08fcfe7db7631919a6f1925b338b7fb5533efc362cd4a814
       url: "https://pub.dev"
     source: hosted
-    version: "0.4.177"
+    version: "0.4.179"
   json_annotation:
     dependency: transitive
     description:
