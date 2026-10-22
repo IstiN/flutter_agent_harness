@@ -139,6 +139,12 @@ final class StatusLineSnapshot {
   /// Live output rate for `token_rate` (tok/s); hidden when null/zero.
   final double? tokensPerSecond;
 
+  /// Session-average output rate for `token_rate_avg` (tok/s): the usage
+  /// ledger's total output over accumulated active-stream time (gh-1762).
+  /// Hidden when null — until a completed turn exists it stays null, never
+  /// `0 t/s`.
+  final double? tokensPerSecondAvg;
+
   /// Running session cost in USD; `null` = unpriced model → the `cost`
   /// segment hides (E2: never `$0.00` for an unknown price).
   final double? costUsd;
@@ -204,6 +210,7 @@ final class StatusLineSnapshot {
     this.cacheRead = 0,
     this.cacheWrite = 0,
     this.tokensPerSecond,
+    this.tokensPerSecondAvg,
     this.costUsd,
     this.sessionName,
     this.sessionId,
@@ -495,7 +502,13 @@ kStatusLinePresets = {
       // unarmed band renders byte-identically.
       'timer',
     ],
-    right: ['session_name'],
+    // gh-1762: the default band gains the live rate pair after the
+    // session name (the card's «replace the trailing context-window
+    // label» intent — fa's default preset never carried `context_total`;
+    // custom configs referencing it keep working, the id stays in the
+    // table + registry). Without data both render hidden, so an unarmed
+    // band stays clean; while streaming it reads `42 t/s · avg 38 t/s`.
+    right: ['session_name', 'token_rate', 'token_rate_avg'],
     separator: StatusLineSeparatorStyle.powerlineThin,
     nerd: false,
     options: StatusLineSegmentOptions(),
@@ -540,6 +553,7 @@ kStatusLinePresets = {
       'token_in',
       'token_out',
       'token_rate',
+      'token_rate_avg',
       'cache_read',
       'cost',
       'context_pct',
@@ -570,6 +584,7 @@ kStatusLinePresets = {
       'cache_read',
       'cache_write',
       'token_rate',
+      'token_rate_avg',
       'cost',
       'context_pct',
       'context_total',
@@ -608,8 +623,9 @@ const List<String> kStatusLinePresetNames = [
 ];
 
 /// The omp 27 segment ids (`schema.ts` `STATUS_LINE_SEGMENT_IDS`) plus
-/// fa's `timer` extension (gh-1556, the deadline countdown chip — renders
-/// hidden until a deadline is armed). Ids with no fa counterpart data
+/// fa's extensions: `timer` (gh-1556, the deadline countdown chip) and
+/// `token_rate_avg` (gh-1762, the session-average rate) — both render
+/// hidden until their data exists. Ids with no fa counterpart data
 /// (`usage`, `collab`, `vim`, `cache_hit`) — and `stream`, hidden since
 /// #920 (the composer header owns the spinner) — stay valid and render
 /// hidden: custom configs referencing them keep working (umbrella D2, E7).
@@ -626,6 +642,7 @@ const List<String> kStatusLineSegmentIds = [
   'token_out',
   'token_total',
   'token_rate',
+  'token_rate_avg',
   'cost',
   'context_pct',
   'context_total',
@@ -806,6 +823,10 @@ final class StatusLineConfig {
   /// `symbolPreset: nerd`): the preset's `nerd` flag otherwise decides.
   final bool? nerdSymbols;
 
+  /// gh-1762: the live-rate rolling window in ms (`token_rate`). Second
+  /// tier knob (card open question 2); the meter default is 5000.
+  final int? rateWindowMs;
+
   const StatusLineConfig({
     this.preset,
     this.left,
@@ -814,6 +835,7 @@ final class StatusLineConfig {
     this.segmentOptions,
     this.transparent = false,
     this.nerdSymbols,
+    this.rateWindowMs,
   });
 
   /// The `tui.statusLine:` yaml block for the config round-trip; empty
@@ -824,6 +846,7 @@ final class StatusLineConfig {
       if (separator != null) '    separator: ${separator!.name}',
       if (transparent) '    transparent: true',
       if (nerdSymbols != null) '    nerdSymbols: $nerdSymbols',
+      if (rateWindowMs != null) '    rateWindowMs: $rateWindowMs',
       if (left != null) '    left: [${left!.join(', ')}]',
       if (right != null) '    right: [${right!.join(', ')}]',
     ];
@@ -851,10 +874,17 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
     'segmentOptions',
     'transparent',
     'nerdSymbols',
+    'rateWindowMs',
   });
   final preset = _statusLinePreset(node['preset']);
   final optionsNode = _statusLineOptionsNode(node);
   final separator = node['separator'];
+  final rateWindowMs = node['rateWindowMs'];
+  if (rateWindowMs != null && (rateWindowMs is! int || rateWindowMs <= 0)) {
+    throw ConfigException(
+      '"tui.statusLine.rateWindowMs" must be a positive integer',
+    );
+  }
   return StatusLineConfig(
     preset: preset,
     left: _statusLineSegmentIds(node, 'left'),
@@ -867,6 +897,7 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
         : parseSegmentOptions(optionsNode),
     transparent: _statusLineBoolFlag(node, 'transparent') ?? false,
     nerdSymbols: _statusLineBoolFlag(node, 'nerdSymbols'),
+    rateWindowMs: rateWindowMs as int?,
   );
 }
 
@@ -1452,14 +1483,30 @@ LaidSegment? _renderTokenTotal(StatusLineSnapshot s, StatusLineSpec spec) {
   ]);
 }
 
+/// The rate number form, shared by the `token_rate`/`token_rate_avg`
+/// segments and the classic footer's rate part (one formatter — both
+/// renderers print the same digits): `99.9` keeps one decimal, `100`
+/// and above round to the integer.
+String formatTokenRate(double rate) => rate >= 100
+    ? rate.round().toString()
+    : rate.toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '');
+
 LaidSegment? _renderTokenRate(StatusLineSnapshot s, StatusLineSpec spec) {
   final rate = s.tokensPerSecond;
   if (rate == null || rate <= 0) return null;
-  final formatted = rate >= 100
-      ? rate.round().toString()
-      : rate.toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '');
   return LaidSegment('token_rate', [
-    ('$formatted t/s', StatusLineRoleKey.output),
+    ('${formatTokenRate(rate)} t/s', StatusLineRoleKey.output),
+  ]);
+}
+
+/// gh-1762: the session average beside the live rate. Two segments, not
+/// one combined (card open question 1): custom specs stay composable —
+/// the default preset places both.
+LaidSegment? _renderTokenRateAvg(StatusLineSnapshot s, StatusLineSpec spec) {
+  final avg = s.tokensPerSecondAvg;
+  if (avg == null || avg <= 0) return null;
+  return LaidSegment('token_rate_avg', [
+    ('avg ${formatTokenRate(avg)} t/s', StatusLineRoleKey.output),
   ]);
 }
 
@@ -1612,6 +1659,7 @@ kStatusLineSegments = UnmodifiableMapView(
     'token_out': _renderTokenOut,
     'token_total': _renderTokenTotal,
     'token_rate': _renderTokenRate,
+    'token_rate_avg': _renderTokenRateAvg,
     'cost': _renderCost,
     'context_pct': _renderContextPct,
     'context_total': _renderContextTotal,
