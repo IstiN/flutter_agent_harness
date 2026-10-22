@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1778): the release gate no longer reds a fully-green shard when
+  GitHub's cache service degrades. v1.0.621's `Core tests (shard 2/4)` was
+  killed by its own `timeout-minutes: 12` with 2535/2761 tests green — both
+  cache steps had stalled ~133 s on keys that existed (degraded service,
+  not eviction), cold `pub get` + native-asset hook builds delayed the
+  first test to ~5 min, and the shard needed ~14 min against a budget
+  sized for the warm ~8.8 min wall. The job budget is now 20 min (sibling
+  test-leg band), and both `test-core` cache steps are best-effort
+  (`timeout-minutes: 2` + `continue-on-error: true`) — a failed restore is
+  slower setup, never a red shard. `test/ci_core_shard_timeout_guard_test.dart`
+  pins the budget and the best-effort cache contract (RED-first on the old
+  YAML).
+
 - feat(#1761): the 32KB project-context budget never cuts silently again.
   A file truncated to its head excerpt now carries an extended
   `<!-- From: path — N bytes, only the first M shown -->` marker plus an
