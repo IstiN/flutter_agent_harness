@@ -137,28 +137,8 @@ double medianWrapMs(
   return times[runs ~/ 2];
 }
 
-/// Fastest wrap time over [runs] executions (one untimed warm-up first).
-///
-/// The growth assertions sample each size with the MIN, not the median:
-/// scheduler steals and GC pauses can only ADD wall time, so the fastest
-/// observed run is the least-contaminated estimate of the true per-size
-/// cost — the same principle that gates across attempts, applied within
-/// them. A median needs a majority of clean runs; a min needs exactly
-/// one, which is what survives the sustained contention shape that red
-/// the PR #1635 validation twice (a steal window spanning ≥3 of 5 runs
-/// of the doubled size in every attempt inflated every attempt median —
-/// runs 38824807299 and 38830911279). A genuine quadratic regression
-/// inflates every doubled run including the fastest, so it still trips.
-double minWrapMs(String line, int width, {int runs = 5, ElapsedUs? elapsedUs}) {
-  final measure = elapsedUs ?? _stopwatchUs;
-  wrapAnsiLine(line, width); // JIT warm-up, untimed
-  var min = double.infinity;
-  for (var i = 0; i < runs; i++) {
-    final t = measure(() => wrapAnsiLine(line, width)) / 1000.0;
-    if (t < min) min = t;
-  }
-  return min;
-}
+/// Timed runs per size in one growth attempt (min-of-runs, gh-1532).
+const _growthRuns = 5;
 
 /// Independent doubling samples per growth assertion (gh-1532): the
 /// superlinear guard is gated on the MIN ratio across the attempts —
@@ -180,23 +160,50 @@ const _minGrowthRatio = 1.5;
 
 /// Growth-shape contract: doubling the input must not more than
 /// [_maxLinearRatio] the fastest wrap time — see the constants above for
-/// the guard bounds and the gh-1532 rationale. Each attempt samples each
-/// size with [minWrapMs] (the fastest run is the least-contended
-/// estimate); the min ratio across attempts gates the superlinear guard,
-/// and the max across attempts must clear [_minGrowthRatio] so a
-/// degenerate flat measurement fails.
+/// the guard bounds and the gh-1532 rationale.
+///
+/// Sampling shape (PR #1783 validation red, run 39799009640): the sizes
+/// are sampled in an INTERLEAVED order — one timed run of each size per
+/// pair, [_growthRuns] pairs per attempt — never one size's whole block
+/// followed by the other's. The growth assertions sample each size with
+/// the MIN of its runs, not the median: scheduler steals and GC pauses
+/// can only ADD wall time, so the fastest observed run is the
+/// least-contaminated estimate of the true per-size cost (PR #1635
+/// validation red ×2: a steal window spanning ≥3 of 5 runs of the
+/// doubled size in every attempt inflated every attempt median — runs
+/// 38824807299 and 38830911279). Interleaving adds weather parity: the
+/// pre-fix harness measured all small runs, then all doubled runs, so
+/// the doubled samples of the 3 attempts sat in three contiguous blocks
+/// and one sustained contention phase inflated EVERY doubled minimum
+/// (best ratio 3.24x at 500k cells) while the small minima stayed
+/// clean — the cross-attempt min had nothing clean to rescue. With
+/// alternating sizes, a phase of the same length strikes runs of BOTH
+/// sizes, both per-size minima keep clean runs, and the ratio survives.
+/// A genuine quadratic regression inflates every doubled run including
+/// the fastest, so it still trips.
 void expectLinearGrowth(
   String Function(int cells) build,
   int baseCells,
   String label, {
   ElapsedUs? elapsedUs,
 }) {
+  final measure = elapsedUs ?? _stopwatchUs;
   var minRatio = double.infinity;
   var maxRatio = 0.0;
   for (var a = 0; a < _growthAttempts; a++) {
-    final small = minWrapMs(build(baseCells), 80, elapsedUs: elapsedUs);
-    final doubled = minWrapMs(build(baseCells * 2), 80, elapsedUs: elapsedUs);
-    final ratio = doubled / small;
+    final smallLine = build(baseCells);
+    final doubledLine = build(baseCells * 2);
+    wrapAnsiLine(smallLine, 80); // JIT warm-up, untimed
+    wrapAnsiLine(doubledLine, 80); // JIT warm-up, untimed
+    var smallMin = double.infinity;
+    var doubledMin = double.infinity;
+    for (var i = 0; i < _growthRuns; i++) {
+      final s = measure(() => wrapAnsiLine(smallLine, 80)) / 1000.0;
+      if (s < smallMin) smallMin = s;
+      final d = measure(() => wrapAnsiLine(doubledLine, 80)) / 1000.0;
+      if (d < doubledMin) doubledMin = d;
+    }
+    final ratio = doubledMin / smallMin;
     if (ratio < minRatio) minRatio = ratio;
     if (ratio > maxRatio) maxRatio = ratio;
   }
@@ -317,9 +324,10 @@ void main() {
       // attempt under the pre-gh-1532 harness; the per-size min (the
       // clean runs 4-5 pin the doubled sample) and the cross-attempt min
       // must both ride it out.
-      // Measurement call order: per attempt, 5 timed runs of the small
-      // input then 5 of the doubled one.
-      final spike = ContendedClock(spiked: {6, 7, 8});
+      // Measurement call order (interleaved, PR #1783 red): per attempt,
+      // s,d,s,d,s,d,s,d,s,d — the doubled timed runs sit at calls
+      // 2,4,6,8,10 within each attempt.
+      final spike = ContendedClock(spiked: {2, 4, 6});
       expectLinearGrowth(
         asciiProse,
         100000,
@@ -361,9 +369,10 @@ void main() {
     // real 500k growth tests on the same runner stayed green. Two clean
     // samples per attempt make the per-attempt min tolerate one
     // contaminated clean run; the cross-attempt min covers the rest.
-    // Measurement call order: per attempt, 5 timed runs of the small
-    // input then 5 of the doubled one.
-    final sustained = ContendedClock(spiked: {6, 7, 8, 16, 17, 18, 26, 27, 28});
+    // Measurement call order (interleaved, PR #1783 red): per attempt,
+    // s,d,s,d,s,d,s,d,s,d — the doubled timed runs sit at calls
+    // 2,4,6,8,10 within each attempt (3 spiked per attempt below).
+    final sustained = ContendedClock(spiked: {2, 4, 6, 12, 14, 16, 22, 24, 26});
     expectLinearGrowth(
       asciiProse,
       100000,
@@ -375,6 +384,51 @@ void main() {
     // × 5 timed runs).
     expect(
       sustained.calls,
+      30,
+      reason: 'the spiked indices encode the call layout',
+    );
+  });
+
+  test('growth assertion survives contention covering every doubled block '
+      '(PR #1783 validation red, run 39799009640)', () {
+    // The #1635/gh-1732 harness red once more on the hostile-env leg
+    // (best doubling ratio 3.24x at 500k cells — EVERY attempt's doubled
+    // minimum was over the 3.2 bound, so the cross-attempt min could not
+    // rescue it). The layout that lost: all 5 small runs then all 5
+    // doubled runs per attempt put the doubled samples of the 3 attempts
+    // into three contiguous ~150ms blocks — a contention phase spanning
+    // them inflates every doubled run while the short small runs between
+    // the blocks stay clean (exposure scales with run duration, the
+    // #1635 mechanism, extended across attempts). Model the shape under
+    // the pre-fix sequential call layout: every doubled timed run of
+    // every attempt spiked (calls 6-10, 16-20, 26-30 — small runs at
+    // 1-5, 11-15, 21-25 untouched).
+    //
+    // The fix interleaves the sizes (s,d,s,d,… per attempt): the same
+    // contention phase now lands on 3-of-5 doubled AND 2-of-5 small runs
+    // per attempt, both per-size minima keep 2 clean samples, and the
+    // doubling ratio — which symmetric weather inflates far less than a
+    // one-sided block — stays linear. spikeMs 12 on the ~3.5ms/7ms
+    // baselines at 100k cells: pre-fix doubled min ≈ 19ms → ratio ≈ 5x
+    // in every attempt (a louder stand-in for the live 3.24x); post-fix
+    // both minima are clean ≈2x.
+    final blocks = ContendedClock(
+      spiked: {6, 7, 8, 9, 10, 16, 17, 18, 19, 20, 26, 27, 28, 29, 30},
+      spikeMs: 12,
+    );
+    expectLinearGrowth(
+      asciiProse,
+      100000,
+      'ASCII prose',
+      elapsedUs: blocks.call,
+    );
+    // Same layout guard as the contention tests above: the spiked
+    // indices encode the measure loop's exact call layout (3 attempts ×
+    // 2 sizes × 5 timed runs). If that layout ever changes the spikes
+    // silently land on the wrong measurements — this assertion turns
+    // that into a loud failure.
+    expect(
+      blocks.calls,
       30,
       reason: 'the spiked indices encode the call layout',
     );

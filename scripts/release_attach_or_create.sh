@@ -71,6 +71,16 @@ git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1
 ls_remote_rc=$?
 set -e
 if [ "$ls_remote_rc" -eq 2 ]; then
+  # Fail fast BEFORE the cryptic crash: the push URL below collapses to ''
+  # when GH_TOKEN is unset, and git's `fatal: bad repository ''` does not
+  # point at the env gap (run 39766453580, v1.0.626 mobile leg). Callers
+  # must export GH_TOKEN=RELEASE_PAT (or a job-scoped App token) — the
+  # workflow GITHUB_TOKEN is not a substitute (GitHub suppresses events it
+  # triggers, so the tag CI would never fire).
+  if [ -z "${GH_TOKEN:-}" ]; then
+    echo "::error::tag $tag is missing but GH_TOKEN is not set — the annotated-tag push would run 'git push \"\"'. Set GH_TOKEN (PAT/App token) on the calling step, or the tag can never be minted here." >&2
+    exit 1
+  fi
   target="${RELEASE_TARGET_SHA:-${GITHUB_SHA:?}}"
   echo "tag $tag missing — creating annotated tag at $target (PAT push, fires tag CI)"
   git fetch origin "$target" --depth=1 2>/dev/null || git fetch origin main --depth=50

@@ -1193,6 +1193,60 @@ jobs:
         expect(creates.single.text, contains('--latest'));
       },
     );
+    test(
+      'every release_attach_or_create.sh call site exports GH_TOKEN (PAT/App token, never bare GITHUB_TOKEN)',
+      () {
+        // PR #1783 review: the script's tag-mint push URL is built ONLY
+        // from GH_TOKEN (`git push "${GH_TOKEN:+https://…}"`), so a call
+        // site that exports just GITHUB_TOKEN collapses the URL to '' and
+        // dies with `fatal: bad repository ''` (run 39766453580,
+        // v1.0.626 mobile leg) — the macOS release-macos step had exactly
+        // this gap. Pin the script header's documented contract on every
+        // caller.
+        var checked = 0;
+        for (final wf in [
+          '.github/workflows/build-macos.yml',
+          '.github/workflows/build-mobile.yml',
+        ]) {
+          jobsOf(wf).forEach((jobId, job) {
+            if (job is! Map || !job.containsKey('steps')) return;
+            for (final step in (job['steps'] as YamlList)) {
+              if (step is! YamlMap) continue;
+              final run = step['run']?.toString() ?? '';
+              if (!run.contains('release_attach_or_create.sh')) continue;
+              checked++;
+              final env = step['env'] as YamlMap?;
+              final ghToken = env?['GH_TOKEN']?.toString();
+              expect(
+                ghToken,
+                isNotNull,
+                reason:
+                    '$wf job "$jobId": release_attach_or_create.sh call site '
+                    'must export GH_TOKEN (PAT/App token) — the tag-mint '
+                    'push URL is built only from GH_TOKEN; without it the '
+                    "push runs 'git push \"\"' (fatal: bad repository '')",
+              );
+              expect(
+                ghToken,
+                isNot(contains('secrets.GITHUB_TOKEN')),
+                reason:
+                    '$wf job "$jobId": GH_TOKEN must be a PAT/App token, '
+                    'never the workflow GITHUB_TOKEN — GitHub suppresses '
+                    'events triggered by it, so the minted tag would never '
+                    'fire tag CI',
+              );
+            }
+          });
+        }
+        expect(
+          checked,
+          greaterThanOrEqualTo(2),
+          reason:
+              'the lint must see both release legs (release-macos + mobile) '
+              '— any new call site is auto-covered by the loop above',
+        );
+      },
+    );
   });
 
   // ── AC3 — one naming scheme: bare vX.Y.Z (UT-naming) ────────────────────
