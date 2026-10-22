@@ -83,6 +83,10 @@ _bootHeadless({
           queue.entries.isNotEmpty && queue.scope != ProviderQueueScope.env
           ? queue.entries
           : const [],
+      // The env view the boot resolved through (bin reads
+      // Platform.environment at this point — the same view the queue
+      // scope and the key gate above used).
+      env: env,
     ),
     debug: false,
   );
@@ -137,6 +141,76 @@ void main() {
       );
       expect(boot.runtime, isNotNull);
       expect(boot.apiKey, isEmpty);
+    });
+
+    // gh-1781 review (BLOCKING): the documented canonical queue shape is
+    // an env-sourced `apiKeyEnv` (`prompts/skills/self-settings/SKILL.md`,
+    // "Provider queue"). A project/user-config queue whose key resolves
+    // from the environment is the SAME key-source situation as the
+    // env-scope queue — the "resolved NOTHING from the secure store —
+    // those providers boot keyless" alarm must stay silent for it too.
+    // The E3 test above only covers the env scope, which is why the false
+    // alarm on this flow slipped through.
+    test('IT: a project-scope queue with an env-only apiKeyEnv prints NO '
+        'store boot diagnostics', () async {
+      Directory('${tmp.path}/.fah').createSync();
+      File('${tmp.path}/.fah/config.yaml').writeAsStringSync('''
+providersQueue:
+  - provider_type: zai
+    provider_config:
+      baseUrl: https://api.z.ai/api/coding/paas/v4
+      model: glm-5.3-flash
+      apiKeyEnv: MY_CUSTOM_QUEUE_KEY
+''');
+      final boot = await _bootHeadless(
+        projectDir: tmp.path,
+        homeDir: tmp.path,
+        env: {'MY_CUSTOM_QUEUE_KEY': 'secret-123'},
+      );
+      expect(boot.runtime, isNotNull);
+      expect(boot.runtime!.streamFunction.currentModel.id, 'glm-5.3-flash');
+      expect(boot.apiKey, isEmpty);
+      // The env key resolves and the queue serves — no false "boot
+      // keyless" alarm with the wrong "re-enter a key" remediation.
+      expect(boot.bootDiagnostics, isEmpty);
+    });
+
+    // The guardrail twin: a config-scope queue entry whose key resolves
+    // from NEITHER env nor store IS store-referenced and unresolved — the
+    // warning must keep firing for it (env-resolved names drop out of the
+    // diagnostics set, env-unresolved names stay).
+    test('IT: a project-scope queue key absent from env AND store still '
+        'warns (store-referenced and unresolved)', () async {
+      Directory('${tmp.path}/.fah').createSync();
+      File('${tmp.path}/.fah/config.yaml').writeAsStringSync('''
+providersQueue:
+  - provider_type: zai
+    provider_config:
+      baseUrl: https://api.z.ai/api/coding/paas/v4
+      model: glm-5.3-flash
+      apiKeyEnv: STORE_ONLY_QUEUE_KEY
+  - provider_type: zai
+    provider_config:
+      baseUrl: https://api.z.ai/api/coding/paas/v4
+      model: glm-5.3-airx
+      apiKeyEnv: MY_CUSTOM_QUEUE_KEY
+''');
+      final boot = await _bootHeadless(
+        projectDir: tmp.path,
+        homeDir: tmp.path,
+        // MY_CUSTOM_QUEUE_KEY resolves from the env; STORE_ONLY_QUEUE_KEY
+        // resolves nowhere — entry #0 is skipped (queue warning channel)
+        // and its name is the one store-referenced key the diagnostics
+        // must still warn about.
+        env: {'MY_CUSTOM_QUEUE_KEY': 'secret-123'},
+      );
+      expect(boot.runtime, isNotNull);
+      expect(boot.runtime!.streamFunction.currentModel.id, 'glm-5.3-airx');
+      expect(boot.bootDiagnostics, hasLength(1));
+      expect(boot.bootDiagnostics.single, allOf(
+        contains('1 provider key(s)'),
+        contains('resolved NOTHING'),
+      ));
     });
   });
 

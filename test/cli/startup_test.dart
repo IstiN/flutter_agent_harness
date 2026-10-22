@@ -1500,6 +1500,67 @@ void main() {
       expect(names, contains('MY_CUSTOM_QUEUE_KEY'));
       expect(referencedSecureKeyNames(CliConfig()), isEmpty);
     });
+
+    // gh-1781 review (BLOCKING): a queue key name the environment resolves
+    // is NOT store-referenced — the same rule freshInstallProviderState
+    // applies. The documented env-keyed project/user-config queue must not
+    // feed the "resolved NOTHING … boot keyless" store alarm.
+    test('referencedSecureKeyNames drops queue key names the environment '
+        'resolves; env-unresolved names stay store-referenced', () {
+      final names = referencedSecureKeyNames(
+        CliConfig(),
+        queueEntries: [
+          ProviderQueueEntry(
+            providerType: 'anthropic',
+            model: 'm1',
+            apiKeyEnv: 'ENV_SET_QUEUE_KEY',
+          ),
+          ProviderQueueEntry(
+            providerType: 'anthropic',
+            model: 'm2',
+            apiKeyEnv: 'EMPTY_ENV_QUEUE_KEY',
+          ),
+          ProviderQueueEntry(
+            providerType: 'chatgpt-codex',
+            model: 'gpt-5-codex',
+            refreshTokenEnv: 'STORE_ONLY_REFRESH',
+          ),
+        ],
+        env: const {
+          'ENV_SET_QUEUE_KEY': 'env-value-1',
+          'EMPTY_ENV_QUEUE_KEY': '',
+        },
+      );
+      // Env-resolved name drops out; an EMPTY env value is not a
+      // resolution (freshInstallProviderState's rule) — the name stays;
+      // the env-unset refreshTokenEnv name stays.
+      expect(names, {'EMPTY_ENV_QUEUE_KEY', 'STORE_ONLY_REFRESH'});
+      // The chatgpt default Keychain slot (no apiKeyEnv named) is
+      // env-unset here, so it stays store-referenced too.
+      expect(names, contains(chatGptOAuthCredentialsEnvName));
+    });
+
+    test('the env filter scopes to queue names only — legacy referenced '
+        'names never env-filter (byte-identical legacy diagnostics)', () {
+      final legacy = CliConfig(
+        customProviders: [
+          CustomProviderEntry(
+            name: 'chatgpt.com',
+            apiType: 'openai',
+            baseUrl: 'https://api.chatgpt.com/v1',
+            modelId: 'gpt-5',
+            keyName: 'FA_KEY_CHATGPT_COM',
+          ),
+        ],
+      );
+      expect(
+        referencedSecureKeyNames(
+          legacy,
+          env: const {'FA_KEY_CHATGPT_COM': 'env-value-1'},
+        ),
+        {'FA_KEY_CHATGPT_COM'},
+      );
+    });
   });
 
   group('webSearchSecrets', () {

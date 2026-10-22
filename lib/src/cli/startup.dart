@@ -641,11 +641,21 @@ bool freshInstallProviderState({
 /// the set via [queueEntries] (gh-1781) — a stored queue key that never
 /// resolves must say so in the boot diagnostics. Env-only setups reference
 /// nothing — the boot warning must stay silent for them (a missing env key
-/// has its own loud banner).
+/// has its own loud banner). A queue key name the [env] view resolves
+/// (non-empty value — the [freshInstallProviderState] rule) is not
+/// store-referenced either (gh-1781 review: the documented env-keyed
+/// project/user-config queue — the canonical `apiKeyEnv: SOME_ENV` shape
+/// the shipped skill doc recommends — printed a false "resolved NOTHING …
+/// boot keyless" alarm on every boot); [secureKeyPreloadNames] keeps the
+/// UNFILTERED names — preloading a name the env shadows is harmless. The
+/// env check scopes to the queue names only: legacy customProviders/roles
+/// names never env-filter (byte-identical legacy diagnostics).
 Set<String> referencedSecureKeyNames(
   CliConfig saved, {
   Iterable<ProviderQueueEntry> queueEntries = const [],
+  Map<String, String>? env,
 }) {
+  final environment = env ?? Platform.environment;
   return {
     for (final entry in saved.customProviders)
       if (entry.keyName != null) entry.keyName!,
@@ -654,7 +664,8 @@ Set<String> referencedSecureKeyNames(
         saved.modelRoles!,
         customProviders: saved.customProviders,
       ),
-    ...queueEntryKeyNames(queueEntries),
+    for (final name in queueEntryKeyNames(queueEntries))
+      if ((environment[name] ?? '').isEmpty) name,
   };
 }
 
