@@ -81,6 +81,22 @@ List<String> frameContentLines(List<String> viewport) => [
 Pattern lostSpaceTolerant(String phrase) =>
     RegExp(phrase.split(' ').map(RegExp.escape).join(' ?'));
 
+/// A `/skills` row for [skillName] whose `added mid-session` flag tail is
+/// FULLY painted. `_listSkills` renders the flag at the row's end
+/// (`…/SKILL.md (project, fah; added mid-session)`), and the TUI paints a
+/// fresh listing over several PTY writes — so the first screen frame
+/// carrying the bare flag anywhere can be MID-PAINT (gh-1639: the
+/// `latecomer` row complete, the `latecomer2` row truncated at
+/// `…/.fah/skills/` or even `Mid-sessio`; a wait on the bare flag anchored
+/// that partial frame and the flagged-row count asserted 1 ≠ 2). `.` never
+/// crosses a newline and the closing `)` must be on the SAME screen row,
+/// so a match proves the row — and with it the last flagged row of the
+/// listing — is settled. Top-level (like [maskedValueRow]) so the
+/// row-anchor rule is unit-testable without a PTY
+/// (`pty_harness_settled_skill_row_test.dart` pins both red frames).
+Pattern settledMidSessionSkillRow(String skillName) =>
+    RegExp('${RegExp.escape(skillName)}.*; added mid-session\\)');
+
 /// One finished background shell job's settle notice (`[bash] sh-…
 /// exited(code) — log`) as painted into the raw stream by the CLI; exactly
 /// one per job proves the command started AND finished. ANY exit code is
