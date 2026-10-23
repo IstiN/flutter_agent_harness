@@ -1368,40 +1368,10 @@ extension on AgentCli {
     // CrossProviderSwitch on cache evidence). Unresolved shapes — a
     // future caller handing a raw id — are still judged.
     if (!preResolvedSameProvider) {
-      final activeCandidates = _modelCandidates('');
-      switch (parseTypedModelTarget(
-        modelId,
-        activeProvider: current.provider,
-        activeCustomName: _activeCustomName,
-        activeModelIds: activeCandidates.toSet(),
-        // The backstop refuses only on CACHE EVIDENCE: with no model list
-        // for the active endpoint there is nothing to distinguish a
-        // cross-provider reference from a vendor-prefixed id that endpoint
-        // serves (OpenRouter's `openai/gpt-4o`), and the coherent legacy
-        // pasthrough wins. The routing paths above use the real resolver.
-        isKnownProvider: activeCandidates.isNotEmpty
-            ? _isKnownModelProvider
-            : (_) => false,
-      )) {
-        case SameModelSwitch():
-          break;
-        case CrossProviderSwitch():
-          io.writeln(
-            const ModelCoherenceRefusal(
-              problem:
-                  '"/model" reuse cannot carry a cross-provider pick — '
-                  'model ids never ride a foreign provider/endpoint/key '
-                  'triple',
-              fields: ['provider', 'baseUrl', 'key'],
-              repair:
-                  '/model <provider>/<id> resolves the whole triple, or '
-                  '/provider <provider> first',
-            ).message,
-          );
-          return;
-        case RefusedSwitch(:final refusal):
-          io.writeln(refusal.message);
-          return;
+      final refusal = _backstopCrossProviderRefusal(modelId);
+      if (refusal != null) {
+        io.writeln(refusal);
+        return;
       }
     }
     // An endpoint-reported window/cap beats the carried one (the catalog
@@ -1499,6 +1469,54 @@ extension on AgentCli {
     // _recordCustomModel ALWAYS notifies the host (not just with an active
     // custom entry) — the single onModelChanged fire for this switch.
     await _recordCustomModel(modelId);
+  }
+
+  /// The G1 backstop verdict (gh-178) for an id reaching [_switchModel]
+  /// UNRESOLVED — no [preResolvedSameProvider] caller vouches for it: null
+  /// when the same-provider reuse shape may apply, the refusal message
+  /// when the shape is a cross-provider reference. Kept as its own
+  /// dispatcher so the switch lives in one cohesive, directly testable
+  /// place (the CRAP ratchet: CC-12 in one body measures above the 12.0
+  /// line at any less-than-perfect coverage).
+  ///
+  /// The predicate is cache-evidence-gated and NARROWER than the router's
+  /// (see the [parseTypedModelTarget] kdoc): with no model list for the
+  /// active endpoint there is nothing to distinguish a cross-provider
+  /// reference from a vendor-prefixed id that endpoint serves (OpenRouter's
+  /// `openai/gpt-4o`), and the coherent legacy pasthrough wins. The
+  /// routing paths above use the real resolver.
+  ///
+  /// The `RefusedSwitch` arm exists for the sealed-class exhaustiveness
+  /// check only — [parseTypedModelTarget] currently never constructs one —
+  /// so it stays a straight passthrough of the carried refusal.
+  String? _backstopCrossProviderRefusal(String modelId) {
+    final current = _agent.state.model;
+    final activeCandidates = _modelCandidates('');
+    switch (parseTypedModelTarget(
+      modelId,
+      activeProvider: current.provider,
+      activeCustomName: _activeCustomName,
+      activeModelIds: activeCandidates.toSet(),
+      isKnownProvider: activeCandidates.isNotEmpty
+          ? _isKnownModelProvider
+          : (_) => false,
+    )) {
+      case SameModelSwitch():
+        return null;
+      case CrossProviderSwitch():
+        return const ModelCoherenceRefusal(
+          problem:
+              '"/model" reuse cannot carry a cross-provider pick — '
+              'model ids never ride a foreign provider/endpoint/key '
+              'triple',
+          fields: ['provider', 'baseUrl', 'key'],
+          repair:
+              '/model <provider>/<id> resolves the whole triple, or '
+              '/provider <provider> first',
+        ).message;
+      case RefusedSwitch(:final refusal):
+        return refusal.message;
+    }
   }
 
   /// `/model-edit [contextWindow|maxTokens <n>]`: shows or overrides the
