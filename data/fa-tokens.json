@@ -59,15 +59,6 @@
       "model": ""
     }
   ],
-  "issue-1450": [
-    {
-      "leg": "dev",
-      "at": "2026-10-09T22:50:52Z",
-      "prompt": 512802,
-      "completion": 115894,
-      "total": 628696
-    }
-  ],
   "issue-1455": [
     {
       "leg": "dev",
@@ -4890,6 +4881,17 @@
       "completion": 25021,
       "total": 111696,
       "cacheRead": 1354112,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-1814": [
+    {
+      "leg": "dev",
+      "at": "2026-10-23T23:27:06Z",
+      "prompt": 100571,
+      "completion": 43554,
+      "total": 144125,
+      "cacheRead": 4556608,
       "model": "glm-5.3-flash"
     }
   ]
