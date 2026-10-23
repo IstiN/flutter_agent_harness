@@ -306,7 +306,21 @@ jobs:
           # re-resolves a new engine build on every 3.47.x patch and moves
           # the canvaskit/skwasm rev-hash dir the gate tracks. Bump
           # consciously, with any floor reseed in the same PR.
-          flutter-version: '3.47.7'
+          #
+          # 3.47.4 specifically (gh-1800 follow-up): the pure-CocoaPods
+          # lane leans on FLUTTER_SWIFT_PACKAGE_MANAGER=0, and 3.47.7 no
+          # longer honors it — on the pinned-3.47.7 self-hosted runners
+          # the --config-only pass adds SPM integration despite the pin
+          # (run 40022900373, after the SPM-residue clean from #1812,
+          # so residue is excluded), tripping the min-platform gate.
+          # Verified locally: 3.47.4 + the pin + a clean tree produces
+          # zero SPM state. flutter/flutter#193978 (flag removal) landed
+          # between 3.47.4 and 3.47.7 — the day the workflow comment
+          # above predicted. The long-term fix is the SPM lane with
+          # raised floors (owner ruling: min macOS may be raised);
+          # until that card, the release lane pins the last honoring
+          # patch.
+          flutter-version: '3.47.4'
 
       - name: Setup host toolchains
         run: |
