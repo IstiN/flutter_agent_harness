@@ -5012,6 +5012,15 @@
       "total": 196436,
       "cacheRead": 5759424,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-23T13:08:39Z",
+      "prompt": 152110,
+      "completion": 39897,
+      "total": 192007,
+      "cacheRead": 7115008,
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-1800": [
