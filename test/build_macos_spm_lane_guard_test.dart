@@ -48,33 +48,39 @@ String stepScriptOf(String workflowPath, String job, String stepName) {
 }
 
 void main() {
-  test('AC1 — build-macos job pins FLUTER_SWIFT_PACKAGE_MANAGER=0 (gh-180)',
-      () {
-    final job = jobsOf(workflowPath)[jobName] as YamlMap;
-    final env = job['env'] as YamlMap?;
-    expect(env, isNotNull, reason: 'the build-macos job must carry an env block');
-    final pin = env?['FLUTTER_SWIFT_PACKAGE_MANAGER']?.toString();
-    expect(
-      pin,
-      '0',
-      reason:
-          'Flutter 3.47 stable ships the SwiftPM feature enabled-by-default; '
-          'without the pin every fresh-clone build re-enters the '
-          'FlutterGeneratedPluginSwiftPackage lane whose 12.0 floor bump '
-          'depends on a silent xcodebuild -showBuildSettings read — the '
-          'exact mechanism that red run 39905803673 (gh-180) when a '
-          '14.0-floored product existed. The pods lane (Podfile.lock) '
-          'builds every macOS plugin at the Podfile platform instead.',
-    );
-  });
+  test(
+    'AC1 — build-macos job pins FLUTER_SWIFT_PACKAGE_MANAGER=0 (gh-180)',
+    () {
+      final job = jobsOf(workflowPath)[jobName] as YamlMap;
+      final env = job['env'] as YamlMap?;
+      expect(
+        env,
+        isNotNull,
+        reason: 'the build-macos job must carry an env block',
+      );
+      final pin = env?['FLUTTER_SWIFT_PACKAGE_MANAGER']?.toString();
+      expect(
+        pin,
+        '0',
+        reason:
+            'Flutter 3.47 stable ships the SwiftPM feature enabled-by-default; '
+            'without the pin every fresh-clone build re-enters the '
+            'FlutterGeneratedPluginSwiftPackage lane whose 12.0 floor bump '
+            'depends on a silent xcodebuild -showBuildSettings read — the '
+            'exact mechanism that red run 39905803673 (gh-180) when a '
+            '14.0-floored product existed. The pods lane (Podfile.lock) '
+            'builds every macOS plugin at the Podfile platform instead.',
+      );
+    },
+  );
 
   test('AC2 — Build macOS release step: config-only + min-platform gate '
       'before the release build', () {
-    final steps = (jobsOf(workflowPath)[jobName] as YamlMap)['steps']
-        as YamlList;
+    final steps =
+        (jobsOf(workflowPath)[jobName] as YamlMap)['steps'] as YamlList;
     final buildStep = steps.whereType<YamlMap>().firstWhere(
-          (s) => (s['name']?.toString() ?? '').startsWith(buildStepPrefix),
-        );
+      (s) => (s['name']?.toString() ?? '').startsWith(buildStepPrefix),
+    );
     final script = buildStep['run'].toString();
 
     expect(
@@ -106,8 +112,9 @@ void main() {
   test('AC3 — the committed pbxproj keeps the Runner-target floor shape the '
       'gate asserts (3×14.0, nothing else)', () {
     final pbxproj = read('flutter_app/macos/Runner.xcodeproj/project.pbxproj');
-    final entries =
-        RegExp(r'MACOSX_DEPLOYMENT_TARGET = ([^;]+);').allMatches(pbxproj);
+    final entries = RegExp(
+      r'MACOSX_DEPLOYMENT_TARGET = ([^;]+);',
+    ).allMatches(pbxproj);
     expect(entries, isNotEmpty);
     for (final m in entries) {
       expect(

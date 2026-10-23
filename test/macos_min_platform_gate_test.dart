@@ -54,7 +54,8 @@ const appMin = '14.0';
 
 /// A minimal Runner.xcodeproj shape the gate accepts: exactly the Runner
 /// target's three configs (Debug/Release/Profile) carry the floor.
-String pbxprojWith(String deploymentTargetLine) => '''
+String pbxprojWith(String deploymentTargetLine) =>
+    '''
 \t\t33CC10F9 /* Debug */ = {
 \t\t\tisa = XCBuildConfiguration;
 \t\t\tbuildSettings = {
@@ -113,8 +114,7 @@ void addSpmState(
       'FlutterGeneratedPluginSwiftPackage;\n',
     );
   }
-  final pkgs =
-      '${tree.path}/flutter_app/macos/Flutter/ephemeral/Packages';
+  final pkgs = '${tree.path}/flutter_app/macos/Flutter/ephemeral/Packages';
   if (generatedFloor != null) {
     final generated = File(
       '$pkgs/FlutterGeneratedPluginSwiftPackage/Package.swift',
@@ -133,11 +133,11 @@ void addSpmState(
 }
 
 ProcessResult runGate(Directory tree, {String min = appMin}) {
-  return Process.runSync(
-    'bash',
-    [File(scriptPath).absolute.path, min, tree.path],
-    workingDirectory: tree.path,
-  );
+  return Process.runSync('bash', [
+    File(scriptPath).absolute.path,
+    min,
+    tree.path,
+  ], workingDirectory: tree.path);
 }
 
 void main() {
@@ -156,10 +156,7 @@ void main() {
   });
 
   test('AC1 — clean pods-lane tree passes', () {
-    final tree = makeTree(
-      pbxproj: pbxprojWith('14.0;'),
-      podfile: cleanPodfile,
-    );
+    final tree = makeTree(pbxproj: pbxprojWith('14.0;'), podfile: cleanPodfile);
     final r = runGate(tree);
     expect(r.exitCode, 0, reason: 'stdout: ${r.stdout}\nstderr: ${r.stderr}');
     expect(r.stdout, contains('OK'));
@@ -167,10 +164,7 @@ void main() {
 
   test('AC2a — FlutterGeneratedPluginSwiftPackage in pbxproj fails loud '
       'with the lane remediation', () {
-    final tree = makeTree(
-      pbxproj: pbxprojWith('14.0;'),
-      podfile: cleanPodfile,
-    );
+    final tree = makeTree(pbxproj: pbxprojWith('14.0;'), podfile: cleanPodfile);
     addSpmState(tree); // marker only — floors would all be fine
     final r = runGate(tree);
     expect(r.exitCode, 1, reason: 'SPM re-entry must fail the gate');
@@ -180,10 +174,7 @@ void main() {
   });
 
   test('AC2b — a plugin that regained Package.swift fails loud', () {
-    final tree = makeTree(
-      pbxproj: pbxprojWith('14.0;'),
-      podfile: cleanPodfile,
-    );
+    final tree = makeTree(pbxproj: pbxprojWith('14.0;'), podfile: cleanPodfile);
     // Package.swift mere presence is the SwiftPM opt-in signal (gh-1798).
     final vendored = File(
       '${tree.path}/vendor/flutter_inappwebview_macos/macos/'
@@ -199,15 +190,8 @@ void main() {
 
   test('AC3 — the literal gh-180 shape (generated 12.0 + product 14.0) '
       'fails with the floor message', () {
-    final tree = makeTree(
-      pbxproj: pbxprojWith('14.0;'),
-      podfile: cleanPodfile,
-    );
-    addSpmState(
-      tree,
-      generatedFloor: '12.0',
-      pluginFloors: ['14.0'],
-    );
+    final tree = makeTree(pbxproj: pbxprojWith('14.0;'), podfile: cleanPodfile);
+    addSpmState(tree, generatedFloor: '12.0', pluginFloors: ['14.0']);
     final r = runGate(tree);
     expect(r.exitCode, 1);
     final out = '${r.stdout}${r.stderr}';
@@ -218,10 +202,7 @@ void main() {
 
   test('AC4 — floor scan catches a violation in a LATER manifest '
       '(multi-item)', () {
-    final tree = makeTree(
-      pbxproj: pbxprojWith('14.0;'),
-      podfile: cleanPodfile,
-    );
+    final tree = makeTree(pbxproj: pbxprojWith('14.0;'), podfile: cleanPodfile);
     addSpmState(
       tree,
       generatedFloor: '14.0',
@@ -235,15 +216,8 @@ void main() {
 
   test('AC4b — SPM state with coherent floors still fails the lane pin, '
       'with the bump-skip diagnostic', () {
-    final tree = makeTree(
-      pbxproj: pbxprojWith('14.0;'),
-      podfile: cleanPodfile,
-    );
-    addSpmState(
-      tree,
-      generatedFloor: '12.0',
-      pluginFloors: ['10.15', '11.0'],
-    );
+    final tree = makeTree(pbxproj: pbxprojWith('14.0;'), podfile: cleanPodfile);
+    addSpmState(tree, generatedFloor: '12.0', pluginFloors: ['10.15', '11.0']);
     final r = runGate(tree);
     expect(
       r.exitCode,
@@ -261,12 +235,8 @@ void main() {
     expect(out, contains('12.0'));
   });
 
-  test('AC5a — MACOSX_DEPLOYMENT_TARGET drift below the app floor fails',
-      () {
-    final tree = makeTree(
-      pbxproj: pbxprojWith('13.0;'),
-      podfile: cleanPodfile,
-    );
+  test('AC5a — MACOSX_DEPLOYMENT_TARGET drift below the app floor fails', () {
+    final tree = makeTree(pbxproj: pbxprojWith('13.0;'), podfile: cleanPodfile);
     expect(runGate(tree).exitCode, 1);
   });
 
@@ -302,10 +272,6 @@ void main() {
     // The gate's default repo-root resolution: run it with no root arg from
     // the repo root — the state this task ships must be green by default.
     final r = Process.runSync('bash', [scriptPath, appMin]);
-    expect(
-      r.exitCode,
-      0,
-      reason: 'stdout: ${r.stdout}\nstderr: ${r.stderr}',
-    );
+    expect(r.exitCode, 0, reason: 'stdout: ${r.stdout}\nstderr: ${r.stderr}');
   });
 }
