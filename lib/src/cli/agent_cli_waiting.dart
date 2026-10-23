@@ -133,6 +133,18 @@ final class _WaitingCoordinator {
       _printLiveness(toolLivenessReminderLine(call, _clock()));
     },
     onEscalate: (call) {
+      // Issue #1786 AC4: the watchdog's escalate rung first offers the
+      // budget ladder the action — when it fires, surfacing the one-key
+      // offer IS the escalation (its `foreground_budget` record, terminal
+      // line and `b` affordance land via the event path) and the
+      // display-only lines here would be a duplicate beat. The ladder
+      // declining (no silent in-flight call / no pending steering /
+      // already acted) keeps the legacy behavior byte-identical (REG-3:
+      // budget-not-hit cadence unchanged).
+      if (_cli._foregroundBudgetControls.requestOffer()) {
+        budgetOfferRequested = true;
+        return;
+      }
       if (!_cli._useTui) {
         _printLiveness(toolLivenessEscalationLine(call, _clock()));
       }
@@ -280,6 +292,11 @@ final class _WaitingCoordinator {
 
   /// Nudges sent overall — the dedup/cap test seam's observable.
   int _nudgesSent = 0;
+
+  /// Whether the last escalation handed the action to the budget ladder's
+  /// offer (issue #1786 AC4) instead of the legacy escalation+nudge —
+  /// the AC4 test seam's observable.
+  bool budgetOfferRequested = false;
 
   /// Refills the per-turn nudge budget (issue #1185 E2).
   void resetToolNudges() {
@@ -1110,6 +1127,11 @@ extension AgentCliWaitingSeams on AgentCli {
   /// the same reset a fresh turn performs, without driving a new prompt.
   @visibleForTesting
   void resetToolNudgesForTest() => _waiting.resetToolNudges();
+
+  /// Test seam: whether the last escalation routed through the budget
+  /// ladder's offer (issue #1786 AC4) instead of the legacy nudge.
+  @visibleForTesting
+  bool get budgetOfferRequestedForTest => _waiting.budgetOfferRequested;
 
   /// Test seam: fires one reasoning-liveness evaluation now (gh-1198),
   /// the analog of [toolLivenessTickForTest].

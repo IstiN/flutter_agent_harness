@@ -78,6 +78,8 @@ const _nestedKeySources = <String, String>{
   'cube.enabled': 'lib/src/cube/config/cube_settings.dart',
   'cube.config': 'lib/src/cube/config/cube_settings.dart',
   'agent.contextWindowCap': 'lib/src/cli/cli_config.dart',
+  'agent.foregroundCallBudgetSeconds': 'lib/src/cli/cli_config.dart',
+  'agent.foregroundCallAutoConvert': 'lib/src/cli/cli_config.dart',
   'power.sleepPrevention': 'lib/src/cli/cli_config.dart',
   'power.hold': 'lib/src/cli/cli_config.dart',
   'providerTimeouts.connectTimeoutMs': 'lib/src/cli/cli_config.dart',

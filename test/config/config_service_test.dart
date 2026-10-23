@@ -8,6 +8,7 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/src/cli/cli_config.dart';
 import 'package:flutter_agent_harness/src/agent/stuck_tool.dart';
+import 'package:flutter_agent_harness/src/agent/foreground_call_budget.dart';
 import 'package:flutter_agent_harness/src/config/config_service.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/power_config.dart';
@@ -1093,6 +1094,42 @@ void main() {
       );
     });
 
+    test('agent validation agrees on the foregroundCall leaves (#1786)', () {
+      // Same mirror discipline as stuckTool: each leaf validates through
+      // ForegroundCallBudgetConfig.fromLeaves — the exact parser the
+      // boot parser applies — so `fa config set` can never accept what
+      // the boot rejects (and vice versa).
+      final badSeconds =
+          loadYaml('agent:\n  foregroundCallBudgetSeconds: 0\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(badSeconds), throwsConfigException);
+      expect(
+        () => validateAgentSection(badSeconds['agent']),
+        throwsConfigException,
+      );
+      final badConvert =
+          loadYaml('agent:\n  foregroundCallAutoConvert: maybe\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(badConvert), throwsConfigException);
+      expect(
+        () => validateAgentSection(badConvert['agent']),
+        throwsConfigException,
+      );
+      final good =
+          loadYaml(
+                'agent:\n'
+                '  foregroundCallBudgetSeconds: 300\n'
+                '  foregroundCallAutoConvert: auto\n',
+              )
+              as YamlMap;
+      final agentNode = good['agent'] as YamlMap;
+      expect(() => validateAgentSection(agentNode), returnsNormally);
+      expect(() => CliConfig.fromYaml(good), returnsNormally);
+      expect(
+        CliConfig.fromYaml(good).foregroundCall?.budget,
+        const Duration(seconds: 300),
+      );
+      expect(CliConfig.fromYaml(good).foregroundCall?.autoConvert, isTrue);
+    });
+
     test('everything the agent emitter renders passes the strict '
         'mirror validator', () {
       // Emitter↔validator parity, mechanically: every shape
@@ -1104,6 +1141,12 @@ void main() {
         CliConfig(agentLoadMode: 'pi'),
         CliConfig(misuseBreaker: false),
         CliConfig(stuckTool: StuckToolConfig(floor: Duration(seconds: 90))),
+        CliConfig(
+          foregroundCall: ForegroundCallBudgetConfig(
+            budget: Duration(seconds: 300),
+            autoConvert: true,
+          ),
+        ),
         CliConfig(
           contextWindowCap: 256000,
           agentLoadMode: 'omp',

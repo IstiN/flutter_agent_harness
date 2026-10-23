@@ -366,6 +366,25 @@ class HepWriter {
             detail: redactionPipeline?.redact(detail) ?? detail,
           ),
         );
+      case ToolCallBudgetEvent(
+        :final toolCallId,
+        :final toolName,
+        :final elapsed,
+        :final action,
+        :final rung,
+        :final steeringCount,
+      ):
+        _emit(
+          hepToolLivenessFrame(
+            turnId: _turnId(),
+            id: toolCallId,
+            name: toolName,
+            action: action.label,
+            elapsedMs: elapsed.inMilliseconds,
+            outputBytes: 0,
+            detail: 'rung ${rung.label} steering=$steeringCount',
+          ),
+        );
       default:
         break;
     }

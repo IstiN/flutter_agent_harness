@@ -243,8 +243,13 @@ retry:                         # chain fallback policy
 providerTimeouts:              # GLOBAL fallback: only these two keys
   connectTimeoutMs: 180000
   streamIdleTimeoutMs: 300000
-agent:                         # strict: only contextWindowCap (issue #273)
+agent:                         # strict: contextWindowCap (issue #273) +
+                               # foreground-call budget keys (issue #1786)
   contextWindowCap: 262144     # owner context cap; min 16384 = the compaction reserve
+  foregroundCallBudgetSeconds: 600  # foreground tool-call budget B in seconds;
+                                    # int > 0, default 600 (10 min)
+  foregroundCallAutoConvert: offer  # rung-1 behavior at B/2: offer (default, ask)
+                                    # or auto (convert to background unattended)
 images:                        # session image registry (strict): send-once
   registry: true               # kill switch — false = byte-for-byte legacy
   maxPerRequest: 20            # per-request unique-image cap (default 20)

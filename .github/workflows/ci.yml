@@ -2328,7 +2328,25 @@ jobs:
         run: |
           cd office_addin/e2e
           npm ci
-          npx playwright install --with-deps chromium webkit
+          # The browser download is this step's one network-bound leg. A
+          # starved runner can stall it past the job budget without ever
+          # erroring (2026-10-23: the install hung 40m, no test started,
+          # and the same run's pub get reported an unhealthy network), so
+          # each attempt is time-capped and retried — mirrors the pub-get
+          # wrapper's bounded-retry shape.
+          install_ok=false
+          for attempt in 1 2 3; do
+            if timeout 600 npx playwright install --with-deps chromium webkit; then
+              install_ok=true
+              break
+            fi
+            echo "::warning::playwright install failed (attempt $attempt/3) — retrying in 15s"
+            sleep 15
+          done
+          if [ "$install_ok" != "true" ]; then
+            echo "::error::playwright install failed after 3 attempts — the runner's network to the browser CDN/apt is unhealthy"
+            exit 1
+          fi
           npx playwright test --reporter=line
 
       - name: Upload assembled add-in

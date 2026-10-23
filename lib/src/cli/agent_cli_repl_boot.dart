@@ -208,6 +208,7 @@ extension on AgentCli {
         onPickerSelected: _tuiPickerSelected,
         onPickerCancelled: _tuiPickerCancelled,
         onSteer: _steerTuiMessages,
+        onBudgetAccept: acceptOutstandingBudgetOffer,
         pathCandidates: pathCandidatesFor,
         onHubAction: (action, key) => _onHubAction(action, key),
         readClipboardImage: () => readPasteboardImage(),

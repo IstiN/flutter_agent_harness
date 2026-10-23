@@ -47,6 +47,7 @@ export const KNOWN_EVENT_KINDS: readonly string[] = [
   'task_ledger',
   'tool_call_heartbeat',
   'tool_call_stuck',
+  'tool_call_budget',
 ];
 
 /** Host-interaction request kinds — answered with the matching `_response` command. */
@@ -322,7 +323,8 @@ export function decodeEvent(frame: WireFrame): DecodedWireEvent {
       kind === 'tool_execution_update' ||
       kind === 'tool_execution_end' ||
       kind === 'tool_call_heartbeat' ||
-      kind === 'tool_call_stuck'
+      kind === 'tool_call_stuck' ||
+      kind === 'tool_call_budget'
     ) {
       requireString(frame, 'toolCallId');
       requireString(frame, 'toolName');

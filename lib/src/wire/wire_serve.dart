@@ -42,7 +42,8 @@ library;
 
 import 'dart:async';
 
-import '../agent/agent_loop.dart' show AgentEvent, ToolCallStuckEvent;
+import '../agent/agent_loop.dart'
+    show AgentEvent, ToolCallBudgetEvent, ToolCallStuckEvent;
 import '../approval/approval.dart';
 import '../redact/redaction_pipeline.dart';
 import '../tools/ask_tool.dart';
@@ -285,6 +286,23 @@ final class WireServeServer {
         args: event.args,
         elapsed: event.elapsed,
         action: event.action,
+        detail: pipeline.redact(event.detail),
+        timestamp: event.timestamp,
+      );
+    }
+    // Same bridge surface, same secret rule: a budget event's detail is a
+    // transcript-grade announcement (and the escalation path can embed
+    // partial output) — masked before the frame leaves for the client.
+    if (event is ToolCallBudgetEvent && redactionPipeline != null) {
+      final pipeline = redactionPipeline!;
+      event = ToolCallBudgetEvent(
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args: event.args,
+        rung: event.rung,
+        action: event.action,
+        elapsed: event.elapsed,
+        steeringCount: event.steeringCount,
         detail: pipeline.redact(event.detail),
         timestamp: event.timestamp,
       );

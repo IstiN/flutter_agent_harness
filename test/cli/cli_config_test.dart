@@ -1069,6 +1069,133 @@ prompts:
           );
         },
       );
+
+      test('absent foregroundCall leaves parse to null (issue #1786)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: omp\n');
+        expect(loadCliConfig(tmp.path).foregroundCall, isNull);
+      });
+
+      test('parses the foregroundCall leaves into the budget config', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n'
+          '  foregroundCallBudgetSeconds: 300\n'
+          '  foregroundCallAutoConvert: auto\n',
+        );
+        final fg = loadCliConfig(tmp.path).foregroundCall;
+        expect(fg, isNotNull);
+        expect(fg!.budget, const Duration(seconds: 300));
+        expect(fg.autoConvert, isTrue);
+        // One leaf present keeps the other's default (fromLeaves).
+        file.writeAsStringSync('agent:\n  foregroundCallBudgetSeconds: 90\n');
+        final half = loadCliConfig(tmp.path).foregroundCall;
+        expect(half!.budget, const Duration(seconds: 90));
+        expect(half.autoConvert, isFalse);
+      });
+
+      test('rejects a bad foregroundCallBudgetSeconds', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        // 0, negative, non-int all hit the same strict positive-integer
+        // error; a quoted "600" is a string, not an int.
+        for (final raw in ['0', '-5', '"600"', 'true']) {
+          file.writeAsStringSync(
+            'agent:\n  foregroundCallBudgetSeconds: $raw\n',
+          );
+          expect(
+            () => loadCliConfig(tmp.path),
+            throwsA(
+              isA<ConfigException>().having(
+                (e) => e.message,
+                'message',
+                contains(
+                  '"agent.foregroundCallBudgetSeconds" must be a positive '
+                  'integer',
+                ),
+              ),
+            ),
+            reason: 'foregroundCallBudgetSeconds: $raw',
+          );
+        }
+        // A per-tool override map is rejected in the core tier too.
+        file.writeAsStringSync(
+          'agent:\n  foregroundCallBudgetSeconds:\n    bash: 30\n',
+        );
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains(
+                '"agent.foregroundCallBudgetSeconds" must be a positive '
+                'integer',
+              ),
+            ),
+          ),
+        );
+      });
+
+      test('rejects a bad foregroundCallAutoConvert', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  foregroundCallAutoConvert: 5\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('"agent.foregroundCallAutoConvert" must be a string'),
+            ),
+          ),
+        );
+        file.writeAsStringSync('agent:\n  foregroundCallAutoConvert: maybe\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('"agent.foregroundCallAutoConvert" must be "offer"'),
+            ),
+          ),
+        );
+      });
+
+      test('toYaml keeps non-default foreground leaves, omits defaults', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n'
+          '  foregroundCallBudgetSeconds: 300\n'
+          '  foregroundCallAutoConvert: auto\n',
+        );
+        final loaded = loadCliConfig(tmp.path);
+        expect(
+          loaded.withCustomProviders(loaded.customProviders).toYaml(),
+          contains(
+            'agent:\n'
+            '  foregroundCallBudgetSeconds: 300\n'
+            '  foregroundCallAutoConvert: auto\n',
+          ),
+        );
+        // Explicit defaults round-trip to absence (the file stays
+        // minimal).
+        file.writeAsStringSync(
+          'agent:\n'
+          '  foregroundCallBudgetSeconds: 600\n'
+          '  foregroundCallAutoConvert: offer\n',
+        );
+        final defaults = loadCliConfig(tmp.path);
+        expect(
+          defaults.withCustomProviders(defaults.customProviders).toYaml(),
+          isNot(contains('foregroundCall')),
+        );
+      });
     });
   });
 
@@ -1641,8 +1768,10 @@ memory:
           isA<ConfigException>().having(
             (e) => e.message,
             'message',
-            contains('"trajectory.requestBlobMaxMb" must be a positive '
-                'integer'),
+            contains(
+              '"trajectory.requestBlobMaxMb" must be a positive '
+              'integer',
+            ),
           ),
         ),
       );
@@ -1653,8 +1782,10 @@ memory:
           isA<ConfigException>().having(
             (e) => e.message,
             'message',
-            contains('"trajectory.requestBlobTtlDays" must be a positive '
-                'integer'),
+            contains(
+              '"trajectory.requestBlobTtlDays" must be a positive '
+              'integer',
+            ),
           ),
         ),
       );
@@ -1724,8 +1855,7 @@ memory:
       expect(tunedReloaded.trajectoryRequestBlobTtlDays, 7);
     });
 
-    test('gh-1745: loadProjectTrajectorySection carries the whole section',
-        () {
+    test('gh-1745: loadProjectTrajectorySection carries the whole section', () {
       final file = File('${tmp.path}/.fah/config.yaml');
       file.createSync(recursive: true);
       file.writeAsStringSync('other: 1\n');

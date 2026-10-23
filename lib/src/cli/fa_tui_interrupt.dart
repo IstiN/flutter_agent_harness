@@ -17,6 +17,13 @@ extension FaTuiModelInterrupt on FaTuiModel {
         // never quits the program.
         callbacks.onInterrupt?.call();
         return (this, null);
+      case 'b':
+        // The budget offer's one-key accept (issue #1786): consumed ONLY
+        // when an offer is actually outstanding — an offer-less or idle
+        // `b` falls through to the composer (returning null keeps the
+        // edit cluster reachable, so typing `b` never regresses).
+        if (callbacks.onBudgetAccept?.call() ?? false) return (this, null);
+        return null;
       default:
         return null;
     }

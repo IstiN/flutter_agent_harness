@@ -32,6 +32,7 @@ import 'agent_loop.dart';
 import 'message_cap.dart' show MessageCapPolicy;
 import 'misuse_breaker.dart';
 import 'stuck_tool.dart';
+import 'foreground_call_budget.dart';
 import 'tool_registry.dart';
 
 /// Thrown (as [ArgumentError]) when neither a tool executor nor a tool
@@ -145,6 +146,10 @@ final class _PendingMessageQueue {
 
   bool hasItems() => _messages.isNotEmpty;
 
+  /// How many messages are queued (issue #1786: the budget ladder's rung-1
+  /// "steering FIFO non-empty" gate and its announcement counts).
+  int get pendingCount => _messages.length;
+
   List<Message> drain() {
     if (mode == QueueMode.all) {
       final drained = List.of(_messages);
@@ -218,6 +223,7 @@ class Agent {
     this.messageCapRelief,
     this.toolMisuseBreaker,
     this.stuckTool,
+    this.foregroundCall,
     this.finalizeGate = false,
     this.operativeSkills = const [],
     Set<String>? reportedOrphanKeys,
@@ -384,6 +390,18 @@ class Agent {
   /// plus the autonomous cancel/retry/convert follow-up. `null` =
   /// unsupervised.
   final StuckToolConfig? stuckTool;
+
+  /// Foreground tool-call budget (issue #1786), threaded into every
+  /// [AgentLoopConfig]: bounds how long a running foreground tool call can
+  /// keep the agent unreachable by steering. `null` = the 10-minute
+  /// default applies.
+  final ForegroundCallBudgetConfig? foregroundCall;
+
+  /// Late-wirable host controls for the budget ladder's one-key offer and
+  /// the watchdog escalate hook (issue #1786) — set by the interactive host
+  /// after construction, same pattern as [externalSteeringSource]. `null` =
+  /// headless/unattended: rung 1 waits for rung 2 (or auto-converts).
+  ForegroundCallBudgetControls? foregroundBudgetControls;
 
   /// External messages merged into the steering poll at every turn boundary
   /// (before the first turn and after each one) — e.g. the agent's inbox in
@@ -702,6 +720,9 @@ class Agent {
       messageCapPolicy: messageCapPolicy,
       messageCapRelief: messageCapRelief,
       stuckTool: stuckTool,
+      foregroundCallBudget: foregroundCall,
+      foregroundBudgetControls: foregroundBudgetControls,
+      pendingSteeringCount: () => _steeringQueue.pendingCount,
       toolExecution: toolExecution,
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,

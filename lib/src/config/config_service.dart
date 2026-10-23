@@ -31,6 +31,7 @@ import 'package:yaml/yaml.dart';
 
 import '../a2a/a2a_config.dart';
 import '../agent/stuck_tool.dart';
+import '../agent/foreground_call_budget.dart';
 import '../cli/custom_providers.dart';
 import '../cli/tui_status_line.dart' show parseTuiSection;
 import '../compaction/compaction_engine.dart';
@@ -1435,9 +1436,12 @@ void validateProviderTimeoutsSection(Object? node) {
 /// `mode` (the load preset `default|pi|omp`, validated by the shared
 /// [agentLoadModeValidationError] rule), `misuseBreaker` (a boolean —
 /// gh-1572 makes the emitter render the kill switch, so the mirror has
-/// to accept it or `fa config check` false-fails on fa's own output) and
+/// to accept it or `fa config check` false-fails on fa's own output),
 /// `stuckTool` (validated with the section's own strict parser, the same
-/// one the boot parser applies).
+/// one the boot parser applies) and the issue-#1786 foreground-budget
+/// leaves (`foregroundCallBudgetSeconds`, `foregroundCallAutoConvert` —
+/// each validated through [ForegroundCallBudgetConfig.fromLeaves], the
+/// same strict parser the boot parser applies).
 ///
 /// The per-key checks live in [_agentKeyValidators] — the same
 /// table-driven shape the section dispatch above uses — so the dispatch
@@ -1467,6 +1471,10 @@ final _agentKeyValidators = <String, void Function(Object?)>{
   'contextWindowCap': _validateAgentCapValue,
   'misuseBreaker': _validateAgentMisuseBreakerValue,
   'stuckTool': (value) => StuckToolConfig.fromYaml(value),
+  'foregroundCallBudgetSeconds': (value) =>
+      ForegroundCallBudgetConfig.fromLeaves(budgetSeconds: value),
+  'foregroundCallAutoConvert': (value) =>
+      ForegroundCallBudgetConfig.fromLeaves(autoConvert: value),
   'mode': _validateAgentModeValue,
 };
 

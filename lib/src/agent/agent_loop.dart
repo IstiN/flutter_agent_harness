@@ -74,9 +74,11 @@ import 'message_cap.dart'
     show MessageCapPolicy, coalesceMessagesForCap, kMessageCapDefaultMargin;
 import 'misuse_breaker.dart';
 import 'stuck_tool.dart';
+import 'foreground_call_budget.dart';
 import 'tool_pairing.dart';
 
 part 'agent_loop_stuck_supervision.dart';
+part 'agent_loop_foreground_budget.dart';
 part 'agent_loop_empty_completion.dart';
 part 'agent_loop_finalize_gate.dart';
 part 'agent_loop_message_cap.dart';
@@ -433,6 +435,9 @@ final class AgentLoopConfig {
     this.wireDump = false,
     this.toolMisuseBreaker,
     this.stuckTool,
+    this.foregroundCallBudget,
+    this.pendingSteeringCount,
+    this.foregroundBudgetControls,
     this.finalizeGate = false,
     this.operativeSkills = const [],
     this.reportedOrphanKeys,
@@ -554,6 +559,25 @@ final class AgentLoopConfig {
   /// `null` = unsupervised (byte-identical legacy behavior).
   final StuckToolConfig? stuckTool;
 
+  /// Foreground tool-call budget (issue #1786): bounds how long a running
+  /// foreground tool call can keep the agent unreachable by steering.
+  /// `null` = the default budget applies (10 minutes, offer at B/2) — the
+  /// bounded-unreachability invariant is on by default.
+  final ForegroundCallBudgetConfig? foregroundCallBudget;
+
+  /// Peeks how many steering messages are queued WITHOUT draining them
+  /// (issue #1786): gates the rung-1 offer ("steering FIFO non-empty") and
+  /// supplies the steering count for the escalation announcements. Null
+  /// when the host has no in-process steering queue (rung 1 never fires on
+  /// the steering condition; rung 2 still bounds the window).
+  final int Function()? pendingSteeringCount;
+
+  /// Host-created CLI→loop controls for the budget ladder (the one-key
+  /// "background & deliver steering" accept and the watchdog's escalate
+  /// invocation). `null` = headless/unattended: rung 1 waits for rung 2
+  /// (or auto-converts when configured); the watchdog keeps its nudge.
+  final ForegroundCallBudgetControls? foregroundBudgetControls;
+
   /// The FinalizeGate (gh-1412): when true (unattended/bench runs), the
   /// loop parses the `task-ledger` fenced block out of the run's final
   /// assistant message and emits [TaskLedgerEvent] so hosts persist the
@@ -615,6 +639,9 @@ final class AgentLoopConfig {
       wireDump: wireDump,
       toolMisuseBreaker: toolMisuseBreaker,
       stuckTool: stuckTool,
+      foregroundCallBudget: foregroundCallBudget,
+      pendingSteeringCount: pendingSteeringCount,
+      foregroundBudgetControls: foregroundBudgetControls,
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,
       reportedOrphanKeys: reportedOrphanKeys,
@@ -2211,6 +2238,9 @@ Future<_ExecutedToolCallBatch> _executeToolCallsSequential(
           cancelToken,
           emit,
           stuckTool: config.stuckTool,
+          foregroundCallBudget: config.foregroundCallBudget,
+          foregroundBudgetControls: config.foregroundBudgetControls,
+          pendingSteeringCount: config.pendingSteeringCount,
         ),
         config,
         cancelToken,
@@ -2273,6 +2303,9 @@ Future<_ExecutedToolCallBatch> _executeToolCallsParallel(
             cancelToken,
             emit,
             stuckTool: config.stuckTool,
+            foregroundCallBudget: config.foregroundCallBudget,
+            foregroundBudgetControls: config.foregroundBudgetControls,
+            pendingSteeringCount: config.pendingSteeringCount,
           );
           final finalized = await _finalizeExecutedToolCall(
             context,
@@ -2408,6 +2441,9 @@ Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
   CancelToken? cancelToken,
   AgentEventSink emit, {
   StuckToolConfig? stuckTool,
+  ForegroundCallBudgetConfig? foregroundCallBudget,
+  ForegroundCallBudgetControls? foregroundBudgetControls,
+  int Function()? pendingSteeringCount,
 }) async {
   final updateEvents = <Future<void>>[];
   var acceptingUpdates = true;
@@ -2439,13 +2475,22 @@ Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
       stuckTool != null &&
       stuckTool.enabled &&
       !stuckTool.excludes(toolCall.name);
-  final execution = supervised
+  // Issue #1786: the foreground budget supervises every call the stuck
+  // supervisor's exclusion list does not exempt (human-blocking tools,
+  // subagents) — it is the unconditional outer bound, on by default.
+  final budgetApplies = _budgetAppliesTo(toolCall.name);
+  final execution = supervised || budgetApplies
       ? _superviseToolExecution(
           toolCall: toolCall,
           run: run,
           runToken: cancelToken,
-          stuck: stuckTool,
+          stuck: supervised ? stuckTool : null,
           emit: emit,
+          budget: budgetApplies
+              ? (foregroundCallBudget ?? const ForegroundCallBudgetConfig())
+              : null,
+          controls: foregroundBudgetControls,
+          pendingSteeringCount: pendingSteeringCount,
         )
       : run(cancelToken);
   try {

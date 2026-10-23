@@ -1665,6 +1665,7 @@ Future<void> _runApp(List<String> args) async {
         trajectoryRequestBlobTtlDays: trajectoryRequestBlobTtlDays,
         contextWindowCap: saved.contextWindowCap,
         stuckTool: saved.stuckTool,
+        foregroundCall: saved.foregroundCall,
         subagents: saved.subagents,
         jobs: saved.jobs,
         headless: saved.headless,

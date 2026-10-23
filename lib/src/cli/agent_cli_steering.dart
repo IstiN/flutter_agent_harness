@@ -92,7 +92,14 @@ extension AgentCliSteering on AgentCli {
         // HOW MUCH is saved, not just a per-message nudge; the stall
         // copy stays classifier-driven (#514): /restart + esc recovery.
         final queued = _pendingSteering.length + 1;
-        io.writeln(tuiWarning(_stallBannerLine(queued: queued)));
+        io.writeln(
+          tuiWarning(
+            _stallBannerLine(
+              queued: queued,
+              budgetOffer: hasOutstandingBudgetOffer,
+            ),
+          ),
+        );
       }
       // Issue #1760: bound an oversized steer BEFORE it joins the FIFO —
       // spill fires here, and the FIFO, the session record and the
@@ -357,7 +364,7 @@ extension AgentCliSteering on AgentCli {
   /// if the run wakes" copy that offered no recovery action. Every
   /// stall symptom — banner, panel label, busy row — reads the SAME
   /// classifier ([_runLooksWedged]).
-  String _stallBannerLine({int queued = 0}) {
+  String _stallBannerLine({int queued = 0, bool budgetOffer = false}) {
     final last = _lastAgentEventAt;
     final seconds = last == null
         ? 0
@@ -380,8 +387,16 @@ extension AgentCliSteering on AgentCli {
       final saved = queued == 1
           ? '1 steering message saved to the session'
           : '$queued steering messages saved to the session';
+      // Issue #1786: with a budget offer outstanding, `b` is the real-time
+      // affordance — background the call and deliver the steering NOW,
+      // next to the post-mortem levers. budgetOffer=false keeps the line
+      // byte-identical (REG-3).
+      final budgetNote = budgetOffer
+          ? '; press b to background the running call & deliver steering now'
+          : '';
       return '⚠ agent stalled — no response for ${minutes}m$windowNote. '
-          '$saved: /restart delivers it into a fresh run, esc aborts';
+          '$saved: /restart delivers it into a fresh run, esc aborts'
+          '$budgetNote';
     }
     return 'info: agent stalled — no response for ${minutes}m$windowNote. '
         '/restart starts a fresh run, esc aborts';
@@ -396,7 +411,10 @@ extension AgentCliSteering on AgentCli {
     _tuiController?.setRunStalled(stalled);
     if (stalled) {
       final queued = _pendingSteering.length;
-      final line = _stallBannerLine(queued: queued);
+      final line = _stallBannerLine(
+        queued: queued,
+        budgetOffer: hasOutstandingBudgetOffer,
+      );
       io.writeln(queued > 0 ? tuiWarning(line) : _style.dim(line));
     }
   }
