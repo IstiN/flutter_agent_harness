@@ -1,0 +1,297 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-23T02:32:47.609Z",
+  "ticketKey": "pr-1794",
+  "headSha": "a72e65688d185d783a6caf5099d4053eee6451fb",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:8ca8e4474da519f4",
+      "size": 112987
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:9b103f50d9ed4a37",
+      "size": 2050982
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:05e4380360a0930d",
+      "size": 312
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:40fc959cc6807dd9",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:2fa63f3b998c9af9",
+      "size": 32206
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:f8ba7ae9be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:d7d54f9175613e05",
+      "size": 3142
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:f2fd5b76c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:b395ad33dc5d3e18",
+      "size": 2911
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:c8ed49d029e25928",
+      "size": 2803
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:a62ab990",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread: barrel insertion breaks the append-only order (gh-1232)\n\n**Status: fixed** on this push.\n\n`export 'src/cli/model_switch_coherence.dart';` moved out of the mid-group insertion point (between `custom_providers.dart` and `key_status.dart`) to the end of the run of cli exports, appended after `provider_tuning_seed.dart`. No existing line was re-sorted — the gh-1232 append-only invariant holds. No behavior change."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:55bd6fe8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the refusal `ErrorEvent` carries `stopReason: stop`, so a refused turn is misclassified as a clean empty completion and gets the auto-continue nudge**\n\n`ProviderStreamState.stopReason` defaults to `StopReason.stop` (`provider_common.dart:1289`) and this construction only sets `errorMessage` — the finalized snapshot riding the `ErrorEvent` therefore claims a **normal stop**, unlike every other terminal error in the codebase: the shared helper `pushStreamErrorEvent` sets `state.stopReason = reason` before snapshotting (`provider_common.dart:1531`), and consumers branch on the **message's** stop reason, not the event's:\n\n- `classifyEmptyCompletion` (`empty_completion.dart:88-95`): the refusal turn is empty content + `stopReason: stop` + no prior partial content → `cleanEmpty` instead of `abortedOrError`;\n- `_shouldContinueAfterEmptyReply` / `_settleAfterPrompt` (`agent_cli_run.dart:183-188`, `agent_cli_compaction.dart:1173-1174`): `cleanEmpty` fires the one-shot \"continue\" nudge — a coherence-refused session gets a second auto-continued turn (a second refusal cycle, plus the injected `continue` user message in the transcript) instead of the terminal stop the gate intends;\n- the transcript/ledger records `stopReason: stop` for a refused request (misaccounting; `_settleAfterPrompt`'s error-stop handling at `agent_cli_run.dart:167` is also skipped).\n\nThe \"zero requests\" AC still holds — but the refusal is supposed to be terminal (\"the caller must surface it INSTEAD of the request\"), and it currently behaves as a retryable empty answer.\n\n**Fix** — one line, matching the house contract:\n\n```dart\nfinal state = ProviderStreamState(model)\n  ..stopReason = StopReason.error\n  ..errorMessage = refusal.message;\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:d1881d7e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the wired G3 call site hardcodes `providerResolvable: true` — the E4 `refuse` verdict and `repairModelId` are dead at the only production call site**\n\nTwo consequences:\n\n1. `RestoreGateVerdict.refuse` (\"persisted provider no longer resolves\", the E4 branch UT-3 tests) is **unreachable from production**: the only call site passes the constant `true`. The deleted-provider case is actually handled upstream — `_buildRestoredModel` catches the `ConfigException` and returns null with its own stale note (`session_commands.dart:1157-1173`), so the gate never sees an unresolvable provider. That's fine behaviorally, but the decision core's contract over-promises: `restoreGateDecision` advertises a three-way verdict that collapses to two-way at the wired site. Either pass the real resolvability (`resolveCliProviderSpec(providerKind) != null` — even if currently redundant with `_buildRestoredModel`'s guard, it keeps the core honest) or document the precondition on the call site/core kdoc.\n\n2. `repairModelId: _agent.state.model.id` is computed and passed (line 1026) but never read: the refusal branch prints `_agent.state.model.id` directly (line 1032) and returns, and `verdict != restore` treats `repair` and `refuse` identically. If `repairModelId` is meant to be the id the session repairs to (OQ3), print/apply it; otherwise drop the parameter instead of threading dead data through a public (barrel-exported) API.\n\nAlso note the gate runs after `_restoreBindingSatisfied` early-returns (line 1005) — a boot that already applied a mixed triple skips the G3 note entirely (G2 catches it later at request-build). Worth a kdoc line so the next reader knows the gate judges only re-apply restores."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:e4f41d34",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the backstop re-parses with a different `isKnownProvider` than the router — a pick the router resolved as same-provider can be refused here**\n\n`_handleModelCommand` already resolves the target with the real resolver (`provider_models.dart:1127-1139`, `isKnownProvider: _isKnownModelProvider`) and hands `_switchModel` the resolved same-provider id. This backstop then **re-parses the same string** with a *different* predicate (cache-evidence-gated). The divergence is reachable:\n\n- Active saved entry `copilot-acme`; user types `/model copilot-acme/openai/gpt-4o` (active-identity head + a nested vendor-prefixed id that the entry's endpoint serves but the cache doesn't currently list).\n- Router: rule 1 fires first (head == active identity) → `SameModelSwitch('openai/gpt-4o')` → `_switchModel('openai/gpt-4o')`.\n- Backstop: head `openai` is a known provider, `openai/gpt-4o` ∉ `activeModelIds` (cache cold/miss) → `CrossProviderSwitch` → **loudly refused** — a pick the routing layer just resolved as a legitimate same-provider id.\n\nThe refusal is safe-direction (never a mixed triple), but it makes an existing id unswitchable until `/models` repopulates the cache, and the two layers disagree about the same input. Since every current `_switchModel` caller already passes a resolved bare id (or empty), consider having the router pass its resolved plan down (or a `preResolvedSameProvider: true` flag), so the backstop only judges *unresolved* shapes. At minimum, document that the backstop may veto router-resolved picks on cache evidence.\n\nMinor: `_modelCandidates('')` is computed twice per switch (line 1346 and line 1352) — hoist it into one local."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:22b2dfa5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: barrel insertion breaks the section's append-only order (AGENTS.md gh-1232)**\n\n`lib/flutter_agent_harness.dart` policy: \"exports sorted by path within a group, new exports **appended** to their subsystem group … no re-sorting of existing lines — append only\". This export is inserted mid-group between `custom_providers.dart` and `key_status.dart`, landing *before* `key_status.dart`/`env_provider_preconfig.dart` (which sort after `model_switch_coherence.dart`). Appending after `provider_tuning_seed.dart` (the current end of this run of cli exports) would have kept the append-only invariant. One-line move; no behavior change."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:ccb5aa7f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: two shipped gate branches have no end-to-end test**\n\nThe suite is otherwise excellent (33 tests, including the incident replay), but two user-visible branches added by this PR are never asserted end-to-end:\n\n1. **The wired G3 note branch** (`session_commands.dart:1028-1036`): no IT boots a session with a persisted triple that fails `_restoreBindingResolves` and asserts the printed note + kept boot model + unchanged wiring. UT-3 covers only the pure `restoreGateDecision`; the wiring (note text, `_agent` state untouched, no `model_change` appended) is untested. The CRAP ratchet also wants every branch of `_applyRestoredModelBinding` covered — this branch currently is only if some pre-existing restore test happens to trip it.\n\n2. **The `_switchModel` backstop refusal** (`provider_models.dart:1354-1368`): the `\"/model\" reuse cannot carry a cross-provider pick` refusal appears nowhere in `test/` — neither a case that reaches it nor an assertion of its message. Given it is the last-resort guard for the incident class, a direct test (force a cross-provider shape into `_switchModel`, assert refusal + untouched state) would pin the invariant the PR is about.\n\nBoth are cheap: follow the `incidentCli` fixture pattern already in this file."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:1d06c901",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: rule 3 can hijack router-vendor ids when the active cache is cold**\n\nPrecedence rules 1→4 are documented and test-covered, but rule 3 has a router-specific corner worth a doc line (or a fix): active = `openrouter`, live `/models` cache cold **and** the id absent from `knownModelPresets` — e.g. `/model google/gemini-2.5-flash` (a genuine OpenRouter id, `google/gemini-2.5-pro` is preset but `-flash` is not) — parses `google` as a known provider and routes a **whole-triple switch to the google catalog endpoint/key**, where pre-PR the id rode OpenRouter. The outcome is coherent and loudly printed (so not the incident class), and rule 2 wins once the cache is warm — but for router actives the user's id most often means \"vendor-prefixed id on THIS router\". Consider: when the active identity is a router-kind record, require rule-3 heads to also resolve a *different* kind before crossing, or at least extend the kdoc/example here so the trade-off is explicit for OpenRouter-style actives."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:295487d8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread: `model-switch-reg` is advisory — not wired into the required `quality-gate` aggregate\n\n**Status: fixed** on this push.\n\nThe reviewer was right: the leg ran advisory. `model-switch-reg` is now wired into every place that feeds the `quality-gate` aggregate (`.github/workflows/ci.yml`), mirroring how every other leg is wired:\n\n1. `quality-gate`'s `needs:` list — `model-switch-reg` appended, so the gate waits for it.\n2. The \"Report leg results\" step — `echo \"model-switch-reg = ${{ needs.model-switch-reg.result }}\"` added.\n3. The `R_*` env map — `R_MODEL_SWITCH_REG: ${{ needs.model-switch-reg.result }}` added.\n4. The `for kv in …` verdict loop — `\"model-switch-reg:$R_MODEL_SWITCH_REG\"` added as a **package leg** (exactly as suggested): `skipped` stays green, any other non-success result sets `dart_ok=false` AND reddens the required aggregate.\n\nBranch protection does not list `model-switch-reg` as a separate required status check — the aggregate is the required check (as the comment inferred from the repo's documented contract), so this wiring is what makes a red REG job block the merge: the gh-1788 merge rule (\"a red REG job blocks merge even with UT/IT green\") now holds at the CI layer.\n\nVerified mechanically: the workflow parses, and the four wiring points + the package-leg (non-platform) classification are asserted by a parse check over `ci.yml`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:d233ca67",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread: G2 refusal `ErrorEvent` carries `stopReason: stop` → misclassified `cleanEmpty` → auto-continue nudge\n\n**Status: fixed** on this push, with the exact one-line house-contract fix suggested:\n\n```dart\nfinal state = ProviderStreamState(model)\n  ..stopReason = StopReason.error\n  ..errorMessage = refusal.message;\n```\n\n(`lib/src/cli/provider_model_coherence.dart`, `_gateCatalogStream` — with a comment naming the gh-1788 reason.)\n\nReproduced before the fix (TDD): a new regression test in `test/cli/agent_cli_model_coherence_test.dart` (\"a refused turn records stopReason error and fires no continuation nudge\") drove the forced-mixed fixture and watched the misclassification happen live — the transcript came back with the refusal message AND **two** injected `your last reply was empty/truncated — continue the task` user messages (`classifyEmptyCompletion` verdicting `cleanEmpty` → the one-shot nudge → a second refusal cycle). After the fix the same scenario is terminal: the finalized snapshot rides `StopReason.error` (→ `abortedOrError`), `fake.calls` stays 0, and the transcript contains no continuation-nudge user message."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:d75b4b9d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread: wired G3 call site hardcodes `providerResolvable: true`; `repairModelId` is dead\n\n**Status: fixed** on this push (`lib/src/cli/session_commands.dart`, `_applyRestoredModelBinding`) — both consequences, plus the requested kdoc line:\n\n1. **Real resolvability**: the call site now passes\n   `providerResolvable: resolveCliProviderSpec(providerKind) != null`\n   instead of the constant `true`. As the comment predicted it is currently redundant with `_buildRestoredModel`'s guard (an unresolvable kind returns null before the gate), but the decision core's three-way contract is now honest at the only production call site — the E4 `refuse` verdict is reachable the moment the upstream guard changes.\n2. **`repairModelId` is now read**: the refusal branch prints the kept model as\n   `final keptId = gate.repairModelId ?? _agent.state.model.id;`\n   — OQ3's \"the id the session repairs to\" IS the boot-coherent model, so the parameter now carries real data instead of being threaded dead through a barrel-exported API.\n3. **Kdoc**: `_applyRestoredModelBinding` now documents that G3 judges only **re-apply** restores — `_restoreBindingSatisfied` early-returns when the boot already applied this exact binding, so a boot that applied a mixed triple never reaches this gate; G2 catches that at request-build.\n\nCoverage: the previously-unwired branch now has an end-to-end test (see the reply on the test-coverage thread): a persisted `anthropic`/`gpt-4o` triple that fails the validating binding boots on the launch model with the loud note, unchanged model and identical wiring."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:45f8f3e2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread: `_switchModel` backstop re-parses with a different `isKnownProvider` than the router\n\n**Status: fixed** on this push (`lib/src/cli/provider_models.dart`) with the suggested flag, plus the minor cleanup:\n\n- `_switchModel` gained `{bool preResolvedSameProvider = false}`. When true, the backstop re-parse is skipped entirely — the routing layer already resolved the id same-provider with the real resolver. All three resolved call sites pass it:\n  1. the `parseTypedModelTarget` `SameModelSwitch` case in `_handleModelCommand`,\n  2. `_applyModelEntryPick`'s same-identity branch (the `sameProviderIdentity` check is the routing-layer predicate),\n  3. `_switchCrossProviderModel`'s fallback after the `provider|model` key split resolved the pair (the same cold-cache false-refusal existed there for nested vendor ids like `kimi|openai/gpt-4o`).\n\n  The backstop now judges only **unresolved** shapes (a raw id from a future caller); the flag and the divergence are documented in its kdoc, including exactly the reviewer's example (active-identity head + nested vendor-prefixed id + cold cache → `CrossProviderSwitch` on cache evidence).\n- Minor: `_modelCandidates('')` is computed once into `activeCandidates` inside the backstop block (and not at all on the pre-resolved path).\n\nReproduced before the fix (TDD): a regression test drives the exact reviewer scenario — active saved entry `copilot-acme`, typed `/model copilot-acme/openai/gpt-4o`, the entry's endpoint serves the id but the `/models` cache does not list it. Before: loudly refused (router rule 1 said same-provider, backstop said cross). After: `switched model to openai/gpt-4o`, triple kept, no refusal. The backstop's refusal branch itself stays pinned by a direct-drive test (see the test-coverage thread reply)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:3aab3a32",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the REG leg never blocks the merge — it is not wired into the required `quality-gate` aggregate**\n\nThe PR's core merge rule — \"a red REG job blocks merge even with UT/IT green\" (this comment block, and the same claim in the PR description / gh-178 ticket) — is not implemented. In this workflow the **only** required check is the `quality-gate` aggregate (`ci.yml:116` \"quality-gate → ONE aggregate required check\"; `ci.yml:2494-2497` \"only the aggregate Quality gate is a required check\"). The new `model-switch-reg` job is missing from every place that feeds that aggregate:\n\n1. `quality-gate`'s `needs:` list (`ci.yml:360`) — `model-switch-reg` absent, so the gate job doesn't even wait for it;\n2. the \"Report leg results\" echo list (`ci.yml:3395-3424`) — absent;\n3. the `R_*` env map and the `for kv in …` verdict loop (`ci.yml:3445-3482`) — absent, so a `failure` result from this leg reddens nothing.\n\nNet effect: the REG suite runs as an **advisory** check. A future red `model-switch-reg` (the exact failure this PR exists to make merge-blocking) merges clean with UT/IT green — the bug gh-178 is meant to close is still open at the CI layer.\n\n**Fix** (mirrors how every other leg is wired):\n\n```yaml\n  quality-gate:\n    needs: [release-pending, release-dedupe, changes, static, …, extension-size-gate,\n            model-switch-reg]          # + add here\n    env:\n      R_MODEL_SWITCH_REG: ${{ needs.model-switch-reg.result }}   # + add here\n```\n\nand add `\"model-switch-reg:$R_MODEL_SWITCH_REG\"` to the `for kv in` loop (package-leg arm, so skipped stays green but failure blocks `dart_ok` + the aggregate), plus one `echo \"model-switch-reg = …\"` line to the report step.\n\n(If branch protection separately lists `model-switch-reg` as a required status check, please say so in the PR — but the repo's documented contract is aggregate-only, and the scope-fastpass \"required context reported\" wording implies the aggregate mechanism.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:5f8729d9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread: two shipped gate branches have no end-to-end test\n\n**Status: fixed** on this push — both branches now have end-to-end coverage in `test/cli/agent_cli_model_coherence_test.dart` (a new \"rework: review-thread coverage\" group, same fixture patterns as the rest of the file):\n\n1. **The wired G3 note branch** (`session_commands.dart`): a session is seeded, a per-folder model state is persisted with a triple that BUILDS (`buildCliDefaultModel` resolves `anthropic` and builds any id) but FAILS the validating binding constructor (`gpt-4o` on the family-exclusive anthropic endpoint → `_restoreBindingResolves` false), and the resumed boot asserts:\n   - the printed note (`model coherence refusal: persisted model \"gpt-4o\" does not form a valid binding with provider \"anthropic\" …` + the `/provider` repair),\n   - the kept boot model (`keeping start-model`), state untouched (`start-model` @ `test-provider` @ `https://example.test`),\n   - the wiring is identical (same `streamFunction` instance as before boot), no `restored gpt-4o` line.\n   That also covers the `_applyRestoredModelBinding` branch the CRAP ratchet wants seen.\n\n2. **The `_switchModel` backstop refusal** (`provider_models.dart`): a new `@visibleForTesting` seam `switchModelUnresolvedForTest` drives `_switchModel` with a RAW cross-provider shape (`kimi/kimi-for-coding` while the copilot entry is active) — no router resolution, the shape an unresolved caller would hand it. The test asserts the `\"/model\" reuse cannot carry a cross-provider pick` refusal message with the `/provider` repair, the untouched triple (`gemini-4-argon` @ copilot), and zero stream calls. The seam is what keeps the backstop testable after the thread-4 fix routed resolved picks around it.\n\nAll 38 tests in the two coherence files pass; the full `test/cli/` suite was re-run green before this reply (4076+ tests, see `outputs/response.md`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:97e1aeb0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread: rule 3 can hijack router-vendor ids when the active cache is cold\n\n**Status: fixed** on this push via the doc-line option (the fix alternative was deliberately not taken: rerouting rule-3 heads away for router actives would also block the legitimate \"move OFF the router to the vendor catalog while the cache is cold\" switch, and the outcome today is coherent and loudly printed — not the incident's silent class).\n\n- `parseTypedModelTarget`'s kdoc (`lib/src/cli/model_switch_coherence.dart`) now documents the ROUTER-ACTIVE trade-off explicitly, with the exact example from this thread: active = OpenRouter, cache cold and the id absent from `knownModelPresets` → `google/gemini-2.5-flash` parses `google` as a known provider and moves the WHOLE triple to the google catalog endpoint/key, where the id most often meant \"vendor-prefixed id on THIS router\". It also states the mitigations: the outcome is coherent and loudly printed (never the silent incident class), rule 2 wins once the cache is warm, and typing the bare id (rule 4) stays on the router for unlisted ids.\n- A pinning UT was added (`model_switch_coherence_test.dart`, \"router actives with a COLD cache: rule 3 crosses to the vendor record — the documented trade-off\") asserting `google/gemini-2.5-flash` on a cold-cache openrouter active resolves `CrossProviderSwitch(google, gemini-2.5-flash)` — so the documented trade-off cannot drift silently."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:ee2c0999",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: validation CI red — `ci_1267_path_triggered_legs_test.dart` AC2 pin broken by the `quality-gate` needs edit**\n\nThe rework correctly wired `model-switch-reg` into the aggregate (verified: `needs:` ci.yml:3360, report echo ci.yml:3405, `R_MODEL_SWITCH_REG` ci.yml:3441, verdict loop ci.yml:3485 in the package arm) — but the needs entry was **appended after `extension-size-gate`**, and `test/ci_1267_path_triggered_legs_test.dart:200` pins the exact tail of that list:\n\n```\nExpected: contains 'install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]'\n  Which: does not contain …  (the list now ends \"…extension-size-gate, model-switch-reg]\")\n```\n\nReproduced locally on this head (`dart test test/ci_1267_path_triggered_legs_test.dart` → failed at line 200); the same failure reddened **Core tests shard 3/4** and **Hostile ambient env** on commit `1ddfaa1c` (see `ci_failures_full.log` lines 1656/20635).\n\n**Fix** — either of:\n1. Move `model-switch-reg` earlier in the needs list (e.g. right after `guards`) so the pinned tail `…extension-size-gate]` matches again — zero test churn; or\n2. Update the pin in `test/ci_1267_path_triggered_legs_test.dart:200-206` to the new tail (`…extension-size-gate, model-switch-reg]`).\n\nOption 1 is preferred: the pin's purpose (\"quality-gate must NEED the leg\") stays byte-identical and no guard test changes."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:a5677158",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: validation CI red — `ci_release_pending_guard_test.dart` AC1: `model-switch-reg` entered the gate closure without a changes-keyed `if` and without a `pathBlindLegs` entry**\n\nAdding `model-switch-reg` to `quality-gate`'s `needs:` (ci.yml:3360) pulls the job into `_gateClosure` — and AC1 of the gh-1551 guard (`test/ci_release_pending_guard_test.dart:163-189`) then requires every guarded, non-path-blind job's `if` to carry BOTH the release-pending guard AND a `needs.changes.outputs.*` reference:\n\n```\nExpected: contains <RegExp: pattern=needs\\.changes\\.outputs\\.[a-z0-9-]+>\n  Actual: 'needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true''\ngh-1551: the guard must be ANDed ON TOP of `model-switch-reg`'s changes-keyed condition, not replace it …\n```\n\nReproduced locally on this head; reddened **Core tests shard 1/4** and **Hostile ambient env** on commit `1ddfaa1c` (see `ci_failures_full.log` lines 8437/29100).\n\nThis job's changes keying lives at STEP level (the checkout/setup/pub-get/test steps), exactly like the `guards` leg — whose job-level `if` is also guard-only. `guards` passes because it is listed in `pathBlindLegs` (`test/ci_release_pending_guard_test.dart:98-112`).\n\n**Fix** — add `model-switch-reg` to `pathBlindLegs` with the same classification comment (step-level changes keying, job-if guard-only), mirroring `guards`:\n\n```dart\nconst pathBlindLegs = {\n  …\n  'guards',\n  'model-switch-reg', // step-level changes keying (see the job body); job-if carries the gh-1551 guard only\n  …\n```\n\n(Alternative — key the job-level `if` on `needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'` — would change the leg's skip semantics and is NOT the house pattern; prefer the `pathBlindLegs` entry.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:c6cae948",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread: validation CI red — `ci_1267_path_triggered_legs_test.dart` AC2 needs-tail pin broken\n\n**Status: fixed** on this push, with the preferred Option 1 (zero test churn — the pin stays byte-identical).\n\n`model-switch-reg` moved out of the tail position in `quality-gate`'s `needs:` list to sit right after `guards` (both are whole-tree gate legs that key changes at step level):\n\n```yaml\nneeds: [release-pending, release-dedupe, changes, static, flutter-analyze,\n        test-core, coverage-gate, guards, model-switch-reg, flutter-tests, …,\n        office-addin-suite, extension-size-gate]\n```\n\nThe pinned tail `install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]` matches again, and the pin's purpose (\"quality-gate must NEED the leg\") is untouched — `dart test test/ci_1267_path_triggered_legs_test.dart` is green (11/11).\n\nWhile applying this, the same test's second pin caught one more byte-level detail: the verdict-loop tail `…\"office-addin-suite:$R_OFFICE_ADDIN\" \"extension-size-gate:$R_EXT_SIZE\"; do` is also pinned, so the loop entry moved before the `flutter-app-exzone` line too — every pinned tail in the gate body is now byte-identical to main, with `model-switch-reg` present in `needs:`, the report echo, the `R_*` map and the verdict loop (package arm), verified by a parse check plus both guard test files green (19/19 combined)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:a893b986",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread: validation CI red — `ci_release_pending_guard_test.dart` AC1: gate-closure entry without changes keying or `pathBlindLegs`\n\n**Status: fixed** on this push, with the suggested `pathBlindLegs` entry (the job-level-`if` alternative was rejected exactly for the reason given — it would change the leg's skip semantics and is not the house pattern).\n\n`model-switch-reg` is classified in `test/ci_release_pending_guard_test.dart`'s `pathBlindLegs` set, mirroring `guards` with the same classification comment:\n\n```dart\nconst pathBlindLegs = {\n  …\n  'coverage-gate',\n  'guards',\n  // gh-1788: step-level changes keying (the checkout/setup/pub-get/test\n  // steps), job-if carries the gh-1551 guard only — same shape as `guards`.\n  'model-switch-reg',\n  'dep-audit',\n  …\n```\n\nThe job body keeps its step-level changes keying (`needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'` on every checkout/setup/pub-get/test step) and the job-level `if` keeps the gh-1551 guard only — exactly like `guards`. AC1 now passes: `dart test test/ci_release_pending_guard_test.dart` is green (7/7), and the combined run over both CI-invariant test files is 19/19."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:1dbdfa47",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gate design is sound and well-tested (33 new tests; full `test/cli/` green; `dart analyze lib test` clean), but two blocking defects must be fixed first: the new `model-switch-reg` CI leg is **not wired into the required `quality-gate` aggregate** (missing from its `needs:`, the `R_*` map and the verdict loop), so a red REG run never blocks the merge — the PR's own merge rule is not actually implemented; and the G2 refusal `ErrorEvent` never sets `stopReason`, so a coherence-refused turn records `stop` and triggers the empty-reply \"continue\" nudge (a second, pointless refusal cycle) instead of terminating.\n\n**Key Issues**:\n- 🚨 `model-switch-reg` is advisory: absent from `quality-gate` needs + verdict loop (`ci.yml:360`, `ci.yml:3472`) — REG red merges clean.\n- 🚨 G2 refusal snapshot carries `stopReason: stop` (`provider_model_coherence.dart:22`) → misclassified `cleanEmpty` → auto-continue nudge + misrecorded transcript.\n- ⚠️ G3 call site hardcodes `providerResolvable: true` — the E4 refuse verdict and `repairModelId` are dead at the only wired site.\n- ⚠️ `_switchModel` backstop re-parses with a different `isKnownProvider` than the router — can refuse a pick the router already resolved same-provider (nested vendor-prefix + cold cache).\n- 💡 Barrel insertion breaks append-only order; wired G3 note branch and backstop refusal branch lack end-to-end tests; rule-3 can reroute cold-cache router ids to the vendor catalog (documented trade-off, worth a doc line).\n- Nit: PR description says the switch paths funnel through `switchModelCoherently` — the actual symbol is `_applyModelEntryPick`.\n\n**Next Steps**:\n1. Add `model-switch-reg` to `quality-gate`'s `needs:`, the `R_*` env map and the verdict loop (package-leg arm).\n2. Set `state.stopReason = StopReason.error` on the G2 refusal stream (one line).\n3. Address the two ⚠️ items and re-run `dart test test/cli/` (all 4076 currently pass — keep it that way)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:54ffa10d",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1788 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 1ddfaa1cf7065b545cadf7d814df23bef70fe814 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:fbfee41a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (re-review, head `1ddfaa1c`)\n\n**Summary**: All 7 threads from the previous round are verified fixed in the tree (stopReason, aggregate wiring, G3 resolvability + `keptId`, `preResolvedSameProvider`, barrel order, 5 new coverage tests, rule-3 kdoc — 38/38 coherence tests, `dart analyze lib test` clean), but the rework's `ci.yml` edits broke two CI-invariant meta-tests: validation CI is red on the head (3 jobs: Hostile ambient env, Core shard 1/4, Core shard 3/4), so the merge gate is red.\n\n**Key Issues**:\n- 🚨 `ci_1267_path_triggered_legs_test.dart:200` — the exact needs-tail pin (`…extension-size-gate]`) no longer matches: `model-switch-reg` was appended after `extension-size-gate` in `quality-gate`'s needs. Fix: insert the leg earlier in the list (e.g. after `guards`) or update the pin.\n- 🚨 `ci_release_pending_guard_test.dart:182` (AC1) — `model-switch-reg` is now in the gate closure but has no `needs.changes.outputs.*` in its job `if` and no `pathBlindLegs` entry. Fix: add it to `pathBlindLegs` mirroring `guards` (step-level changes keying).\n\n**Next Steps**:\n1. Apply the two one-line fixes above; local repro: `dart test test/ci_release_pending_guard_test.dart test/ci_1267_path_triggered_legs_test.dart` (currently `17 passed, 2 failed`).\n2. Re-run validation — everything else is green on this head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:e82602b6",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head a72e65688d185d783a6caf5099d4053eee6451fb — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:14dd965a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Re-review of head `a72e65688d`: all 9 threads from rounds 1–2 verified fixed in the tree — the 7 gh-1788 functional findings (stopReason=error on G2 refusal, aggregate `quality-gate` wiring, real `providerResolvable` + `keptId`, `preResolvedSameProvider` on all three call sites, barrel order, 5 new coverage tests, rule-3 trade-off doc) and both round-2 CI-invariant regressions (`model-switch-reg` repositioned after `guards` in needs with byte-identical pinned tails; verdict-loop entry moved ahead of the pinned tail; `pathBlindLegs` entry mirroring `guards`). Validation CI is green on this head (no red notices for `a72e65688d`).\n\n**Key Issues**: none — `issueCounts` all zero.\n\n**Verification on this head**: `dart test test/ci_release_pending_guard_test.dart test/ci_1267_path_triggered_legs_test.dart` → 19/19; coherence suites → 38/38; `dart analyze lib test` → No issues found; full `dart test test/cli/` → 4098 passed, 6 skipped, exit 0."
+    }
+  ]
+}
