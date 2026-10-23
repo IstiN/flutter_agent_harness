@@ -823,13 +823,14 @@ String removeYamlPath(String text, List<String> segments) {
 
 /// The index of the line declaring `segments[depth]` at [cursor]'s block
 /// level, or -1. The scan stops when the indentation backs out of the
-/// parent block. A key matches in BOTH on-disk spellings — the bare form
-/// and the `jsonEncode`-quoted form the typed emitters render
-/// (`models.overrides` providers/model ids, `models.custom` names —
-/// `ModelCapabilityOverrides.toYaml`); the two spell the SAME yaml key,
-/// and missing the quoted one used to insert a duplicate bare chain
-/// whose pre-write parse threw `YamlException: Duplicate mapping key`
-/// (gh-1787).
+/// parent block. A key matches in EVERY on-disk spelling of the SAME
+/// mapping key — the bare form, the `jsonEncode`-double-quoted form the
+/// typed emitters render (`models.overrides` providers/model ids,
+/// `models.custom` names — `ModelCapabilityOverrides.toYaml`), and the
+/// single-quoted form hand-edited files use (`'copilot':` ≡ `copilot:` —
+/// the gh-1787 rework review); missing any of them inserts a duplicate
+/// chain whose pre-write parse throws
+/// `YamlException: Duplicate mapping key` (gh-1787).
 int _findKeyLine(
   List<String> lines,
   List<String> segments,
@@ -839,8 +840,11 @@ int _findKeyLine(
   final indent = '  ' * depth;
   final tail = r':(\s.*)?$';
   final key = RegExp.escape(segments[depth]);
-  final quoted = RegExp.escape(jsonEncode(segments[depth]));
-  final pattern = RegExp('^${RegExp.escape(indent)}(?:$key|$quoted)$tail');
+  final doubleQuoted = RegExp.escape(jsonEncode(segments[depth]));
+  final singleQuoted = RegExp.escape(_singleQuotedKey(segments[depth]));
+  final pattern = RegExp(
+    '^${RegExp.escape(indent)}(?:$key|$doubleQuoted|$singleQuoted)$tail',
+  );
   for (var i = cursor; i < lines.length; i++) {
     if (_indentOf(lines[i]) < depth * 2 && i > cursor) break;
     if (pattern.hasMatch(lines[i])) return i;
@@ -872,7 +876,10 @@ bool _inlineSafeLine(String line) {
 /// `ModelCapabilityOverrides.toYaml`) grows a quoted key, never a bare
 /// duplicate that the yaml parser reads as a SECOND mapping entry (the
 /// duplicate threw `YamlException: Duplicate mapping key` at the pre-
-/// write validation, and the write never landed).
+/// write validation, and the write never landed). Per level (gh-1787
+/// rework review): only the FIRST inserted level has real siblings — it
+/// takes the parent block's spelling; every deeper fresh level has no
+/// visible children and stays bare (the legacy shape).
 String _insertChain(
   List<String> lines,
   List<String> segments,
@@ -885,16 +892,22 @@ String _insertChain(
   if (depth == 0 && lines.isNotEmpty && lines.last.trim().isNotEmpty) {
     lines.add('');
   }
-  final quoted = depth > 0 && _childrenQuoted(lines, cursor - 1, depth);
-  String spelling(String key) => quoted ? jsonEncode(key) : key;
+  final childSpelling = depth > 0
+      ? _childKeySpelling(lines, cursor - 1, depth)
+      : _bareKey;
+  String spelling(String key, int level) =>
+      level == depth ? childSpelling(key) : key;
   var at = insertAt;
   for (var d = depth; d < segments.length; d++) {
     final isLeaf = d == segments.length - 1;
     if (isLeaf && leafLines.length == 1 && _inlineSafeLine(leafLines[0])) {
-      lines.insert(at, '${'  ' * d}${spelling(segments[d])}: ${leafLines[0]}');
+      lines.insert(
+        at,
+        '${'  ' * d}${spelling(segments[d], d)}: ${leafLines[0]}',
+      );
       break;
     }
-    lines.insert(at++, '${'  ' * d}${spelling(segments[d])}:');
+    lines.insert(at++, '${'  ' * d}${spelling(segments[d], d)}:');
     if (isLeaf) {
       for (final line in leafLines) {
         lines.insert(at++, line);
@@ -904,21 +917,40 @@ String _insertChain(
   return _join(lines, hadTrailingNewline);
 }
 
-/// Whether the existing children of the block opened at [parentLine] spell
-/// their keys quoted (`"key":` — the typed emitters' jsonEncode shape).
-/// The first non-comment key line at [childDepth]'s exact indent decides;
-/// grandchildren are skipped, a dedent ends the block. A parent with no
-/// visible children (fresh section) stays bare — the legacy shape.
-bool _childrenQuoted(List<String> lines, int parentLine, int childDepth) {
+/// The bare spelling (the identity) — the legacy shape for a block whose
+/// visible children carry no quotes.
+String _bareKey(String key) => key;
+
+/// The single-quoted spelling of a yaml mapping key (`'key':`): legal
+/// yaml spelling the SAME mapping key as the bare form — the hand-edited
+/// shape the gh-1787 rework review flagged (`'copilot':` ≡ `copilot:`).
+/// A literal single quote inside is doubled (`''`), the yaml
+/// single-quoted escape — the spelling a single-quoted emitter renders.
+String _singleQuotedKey(String key) => "'${key.replaceAll("'", "''")}'";
+
+/// The key spelling the visible children of the block opened at
+/// [parentLine] use, as a key renderer: `"key":` (jsonEncode — the typed
+/// emitters' shape), `'key':` (the hand-edited single-quoted shape — the
+/// same yaml mapping key), or bare. The first non-comment key line at
+/// [childDepth]'s exact indent decides; grandchildren are skipped, a
+/// dedent ends the block. A parent with no visible children (fresh
+/// section) stays bare — the legacy shape.
+String Function(String) _childKeySpelling(
+  List<String> lines,
+  int parentLine,
+  int childDepth,
+) {
   final indent = '  ' * childDepth;
   for (var i = parentLine + 1; i < lines.length; i++) {
     final line = lines[i];
     if (line.trim().isEmpty || _indentOf(line) > childDepth * 2) continue;
-    if (_indentOf(line) < childDepth * 2) return false;
+    if (_indentOf(line) < childDepth * 2) return _bareKey;
     if (line.startsWith('$indent#')) continue;
-    return line.startsWith('$indent"');
+    if (line.startsWith('$indent"')) return (key) => jsonEncode(key);
+    if (line.startsWith("$indent'")) return _singleQuotedKey;
+    return _bareKey;
   }
-  return false;
+  return _bareKey;
 }
 
 /// Swaps the leaf key line at [found] for [leafLines]: a single line keeps
@@ -936,8 +968,19 @@ String _replaceLeaf(
   final comment = _trailingComment(lines[found]);
   // The found line's own spelling is preserved (gh-1787): a quoted key
   // line is rewritten quoted — the edit stays byte-stable within its
-  // block's style instead of flipping the key to the bare form.
-  final keyText = lines[found].startsWith('$indent"') ? jsonEncode(key) : key;
+  // block's style instead of flipping the key to the bare form. Both
+  // quoted spellings of the SAME key are recognized (gh-1787 rework
+  // review): the emitters' jsonEncode form and the hand-edited
+  // single-quoted form.
+  final raw = lines[found];
+  final String keyText;
+  if (raw.startsWith('$indent"')) {
+    keyText = jsonEncode(key);
+  } else if (raw.startsWith("$indent'")) {
+    keyText = _singleQuotedKey(key);
+  } else {
+    keyText = key;
+  }
   if (leafLines.length == 1 && _inlineSafeLine(leafLines[0])) {
     lines[found] = '$indent$keyText: ${leafLines[0]}$comment';
     return _join(lines, hadTrailingNewline);

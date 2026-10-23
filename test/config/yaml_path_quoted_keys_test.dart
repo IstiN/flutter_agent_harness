@@ -288,25 +288,27 @@ models:
       expect((caps['gemini-4-argon'] as YamlMap)['contextWindow'], 131072);
     });
 
-    test('a single-quoted key holding a quote matches (the doubled escape)',
-        () {
-      // `it''s` is the yaml single-quoted escape of `it's`.
-      const quoted = '''
+    test(
+      'a single-quoted key holding a quote matches (the doubled escape)',
+      () {
+        // `it''s` is the yaml single-quoted escape of `it's`.
+        const quoted = '''
 models:
   custom:
     'it''s a model':
       provider: openai-completions
 ''';
-      final edited = upsertYamlPath(
-        quoted,
-        ['models', 'custom', "it's a model", 'modelId'],
-        ['gpt-5'],
-      );
-      final doc = loadYaml(edited) as YamlMap;
-      final entry = (doc['models'] as YamlMap)['custom'] as YamlMap;
-      expect(entry.length, 1, reason: 'edited in place, not duplicated');
-      expect((entry["it's a model"] as YamlMap)['modelId'], 'gpt-5');
-    });
+        final edited = upsertYamlPath(
+          quoted,
+          ['models', 'custom', "it's a model", 'modelId'],
+          ['gpt-5'],
+        );
+        final doc = loadYaml(edited) as YamlMap;
+        final entry = (doc['models'] as YamlMap)['custom'] as YamlMap;
+        expect(entry.length, 1, reason: 'edited in place, not duplicated');
+        expect((entry["it's a model"] as YamlMap)['modelId'], 'gpt-5');
+      },
+    );
   });
 
   group('removeYamlPath on a single-quoted block (gh-1787 rework)', () {
@@ -339,25 +341,22 @@ models:
   });
 
   group('the inserted chain spelling is per level (gh-1787 rework)', () {
-    test(
-      'only the first inserted level takes the block spelling; deeper '
-      'fresh levels stay bare',
-      () {
-        final edited = upsertYamlPath(
-          _incidentConfig,
-          ['models', 'overrides', 'copilot', 'gpt-5', 'maxTokens'],
-          ['32768'],
-        );
-        // First inserted level: real siblings (the quoted gemini entry) —
-        // the block's quoted spelling.
-        expect(edited, contains('"gpt-5":'));
-        // Deeper fresh levels have no visible children — the legacy bare
-        // shape (the key-spelling helper's own doc: a parent with no
-        // visible children stays bare).
-        expect(edited, contains('maxTokens: 32768'));
-        expect(edited, isNot(contains('"maxTokens":')));
-      },
-    );
+    test('only the first inserted level takes the block spelling; deeper '
+        'fresh levels stay bare', () {
+      final edited = upsertYamlPath(
+        _incidentConfig,
+        ['models', 'overrides', 'copilot', 'gpt-5', 'maxTokens'],
+        ['32768'],
+      );
+      // First inserted level: real siblings (the quoted gemini entry) —
+      // the block's quoted spelling.
+      expect(edited, contains('"gpt-5":'));
+      // Deeper fresh levels have no visible children — the legacy bare
+      // shape (the key-spelling helper's own doc: a parent with no
+      // visible children stays bare).
+      expect(edited, contains('maxTokens: 32768'));
+      expect(edited, isNot(contains('"maxTokens":')));
+    });
 
     test('a single-level insert into a quoted block stays quoted', () {
       final edited = upsertYamlPath(

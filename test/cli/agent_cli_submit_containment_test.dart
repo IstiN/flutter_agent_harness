@@ -322,8 +322,7 @@ void main() {
       },
     );
 
-    test('a leading header behind blank space still resolves to the cause',
-        () {
+    test('a leading header behind blank space still resolves to the cause', () {
       final line = submitErrorPanelLine(
         '\n  Unhandled exception:  \nStateError: boot failed\n#1 frame',
       );
@@ -465,7 +464,6 @@ void main() {
   });
 
   group('the settings-hub picker route (IT-4, gh-1787 rework)', () {
-
     test(
       'a throwing onModelChanged through the hub\'s Model capabilities row '
       'renders the one-line panel, never a raw stack (IT-4)',
@@ -486,7 +484,12 @@ void main() {
         // flagged as unguarded (the flow's primary entry).
         final submit = cli.tuiSubmitForTest('/settings', const []);
         await submit;
-        await cli.tuiWizardPickForTest('settings', 'model-caps');
+        // NOT awaited up front: the future IS the flow — it completes
+        // only when the flow ends (the picker dispatch awaits its
+        // handler). Awaiting it here would deadlock on the flow's own
+        // wizard prompts; after the forced throw it must resolve
+        // CONTAINED (below), never rethrow the raw StateError.
+        final hubPick = cli.tuiWizardPickForTest('settings', 'model-caps');
         // The caps flow menu: the incident's pinned entry is listed —
         // pick it straight to the per-model caps menu.
         await waitForIt(() => frames.plain.contains('Pin or edit an override'));
@@ -514,6 +517,9 @@ void main() {
           '65536',
         );
         await picked;
+        // The containment verdict for the flagged route: the dispatch
+        // future resolves instead of dumping a raw stack.
+        await hubPick;
 
         // The clean one-line panel carries the exception message.
         await waitForIt(

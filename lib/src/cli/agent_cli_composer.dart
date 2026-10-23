@@ -11,9 +11,18 @@ part of 'agent_cli.dart';
 /// replayed as data) collapses to its first meaningful line, so frame
 /// markers and `<asynchronous suspension>` can never ride the panel.
 String submitErrorPanelLine(Object error) {
+  // A leading line that IS the bare zone-print header (`Unhandled
+  // exception:` — an uncaught-zone dump replayed as data) names nothing;
+  // the CAUSE rides the next line. Leading headers are skipped so the
+  // panel always carries the error itself; a body that merely mentions
+  // the words is content, not boilerplate, and stays.
+  var leading = true;
   for (final line in error.toString().split('\n')) {
     final trimmed = line.trim();
-    if (trimmed.isNotEmpty) return trimmed;
+    if (trimmed.isEmpty) continue;
+    if (leading && trimmed == 'Unhandled exception:') continue;
+    leading = false;
+    return trimmed;
   }
   return error.runtimeType.toString();
 }
