@@ -59,6 +59,8 @@ final class CustomProviderEntry {
   /// [authMethod] selects the auth path for SSO/JWT providers. [authHeader]
   /// names the auth header (issue #964): `x-api-key` sends
   /// `x-api-key: <key>` instead of `Authorization: Bearer <key>`.
+  /// [project] is the CodeMie project picked at connect time (issue #1809):
+  /// sent as the `x-codemie-project` header on the entry's API requests.
   CustomProviderEntry({
     required this.name,
     required this.apiType,
@@ -70,6 +72,7 @@ final class CustomProviderEntry {
     this.connectTimeout,
     this.streamIdleTimeout,
     this.keyNotPersisted = false,
+    this.project,
   });
 
   /// Parses one yaml map from the `customProviders:` list. Throws
@@ -134,6 +137,12 @@ final class CustomProviderEntry {
       // session-only keeps the marker so the next boot can surface the
       // degradation while the slot stays empty.
       keyNotPersisted: node['keyNotPersisted'] == true,
+      // Issue #1809: the CodeMie project picked at connect time (null for
+      // non-CodeMie entries and entries connected before the field existed).
+      project:
+          node['project'] is String && (node['project'] as String).isNotEmpty
+          ? node['project'] as String
+          : null,
     );
   }
 
@@ -188,6 +197,12 @@ final class CustomProviderEntry {
   /// byte-identical).
   bool keyNotPersisted;
 
+  /// The CodeMie project picked at connect time (issue #1809), sent as the
+  /// `x-codemie-project` header on this entry's API requests. Null for
+  /// non-CodeMie entries and pre-#1809 connects (never written to yaml —
+  /// existing configs stay byte-identical).
+  String? project;
+
   /// The last-used model id (rewritten on `/model` switches while active).
   String modelId;
 
@@ -203,6 +218,7 @@ final class CustomProviderEntry {
       'connectTimeoutMs': ?connectTimeout?.inMilliseconds,
       'streamIdleTimeoutMs': ?streamIdleTimeout?.inMilliseconds,
       'keyNotPersisted': ?(keyNotPersisted ? true : null),
+      'project': ?project,
       'modelId': modelId,
     };
   }
@@ -291,9 +307,10 @@ bool sameEndpoint(String a, String b) {
 /// (review r2): the `/provider` edit wizard rebuilds the entry from the
 /// wizard answers and would otherwise silently drop the fields it does
 /// not ask about — `authMethod` (the SSO/JWT routing signal), `authHeader`
-/// (issue #964), and the tuning keys `connectTimeoutMs`/`streamIdleTimeoutMs`
-/// (issue #1398). The wizard-owned identity fields (name, apiType,
-/// baseUrl, modelId, keyName) stay whatever the wizard produced.
+/// (issue #964), the tuning keys `connectTimeoutMs`/`streamIdleTimeoutMs`
+/// (issue #1398), and `project` (the CodeMie connect-time pick, issue
+/// #1809). The wizard-owned identity fields (name, apiType, baseUrl,
+/// modelId, keyName) stay whatever the wizard produced.
 CustomProviderEntry mergeEditedCustomProviderEntry({
   required CustomProviderEntry existing,
   required CustomProviderEntry updated,
@@ -302,7 +319,8 @@ CustomProviderEntry mergeEditedCustomProviderEntry({
     ..authMethod = existing.authMethod
     ..authHeader = existing.authHeader
     ..connectTimeout = existing.connectTimeout
-    ..streamIdleTimeout = existing.streamIdleTimeout;
+    ..streamIdleTimeout = existing.streamIdleTimeout
+    ..project = existing.project;
 }
 
 /// The `authHeader` of the saved entry serving [baseUrl], for the

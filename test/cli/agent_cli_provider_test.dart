@@ -1485,7 +1485,8 @@ void main() {
       },
     );
 
-    test('re-login reuses the entry and keeps the last-used model', () async {
+    test('same-account re-login still shows the project picker and the '
+        'keep-current row preserves the pair (gh-1809)', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final registry = CustomProviderRegistry([
         CustomProviderEntry(
@@ -1493,12 +1494,15 @@ void main() {
           apiType: 'openai',
           baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
           modelId: 'codemie-model-1',
+          authMethod: CustomProviderAuthMethod.sso,
+          project: 'demo-project',
         ),
       ]);
       final cli = cliFor(
         fake.call,
         envVarValue: (_) => null,
         customProviders: registry,
+        modelsHttpClient: _codeMieSsoMockClient(),
         codeMieSsoAuthenticateFn: (url, onStatus) async {
           return const CodeMieSsoCredentials(
             cookies: {'_oauth2_proxy': 'new-val'},
@@ -1517,14 +1521,28 @@ void main() {
             io.out.toString().contains('provider name [codemie.lab.epam.com]'),
       );
       io.sendLine('');
+      // The project picker runs on the SAME-account path too (gh-1809
+      // AC2/AC6) — led by the keep-current row.
+      await waitForIt(() => io.out.toString().contains('CodeMie project'));
+      await waitForIt(
+        () => io.out.toString().contains('keep current project/model'),
+      );
+      io.sendLine('1'); // keep current project/model
       await waitForIt(() => io.out.toString().contains('saved provider'));
       io.sendLine('/exit');
       await run;
 
-      // One entry, last-used model preserved, key refreshed.
+      // One entry, last-used model + project preserved, key refreshed.
       expect(registry.entries, hasLength(1));
       expect(registry.entries.single.modelId, 'codemie-model-1');
+      expect(registry.entries.single.project, 'demo-project');
       expect(cli.agent.state.model.id, 'codemie-model-1');
+      // The refreshed cookie and the picked project both ride the model.
+      expect(cli.agent.state.model.headers?['cookie'], '_oauth2_proxy=new-val');
+      expect(
+        cli.agent.state.model.headers?['x-codemie-project'],
+        'demo-project',
+      );
     });
 
     test(
@@ -1540,12 +1558,15 @@ void main() {
             apiType: 'openai',
             baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
             modelId: 'codemie-model-1',
+            authMethod: CustomProviderAuthMethod.sso,
+            project: 'demo-project',
           ),
         ]);
         final cli = cliFor(
           fake.call,
           envVarValue: (_) => null,
           customProviders: registry,
+          modelsHttpClient: _codeMieSsoMockClient(),
           codeMieSsoAuthenticateFn: (url, onStatus) async {
             return const CodeMieSsoCredentials(
               cookies: {'_oauth2_proxy': 'new-val'},
@@ -1561,6 +1582,8 @@ void main() {
           () => io.out.toString().contains('provider name [work-codemie]'),
         );
         io.sendLine('');
+        await waitForIt(() => io.out.toString().contains('CodeMie project'));
+        io.sendLine('1'); // keep current project/model (gh-1809 AC2)
         await waitForIt(() => io.out.toString().contains('saved provider'));
         io.sendLine('/exit');
         await run;
@@ -1568,6 +1591,7 @@ void main() {
         expect(registry.entries, hasLength(1), reason: 'no duplicate entry');
         expect(registry.entries.single.name, 'work-codemie');
         expect(registry.entries.single.modelId, 'codemie-model-1');
+        expect(registry.entries.single.project, 'demo-project');
       },
     );
 
@@ -1688,6 +1712,95 @@ void main() {
       },
     );
 
+    test('a failed projects fetch is loud and the entry has no project '
+        '(gh-1809 AC3/AC4)', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        customProviders: registry,
+        // /v1/user 403s — the broken-response case that used to look
+        // identical to "no projects" (gh-1809 AC3).
+        modelsHttpClient: _codeMieSsoMockClient(userStatus: 403),
+        codeMieSsoAuthenticateFn: (url, onStatus) async {
+          return const CodeMieSsoCredentials(
+            cookies: {'_oauth2_proxy': 'proxy-val'},
+            apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+            expiresAt: 9999999999999,
+          );
+        },
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider codemie sso');
+      await waitForIt(
+        () =>
+            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
+      );
+      io.sendLine('');
+      await waitForIt(
+        () => io.out.toString().contains('CodeMie projects fetch failed'),
+      );
+      // The picker was skipped — the flow moved on to the model step.
+      await waitForIt(() => io.out.toString().contains('CodeMie model'));
+      io.sendLine('1'); // pick codemie-model-1
+      await waitForIt(() => io.out.toString().contains('saved provider'));
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('CodeMie projects fetch failed'));
+      expect(output, isNot(contains('CodeMie project\n')));
+      expect(registry.entries.single.project, isNull);
+      expect(registry.entries.single.modelId, 'codemie-model-1');
+      expect(cli.agent.state.model.headers?['x-codemie-project'], isNull);
+    });
+
+    test('first connect picks a project and it persists and rides the '
+        'requests (gh-1809 AC4)', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        customProviders: registry,
+        modelsHttpClient: _codeMieSsoMockClient(),
+        codeMieSsoAuthenticateFn: (url, onStatus) async {
+          return const CodeMieSsoCredentials(
+            cookies: {'_oauth2_proxy': 'proxy-val'},
+            apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+            expiresAt: 9999999999999,
+          );
+        },
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider codemie sso');
+      await waitForIt(
+        () =>
+            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
+      );
+      io.sendLine('');
+      // First connect: no keep-current row — the fetched projects only.
+      await waitForIt(() => io.out.toString().contains('CodeMie project'));
+      io.sendLine('2'); // demo-project (sorted after admin-project)
+      await waitForIt(() => io.out.toString().contains('CodeMie model'));
+      io.sendLine('1'); // pick codemie-model-1
+      await waitForIt(() => io.out.toString().contains('saved provider'));
+      io.sendLine('/exit');
+      await run;
+
+      expect(io.out.toString(), contains('selected project: demo-project'));
+      expect(registry.entries.single.project, 'demo-project');
+      expect(registry.entries.single.modelId, 'codemie-model-1');
+      expect(
+        cli.agent.state.model.headers?['x-codemie-project'],
+        'demo-project',
+      );
+      expect(cli.agent.state.model.headers?['cookie'], isNotNull);
+    });
+
     test('/provider codemie sso rejects a bad org URL', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);
@@ -1796,6 +1909,9 @@ void main() {
         io.sendLine(
           '/provider codemie jwt https://codemie.lab.epam.com $jwtToken',
         );
+        // The JWT path runs the project step too (gh-1809 AC5).
+        await waitForIt(() => io.out.toString().contains('CodeMie project'));
+        io.sendLine('1'); // pick demo
         await waitForIt(() => io.out.toString().contains('CodeMie model'));
         io.sendLine('1'); // pick codemie-model-jwt
         await waitForIt(
@@ -1817,6 +1933,9 @@ void main() {
           entry.baseUrl,
           'https://codemie.lab.epam.com/code-assistant-api/v1',
         );
+        // The picked project persists and rides the requests (gh-1809 AC4).
+        expect(entry.project, 'demo');
+        expect(cli.agent.state.model.headers?['x-codemie-project'], 'demo');
         expect(store.map[entry.keyName], jwtToken);
         expect(cli.providerKind, 'openai-completions');
         expect(cli.agent.state.model.baseUrl, entry.baseUrl);
@@ -1825,7 +1944,8 @@ void main() {
       },
     );
 
-    test('/provider codemie shows auth-method picker', () async {
+    test('/provider codemie shows the URL prompt then the auth-method '
+        'picker (gh-1809 AC1 default URL)', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final registry = CustomProviderRegistry([]);
       final jwtToken = _makeJwtToken(exp: 9999999999);
@@ -1839,12 +1959,18 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie');
+      // The bare command asks WHERE CodeMie lives before the method
+      // picker (gh-1809 AC1) — Enter applies the hosted default.
+      await waitForIt(() => io.out.toString().contains('CodeMie URL ['));
+      io.sendLine('');
       await waitForIt(
         () => io.out.toString().contains('CodeMie sign-in method'),
       );
       io.sendLine('2'); // JWT option
       await waitForIt(() => io.out.toString().contains('JWT token:'));
       io.sendLine(jwtToken);
+      await waitForIt(() => io.out.toString().contains('CodeMie project'));
+      io.sendLine('1'); // pick demo (gh-1809 AC5)
       await waitForIt(() => io.out.toString().contains('CodeMie model'));
       io.sendLine('1'); // pick codemie-model-jwt
       await waitForIt(
@@ -1859,7 +1985,131 @@ void main() {
       final output = io.out.toString();
       expect(output, contains('CodeMie sign-in method'));
       expect(output, contains('JWT token:'));
-      expect(registry.find('codemie.lab.epam.com'), isNotNull);
+      final entry = registry.find('codemie.lab.epam.com');
+      expect(entry, isNotNull);
+      expect(entry!.project, 'demo');
+    });
+
+    test('bare /provider codemie cancels on Ctrl-C and rejects a non-http '
+        'URL (gh-1809 AC1)', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      io.sendLine('/provider codemie');
+      await waitForIt(() => io.out.toString().contains('CodeMie URL ['));
+      io.interrupt(); // cancel at the URL prompt
+      await waitForIt(
+        () => io.out.toString().contains('CodeMie setup cancelled'),
+      );
+
+      io.sendLine('/provider codemie');
+      await waitForIt(() => io.out.toString().contains('CodeMie URL ['));
+      io.sendLine('ftp://nope');
+      await waitForIt(
+        () => io.out.toString().contains('invalid CodeMie URL: ftp://nope'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('bare /provider codemie accepts a custom org URL end-to-end '
+        '(gh-1809 AC1)', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([]);
+      final seenUrls = <String>[];
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        customProviders: registry,
+        codeMieSsoAuthenticateFn: (url, onStatus) async {
+          seenUrls.add(url);
+          return CodeMieSsoCredentials(
+            cookies: const {'_oauth2_proxy': 'corp-val'},
+            apiUrl: 'https://codie.corp.example.com/code-assistant-api',
+            expiresAt: 9999999999999,
+          );
+        },
+        codeMieGuidedSetupFn: (apiBase, cookie, pickOption, askLine) async =>
+            'corp-model-1',
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider codemie');
+      await waitForIt(() => io.out.toString().contains('CodeMie URL ['));
+      io.sendLine('https://codie.corp.example.com');
+      await waitForIt(
+        () => io.out.toString().contains('CodeMie sign-in method'),
+      );
+      io.sendLine('1'); // Browser SSO
+      await waitForIt(
+        () => io.out.toString().contains(
+          'provider name [codie.corp.example.com]',
+        ),
+      );
+      io.sendLine('');
+      await waitForIt(() => io.out.toString().contains('saved provider'));
+      io.sendLine('/exit');
+      await run;
+
+      expect(seenUrls, ['https://codie.corp.example.com']);
+      final entry = registry.find('codie.corp.example.com');
+      expect(entry, isNotNull);
+      expect(
+        entry!.baseUrl,
+        'https://codie.corp.example.com/code-assistant-api/v1',
+      );
+    });
+
+    test('JWT re-login to an existing entry leads with the keep-current '
+        'row (gh-1809 AC2/AC5)', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final jwtToken = _makeJwtToken(exp: 9999999999);
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_CODEMIE_LAB_EPAM_COM'] = jwtToken;
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'codemie.lab.epam.com',
+          apiType: 'openai',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'codemie-model-jwt',
+          keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+          authMethod: CustomProviderAuthMethod.jwt,
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+        modelsHttpClient: _codeMieJwtMockClient(jwtToken),
+      );
+      final run = cli.run();
+
+      io.sendLine(
+        '/provider codemie jwt https://codemie.lab.epam.com '
+        '$jwtToken',
+      );
+      // A re-login (existing entry, no project yet) keeps the current
+      // MODEL — the label drops the project half.
+      await waitForIt(() => io.out.toString().contains('keep current model'));
+      io.sendLine('1');
+      await waitForIt(
+        () =>
+            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
+      );
+      io.sendLine('');
+      await waitForIt(() => io.out.toString().contains('saved provider'));
+      io.sendLine('/exit');
+      await run;
+
+      expect(registry.entries, hasLength(1));
+      expect(registry.entries.single.modelId, 'codemie-model-jwt');
+      expect(registry.entries.single.project, isNull);
+      // The keep pick skipped the model fetch — no model picker ran.
+      expect(io.out.toString(), isNot(contains('fetching CodeMie models...')));
     });
 
     test(
@@ -2665,6 +2915,42 @@ http.Client _codeMieJwtMockClient(String jwtToken) {
       return http.Response(
         jsonEncode([
           {'id': 'codemie-model-jwt'},
+        ]),
+        200,
+      );
+    }
+    return http.Response('Not found', 404);
+  });
+}
+
+/// The CodeMie SSO (cookie-auth) backend: `/v1/user` with two projects
+/// ([userStatus] injects the broken-response case) and `/llm_models`.
+http.Client _codeMieSsoMockClient({int userStatus = 200}) {
+  return http_testing.MockClient((request) async {
+    if (request.headers['cookie'] == null) {
+      return http.Response('Unauthorized', 401);
+    }
+    final url = request.url.toString();
+    if (url.contains('/v1/user')) {
+      if (userStatus != 200) {
+        return http.Response(
+          'CodeMie user info failed ($userStatus)',
+          userStatus,
+        );
+      }
+      return http.Response(
+        jsonEncode({
+          'applications': ['demo-project'],
+          'applications_admin': ['admin-project'],
+        }),
+        200,
+      );
+    }
+    if (url.contains('/llm_models')) {
+      return http.Response(
+        jsonEncode([
+          {'id': 'codemie-model-1'},
+          {'id': 'codemie-model-2'},
         ]),
         200,
       );
