@@ -353,28 +353,14 @@ Future<ToolExecutionResult> _superviseToolExecution({
     toolCall.arguments,
     toolName: toolCall.name,
   );
-  final threshold = stuck?.stuckThreshold(declared);
-  final heartbeatStart = stuck?.heartbeatStart(declared);
-  final budgetClock = budget == null
-      ? null
-      : _BudgetClock(
-          toolCall: toolCall,
-          budget: budget,
-          pendingSteeringCount: pendingSteeringCount,
-        );
-  if (budgetClock != null) {
-    _armBudgetTimers(budgetClock);
-    controls?.attach(
-      toolCallId: toolCall.id,
-      requestOffer: () => _requestBudgetOffer(budgetClock),
-      acceptOffer: () => _acceptBudgetOffer(budgetClock),
-    );
-    if (runToken != null) {
-      // E3: esc wins — the run's death disarms the ladder so an
-      // outstanding offer can never auto-convert after the abort.
-      unawaited(runToken.onCancel.then((_) => budgetClock.disarm()));
-    }
-  }
+  final (threshold, heartbeatStart) = _stuckTimings(stuck, declared);
+  final budgetClock = _armCallBudget(
+    toolCall: toolCall,
+    budget: budget,
+    controls: controls,
+    pendingSteeringCount: pendingSteeringCount,
+    runToken: runToken,
+  );
   final marks = <String>[];
   var attempt = 0;
   var totalElapsed = Duration.zero;
@@ -400,49 +386,32 @@ Future<ToolExecutionResult> _superviseToolExecution({
 
       // The run is over (user abort / host teardown) — no follow-up stages
       // may outlive it; the loop's abort handling owns the result.
-      if (runToken != null && runToken.isCancelled) {
-        throw CancelledException(runToken.cancelReason);
-      }
+      _requireRunAlive(runToken);
       // The budget escalated: it preempts the stuck stage machine — no
       // stuck retry may restart a call the ladder has already acted on.
-      if (budgetClock != null && budgetClock.ladderFired) {
+      if (_budgetPreempts(budgetClock)) {
         return await _finalizeBudgetEscalation(
-          clock: budgetClock,
+          // _budgetPreempts guarantees the clock exists (ladderFired only
+          // lives on an armed clock).
+          clock: budgetClock!,
           toolCall: toolCall,
           outcome: outcome,
           emit: emit,
         );
       }
-      if (outcome.error != null) {
-        // A failure before the threshold is the executor's own — rethrow.
-        // A failure after the supervisor's cancel is that cancel's
-        // consequence (bash's `Command aborted` once the job registry kills
-        // the process, a token-obeying executor's throw): it follows the
-        // same stage logic as a hang below, so the follow-up (retry /
-        // background conversion / escalation) still runs.
-        if (!outcome.cancelledBySupervisor) throw outcome.error!;
-      }
-      if (outcome.error == null && !outcome.hung) {
-        final mark = _completedStuckMark(
-          attempt: attempt,
-          outcome: outcome,
-          toolCall: toolCall,
-          threshold: threshold,
-        );
-        if (mark != null) marks.add(mark);
-        if (_recordsBackgroundConvert(stage: stage, outcome: outcome)) {
-          // The stage actually advanced (the executor handed the job back):
-          // the initiation record is only now truthful.
-          await emit(
-            _backgroundConvertRecord(
-              toolCall: toolCall,
-              outcome: outcome,
-              threshold: threshold,
-            ),
-          );
-        }
-        return _prefixMarks(marks, outcome.result!);
-      }
+      // An error rethrows (the executor's own) or falls through to the
+      // stage logic; a healthy completion settles the call here.
+      final settled = await _settleHealthyOrThrow(
+        stage: stage,
+        outcome: outcome,
+        stuck: stuck,
+        attempt: attempt,
+        threshold: threshold,
+        toolCall: toolCall,
+        emit: emit,
+        marks: marks,
+      );
+      if (settled != null) return _prefixMarks(marks, settled);
 
       if (_recordsBackgroundConvert(stage: stage, outcome: outcome)) {
         // The stage actually advanced (the attempt was abandoned): the
@@ -469,6 +438,102 @@ Future<ToolExecutionResult> _superviseToolExecution({
     budgetClock?.disarm();
     controls?.detach(toolCall.id);
   }
+}
+
+/// The stuck supervisor's timer offsets for one call — both null when the
+/// stage machine is not armed (issue #1786: the budget-only path).
+(Duration?, Duration?) _stuckTimings(
+  StuckToolConfig? stuck,
+  Duration? declared,
+) => (stuck?.stuckThreshold(declared), stuck?.heartbeatStart(declared));
+
+/// Arms the budget ladder for one call (issue #1786): timers, the host
+/// controls registration, and the E3 disarm link (esc wins — the run's
+/// death disarms the ladder so an outstanding offer can never auto-convert
+/// after the abort). Null when the budget is off.
+_BudgetClock? _armCallBudget({
+  required ToolCall toolCall,
+  required ForegroundCallBudgetConfig? budget,
+  required ForegroundCallBudgetControls? controls,
+  required int Function()? pendingSteeringCount,
+  required CancelToken? runToken,
+}) {
+  if (budget == null) return null;
+  final clock = _BudgetClock(
+    toolCall: toolCall,
+    budget: budget,
+    pendingSteeringCount: pendingSteeringCount,
+  );
+  _armBudgetTimers(clock);
+  controls?.attach(
+    toolCallId: toolCall.id,
+    requestOffer: () => _requestBudgetOffer(clock),
+    acceptOffer: () => _acceptBudgetOffer(clock),
+  );
+  if (runToken != null) {
+    unawaited(runToken.onCancel.then((_) => clock.disarm()));
+  }
+  return clock;
+}
+
+/// Throws the loop's cancellation when the run is over (user abort / host
+/// teardown) — no follow-up stages may outlive it.
+void _requireRunAlive(CancelToken? runToken) {
+  if (runToken != null && runToken.isCancelled) {
+    throw CancelledException(runToken.cancelReason);
+  }
+}
+
+/// Whether the budget ladder already acted on this call and therefore
+/// owns the attempt's outcome (the stuck stage machine must not retry).
+bool _budgetPreempts(_BudgetClock? budgetClock) =>
+    budgetClock != null && budgetClock.ladderFired;
+
+/// Settles a non-preempted attempt: an error that is NOT the supervisor's
+/// own cancel rethrows (the executor's failure); a healthy completion gets
+/// its disclosure mark (+ the deferred background-convert record when the
+/// stage actually advanced) and is returned for marking. Returns null for
+/// a hang — the caller advances the stuck stage.
+Future<ToolExecutionResult?> _settleHealthyOrThrow({
+  required StuckFollowUpAction stage,
+  required _SupervisedAttempt outcome,
+  required StuckToolConfig? stuck,
+  required int attempt,
+  required Duration? threshold,
+  required ToolCall toolCall,
+  required AgentEventSink emit,
+  required List<String> marks,
+}) async {
+  if (outcome.error != null) {
+    // A failure before the threshold is the executor's own — rethrow.
+    // A failure after the supervisor's cancel is that cancel's
+    // consequence (bash's `Command aborted` once the job registry kills
+    // the process, a token-obeying executor's throw): it follows the
+    // same stage logic as a hang below, so the follow-up (retry /
+    // background conversion / escalation) still runs.
+    if (!outcome.cancelledBySupervisor) throw outcome.error!;
+    return null;
+  }
+  if (outcome.hung) return null;
+  final mark = _completedStuckMark(
+    attempt: attempt,
+    outcome: outcome,
+    toolCall: toolCall,
+    threshold: threshold,
+  );
+  if (mark != null) marks.add(mark);
+  if (_recordsBackgroundConvert(stage: stage, outcome: outcome)) {
+    // The stage actually advanced (the executor handed the job back):
+    // the initiation record is only now truthful.
+    await emit(
+      _backgroundConvertRecord(
+        toolCall: toolCall,
+        outcome: outcome,
+        threshold: threshold,
+      ),
+    );
+  }
+  return outcome.result;
 }
 
 /// One supervised attempt: run the executor under per-call cancel/yield
@@ -577,6 +642,91 @@ void _fireStuckThreshold({
   }
 }
 
+/// Registers the current attempt's plumbing on the budget ladder (a fire
+/// between attempts cancels stale tokens harmlessly). No-op when the
+/// budget is off.
+void _registerBudgetAttempt(
+  _BudgetClock? budgetClock,
+  CancelTokenSource callSource,
+  CancelTokenSource yieldSource,
+  _AttemptClock clock,
+) {
+  if (budgetClock == null) return;
+  budgetClock
+    ..attemptCallSource = callSource
+    ..attemptYieldSource = yieldSource
+    ..attemptClock = clock;
+}
+
+/// Records one partial result for the liveness sidebands: the attempt
+/// clock feeds the heartbeat's captured-output size and the stuck
+/// escalation's partial-output pointer; the budget clock mirrors both for
+/// its rung conditions (no output) and its abort capture. Skipped once the
+/// attempt is over.
+void _observeAttemptOutput(
+  _AttemptClock clock,
+  _BudgetClock? budgetClock,
+  ToolExecutionResult partial,
+) {
+  if (!clock.alive) return;
+  clock.outputBytes = _resultOutputSize(partial);
+  clock.partialText = _resultPartialText(partial);
+  if (budgetClock != null) {
+    budgetClock
+      ..outputBytes = clock.outputBytes
+      ..partialText = clock.partialText;
+  }
+}
+
+/// Arms the stuck supervisor's timers for one attempt: the threshold
+/// follow-up and the liveness heartbeat. Neither exists when the stage
+/// machine is not armed (issue #1786: the budget-only path).
+void _armStuckAttemptTimers({
+  required _AttemptClock clock,
+  required ToolCall toolCall,
+  required StuckToolConfig? stuck,
+  required Duration? threshold,
+  required Duration? heartbeatStart,
+  required int attempt,
+  required StuckFollowUpAction stageIfHung,
+  required void Function(AgentEvent event) enqueue,
+  required CancelTokenSource callSource,
+  required CancelTokenSource yieldSource,
+}) {
+  if (stuck == null) return;
+  if (threshold != null) {
+    clock.stuckTimer = Timer(threshold, () {
+      _fireStuckThreshold(
+        clock: clock,
+        toolCall: toolCall,
+        stuck: stuck,
+        stageIfHung: stageIfHung,
+        enqueue: enqueue,
+        callSource: callSource,
+        yieldSource: yieldSource,
+      );
+    });
+  }
+  if (heartbeatStart != null) {
+    clock.heartbeatTimer = Timer.periodic(stuck.heartbeatInterval, (_) {
+      if (!clock.alive) return;
+      final elapsed = clock.stopwatch.elapsed;
+      if (elapsed < heartbeatStart) return;
+      enqueue(
+        ToolCallHeartbeatEvent(
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          args: toolCall.arguments,
+          elapsed: elapsed,
+          outputBytes: clock.outputBytes,
+          attempt: attempt,
+          timestamp: DateTime.now(),
+        ),
+      );
+    });
+  }
+}
+
 Future<_SupervisedAttempt> _supervisedAttempt({
   required ToolCall toolCall,
   required _SupervisedRun run,
@@ -609,12 +759,7 @@ Future<_SupervisedAttempt> _supervisedAttempt({
   // The budget ladder acts on THIS attempt's tokens and grace gate while it
   // is the current one (a fire between attempts cancels stale tokens
   // harmlessly), and reads the observed output for its rung conditions.
-  if (budgetClock != null) {
-    budgetClock
-      ..attemptCallSource = callSource
-      ..attemptYieldSource = yieldSource
-      ..attemptClock = clock;
-  }
+  _registerBudgetAttempt(budgetClock, callSource, yieldSource, clock);
 
   // Serialized event chain: heartbeats/stuck events never interleave with
   // each other, and the attempt drains the chain before reporting so the
@@ -630,16 +775,8 @@ Future<_SupervisedAttempt> _supervisedAttempt({
   // Observes partial results for the heartbeat's captured-output size and
   // the escalation's partial-output pointer. Forwarding to the loop's
   // update emitter stays inside `run` — this only reads.
-  void observe(ToolExecutionResult partial) {
-    if (!clock.alive) return;
-    clock.outputBytes = _resultOutputSize(partial);
-    clock.partialText = _resultPartialText(partial);
-    if (budgetClock != null) {
-      budgetClock
-        ..outputBytes = clock.outputBytes
-        ..partialText = clock.partialText;
-    }
-  }
+  void observe(ToolExecutionResult partial) =>
+      _observeAttemptOutput(clock, budgetClock, partial);
 
   // The executor's token: the RUN token itself unless the stuck stage
   // machine is armed (it needs a per-call token to cancel-and-RETRY this
@@ -659,37 +796,18 @@ Future<_SupervisedAttempt> _supervisedAttempt({
     zoneValues: {yieldTokenZoneKey: yieldSource.token},
   );
 
-  if (stuck != null && threshold != null) {
-    clock.stuckTimer = Timer(threshold, () {
-      _fireStuckThreshold(
-        clock: clock,
-        toolCall: toolCall,
-        stuck: stuck,
-        stageIfHung: stageIfHung,
-        enqueue: enqueue,
-        callSource: callSource,
-        yieldSource: yieldSource,
-      );
-    });
-  }
-  if (stuck != null && heartbeatStart != null) {
-    clock.heartbeatTimer = Timer.periodic(stuck.heartbeatInterval, (_) {
-      if (!clock.alive) return;
-      final elapsed = clock.stopwatch.elapsed;
-      if (elapsed < heartbeatStart) return;
-      enqueue(
-        ToolCallHeartbeatEvent(
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          args: toolCall.arguments,
-          elapsed: elapsed,
-          outputBytes: clock.outputBytes,
-          attempt: attempt,
-          timestamp: DateTime.now(),
-        ),
-      );
-    });
-  }
+  _armStuckAttemptTimers(
+    clock: clock,
+    toolCall: toolCall,
+    stuck: stuck,
+    threshold: threshold,
+    heartbeatStart: heartbeatStart,
+    attempt: attempt,
+    stageIfHung: stageIfHung,
+    enqueue: enqueue,
+    callSource: callSource,
+    yieldSource: yieldSource,
+  );
   if (budgetClock != null) {
     budgetClock.enqueue = enqueue;
   }
