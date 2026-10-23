@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-23T00:36:49.344Z",
+  "ticketKey": "pr-1785",
+  "headSha": "7d0e377ac1397e82f11d560e8b631dfc31caace1",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:fec6771665358bca",
+      "size": 12306
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:92acdde0a6535747",
+      "size": 36474
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:b5f380b87dfa7298",
+      "size": 5597
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:671d1ef3162f3211",
+      "size": 1458
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:d797d8f769700bd4",
+      "size": 1299
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:09977464c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:b486b521a8841888",
+      "size": 1171
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:a3202c0455ac132d",
+      "size": 1112
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6vbMJt",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "vendor/quickjs_runtime/CHANGELOG.md:40",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: vendored QuickJS engine is 3 upstream releases behind — document a security re-vendor path**\n\nThis bump makes the vendored QuickJS **2024-01-13** C engine the preferred JS backend on all VM platforms (`js_widget_runtime` 0.4.180's default backend selects `QuickjsFfi.isAvailable ? QuickjsWidgetEngineBackend : FlutterJsWidgetEngineBackend` — the Native Asset now builds on iOS/Android/macOS/Linux thanks to the fork), i.e. user-supplied app scripts now execute in an app-bundled engine instead of the OS-patched JavaScriptCore that the flutter_js backend used on iOS.\n\nThe vendored sources are pinned at 2024-01-13 (`hook/build.dart` `CONFIG_VERSION: '\"2024-01-13\"'`; `native/quickjs/*.c` headers copyright 2017-2021), but upstream QuickJS has published **2025-04-26, 2025-09-13 and 2026-06-04** since (https://bellard.org/quickjs/, read during this review) — three releases of engine fixes the vendored copy will never receive on its own.\n\nThe fork's own lifecycle note (`vendor/quickjs_runtime/CHANGELOG.md` \"Re-vendor … on the next upstream publish that fixes **both**\") only triggers on the next `quickjs_runtime` publish that fixes the Android/Windows **build** breaks — there is no documented trigger or path for pulling **engine** security fixes into this fork.\n\nPlease add a short security note to `vendor/quickjs_runtime/CHANGELOG.md` (or the fork header in `hook/build.dart`): which party tracks QuickJS upstream releases/security advisories for this vendored engine, and what the re-vendor/upgrade path is (e.g. \"re-vendor from the next quickjs_runtime that tracks quickjs ≥ 2026-06-04\" or an explicit risk acceptance with an owner). The engineering in this PR is clean — this is only about making the upgrade trigger explicit before the fork ages in place.\n\n(Non-blocking: behavior is the ticket's stated intent — #1784 needs the synchronous FFI lane — and CI is green.)"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vbMNd",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/pubspec.yaml:254",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: PR description doesn't mention ~½ of the final diff**\n\nThe PR body covers the jsr bump, the store/codesign hardening, size budgets and the gh-1784 gesture wiring — but two substantial parts of the shipped diff are invisible to a description-only reader:\n\n1. **The vendored fork** (`vendor/quickjs_runtime/` — 49 upstream files + the Android/Windows hook deltas + the 3 CodeQL-driven C casts) and the `dependency_overrides` pin consumed here — the whole reason this override exists.\n2. **The wrap-perf gate hardening** (`test/cli/wrap_ansi_line_perf_test.dart` — best-of-3 attempt medians for the absolute budgets), which fixed the validation red that blocked this PR's own CI.\n\nBoth are well documented in the review-thread rework comments, but the description is the durable record. Please append a short \"Rework additions\" section listing them (and the pin test that guards the override) so future readers don't have to reconstruct the scope from the discussion history."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vbMQC",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "vendor/quickjs_runtime/tool/build_quickjs.sh:31",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `tool/build_quickjs.sh` still links `-lpthread` unconditionally — the exact break this PR fixes in the hook**\n\nThe Native-Assets hook now excludes `pthread` on Android (bionic ships pthread in libc; the NDK has no `libpthread` since r18 — `ld.lld: error: unable to find library -lpthread`), but this manual build script kept the unconditional `-lm ... -lpthread`, so anyone building the bridge by hand against the NDK reproduces the CI error this PR just fixed. The script already pattern-matches `uname -s` for the Windows `-ldl` case; the same `case` could drop `pthread` for Android environments (e.g. when `CC` names an `*android*` cross-compiler or `$ANDROID_NDK` is set), keeping script and hook consistent.\n\nRelated nit: the script's output (`native/quickjs/libquickjs_bridge.so`, ~940 KB) is not covered by `.gitignore`'s vendor-artifact rules (`vendor/**/target|build|.dart_tool`), so a local manual build leaves an untracked binary in `git status`. One line — `vendor/quickjs_runtime/native/quickjs/libquickjs_bridge.so` — closes it (the Native Assets build output under `build/` is already ignored).\n\nDev-only path, not blocking."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vbMTH",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/quickjs_runtime_vendor_pin_test.dart:6",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: typo in the quoted CI error — `ld.ld:` → `ld.lld:`**\n\nThe header comment quoting the Android link failure reads `ld.ld: error: unable to find library -lpthread`; the linker is `ld.lld`. The same quote is spelled correctly on line 127 of this very file (the test reason string), in `hook/build.dart` and in the vendor `CHANGELOG.md` — worth aligning so a future grep for the real CI error text also finds this header."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:aa448453",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: vendored QuickJS engine is 3 upstream releases behind — document a security re-vendor path**\n\nThis bump makes the vendored QuickJS **2024-01-13** C engine the preferred JS backend on all VM platforms (`js_widget_runtime` 0.4.180's default backend selects `QuickjsFfi.isAvailable ? QuickjsWidgetEngineBackend : FlutterJsWidgetEngineBackend` — the Native Asset now builds on iOS/Android/macOS/Linux thanks to the fork), i.e. user-supplied app scripts now execute in an app-bundled engine instead of the OS-patched JavaScriptCore that the flutter_js backend used on iOS.\n\nThe vendored sources are pinned at 2024-01-13 (`hook/build.dart` `CONFIG_VERSION: '\"2024-01-13\"'`; `native/quickjs/*.c` headers copyright 2017-2021), but upstream QuickJS has published **2025-04-26, 2025-09-13 and 2026-06-04** since (https://bellard.org/quickjs/, read during this review) — three releases of engine fixes the vendored copy will never receive on its own.\n\nThe fork's own lifecycle note (`vendor/quickjs_runtime/CHANGELOG.md` \"Re-vendor … on the next upstream publish that fixes **both**\") only triggers on the next `quickjs_runtime` publish that fixes the Android/Windows **build** breaks — there is no documented trigger or path for pulling **engine** security fixes into this fork.\n\nPlease add a short security note to `vendor/quickjs_runtime/CHANGELOG.md` (or the fork header in `hook/build.dart`): which party tracks QuickJS upstream releases/security advisories for this vendored engine, and what the re-vendor/upgrade path is (e.g. \"re-vendor from the next quickjs_runtime that tracks quickjs ≥ 2026-06-04\" or an explicit risk acceptance with an owner). The engineering in this PR is clean — this is only about making the upgrade trigger explicit before the fork ages in place.\n\n(Non-blocking: behavior is the ticket's stated intent — #1784 needs the synchronous FFI lane — and CI is green.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:faa6580f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: PR description doesn't mention ~½ of the final diff**\n\nThe PR body covers the jsr bump, the store/codesign hardening, size budgets and the gh-1784 gesture wiring — but two substantial parts of the shipped diff are invisible to a description-only reader:\n\n1. **The vendored fork** (`vendor/quickjs_runtime/` — 49 upstream files + the Android/Windows hook deltas + the 3 CodeQL-driven C casts) and the `dependency_overrides` pin consumed here — the whole reason this override exists.\n2. **The wrap-perf gate hardening** (`test/cli/wrap_ansi_line_perf_test.dart` — best-of-3 attempt medians for the absolute budgets), which fixed the validation red that blocked this PR's own CI.\n\nBoth are well documented in the review-thread rework comments, but the description is the durable record. Please append a short \"Rework additions\" section listing them (and the pin test that guards the override) so future readers don't have to reconstruct the scope from the discussion history."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:49a4206d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `tool/build_quickjs.sh` still links `-lpthread` unconditionally — the exact break this PR fixes in the hook**\n\nThe Native-Assets hook now excludes `pthread` on Android (bionic ships pthread in libc; the NDK has no `libpthread` since r18 — `ld.lld: error: unable to find library -lpthread`), but this manual build script kept the unconditional `-lm ... -lpthread`, so anyone building the bridge by hand against the NDK reproduces the CI error this PR just fixed. The script already pattern-matches `uname -s` for the Windows `-ldl` case; the same `case` could drop `pthread` for Android environments (e.g. when `CC` names an `*android*` cross-compiler or `$ANDROID_NDK` is set), keeping script and hook consistent.\n\nRelated nit: the script's output (`native/quickjs/libquickjs_bridge.so`, ~940 KB) is not covered by `.gitignore`'s vendor-artifact rules (`vendor/**/target|build|.dart_tool`), so a local manual build leaves an untracked binary in `git status`. One line — `vendor/quickjs_runtime/native/quickjs/libquickjs_bridge.so` — closes it (the Native Assets build output under `build/` is already ignored).\n\nDev-only path, not blocking."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:3327db72",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: typo in the quoted CI error — `ld.ld:` → `ld.lld:`**\n\nThe header comment quoting the Android link failure reads `ld.ld: error: unable to find library -lpthread`; the linker is `ld.lld`. The same quote is spelled correctly on line 127 of this very file (the test reason string), in `hook/build.dart` and in the vendor `CHANGELOG.md` — worth aligning so a future grep for the real CI error text also finds this header."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:ca673c2d",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch fdaea97dbe55b8eef8f1eb1582c56142ac54e416 — zombie 1/3 at 2026-10-22T20:24:40.194Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:a894aa43",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head fdaea97dbe55b8eef8f1eb1582c56142ac54e416 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-22:a30ddf7f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — pr-1785\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:1a55f7c1",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 712cfd4841edf91abde15601a5dacbcd211e9186 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:8a62b183",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head acde62b68febf86b98e95c91dcdaf9646a71f8cb — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:53636d17",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head ca749c7c8fa55c9e609b837d64b03b89d3060258 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:107cfd3c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1784 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 07ea07af6c0704acda0188b3d76c57e76036d2c1 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-22:4bbf6776",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-22",
+      "updatedAt": "2026-10-22",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 0fbbcab78d42970ef1e456f7d5f09fc049164fd5 — stale base at 2026-10-22T23:41:27.326Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:f2daa290",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: Solid, verified fork: vendored `quickjs_runtime` is byte-identical to upstream pub.dev 0.4.2 (sha256 match; recursive diff = only the 4 documented deltas), the 3 C widening casts are value-identical under their existing guards, and the `onGestureEvent` wiring matches the renderer contract in all three surfaces. One important security-posture doc gap (vendored QuickJS 2024-01-13 is now the preferred JS engine on all VM platforms but is 3 upstream releases behind, with no documented engine re-vendor trigger) and 3 suggestions; nothing blocking.\n\n**Key Issues**:\n- ⚠️ IMPORTANT — no documented security re-vendor path for the vendored engine (`vendor/quickjs_runtime/CHANGELOG.md`; upstream published 2025-04-26 / 2025-09-13 / 2026-06-04 since 2024-01-13)\n- 💡 SUGGESTION — PR description omits the vendored fork and the wrap-perf hardening (half the final diff)\n- 💡 SUGGESTION — `tool/build_quickjs.sh` still links `-lpthread` (Android) and its `.so` output isn't gitignored\n- 💡 SUGGESTION — `ld.ld:` → `ld.lld:` typo in the pin-test header\n\n**Verified this run**: provenance (sha256 + full byte-diff vs pristine upstream 0.4.2), fork-delta value-preservation arguments at all 3 C sites, pin/guard suites 17/17, wrap-perf 14/14, flutter app tests 35 pass / 6 skip (incl. the new gh-1784 gesture tests), `dart analyze` clean, size-budget arithmetic (+950,272 both TSVs) correct, vendor tree excluded from repo gates/publish payload per the established `vendor/dart_tui`/`wasm_run` pattern.\n\n**Next Steps**:\n1. Document the engine security re-vendor path in `vendor/quickjs_runtime/CHANGELOG.md`\n2. Align `tool/build_quickjs.sh` with the hook's Android library set + add the `.so` gitignore rule\n3. Update the PR description with a \"Rework additions\" section (fork + wrap-perf hardening)\n4. Fix the `ld.lld` typo in the pin-test header"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
