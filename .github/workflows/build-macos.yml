@@ -111,35 +111,34 @@ jobs:
       # instead of Apple's SSL APIs, avoiding "bad certificate format" errors
       # caused by corporate Zscaler/MDM certificates in the system keychain.
       DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER: "0"
-      # gh-180: these release legs build PURE CocoaPods. Flutter 3.47 stable
-      # ships the Swift Package Manager feature enabled BY DEFAULT, migrates
-      # a fresh clone at build time, and generates
-      # FlutterGeneratedPluginSwiftPackage at the macOS 12.0 floor, raising
-      # it to the app's 14.0 only via a best-effort, silent
-      # `xcodebuild -showBuildSettings` read. On the first Xcode 27 run that
-      # read skipped (run 39905803673) and a 14.0-floored SwiftPM product
-      # hard-failed both arches: "requires minimum platform version 14.0
-      # ... but this target supports a lower version" → no DMGs in v1.0.630.
-      # The env override is read per flutter invocation
-      # (flutter_features_config.dart); with the feature off the SPM
-      # migration skips cleanly and every macOS plugin builds from the
-      # Podfile.lock pins at the Podfile platform (:osx, '14.0') — no
-      # dependency on the fragile bump. Enforced at build time by
-      # scripts/assert_macos_min_platform.sh (see the Build macOS release
-      # step); pinned by test/build_macos_spm_lane_guard_test.dart +
+      # gh-1814: these release legs ride the Swift Package Manager lane.
+      # History: gh-180 pinned the legs to PURE CocoaPods via the job-level
+      # FLUTTER_SWIFT_PACKAGE_MANAGER=0 override because Flutter 3.47's
+      # best-effort, silent FlutterGeneratedPluginSwiftPackage floor bump
+      # (xcodebuild -showBuildSettings inside updateMinimumDeployment)
+      # skipped on the first Xcode 27 run (run 39905803673, "requires
+      # minimum platform version 14.0" → no DMGs in v1.0.630). That pin is
+      # GONE now: upstream removed the disable knob between 3.47.4 and
+      # 3.47.7 (flutter/flutter#193978 — the day the gh-180 shelf-life
+      # comment predicted), and the pinned-3.47.7 legs added SwiftPM
+      # integration anyway (runs 39991663029 / 40022900373), reding the
+      # gh-180 gate that forbade SwiftPM state. The #1813 escape (pin
+      # 3.47.4) is operationally dead — the runners cannot fetch that SDK
+      # (run 40034163885). Owner ruling: the minimum macOS version may be
+      # raised, so the lane ADOPTS SwiftPM instead of fighting it:
+      #   - every floor is ≥ 14.0 and stays there — Runner pbxproj 3×14.0,
+      #     Podfile platform :osx, '14.0' (the CocoaPods half: the vendored
+      #     flutter_inappwebview_macos keeps its Package.swift deleted,
+      #     gh-1798, riding Podfile.lock pins), generated package floor
+      #     bumped to the app's MACOSX_DEPLOYMENT_TARGET by the tool
+      #     (verified working on 3.47.7: gate diagnostic
+      #     `generated floor: 14.0`);
+      #   - scripts/assert_macos_min_platform.sh (the Build macOS release
+      #     step below) ASSERTS the SPM lane post-config — SwiftPM state
+      #     EXPECTED, generated floor ≥ app floor, no product above the app
+      #     min — still fail-loud-in-seconds.
+      # Pinned by test/build_macos_spm_lane_guard_test.dart +
       # test/macos_min_platform_gate_test.dart.
-      #
-      # Shelf life (gh-180 review): upstream is deprecating the disable
-      # path — features.dart carries warningMessageOnDisable ("Enabling
-      # Swift Package Manager will be required in a future version of
-      # Flutter") and flutter/flutter#193978 tracks removing the flag
-      # entirely. When that lands, this pin stops working and the lane
-      # decision needs a different mechanism (a tighter tool-version pin,
-      # or migrating the generated package's floor control). The gate
-      # below fails loud the day the pin loses — including the env name
-      # removal itself, since any SwiftPM state after the config pass is
-      # a gate failure — so the removal cannot arrive as a silent red leg.
-      FLUTTER_SWIFT_PACKAGE_MANAGER: "0"
 
     steps:
       # ── Prepare persistent local git mirrors ────────────────────────────────
@@ -307,20 +306,18 @@ jobs:
           # the canvaskit/skwasm rev-hash dir the gate tracks. Bump
           # consciously, with any floor reseed in the same PR.
           #
-          # 3.47.4 specifically (gh-1800 follow-up): the pure-CocoaPods
-          # lane leans on FLUTTER_SWIFT_PACKAGE_MANAGER=0, and 3.47.7 no
-          # longer honors it — on the pinned-3.47.7 self-hosted runners
-          # the --config-only pass adds SPM integration despite the pin
-          # (run 40022900373, after the SPM-residue clean from #1812,
-          # so residue is excluded), tripping the min-platform gate.
-          # Verified locally: 3.47.4 + the pin + a clean tree produces
-          # zero SPM state. flutter/flutter#193978 (flag removal) landed
-          # between 3.47.4 and 3.47.7 — the day the workflow comment
-          # above predicted. The long-term fix is the SPM lane with
-          # raised floors (owner ruling: min macOS may be raised);
-          # until that card, the release lane pins the last honoring
-          # patch.
-          flutter-version: '3.47.4'
+          # 3.47.7 (gh-1814, reverting the #1813 3.47.4 pin): 3.47.4 was
+          # the last patch honoring FLUTTER_SWIFT_PACKAGE_MANAGER=0, but it
+          # is UNREACHABLE here — the fa-m5 runners' ~60kB/s link cannot
+          # download that SDK (run 40034163885 died in the download, bounded
+          # retries exhausted) — and with the SPM lane adopted (see the job
+          # env comment above) there is no reason to chase it: 3.47.7's
+          # forced SPM integration is now the lane, its floor bump verified
+          # working (`generated floor: 14.0` in the run 40022900373 gate
+          # diagnostic), and scripts/assert_macos_min_platform.sh asserts
+          # the post-config state. Same 3.47.7 the extension + Pages legs
+          # already pin.
+          flutter-version: '3.47.7'
 
       - name: Setup host toolchains
         run: |
@@ -628,28 +625,27 @@ jobs:
             export FA_CODE_SIGN_IDENTITY="-"
             export FA_CODE_SIGN_STYLE=Automatic
           fi
-          # gh-180 REG gate — fail loud at build time, not at release time.
+          # gh-1814 REG gate — fail loud at build time, not at release time.
           # --config-only drives the tool's real SPM/pods config pass
-          # (migration or its clean skip + pod install) without compiling;
-          # the gate then asserts the lane invariants: app floor 14.0
-          # (pbxproj + Podfile), the vendored inappwebview Package.swift
-          # stays deleted, and NO SwiftPM state exists after the config
-          # pass. If the FLUTTER_SWIFT_PACKAGE_MANAGER=0 pin above ever
-          # loses (env name change, tool default flip, a plugin regaining
-          # Package.swift), this fails in seconds with the remediation
-          # instead of Xcode's cryptic "requires minimum platform version"
-          # error after a 50+-minute resolution pass (gh-1798 measured
-          # 3365s on the first Xcode 27 run).
-          # gh-1800 follow-up: self-hosted workdirs are PERSISTENT — SPM
-          # state generated by pre-pin builds (untracked: macos/Flutter/
-          # ephemeral SPM package refs, Pods, .symlinks) survives
-          # actions/checkout, and the config-only pass below re-adopts it
-          # (observed: "Adding Swift Package Manager integration… 1095s"
-          # + gate failure on run 39991663029, both arch legs). The
-          # FLUTTER_SWIFT_PACKAGE_MANAGER=0 pin IS honored by Flutter
-          # 3.47.x on a clean tree (verified locally: zero SPM state
-          # after clean + config-only), so the deterministic fix is to
-          # remove the residue before every build.
+          # (the SwiftPM migration + pod install) without compiling; the
+          # gate then ASSERTS the adopted SPM lane: SwiftPM state EXPECTED
+          # after the config pass (pbxproj marker + ephemeral generated
+          # package), app floor 14.0 (pbxproj + Podfile), generated package
+          # floor ≥ 14.0 (the tool's silent showBuildSettings bump must
+          # have landed — the literal gh-180 killer), no SwiftPM product
+          # above the app min, and the vendored inappwebview manifest
+          # floored at 14.0 if it ever reappears. A drift fails in seconds
+          # with the remediation instead of Xcode's cryptic "requires
+          # minimum platform version" error after a 50+-minute resolution
+          # pass (gh-1798 measured 3365s on the first Xcode 27 run).
+          # gh-1800 follow-up (the residue clean stays): self-hosted
+          # workdirs are PERSISTENT — untracked build state (macos/Flutter/
+          # ephemeral, Pods, .symlinks) survives actions/checkout, so it is
+          # wiped before every build and the config-only pass regenerates a
+          # DETERMINISTIC fresh SPM migration + pod install (the pre-#1812
+          # runs showed stale residue steering the lane). The gate below
+          # then sees exactly the state a fresh 3.47.7 config pass
+          # produces.
           flutter clean
           rm -rf macos/Flutter/ephemeral macos/Pods macos/.symlinks
           FLUTTER_XCODE_ARCHS="$ARCH" flutter build macos --config-only
