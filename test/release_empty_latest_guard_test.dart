@@ -212,10 +212,7 @@ void main() {
               'the draft body must stamp the ownership marker so the draft '
               'lifecycle guard can reclaim it on failure (review threads 4/8)',
         );
-        expect(
-          stripComments(helper),
-          isNot(contains('--generate-notes')),
-        );
+        expect(stripComments(helper), isNot(contains('--generate-notes')));
       },
     );
 
@@ -708,60 +705,79 @@ void main() {
           includeParentEnvironment: true,
         );
 
-    List<String> ghLog() => File(logPath).existsSync()
-        ? File(logPath).readAsLinesSync()
-        : const [];
+    List<String> ghLog() =>
+        File(logPath).existsSync() ? File(logPath).readAsLinesSync() : const [];
 
-    test('release_lazy_draft.sh: draft-first, curated notes + owner marker, never latest', () {
-      plant('CHANGELOG.md', '## Unreleased\n- curated entry one\n');
-      final r = runScript(
-        '${Directory.current.path}/scripts/release_lazy_draft.sh',
-        ['v1.2.3'],
-      );
-      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-      final creates = ghLog().where((l) => l.contains('release create')).toList();
-      expect(creates, hasLength(1));
-      expect(creates.single, contains('--draft'), reason: 'draft-first');
-      expect(creates.single, contains('--title v1.2.3'));
-      expect(
-        creates.single,
-        isNot(contains('--latest')),
-        reason: 'a lazy create never flags latest — provenance owns the flip',
-      );
-      final notes = File('${fx.path}/last-create-notes.md').readAsStringSync();
-      expect(notes, contains('curated entry one'), reason: 'the curated CHANGELOG section reaches the release body (threads 3/7)');
-      expect(
-        notes,
-        contains('release-draft-owner: run/222/job/release-macos'),
-        reason: 'the draft body stamps the owner so the guard can reclaim it (threads 4/8)',
-      );
-    });
-
-    test('release_lazy_draft.sh: release already exists → no create, exit 0', () {
-      plant('release-exists', '');
-      final r = runScript(
-        '${Directory.current.path}/scripts/release_lazy_draft.sh',
-        ['v1.2.3'],
-      );
-      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-      expect(ghLog().where((l) => l.contains('release create')), isEmpty);
-    });
-
-    test('release_lazy_draft.sh: malformed RELEASE_DRAFT_IDENTITY fails loud', () {
-      plant('CHANGELOG.md', '## Unreleased\n- curated entry one\n');
-      final r = Process.runSync(
-        'bash',
-        [
+    test(
+      'release_lazy_draft.sh: draft-first, curated notes + owner marker, never latest',
+      () {
+        plant('CHANGELOG.md', '## Unreleased\n- curated entry one\n');
+        final r = runScript(
           '${Directory.current.path}/scripts/release_lazy_draft.sh',
-          'v1.2.3',
-        ],
-        workingDirectory: fx.path,
-        environment: env(extra: {'RELEASE_DRAFT_IDENTITY': 'job/binaries'}),
-        includeParentEnvironment: true,
-      );
-      expect(r.exitCode, isNot(0), reason: 'an unmatchable marker would orphan the draft forever');
-      expect('${r.stdout}${r.stderr}', contains('RELEASE_DRAFT_IDENTITY'));
-    });
+          ['v1.2.3'],
+        );
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final creates = ghLog()
+            .where((l) => l.contains('release create'))
+            .toList();
+        expect(creates, hasLength(1));
+        expect(creates.single, contains('--draft'), reason: 'draft-first');
+        expect(creates.single, contains('--title v1.2.3'));
+        expect(
+          creates.single,
+          isNot(contains('--latest')),
+          reason: 'a lazy create never flags latest — provenance owns the flip',
+        );
+        final notes = File(
+          '${fx.path}/last-create-notes.md',
+        ).readAsStringSync();
+        expect(
+          notes,
+          contains('curated entry one'),
+          reason:
+              'the curated CHANGELOG section reaches the release body (threads 3/7)',
+        );
+        expect(
+          notes,
+          contains('release-draft-owner: run/222/job/release-macos'),
+          reason:
+              'the draft body stamps the owner so the guard can reclaim it (threads 4/8)',
+        );
+      },
+    );
+
+    test(
+      'release_lazy_draft.sh: release already exists → no create, exit 0',
+      () {
+        plant('release-exists', '');
+        final r = runScript(
+          '${Directory.current.path}/scripts/release_lazy_draft.sh',
+          ['v1.2.3'],
+        );
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        expect(ghLog().where((l) => l.contains('release create')), isEmpty);
+      },
+    );
+
+    test(
+      'release_lazy_draft.sh: malformed RELEASE_DRAFT_IDENTITY fails loud',
+      () {
+        plant('CHANGELOG.md', '## Unreleased\n- curated entry one\n');
+        final r = Process.runSync(
+          'bash',
+          ['${Directory.current.path}/scripts/release_lazy_draft.sh', 'v1.2.3'],
+          workingDirectory: fx.path,
+          environment: env(extra: {'RELEASE_DRAFT_IDENTITY': 'job/binaries'}),
+          includeParentEnvironment: true,
+        );
+        expect(
+          r.exitCode,
+          isNot(0),
+          reason: 'an unmatchable marker would orphan the draft forever',
+        );
+        expect('${r.stdout}${r.stderr}', contains('RELEASE_DRAFT_IDENTITY'));
+      },
+    );
 
     test(
       'attach path: release without SHA256SUMS → upload only, publish left to provenance',
@@ -775,7 +791,10 @@ void main() {
           ['v1.2.3', asset],
         );
         expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-        expect(ghLog(), contains('release upload v1.2.3 $asset --clobber --repo OWNER/REPO'));
+        expect(
+          ghLog(),
+          contains('release upload v1.2.3 $asset --clobber --repo OWNER/REPO'),
+        );
         expect(
           ghLog().where((l) => l.contains('release edit')),
           isEmpty,
@@ -807,8 +826,11 @@ void main() {
         expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
         expect(
           ghLog(),
-          contains('release edit v1.2.3 --draft=false --latest --repo OWNER/REPO'),
-          reason: 'a servable release (signed checksums on board) may be published + flagged latest',
+          contains(
+            'release edit v1.2.3 --draft=false --latest --repo OWNER/REPO',
+          ),
+          reason:
+              'a servable release (signed checksums on board) may be published + flagged latest',
         );
       },
     );
@@ -825,55 +847,100 @@ void main() {
           ['v1.2.3', asset],
         );
         expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-        final creates = ghLog().where((l) => l.contains('release create')).toList();
+        final creates = ghLog()
+            .where((l) => l.contains('release create'))
+            .toList();
         expect(creates, hasLength(1));
-        expect(creates.single, contains('--draft'), reason: 'the leg create is draft-only');
-        expect(creates.single, isNot(contains('--latest')), reason: 'gh-1801 threads 2/6: a leg create never publishes/latest');
-        expect(creates.single, contains('a.ab'), reason: 'assets ride the create command');
-        final notes = File('${fx.path}/last-create-notes.md').readAsStringSync();
+        expect(
+          creates.single,
+          contains('--draft'),
+          reason: 'the leg create is draft-only',
+        );
+        expect(
+          creates.single,
+          isNot(contains('--latest')),
+          reason: 'gh-1801 threads 2/6: a leg create never publishes/latest',
+        );
+        expect(
+          creates.single,
+          contains('a.ab'),
+          reason: 'assets ride the create command',
+        );
+        final notes = File(
+          '${fx.path}/last-create-notes.md',
+        ).readAsStringSync();
         expect(notes, contains('leg notes'));
-        expect(notes, contains('release-draft-owner: run/222/job/release-macos'));
+        expect(
+          notes,
+          contains('release-draft-owner: run/222/job/release-macos'),
+        );
       },
     );
 
-    test('draft guard: RELEASE_DRAFT_IDENTITY match deletes the leg-stamped draft', () {
-      plant('draft-state.txt', 'true');
-      plant('release-body.txt', '<!-- release-draft-owner: run/222/job/binaries-linux-x64 -->\n');
-      final r = Process.runSync(
-        'bash',
-        ['${Directory.current.path}/scripts/release_draft_guard.sh', 'v1.2.3'],
-        workingDirectory: fx.path,
-        environment: env(extra: {
-          'GITHUB_JOB': 'binaries',
-          'RELEASE_DRAFT_IDENTITY': 'run/222/job/binaries-linux-x64',
-        }),
-        includeParentEnvironment: true,
-      );
-      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-      expect(ghLog(), contains('release delete v1.2.3 --repo OWNER/REPO --yes'));
-    });
+    test(
+      'draft guard: RELEASE_DRAFT_IDENTITY match deletes the leg-stamped draft',
+      () {
+        plant('draft-state.txt', 'true');
+        plant(
+          'release-body.txt',
+          '<!-- release-draft-owner: run/222/job/binaries-linux-x64 -->\n',
+        );
+        final r = Process.runSync(
+          'bash',
+          [
+            '${Directory.current.path}/scripts/release_draft_guard.sh',
+            'v1.2.3',
+          ],
+          workingDirectory: fx.path,
+          environment: env(
+            extra: {
+              'GITHUB_JOB': 'binaries',
+              'RELEASE_DRAFT_IDENTITY': 'run/222/job/binaries-linux-x64',
+            },
+          ),
+          includeParentEnvironment: true,
+        );
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        expect(
+          ghLog(),
+          contains('release delete v1.2.3 --repo OWNER/REPO --yes'),
+        );
+      },
+    );
 
-    test('draft guard: sibling leg identity never deletes (refuses, exit 0)', () {
-      plant('draft-state.txt', 'true');
-      plant('release-body.txt', '<!-- release-draft-owner: run/222/job/binaries-linux-x64 -->\n');
-      final r = Process.runSync(
-        'bash',
-        ['${Directory.current.path}/scripts/release_draft_guard.sh', 'v1.2.3'],
-        workingDirectory: fx.path,
-        environment: env(extra: {
-          'GITHUB_JOB': 'binaries',
-          'RELEASE_DRAFT_IDENTITY': 'run/222/job/binaries-macos-x64',
-        }),
-        includeParentEnvironment: true,
-      );
-      expect(r.exitCode, 0);
-      expect(
-        ghLog().where((l) => l.contains('release delete')),
-        isEmpty,
-        reason: 'a failed leg must never delete a sibling leg\'s in-flight draft',
-      );
-      expect('${r.stdout}${r.stderr}', contains('refusing to delete'));
-    });
+    test(
+      'draft guard: sibling leg identity never deletes (refuses, exit 0)',
+      () {
+        plant('draft-state.txt', 'true');
+        plant(
+          'release-body.txt',
+          '<!-- release-draft-owner: run/222/job/binaries-linux-x64 -->\n',
+        );
+        final r = Process.runSync(
+          'bash',
+          [
+            '${Directory.current.path}/scripts/release_draft_guard.sh',
+            'v1.2.3',
+          ],
+          workingDirectory: fx.path,
+          environment: env(
+            extra: {
+              'GITHUB_JOB': 'binaries',
+              'RELEASE_DRAFT_IDENTITY': 'run/222/job/binaries-macos-x64',
+            },
+          ),
+          includeParentEnvironment: true,
+        );
+        expect(r.exitCode, 0);
+        expect(
+          ghLog().where((l) => l.contains('release delete')),
+          isEmpty,
+          reason:
+              'a failed leg must never delete a sibling leg\'s in-flight draft',
+        );
+        expect('${r.stdout}${r.stderr}', contains('refusing to delete'));
+      },
+    );
   });
 }
 

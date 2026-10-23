@@ -914,7 +914,8 @@ jobs:
         expect(
           helperCalls,
           greaterThan(0),
-          reason: 'the binaries/web-spa upload steps must route their '
+          reason:
+              'the binaries/web-spa upload steps must route their '
               'draft-first create through release_lazy_draft.sh',
         );
       },
@@ -1128,7 +1129,9 @@ jobs:
         expect(run.exitCode, 0);
         expect(
           run.log,
-          contains('release edit v1.2.3 --draft=false --latest --repo OWNER/REPO'),
+          contains(
+            'release edit v1.2.3 --draft=false --latest --repo OWNER/REPO',
+          ),
           reason:
               'a servable release (signed checksums on board) may be '
               'published + flagged latest by the attach (recovery path)',
@@ -1784,43 +1787,51 @@ gh release create "v9.9.9" \
       }
     });
 
-    test('the two shared create paths are the only creates, both draft-only', () {
-      expect(
-        extractCreates(read('scripts/auto_release.sh')),
-        isEmpty,
-        reason: 'gh-1801: auto_release.sh must not create a release',
-      );
-      final lazy = extractCreates(read('scripts/release_lazy_draft.sh'));
-      expect(lazy, hasLength(1));
-      expect(lazy.single.text, contains('--draft'));
-      expect(lazy.single.text, isNot(contains('--latest')));
-      final attach = extractCreates(read('scripts/release_attach_or_create.sh'));
-      expect(attach, hasLength(1));
-      expect(attach.single.text, contains('--draft'));
-      expect(attach.single.text, isNot(contains('--latest')));
-    });
+    test(
+      'the two shared create paths are the only creates, both draft-only',
+      () {
+        expect(
+          extractCreates(read('scripts/auto_release.sh')),
+          isEmpty,
+          reason: 'gh-1801: auto_release.sh must not create a release',
+        );
+        final lazy = extractCreates(read('scripts/release_lazy_draft.sh'));
+        expect(lazy, hasLength(1));
+        expect(lazy.single.text, contains('--draft'));
+        expect(lazy.single.text, isNot(contains('--latest')));
+        final attach = extractCreates(
+          read('scripts/release_attach_or_create.sh'),
+        );
+        expect(attach, hasLength(1));
+        expect(attach.single.text, contains('--draft'));
+        expect(attach.single.text, isNot(contains('--latest')));
+      },
+    );
 
-    test('the publish flip exists exactly once per owner, next to SHA256SUMS', () {
-      final provenance = read('.github/workflows/ci.yml');
-      expect(
-        provenance,
-        contains('--draft=false --latest'),
-        reason:
-            'release-provenance is the single flip owner: it runs after '
-            'every fa-* asset AND uploads the signed SHA256SUMS',
-      );
-      final attachScript = read('scripts/release_attach_or_create.sh');
-      expect(
-        attachScript,
-        contains('--draft=false --latest'),
-        reason: 'the SHA256SUMS-gated recovery publish stays',
-      );
-      expect(
-        attachScript.contains('SHA256SUMS'),
-        isTrue,
-        reason: 'the recovery publish must be gated on servability',
-      );
-    });
+    test(
+      'the publish flip exists exactly once per owner, next to SHA256SUMS',
+      () {
+        final provenance = read('.github/workflows/ci.yml');
+        expect(
+          provenance,
+          contains('--draft=false --latest'),
+          reason:
+              'release-provenance is the single flip owner: it runs after '
+              'every fa-* asset AND uploads the signed SHA256SUMS',
+        );
+        final attachScript = read('scripts/release_attach_or_create.sh');
+        expect(
+          attachScript,
+          contains('--draft=false --latest'),
+          reason: 'the SHA256SUMS-gated recovery publish stays',
+        );
+        expect(
+          attachScript.contains('SHA256SUMS'),
+          isTrue,
+          reason: 'the recovery publish must be gated on servability',
+        );
+      },
+    );
 
     test('guards and sweeper never touch the latest badge', () {
       for (final script in [
@@ -2486,8 +2497,11 @@ gh release create "v9.9.9" \
               .ghLog()
               .where((l) => l.contains('release create'))
               .toList();
-          expect(creates, hasLength(0),
-              reason: 'gh-1801: no release object across the sequence');
+          expect(
+            creates,
+            hasLength(0),
+            reason: 'gh-1801: no release object across the sequence',
+          );
           expect(
             r2.originSubjects(4).where((s) => s.startsWith('chore(release):')),
             isEmpty,

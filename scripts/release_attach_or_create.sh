@@ -67,7 +67,7 @@ upload_all() { # exists-path: upload + (servable-only) publish + latest
 # and aborts when either is missing (bin/self_manage.dart).
 release_serves_fa_update() {
   local names
-  names=$(gh release view "$tag" --repo "$repo" --json assets --jq '[.assets[].name]' 2>/dev/null || true)
+  names=$(gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' 2>/dev/null || true)
   printf '%s\n' "$names" | grep -qE '^SHA256SUMS(\.sig)?$'
 }
 
