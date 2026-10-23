@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-23T14:49:09.562Z",
+  "ticketKey": "pr-1807",
+  "headSha": "a0ee19887050b82e41d0b4a828410e9ef2fdb958",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:5c2844f676b6a640",
+      "size": 6217
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:29b7ed788cc2fe2f",
+      "size": 7209
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:44579542990be516",
+      "size": 2822
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:db34ceaba33a8b2b",
+      "size": 2664
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:4cb3decb3be6b1e8",
+      "size": 916
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:86d6be9fc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:f38688aab3a4a550",
+      "size": 2400
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:29dc1f77949b9c02",
+      "size": 2328
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6votiX",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/fa_tui_slash_menu_chord_test.dart:42",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Not `dart format`-clean**\n\n`dart format --output=none --set-exit-if-changed` under the current SDK (3.13.5) reflows two spots in this new file. The `_chord` helper collapses:\n\n```diff\n-TeaKey _chord(String letter) => TeaKey(\n-  code: KeyCode.rune,\n-  text: letter,\n-  modifiers: const {KeyMod.ctrl},\n-);\n+TeaKey _chord(String letter) =>\n+    TeaKey(code: KeyCode.rune, text: letter, modifiers: const {KeyMod.ctrl});\n```\n\nand the long test name at line 63 gets wrapped. The repo's pre-commit hook self-heals staged Dart files (`scripts/pre-commit:39-41` runs `dart format` + re-stage), so this file likely landed without the hook running.\n\nPurely mechanical: `dart format test/cli/fa_tui_slash_menu_chord_test.dart`. Polish only — there is no CI format gate and sibling test files carry the same drift (e.g. `test/cli/fa_tui_paste_flow_test.dart`, landed 2026-10-14, is also dirty under the current SDK), so the tree tolerates it; noting it so the next touch of the file doesn't produce a noisy format-only diff."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6votlu",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/fa_tui_slash_menu_chord_test.dart:103",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Tests 3 & 5 couple to `/memory` existing in `builtinSlashCommands`**\n\nThe regression tests drive the real production path (`buildSlashMenuItems` + `builtinSlashCommands`), which is good end-to-end coverage — but tests 3 and 5 hard-assert the catalog contains `/memory` (`line 80` and `line 103`'s `firstWhere`). If that command is ever renamed or removed, these chord-regression tests break for a reason unrelated to the chord guard and need a follow-up edit.\n\nThe `buildSlashMenu` callback is already wired in `_model()`; returning a fixed 2–3 item list there (as several `test/cli/fa_tui_test.dart` cases do with `buildSlashMenu: (_) => const [...]`) would pin the regression strictly to the chord behavior, independent of the command catalog.\n\nKeeping the real builder is also defensible — the 2+ item flow through the real filter is exactly the reported failure shape. A lighter alternative that keeps that coverage: assert the item list is UNCHANGED across the chord (snapshot `model.menuItems` before/after) instead of naming a specific command. Either way, polish only — the behavior asserted today is correct and the tests are green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:ce1e9e06",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Not `dart format`-clean**\n\n`dart format --output=none --set-exit-if-changed` under the current SDK (3.13.5) reflows two spots in this new file. The `_chord` helper collapses:\n\n```diff\n-TeaKey _chord(String letter) => TeaKey(\n-  code: KeyCode.rune,\n-  text: letter,\n-  modifiers: const {KeyMod.ctrl},\n-);\n+TeaKey _chord(String letter) =>\n+    TeaKey(code: KeyCode.rune, text: letter, modifiers: const {KeyMod.ctrl});\n```\n\nand the long test name at line 63 gets wrapped. The repo's pre-commit hook self-heals staged Dart files (`scripts/pre-commit:39-41` runs `dart format` + re-stage), so this file likely landed without the hook running.\n\nPurely mechanical: `dart format test/cli/fa_tui_slash_menu_chord_test.dart`. Polish only — there is no CI format gate and sibling test files carry the same drift (e.g. `test/cli/fa_tui_paste_flow_test.dart`, landed 2026-10-14, is also dirty under the current SDK), so the tree tolerates it; noting it so the next touch of the file doesn't produce a noisy format-only diff."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:9336249a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Tests 3 & 5 couple to `/memory` existing in `builtinSlashCommands`**\n\nThe regression tests drive the real production path (`buildSlashMenuItems` + `builtinSlashCommands`), which is good end-to-end coverage — but tests 3 and 5 hard-assert the catalog contains `/memory` (`line 80` and `line 103`'s `firstWhere`). If that command is ever renamed or removed, these chord-regression tests break for a reason unrelated to the chord guard and need a follow-up edit.\n\nThe `buildSlashMenu` callback is already wired in `_model()`; returning a fixed 2–3 item list there (as several `test/cli/fa_tui_test.dart` cases do with `buildSlashMenu: (_) => const [...]`) would pin the regression strictly to the chord behavior, independent of the command catalog.\n\nKeeping the real builder is also defensible — the 2+ item flow through the real filter is exactly the reported failure shape. A lighter alternative that keeps that coverage: assert the item list is UNCHANGED across the chord (snapshot `model.menuItems` before/after) instead of naming a specific command. Either way, polish only — the behavior asserted today is correct and the tests are green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:9a04fbd3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: Correct, minimal fix for gh-1805 — the `_isCommandKeystroke` guard on `_handleSlashMenuEditKey` mirrors the established pattern on the other three insert surfaces (`_handleCharInsertKey`, `_pickerTypeFilter`, `_promptChar`), and the 5 new regression tests reproduce the reported `/smemory` symptom (verified RED before the fix, GREEN after). No blocking findings; mergeable as-is.\n\n**Key Issues** (all 💡 suggestions):\n- `test/cli/fa_tui_slash_menu_chord_test.dart` is not `dart format`-clean under the current SDK (2 mechanical reflows; no CI format gate, sibling drift exists).\n- Tests 3 & 5 couple to `/memory` in `builtinSlashCommands` — a fixed injected menu (or an items-unchanged assertion) would decouple the regression from the command catalog.\n- No `## Unreleased` line in CHANGELOG.md for a user-visible TUI bugfix (curated-only file; recent bugfix practice is mixed, so optional).\n\n**Next Steps**:\n1. Optional: `dart format test/cli/fa_tui_slash_menu_chord_test.dart`\n2. Optional: add a CHANGELOG `## Unreleased` bullet\n3. Locally verified on this review leg: `dart analyze` clean on both changed files, 5/5 new tests pass, 38/38 composer/slash-menu/TUI suite passes (`dart test test/cli/fa_tui_*.dart test/cli/slash_*.dart test/cli/fa_tui_slash_menu_chord_test.dart`)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:e15b8719",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel c7e3ef076484974533fb2c50fc02ebafdcbe2207 — stale base at 2026-10-23T14:34:07.622Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
