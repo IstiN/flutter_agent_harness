@@ -192,34 +192,63 @@ void main() {
     );
 
     test(
-      'publish (--draft=false) happens only in steps that upload a CLI asset',
+      'publish (--draft=false) happens ONLY in steps that upload SHA256SUMS',
       () {
+        // Review threads 1/5: the CLI asset is NOT the servability bar —
+        // `fa update` hard-fails without the SIGNED SHA256SUMS(.sig)
+        // (bin/self_manage.dart provenance gate), which only the
+        // release-provenance job uploads (needs the whole matrix +
+        // web-spa). A publish keyed on the first CLI upload recreates the
+        // incident window: latest points at a release every `fa update`
+        // aborts on, for all platforms, until provenance lands.
         for (final wf in [
           '.github/workflows/ci.yml',
           '.github/workflows/build-macos.yml',
         ]) {
           runBlocks(wf).forEach((name, body) {
-            if (!body.contains('--draft=false')) return;
+            final stripped = stripComments(body);
+            if (!stripped.contains('--draft=false')) return;
             expect(
-              body,
-              contains('gh release upload'),
+              stripped,
+              contains('SHA256SUMS'),
               reason:
-                  '$wf step "$name": --draft=false (publish + latest) must '
-                  'ride the step that uploads a real asset — publishing from '
-                  'an asset-less step recreates the empty-latest window',
-            );
-            expect(
-              body,
-              contains(RegExp(r'fa-.*\.(tar\.gz|zip)')),
-              reason:
-                  '$wf step "$name": only fa-update CLI assets (fa-*.tar.gz '
-                  '/ fa-*.zip) may publish the release — a non-CLI asset '
-                  '(web zip, extension) must never be the only asset of latest',
+                  '$wf step "$name": --draft=false (publish + latest) may '
+                  'only ride the step that uploads the signed SHA256SUMS — '
+                  'that is the first moment the release can actually serve '
+                  '`fa update` (gh-1801 rework)',
             );
           });
         }
       },
     );
+
+    test('release-provenance owns the publish flip after signing', () {
+      final prov =
+          workflowYaml('.github/workflows/ci.yml')['jobs']['release-provenance']
+              as YamlMap;
+      expect(
+        (prov['needs'] as YamlList).map((e) => e.toString()),
+        containsAll(['binaries', 'web-spa']),
+        reason:
+            'the flip may only fire after EVERY fa-* asset (full matrix + '
+            'web-spa) is on the release',
+      );
+      final uploadStep = (prov['steps'] as YamlList)
+          .whereType<YamlMap>()
+          .firstWhere((s) => s['name'] == 'Upload provenance assets');
+      final body = stripComments(uploadStep['run'].toString());
+      expect(body, contains('gh release upload'));
+      expect(body, contains('SHA256SUMS'));
+      expect(
+        body,
+        contains('--draft=false --latest'),
+        reason:
+            'the provenance upload step is the single publish point: it runs '
+            'after all CLI assets AND the signed checksums landed — a red '
+            'provenance leaves the previous release as latest instead of '
+            'stranding a provenance-less one (gh-1801 rework)',
+      );
+    });
 
     test('web-spa / extension uploads never publish the release', () {
       final ciBlocks = runBlocks('.github/workflows/ci.yml');
