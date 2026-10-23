@@ -168,6 +168,68 @@ final class _ThrowingWriteEnv implements ExecutionEnv {
 }
 
 void main() {
+  // Shared live-TUI harness: fresh frame sink + key stream + memory env
+  // per test, the incident boot, and the ctrl+c quit (the picker and
+  // submit route groups drive them).
+  late _FrameSink frames;
+  late StreamController<List<int>> keys;
+  late MemoryExecutionEnv env;
+  late FakeCliIO io;
+
+  setUp(() {
+    frames = _FrameSink();
+    keys = StreamController<List<int>>();
+    env = MemoryExecutionEnv(cwd: '/work');
+    io = FakeCliIO();
+  });
+
+  tearDown(() => io.close());
+
+  /// Boots the real CLI in TUI mode headlessly over the incident's
+  /// config. Returns the booted cli (drive submits; quit with
+  /// [quitTui]).
+  Future<AgentCli> bootIncidentCli({
+    Future<void> Function(Model model)? onModelChanged,
+    _ThrowingWriteEnv? throwingEnv,
+  }) async {
+    await env.writeFile('/home/u/.fah/config.yaml', _incidentConfig);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: _copilotModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: throwingEnv ?? env,
+        homeDir: '/home/u',
+        sessionRoot: '/sessions',
+        modelsConfig: ModelsConfig.fromYaml(
+          (loadYaml(_incidentConfig) as Map)['models'],
+        ),
+        onModelChanged: onModelChanged,
+        providerKind: 'copilot',
+        skillsAccess: SkillsAccess.granted,
+        tuiProgramHooks: TuiProgramHooks(
+          input: keys.stream,
+          output: frames,
+          width: 80,
+          height: 24,
+        ),
+      ),
+      io: io,
+      useTui: true,
+      streamFunction: FakeStreamFunction(const []).call,
+    );
+    final run = cli.run();
+    // The test ends via the TUI's own ctrl+c quit; a boot failure must
+    // surface as this test's timeout, not a dangling zone error.
+    unawaited(run.catchError((Object _) {}));
+    await waitForIt(() => frames.text.contains('\x1b[?1049h'));
+    return cli;
+  }
+
+  Future<void> quitTui() async {
+    keys.add([0x03]); // ctrl+c press 1: arms the double-press window
+    keys.add([0x03]); // press 2 within the window quits the TUI
+  }
+
   group('runContainedSubmit (the containment wrapper, UT-1)', () {
     test('a synchronous throw is reported, never rethrown', () async {
       final reported = <Object>[];
@@ -280,60 +342,6 @@ void main() {
   });
 
   group('the live TUI submit boundary (IT-2/IT-3, REG-1)', () {
-    late _FrameSink frames;
-    late StreamController<List<int>> keys;
-    late MemoryExecutionEnv env;
-    late FakeCliIO io;
-
-    setUp(() {
-      frames = _FrameSink();
-      keys = StreamController<List<int>>();
-      env = MemoryExecutionEnv(cwd: '/work');
-      io = FakeCliIO();
-    });
-
-    tearDown(() => io.close());
-
-    /// Boots the real CLI in TUI mode headlessly over the incident's
-    /// config. Returns the booted cli (drive submits; quit with
-    /// [quitTui]).
-    Future<AgentCli> bootIncidentCli({
-      Future<void> Function(Model model)? onModelChanged,
-      _ThrowingWriteEnv? throwingEnv,
-    }) async {
-      await env.writeFile('/home/u/.fah/config.yaml', _incidentConfig);
-      final cli = AgentCli(
-        config: AgentCliConfig(
-          model: _copilotModel,
-          apiKey: '[REDACTED:Sensitive Value]',
-          env: throwingEnv ?? env,
-          homeDir: '/home/u',
-          sessionRoot: '/sessions',
-          modelsConfig: ModelsConfig.fromYaml(
-            (loadYaml(_incidentConfig) as Map)['models'],
-          ),
-          onModelChanged: onModelChanged,
-          providerKind: 'copilot',
-          skillsAccess: SkillsAccess.granted,
-          tuiProgramHooks: TuiProgramHooks(
-            input: keys.stream,
-            output: frames,
-            width: 80,
-            height: 24,
-          ),
-        ),
-        io: io,
-        useTui: true,
-        streamFunction: FakeStreamFunction(const []).call,
-      );
-      final run = cli.run();
-      // The test ends via the TUI's own ctrl+c quit; a boot failure must
-      // surface as this test's timeout, not a dangling zone error.
-      unawaited(run.catchError((Object _) {}));
-      await waitForIt(() => frames.text.contains('\x1b[?1049h'));
-      return cli;
-    }
-
     /// Boots the CLI and drives the bare `/model-edit` flow to the 65536
     /// max output preset through the real submit boundary. Returns
     /// `(submit, cli)`: the still-running flow's submit future (await it
@@ -362,11 +370,6 @@ void main() {
         reason: 'the token ladder picker opened',
       );
       return (submit, cli);
-    }
-
-    Future<void> quitTui() async {
-      keys.add([0x03]); // ctrl+c press 1: arms the double-press window
-      keys.add([0x03]); // press 2 within the window quits the TUI
     }
 
     test(
@@ -455,6 +458,90 @@ void main() {
         )).valueOrNull;
         expect(written, _incidentConfig);
         expect(throwingEnv.writeAttempts, greaterThanOrEqualTo(1));
+
+        await quitTui();
+      },
+    );
+  });
+
+  group('the settings-hub picker route (IT-4, gh-1787 rework)', () {
+
+    test(
+      'a throwing onModelChanged through the hub\'s Model capabilities row '
+      'renders the one-line panel, never a raw stack (IT-4)',
+      timeout: const Timeout(Duration(seconds: 120)),
+      () async {
+        var armed = false;
+        final cli = await bootIncidentCli(
+          onModelChanged: (model) async {
+            if (armed) {
+              armed = false;
+              throw StateError('host persist failed');
+            }
+          },
+        );
+
+        // `/settings` only OPENS the hub picker; the row selection runs
+        // later through the live picker dispatch — the route the review
+        // flagged as unguarded (the flow's primary entry).
+        final submit = cli.tuiSubmitForTest('/settings', const []);
+        await submit;
+        await cli.tuiWizardPickForTest('settings', 'model-caps');
+        // The caps flow menu: the incident's pinned entry is listed —
+        // pick it straight to the per-model caps menu.
+        await waitForIt(() => frames.plain.contains('Pin or edit an override'));
+        await cli.tuiWizardPickForTest(
+          'wizard:model capabilities',
+          'entry:copilot/gemini-4-argon',
+        );
+        await waitForIt(
+          () => frames.plain.contains('capabilities — copilot/gemini-4-argon'),
+        );
+        armed = true;
+        await cli.tuiWizardPickForTest(
+          'wizard:capabilities — copilot/gemini-4-argon',
+          'maxTokens',
+        );
+        await waitForIt(
+          () => frames.plain.contains('Enter a number manually'),
+          reason: 'the token ladder picker opened',
+        );
+        // NOT awaited before the throw: without containment this future
+        // IS the escape (the picker dispatch's raw throw); with it, the
+        // flow ends contained and the future completes normally.
+        final picked = cli.tuiWizardPickForTest(
+          'wizard:maxTokens in tokens',
+          '65536',
+        );
+        await picked;
+
+        // The clean one-line panel carries the exception message.
+        await waitForIt(
+          () => frames.plain.contains('Bad state: host persist failed'),
+          reason: 'the error panel painted',
+        );
+        expect(
+          frames.plain,
+          isNot(contains('asynchronous suspension')),
+          reason: 'a contained flow error must never paint stack frames',
+        );
+
+        // E3: the write itself landed before the apply failed.
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        final doc = loadYaml(written!) as YamlMap;
+        final caps =
+            ((doc['models'] as YamlMap)['overrides'] as YamlMap)['copilot']
+                as YamlMap;
+        expect((caps['gemini-4-argon'] as YamlMap)['maxTokens'], 65536);
+
+        // Usability: the session accepts a fresh submit and completes it.
+        await cli.tuiSubmitForTest('/model-edit maxTokens 4096', const []);
+        await waitForIt(
+          () => frames.plain.contains('model max tokens set to 4096'),
+        );
+        expect(cli.isBusy, isFalse);
 
         await quitTui();
       },
