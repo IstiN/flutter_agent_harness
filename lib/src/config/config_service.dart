@@ -824,7 +824,14 @@ String removeYamlPath(String text, List<String> segments) {
 
 /// The index of the line declaring `segments[depth]` at [cursor]'s block
 /// level, or -1. The scan stops when the indentation backs out of the
-/// parent block.
+/// parent block. A key matches in EVERY on-disk spelling of the SAME
+/// mapping key — the bare form, the `jsonEncode`-double-quoted form the
+/// typed emitters render (`models.overrides` providers/model ids,
+/// `models.custom` names — `ModelCapabilityOverrides.toYaml`), and the
+/// single-quoted form hand-edited files use (`'copilot':` ≡ `copilot:` —
+/// the gh-1787 rework review); missing any of them inserts a duplicate
+/// chain whose pre-write parse throws
+/// `YamlException: Duplicate mapping key` (gh-1787).
 int _findKeyLine(
   List<String> lines,
   List<String> segments,
@@ -833,8 +840,11 @@ int _findKeyLine(
 ) {
   final indent = '  ' * depth;
   final tail = r':(\s.*)?$';
+  final key = RegExp.escape(segments[depth]);
+  final doubleQuoted = RegExp.escape(jsonEncode(segments[depth]));
+  final singleQuoted = RegExp.escape(_singleQuotedKey(segments[depth]));
   final pattern = RegExp(
-    '^${RegExp.escape(indent)}${RegExp.escape(segments[depth])}$tail',
+    '^${RegExp.escape(indent)}(?:$key|$doubleQuoted|$singleQuoted)$tail',
   );
   for (var i = cursor; i < lines.length; i++) {
     if (_indentOf(lines[i]) < depth * 2 && i > cursor) break;
@@ -861,6 +871,16 @@ bool _inlineSafeLine(String line) {
 /// Inserts the missing `segments[depth..]` chain — at EOF for a new
 /// top-level section, otherwise at the top of the parent's block — and
 /// returns the joined text.
+///
+/// The inserted keys share the parent block's key spelling (gh-1787): a
+/// block the typed emitters render with quoted keys (`"copilot":` —
+/// `ModelCapabilityOverrides.toYaml`) grows a quoted key, never a bare
+/// duplicate that the yaml parser reads as a SECOND mapping entry (the
+/// duplicate threw `YamlException: Duplicate mapping key` at the pre-
+/// write validation, and the write never landed). Per level (gh-1787
+/// rework review): only the FIRST inserted level has real siblings — it
+/// takes the parent block's spelling; every deeper fresh level has no
+/// visible children and stays bare (the legacy shape).
 String _insertChain(
   List<String> lines,
   List<String> segments,
@@ -869,18 +889,23 @@ String _insertChain(
   List<String> leafLines,
   bool hadTrailingNewline,
 ) {
-  final insertAt = depth == 0 ? lines.length : cursor;
-  if (depth == 0 && lines.isNotEmpty && lines.last.trim().isNotEmpty) {
-    lines.add('');
-  }
+  final insertAt = _topLevelInsertAt(lines, depth, cursor);
+  final childSpelling = depth > 0
+      ? _childKeySpelling(lines, cursor - 1, depth)
+      : _bareKey;
+  String spelling(String key, int level) =>
+      level == depth ? childSpelling(key) : key;
   var at = insertAt;
   for (var d = depth; d < segments.length; d++) {
     final isLeaf = d == segments.length - 1;
     if (isLeaf && leafLines.length == 1 && _inlineSafeLine(leafLines[0])) {
-      lines.insert(at, '${'  ' * d}${segments[d]}: ${leafLines[0]}');
+      lines.insert(
+        at,
+        '${'  ' * d}${spelling(segments[d], d)}: ${leafLines[0]}',
+      );
       break;
     }
-    lines.insert(at++, '${'  ' * d}${segments[d]}:');
+    lines.insert(at++, '${'  ' * d}${spelling(segments[d], d)}:');
     if (isLeaf) {
       for (final line in leafLines) {
         lines.insert(at++, line);
@@ -888,6 +913,55 @@ String _insertChain(
     }
   }
   return _join(lines, hadTrailingNewline);
+}
+
+/// The index a missing-chain insert starts at: the top of the parent's
+/// block for a nested level; EOF for a new top-level section, after
+/// appending the blank separator line that keeps it off the last entry.
+/// Split out of [_insertChain] to keep it under the repo's CRAP ratchet
+/// (crap4dart threshold 12 — the method has no headroom at CC 12).
+int _topLevelInsertAt(List<String> lines, int depth, int cursor) {
+  if (depth > 0) return cursor;
+  if (lines.isNotEmpty && lines.last.trim().isNotEmpty) {
+    lines.add('');
+  }
+  return lines.length;
+}
+
+/// The bare spelling (the identity) — the legacy shape for a block whose
+/// visible children carry no quotes.
+String _bareKey(String key) => key;
+
+/// The single-quoted spelling of a yaml mapping key (`'key':`): legal
+/// yaml spelling the SAME mapping key as the bare form — the hand-edited
+/// shape the gh-1787 rework review flagged (`'copilot':` ≡ `copilot:`).
+/// A literal single quote inside is doubled (`''`), the yaml
+/// single-quoted escape — the spelling a single-quoted emitter renders.
+String _singleQuotedKey(String key) => "'${key.replaceAll("'", "''")}'";
+
+/// The key spelling the visible children of the block opened at
+/// [parentLine] use, as a key renderer: `"key":` (jsonEncode — the typed
+/// emitters' shape), `'key':` (the hand-edited single-quoted shape — the
+/// same yaml mapping key), or bare. The first non-comment key line at
+/// [childDepth]'s exact indent decides; grandchildren are skipped, a
+/// dedent ends the block. A parent with no visible children (fresh
+/// section) stays bare — the legacy shape.
+String Function(String) _childKeySpelling(
+  List<String> lines,
+  int parentLine,
+  int childDepth,
+) {
+  final indent = '  ' * childDepth;
+  for (var i = parentLine + 1; i < lines.length; i++) {
+    final line = lines[i];
+    if (line.trim().isEmpty || _indentOf(line) > childDepth * 2) continue;
+    if (_indentOf(line) < childDepth * 2) return _bareKey;
+    if (line.startsWith('$indent#')) continue;
+    if (line.startsWith('$indent"')) return (key) => jsonEncode(key);
+    if (line.startsWith("$indent'")) return _singleQuotedKey;
+    return _bareKey;
+  }
+  return _bareKey;
 }
 
 /// Swaps the leaf key line at [found] for [leafLines]: a single line keeps
@@ -903,11 +977,26 @@ String _replaceLeaf(
 ) {
   final indent = '  ' * depth;
   final comment = _trailingComment(lines[found]);
+  // The found line's own spelling is preserved (gh-1787): a quoted key
+  // line is rewritten quoted — the edit stays byte-stable within its
+  // block's style instead of flipping the key to the bare form. Both
+  // quoted spellings of the SAME key are recognized (gh-1787 rework
+  // review): the emitters' jsonEncode form and the hand-edited
+  // single-quoted form.
+  final raw = lines[found];
+  final String keyText;
+  if (raw.startsWith('$indent"')) {
+    keyText = jsonEncode(key);
+  } else if (raw.startsWith("$indent'")) {
+    keyText = _singleQuotedKey(key);
+  } else {
+    keyText = key;
+  }
   if (leafLines.length == 1 && _inlineSafeLine(leafLines[0])) {
-    lines[found] = '$indent$key: ${leafLines[0]}$comment';
+    lines[found] = '$indent$keyText: ${leafLines[0]}$comment';
     return _join(lines, hadTrailingNewline);
   }
-  lines[found] = '$indent$key:$comment';
+  lines[found] = '$indent$keyText:$comment';
   final end = _blockEnd(lines, found, depth);
   lines.removeRange(found + 1, end);
   for (var i = 0; i < leafLines.length; i++) {
@@ -1035,12 +1124,38 @@ String _trailingComment(String line) {
 /// The inline value of a `key: value` line (null when the line declares a
 /// nested block), comments stripped.
 String? _inlineValue(String line) {
-  final colon = line.indexOf(':');
+  var colon = line.indexOf(':');
+  // A quoted key (`"m:1":` — the typed emitters' jsonEncode shape) may
+  // carry colons INSIDE the quotes; the value colon is the one after the
+  // closing quote (gh-1787, same quoted-key class as `_findKeyLine`).
+  final firstChar = line.trimLeft().isEmpty ? '' : line.trimLeft()[0];
+  if (firstChar == '"') {
+    final closing = _closingQuote(line, line.indexOf('"'));
+    if (closing >= 0 &&
+        closing + 1 < line.length &&
+        line.startsWith(':', closing + 1)) {
+      colon = closing + 1;
+    }
+  }
   if (colon < 0) return null;
   var value = line.substring(colon + 1);
   final comment = RegExp('\\s+#[^\']*\$').firstMatch(value);
   if (comment != null) value = value.substring(0, comment.start);
   return value.trim();
+}
+
+/// The index of the quote closing the one opening at [open] (skipping
+/// `\"` escapes), or -1.
+int _closingQuote(String line, int open) {
+  if (open < 0) return -1;
+  for (var i = open + 1; i < line.length; i++) {
+    if (line[i] == '\\') {
+      i++;
+      continue;
+    }
+    if (line[i] == '"') return i;
+  }
+  return -1;
 }
 
 /// Whether/when a change to a config section applies at runtime — the

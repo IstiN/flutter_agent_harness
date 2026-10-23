@@ -1104,6 +1104,14 @@ class AgentCli {
   Set<String> settingsPickerHandlerKeysForTest() =>
       _settingsPickerHandlers.keys.toSet();
 
+  /// Test seam routing a wizard-picker selection through the live TUI
+  /// dispatch (`_tuiPickerSelected`): completes the pending `_pickOption`
+  /// answer the way a real picker row does — the settings flows'
+  /// multiple-choice steps in tests (gh-1787).
+  @visibleForTesting
+  Future<void> tuiWizardPickForTest(String pickerId, String key) =>
+      _tuiPickerSelected(pickerId, key);
+
   /// Test seam: opens the sessions picker (building its rows) without a
   /// TUI; the built items land in [sessionPickerItemsForTest].
   @visibleForTesting

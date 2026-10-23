@@ -557,7 +557,11 @@ extension ModelCapabilityCapsSettings on AgentCli {
     if (current.provider == provider && current.id == modelId) {
       _rebuildActiveModel(current, before, after, caps, modelId);
       _reconcileWindowRegistry(provider, modelId, after);
-      unawaited(config.onModelChanged?.call(_agent.state.model));
+      // gh-1787 E1: AWAITED, not unawaited — a detached host callback's
+      // throw can only ever hit the zone (an uncaught async error, a raw
+      // stack in the transcript); awaited, it propagates up the flow and
+      // the submit boundary's containment renders the clean error panel.
+      await config.onModelChanged?.call(_agent.state.model);
     }
     for (final note in caps.notes) {
       io.writeln(_style.dim('note: $note'));
