@@ -93,7 +93,7 @@ for attempt in 1 2 3; do
   git tag -a "$tag" -m "Release $tag" origin/main
 
   if [ "$dry_run" -eq 1 ]; then
-    echo "Auto-release DRY-RUN: would push tag $tag at $(git rev-parse --short origin/main) and create the GitHub Release."
+    echo "Auto-release DRY-RUN: would push tag $tag at $(git rev-parse --short origin/main). No GitHub Release is created (gh-1801: the binaries job owns creation, draft-first)."
     git tag -d "$tag" >/dev/null
     exit 0
   fi
