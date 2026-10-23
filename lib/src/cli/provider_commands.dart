@@ -1656,12 +1656,14 @@ extension on AgentCli {
 
   /// Saves the SSO session: the full cookie string becomes the stored "key"
   /// of a saved custom provider pointing at `<apiUrl>/v1` (re-login replaces
-  /// the key, keeps the last-used model). The model's headers carry a
-  /// `cookie:` entry so the openai-completions adapter sends Cookie-header
-  /// auth instead of the default `authorization: Bearer`. After saving, runs
-  /// the guided project → model selection (matching the CodeMie CLI's setup
-  /// flow) so the user lands on a working connection. [offerName] gates the
-  /// provider-name step (explicit add flows only — see the caller).
+  /// the key). The model's headers carry a `cookie:` entry so the
+  /// openai-completions adapter sends Cookie-header auth instead of the
+  /// default `authorization: Bearer`. After saving, runs the guided
+  /// project → model selection (matching the CodeMie CLI's setup flow) so
+  /// the user lands on a working connection — on EVERY connect now
+  /// (issue #1809 AC2): a re-login to the same entry leads the project
+  /// picker with a keep-current row. [offerName] gates the provider-name
+  /// step (explicit add flows only — see the caller).
   Future<void> _applyCodeMieSsoCredentials(
     CodeMieSsoCredentials credentials, {
     bool offerName = false,
@@ -1694,17 +1696,20 @@ extension on AgentCli {
     final spec = providerCatalog['openai']!;
     await _storeProviderToken(spec, baseUrl, cookie, keyName: keyName);
 
-    // Guided project → model selection. It runs for a NEW account — no entry
-    // on this endpoint yet, or the user typed a DIFFERENT name (a second
-    // account needs its own project/model pick). A re-login to the SAME
-    // entry (Enter on the name prompt, or an automatic re-authorization)
-    // keeps the existing model choice.
+    // Guided project → model selection. It runs for a NEW account AND on a
+    // re-login to the SAME entry (issue #1809 AC2 — the old sameAccount
+    // skip hid the picker from every re-auth path): the re-login leads the
+    // picker with a keep-current row, so Enter keeps the existing
+    // project/model while a pick switches.
     final sameAccount = existing != null && name == existing.name;
-    final modelId = sameAccount
-        ? existing.modelId
-        : (await _codemieGuidedSetup(credentials.apiUrl, cookie) ??
-              existing?.modelId ??
-              _agent.state.model.id);
+    final guided = await _codemieGuidedSetup(
+      credentials.apiUrl,
+      cookie,
+      currentProject: sameAccount ? existing.project : null,
+      currentModelId: sameAccount ? existing.modelId : null,
+    );
+    final project = guided.$1 ?? (sameAccount ? existing.project : null);
+    final modelId = guided.$2 ?? existing?.modelId ?? _agent.state.model.id;
 
     if (registry != null) {
       registry.add(
@@ -1715,12 +1720,20 @@ extension on AgentCli {
           modelId: modelId,
           keyName: keyName,
           authMethod: CustomProviderAuthMethod.sso,
+          project: project,
         ),
       );
       _activeCustomName = name;
       io.writeln('saved provider $name (listed first in /provider)');
     }
-    await _switchCodeMieProvider(spec, baseUrl, modelId, cookie, keyName);
+    await _switchCodeMieProvider(
+      spec,
+      baseUrl,
+      modelId,
+      cookie,
+      keyName,
+      project: project,
+    );
     final hours =
         (credentials.expiresAt - DateTime.now().millisecondsSinceEpoch) ~/
         3600000;
@@ -1731,14 +1744,28 @@ extension on AgentCli {
   }
 
   /// Post-SSO guided setup: fetch projects, let the user pick one, then
-  /// fetch and pick a model. Returns the chosen model id, or null on cancel.
-  /// Dispatches to the config-injected guided setup, or the real flow.
-  Future<String?> _codemieGuidedSetup(String apiBase, String cookie) {
+  /// fetch and pick a model. Returns the (project, modelId) pair — a null
+  /// modelId is a cancel. Dispatches to the config-injected guided setup
+  /// (a test seam returning a model id only — the project stays null), or
+  /// the real flow, which leads a re-login with a keep-current row
+  /// ([currentModelId] set, issue #1809 AC2).
+  Future<(String?, String?)> _codemieGuidedSetup(
+    String apiBase,
+    String cookie, {
+    String? currentProject,
+    String? currentModelId,
+  }) async {
     final override = config.codeMieGuidedSetupFn;
     if (override != null) {
-      return override(apiBase, cookie, _pickOption, _askLine);
+      final modelId = await override(apiBase, cookie, _pickOption, _askLine);
+      return (null, modelId);
     }
-    return _codemiePickProjectAndModel(apiBase, cookie);
+    return _codemiePickProjectAndModel(
+      apiBase,
+      cookie,
+      currentProject: currentProject,
+      currentModelId: currentModelId,
+    );
   }
 
   /// Switches to a CodeMie provider using Cookie-header auth instead of the
@@ -1746,13 +1773,15 @@ extension on AgentCli {
   /// (for `/models` fetches and key status display), but the openai-completions
   /// adapter receives an empty apiKey (so it skips `authorization: Bearer`)
   /// while the model's `headers` carry `cookie: <full cookie string>`.
+  /// [project] rides as the `x-codemie-project` header (issue #1809).
   Future<void> _switchCodeMieProvider(
     ProviderSpec spec,
     String baseUrl,
     String modelId,
     String cookie,
-    String keyName,
-  ) async {
+    String keyName, {
+    String? project,
+  }) async {
     final modelLine = modelId == _agent.state.model.id
         ? '  model unchanged: $modelId — use /model to change'
         : '  model: $modelId';
@@ -1777,8 +1806,9 @@ extension on AgentCli {
       contextWindow: builtModel.contextWindow,
       maxTokens: builtModel.maxTokens,
       // Cookie-header auth: the adapter sees an empty apiKey (no Bearer) and
-      // merges model.headers, adding `cookie: <full cookie jar>`.
-      headers: {'cookie': cookie},
+      // merges model.headers, adding `cookie: <full cookie jar>` — plus the
+      // picked project (issue #1809 AC4).
+      headers: {'cookie': cookie, 'x-codemie-project': ?project},
       compat: builtModel.compat,
       maxImages: builtModel.maxImages,
     );
@@ -1802,43 +1832,17 @@ extension on AgentCli {
     await config.onProviderChanged?.call(_providerKind, _apiKey);
   }
 
-  Future<String?> _codemiePickProjectAndModel(
-    String apiBase,
-    String cookie,
-  ) async {
-    await _codemiePickProject(apiBase, cookie);
-    return _codemiePickModel(apiBase, cookie);
-  }
-
-  /// Step 1: fetch and optionally pick a CodeMie project.
-  Future<void> _codemiePickProject(String apiBase, String cookie) async {
-    io.writeln('fetching CodeMie projects...');
-    final projects = await fetchCodeMieProjects(apiBase, cookie).catchError((
-      e,
-    ) {
-      return const <String>[];
-    });
-    if (projects.isEmpty) return;
-    await _pickCodeMieProject(projects);
-  }
-
-  /// Offers the project picker for [projects] and reports the selection
-  /// (a cancelled picker stays silent).
-  Future<void> _pickCodeMieProject(List<String> projects) async {
-    final projectPick = await _pickOption('CodeMie project', [
-      for (final p in projects) (p, p, ''),
-    ]);
-    if (projectPick != null) io.writeln('selected project: $projectPick');
-  }
-
   /// Step 2: fetch and pick a CodeMie model (or manual entry).
   Future<String?> _codemiePickModel(String apiBase, String cookie) async {
     io.writeln('fetching CodeMie models...');
-    final models = await fetchCodeMieModels('$apiBase/v1', cookie).catchError((
-      e,
-    ) {
-      return const <String>[];
-    });
+    final models =
+        await fetchCodeMieModels(
+          '$apiBase/v1',
+          cookie,
+          client: config.modelsHttpClient,
+        ).catchError((e) {
+          return const <String>[];
+        });
     if (models.isEmpty) {
       io.writeln('no models available — set one with /model <id>');
       return null;
