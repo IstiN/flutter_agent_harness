@@ -117,16 +117,6 @@
         38047875908,
         38041880102
       ]
-    },
-    {
-      "file": "test/integration/setup_wizard_portability_test.dart",
-      "test": "edge cases E2 \u2014 existing config is not clobbered silently",
-      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1796",
-      "since": "2026-10-23",
-      "runs": [
-        39879783356,
-        39755267893
-      ]
     }
   ]
 }
