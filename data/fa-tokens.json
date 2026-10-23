@@ -54,24 +54,6 @@
       "total": 434038
     }
   ],
-  "issue-1426": [
-    {
-      "leg": "rework",
-      "at": "2026-10-09T02:40:33Z",
-      "prompt": 100251,
-      "completion": 11059,
-      "total": 111310
-    }
-  ],
-  "pr-1429": [
-    {
-      "leg": "rework",
-      "at": "2026-10-09T02:28:28Z",
-      "prompt": 197900,
-      "completion": 54199,
-      "total": 252099
-    }
-  ],
   "pr-1428": [
     {
       "leg": "rework",
@@ -5031,6 +5013,15 @@
       "completion": 8851,
       "total": 261417,
       "cacheRead": 5283776,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-23T03:32:00Z",
+      "prompt": 433420,
+      "completion": 69350,
+      "total": 502770,
+      "cacheRead": 59254720,
       "model": "glm-5.3-flash"
     }
   ],
