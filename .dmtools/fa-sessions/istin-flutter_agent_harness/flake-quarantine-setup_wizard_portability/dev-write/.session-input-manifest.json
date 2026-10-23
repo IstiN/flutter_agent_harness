@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-23T05:18:32.214Z",
+  "ticketKey": "pr-1797",
+  "headSha": "98ec6049bd0eb993f2bda2a1a5326bc82aa191a1",
+  "baseBranch": "main",
+  "reviewDecision": "APPROVED",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:73cb42c797393e7d",
+      "size": 2056
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:829e7e1e359daa1b",
+      "size": 18395
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:b591ad44faa7d004",
+      "size": 2633
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:fa9f193c11e053e7",
+      "size": 858
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:b397b128938602c7",
+      "size": 1075
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:1a0802b1c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:1c482ac994c8b128",
+      "size": 539
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:173d31ea1d02a20f",
+      "size": 485
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6vepoh",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/test_quarantine.json:122",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: this quarantine does not shield the `installer-portability` gate leg that also runs this file per-PR**\n\nThe entry claims (via the file's `comment`, line 3) that a listed file is \"REMOVED from every deterministic Quality-gate integration leg\". For **this** file that is not true: `installer-portability` runs it directly, with no `apply_quarantine.py` filter:\n\n`.github/workflows/ci.yml:1093` (unchanged, on `main`):\n```yaml\n      - name: IT — piped wizard under dash/busybox/bash (AC2-AC5)\n        run: dart test test/integration/setup_wizard_portability_test.dart\n```\n\nThat job gates on `needs.changes.outputs.installer == 'true'` (ci.yml:1070), so any PR touching `site/**` or the installer generator still executes the known-flaky E2 test as a merge-blocking leg until #1796's fix lands. The two runs cited here went red in `PTY/CLI integration (linux, shard 2/3)` — which IS shielded — so this PR achieves its primary goal; the gap only affects installer-touching PRs.\n\nSuggested follow-ups (either is fine, this entry itself is correct):\n1. Pipe the IT step's target through the filter: `dart test $(echo test/integration/setup_wizard_portability_test.dart | python3 scripts/apply_quarantine.py)` — or skip the step when the file is quarantined.\n2. If a ci.yml change is out of scope for an auto-filed quarantine PR, record the exception in issue #1796 so the fix-PR reviewer knows the file still gates installer PRs and prioritizes accordingly."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vepr0",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/test_quarantine.json:3",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: avoid the `\\u2014` escape churn on this comment line**\n\nThe only change on this line is the em-dash becoming a JSON escape (`—` → `\\u2014`) — semantically identical after `json.load`, so `apply_quarantine.py` behavior is unchanged. It is serializer noise from the bot tooling (the same escape appears in the new entry's `test` field, copied verbatim from issue #1796's proposed JSON).\n\nRestore the literal character to keep the file uniformly literal-UTF-8 and shrink the diff to just the new entry — pure polish, no action required for merge."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:1b86fa83",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: this quarantine does not shield the `installer-portability` gate leg that also runs this file per-PR**\n\nThe entry claims (via the file's `comment`, line 3) that a listed file is \"REMOVED from every deterministic Quality-gate integration leg\". For **this** file that is not true: `installer-portability` runs it directly, with no `apply_quarantine.py` filter:\n\n`.github/workflows/ci.yml:1093` (unchanged, on `main`):\n```yaml\n      - name: IT — piped wizard under dash/busybox/bash (AC2-AC5)\n        run: dart test test/integration/setup_wizard_portability_test.dart\n```\n\nThat job gates on `needs.changes.outputs.installer == 'true'` (ci.yml:1070), so any PR touching `site/**` or the installer generator still executes the known-flaky E2 test as a merge-blocking leg until #1796's fix lands. The two runs cited here went red in `PTY/CLI integration (linux, shard 2/3)` — which IS shielded — so this PR achieves its primary goal; the gap only affects installer-touching PRs.\n\nSuggested follow-ups (either is fine, this entry itself is correct):\n1. Pipe the IT step's target through the filter: `dart test $(echo test/integration/setup_wizard_portability_test.dart | python3 scripts/apply_quarantine.py)` — or skip the step when the file is quarantined.\n2. If a ci.yml change is out of scope for an auto-filed quarantine PR, record the exception in issue #1796 so the fix-PR reviewer knows the file still gates installer PRs and prioritizes accordingly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:e0cad4f7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: avoid the `\\u2014` escape churn on this comment line**\n\nThe only change on this line is the em-dash becoming a JSON escape (`—` → `\\u2014`) — semantically identical after `json.load`, so `apply_quarantine.py` behavior is unchanged. It is serializer noise from the bot tooling (the same escape appears in the new entry's `test` field, copied verbatim from issue #1796's proposed JSON).\n\nRestore the literal character to keep the file uniformly literal-UTF-8 and shrink the diff to just the new entry — pure polish, no action required for merge."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:612cadee",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/39892637833\n🔴 red head 3f5454f6e7eb0ca59b6403da32029c2f54e138f5 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:6b30c271",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ silent-update failure — attempt 1 at 2026-10-23T03:38:08.058Z"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:715d06dc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — pr-1797\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:ef7f464c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 42bf7b27e04b7e35a1d1812dcebd3007ed501c87 — zombie 1/3 at 2026-10-23T03:58:24.086Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:10790bcf",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 42bf7b27e04b7e35a1d1812dcebd3007ed501c87 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:bf97e7f1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: Verified flake quarantine per gh-1199 AC6: entry is byte-identical to issue #1796's prescribed JSON, `apply_quarantine.py --check` passes (12 entries), and both cited runs (39879783356, 39755267893) are confirmed failures in PTY/CLI integration shard 2/3 — the leg the quarantine shields — on 2 distinct SHAs within 24h. Fully-qualified test name matches source (`group('edge cases')` + `test('E2 — existing config is not clobbered silently')`).\n\n**Key Issues**:\n1. ⚠️ IMPORTANT — `installer-portability` (ci.yml:1093) runs this file directly, un-filtered by `apply_quarantine.py`; installer-touching PRs remain exposed to the flake until #1796's fix lands.\n2. 💡 SUGGESTION — line 3's only change is `—` → `\\u2014` (identical after JSON parse): serializer churn, restore the literal char.\n\n**Next Steps**:\n1. Pipe `installer-portability`'s IT step through `apply_quarantine.py` (or document the exception in issue #1796).\n2. Land the E2 fix to un-quarantine (needs the AC4 nightly repeat-run proof).\n3. Note (outside this diff): the `bash_job` near-miss `zz`-suffix test-id flake on main (`test/tools/bash_job_resolution_test.dart:168,180,193,412`, `test/tools/shell_jobs_test.dart:409`, ≈1/1296 per start) burned this PR's two earlier heads; the branch rewrite dropped the rework fix — re-land it on main."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
