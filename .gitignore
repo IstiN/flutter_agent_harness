@@ -12,6 +12,13 @@ cov-*/
 # thread 14: coverage_cov/; gh-1439 rework: coverage-verify/).
 coverage_cov/
 coverage-verify/
+# Redirect artifacts with a Win32-invalid character in the name (e.g.
+# ":debug," from a mangled word-split loop): a WIP auto-save swept two of
+# them onto the gh-1800 rework branch and EVERY windows-latest job failed
+# at checkout before its first step ("error: invalid path") while the
+# Linux legs stayed green. Nothing legitimate ever carries a colon in a
+# file name (Windows cannot check it out), so ignore the class.
+*:*
 coverage-llm/  # gh-1697: LLM-tagged VM coverage scratch swept onto branches by WIP auto-saves
 # The Pages workflow assembles the Flutter web demo here; never commit it.
 site/app/
