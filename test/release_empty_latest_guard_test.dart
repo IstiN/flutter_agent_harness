@@ -163,125 +163,119 @@ void main() {
       },
     );
 
-    test(
-      'every lazy create routes through release_lazy_draft.sh (curated notes + ownership marker)',
-      () {
-        // Review threads 3/7 + 4/8: the inline `--draft --generate-notes`
-        // creates (a) dropped the curated CHANGELOG notes contract and
-        // (b) left drafts the ownership-scoped draft guard can never
-        // reclaim. Both invariants live in the shared helper now.
-        for (final wf in [
-          '.github/workflows/ci.yml',
-          '.github/workflows/build-macos.yml',
-        ]) {
-          expect(
-            extractCreateCommands(read(wf)),
-            isEmpty,
-            reason:
-                '$wf must not inline `gh release create` anymore — the lazy '
-                'draft create lives in scripts/release_lazy_draft.sh '
-                '(curated notes via release_notes.sh + the release-draft-owner '
-                'marker), gh-1801 rework',
-          );
-          expect(read(wf), contains('release_lazy_draft.sh'));
-        }
-        final helper = read('scripts/release_lazy_draft.sh');
+    test('every lazy create routes through release_lazy_draft.sh (curated notes + ownership marker)', () {
+      // Review threads 3/7 + 4/8: the inline `--draft --generate-notes`
+      // creates (a) dropped the curated CHANGELOG notes contract and
+      // (b) left drafts the ownership-scoped draft guard can never
+      // reclaim. Both invariants live in the shared helper now.
+      for (final wf in [
+        '.github/workflows/ci.yml',
+        '.github/workflows/build-macos.yml',
+      ]) {
         expect(
-          helper,
-          contains('release_notes.sh'),
+          extractCreateCommands(read(wf)),
+          isEmpty,
           reason:
-              'the create body must fold the curated CHANGELOG section '
-              '(release_notes.sh preference order) — --generate-notes '
-              'permanently degraded the release notes on every train '
-              '(review threads 3/7)',
+              '$wf must not inline `gh release create` anymore — the lazy '
+              'draft create lives in scripts/release_lazy_draft.sh '
+              '(curated notes via release_notes.sh + the release-draft-owner '
+              'marker), gh-1801 rework',
         );
-        expect(
-          stripComments(helper),
-          contains('--draft'),
-          reason: 'a lazy create is draft-first — never publishes empty',
-        );
-        expect(
-          stripComments(helper),
-          isNot(contains('--latest')),
-          reason: 'a lazy create never flags latest — provenance owns the flip',
-        );
-        expect(
-          helper,
-          contains('release-draft-owner: run/'),
-          reason:
-              'the draft body must stamp the ownership marker so the draft '
-              'lifecycle guard can reclaim it on failure (review threads 4/8)',
-        );
-        expect(stripComments(helper), isNot(contains('--generate-notes')));
-      },
-    );
+        expect(read(wf), contains('release_lazy_draft.sh'));
+      }
+      final helper = read('scripts/release_lazy_draft.sh');
+      expect(
+        helper,
+        contains('release_notes.sh'),
+        reason:
+            'the create body must fold the curated CHANGELOG section '
+            '(release_notes.sh preference order) — --generate-notes '
+            'permanently degraded the release notes on every train '
+            '(review threads 3/7)',
+      );
+      expect(
+        stripComments(helper),
+        contains('--draft'),
+        reason: 'a lazy create is draft-first — never publishes empty',
+      );
+      expect(
+        stripComments(helper),
+        isNot(contains('--latest')),
+        reason: 'a lazy create never flags latest — provenance owns the flip',
+      );
+      expect(
+        helper,
+        contains('release-draft-owner: run/'),
+        reason:
+            'the draft body must stamp the ownership marker so the draft '
+            'lifecycle guard can reclaim it on failure (review threads 4/8)',
+      );
+      expect(stripComments(helper), isNot(contains('--generate-notes')));
+    });
 
-    test(
-      'matrix lazy creates carry a leg-suffixed draft identity (sibling-safe guard)',
-      () {
-        // Matrix legs share GITHUB_JOB (binaries / build-macos-cli). A
-        // guard keyed on run+job alone would let one failed leg delete a
-        // SIBLING leg's mid-upload draft — the exact destruction the
-        // ownership scoping (review of #294) was built to prevent.
-        // RELEASE_DRAFT_IDENTITY rides the step env, so inspect the step
-        // maps, not just the run bodies.
-        Map<String, YamlMap> stepMaps(String workflowPath) {
-          final steps = <String, YamlMap>{};
-          (workflowYaml(workflowPath)['jobs'] as YamlMap).forEach((jobId, job) {
-            for (final step in (job as YamlMap)['steps'] as YamlList) {
-              if (step is YamlMap && step.containsKey('run')) {
-                steps['$jobId/${step['name'] ?? '?'}'] = step;
-              }
+    test('matrix lazy creates carry a leg-suffixed draft identity (sibling-safe guard)', () {
+      // Matrix legs share GITHUB_JOB (binaries / build-macos-cli). A
+      // guard keyed on run+job alone would let one failed leg delete a
+      // SIBLING leg's mid-upload draft — the exact destruction the
+      // ownership scoping (review of #294) was built to prevent.
+      // RELEASE_DRAFT_IDENTITY rides the step env, so inspect the step
+      // maps, not just the run bodies.
+      Map<String, YamlMap> stepMaps(String workflowPath) {
+        final steps = <String, YamlMap>{};
+        (workflowYaml(workflowPath)['jobs'] as YamlMap).forEach((jobId, job) {
+          for (final step in (job as YamlMap)['steps'] as YamlList) {
+            if (step is YamlMap && step.containsKey('run')) {
+              steps['$jobId/${step['name'] ?? '?'}'] = step;
             }
-          });
-          return steps;
-        }
+          }
+        });
+        return steps;
+      }
 
-        void expectLegIdentity(
-          Map<String, YamlMap> steps,
-          String jobPrefix,
-          String wf,
-        ) {
-          final step = steps.entries.firstWhere(
-            (e) =>
-                e.key.startsWith(jobPrefix) &&
-                e.value['run'].toString().contains('release_lazy_draft.sh'),
-          );
-          expect(
-            step.value['env']?['RELEASE_DRAFT_IDENTITY']?.toString() ?? '',
-            contains('matrix.'),
-            reason:
-                '$wf step "${step.key}": matrix legs must stamp a '
-                'leg-suffixed draft identity (e.g. '
-                '${step.key.split('/').first}-<leg>) — the failure-path '
-                'guard is only sibling-safe at leg resolution',
-          );
-          final guard = steps.entries.firstWhere(
-            (e) =>
-                e.key.startsWith(jobPrefix) &&
-                e.value['run'].toString().contains('release_draft_guard.sh'),
-          );
-          expect(
-            guard.value['env']?['RELEASE_DRAFT_IDENTITY']?.toString() ?? '',
-            contains('matrix.'),
-            reason:
-                '$wf guard step "${guard.key}" must carry the same '
-                'leg-suffixed identity as the create step',
-          );
-        }
+      void expectLegIdentity(
+        Map<String, YamlMap> steps,
+        String jobPrefix,
+        String wf,
+      ) {
+        final step = steps.entries.firstWhere(
+          (e) =>
+              e.key.startsWith(jobPrefix) &&
+              e.value['run'].toString().contains('release_lazy_draft.sh'),
+        );
+        expect(
+          step.value['env']?['RELEASE_DRAFT_IDENTITY']?.toString() ?? '',
+          contains('matrix.'),
+          reason:
+              '$wf step "${step.key}": matrix legs must stamp a '
+              'leg-suffixed draft identity (e.g. '
+              '${step.key.split('/').first}-<leg>) — the failure-path '
+              'guard is only sibling-safe at leg resolution',
+        );
+        final guard = steps.entries.firstWhere(
+          (e) =>
+              e.key.startsWith(jobPrefix) &&
+              e.value['run'].toString().contains('release_draft_guard.sh'),
+        );
+        expect(
+          guard.value['env']?['RELEASE_DRAFT_IDENTITY']?.toString() ?? '',
+          contains('matrix.'),
+          reason:
+              '$wf guard step "${guard.key}" must carry the same '
+              'leg-suffixed identity as the create step',
+        );
+      }
 
-        expectLegIdentity(
-          stepMaps('.github/workflows/ci.yml'),
-          'binaries/',
-          '.github/workflows/ci.yml',
-        );
-        expectLegIdentity(
-          stepMaps('.github/workflows/build-macos.yml'),
-          'build-macos-cli/',
-          '.github/workflows/build-macos.yml',
-        );
-      },
-    );
+      expectLegIdentity(
+        stepMaps('.github/workflows/ci.yml'),
+        'binaries/',
+        '.github/workflows/ci.yml',
+      );
+      expectLegIdentity(
+        stepMaps('.github/workflows/build-macos.yml'),
+        'build-macos-cli/',
+        '.github/workflows/build-macos.yml',
+      );
+    });
 
     test(
       'publish (--draft=false) happens ONLY in steps that upload SHA256SUMS',
@@ -395,48 +389,45 @@ void main() {
       );
     });
 
-    test(
-      'attach-or-create: create is draft-only, the attach publish is SHA256SUMS-gated',
-      () {
-        // Review threads 2/6: the create path published `--latest` with
-        // whatever the leg resolved (AAB/IPA/DMG/zip) and the attach path
-        // published a sibling draft unconditionally — both can strand a
-        // `latest` that cannot serve `fa update`. The create is draft-only
-        // now and the re-asserted publish is gated on the release actually
-        // carrying the signed checksums.
-        final script = read('scripts/release_attach_or_create.sh');
-        final creates = extractCreateCommands(script);
-        expect(creates, hasLength(1));
-        expect(
-          creates.single,
-          contains('--draft'),
-          reason:
-              'the daily legs must create the release as a DRAFT — publish '
-              'belongs to the provenance step, never to a leg-resolved asset '
-              'list (gh-1801 rework)',
-        );
-        expect(
-          creates.single,
-          isNot(contains('--latest')),
-          reason:
-              'a create with leg-resolved assets (AAB/IPA/DMG) must never '
-              'carry the latest badge — latest moves only after the signed '
-              'SHA256SUMS is on the release (gh-1801 threads 2/6)',
-        );
-        expect(
-          script,
-          contains('--draft=false --latest'),
-          reason: 'the recovery publish (release already servable) stays',
-        );
-        expect(
-          stripComments(script),
-          contains('SHA256SUMS'),
-          reason:
-              'the attach publish must be gated on the release carrying '
-              'SHA256SUMS — `fa update` aborts without the signed checksums',
-        );
-      },
-    );
+    test('attach-or-create: create is draft-only, the attach publish is SHA256SUMS-gated', () {
+      // Review threads 2/6: the create path published `--latest` with
+      // whatever the leg resolved (AAB/IPA/DMG/zip) and the attach path
+      // published a sibling draft unconditionally — both can strand a
+      // `latest` that cannot serve `fa update`. The create is draft-only
+      // now and the re-asserted publish is gated on the release actually
+      // carrying the signed checksums.
+      final script = read('scripts/release_attach_or_create.sh');
+      final creates = extractCreateCommands(script);
+      expect(creates, hasLength(1));
+      expect(
+        creates.single,
+        contains('--draft'),
+        reason:
+            'the daily legs must create the release as a DRAFT — publish '
+            'belongs to the provenance step, never to a leg-resolved asset '
+            'list (gh-1801 rework)',
+      );
+      expect(
+        creates.single,
+        isNot(contains('--latest')),
+        reason:
+            'a create with leg-resolved assets (AAB/IPA/DMG) must never '
+            'carry the latest badge — latest moves only after the signed '
+            'SHA256SUMS is on the release (gh-1801 threads 2/6)',
+      );
+      expect(
+        script,
+        contains('--draft=false --latest'),
+        reason: 'the recovery publish (release already servable) stays',
+      );
+      expect(
+        stripComments(script),
+        contains('SHA256SUMS'),
+        reason:
+            'the attach publish must be gated on the release carrying '
+            'SHA256SUMS — `fa update` aborts without the signed checksums',
+      );
+    });
   });
 
   // ── behavioral: auto_release.sh never calls `gh release create` ─────────
@@ -460,9 +451,8 @@ void main() {
         '#!/usr/bin/env bash\necho "\$*" >> "\$FA_GH_LOG"\nexit 0\n',
       );
       // git shim → real binary (session PATH may carry push-guard shims).
-      File(
-        '$bin/git',
-      ).writeAsStringSync('#!/usr/bin/env bash\nexec "$realGit" "\$@"\n');
+      File('$bin/git')
+          .writeAsStringSync('#!/usr/bin/env bash\nexec "$realGit" "\$@"\n');
       for (final f in ['$bin/gh', '$bin/git']) {
         Process.runSync('chmod', ['+x', f]);
       }
@@ -521,145 +511,136 @@ void main() {
         ? File(ghLogPath).readAsLinesSync()
         : const [];
 
-    test(
-      'auto_release.sh pushes the next annotated tag and never creates a release',
-      () {
-        final res = Process.runSync(
-          'bash',
-          ['${Directory.current.path}/scripts/auto_release.sh'],
-          workingDirectory: seed,
-          environment: {
-            for (final e in Platform.environment.entries)
-              if (!e.key.startsWith('GIT_')) e.key: e.value,
-            'PATH': '${root.path}/bin:${Platform.environment['PATH']}',
-            'FA_GH_LOG': ghLogPath,
-            'GITHUB_REPOSITORY': 'OWNER/REPO',
-            'GH_TOKEN': 'stub',
-          },
-          includeParentEnvironment: false,
-        );
-        final out = '${res.stdout}${res.stderr}';
-        expect(res.exitCode, 0, reason: out);
+    test('auto_release.sh pushes the next annotated tag and never creates a release', () {
+      final res = Process.runSync(
+        'bash',
+        ['${Directory.current.path}/scripts/auto_release.sh'],
+        workingDirectory: seed,
+        environment: {
+          for (final e in Platform.environment.entries)
+            if (!e.key.startsWith('GIT_')) e.key: e.value,
+          'PATH': '${root.path}/bin:${Platform.environment['PATH']}',
+          'FA_GH_LOG': ghLogPath,
+          'GITHUB_REPOSITORY': 'OWNER/REPO',
+          'GH_TOKEN': 'stub',
+        },
+        includeParentEnvironment: false,
+      );
+      final out = '${res.stdout}${res.stderr}';
+      expect(res.exitCode, 0, reason: out);
 
-        // The release train still moves: v0.1.496 cut + pushed, annotated.
-        final tagSha = Process.runSync(realGit, [
+      // The release train still moves: v0.1.496 cut + pushed, annotated.
+      final tagSha = Process.runSync(realGit, [
+        '--git-dir',
+        origin,
+        'rev-parse',
+        '-q',
+        '--verify',
+        'refs/tags/v0.1.496',
+      ]);
+      expect(tagSha.exitCode, 0, reason: 'the next tag must still be pushed');
+      expect(
+        Process.runSync(realGit, [
           '--git-dir',
           origin,
-          'rev-parse',
-          '-q',
-          '--verify',
+          'for-each-ref',
+          '--format=%(objecttype)',
           'refs/tags/v0.1.496',
-        ]);
-        expect(tagSha.exitCode, 0, reason: 'the next tag must still be pushed');
-        expect(
-          Process.runSync(realGit, [
-            '--git-dir',
-            origin,
-            'for-each-ref',
-            '--format=%(objecttype)',
-            'refs/tags/v0.1.496',
-          ]).stdout.toString().trim(),
-          'tag',
-          reason:
-              'the cut tag stays ANNOTATED — a lightweight API tag fires '
-              'no tag CI (issue #597 class)',
-        );
+        ]).stdout.toString().trim(),
+        'tag',
+        reason:
+            'the cut tag stays ANNOTATED — a lightweight API tag fires '
+            'no tag CI (issue #597 class)',
+      );
 
-        // THE regression: no release create from the empty-asset path.
-        expect(
-          ghLog().where((l) => l.contains('release create')),
-          isEmpty,
-          reason:
-              'auto_release.sh must refuse to create a release with zero '
-              'resolved assets — the empty latest release is the fa update '
-              'breaker (gh-1801)',
-        );
-      },
-    );
+      // THE regression: no release create from the empty-asset path.
+      expect(
+        ghLog().where((l) => l.contains('release create')),
+        isEmpty,
+        reason:
+            'auto_release.sh must refuse to create a release with zero '
+            'resolved assets — the empty latest release is the fa update '
+            'breaker (gh-1801)',
+      );
+    });
 
-    test(
-      'release_attach_or_create.sh with zero assets refuses (hard fail, no create)',
-      () {
-        final bin = '${root.path}/bin';
-        final res = Process.runSync(
-          'bash',
-          [
-            '${Directory.current.path}/scripts/release_attach_or_create.sh',
-            'v1.2.3',
-          ],
-          workingDirectory: seed,
-          environment: {
-            for (final e in Platform.environment.entries)
-              if (!e.key.startsWith('GIT_')) e.key: e.value,
-            'PATH': '$bin:${Platform.environment['PATH']}',
-            'FA_GH_LOG': ghLogPath,
-            'GITHUB_REPOSITORY': 'OWNER/REPO',
-            'GITHUB_RUN_ID': '111',
-            'GITHUB_JOB': 'release-mobile',
-            'GH_TOKEN': 'stub',
-          },
-          includeParentEnvironment: false,
-        );
-        expect(
-          res.exitCode,
-          isNot(0),
-          reason:
-              'zero resolved assets must be a loud refusal — a silent '
-              'pass would leave the release missing entirely',
-        );
-        expect(
-          '${res.stderr}',
-          contains('no assets'),
-          reason: 'the refusal must name the empty asset list',
-        );
-        expect(
-          ghLog().where((l) => l.contains('release create')),
-          isEmpty,
-          reason:
-              'the refusal must happen BEFORE any create — an empty '
-              'latest release is the fa update breaker (gh-1801)',
-        );
-      },
-    );
+    test('release_attach_or_create.sh with zero assets refuses (hard fail, no create)', () {
+      final bin = '${root.path}/bin';
+      final res = Process.runSync(
+        'bash',
+        [
+          '${Directory.current.path}/scripts/release_attach_or_create.sh',
+          'v1.2.3',
+        ],
+        workingDirectory: seed,
+        environment: {
+          for (final e in Platform.environment.entries)
+            if (!e.key.startsWith('GIT_')) e.key: e.value,
+          'PATH': '$bin:${Platform.environment['PATH']}',
+          'FA_GH_LOG': ghLogPath,
+          'GITHUB_REPOSITORY': 'OWNER/REPO',
+          'GITHUB_RUN_ID': '111',
+          'GITHUB_JOB': 'release-mobile',
+          'GH_TOKEN': 'stub',
+        },
+        includeParentEnvironment: false,
+      );
+      expect(
+        res.exitCode,
+        isNot(0),
+        reason:
+            'zero resolved assets must be a loud refusal — a silent '
+            'pass would leave the release missing entirely',
+      );
+      expect(
+        '${res.stderr}',
+        contains('no assets'),
+        reason: 'the refusal must name the empty asset list',
+      );
+      expect(
+        ghLog().where((l) => l.contains('release create')),
+        isEmpty,
+        reason:
+            'the refusal must happen BEFORE any create — an empty '
+            'latest release is the fa update breaker (gh-1801)',
+      );
+    });
 
-    test(
-      'release_attach_or_create.sh attach path publishes draft + asserts latest',
-      () {
-        final bin = '${root.path}/bin';
-        final asset = '$seed/a.zip';
-        File(asset).writeAsStringSync('asset');
-        final res = Process.runSync(
-          'bash',
-          [
-            '${Directory.current.path}/scripts/release_attach_or_create.sh',
-            'v1.2.3',
-            asset,
-          ],
-          workingDirectory: seed,
-          environment: {
-            for (final e in Platform.environment.entries)
-              if (!e.key.startsWith('GIT_')) e.key: e.value,
-            'PATH': '$bin:${Platform.environment['PATH']}',
-            'FA_GH_LOG': ghLogPath,
-            'GITHUB_REPOSITORY': 'OWNER/REPO',
-            'GITHUB_RUN_ID': '111',
-            'GITHUB_JOB': 'release-mobile',
-            'GH_TOKEN': 'stub',
-          },
-          includeParentEnvironment: false,
-        );
-        final out = '${res.stdout}${res.stderr}';
-        expect(res.exitCode, 0, reason: out);
-        expect(
-          ghLog().where((l) => l.contains('release edit')),
-          isEmpty,
-          reason:
-              'the simple logging stub answers no asset list — a release '
-              'without provenance must NOT be published/latest by the attach '
-              '(the rework behavioral group below covers the servable path)',
-        );
-      },
-    );
+    test('release_attach_or_create.sh attach path publishes draft + asserts latest', () {
+      final bin = '${root.path}/bin';
+      final asset = '$seed/a.zip';
+      File(asset).writeAsStringSync('asset');
+      final res = Process.runSync(
+        'bash',
+        [
+          '${Directory.current.path}/scripts/release_attach_or_create.sh',
+          'v1.2.3',
+          asset,
+        ],
+        workingDirectory: seed,
+        environment: {
+          for (final e in Platform.environment.entries)
+            if (!e.key.startsWith('GIT_')) e.key: e.value,
+          'PATH': '$bin:${Platform.environment['PATH']}',
+          'FA_GH_LOG': ghLogPath,
+          'GITHUB_REPOSITORY': 'OWNER/REPO',
+          'GITHUB_RUN_ID': '111',
+          'GITHUB_JOB': 'release-mobile',
+          'GH_TOKEN': 'stub',
+        },
+        includeParentEnvironment: false,
+      );
+      final out = '${res.stdout}${res.stderr}';
+      expect(res.exitCode, 0, reason: out);
+      expect(
+        ghLog().where((l) => l.contains('release edit')),
+        isEmpty,
+        reason:
+            'the simple logging stub answers no asset list — a release '
+            'without provenance must NOT be published/latest by the attach '
+            '(the rework behavioral group below covers the servable path)',
+      );
+    });
   });
 
   // ── rework threads 1-4: behavioral (stateful stubbed gh) ────────────────
@@ -708,43 +689,36 @@ void main() {
     List<String> ghLog() =>
         File(logPath).existsSync() ? File(logPath).readAsLinesSync() : const [];
 
-    test(
-      'release_lazy_draft.sh: draft-first, curated notes + owner marker, never latest',
-      () {
-        plant('CHANGELOG.md', '## Unreleased\n- curated entry one\n');
-        final r = runScript(
-          '${Directory.current.path}/scripts/release_lazy_draft.sh',
-          ['v1.2.3'],
-        );
-        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-        final creates = ghLog()
-            .where((l) => l.contains('release create'))
-            .toList();
-        expect(creates, hasLength(1));
-        expect(creates.single, contains('--draft'), reason: 'draft-first');
-        expect(creates.single, contains('--title v1.2.3'));
-        expect(
-          creates.single,
-          isNot(contains('--latest')),
-          reason: 'a lazy create never flags latest — provenance owns the flip',
-        );
-        final notes = File(
-          '${fx.path}/last-create-notes.md',
-        ).readAsStringSync();
-        expect(
-          notes,
-          contains('curated entry one'),
-          reason:
-              'the curated CHANGELOG section reaches the release body (threads 3/7)',
-        );
-        expect(
-          notes,
-          contains('release-draft-owner: run/222/job/release-macos'),
-          reason:
-              'the draft body stamps the owner so the guard can reclaim it (threads 4/8)',
-        );
-      },
-    );
+    test('release_lazy_draft.sh: draft-first, curated notes + owner marker, never latest', () {
+      plant('CHANGELOG.md', '## Unreleased\n- curated entry one\n');
+      final r = runScript(
+        '${Directory.current.path}/scripts/release_lazy_draft.sh',
+        ['v1.2.3'],
+      );
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+      final creates = ghLog()
+          .where((l) => l.contains('release create'))
+          .toList();
+      expect(creates, hasLength(1));
+      expect(creates.single, contains('--draft'), reason: 'draft-first');
+      expect(creates.single, contains('--title v1.2.3'));
+      expect(
+        creates.single,
+        isNot(contains('--latest')),
+        reason: 'a lazy create never flags latest — provenance owns the flip',
+      );
+      final notes = File('${fx.path}/last-create-notes.md').readAsStringSync();
+      expect(
+        notes,
+        contains('curated entry one'),
+        reason: 'the curated CHANGELOG section reaches the release body (threads 3/7)',
+      );
+      expect(
+        notes,
+        contains('release-draft-owner: run/222/job/release-macos'),
+        reason: 'the draft body stamps the owner so the guard can reclaim it (threads 4/8)',
+      );
+    });
 
     test(
       'release_lazy_draft.sh: release already exists → no create, exit 0',
@@ -779,61 +753,54 @@ void main() {
       },
     );
 
-    test(
-      'attach path: release without SHA256SUMS → upload only, publish left to provenance',
-      () {
-        plant('view-seq.txt', 'exists\n');
-        plant('asset-names.txt', 'Fa-macos-arm64.dmg\nfa-web-spa.zip\n');
-        final asset = '${fx.path}/a.zip';
-        File(asset).writeAsStringSync('asset');
-        final r = runScript(
-          '${Directory.current.path}/scripts/release_attach_or_create.sh',
-          ['v1.2.3', asset],
-        );
-        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-        expect(
-          ghLog(),
-          contains('release upload v1.2.3 $asset --clobber --repo OWNER/REPO'),
-        );
-        expect(
-          ghLog().where((l) => l.contains('release edit')),
-          isEmpty,
-          reason:
-              'a release without the signed checksums cannot serve `fa update` '
-              '— publishing it as latest here recreates the incident window '
-              '(gh-1801 threads 1/5, 2/6)',
-        );
-      },
-    );
+    test('attach path: release without SHA256SUMS → upload only, publish left to provenance', () {
+      plant('view-seq.txt', 'exists\n');
+      plant('asset-names.txt', 'Fa-macos-arm64.dmg\nfa-web-spa.zip\n');
+      final asset = '${fx.path}/a.zip';
+      File(asset).writeAsStringSync('asset');
+      final r = runScript(
+        '${Directory.current.path}/scripts/release_attach_or_create.sh',
+        ['v1.2.3', asset],
+      );
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+      expect(
+        ghLog(),
+        contains('release upload v1.2.3 $asset --clobber --repo OWNER/REPO'),
+      );
+      expect(
+        ghLog().where((l) => l.contains('release edit')),
+        isEmpty,
+        reason:
+            'a release without the signed checksums cannot serve `fa update` '
+            '— publishing it as latest here recreates the incident window '
+            '(gh-1801 threads 1/5, 2/6)',
+      );
+    });
 
-    test(
-      'attach path: release already carrying SHA256SUMS → recovery publish + latest',
-      () {
-        // Provenance landed (servable) but its own flip failed / a draft
-        // was left behind — the attach may recover it: publish + latest is
-        // safe exactly when the release can serve `fa update`.
-        plant('view-seq.txt', 'exists\n');
-        plant(
-          'asset-names.txt',
-          'fa-linux-x64.tar.gz\nSHA256SUMS\nSHA256SUMS.sig\n',
-        );
-        final asset = '${fx.path}/a.zip';
-        File(asset).writeAsStringSync('asset');
-        final r = runScript(
-          '${Directory.current.path}/scripts/release_attach_or_create.sh',
-          ['v1.2.3', asset],
-        );
-        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
-        expect(
-          ghLog(),
-          contains(
-            'release edit v1.2.3 --draft=false --latest --repo OWNER/REPO',
-          ),
-          reason:
-              'a servable release (signed checksums on board) may be published + flagged latest',
-        );
-      },
-    );
+    test('attach path: release already carrying SHA256SUMS → recovery publish + latest', () {
+      // Provenance landed (servable) but its own flip failed / a draft
+      // was left behind — the attach may recover it: publish + latest is
+      // safe exactly when the release can serve `fa update`.
+      plant('view-seq.txt', 'exists\n');
+      plant(
+        'asset-names.txt',
+        'fa-linux-x64.tar.gz\nSHA256SUMS\nSHA256SUMS.sig\n',
+      );
+      final asset = '${fx.path}/a.zip';
+      File(asset).writeAsStringSync('asset');
+      final r = runScript(
+        '${Directory.current.path}/scripts/release_attach_or_create.sh',
+        ['v1.2.3', asset],
+      );
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+      expect(
+        ghLog(),
+        contains(
+          'release edit v1.2.3 --draft=false --latest --repo OWNER/REPO',
+        ),
+        reason: 'a servable release (signed checksums on board) may be published + flagged latest',
+      );
+    });
 
     test(
       'create path: draft-only create, ownership marker, never --latest',
@@ -866,9 +833,8 @@ void main() {
           contains('a.ab'),
           reason: 'assets ride the create command',
         );
-        final notes = File(
-          '${fx.path}/last-create-notes.md',
-        ).readAsStringSync();
+        final notes = File('${fx.path}/last-create-notes.md')
+            .readAsStringSync();
         expect(notes, contains('leg notes'));
         expect(
           notes,
@@ -941,6 +907,94 @@ void main() {
         expect('${r.stdout}${r.stderr}', contains('refusing to delete'));
       },
     );
+  });
+
+  // ── AC4 — truthful Latest (IT-latest, gh-1801 rework) ───────────────────
+  //
+  // The `latest` badge is PROVENANCE-OWNED: `fa update` resolves
+  // `releases/latest` and hard-fails without the signed SHA256SUMS(.sig)
+  // (bin/self_manage.dart), so latest may move only onto a release that
+  // carries them. Every create path in the train is draft-only; the single
+  // flip point is release-provenance's upload step (ci.yml), with a
+  // SHA256SUMS-gated recovery publish in release_attach_or_create.sh.
+  // (Moved here from release_hygiene_test.dart — this file is the gh-1801
+  // latest/publish-pin home; keeps the hygiene file under the loc ratchet.)
+  group('AC4 — latest is provenance-owned (drafts never carry it)', () {
+    const trainWorkflows = [
+      '.github/workflows/ci.yml',
+      '.github/workflows/build-macos.yml',
+      '.github/workflows/build-mobile.yml',
+    ];
+
+    test('no workflow in the train inlines a release create anymore', () {
+      // gh-1801 rework: the lazy creates live in release_lazy_draft.sh
+      // (curated notes + ownership marker) and the leg creates in
+      // release_attach_or_create.sh — no inline create may regress in.
+      for (final wf in trainWorkflows) {
+        expect(
+          extractCreateCommands(read(wf)),
+          isEmpty,
+          reason: '$wf must not inline `gh release create` (gh-1801 rework)',
+        );
+      }
+    });
+
+    test(
+      'the two shared create paths are the only creates, both draft-only',
+      () {
+        expect(
+          extractCreateCommands(read('scripts/auto_release.sh')),
+          isEmpty,
+          reason: 'gh-1801: auto_release.sh must not create a release',
+        );
+        final lazy = extractCreateCommands(
+          read('scripts/release_lazy_draft.sh'),
+        );
+        expect(lazy, hasLength(1));
+        expect(lazy.single, contains('--draft'));
+        expect(lazy.single, isNot(contains('--latest')));
+        final attach = extractCreateCommands(
+          read('scripts/release_attach_or_create.sh'),
+        );
+        expect(attach, hasLength(1));
+        expect(attach.single, contains('--draft'));
+        expect(attach.single, isNot(contains('--latest')));
+      },
+    );
+
+    test(
+      'the publish flip exists exactly once per owner, next to SHA256SUMS',
+      () {
+        final provenance = read('.github/workflows/ci.yml');
+        expect(
+          provenance,
+          contains('--draft=false --latest'),
+          reason:
+              'release-provenance is the single flip owner: it runs after '
+              'every fa-* asset AND uploads the signed SHA256SUMS',
+        );
+        final attachScript = read('scripts/release_attach_or_create.sh');
+        expect(
+          attachScript,
+          contains('--draft=false --latest'),
+          reason: 'the SHA256SUMS-gated recovery publish stays',
+        );
+        expect(
+          attachScript.contains('SHA256SUMS'),
+          isTrue,
+          reason: 'the recovery publish must be gated on servability',
+        );
+      },
+    );
+
+    test('guards and sweeper never touch the latest badge', () {
+      for (final script in [
+        'scripts/release_draft_guard.sh',
+        'scripts/sweep_stale_drafts.sh',
+      ]) {
+        expect(read(script), isNot(contains('--latest')));
+      }
+    });
   });
 }
 
