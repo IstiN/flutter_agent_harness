@@ -133,13 +133,34 @@ class _PtyRun {
 
   /// The wizard's exit status, delivered out-of-band by the run wrapper —
   /// pty2's own `exitCode` races the Dart VM's child reaper (ECHILD → -1).
+  ///
+  /// The exit FILE is written by the wrapper the instant the pipeline
+  /// exits, but pty2 closes the pty master the moment IT reaps the same
+  /// child (BlockingPseudoTerminal chains exitCode → kill → close), and
+  /// an undrained master output queue is discarded on that close — #1796:
+  /// the trailing "Kept existing config." was lost exactly this way, in
+  /// two distinct-SHA gate runs. So after the file appears we also wait
+  /// for the pty stream to hit EOF: one Dart stream delivers strictly in
+  /// order, so `done` (onDone) proves every byte is already in [buffer].
   Future<int> awaitExit() async {
     final deadline = DateTime.now().add(const Duration(seconds: 60));
     while (true) {
       final f = File(exitFile);
       if (f.existsSync()) {
         final text = f.readAsStringSync().trim();
-        if (text.isNotEmpty) return int.parse(text);
+        if (text.isNotEmpty) {
+          final code = int.parse(text);
+          while (!done) {
+            if (DateTime.now().isAfter(deadline)) {
+              fail(
+                'wizard exited $code but the pty stream never drained; '
+                'captured:\n${_clean(buffer.toString())}',
+              );
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          return code;
+        }
       }
       if (DateTime.now().isAfter(deadline)) {
         fail('wizard never exited; captured:\n${_clean(buffer.toString())}');
