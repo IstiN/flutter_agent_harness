@@ -39,7 +39,7 @@ asserts the endpoint speaks it) and is echoed in every binding report
 | --- | --- | --- | --- |
 | `chatgpt` (`chatgpt-codex`) | OAuth PKCE against `auth.openai.com`; `CHATGPT_OAUTH_CREDENTIALS` blob | Responses-API SSE, `store: false`, `ChatGPT-Account-ID` header; 401 → refresh → re-persist | manual |
 | `codemie` (manual) | env `CODEMIE_API_KEY` | `<org>/code-assistant-api/v1` Bearer | `/models` |
-| `codemie` (SSO) | browser SSO → `codemie_access_token` JWT Bearer (random callback port, base64 `token` carries session cookies; re-login refreshes, keeps last-used model) | same as manual | `/llm_models?include_all=true` (LiteLLM) — `_refreshModelCache` branches on `code-assistant-api` marker |
+| `codemie` (SSO) | browser SSO → `codemie_access_token` JWT Bearer (random callback port, base64 `token` carries session cookies; re-login refreshes, keeps last-used model). Guided project → model pick runs on EVERY connect — a re-login leads the picker with a keep-current row; the picked project persists on the saved entry and rides requests as `x-codemie-project` (issue #1809) | same as manual + `x-codemie-project` header | `/llm_models?include_all=true` (LiteLLM) — `_refreshModelCache` branches on `code-assistant-api` marker |
 | `dial` (EPAM DIAL Core) | `Api-Key` header (adapter null key — no `Authorization: Bearer`); `?api-version=` from `DIAL_API_VERSION` env | chat at `{baseUrl}/openai/deployments/{model}/chat/completions` (deployment name in PATH via `OpenAICompletionsOptions.urlBuilder`) | `{baseUrl}/openai/models` (`fetchDialModels`, `_refreshModelCache` `provider == 'dial'` branch) |
 | `anthropic` | env `ANTHROPIC_API_KEY` | `api: 'anthropic-messages'`, `https://api.anthropic.com` | context window 200k / max 16k |
 | `google` | env `GOOGLE_API_KEY` | `api: 'google-generative-ai'`, `https://generativelanguage.googleapis.com/v1beta` (also Gemini media — see `MediaGateway`) | context window 1M / max 16k |
@@ -61,7 +61,7 @@ Headless flows: `--provider copilot --model <id>` with `COPILOT_GITHUB_TOKEN` (O
 
 ## CLI flags
 
-CLI: `/provider chatgpt oauth [headless]` (callback server in `lib/src/cli/chatgpt_oauth_server.dart`, exported from `lib/io.dart`). `/provider codemie sso [orgUrl]` (callback server in `lib/src/cli/codemie_sso_server.dart`, exported from `lib/io.dart`). Headless: `--provider dial --model <deployment> [--base-url …]` (dial has no default model id — `buildCliDefaultModel` throws without `--model`).
+CLI: `/provider chatgpt oauth [headless]` (callback server in `lib/src/cli/chatgpt_oauth_server.dart`, exported from `lib/io.dart`). `/provider codemie` asks for the org URL first (Enter applies the hosted default, issue #1809), then SSO vs JWT; `/provider codemie sso [orgUrl]` (callback server in `lib/src/cli/codemie_sso_server.dart`, exported from `lib/io.dart`) and `/provider codemie jwt [orgUrl] [token]` skip the prompt. Headless: `--provider dial --model <deployment> [--base-url …]` (dial has no default model id — `buildCliDefaultModel` throws without `--model`).
 
 ## Roles × custom providers
 
