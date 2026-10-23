@@ -175,6 +175,11 @@ factory-agents/
 .fm-drill-cache/
 node_modules
 
+# quickjs_runtime manual-build output (tool/build_quickjs.sh writes it
+# next to the sources; the Native Assets build output lives under the
+# ignored build/ dirs).
+vendor/quickjs_runtime/native/quickjs/libquickjs_bridge.so
+
 # sdk/web type-stripped build output (node build.mjs regenerates it).
 sdk/web/dist/
 agents/

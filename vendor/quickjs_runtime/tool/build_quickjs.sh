@@ -24,10 +24,25 @@ case "$UNAME_S" in
   MINGW* | MSYS* | CYGWIN*) DL_LIB="" ;;
 esac
 
+# Android (bionic) ships pthread inside libc and the NDK sysroot has had
+# no libpthread since r18, so -lpthread fails the link there with
+# "ld.lld: error: unable to find library -lpthread" — the Native Assets
+# hook (../hook/build.dart) carries the same exclusion (PR #1785). Detect
+# the two real NDK invocations: an *android* cross-compiler in CC (the
+# NDK wrappers are named *-linux-android*-clang) or the ANDROID_NDK*
+# environment variables pointing at an NDK.
+PTHREAD_LIB="-lpthread"
+case "$CC" in
+  *android*) PTHREAD_LIB="" ;;
+esac
+if [ -n "${ANDROID_NDK:-}${ANDROID_NDK_HOME:-}${ANDROID_NDK_ROOT:-}" ]; then
+  PTHREAD_LIB=""
+fi
+
 "$CC" -shared -fPIC -O2 -D_GNU_SOURCE \
   -DCONFIG_VERSION='"2024-01-13"' -I. \
   -o libquickjs_bridge.so ../quickjs_bridge.c \
   quickjs.c libregexp.c libunicode.c cutils.c quickjs-libc.c libbf.c \
-  -lm $DL_LIB -lpthread
+  -lm $DL_LIB $PTHREAD_LIB
 
 echo "built native/quickjs/libquickjs_bridge.so"

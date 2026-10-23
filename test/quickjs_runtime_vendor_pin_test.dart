@@ -3,7 +3,7 @@
 // `hook/build.dart` (Native Assets) cannot build on two CI legs:
 //
 //   Build Android APK (debug):
-//     ld.ld: error: unable to find library -lpthread
+//     ld.lld: error: unable to find library -lpthread
 //   The Android NDK has shipped no libpthread since r18 — pthread lives
 //   in bionic's libc — so the unconditional `-lpthread` in `libraries:`
 //   fails the link for every ABI.
@@ -323,6 +323,107 @@ void main() {
             '$hookPath must compile — the Native Assets runner kernel-compiles '
             'it before every build:\n${result.stdout}\n${result.stderr}',
       );
+    });
+
+    test('manual build script matches the hook Android library set '
+        '(review PRRT_kwDOTXdlLc6vbMQC)', () {
+      // tool/build_quickjs.sh is the manual (non-Native-Assets) path to the
+      // same shared library. It kept an unconditional `-lpthread`, so a
+      // hand build against the NDK reproduced the exact
+      // `ld.lld: error: unable to find library -lpthread` the hook fix
+      // removed (bionic ships pthread in libc; no libpthread since r18).
+      final script = File('$vendorDir/tool/build_quickjs.sh');
+      expect(script.existsSync(), isTrue, reason: '${script.path} must exist');
+      final text = script.readAsStringSync();
+      // The link command spans `\`-continuation lines: match the whole
+      // command block, not the first `-shared` line.
+      final linkBlock = text
+          .split('\n')
+          .skipWhile((l) => !l.contains('-shared'))
+          .take(5)
+          .join(' ');
+      expect(
+        linkBlock.contains(r'$PTHREAD_LIB'),
+        isTrue,
+        reason:
+            '${script.path} must link pthread through a \$PTHREAD_LIB '
+            'variable so the Android exclusion is a single decision point — '
+            'an unconditional `-lpthread` breaks NDK builds '
+            '(ld.lld: unable to find library -lpthread).',
+      );
+      expect(
+        linkBlock.contains('-lpthread'),
+        isFalse,
+        reason: '${script.path} must not pass a literal `-lpthread` in the '
+            'link command — only the \$PTHREAD_LIB variable may carry it.',
+      );
+      // Android detection must cover the two real NDK invocations: an
+      // *android* cross-compiler in CC (e.g. aarch64-linux-android24-clang)
+      // and the ANDROID_NDK* environment variables.
+      expect(
+        text.contains('*android*'),
+        isTrue,
+        reason: '${script.path} must detect Android via a `*android*` CC '
+            'pattern (the NDK wrappers are *-linux-android*-clang) — keep '
+            'the script consistent with the hook.',
+      );
+      expect(
+        text,
+        contains(RegExp(r'ANDROID_NDK')),
+        reason:
+            '${script.path} must also detect the ANDROID_NDK* environment '
+            'variables — a plain `clang` CC with the NDK on the path still '
+            'has no libpthread to link.',
+      );
+    });
+
+    test('manual-build .so output is gitignored (review '
+        'PRRT_kwDOTXdlLc6vbMQC)', () {
+      final gitignore = File('.gitignore').readAsStringSync();
+      expect(
+        gitignore,
+        contains('vendor/quickjs_runtime/native/quickjs/'
+            'libquickjs_bridge.so'),
+        reason:
+            'tool/build_quickjs.sh writes libquickjs_bridge.so next to the '
+            'sources; without the ignore rule every manual build leaves an '
+            'untracked ~940 KB binary in git status.',
+      );
+    });
+
+    test('fork header quotes the real linker name and the CHANGELOG '
+        'documents the engine re-vendor path (reviews '
+        'PRRT_kwDOTXdlLc6vbMTH / PRRT_kwDOTXdlLc6vbMJt)', () {
+      final header = File('test/quickjs_runtime_vendor_pin_test.dart')
+          .readAsLinesSync()
+          .take(30)
+          .join('\n');
+      expect(
+        header.contains('ld.ld:'),
+        isFalse,
+        reason:
+            'the header quotes the Android link failure as `ld.ld:` — the '
+            'linker is `ld.lld`; a grep for the real CI error text must hit '
+            'this header too (the test reason string and hook already spell '
+            'it correctly).',
+      );
+      final changelog = File('$vendorDir/CHANGELOG.md').readAsStringSync();
+      for (final needle in const [
+        'Security',
+        '2026-06-04',
+        'bellard.org/quickjs',
+      ]) {
+        expect(
+          changelog.contains(needle),
+          isTrue,
+          reason:
+              '$vendorDir/CHANGELOG.md must document the engine security '
+              're-vendor path — the vendored QuickJS 2024-01-13 is the '
+              'preferred JS backend on all VM platforms since the 0.4.180 '
+              'bump, and upstream has published 2025-04-26 / 2025-09-13 / '
+              '2026-06-04 since (missing: `$needle`).',
+        );
+      }
     });
   });
 }

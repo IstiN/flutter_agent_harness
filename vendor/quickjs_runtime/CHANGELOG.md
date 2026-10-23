@@ -42,6 +42,42 @@ upstream publish that fixes both; re-apply the three widening casts
 (`test/quickjs_runtime_vendor_pin_test.dart` fails with the exact
 statements to re-cast).
 
+## Security & engine re-vendor policy (QuickJS 2024-01-13)
+
+The vendored engine is upstream QuickJS **2024-01-13**. Upstream has
+since published **2025-04-26**, **2025-09-13** and **2026-06-04**
+(https://bellard.org/quickjs/); none of those engine fixes reach this
+tree on its own. Since the 0.4.180 bump this engine is the preferred JS
+backend on all VM platforms (`js_widget_runtime` 0.4.180's default
+backend selects `QuickjsFfi.isAvailable ? QuickjsWidgetEngineBackend :
+FlutterJsWidgetEngineBackend`, and the fork's hook makes the Native
+Asset build on iOS/Android/macOS/Linux) — unlike the flutter_js backend
+it replaces on iOS, it is app-bundled, so it receives **no OS security
+patches**.
+
+- **Who tracks upstream**: the `quickjs_runtime` / `js_widget_runtime`
+  publishers (IstiN — the same account publishes both packages the app
+  consumes) watch bellard.org/quickjs releases and advisories as part of
+  that package's release process. An engine upgrade lands here ONLY via
+  a new `quickjs_runtime` publish — never by patching the vendored
+  engine in place (the vendored tree stays byte-faithful to the package
+  payload plus the documented deltas).
+- **Re-vendor trigger (app repo)**: act when either
+  (a) a `quickjs_runtime` release tracks QuickJS ≥ **2026-06-04**, or
+  (b) a QuickJS engine CVE is published that affects 2024-01-13 and the
+  app's script exposure (raise it as a `flutter_agent_harness` issue so
+  it is triaged against this section). Until either fires, shipping
+  2024-01-13 is the accepted interim state: the engine executes
+  bundled/on-device app scripts — the same script trust level the
+  flutter_js backend had — and remote widget content still goes through
+  the app's existing script-origin policy.
+- **Re-vendor path**: copy the new `quickjs_runtime` package over this
+  directory, then re-apply the fork deltas — the `hook/build.dart`
+  Android/Windows fixes, the three value-identical widening casts in
+  `libbf.c`/`quickjs.c`, this CHANGELOG, and the Android-aware
+  `tool/build_quickjs.sh`. `test/quickjs_runtime_vendor_pin_test.dart`
+  fails with the exact statements/anchors to re-apply.
+
 ## Upstream
 
 
