@@ -277,6 +277,12 @@ dependency_overrides:
   # still on master). Vendored verbatim with ONLY the deployment floor raised
   # to the app's 14.0 (vendor/flutter_inappwebview_macos/VENDORED.md). Drop
   # the override once upstream fixes the minimum.
+  # gh-1798: the vendored Package.swift is DELETED — its existence is the
+  # SwiftPM opt-in signal, and the 14.0-floored product breaks the build
+  # whenever the tool's silent FlutterGeneratedPluginSwiftPackage floor bump
+  # (12.0 → the project's 14.0) skips. The plugin rides CocoaPods (podspec
+  # 14.0, pinned in macos/Podfile.lock); guarded by
+  # ../test/inappwebview_macos_pods_lane_test.dart.
   flutter_inappwebview_macos:
     path: ../vendor/flutter_inappwebview_macos
   # gh-1265: the umbrella's desktop implementations are pulled into every
