@@ -59,15 +59,6 @@
       "model": ""
     }
   ],
-  "issue-1455": [
-    {
-      "leg": "dev",
-      "at": "2026-10-09T23:37:31Z",
-      "prompt": 492797,
-      "completion": 120447,
-      "total": 613244
-    }
-  ],
   "pr-1458": [
     {
       "leg": "review",
@@ -4892,6 +4883,17 @@
       "completion": 43554,
       "total": 144125,
       "cacheRead": 4556608,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-1815": [
+    {
+      "leg": "review",
+      "at": "2026-10-23T23:41:43Z",
+      "prompt": 100099,
+      "completion": 18817,
+      "total": 118916,
+      "cacheRead": 2466944,
       "model": "glm-5.3-flash"
     }
   ]
