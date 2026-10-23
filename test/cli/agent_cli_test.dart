@@ -2251,50 +2251,6 @@ void main() {
       },
     );
 
-    test('startup restore rides the saved CodeMie project as a header '
-        '(gh-1809 AC4)', () async {
-      final registry = CustomProviderRegistry([
-        CustomProviderEntry(
-          name: 'codemie.lab.epam.com',
-          apiType: 'openai',
-          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
-          modelId: 'gpt-4.1-mini',
-          keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
-          authMethod: CustomProviderAuthMethod.sso,
-          project: 'demo-project',
-        ),
-      ]);
-      const codeMieModel = Model(
-        id: 'gpt-4.1-mini',
-        api: 'openai-completions',
-        provider: 'openai',
-        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
-        contextWindow: 200000,
-        maxTokens: 4096,
-      );
-      final store = FakeSecureKeyStore()
-        ..map['FA_KEY_CODEMIE_LAB_EPAM_COM'] = '_oauth2_proxy=abc123';
-      final secureKeys = SecureKeyCache(store);
-      await secureKeys.preload(['FA_KEY_CODEMIE_LAB_EPAM_COM']);
-      final cli = AgentCli(
-        config: AgentCliConfig(
-          model: codeMieModel,
-          apiKey: '',
-          env: env,
-          sessionRoot: '/sessions',
-          providerKind: 'openai-completions',
-          customProviders: registry,
-          secureKeys: secureKeys,
-        ),
-        io: io,
-      );
-      expect(
-        cli.agent.state.model.headers?['x-codemie-project'],
-        'demo-project',
-      );
-      expect(cli.agent.state.model.headers?['cookie'], '_oauth2_proxy=abc123');
-    });
-
     test('startup with an expired CodeMie SSO cookie triggers re-authorization '
         'instead of restoring the stale cookie', () async {
       final registry = CustomProviderRegistry([

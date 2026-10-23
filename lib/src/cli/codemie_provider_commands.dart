@@ -159,12 +159,16 @@ extension on AgentCli {
         return;
       }
 
-      final apiBase = '${codeMieApiBase(orgUrl)}/v1';
+      // The guided flow speaks the SSO convention: apiBase WITHOUT the
+      // /v1 segment (the project fetch appends /v1/user itself); baseUrl
+      // (the registry URL) keeps it.
+      final apiBase = codeMieApiBase(orgUrl);
+      final baseUrl = '$apiBase/v1';
       // The guided flow's keep-current row needs the entry that already
       // serves this endpoint (issue #1809 AC2/AC5).
       final registry = config.customProviders;
       final existing = registry != null
-          ? _entryForBaseUrl(registry, apiBase)
+          ? _entryForBaseUrl(registry, baseUrl)
           : null;
       final (project, modelId) = await _codemieJwtGuidedSetup(
         apiBase,
@@ -179,7 +183,7 @@ extension on AgentCli {
 
       await _applyCodeMieJwtCredentials(
         orgUrl,
-        apiBase,
+        baseUrl,
         trimmedToken,
         modelId,
         project: project,
@@ -215,7 +219,7 @@ extension on AgentCli {
     io.writeln('fetching CodeMie models...');
     final models =
         await fetchCodeMieModelsWithJwt(
-          apiBase,
+          '$apiBase/v1',
           jwtToken,
           client: config.modelsHttpClient,
         ).catchError((_) {
