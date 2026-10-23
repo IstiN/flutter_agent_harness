@@ -39,11 +39,8 @@ FaTuiModel _key(FaTuiModel model, TeaKey key) =>
 
 /// A control-byte chord as the decoder delivers it: base letter in `text`
 /// plus the ctrl modifier (key_buffer_parser.dart 0x01–0x1a branch).
-TeaKey _chord(String letter) => TeaKey(
-  code: KeyCode.rune,
-  text: letter,
-  modifiers: const {KeyMod.ctrl},
-);
+TeaKey _chord(String letter) =>
+    TeaKey(code: KeyCode.rune, text: letter, modifiers: const {KeyMod.ctrl});
 
 void main() {
   test('ctrl chord with the slash menu open does not leak its base letter', () {
@@ -60,24 +57,38 @@ void main() {
     expect(model.menuItems.length, greaterThan(1));
   });
 
-  test('no chord letter leaks while the menu is open (ctrl s/u/w/k/y/b/a/e)', () {
-    var model = _model();
-    model = _key(model, const TeaKey(code: KeyCode.rune, text: '/'));
-    for (final letter in ['s', 'u', 'w', 'k', 'y', 'b', 'a', 'e']) {
-      model = _key(model, _chord(letter));
-      expect(model.inputText, '/', reason: 'ctrl+$letter leaked its letter');
-    }
-    expect(model.menuOpen, isTrue);
-  });
+  test(
+    'no chord letter leaks while the menu is open (ctrl s/u/w/k/y/b/a/e)',
+    () {
+      var model = _model();
+      model = _key(model, const TeaKey(code: KeyCode.rune, text: '/'));
+      for (final letter in ['s', 'u', 'w', 'k', 'y', 'b', 'a', 'e']) {
+        model = _key(model, _chord(letter));
+        expect(model.inputText, '/', reason: 'ctrl+$letter leaked its letter');
+      }
+      expect(model.menuOpen, isTrue);
+    },
+  );
 
   test('plain letters still type and filter with the menu open', () {
     var model = _model();
     model = _key(model, const TeaKey(code: KeyCode.rune, text: '/'));
+    final fullKeys = model.menuItems.map((i) => i.key).toSet();
+    expect(fullKeys.length, greaterThan(1));
     model = _key(model, const TeaKey(code: KeyCode.rune, text: 'm'));
     expect(model.inputText, '/m');
     expect(model.menuOpen, isTrue);
-    // The typed letter filters the menu: an /m-prefixed command is offered.
-    expect(model.menuItems.any((i) => i.key == '/memory'), isTrue);
+    // The typed letter filters the menu: the shown set strictly narrows
+    // against what '/' offered. No specific command is named, so the
+    // regression does not couple to the builtin catalog (review thread 2).
+    final filteredKeys = model.menuItems.map((i) => i.key).toSet();
+    expect(filteredKeys, isNotEmpty);
+    expect(filteredKeys.length, lessThan(fullKeys.length));
+    // Every survivor is still a builtin slash command — no specific command
+    // is named, so the regression does not couple to the catalog contents
+    // (review thread 2; the '/' list above is fuzzyMenu's top-32 view, so
+    // the subset is checked against the catalog, not that truncation).
+    expect(filteredKeys.every(builtinSlashCommands.containsKey), isTrue);
   });
 
   test('shift+letter still types with the menu open', () {
@@ -94,19 +105,23 @@ void main() {
   test('chord-poisoned prefix cannot survive a menu accept (2+ item flow)', () {
     var model = _model();
     model = _key(model, const TeaKey(code: KeyCode.rune, text: '/'));
-    // The chord must be a no-op, so the menu keeps the FULL multi-item list
-    // (2+ items — the single-item regression shape is not enough here).
+    // Snapshot the FULL multi-item list (2+ items — the single-item
+    // regression shape is not enough here); the chord must leave it alone.
+    final beforeKeys = model.menuItems.map((i) => i.key).toList();
+    expect(beforeKeys.length, greaterThan(1));
     model = _key(model, _chord('s'));
-    final items = model.menuItems;
-    expect(items.length, greaterThan(1));
-    // Navigate to a specific command and accept it.
-    final target = items.firstWhere((i) => i.key == '/memory');
-    var index = items.indexOf(target);
-    while (model.menuSelected != index) {
+    // The chord is a no-op: same items, same selection, input untouched.
+    expect(model.inputText, '/');
+    expect(model.menuItems.map((i) => i.key).toList(), beforeKeys);
+    // Navigate to the last item and accept it — the picked command is read
+    // off the menu instead of being named, so the regression does not
+    // couple to the builtin catalog (review thread 2).
+    final acceptedKey = model.menuItems.last.key;
+    while (model.menuSelected < model.menuItems.length - 1) {
       model = _key(model, const TeaKey(code: KeyCode.down));
     }
     model = _key(model, const TeaKey(code: KeyCode.enter));
-    expect(model.inputText, '/memory');
+    expect(model.inputText, acceptedKey);
     expect(model.menuOpen, isFalse);
   });
 }
