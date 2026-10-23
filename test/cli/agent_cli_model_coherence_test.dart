@@ -438,7 +438,236 @@ void main() {
       },
     );
   });
+
+  group('rework: review-thread coverage (gh-1788 rework)', () {
+    // Thread PRRT_kwDOTXdlLc6vbU_u (BLOCKING): the G2 refusal ErrorEvent
+    // must be TERMINAL — the finalized snapshot claims `StopReason.error`
+    // (the pushStreamErrorEvent house contract), so the empty-completion
+    // classifier verdicts abortedOrError and the one-shot "continue"
+    // nudge never fires a second refusal cycle.
+    test('a refused turn records stopReason error and fires no '
+        'continuation nudge', () async {
+      final store = FakeSecureKeyStore()..map['KIMI_API_KEY'] = 'kimi-key';
+      final cache = SecureKeyCache(store);
+      final fake = FakeStreamFunction([textTurn('should-never-run')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'kimi-for-coding',
+            api: 'openai-completions',
+            provider: 'copilot',
+            baseUrl: 'https://api.enterprise.githubcopilot.com',
+            contextWindow: 1000000,
+            maxTokens: 32768,
+          ),
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          envVarValue: (name) => store.map[name],
+          envVarIsSet: (name) => store.map.containsKey(name),
+          secureKeys: cache,
+          providerKind: 'copilot',
+          catalogStreamOverride: (kind, key) => fake.call,
+        ),
+        io: io,
+      );
+      final run = await boot(cli);
+
+      io.sendLine('hello');
+      await waitForIt(
+        () => io.out.toString().contains('model coherence refusal'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(fake.calls, 0, reason: 'no request may leave the process');
+      final messages = cli.agent.state.messages;
+      final last = messages.last;
+      expect(last, isA<AssistantMessage>());
+      expect(
+        (last as AssistantMessage).stopReason,
+        StopReason.error,
+        reason: 'a coherence refusal is a terminal error stop, never a '
+            'clean empty completion',
+      );
+      expect(last.errorMessage, contains('model coherence refusal'));
+      expect(
+        messages.whereType<UserMessage>().map((m) => m.content),
+        isNot(contains(emptyContinuationNudge)),
+        reason: 'the auto-continue nudge must not ride a refused turn',
+      );
+    });
+
+    // Thread PRRT_kwDOTXdlLc6vbVCd (IMPORTANT): the backstop re-parses
+    // with a narrower predicate than the router — a pick the router
+    // resolved SAME-provider (active-identity head + a nested
+    // vendor-prefixed id the cache does not list) must switch, not be
+    // re-refused.
+    test('a nested vendor-prefixed id behind the ACTIVE identity head '
+        'switches instead of being re-refused by the backstop', () async {
+      final (cli, _) = await incidentCli(
+        kimiEnvKey: 'kimi-key',
+        modelsFetcher: (baseUrl, {required apiKey}) async =>
+            baseUrl.contains('kimi')
+            ? const ['kimi-for-coding', 'k3-256k']
+            : const ['gemini-4-argon'],
+      );
+      final run = await boot(cli);
+
+      io.sendLine('/model copilot-acme/openai/gpt-4o');
+      await waitForIt(
+        () => io.out.toString().contains('switched model to') ||
+            io.out.toString().contains('model coherence refusal'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      // The router's rule 1 verdict (head == active identity) stands: a
+      // same-provider pick of the full vendor-prefixed id.
+      expect(io.out.toString(), contains('switched model to openai/gpt-4o'));
+      expect(io.out.toString(), isNot(contains('model coherence refusal')));
+      expect(cli.agent.state.model.id, 'openai/gpt-4o');
+      expect(cli.agent.state.model.provider, 'copilot');
+      expect(
+        cli.agent.state.model.baseUrl,
+        'https://api.enterprise.githubcopilot.com',
+      );
+    });
+
+    // Thread PRRT_kwDOTXdlLc6vbVEo (2): the `_switchModel` backstop
+    // refusal, driven DIRECTLY (a raw cross-provider shape, no router
+    // resolution) — the last-resort guard pins the invariant.
+    test('the backstop refuses a forced cross-provider shape and leaves '
+        'the state untouched', () async {
+      final (cli, fake) = await incidentCli(
+        kimiEnvKey: 'kimi-key',
+        modelsFetcher: (baseUrl, {required apiKey}) async =>
+            baseUrl.contains('kimi')
+            ? const ['kimi-for-coding', 'k3-256k']
+            : const ['gemini-4-argon'],
+      );
+      final run = await boot(cli);
+
+      await cli.switchModelUnresolvedForTest('kimi/kimi-for-coding');
+      await waitForIt(
+        () => io.out.toString().contains('model coherence refusal'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(
+        io.out.toString(),
+        contains('"/model" reuse cannot carry a cross-provider pick'),
+      );
+      expect(io.out.toString(), contains('/provider'));
+      // Nothing moved: the triple, the wiring, no request.
+      expect(cli.agent.state.model.id, 'gemini-4-argon');
+      expect(cli.agent.state.model.provider, 'copilot');
+      expect(fake.calls, 0);
+    });
+
+    // Thread PRRT_kwDOTXdlLc6vbVEo (1): the WIRED G3 note branch — a
+    // re-apply restore whose persisted triple fails the binding
+    // validation keeps the boot-coherent model with the loud note.
+    test('a persisted triple that fails the binding boots on the launch '
+        'model with the loud G3 note and unchanged wiring', () async {
+      Future<AgentCli> factory(FakeCliIO cliIo, String sessionName) async {
+        final cli = AgentCli(
+          config: AgentCliConfig(
+            model: Model(
+              id: 'start-model',
+              api: 'test-api',
+              provider: 'test-provider',
+              baseUrl: 'https://example.test',
+              contextWindow: 100000,
+              maxTokens: 4096,
+            ),
+            apiKey: '',
+            env: env,
+            sessionRoot: '/sessions',
+            sessionName: sessionName,
+          ),
+          io: cliIo,
+          streamFunction: fakeTextTurn,
+        );
+        return cli;
+      }
+
+      // Seed the session the second boot will resume.
+      final seedIo = FakeCliIO();
+      final first = await factory(seedIo, 'g3-note');
+      final run1 = first.run();
+      seedIo.sendLine('hi');
+      await waitForIt(() => !first.isBusy && seedIo.out.toString().isNotEmpty);
+      seedIo.sendLine('/exit');
+      await run1;
+      await seedIo.close();
+
+      // A triple that BUILDS (buildCliDefaultModel resolves anthropic and
+      // builds any id) but FAILS the validating binding constructor: a
+      // gpt id on the family-exclusive anthropic endpoint.
+      await saveFolderModelState(
+        env,
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+        providerKind: 'anthropic',
+        modelId: 'gpt-4o',
+        baseUrl: null,
+      );
+
+      final g3Io = FakeCliIO();
+      final second = await factory(g3Io, 'g3-note');
+      final streamBefore = second.agent.streamFunction;
+      final run2 = second.run();
+      await waitForIt(() => g3Io.out.toString().contains('persisted model'));
+      g3Io.sendLine('/exit');
+      await run2;
+      await g3Io.close();
+
+      final out = g3Io.out.toString();
+      // The loud note names the conflicted fields and the repair.
+      expect(out, contains('model coherence refusal'));
+      expect(
+        out,
+        contains(
+          'persisted model "gpt-4o" does not form a valid binding with '
+          'provider "anthropic"',
+        ),
+      );
+      expect(out, contains('/provider'));
+      // The kept model is the boot-coherent one (OQ3 repair semantics).
+      expect(out, contains('keeping start-model'));
+      expect(out, isNot(contains('restored gpt-4o')));
+      // The boot model and the wiring are untouched.
+      expect(second.agent.state.model.id, 'start-model');
+      expect(second.agent.state.model.provider, 'test-provider');
+      expect(second.agent.state.model.baseUrl, 'https://example.test');
+      expect(identical(second.agent.streamFunction, streamBefore), isTrue);
+    });
+  });
 }
+
+/// A one-turn fake stream serving a single text completion (the G3 fixture
+/// shares the shape of the restore-suite helper).
+StreamFunction get fakeTextTurn => (model, context, {cancelToken}) {
+  final stream = AssistantMessageEventStream();
+  stream.push(
+    DoneEvent(
+      reason: StopReason.stop,
+      message: AssistantMessage(
+        content: [TextContent(text: 'ok')],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.now(),
+      ),
+    ),
+  );
+  stream.end();
+  return stream;
+};
 
 /// The provider named by the LAST `model_change` record under the session
 /// root — the transcript half of the REG-3 agreement.

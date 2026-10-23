@@ -1049,6 +1049,14 @@ class AgentCli {
     unawaited(_recordCustomModel(modelId));
   }
 
+  /// Test seam driving [_switchModel] with a RAW model id — no router
+  /// resolution, the shape an unresolved caller would hand it. Pins the G1
+  /// backstop refusal (gh-1788): a cross-provider reference that reaches
+  /// the same-provider reuse path is refused loudly, state untouched.
+  @visibleForTesting
+  Future<void> switchModelUnresolvedForTest(String modelId) =>
+      _switchModel(modelId);
+
   /// Test seam driving the TUI picker's Edit action in line mode: opens
   /// the prefilled edit wizard for [entry] (or the active provider when
   /// null), the same `_startProviderEditWizard` the picker calls.

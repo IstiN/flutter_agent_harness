@@ -84,6 +84,28 @@ void main() {
       expect(plan, isA<SameModelSwitch>());
       expect((plan as SameModelSwitch).modelId, 'openai/gpt-4o');
     });
+
+    test('router actives with a COLD cache: rule 3 crosses to the vendor '
+        'record — the documented trade-off', () {
+      // Active openrouter, `/models` cache cold AND the id absent from
+      // knownModelPresets: `google` parses as a known provider and the
+      // whole triple moves to the google catalog endpoint/key. The
+      // outcome is coherent and loudly printed (never the incident's
+      // silent class), and rule 2 wins once the cache is warm — for
+      // OpenRouter-style actives this is the accepted trade-off, see the
+      // parseTypedModelTarget kdoc.
+      final plan = parseTypedModelTarget(
+        'google/gemini-2.5-flash',
+        activeProvider: 'openrouter',
+        activeCustomName: null,
+        activeModelIds: <String>{},
+        isKnownProvider: (name) => knownProvider(name) || name == 'google',
+      );
+      expect(plan, isA<CrossProviderSwitch>());
+      final cross = plan as CrossProviderSwitch;
+      expect(cross.provider, 'google');
+      expect(cross.modelId, 'gemini-2.5-flash');
+    });
   });
 
   group('crossProviderSwitchRefusal (UT-1, E1/E3)', () {
