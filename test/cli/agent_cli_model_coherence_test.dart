@@ -648,6 +648,123 @@ void main() {
       expect(identical(second.agent.streamFunction, streamBefore), isTrue);
     });
   });
+
+  // The CRAP ratchet CI red (gh-1788 validation): `_foreignFamilyHoldsKey`
+  // measured CC-9 at 30.8% coverage — the saved-entry (custom registry)
+  // half of the scan had no test reaching it. These drive the three
+  // saved-family verdicts end to end: holds the wiring key → refusal,
+  // holds a different key → no false refusal, keyless slot → never
+  // judged.
+  group('rework: the saved-family key check (G2 conservative arm, gh-1788)',
+  () {
+    /// The mixed-boot fixture with SAVED entries instead of an env-keyed
+    /// catalog provider: the copilot entry is active, and a kimi saved
+    /// entry exists whose key slot [kimiKey] may or may not hold the key
+    /// the session wiring carries.
+    Future<(AgentCli, FakeStreamFunction)> savedFamilyCli({
+      String? kimiKey,
+      String? kimiKeyName = 'FA_KEY_KIMI_ACT',
+    }) async {
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_COPILOT_ACME'] = 'copilot-key';
+      if (kimiKey != null && kimiKeyName != null) {
+        store.map[kimiKeyName] = kimiKey;
+      }
+      final cache = SecureKeyCache(store);
+      await cache.preload(store.map.keys.toList());
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'copilot-acme',
+          apiType: 'copilot',
+          baseUrl: 'https://api.enterprise.githubcopilot.com',
+          keyName: 'FA_KEY_COPILOT_ACME',
+          modelId: 'gemini-4-argon',
+        ),
+        CustomProviderEntry(
+          name: 'kimi-act',
+          apiType: 'openai',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          keyName: kimiKeyName,
+          modelId: 'kimi-for-coding',
+        ),
+      ]);
+      final fake = FakeStreamFunction([textTurn('streams-through')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'kimi-for-coding',
+            api: 'openai-completions',
+            provider: 'copilot',
+            baseUrl: 'https://api.enterprise.githubcopilot.com',
+            contextWindow: 1000000,
+            maxTokens: 32768,
+          ),
+          // The incident's mixed boot wiring: copilot kind + a kimi key.
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          envVarValue: (name) => store.map[name],
+          envVarIsSet: (name) => store.map.containsKey(name),
+          secureKeys: cache,
+          customProviders: registry,
+          activeCustomName: 'copilot-acme',
+          providerKind: 'copilot',
+          catalogStreamOverride: (kind, key) => fake.call,
+        ),
+        io: io,
+      );
+      return (cli, fake);
+    }
+
+    test('a saved foreign family whose key slot holds the WIRING key '
+        'refuses the request', () async {
+      final (cli, fake) = await savedFamilyCli(kimiKey: 'kimi-key');
+      final run = await boot(cli);
+
+      io.sendLine('hello');
+      await waitForIt(() => !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      expect(fake.calls, 0, reason: 'no request may leave the process');
+      final output = io.out.toString();
+      expect(output, contains('model coherence refusal'));
+      expect(output, contains('DIFFERENT provider family'));
+      // No partial anything: the boot triple is untouched.
+      expect(cli.agent.state.model.provider, 'copilot');
+      expect(cli.agent.state.model.id, 'kimi-for-coding');
+    });
+
+    test('a saved foreign family holding a DIFFERENT key never refuses '
+        '(the conservative arm)', () async {
+      final (cli, fake) = await savedFamilyCli(kimiKey: 'other-key');
+      final run = await boot(cli);
+
+      io.sendLine('hello');
+      await waitForIt(() => !cli.isBusy && fake.calls == 1);
+      io.sendLine('/exit');
+      await run;
+
+      expect(fake.calls, 1);
+      expect(io.out.toString(), contains('streams-through'));
+      expect(io.out.toString(), isNot(contains('model coherence refusal')));
+    });
+
+    test('a KEYLESS saved entry is never judged (no slot, no verdict)',
+        () async {
+      final (cli, fake) = await savedFamilyCli(kimiKey: null, kimiKeyName: null);
+      final run = await boot(cli);
+
+      io.sendLine('hello');
+      await waitForIt(() => !cli.isBusy && fake.calls == 1);
+      io.sendLine('/exit');
+      await run;
+
+      expect(fake.calls, 1);
+      expect(io.out.toString(), contains('streams-through'));
+      expect(io.out.toString(), isNot(contains('model coherence refusal')));
+    });
+  });
 }
 
 /// A one-turn fake stream serving a single text completion (the G3 fixture
