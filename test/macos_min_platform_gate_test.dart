@@ -18,7 +18,7 @@
 // into the 12.0-floored generated package. Xcode hard-failed the build.
 //
 // The lane decision (gh-180 fix): the macOS release legs build PURE
-// CocoaPods. `FLUTER_SWIFT_PACKAGE_MANAGER=0` at the build-macos job level
+// CocoaPods. `FLUTTER_SWIFT_PACKAGE_MANAGER=0` at the build-macos job level
 // turns the feature off for every flutter invocation in the job
 // (flutter_features_config.dart: the env override is read per invocation),
 // the migration then skips cleanly ("The Swift Package Manager feature is
@@ -155,6 +155,50 @@ void main() {
     expect(content.startsWith('#!'), isTrue, reason: 'shebang required');
   });
 
+  test('the lane pin documents the REAL SwiftPM knob — '
+      'FLUTTER_SWIFT_PACKAGE_MANAGER, the only env override flutter_tools '
+      'reads (no 28-char FLUTER_ misspelling anywhere)', () {
+    // flutter_tools consults exactly one environment override for the
+    // SwiftPM feature — FLUTTER_SWIFT_PACKAGE_MANAGER (29 chars;
+    // packages/flutter_tools/lib/src/features.dart, environmentOverride).
+    // A 28-char FLUTER_ spelling (missing a T) is a no-op knob: an
+    // operator who copies it into the job env reproduces the red leg it
+    // claims to fix. These files are what gets copied on the failure
+    // path — the gate's remediation message and the doc strings of the
+    // suites that pin the lane — so none may carry the misspelling.
+    // Built by surgery, not a literal: this file is scanned too, and the
+    // misspelling must not re-enter the tree from the checker itself.
+    final misspelled = 'FLUTTER_SWIFT_PACKAGE_MANAGER'.replaceFirst(
+      'FLUTTER',
+      'FLUTER',
+    );
+    const documented = [
+      'scripts/assert_macos_min_platform.sh',
+      'test/macos_min_platform_gate_test.dart',
+      'test/build_macos_spm_lane_guard_test.dart',
+    ];
+    for (final path in documented) {
+      expect(
+        File(path).readAsStringSync().contains(misspelled),
+        isFalse,
+        reason:
+            '$path spells the SwiftPM env override "$misspelled" '
+            '(28 chars, missing a T) — the tool reads '
+            'FLUTTER_SWIFT_PACKAGE_MANAGER (29 chars); the misspelled '
+            'name is a no-op pin',
+      );
+    }
+    // The gate's fail-loud remediation — the message an operator sees on
+    // the failure path — must name the knob the tool actually reads.
+    expect(
+      File(scriptPath).readAsStringSync(),
+      contains('FLUTTER_SWIFT_PACKAGE_MANAGER=0'),
+      reason:
+          'the gate remediation must name the env override '
+          'flutter_tools actually reads',
+    );
+  });
+
   test('AC1 — clean pods-lane tree passes', () {
     final tree = makeTree(pbxproj: pbxprojWith('14.0;'), podfile: cleanPodfile);
     final r = runGate(tree);
@@ -268,10 +312,60 @@ void main() {
     expect('${r.stdout}${r.stderr}', contains('Podfile'));
   });
 
-  test('the committed tree passes the gate (real repo state)', () {
-    // The gate's default repo-root resolution: run it with no root arg from
-    // the repo root — the state this task ships must be green by default.
-    final r = Process.runSync('bash', [scriptPath, appMin]);
+  test('the committed tree passes the gate (asserted against HEAD, not '
+      'the live working tree)', () {
+    // A local SwiftPM-enabled flutter build migrates the checkout IN PLACE
+    // (the exact mechanism the build-macos lane pins off — gh-180): the
+    // pbxproj gains the FlutterGeneratedPluginSwiftPackage marker and the
+    // gitignored Flutter/ephemeral/Packages tree appears. Neither changes
+    // what SHIPS, but asserting the live tree here made this suite red on
+    // macOS dev checkouts after any local `flutter build`/`run` (and the
+    // pre-commit fast gate runs this suite). So the gate inputs are
+    // materialized from the COMMITTED state (git show HEAD:) into a temp
+    // repo root — the gate's second argument — and the gate runs against
+    // that: host-state independent, identical on Linux CI and on a
+    // migrated macOS checkout.
+    String headFile(String relPath) {
+      final r = Process.runSync('git', ['show', 'HEAD:$relPath']);
+      expect(
+        r.exitCode,
+        0,
+        reason: 'git show HEAD:$relPath failed: ${r.stderr}',
+      );
+      return r.stdout as String;
+    }
+
+    const pbxprojRel = 'flutter_app/macos/Runner.xcodeproj/project.pbxproj';
+    const podfileRel = 'flutter_app/macos/Podfile';
+    const vendoredRel =
+        'vendor/flutter_inappwebview_macos/macos/'
+        'flutter_inappwebview_macos/Package.swift';
+
+    final tree = Directory.systemTemp.createTempSync('fah_min_platform_head');
+    addTearDown(() => tree.deleteSync(recursive: true));
+    File('${tree.path}/$pbxprojRel')
+      ..createSync(recursive: true)
+      ..writeAsStringSync(headFile(pbxprojRel));
+    File('${tree.path}/$podfileRel')
+      ..createSync(recursive: true)
+      ..writeAsStringSync(headFile(podfileRel));
+    // The vendored SwiftPM manifest is deleted on the pods lane (gh-1798);
+    // materialize it only if HEAD regressed to tracking it, so a committed
+    // re-opt-in still fails the gate here. flutter_app/macos/Flutter/
+    // ephemeral/ is gitignored — never in HEAD — so its absence in the
+    // temp root IS the committed state.
+    final vendoredInHead = Process.runSync('git', [
+      'cat-file',
+      '-e',
+      'HEAD:$vendoredRel',
+    ]);
+    if (vendoredInHead.exitCode == 0) {
+      File('${tree.path}/$vendoredRel')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(headFile(vendoredRel));
+    }
+
+    final r = runGate(tree);
     expect(r.exitCode, 0, reason: 'stdout: ${r.stdout}\nstderr: ${r.stderr}');
   });
 }

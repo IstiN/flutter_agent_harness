@@ -12,7 +12,7 @@
 // pattern of ci_macos_signing_window_guard_test.dart /
 // workflow_selfhosted_legs_test.dart):
 //
-//   AC1  the build-macos job pins FLUTER_SWIFT_PACKAGE_MANAGER=0 — the
+//   AC1  the build-macos job pins FLUTTER_SWIFT_PACKAGE_MANAGER=0 — the
 //        feature env override is read per flutter invocation
 //        (flutter_features_config.dart), the SPM migration then skips
 //        cleanly, and the Podfile platform (:osx, '14.0') — not a silent
@@ -35,6 +35,22 @@ const buildStepPrefix = 'Build macOS release (';
 
 String read(String path) => File(path).readAsStringSync();
 
+/// The COMMITTED content of a tracked file. A local SwiftPM-enabled flutter
+/// build migrates the checkout IN PLACE (the exact mechanism the
+/// build-macos lane pins off — gh-180): the pbxproj gains the
+/// FlutterGeneratedPluginSwiftPackage marker and a gitignored ephemeral
+/// package tree appears, without changing what ships. The guards below
+/// assert the committed shape, so they read `git show HEAD:` — the root
+/// `dart test` suite (incl. the pre-commit fast gate) then behaves
+/// identically on Linux CI and on a migrated macOS dev checkout.
+String readCommitted(String path) {
+  final r = Process.runSync('git', ['show', 'HEAD:$path']);
+  if (r.exitCode != 0) {
+    throw StateError('git show HEAD:$path failed: ${r.stderr}');
+  }
+  return r.stdout as String;
+}
+
 YamlMap jobsOf(String workflowPath) =>
     loadYaml(read(workflowPath))['jobs'] as YamlMap;
 
@@ -49,7 +65,7 @@ String stepScriptOf(String workflowPath, String job, String stepName) {
 
 void main() {
   test(
-    'AC1 — build-macos job pins FLUTER_SWIFT_PACKAGE_MANAGER=0 (gh-180)',
+    'AC1 — build-macos job pins FLUTTER_SWIFT_PACKAGE_MANAGER=0 (gh-180)',
     () {
       final job = jobsOf(workflowPath)[jobName] as YamlMap;
       final env = job['env'] as YamlMap?;
@@ -111,7 +127,12 @@ void main() {
 
   test('AC3 — the committed pbxproj keeps the Runner-target floor shape the '
       'gate asserts (3×14.0, nothing else)', () {
-    final pbxproj = read('flutter_app/macos/Runner.xcodeproj/project.pbxproj');
+    // Committed state, not the live file: a local SwiftPM-enabled build
+    // adds the FlutterGeneratedPluginSwiftPackage marker to the working
+    // tree without changing what ships (see readCommitted).
+    final pbxproj = readCommitted(
+      'flutter_app/macos/Runner.xcodeproj/project.pbxproj',
+    );
     final entries = RegExp(
       r'MACOSX_DEPLOYMENT_TARGET = ([^;]+);',
     ).allMatches(pbxproj);

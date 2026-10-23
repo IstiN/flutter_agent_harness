@@ -19,7 +19,7 @@
 #   this target supports a lower version
 #
 # The lane decision (gh-180): the build-macos release legs build PURE
-# CocoaPods. The job-level FLUTER_SWIFT_PACKAGE_MANAGER=0 pin turns the
+# CocoaPods. The job-level FLUTTER_SWIFT_PACKAGE_MANAGER=0 pin turns the
 # feature off for every flutter invocation in the job, the tool's SPM
 # migration then skips cleanly, and every macOS plugin is already pinned in
 # flutter_app/macos/Podfile.lock — the Podfile platform (:osx, '14.0'), not
@@ -112,7 +112,7 @@ if [ "$marker_present" = 1 ] || [ "$ephemeral_present" = 1 ]; then
       fail "min-platform gate: $manifest requires macOS $floor > the app floor $APP_MIN — no SwiftPM product may exceed the app minimum (gh-180 AC)"
     fi
     if [ -n "$generated_floor" ] && ver_gt "$floor" "$generated_floor"; then
-      fail "min-platform gate: a package product requires minimum platform version $floor for the macOS platform, but FlutterGeneratedPluginSwiftPackage supports $generated_floor — the exact gh-180 failure (the tool's silent xcodebuild -showBuildSettings floor bump skipped). Remediation: keep the FLUTER_SWIFT_PACKAGE_MANAGER=0 job pin and the plugin's Package.swift deleted; the pods lane builds the same sources at the Podfile platform"
+      fail "min-platform gate: a package product requires minimum platform version $floor for the macOS platform, but FlutterGeneratedPluginSwiftPackage supports $generated_floor — the exact gh-180 failure (the tool's silent xcodebuild -showBuildSettings floor bump skipped). Remediation: keep the FLUTTER_SWIFT_PACKAGE_MANAGER=0 job pin and the plugin's Package.swift deleted; the pods lane builds the same sources at the Podfile platform"
     fi
   done < <(find -L "$EPHEMERAL_PKGS" -name Package.swift -print0 2>/dev/null || true)
 
