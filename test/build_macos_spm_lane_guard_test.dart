@@ -21,7 +21,7 @@
 //        --config-only` + scripts/assert_macos_min_platform.sh BEFORE the
 //        real `flutter build macos --release` — the gate must see the
 //        post-config state and fail before any compile minute is spent;
-//   AC4  the gh-180 residue cleanup (`flutter clean` + the explicit
+//   AC4  the gh-1800 residue cleanup (`flutter clean` + the explicit
 //        macos/Flutter/ephemeral rm, best-effort) runs BEFORE the
 //        config-only pass — and the cleanup never deletes macos/Pods
 //        (it would defeat the Cache CocoaPods step) or macos/.symlinks

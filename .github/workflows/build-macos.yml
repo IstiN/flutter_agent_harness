@@ -641,7 +641,7 @@ jobs:
           # touched: the cache step above restores it keyed by
           # Podfile.lock and pod install reconciles it deterministically
           # (and macos/.symlinks is the iOS-lane path — macOS symlinks
-          # live inside the ephemeral tree the rm above covers). The rm
+          # live inside the ephemeral tree the rm below covers). The rm
           # is best-effort like the checkout's log-and-prune philosophy:
           # the gate below stays the diagnostic tripwire, not a raw rm
           # error.
