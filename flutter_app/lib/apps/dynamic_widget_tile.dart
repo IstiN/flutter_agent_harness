@@ -390,6 +390,11 @@ class _DynamicWidgetCanvasState extends State<DynamicWidgetCanvas> {
                         voxelWorld: engine.voxelWorld,
                         onScene3dTap: (sceneId, payload) => engine
                             .dispatchHostEvent('scene3d.tap:$sceneId', payload),
+                        // gh-1784: high-frequency gesture streams (onPanUpdate,
+                        // onLongPressMoveUpdate, onScroll) bypass the
+                        // serialized callEvent queue.
+                        onGestureEvent: (actionId, payload) => engine
+                            .dispatchHostEvent('gesture:$actionId', payload),
                         onEvent: (actionId, payload) =>
                             unawaited(engine.callEvent(actionId, payload)),
                       );
