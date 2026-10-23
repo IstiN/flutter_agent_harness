@@ -34,68 +34,62 @@ final _reservedDosDevice = RegExp(
 );
 
 void main() {
-  test(
-    'every tracked path is checkoutable on Windows '
-    '(no <>:"|?* characters, no trailing dots/spaces, '
-    'no reserved DOS device names)',
-    () {
-      final r = Process.runSync('git', ['ls-files', '-z']);
-      expect(
-        r.exitCode,
-        0,
-        reason: 'git ls-files must run from the repo root: ${r.stderr}',
-      );
-      final paths = (r.stdout as String)
-          .split('\x00')
-          .where((p) => p.isNotEmpty)
-          .toList();
-      expect(
-        paths,
-        isNotEmpty,
-        reason: 'git ls-files returned nothing — is this the repo root?',
-      );
+  test('every tracked path is checkoutable on Windows '
+      '(no <>:"|?* characters, no trailing dots/spaces, '
+      'no reserved DOS device names)', () {
+    final r = Process.runSync('git', ['ls-files', '-z']);
+    expect(
+      r.exitCode,
+      0,
+      reason: 'git ls-files must run from the repo root: ${r.stderr}',
+    );
+    final paths = (r.stdout as String)
+        .split('\x00')
+        .where((p) => p.isNotEmpty)
+        .toList();
+    expect(
+      paths,
+      isNotEmpty,
+      reason: 'git ls-files returned nothing — is this the repo root?',
+    );
 
-      final offenders = <String>[];
-      for (final path in paths) {
-        for (final component in path.split('/')) {
-          final invalid = _win32InvalidChars.firstMatch(component);
-          if (invalid != null) {
-            offenders.add(
-              '$path — component "$component" contains the Win32-invalid '
-              'character "${invalid[0]}" (git-for-windows checkout fails '
-              'with "error: invalid path")',
-            );
-            break;
-          }
-          if (component != component.replaceFirst(
-            RegExp(r'[. ]+$'),
-            '',
-          )) {
-            offenders.add(
-              '$path — component "$component" ends with a dot/space '
-              '(Windows silently strips or rejects it at checkout)',
-            );
-            break;
-          }
-          if (_reservedDosDevice.hasMatch(component)) {
-            offenders.add(
-              '$path — component "$component" is a reserved DOS device '
-              'name (git-for-windows checkout fails with "invalid path")',
-            );
-            break;
-          }
+    final offenders = <String>[];
+    for (final path in paths) {
+      for (final component in path.split('/')) {
+        final invalid = _win32InvalidChars.firstMatch(component);
+        if (invalid != null) {
+          offenders.add(
+            '$path — component "$component" contains the Win32-invalid '
+            'character "${invalid[0]}" (git-for-windows checkout fails '
+            'with "error: invalid path")',
+          );
+          break;
+        }
+        if (component != component.replaceFirst(RegExp(r'[. ]+$'), '')) {
+          offenders.add(
+            '$path — component "$component" ends with a dot/space '
+            '(Windows silently strips or rejects it at checkout)',
+          );
+          break;
+        }
+        if (_reservedDosDevice.hasMatch(component)) {
+          offenders.add(
+            '$path — component "$component" is a reserved DOS device '
+            'name (git-for-windows checkout fails with "invalid path")',
+          );
+          break;
         }
       }
+    }
 
-      expect(
-        offenders,
-        isEmpty,
-        reason:
-            'these tracked paths cannot be checked out on Windows — every '
-            'windows-latest job (binaries-pr matrix) fails before its first '
-            'step; remove the files or rename them: \n  '
-            '${offenders.join('\n  ')}',
-      );
-    },
-  );
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'these tracked paths cannot be checked out on Windows — every '
+          'windows-latest job (binaries-pr matrix) fails before its first '
+          'step; remove the files or rename them: \n  '
+          '${offenders.join('\n  ')}',
+    );
+  });
 }
