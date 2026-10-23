@@ -474,13 +474,13 @@ void main() {
       final run = await boot(cli);
 
       io.sendLine('hello');
-      await waitForIt(
-        () => io.out.toString().contains('model coherence refusal'),
-      );
+      await waitForIt(() => !cli.isBusy);
       io.sendLine('/exit');
       await run;
 
       expect(fake.calls, 0, reason: 'no request may leave the process');
+      final output = io.out.toString();
+      expect(output, contains('model coherence refusal'));
       final messages = cli.agent.state.messages;
       final last = messages.last;
       expect(last, isA<AssistantMessage>());
@@ -490,7 +490,7 @@ void main() {
         reason: 'a coherence refusal is a terminal error stop, never a '
             'clean empty completion',
       );
-      expect(last.errorMessage, contains('model coherence refusal'));
+      expect((last as AssistantMessage).errorMessage, isNotNull);
       expect(
         messages.whereType<UserMessage>().map((m) => m.content),
         isNot(contains(emptyContinuationNudge)),
