@@ -110,6 +110,12 @@ class _Answers {
   ]);
 }
 
+/// Echoed by the run wrappers onto the pty AFTER the exit file is written
+/// (see [_PtyRun.awaitExit]): its arrival in the captured buffer is the
+/// completeness proof — everything queued before it on the kernel pty is
+/// already consumed and delivered.
+const _drainSentinel = '__FA_PTY_DRAIN_SENTINEL_1796__';
+
 class _PtyRun {
   _PtyRun._(this.pty, this.buffer, this.exitFile);
   final PseudoTerminal pty;
@@ -133,13 +139,43 @@ class _PtyRun {
 
   /// The wizard's exit status, delivered out-of-band by the run wrapper —
   /// pty2's own `exitCode` races the Dart VM's child reaper (ECHILD → -1).
+  ///
+  /// The exit FILE is written by the wrapper the instant the pipeline
+  /// exits, but pty2 closes the pty master the moment IT reaps the same
+  /// child (BlockingPseudoTerminal chains exitCode → kill → close), and
+  /// an undrained master output queue is discarded on that close — #1796:
+  /// the trailing "Kept existing config." was lost exactly this way, in
+  /// two distinct-SHA gate runs.
+  ///
+  /// A drained buffer therefore cannot be proven via `done`: pty2's read
+  /// maps any `read() <= 0` — EBADF after that close included — to the
+  /// same null-as-EOF, so onDone fires from the KILL even when bytes were
+  /// discarded. The completeness proof is the [_drainSentinel] the run
+  /// wrapper echoes onto the same pty AFTER the exit file: the kernel
+  /// queues it strictly behind every byte the wizard wrote, the reader
+  /// consumes that queue in order, and one SendPort/stream chain
+  /// delivers in order — seeing the sentinel in [buffer] thus proves
+  /// every wizard byte already arrived, whatever the close did after.
   Future<int> awaitExit() async {
     final deadline = DateTime.now().add(const Duration(seconds: 60));
     while (true) {
       final f = File(exitFile);
       if (f.existsSync()) {
         final text = f.readAsStringSync().trim();
-        if (text.isNotEmpty) return int.parse(text);
+        if (text.isNotEmpty) {
+          final code = int.parse(text);
+          final drainDeadline = DateTime.now().add(const Duration(seconds: 10));
+          while (!_clean(buffer.toString()).contains(_drainSentinel)) {
+            if (DateTime.now().isAfter(drainDeadline)) {
+              fail(
+                'wizard exited $code but the pty output never drained to '
+                'the sentinel; captured:\n${_clean(buffer.toString())}',
+              );
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          return code;
+        }
       }
       if (DateTime.now().isAfter(deadline)) {
         fail('wizard never exited; captured:\n${_clean(buffer.toString())}');
@@ -203,7 +239,7 @@ Future<_PtyRun> _startPiped(
     [
       ...shellArgs,
       '-c',
-      'cat "\$1" | $inner; echo \$? > "\$2"',
+      'cat "\$1" | $inner; echo \$? > "\$2"; echo $_drainSentinel',
       'wizard',
       script,
       fixture.exitFile,
@@ -222,7 +258,13 @@ Future<_PtyRun> _startDirect({
   final script = '${_repoRoot()}/site/setup.sh';
   return _spawn(
     'bash',
-    ['-c', 'bash "\$1"; echo \$? > "\$2"', 'wizard', script, fixture.exitFile],
+    [
+      '-c',
+      'bash "\$1"; echo \$? > "\$2"; echo $_drainSentinel',
+      'wizard',
+      script,
+      fixture.exitFile,
+    ],
     fixture: fixture,
     shellEnv: shellEnv,
   );
