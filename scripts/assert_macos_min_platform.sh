@@ -143,9 +143,14 @@ done < <(find -L "$EPHEMERAL_PKGS" -name Package.swift -print0 2>/dev/null || tr
 # floored exactly at the app minimum: below is a silent deployment-target
 # regression (the podspec pins 14.0 for the same sources), above exceeds
 # the app minimum the Runner target consumes products at.
+# vendored_state feeds the OK line — operators grep it, so it must report
+# the vendored state the gate actually saw (gh-1814 review: presence is
+# legal now; "(manifest deleted)" only when it IS deleted).
+vendored_state="manifest deleted"
 if [ -e "$VENDORED_PACKAGE_SWIFT" ]; then
   vendored_floor="$(sed -n 's/.*\.macOS("\([0-9][0-9.]*\)").*/\1/p' "$VENDORED_PACKAGE_SWIFT" | head -1 || true)"
   [ -n "$vendored_floor" ] || fail "min-platform gate: $VENDORED_PACKAGE_SWIFT reappeared with no readable .macOS floor — a SwiftPM opt-in whose platform minimum cannot be asserted; declare platforms: [.macOS(\"$APP_MIN\")] or delete the manifest (the plugin rides CocoaPods, gh-1798)"
+  vendored_state="manifest present, floored at $vendored_floor"
   if ver_gt "$vendored_floor" "$APP_MIN"; then
     fail "min-platform gate: $VENDORED_PACKAGE_SWIFT requires macOS $vendored_floor > the app floor $APP_MIN — the vendored plugin's SwiftPM product exceeds the app minimum (gh-1814); floor it at $APP_MIN to match the podspec (s.platform = :osx, '$APP_MIN')"
   fi
@@ -154,4 +159,4 @@ if [ -e "$VENDORED_PACKAGE_SWIFT" ]; then
   fi
 fi
 
-echo "min-platform gate: OK — SPM lane adopted (gh-1814): app floor $APP_MIN (pbxproj + Podfile), generated floor $generated_floor, all product floors ≤ $APP_MIN, vendored plugin on the pods half (manifest deleted)"
+echo "min-platform gate: OK — SPM lane adopted (gh-1814): app floor $APP_MIN (pbxproj + Podfile), generated floor $generated_floor, all product floors ≤ $APP_MIN, vendored plugin on the pods half ($vendored_state)"

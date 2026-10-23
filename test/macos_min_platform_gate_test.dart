@@ -57,8 +57,11 @@
 //        is broken);
 //   AC5  the vendored plugin's Package.swift (if it ever reappears) is
 //        floored AT the app min — sub-floor fails ("raise it"), above-app
-//        fails ("exceeds the app min"); its mere PRESENCE is no longer a
-//        violation;
+//        fails ("exceeds the app min"), no readable floor fails
+//        ("cannot be asserted"); its mere PRESENCE is no longer a
+//        violation, and the OK line reports the vendored state it saw
+//        (manifest deleted vs present + floor) instead of always
+//        claiming "manifest deleted";
 //   AC6  a half-migrated tree fails: pbxproj marker without the generated
 //        package, or the generated package without the marker;
 //   AC7  app-floor drift still fails: any MACOSX_DEPLOYMENT_TARGET ≠ 14.0
@@ -66,7 +69,11 @@
 //   AC8  a missing pbxproj/Podfile fails gracefully (no false green);
 //   AC9  the committed floors PASS once the tool's migration state is
 //        materialized on top (asserted against HEAD, not the live tree —
-//        a local SwiftPM-enabled build migrates the checkout in place).
+//        a local SwiftPM-enabled build migrates the checkout in place);
+//   AC10 the fail-loud detectors for upstream shape changes are pinned:
+//        an ephemeral Packages dir without the generated manifest, and a
+//        generated manifest whose .macOS floor does not parse — the
+//        branches that must never degrade into a silent pass.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -125,11 +132,18 @@ Directory makeTree({required String pbxproj, required String podfile}) {
 /// Materialize the SwiftPM state `flutter build macos --config-only`
 /// generates on 3.47.7: the FlutterGeneratedPluginSwiftPackage marker in
 /// the pbxproj plus the ephemeral generated package tree.
+///
+/// `rawGeneratedManifest` writes the generated Package.swift verbatim
+/// (upstream shape-change fixtures: a manifest the gate's floor parser
+/// cannot read). `createEphemeralDir` materializes the ephemeral Packages
+/// dir WITHOUT the generated manifest (a half-written config pass).
 void addSpmState(
   Directory tree, {
   String? generatedFloor = appMin,
   List<String> productFloors = const [],
   bool markerInPbxproj = true,
+  String? rawGeneratedManifest,
+  bool createEphemeralDir = false,
 }) {
   if (markerInPbxproj) {
     final pbx = File(
@@ -140,7 +154,13 @@ void addSpmState(
       'FlutterGeneratedPluginSwiftPackage;\n',
     );
   }
-  if (generatedFloor != null) {
+  if (rawGeneratedManifest != null) {
+    final generated = File(
+      '${tree.path}/flutter_app/macos/Flutter/ephemeral/Packages'
+      '/FlutterGeneratedPluginSwiftPackage/Package.swift',
+    )..createSync(recursive: true);
+    generated.writeAsStringSync(rawGeneratedManifest);
+  } else if (generatedFloor != null) {
     final pkgs = '${tree.path}/flutter_app/macos/Flutter/ephemeral/Packages';
     final generated = File(
       '$pkgs/FlutterGeneratedPluginSwiftPackage/Package.swift',
@@ -148,6 +168,10 @@ void addSpmState(
     generated.writeAsStringSync(
       'let package = Package(\n  platforms: [.macOS("$generatedFloor")],\n)\n',
     );
+  } else if (createEphemeralDir) {
+    Directory(
+      '${tree.path}/flutter_app/macos/Flutter/ephemeral/Packages',
+    ).createSync(recursive: true);
   }
   for (var i = 0; i < productFloors.length; i++) {
     final plugin = File(
@@ -160,11 +184,17 @@ void addSpmState(
   }
 }
 
-void writeVendoredPackageSwift(Directory tree, String floor) {
+/// `floor == null` writes a manifest with NO platforms declaration — the
+/// "reappeared with no readable .macOS floor" fixture.
+void writeVendoredPackageSwift(Directory tree, String? floor) {
   final vendored = File(
     '${tree.path}/vendor/flutter_inappwebview_macos/macos/'
     'flutter_inappwebview_macos/Package.swift',
   )..createSync();
+  if (floor == null) {
+    vendored.writeAsStringSync('let package = Package(\n  name: "x",\n)\n');
+    return;
+  }
   vendored.writeAsStringSync(
     'let package = Package(\n  platforms: [.macOS("$floor")],\n)\n',
   );
@@ -266,6 +296,10 @@ void main() {
     final r = runGate(tree);
     expect(r.exitCode, 0, reason: 'stdout: ${r.stdout}\nstderr: ${r.stderr}');
     expect(r.stdout, contains('OK'));
+    // The vendored manifest is absent (the hybrid lane's committed state):
+    // operators grep the OK line, so it must state the vendored state it
+    // saw — "manifest deleted" is the truth here.
+    expect(r.stdout, contains('(manifest deleted)'));
   });
 
   test('AC2 — a tree with NO SwiftPM state after the config pass FAILS: '
@@ -328,6 +362,11 @@ void main() {
           'manifest must not fail the gate. stdout: ${r.stdout}\n'
           'stderr: ${r.stderr}',
     );
+    // gh-1814 review: the OK line must not claim "(manifest deleted)" in
+    // the exact state section 3b legalized — a present, floored manifest
+    // passes and the success line must say what it actually saw.
+    expect(r.stdout, contains('manifest present, floored at 14.0'));
+    expect(r.stdout, isNot(contains('manifest deleted')));
   });
 
   test('AC5b — vendored Package.swift below the app min fails with the '
@@ -349,6 +388,71 @@ void main() {
     final r = runGate(tree);
     expect(r.exitCode, 1);
     expect('${r.stdout}${r.stderr}', contains('15.0'));
+  });
+
+  test('AC5d — vendored Package.swift with NO readable .macOS floor fails '
+      '(a SwiftPM opt-in whose minimum cannot be asserted)', () {
+    final tree = makeTree(pbxproj: pbxprojWith('14.0;'), podfile: cleanPodfile);
+    addSpmState(tree, generatedFloor: '14.0');
+    writeVendoredPackageSwift(tree, null);
+    final r = runGate(tree);
+    expect(
+      r.exitCode,
+      1,
+      reason:
+          'a vendored manifest that reappears without a parseable platforms '
+          'declaration cannot be floor-audited — the gate must fail loud, '
+          'never silently pass an unassertable SwiftPM opt-in',
+    );
+    final out = '${r.stdout}${r.stderr}';
+    expect(out, contains('no readable .macOS floor'));
+    expect(out, contains('Package.swift'));
+  });
+
+  test('AC10a — ephemeral Packages/ dir present but the generated manifest '
+      'missing fails (half-written config pass)', () {
+    final tree = makeTree(pbxproj: pbxprojWith('14.0;'), podfile: cleanPodfile);
+    // Marker + the ephemeral dir exist, but the generated Package.swift is
+    // absent — the gate must not treat the dir's mere existence as lane
+    // adoption (it asserts the floor the tool writes INTO it).
+    addSpmState(tree, generatedFloor: null, createEphemeralDir: true);
+    final r = runGate(tree);
+    expect(
+      r.exitCode,
+      1,
+      reason:
+          'the ephemeral Packages dir without the generated manifest is a '
+          'half-written config pass — the lane cannot be asserted without '
+          'the floor the tool writes into the manifest',
+    );
+    final out = '${r.stdout}${r.stderr}';
+    expect(out, contains('generated package manifest is missing'));
+  });
+
+  test('AC10b — generated manifest whose .macOS floor does not parse fails '
+      '(upstream package-generation shape change)', () {
+    final tree = makeTree(pbxproj: pbxprojWith('14.0;'), podfile: cleanPodfile);
+    // An unquoted .macOS(14.0) — the sed extraction expects the quoted
+    // form; a renamed getter or shape change must fail loud, not read as
+    // "no floor declared" and slip through the audit.
+    addSpmState(
+      tree,
+      rawGeneratedManifest: 'let package = Package(\n'
+          '  platforms: [.macOS(14.0)],\n'
+          ')\n',
+    );
+    final r = runGate(tree);
+    expect(
+      r.exitCode,
+      1,
+      reason:
+          'an unparseable generated floor means the gate cannot assert the '
+          'bump landed — failing loud here is the upstream-shape-change '
+          'detector; a silent pass would resurrect the gh-180 Xcode error',
+    );
+    final out = '${r.stdout}${r.stderr}';
+    expect(out, contains('could not read a .macOS floor'));
+    expect(out, contains('Package.swift'));
   });
 
   test('AC6a — pbxproj marker without the generated package fails '
