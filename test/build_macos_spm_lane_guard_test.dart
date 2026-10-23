@@ -21,6 +21,11 @@
 //        --config-only` + scripts/assert_macos_min_platform.sh BEFORE the
 //        real `flutter build macos --release` — the gate must see the
 //        post-config state and fail before any compile minute is spent;
+//   AC4  the gh-180 residue cleanup (`flutter clean` + the explicit
+//        macos/Flutter/ephemeral rm, best-effort) runs BEFORE the
+//        config-only pass — and the cleanup never deletes macos/Pods
+//        (it would defeat the Cache CocoaPods step) or macos/.symlinks
+//        (the iOS-lane path — macOS symlinks live inside ephemeral);
 //   AC3  the no-sandbox flavor rides the same job env, so it is covered
 //        by the same lane pin (no separate assertion needed — asserted
 //        here anyway as a doc pin that the step invokes plain flutter).
@@ -123,6 +128,75 @@ void main() {
           'fail loud at build time, not at release time: the gate must '
           'reject a drifted lane/floor BEFORE the long release build starts',
     );
+  });
+
+  test('AC4 — gh-1800 residue cleanup: removed BEFORE the config-only pass, '
+      'without defeating the Pods cache', () {
+    final steps =
+        (jobsOf(workflowPath)[jobName] as YamlMap)['steps'] as YamlList;
+    final buildStep = steps.whereType<YamlMap>().firstWhere(
+      (s) => (s['name']?.toString() ?? '').startsWith(buildStepPrefix),
+    );
+    final script = buildStep['run'].toString();
+
+    final cleanIdx = script.indexOf('flutter clean');
+    final rmIdx = script.indexOf('rm -rf macos/Flutter/ephemeral');
+    final configIdx = script.indexOf('flutter build macos --config-only');
+    expect(
+      cleanIdx,
+      greaterThan(-1),
+      reason:
+          'gh-1800: SPM residue from pre-pin builds must be cleaned before '
+          'the config pass or the min-platform gate re-fires after a '
+          '1000s+ SPM pass (run 39991663029)',
+    );
+    expect(
+      rmIdx,
+      greaterThan(-1),
+      reason:
+          'the explicit ephemeral rm is belt-and-braces — flutter clean '
+          'already deletes the tree, the rm pins the intent against a '
+          'future flutter clean regression',
+    );
+    expect(
+      cleanIdx,
+      lessThan(configIdx),
+      reason: 'clean must precede the config-only pass',
+    );
+    expect(
+      rmIdx,
+      lessThan(configIdx),
+      reason: 'the residue rm must precede the config-only pass',
+    );
+
+    // Exactly one cleanup rm, and it must not fight the lanes around it.
+    final rmLines = script
+        .split('\n')
+        .where((l) => l.trim().startsWith('rm -rf macos'))
+        .toList();
+    expect(rmLines, hasLength(1));
+    final cleanup = rmLines.single;
+    expect(
+      cleanup,
+      isNot(contains('macos/Pods')),
+      reason:
+          'deleting macos/Pods defeats the Cache CocoaPods (macOS) step '
+          '(~4 min cold pod install × 2 sequential legs per run) — SPM '
+          'state never lives in Pods/, pod install reconciles the cached '
+          'tree against Podfile.lock (gh-1800 review thread 1)',
+    );
+    expect(
+      cleanup,
+      isNot(contains('.symlinks')),
+      reason:
+          'macos/.symlinks is the iOS-lane path — macOS symlinks live at '
+          'macos/Flutter/ephemeral/.symlinks, already covered by the '
+          'ephemeral removal (gh-1800 review thread 3)',
+    );
+    // Best-effort like the checkout's log-and-prune philosophy (gh-1600):
+    // a busy-path rm must not red the leg with a raw rm error instead of
+    // the gate's diagnostic message.
+    expect(cleanup, contains('|| true'));
   });
 
   test('AC3 — the committed pbxproj keeps the Runner-target floor shape the '
