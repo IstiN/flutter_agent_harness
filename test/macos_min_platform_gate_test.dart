@@ -83,10 +83,10 @@ const cleanPodfile = "platform :osx, '14.0'\n";
 Directory makeTree({required String pbxproj, required String podfile}) {
   final dir = Directory.systemTemp.createTempSync('fah_min_platform_gate');
   addTearDown(() => dir.deleteSync(recursive: true));
-  File(
+  final pbxprojFile = File(
     '${dir.path}/flutter_app/macos/Runner.xcodeproj/project.pbxproj',
-  ).createSync(recursive: true)
-    ..writeAsStringSync(pbxproj);
+  )..createSync(recursive: true);
+  pbxprojFile.writeAsStringSync(pbxproj);
   File('${dir.path}/flutter_app/macos/Podfile')
     ..createSync()
     ..writeAsStringSync(podfile);
@@ -116,25 +116,26 @@ void addSpmState(
   final pkgs =
       '${tree.path}/flutter_app/macos/Flutter/ephemeral/Packages';
   if (generatedFloor != null) {
-    File(
+    final generated = File(
       '$pkgs/FlutterGeneratedPluginSwiftPackage/Package.swift',
-    ).createSync(recursive: true)
-      ..writeAsStringSync(
-        'let package = Package(\n  platforms: [.macOS("$generatedFloor")],\n)\n',
-      );
+    )..createSync(recursive: true);
+    generated.writeAsStringSync(
+      'let package = Package(\n  platforms: [.macOS("$generatedFloor")],\n)\n',
+    );
   }
   for (var i = 0; i < pluginFloors.length; i++) {
-    File('$pkgs/.packages/plugin_$i/Package.swift').createSync(recursive: true)
-      ..writeAsStringSync(
-        'let package = Package(\n  platforms: [.macOS("${pluginFloors[i]}")],\n)\n',
-      );
+    final plugin = File('$pkgs/.packages/plugin_$i/Package.swift')
+      ..createSync(recursive: true);
+    plugin.writeAsStringSync(
+      'let package = Package(\n  platforms: [.macOS("${pluginFloors[i]}")],\n)\n',
+    );
   }
 }
 
 ProcessResult runGate(Directory tree, {String min = appMin}) {
   return Process.runSync(
     'bash',
-    [scriptPath, min, tree.path],
+    [File(scriptPath).absolute.path, min, tree.path],
     workingDirectory: tree.path,
   );
 }
@@ -145,7 +146,11 @@ void main() {
     expect(script.existsSync(), isTrue, reason: '$scriptPath must exist');
     // Executable bit: the workflow invokes it directly from the build step.
     final mode = FileStat.statSync(scriptPath).mode;
-    expect(mode & 0o111, isNot(0), reason: '$scriptPath must be +x');
+    expect(
+      mode & 0x49,
+      isNot(0),
+      reason: '$scriptPath must be +x (0o111 exec bits)',
+    );
     final content = script.readAsStringSync();
     expect(content.startsWith('#!'), isTrue, reason: 'shebang required');
   });
@@ -180,11 +185,11 @@ void main() {
       podfile: cleanPodfile,
     );
     // Package.swift mere presence is the SwiftPM opt-in signal (gh-1798).
-    File(
+    final vendored = File(
       '${tree.path}/vendor/flutter_inappwebview_macos/macos/'
       'flutter_inappwebview_macos/Package.swift',
-    ).createSync()
-      ..writeAsStringSync('// .macOS("14.0")\n');
+    )..createSync();
+    vendored.writeAsStringSync('// .macOS("14.0")\n');
     final r = runGate(tree);
     expect(r.exitCode, 1);
     final out = '${r.stdout}${r.stderr}';
@@ -228,8 +233,8 @@ void main() {
     expect('${r.stdout}${r.stderr}', contains('15.0'));
   });
 
-  test('AC4b — generated floor below app floor with all products under it '
-      'is reported but not fatal (no false red)', () {
+  test('AC4b — SPM state with coherent floors still fails the lane pin, '
+      'with the bump-skip diagnostic', () {
     final tree = makeTree(
       pbxproj: pbxprojWith('14.0;'),
       podfile: cleanPodfile,
@@ -240,8 +245,19 @@ void main() {
       pluginFloors: ['10.15', '11.0'],
     );
     final r = runGate(tree);
-    expect(r.exitCode, 0, reason: 'products ≤ floor builds fine; warn only');
+    expect(
+      r.exitCode,
+      1,
+      reason:
+          'the gate runs in a job whose env pins SwiftPM off — ANY SwiftPM '
+          'state after the config pass means the pin lost, so the lane '
+          'decision itself must fail loud even while every product floor '
+          'would still resolve',
+    );
     final out = '${r.stdout}${r.stderr}';
+    expect(out, contains('FLUTTER_SWIFT_PACKAGE_MANAGER'));
+    // diagnostic: the generated floor stayed at the tool default — the
+    // silent xcodebuild -showBuildSettings bump skipped
     expect(out, contains('12.0'));
   });
 
