@@ -129,6 +129,12 @@ function handleKnown(kind, f) {
     case 'tool_call_stuck':
       add('error', `tool stuck: ${f.toolName} (${f.action})`);
       return;
+    case 'tool_call_budget':
+      add(
+        f.action === 'offer' ? 'tool' : 'error',
+        `${f.detail || `budget ${f.rung}: ${f.toolName} (${f.action})`}`,
+      );
+      return;
     default: return; // model_request, heartbeats, repair: diagnostics, not UI.
   }
 }
