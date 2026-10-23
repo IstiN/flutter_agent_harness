@@ -1591,20 +1591,26 @@ extension on AgentCli {
   /// environment value as its `api-version` query parameter and gates the
   /// manual cache markers on the endpoint-reported `features.cache` set
   /// (unknown models keep the optimistic marker + fallback).
-  StreamFunction _catalogStreamFunction(String kind, String key) =>
-      config.catalogStreamOverride?.call(kind, key) ??
-      providerStreamFunction(
-        kind,
-        key,
-        sessionId: () => _session?.cachedId,
-        dialApiVersion: kind == 'dial'
-            ? config.envVarValue?.call('DIAL_API_VERSION')
-            : null,
-        dialCacheMarkersSupported: kind == 'dial' ? _dialCacheFlag : null,
-        onChatGptCredentialsRefreshed: kind == 'chatgpt-codex'
-            ? _persistChatGptCredentials
-            : null,
-      );
+  ///
+  /// G2 (gh-178): the result is wrapped in the request-build gate — see
+  /// [_gateCatalogStream] in `provider_model_coherence.dart`.
+  StreamFunction _catalogStreamFunction(String kind, String key) {
+    final inner =
+        config.catalogStreamOverride?.call(kind, key) ??
+        providerStreamFunction(
+          kind,
+          key,
+          sessionId: () => _session?.cachedId,
+          dialApiVersion: kind == 'dial'
+              ? config.envVarValue?.call('DIAL_API_VERSION')
+              : null,
+          dialCacheMarkersSupported: kind == 'dial' ? _dialCacheFlag : null,
+          onChatGptCredentialsRefreshed: kind == 'chatgpt-codex'
+              ? _persistChatGptCredentials
+              : null,
+        );
+    return _gateCatalogStream(inner);
+  }
 
   /// The active model's manual-cache support for the dial adapter: true /
   /// false when the models fetch reported the flag, null while unknown.

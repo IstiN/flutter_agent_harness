@@ -1874,6 +1874,45 @@ jobs:
                 f'list 500 sessions {listed} ms')
           EOF
 
+  # gh-178 merge rule: the REG model-switch coherence suite is its own
+  # leg — a red REG job blocks merge even when all UT/IT legs are green.
+  # Runs the whole model-switch surface (pure decision core + CLI-driven
+  # gates); REG-1/REG-2/REG-3 live in these two files.
+  model-switch-reg:
+    name: REG model-switch coherence (gh-178)
+    runs-on: ubuntu-24.04-arm
+    needs: [release-pending, release-dedupe, changes]
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
+    timeout-minutes: 6
+    permissions:
+      contents: read
+    steps:
+      - name: Scope fastpass (out-of-scope → green in seconds)
+        if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true'
+        run: echo "no core/shared changes — REG green-skipped (required context reported)"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        with:
+          sdk: stable
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - run: dart pub get
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+
+      - name: REG — model-switch coherence gates (red blocks merge)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: dart test test/cli/model_switch_coherence_test.dart test/cli/agent_cli_model_coherence_test.dart
+
   # Flutter app analyze split out of the test job (was serial pub get →
   # analyze → test in one 6-min job): analyze runs in parallel with the
   # sharded test legs, each leg no longer waits for it.
@@ -3318,7 +3357,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]
+    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, model-switch-reg, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]
     if: always() && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
@@ -3363,6 +3402,7 @@ jobs:
           echo "lock-smoke  = ${{ needs.flutter-app-lock-smoke.result }}"
           echo "office-addin  = ${{ needs.office-addin-suite.result }}"
           echo "ext-size-gate = ${{ needs.extension-size-gate.result }}"
+          echo "model-switch-reg = ${{ needs.model-switch-reg.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
         id: gate
         env:
@@ -3398,6 +3438,7 @@ jobs:
           R_LOCK_SMOKE: ${{ needs.flutter-app-lock-smoke.result }}
           R_OFFICE_ADDIN: ${{ needs.office-addin-suite.result }}
           R_EXT_SIZE: ${{ needs.extension-size-gate.result }}
+          R_MODEL_SWITCH_REG: ${{ needs.model-switch-reg.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
           # Verdict pass collects blockers WITHOUT exiting, so dart_ok is
@@ -3440,6 +3481,7 @@ jobs:
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
                     "installer-portability:$R_INSTALLER_REG" \
                     "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE" \
+                    "model-switch-reg:$R_MODEL_SWITCH_REG" \
                     "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE" "office-addin-suite:$R_OFFICE_ADDIN" "extension-size-gate:$R_EXT_SIZE"; do
             name="${kv%%:*}"; r="${kv#*:}"
             case "$name" in

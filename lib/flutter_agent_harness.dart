@@ -44,6 +44,7 @@ export 'src/cli/custom_providers.dart';
 export 'src/cli/key_status.dart';
 export 'src/cli/env_provider_preconfig.dart';
 export 'src/cli/provider_tuning_seed.dart';
+export 'src/cli/model_switch_coherence.dart';
 export 'src/model_roles/provider_key_resolver.dart';
 export 'src/cli/config_command.dart';
 export 'src/config/config_service.dart';
