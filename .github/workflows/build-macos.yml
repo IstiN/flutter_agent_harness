@@ -519,7 +519,16 @@ jobs:
             security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build-${{ matrix.arch }}.keychain
             security default-keychain -s build-${{ matrix.arch }}.keychain
             security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build-${{ matrix.arch }}.keychain
-            security set-keychain-settings -t 3600 -u build-${{ matrix.arch }}.keychain
+            # gh-1798: the window must cover the WHOLE job, not the
+            # import→build gap. On the first Xcode 27 run the tool's
+            # "Adding Swift Package Manager integration" pass alone took
+            # 3365s (56 min) + 443s pod install, putting the first codesign
+            # evaluation 73+ min after unlock — the 1h window auto-locked
+            # the keychain mid-build and codesign lost the identity
+            # ("No certificate for team ... matching ... found"). 4h ≥ the
+            # 150-min job ceiling with slack. Pinned by
+            # test/ci_macos_signing_window_guard_test.dart.
+            security set-keychain-settings -t 14400 -u build-${{ matrix.arch }}.keychain
             security list-keychains -d user -s build-${{ matrix.arch }}.keychain ~/Library/Keychains/login.keychain-db
 
             echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > certificate.p12
