@@ -4031,6 +4031,16 @@ jobs:
             archive: tar
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Blobless full history: the lazy draft create (gh-1801 rework)
+          # builds the release body via scripts/release_notes.sh, whose
+          # conventional-commit fallback reads commit MESSAGES since the
+          # previous tag — same reason release-macos fetches full
+          # (gh-1477: blobless, never historical file blobs). Whichever
+          # matrix leg wins the create race must be able to produce the
+          # full curated body.
+          fetch-depth: 0
+          filter: blob:none
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
@@ -4114,6 +4124,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Matrix legs share GITHUB_JOB=binaries — the leg-suffixed draft
+          # owner identity keeps the failure-path guard scoped to the leg
+          # that created the draft, never a sibling's mid-upload one.
+          RELEASE_DRAFT_IDENTITY: run/${{ github.run_id }}/job/${{ github.job }}-${{ matrix.os }}-${{ matrix.arch }}
         run: |
           archive_name="fa-${{ matrix.os }}-${{ matrix.arch }}"
           if [ "${{ matrix.archive }}" = "zip" ]; then
@@ -4121,19 +4135,28 @@ jobs:
           else
             asset="${archive_name}.tar.gz"
           fi
-          # gh-1801: DRAFT-first. A fresh release must never publish with
-          # an empty asset list — that is the `fa update` HTTP-404 breaker
-          # (the v1.0.630 window, 2026-10-23). Create as a DRAFT (matrix
-          # jobs race here, so a duplicate create is tolerated), upload
-          # THIS job's fa-*.tar.gz/zip, and only then publish + latest —
-          # `latest` moves only when a real CLI asset is on the release.
-          if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" \
-              --title "${GITHUB_REF_NAME}" --draft --generate-notes \
-              --repo "${GITHUB_REPOSITORY}" || true
-          fi
+          # gh-1801 (rework): DRAFT-first, publish is PROVENANCE-OWNED. The
+          # CLI tarball is a `fa update` asset, but servability needs the
+          # SIGNED SHA256SUMS — which only the release-provenance job can
+          # upload (it needs the whole matrix + web-spa). So: create the
+          # draft lazily (curated notes + a draft-owner marker the
+          # lifecycle guard can reclaim), upload THIS leg's
+          # fa-*.tar.gz/zip, and let release-provenance own the
+          # --draft=false --latest flip after the checksums land.
+          bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
           gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
-          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
+
+      # Draft lifecycle invariant (issue #282 / gh-1801): this job creates
+      # release drafts — a failed/cancelled leg must not leave its own
+      # behind. Ownership-scoped (review of #294): deletes only a draft
+      # stamped with THIS leg's RELEASE_DRAFT_IDENTITY; a sibling leg's
+      # mid-upload draft is never touched.
+      - name: Draft lifecycle guard (delete orphaned draft on failure)
+        if: always() && job.status != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_DRAFT_IDENTITY: run/${{ github.run_id }}/job/${{ github.job }}-${{ matrix.os }}-${{ matrix.arch }}
+        run: bash scripts/release_draft_guard.sh "${GITHUB_REF_NAME}"
 
   # Rehostable web SPA bundle (issue #1100): every release ships
   # fa-web-spa.zip — the release web build with <base href> rewritten to
@@ -4165,6 +4188,12 @@ jobs:
       contents: write # attach fa-web-spa.zip to the GitHub Release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Blobless full history: the lazy draft create (gh-1801 rework)
+          # builds the release body via scripts/release_notes.sh — same
+          # reason as the binaries job's checkout above.
+          fetch-depth: 0
+          filter: blob:none
 
       # Same pinned SDK as build-web / the release path (#281); EXACT patch
       # pin (#1431): a wildcard re-resolves a new engine build on every
@@ -4224,17 +4253,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # gh-1801: DRAFT-first and NEVER publish here. The web zip is not
-          # a CLI asset — if this step published the release, `latest`
-          # could carry only fa-web-spa.zip and `fa update` would still
-          # 404. Create the draft (matrix jobs race, duplicates tolerated)
-          # and upload; the binaries job publishes + latest after its
-          # fa-*.tar.gz/zip upload.
-          if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" \
-              --title "${GITHUB_REF_NAME}" --draft --generate-notes \
-              --repo "${GITHUB_REPOSITORY}" || true
-          fi
+          # gh-1801 (rework): DRAFT-first and NEVER publish here. The web
+          # zip is not a `fa update` asset — and even a CLI asset alone
+          # would not make the release servable: the SIGNED SHA256SUMS
+          # only lands in release-provenance, which owns the
+          # --draft=false --latest flip. Create/attach the draft with the
+          # curated notes + a draft-owner marker (guard/sweeper-visible)
+          # and upload.
+          # No guard step here ON PURPOSE: this job is continue-on-error —
+          # on failure the train (binaries → provenance) CONTINUES and
+          # must find the draft alive; a genuinely orphaned draft is
+          # reclaimed by the 24h sweeper (GITHUB_TOKEN-authored → bot).
+          bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
           gh release upload "${GITHUB_REF_NAME}" fa-web-spa.zip --clobber --repo "${GITHUB_REPOSITORY}"
 
       # continue-on-error keeps the job/check green even on failure — a
@@ -4326,6 +4356,15 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" \
             provenance/SHA256SUMS provenance/SHA256SUMS.sig \
             --clobber --repo "${GITHUB_REPOSITORY}"
+          # gh-1801 (rework): THE publish point of the train. The release
+          # now carries every fa-* asset AND the signed SHA256SUMS(.sig) —
+          # the first moment `fa update` can actually serve it (it
+          # hard-fails without the signed checksums, bin/self_manage.dart).
+          # Flip draft=false + latest here and ONLY here: a red provenance
+          # leaves the previous release as latest (safe degradation)
+          # instead of stranding a provenance-less one (the v1.0.630
+          # empty/partial-latest window class).
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
 
   # Advance the vpinned release marker to the freshly signed tag. PURE
   # RELEASE-ARTIFACT MANIPULATION — no commits, no pushes: pin_release.sh
@@ -4506,12 +4545,11 @@ jobs:
       - name: Cut release tag
         env:
           RELEASE_DRY_RUN: ${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}
-          # The App token rides the step (gh-1172) for the script's git
-          # surface (the annotated-tag push). gh-1801: no `gh release
-          # create` happens here anymore — an empty-asset create published
-          # an empty `latest` and broke `fa update`; the binaries job
-          # creates the release draft-first after its build.
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # gh-1801 (rework): no GH_TOKEN is exported here anymore —
+          # auto_release.sh no longer calls `gh` at all (the asset-less
+          # create published an empty `latest` and broke `fa update`; the
+          # binaries job owns creation, draft-first). The tag push rides
+          # the checkout App token above (gh-1172).
         run: bash scripts/auto_release.sh
 
   # PR-gate twin of the release `binaries` job: the CLI bundle must compile

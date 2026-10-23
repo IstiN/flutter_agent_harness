@@ -33,8 +33,11 @@
 # cut, logs it, and stops before any push.
 #
 # Release notes: scripts/release_notes.sh is NOT invoked here anymore —
-# with no release create there is no body to prepare; the binaries job's
-# create path (ci.yml, --generate-notes) owns the notes.
+# with no release create there is no body to prepare. The release body is
+# owned by the tag-run binaries job's lazy draft create
+# (scripts/release_lazy_draft.sh), which folds the curated CHANGELOG
+# section via release_notes.sh into the DRAFT it creates; the signed
+# provenance job publishes it (gh-1801).
 set -euo pipefail
 
 # Tag authorship names the App so releases are attributable in history
