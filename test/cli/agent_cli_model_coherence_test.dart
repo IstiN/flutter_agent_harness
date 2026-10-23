@@ -460,7 +460,7 @@ void main() {
             contextWindow: 1000000,
             maxTokens: 32768,
           ),
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: 'kimi-key',
           env: env,
           sessionRoot: '/sessions',
           envVarValue: (name) => store.map[name],
@@ -484,13 +484,15 @@ void main() {
       final messages = cli.agent.state.messages;
       final last = messages.last;
       expect(last, isA<AssistantMessage>());
+      final refusalMessage = last as AssistantMessage;
       expect(
-        (last as AssistantMessage).stopReason,
+        refusalMessage.stopReason,
         StopReason.error,
-        reason: 'a coherence refusal is a terminal error stop, never a '
+        reason:
+            'a coherence refusal is a terminal error stop, never a '
             'clean empty completion',
       );
-      expect((last as AssistantMessage).errorMessage, isNotNull);
+      expect(refusalMessage.errorMessage, isNotNull);
       expect(
         messages.whereType<UserMessage>().map((m) => m.content),
         isNot(contains(emptyContinuationNudge)),
@@ -516,7 +518,8 @@ void main() {
 
       io.sendLine('/model copilot-acme/openai/gpt-4o');
       await waitForIt(
-        () => io.out.toString().contains('switched model to') ||
+        () =>
+            io.out.toString().contains('switched model to') ||
             io.out.toString().contains('model coherence refusal'),
       );
       io.sendLine('/exit');

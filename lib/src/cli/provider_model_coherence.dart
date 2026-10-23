@@ -19,7 +19,12 @@ extension on AgentCli {
     return (model, context, {cancelToken}) {
       final refusal = _requestBuildRefusal(model);
       if (refusal != null) {
+        // Terminal error stop (the pushStreamErrorEvent house contract):
+        // the default StopReason.stop would classify the refused turn as a
+        // clean empty completion and fire the one-shot continue nudge — a
+        // second refusal cycle instead of the terminal stop (gh-1788).
         final state = ProviderStreamState(model)
+          ..stopReason = StopReason.error
           ..errorMessage = refusal.message;
         final stream = AssistantMessageEventStream();
         stream.push(

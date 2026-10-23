@@ -3357,7 +3357,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]
+    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite, extension-size-gate, model-switch-reg]
     if: always() && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
@@ -3402,6 +3402,7 @@ jobs:
           echo "lock-smoke  = ${{ needs.flutter-app-lock-smoke.result }}"
           echo "office-addin  = ${{ needs.office-addin-suite.result }}"
           echo "ext-size-gate = ${{ needs.extension-size-gate.result }}"
+          echo "model-switch-reg = ${{ needs.model-switch-reg.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
         id: gate
         env:
@@ -3437,6 +3438,7 @@ jobs:
           R_LOCK_SMOKE: ${{ needs.flutter-app-lock-smoke.result }}
           R_OFFICE_ADDIN: ${{ needs.office-addin-suite.result }}
           R_EXT_SIZE: ${{ needs.extension-size-gate.result }}
+          R_MODEL_SWITCH_REG: ${{ needs.model-switch-reg.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
           # Verdict pass collects blockers WITHOUT exiting, so dart_ok is
@@ -3479,7 +3481,8 @@ jobs:
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
                     "installer-portability:$R_INSTALLER_REG" \
                     "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE" \
-                    "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE" "office-addin-suite:$R_OFFICE_ADDIN" "extension-size-gate:$R_EXT_SIZE"; do
+                    "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE" "office-addin-suite:$R_OFFICE_ADDIN" "extension-size-gate:$R_EXT_SIZE" \
+                    "model-switch-reg:$R_MODEL_SWITCH_REG"; do
             name="${kv%%:*}"; r="${kv#*:}"
             case "$name" in
               build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual|flutter-app-lock-smoke|installer-portability|office-addin-suite|extension-size-gate)

@@ -120,6 +120,17 @@ final class RefusedSwitch extends ModelSwitchPlan {
 ///    active — the gh-178 incident shape);
 /// 4. otherwise the whole string rides the active endpoint as before (an
 ///    unknown-prefix id is a model id by definition — same-provider).
+///
+/// Rule 3 has a ROUTER-ACTIVE trade-off (documented, accepted): when the
+/// active identity is a router-kind record (OpenRouter/Copilot/DIAL) and
+/// the live `/models` cache is cold (or the id is absent from both the
+/// cache and `knownModelPresets`), a vendor-prefixed id like
+/// `google/gemini-2.5-flash` parses `google` as a known provider and
+/// moves the WHOLE triple to the google catalog endpoint/key — where the
+/// id most often meant "vendor-prefixed id on THIS router". The outcome
+/// is still coherent and loudly printed (never the incident's silent
+/// class), and rule 2 wins once the cache is warm. To stay on the router
+/// for an unlisted id, type the bare id (rule 4).
 ModelSwitchPlan parseTypedModelTarget(
   String input, {
   required String activeProvider,

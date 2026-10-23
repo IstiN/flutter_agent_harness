@@ -302,7 +302,10 @@ extension on AgentCli {
     try {
       await _maybeSwitchToSavedEntry(providerName);
       if (!await _switchToEnvCatalogProvider(providerName, modelId)) {
-        await _switchModel(modelId);
+        // The pick's provider identity was resolved by the `|` key split
+        // (and the triple already moved onto it, or the pick rides the
+        // active one) — same-provider for the CURRENT triple.
+        await _switchModel(modelId, preResolvedSameProvider: true);
       }
     } on Object catch (e) {
       io.writeln('error: model switch to $providerName/$modelId failed: $e');
@@ -1135,7 +1138,10 @@ extension on AgentCli {
       isKnownProvider: _isKnownModelProvider,
     )) {
       case SameModelSwitch(:final modelId):
-        await _switchModel(modelId);
+        // The router resolved this id against the REAL resolver — the
+        // backstop's cache-evidence re-parse is skipped (it judges only
+        // unresolved shapes).
+        await _switchModel(modelId, preResolvedSameProvider: true);
       case CrossProviderSwitch(:final provider, :final modelId):
         await _switchCrossProviderModel('$provider|$modelId');
       case RefusedSwitch(:final refusal):
@@ -1189,7 +1195,9 @@ extension on AgentCli {
       _agent.state.model.provider,
       _activeCustomName,
     )) {
-      await _switchModel(entry.$2);
+      // The identity check already judged this pick same-provider with the
+      // routing-layer predicate — skip the backstop's narrower re-parse.
+      await _switchModel(entry.$2, preResolvedSameProvider: true);
       return;
     }
     await _switchCrossProviderModel('${entry.$1}|${entry.$2}');
@@ -1324,7 +1332,10 @@ extension on AgentCli {
     );
   }
 
-  Future<void> _switchModel(String modelId) async {
+  Future<void> _switchModel(
+    String modelId, {
+    bool preResolvedSameProvider = false,
+  }) async {
     final current = _agent.state.model;
     final rolesResolver = config.modelRolesResolver;
     if (modelId.isEmpty) {
@@ -1339,39 +1350,53 @@ extension on AgentCli {
     // reaches here (a flow the routing above should have caught) is
     // refused loudly instead of silently producing the incident's mixed
     // triple; the repair routes through the whole-triple flow.
-    switch (parseTypedModelTarget(
-      modelId,
-      activeProvider: current.provider,
-      activeCustomName: _activeCustomName,
-      activeModelIds: _modelCandidates('').toSet(),
-      // The backstop refuses only on CACHE EVIDENCE: with no model list
-      // for the active endpoint there is nothing to distinguish a
-      // cross-provider reference from a vendor-prefixed id that endpoint
-      // serves (OpenRouter's `openai/gpt-4o`), and the coherent legacy
-      // pasthrough wins. The routing paths above use the real resolver.
-      isKnownProvider: _modelCandidates('').isNotEmpty
-          ? _isKnownModelProvider
-          : (_) => false,
-    )) {
-      case SameModelSwitch():
-        break;
-      case CrossProviderSwitch():
-        io.writeln(
-          const ModelCoherenceRefusal(
-            problem:
-                '"/model" reuse cannot carry a cross-provider pick — '
-                'model ids never ride a foreign provider/endpoint/key '
-                'triple',
-            fields: ['provider', 'baseUrl', 'key'],
-            repair:
-                '/model <provider>/<id> resolves the whole triple, or '
-                '/provider <provider> first',
-          ).message,
-        );
-        return;
-      case RefusedSwitch(:final refusal):
-        io.writeln(refusal.message);
-        return;
+    //
+    // [preResolvedSameProvider] marks callers whose id the ROUTING LAYER
+    // already resolved same-provider with the real resolver (the
+    // parseTypedModelTarget SameModelSwitch plan, the entry-pick identity
+    // check, the cross-provider `provider|model` key split): the backstop
+    // is skipped for them. Its own predicate is cache-evidence-gated and
+    // NARROWER than the router's — re-parsing a resolved id here would
+    // veto legitimate picks (an active-identity head with a nested
+    // vendor-prefixed id the cold cache does not list resolves
+    // CrossProviderSwitch on cache evidence). Unresolved shapes — a
+    // future caller handing a raw id — are still judged.
+    if (!preResolvedSameProvider) {
+      final activeCandidates = _modelCandidates('');
+      switch (parseTypedModelTarget(
+        modelId,
+        activeProvider: current.provider,
+        activeCustomName: _activeCustomName,
+        activeModelIds: activeCandidates.toSet(),
+        // The backstop refuses only on CACHE EVIDENCE: with no model list
+        // for the active endpoint there is nothing to distinguish a
+        // cross-provider reference from a vendor-prefixed id that endpoint
+        // serves (OpenRouter's `openai/gpt-4o`), and the coherent legacy
+        // pasthrough wins. The routing paths above use the real resolver.
+        isKnownProvider: activeCandidates.isNotEmpty
+            ? _isKnownModelProvider
+            : (_) => false,
+      )) {
+        case SameModelSwitch():
+          break;
+        case CrossProviderSwitch():
+          io.writeln(
+            const ModelCoherenceRefusal(
+              problem:
+                  '"/model" reuse cannot carry a cross-provider pick — '
+                  'model ids never ride a foreign provider/endpoint/key '
+                  'triple',
+              fields: ['provider', 'baseUrl', 'key'],
+              repair:
+                  '/model <provider>/<id> resolves the whole triple, or '
+                  '/provider <provider> first',
+            ).message,
+          );
+          return;
+        case RefusedSwitch(:final refusal):
+          io.writeln(refusal.message);
+          return;
+      }
     }
     // An endpoint-reported window/cap beats the carried one (the catalog
     // defaults) when the id is known to /models.
