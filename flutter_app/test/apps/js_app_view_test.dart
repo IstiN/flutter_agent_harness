@@ -241,6 +241,57 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets(
+      'JsAppView routes onPanUpdate via dispatchHostEvent(gesture:...) to JS '
+      '(gh-1784)',
+      (tester) async {
+        final env = MemoryExecutionEnv();
+        await tester.runAsync(() async {
+          await env.writeFile('apps/panapp/widget.js', '''
+  (function() {
+    var moves = 0;
+    jsr.onEvent(function(actionId, payload) {
+      if (actionId === 'panMove') {
+        moves++;
+        jsr.render({
+          type: 'gestureDetector',
+          onPanUpdate: 'panMove',
+          child: {
+            type: 'sizedBox',
+            width: 200,
+            height: 200,
+            child: {type: 'text', data: 'MOVED:' + moves}
+          }
+        });
+      }
+    });
+    jsr.render({
+      type: 'gestureDetector',
+      onPanUpdate: 'panMove',
+      child: {
+        type: 'sizedBox',
+        width: 200,
+        height: 200,
+        child: {type: 'text', data: 'PAN-READY'}
+      }
+    });
+  })();
+  ''');
+        });
+        await pumpAppRoute(tester, env, 'panapp', 'PAN-READY');
+        await tester.runAsync(() async {
+          await tester.drag(find.text('PAN-READY'), const Offset(40, 20));
+          for (var i = 0; i < 20; i++) {
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+            await tester.pump();
+            if (find.textContaining('MOVED:').evaluate().isNotEmpty) break;
+          }
+        });
+        expect(find.textContaining('MOVED:'), findsOneWidget);
+        await unmount(tester);
+      },
+    );
+
     testWidgets('a widget whose eval never renders shows the boot error '
         'card with the widget id, not an infinite spinner (gh-1336)', (
       tester,

@@ -393,6 +393,14 @@ class _AppTileHostState extends State<AppTileHost> {
               // An interactive tile (`"widget": {"interactive": true}`) gets
               // its taps routed to the tile engine's jsr.onEvent instead —
               // the app opens via the tile menu (long-press / right-click).
+              // gh-1784: interactive tiles also route high-frequency gesture
+              // streams (`onPanUpdate`, `onScroll`) through `dispatchHostEvent`
+              // so pan/scroll does not queue on `callEvent`.
+              onGestureEvent: widget.app.tileWidget?.interactive == true
+                  ? (actionId, payload) {
+                      engine.dispatchHostEvent('gesture:$actionId', payload);
+                    }
+                  : null,
               onEvent: widget.app.tileWidget?.interactive == true
                   ? (actionId, payload) {
                       unawaited(engine.callEvent(actionId, payload));
