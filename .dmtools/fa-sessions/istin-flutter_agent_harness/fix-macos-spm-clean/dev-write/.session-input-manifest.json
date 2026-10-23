@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-23T20:38:09.597Z",
+  "ticketKey": "pr-1812",
+  "headSha": "bfe3046308260c08dce22439b487504a5945b291",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:751370e6c4da188f",
+      "size": 1417
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:e6bd1acf250a8762",
+      "size": 16302
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3a4c19ffb06a9190",
+      "size": 7868
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:dc1bd946e4fce219",
+      "size": 1964
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:c5314b53dd6e2094",
+      "size": 1249
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:dc365829c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:2ad598dc21e37e3e",
+      "size": 1697
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:068398e9d0c6b0f0",
+      "size": 1621
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6vwn5q",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-macos.yml:640",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: deleting `macos/Pods` defeats the CocoaPods cache step above**\n\nThe \"Cache CocoaPods (macOS)\" step one screen above restores `flutter_app/macos/Pods` keyed by `Podfile.lock`, and its own comment documents why: *\"a fresh CI checkout ... wipes Pods/ and forces a full pod install (~4 min with Firebase)\"*. This `rm -rf macos/Pods` deletes the restored tree before every build, so **every leg now pays the cold ~4-min install again** — ×2 sequential arch legs on the single self-hosted runner ≈ +8 min per run, every run. The `actions/cache` restore keeps hitting (the key didn't change), so it becomes pure restore→delete waste.\n\n`flutter clean` adds more of the same class of cost, worth weighing together:\n- it wipes `.dart_tool/` after \"Install Flutter dependencies\" ran, so `--config-only` re-runs an implicit pub get (warm-cache resolve, but without the retry wrapper the `flutter-pub-get` action has — relevant on this box's documented flaky network, gh-1644);\n- with Xcode installed it runs `xcodebuild clean` for **both** the ios and macos workspaces (`flutter_app` has both), wiping DerivedData intermediates whose warm state the stable persistent workspace path previously preserved across runs.\n\nCorrectness-wise the `Pods` deletion is not needed for the SPM fix: SwiftPM state lives in `macos/Flutter/ephemeral` (`FlutterGeneratedPluginSwiftPackage`, `Packages/.packages`), which `flutter clean` already removes (flutter_tools `clean.dart` deletes `macos.ephemeralDirectory`), and `pod install` deterministically reconciles `Pods/` against `Podfile.lock` — the cache step already trusts exactly that property.\n\n**Suggestion**: drop `macos/Pods` from the `rm` list (keep `flutter clean` + the ephemeral removal — that's the whole SPM fix), or if belt-and-braces determinism is deliberately wanted, accept the ~+8-10 min/run consciously and update the \"Cache CocoaPods (macOS)\" step comment (or drop that step) so the workflow doesn't document a cache it no longer uses."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vwn7s",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-macos.yml:639",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: pin the new cleanup in the lane-guard suite (repo's own workflow-shape pattern)**\n\nThese two lines are load-bearing: without them the config-only pass re-adopts SPM residue on the persistent runner and the min-platform gate re-fires after a 10-50-minute SPM pass (run 39991663029: 1095.4s) — exactly the expensive feedback loop the gh-180 gate was built to avoid. Yet they are the only part of the gh-180 lane that nothing pins: the workflow's own env-block comment cites *\"pinned by test/build_macos_spm_lane_guard_test.dart + test/macos_min_platform_gate_test.dart\"*, and that suite's header calls this the *\"workflow-shape test never-again\"* pattern — but its AC2 currently only asserts `--config-only` + gate ordering, so a future refactor can silently drop the cleanup and the regression would only surface as a red deploy run on the runner.\n\nSuggested extension (~10 lines) to AC2 in `test/build_macos_spm_lane_guard_test.dart`:\n\n```dart\nfinal cleanIdx = script.indexOf('flutter clean');\nfinal rmIdx = script.indexOf(\"rm -rf macos/Flutter/ephemeral\");\nfinal configIdx = script.indexOf('flutter build macos --config-only');\nexpect(cleanIdx, greaterThan(-1),\n    reason: 'gh-1800: SPM residue from pre-pin builds must be cleaned '\n        'before the config pass or the gate re-fires after a 1000s+ pass');\nexpect(rmIdx, greaterThan(-1));\nexpect(cleanIdx, lessThan(configIdx), reason: 'clean must precede config-only');\n```\n\n(Adjust the asserted `rm` paths to whatever survives the comment3 discussion — pin what actually ships.)"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vwn9o",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-macos.yml:640",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: two of the three `rm` targets are no-ops on this lane**\n\n- **`macos/.symlinks` never exists.** On macOS, flutter_tools creates the CocoaPods symlinks dir *inside* the ephemeral tree: `symlinksDir = xcodeProject.ephemeralDirectory.childDirectory('.symlinks')` → `macos/Flutter/ephemeral/.symlinks` (flutter_tools `lib/src/macos/cocoapods.dart`, 3.47.x — verified against the local 3.47.8 SDK; the runner pins 3.47.7, same minor line). The top-level `.symlinks` shape is the **iOS** lane (`IosProject.symlinks` → `ios/.symlinks`, `xcode_project.dart:583`). Harmless (`rm -rf` on a missing path exits 0), but the comment block and PR description now document a residue path that can't exist — a future maintainer debugging a recurrence will hunt for `macos/.symlinks` state and find nothing.\n- **`macos/Flutter/ephemeral` is already gone.** `flutter clean` deletes `flutterProject.macos.ephemeralDirectory` (flutter_tools `clean.dart`) one line above — which also covers `.symlinks`, since it lives inside that tree. Keeping the explicit `rm` as belt-and-braces is fine; just know it's a no-op today.\n\nNet: the deterministic fix is entirely `flutter clean` + (optionally) `macos/Pods` — see the separate thread on the Pods-cache cost.\n\nMinor related nit: under the step's default `bash -e`, a partially-failing `rm -rf` (paths held by another process — this box has a documented history of those, gh-160) reds the leg with a raw `rm` error instead of the gate's diagnostic message. `flutter clean` itself swallows deletion failures and lets the gate report, so `rm -rf ... || true` would be consistent with the checkout's log-and-prune philosophy — though fail-loud is also a defensible choice here; author's call."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vwn_u",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-macos.yml:629",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: comment misattributes the residue mechanism to `actions/checkout`**\n\n> \"SPM state generated by pre-pin builds (untracked: ...) survives actions/checkout\"\n\nThis job never runs `actions/checkout` — its checkout is the inline **\"Checkout repository from local mirrors\"** step, which does a full `rm -rf \"$GITHUB_WORKSPACE\"` + fresh mirror clone. Untracked SPM residue can only survive via that step's *degraded* path (gh-160: the wipe is deliberately best-effort log-and-prune because the persistent box accumulates unremovable leftovers, and non-empty remainders get parked in `stale-workspace-*` sidecars rather than deleted). Stock `actions/checkout` isn't in the picture (and it cleans untracked files by default anyway).\n\nThe distinction matters for the next debugger: \"residue survives actions/checkout\" sends them auditing GitHub's action, while the real exposure is this workflow's own tolerant-wipe checkout — i.e., residue survival is a symptom of the gh-160 degraded-prune state, and a run where the wipe succeeds shouldn't see it at all. Suggest rewording, e.g.:\n\n```\n# ... survives the workspace wipe whenever the checkout takes its\n# degraded log-and-prune path (gh-160: unremovable leftovers), so the\n# deterministic fix is to remove the residue before every build.\n```\n\nThe fix itself is unaffected — verified locally by the author and consistent with flutter_tools behavior (the gate remains the tripwire either way)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:e46a44d6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: deleting `macos/Pods` defeats the CocoaPods cache step above**\n\nThe \"Cache CocoaPods (macOS)\" step one screen above restores `flutter_app/macos/Pods` keyed by `Podfile.lock`, and its own comment documents why: *\"a fresh CI checkout ... wipes Pods/ and forces a full pod install (~4 min with Firebase)\"*. This `rm -rf macos/Pods` deletes the restored tree before every build, so **every leg now pays the cold ~4-min install again** — ×2 sequential arch legs on the single self-hosted runner ≈ +8 min per run, every run. The `actions/cache` restore keeps hitting (the key didn't change), so it becomes pure restore→delete waste.\n\n`flutter clean` adds more of the same class of cost, worth weighing together:\n- it wipes `.dart_tool/` after \"Install Flutter dependencies\" ran, so `--config-only` re-runs an implicit pub get (warm-cache resolve, but without the retry wrapper the `flutter-pub-get` action has — relevant on this box's documented flaky network, gh-1644);\n- with Xcode installed it runs `xcodebuild clean` for **both** the ios and macos workspaces (`flutter_app` has both), wiping DerivedData intermediates whose warm state the stable persistent workspace path previously preserved across runs.\n\nCorrectness-wise the `Pods` deletion is not needed for the SPM fix: SwiftPM state lives in `macos/Flutter/ephemeral` (`FlutterGeneratedPluginSwiftPackage`, `Packages/.packages`), which `flutter clean` already removes (flutter_tools `clean.dart` deletes `macos.ephemeralDirectory`), and `pod install` deterministically reconciles `Pods/` against `Podfile.lock` — the cache step already trusts exactly that property.\n\n**Suggestion**: drop `macos/Pods` from the `rm` list (keep `flutter clean` + the ephemeral removal — that's the whole SPM fix), or if belt-and-braces determinism is deliberately wanted, accept the ~+8-10 min/run consciously and update the \"Cache CocoaPods (macOS)\" step comment (or drop that step) so the workflow doesn't document a cache it no longer uses."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:2ba5ec18",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: pin the new cleanup in the lane-guard suite (repo's own workflow-shape pattern)**\n\nThese two lines are load-bearing: without them the config-only pass re-adopts SPM residue on the persistent runner and the min-platform gate re-fires after a 10-50-minute SPM pass (run 39991663029: 1095.4s) — exactly the expensive feedback loop the gh-180 gate was built to avoid. Yet they are the only part of the gh-180 lane that nothing pins: the workflow's own env-block comment cites *\"pinned by test/build_macos_spm_lane_guard_test.dart + test/macos_min_platform_gate_test.dart\"*, and that suite's header calls this the *\"workflow-shape test never-again\"* pattern — but its AC2 currently only asserts `--config-only` + gate ordering, so a future refactor can silently drop the cleanup and the regression would only surface as a red deploy run on the runner.\n\nSuggested extension (~10 lines) to AC2 in `test/build_macos_spm_lane_guard_test.dart`:\n\n```dart\nfinal cleanIdx = script.indexOf('flutter clean');\nfinal rmIdx = script.indexOf(\"rm -rf macos/Flutter/ephemeral\");\nfinal configIdx = script.indexOf('flutter build macos --config-only');\nexpect(cleanIdx, greaterThan(-1),\n    reason: 'gh-1800: SPM residue from pre-pin builds must be cleaned '\n        'before the config pass or the gate re-fires after a 1000s+ pass');\nexpect(rmIdx, greaterThan(-1));\nexpect(cleanIdx, lessThan(configIdx), reason: 'clean must precede config-only');\n```\n\n(Adjust the asserted `rm` paths to whatever survives the comment3 discussion — pin what actually ships.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:6a2fba35",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: two of the three `rm` targets are no-ops on this lane**\n\n- **`macos/.symlinks` never exists.** On macOS, flutter_tools creates the CocoaPods symlinks dir *inside* the ephemeral tree: `symlinksDir = xcodeProject.ephemeralDirectory.childDirectory('.symlinks')` → `macos/Flutter/ephemeral/.symlinks` (flutter_tools `lib/src/macos/cocoapods.dart`, 3.47.x — verified against the local 3.47.8 SDK; the runner pins 3.47.7, same minor line). The top-level `.symlinks` shape is the **iOS** lane (`IosProject.symlinks` → `ios/.symlinks`, `xcode_project.dart:583`). Harmless (`rm -rf` on a missing path exits 0), but the comment block and PR description now document a residue path that can't exist — a future maintainer debugging a recurrence will hunt for `macos/.symlinks` state and find nothing.\n- **`macos/Flutter/ephemeral` is already gone.** `flutter clean` deletes `flutterProject.macos.ephemeralDirectory` (flutter_tools `clean.dart`) one line above — which also covers `.symlinks`, since it lives inside that tree. Keeping the explicit `rm` as belt-and-braces is fine; just know it's a no-op today.\n\nNet: the deterministic fix is entirely `flutter clean` + (optionally) `macos/Pods` — see the separate thread on the Pods-cache cost.\n\nMinor related nit: under the step's default `bash -e`, a partially-failing `rm -rf` (paths held by another process — this box has a documented history of those, gh-160) reds the leg with a raw `rm` error instead of the gate's diagnostic message. `flutter clean` itself swallows deletion failures and lets the gate report, so `rm -rf ... || true` would be consistent with the checkout's log-and-prune philosophy — though fail-loud is also a defensible choice here; author's call."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:64d66c88",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: comment misattributes the residue mechanism to `actions/checkout`**\n\n> \"SPM state generated by pre-pin builds (untracked: ...) survives actions/checkout\"\n\nThis job never runs `actions/checkout` — its checkout is the inline **\"Checkout repository from local mirrors\"** step, which does a full `rm -rf \"$GITHUB_WORKSPACE\"` + fresh mirror clone. Untracked SPM residue can only survive via that step's *degraded* path (gh-160: the wipe is deliberately best-effort log-and-prune because the persistent box accumulates unremovable leftovers, and non-empty remainders get parked in `stale-workspace-*` sidecars rather than deleted). Stock `actions/checkout` isn't in the picture (and it cleans untracked files by default anyway).\n\nThe distinction matters for the next debugger: \"residue survives actions/checkout\" sends them auditing GitHub's action, while the real exposure is this workflow's own tolerant-wipe checkout — i.e., residue survival is a symptom of the gh-160 degraded-prune state, and a run where the wipe succeeds shouldn't see it at all. Suggest rewording, e.g.:\n\n```\n# ... survives the workspace wipe whenever the checkout takes its\n# degraded log-and-prune path (gh-160: unremovable leftovers), so the\n# deterministic fix is to remove the residue before every build.\n```\n\nThe fix itself is unaffected — verified locally by the author and consistent with flutter_tools behavior (the gate remains the tripwire either way)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:3de4475b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: Well-scoped, deterministic fix for the gh-1800 gate failures — the `FLUTTER_SWIFT_PACKAGE_MANAGER=0` pin is preserved, the min-platform gate stays as tripwire, and all workflow-guard suites (`build_macos_spm_lane_guard`, `macos_min_platform_gate`, `workflow_selfhosted_legs` + the wider guard batch — 155 tests) pass against this tree. No blocking findings; two important, two suggestion-level nits.\n\n**Key Issues**:\n- ⚠️ `rm -rf macos/Pods` defeats the \"Cache CocoaPods (macOS)\" step right above it (~4 min cold `pod install` × 2 sequential legs per run; SPM state lives in `macos/Flutter/ephemeral`, not `Pods/`)\n- ⚠️ The new cleanup lines are load-bearing but not pinned — extend AC2 in `test/build_macos_spm_lane_guard_test.dart` (repo's own \"workflow-shape test never-again\" pattern)\n- 💡 `macos/.symlinks` is an iOS-lane path; macOS symlinks live at `macos/Flutter/ephemeral/.symlinks`, and `flutter clean` already deletes that whole tree\n- 💡 Comment says residue \"survives actions/checkout\" — this job's checkout is the inline mirror-checkout; residue survives via its degraded-prune path (gh-160), not `actions/checkout`\n\n**Next Steps**:\n1. Drop `macos/Pods` from the `rm` list (or consciously accept ~+8-10 min/run and update the cache step's comment)\n2. Add the clean-before-config shape assertion to the lane-guard suite\n3. FYI (pre-existing, outside this diff): the checkout's build-cache park/restore targets `$GITHUB_WORKSPACE/build/macos` while products land at `flutter_app/build/macos` — the park/restore never captures anything"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
