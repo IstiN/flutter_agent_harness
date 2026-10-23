@@ -638,8 +638,8 @@ void main() {
       expect(entry!.project, 'demo');
     });
 
-    test('bare /provider codemie cancels on Ctrl-C and rejects a non-http '
-        'URL (gh-1809 AC1)', () async {
+    test('bare /provider codemie cancels on Ctrl-C, rejects a non-http '
+        'URL, and https-defaults a bare host (gh-1809 AC1)', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);
       final run = cli.run();
@@ -651,11 +651,40 @@ void main() {
         () => io.out.toString().contains('CodeMie setup cancelled'),
       );
 
+      // Each restart re-waits on a FRESH prompt (output grown past the
+      // snapshot) — the earlier flow's identical prompt text must not
+      // satisfy the wait and desync the scripted lines.
+      var before = io.out.toString().length;
       io.sendLine('/provider codemie');
-      await waitForIt(() => io.out.toString().contains('CodeMie URL ['));
+      await waitForIt(
+        () =>
+            io.out.toString().length > before &&
+            io.out.toString().contains('CodeMie URL ['),
+      );
       io.sendLine('ftp://nope');
       await waitForIt(
         () => io.out.toString().contains('invalid CodeMie URL: ftp://nope'),
+      );
+
+      // A scheme-less host is accepted — https is assumed.
+      before = io.out.toString().length;
+      io.sendLine('/provider codemie');
+      await waitForIt(
+        () =>
+            io.out.toString().length > before &&
+            io.out.toString().contains('CodeMie URL ['),
+      );
+      io.sendLine('codie.myorg.com');
+      // Wait for the picker's line prompt (same sync block as the
+      // interrupt listener) — interrupting on the title alone races the
+      // prompt install and the Ctrl-C is lost.
+      await waitForIt(() => io.out.toString().contains('type a number:'));
+      io.interrupt(); // end the flow — the URL normalization was the point
+      // The interrupt rides the broadcast controller's async delivery —
+      // one pump before asserting keeps this deterministic.
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      await waitForIt(
+        () => io.out.toString().contains('CodeMie setup cancelled'),
       );
       io.sendLine('/exit');
       await run;

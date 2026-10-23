@@ -114,6 +114,20 @@ void main() {
       expect(merged.project, 'demo-project');
       expect(merged.authMethod, CustomProviderAuthMethod.sso);
       expect(merged.modelId, 'm2');
+
+      // A baseUrl edit DROPS the project — endpoint-scoped, a project of
+      // org A means nothing to org B (issue #1809 review r2).
+      final moved = mergeEditedCustomProviderEntry(
+        existing: existing,
+        updated: CustomProviderEntry(
+          name: 'codemie-2',
+          apiType: 'openai',
+          baseUrl: 'https://codemie.other.com/code-assistant-api/v1',
+          modelId: 'm',
+        ),
+      );
+      expect(moved.project, isNull);
+      expect(moved.authMethod, CustomProviderAuthMethod.sso);
     });
 
     test('rejects invalid authHeader values naming the entry '

@@ -8,8 +8,10 @@ part of 'agent_cli.dart';
 
 /// The picker key of the "keep current project/model" row (issue #1809
 /// AC2): a re-login to an existing entry keeps the working pair unless
-/// the user picks a project anew.
-const _codeMieKeepCurrent = '__keep-current__';
+/// the user picks a project anew. The leading space makes a collision
+/// with a real project impossible — both projects fetches trim names
+/// (`_filterAppNames`), so no fetched project can ever equal this key.
+const _codeMieKeepCurrent = ' keep current';
 
 /// CodeMie provider command handlers. Lives in the same library as
 /// [AgentCli], so the extension body has access to the agent's private
@@ -93,10 +95,14 @@ extension on AgentCli {
         return;
       }
       final trimmed = typed.trim();
-      final orgUrl = trimmed.isEmpty ? defaultCodeMieBaseUrl : trimmed;
+      var orgUrl = trimmed.isEmpty ? defaultCodeMieBaseUrl : trimmed;
+      // A bare host is the most natural thing to type at a URL prompt —
+      // default the scheme the way codeMieApiBase normalizes the path
+      // side. Explicit non-http schemes still reject below.
+      if (!orgUrl.contains('://')) orgUrl = 'https://$orgUrl';
       if (!_isHttpUrl(orgUrl)) {
         io.writeln(
-          'invalid CodeMie URL: $orgUrl (expected http:// or https://)',
+          'invalid CodeMie URL: $trimmed (expected http:// or https://)',
         );
         return;
       }
@@ -335,9 +341,7 @@ extension on AgentCli {
       cost: builtModel.cost,
       contextWindow: builtModel.contextWindow,
       maxTokens: builtModel.maxTokens,
-      headers: project == null
-          ? builtModel.headers
-          : {...?builtModel.headers, 'x-codemie-project': project},
+      headers: {...?builtModel.headers, 'x-codemie-project': ?project},
       compat: builtModel.compat,
       maxImages: builtModel.maxImages,
     );

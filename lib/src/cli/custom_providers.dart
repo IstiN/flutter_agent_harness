@@ -307,10 +307,11 @@ bool sameEndpoint(String a, String b) {
 /// (review r2): the `/provider` edit wizard rebuilds the entry from the
 /// wizard answers and would otherwise silently drop the fields it does
 /// not ask about — `authMethod` (the SSO/JWT routing signal), `authHeader`
-/// (issue #964), the tuning keys `connectTimeoutMs`/`streamIdleTimeoutMs`
-/// (issue #1398), and `project` (the CodeMie connect-time pick, issue
-/// #1809). The wizard-owned identity fields (name, apiType, baseUrl,
-/// modelId, keyName) stay whatever the wizard produced.
+/// (issue #964), and the tuning keys `connectTimeoutMs`/`streamIdleTimeoutMs`
+/// (issue #1398). `project` (issue #1809) is endpoint-scoped, so it only
+/// carries when the wizard kept the endpoint. The wizard-owned identity
+/// fields (name, apiType, baseUrl, modelId, keyName) stay whatever the
+/// wizard produced.
 CustomProviderEntry mergeEditedCustomProviderEntry({
   required CustomProviderEntry existing,
   required CustomProviderEntry updated,
@@ -320,7 +321,12 @@ CustomProviderEntry mergeEditedCustomProviderEntry({
     ..authHeader = existing.authHeader
     ..connectTimeout = existing.connectTimeout
     ..streamIdleTimeout = existing.streamIdleTimeout
-    ..project = existing.project;
+    // The project is ENDPOINT-scoped (a project of org A means nothing to
+    // org B) — it survives the merge only when the entry keeps serving the
+    // same endpoint; a baseUrl edit drops it (issue #1809 review r2).
+    ..project = sameEndpoint(existing.baseUrl, updated.baseUrl)
+        ? existing.project
+        : null;
 }
 
 /// The `authHeader` of the saved entry serving [baseUrl], for the
