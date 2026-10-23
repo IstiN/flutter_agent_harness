@@ -1043,17 +1043,20 @@ jobs:
           tar -czf "$asset" -C build/out bundle
           ls -lh "$asset"
 
-          # Ensure the release exists (race-safe with release-macos). Title
-          # is the bare tag vX.Y.Z (issue #282: one naming scheme, no
-          # "Fa " prefixes), latest is explicit.
+          # gh-1801: DRAFT-first + publish-after-upload. The CLI tarball
+          # is a `fa update` asset, so THIS step may publish — but only
+          # after the upload lands: a fresh release must never become
+          # `latest` empty. Create as a draft (race-safe with
+          # release-macos, duplicates tolerated), upload, then publish.
           if ! gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --title "$RELEASE_TAG" \
+              --draft \
               --generate-notes \
-              --latest \
               --repo "${GITHUB_REPOSITORY}" || true
           fi
           gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+          gh release edit "$RELEASE_TAG" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
 
       # Draft lifecycle invariant (issue #282): this job creates releases,
       # so a failed/cancelled run must not leave one behind as a draft.
@@ -1122,13 +1125,15 @@ jobs:
           cp build/fa-extension.zip "$asset"
           ls -lh "$asset"
 
-          # Ensure the release exists (race-safe with release-macos). Title
-          # is the bare tag vX.Y.Z (issue #282), latest is explicit.
+          # gh-1801: DRAFT-first, NEVER publish here. The extension zip is
+          # not a `fa update` CLI asset — it must never be the only asset
+          # of a published `latest`. Create the draft (race-safe with
+          # release-macos), upload, and let a CLI-asset upload publish.
           if ! gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --title "$RELEASE_TAG" \
+              --draft \
               --generate-notes \
-              --latest \
               --repo "${GITHUB_REPOSITORY}" || true
           fi
           gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"

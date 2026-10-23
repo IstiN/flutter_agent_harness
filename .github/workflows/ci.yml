@@ -4121,14 +4121,19 @@ jobs:
           else
             asset="${archive_name}.tar.gz"
           fi
-          # gh release upload needs the release to exist; create it lazily
-          # (matrix jobs race here, so a duplicate create is tolerated).
+          # gh-1801: DRAFT-first. A fresh release must never publish with
+          # an empty asset list — that is the `fa update` HTTP-404 breaker
+          # (the v1.0.630 window, 2026-10-23). Create as a DRAFT (matrix
+          # jobs race here, so a duplicate create is tolerated), upload
+          # THIS job's fa-*.tar.gz/zip, and only then publish + latest —
+          # `latest` moves only when a real CLI asset is on the release.
           if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create "${GITHUB_REF_NAME}" \
-              --title "${GITHUB_REF_NAME}" --generate-notes \
+              --title "${GITHUB_REF_NAME}" --draft --generate-notes \
               --repo "${GITHUB_REPOSITORY}" || true
           fi
           gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
 
   # Rehostable web SPA bundle (issue #1100): every release ships
   # fa-web-spa.zip — the release web build with <base href> rewritten to
@@ -4219,11 +4224,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # gh release upload needs the release to exist; create it lazily
-          # (matrix jobs race here, so a duplicate create is tolerated).
+          # gh-1801: DRAFT-first and NEVER publish here. The web zip is not
+          # a CLI asset — if this step published the release, `latest`
+          # could carry only fa-web-spa.zip and `fa update` would still
+          # 404. Create the draft (matrix jobs race, duplicates tolerated)
+          # and upload; the binaries job publishes + latest after its
+          # fa-*.tar.gz/zip upload.
           if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create "${GITHUB_REF_NAME}" \
-              --title "${GITHUB_REF_NAME}" --generate-notes \
+              --title "${GITHUB_REF_NAME}" --draft --generate-notes \
               --repo "${GITHUB_REPOSITORY}" || true
           fi
           gh release upload "${GITHUB_REF_NAME}" fa-web-spa.zip --clobber --repo "${GITHUB_REPOSITORY}"

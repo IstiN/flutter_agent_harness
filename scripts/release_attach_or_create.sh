@@ -30,17 +30,26 @@ repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
 shift
 assets=("$@")
 if [ "${#assets[@]}" -eq 0 ]; then
-  echo "::error::no assets to attach for $tag" >&2
+  # gh-1801 hard refusal: creating a release with zero resolved assets is
+  # the `fa update` breaker (an empty `latest` 404s every
+  # fa-<os>-<arch>.tar.gz until backfill — v1.0.630, 2026-10-23). Attaching
+  # is the caller's only honest option when it resolved nothing — fail
+  # loud here, never create empty. Pinned by
+  # test/release_empty_latest_guard_test.dart.
+  echo "::error::no assets to attach for $tag — refusing to create or touch a release with an empty asset list (gh-1801): resolve at least one artifact or skip the release step" >&2
   exit 1
 fi
 
-upload_all() { # exists-path: upload + re-assert the Latest badge (#282)
+upload_all() { # exists-path: upload + publish + re-assert the Latest badge (#282)
   for asset in "${assets[@]}"; do
     gh release upload "$tag" "$asset" --clobber --repo "$repo"
   done
   # Latest policy (#282): the newest published release carries the badge
-  # explicitly — even when this call lost the create race.
-  gh release edit "$tag" --latest --repo "$repo"
+  # explicitly — even when this call lost the create race. gh-1801: also
+  # flip draft=false — a sibling-created DRAFT (the draft-first lazy
+  # creates) must end this attach published and visible, never stranded
+  # invisible with the train's only assets.
+  gh release edit "$tag" --draft=false --latest --repo "$repo"
 }
 
 if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then

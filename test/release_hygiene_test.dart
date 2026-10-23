@@ -1073,7 +1073,7 @@ jobs:
         );
         expect(
           run.log,
-          contains('release edit v1.2.3 --latest --repo OWNER/REPO'),
+          contains('release edit v1.2.3 --draft=false --latest --repo OWNER/REPO'),
         );
       },
     );
@@ -1130,7 +1130,10 @@ jobs:
         );
         expect(
           run.log,
-          contains('release edit v1.2.3 --latest --repo OWNER/REPO'),
+          contains('release edit v1.2.3 --draft=false --latest --repo OWNER/REPO'),
+          reason:
+              'the loser must leave the winner\'s release published + latest '
+              '(gh-1801: the draft-first lazy creates make this publish too)',
         );
         expect(run.out.toLowerCase(), contains('race'));
       },
@@ -1283,16 +1286,20 @@ jobs:
           }
         });
       }
-      // gh-1522: auto_release.sh owns the SINGLE gh release create — cut
-      // from the pushed tag, after the tag push, with release_notes.sh
-      // notes; the retired tag_release.sh (release-tag job) is gone.
+      // gh-1522 cut the tag-only release; gh-1801 removed the LAST
+      // release-create from auto_release.sh: the script resolves an EMPTY
+      // asset list, and an asset-less create publishes an empty `latest`
+      // (the fa update breaker, v1.0.630). The tag-run binaries job owns
+      // creation, draft-first; release_attach_or_create.sh stays the one
+      // asset-carrying create path.
       final autoCreates = extractCreates(read('scripts/auto_release.sh'));
       expect(
         autoCreates,
-        hasLength(1),
+        hasLength(0),
         reason:
-            'auto_release.sh is the one release-create path (gh-1522: the '
-            'retired release-tag job is deleted)',
+            'auto_release.sh must create NO release — it has zero resolved '
+            'assets, and publishing an empty latest breaks fa update '
+            '(gh-1801)',
       );
       for (final c in autoCreates) {
         expect(c.title, c.tag);
@@ -1728,11 +1735,28 @@ gh release create "v9.9.9" \
       }
     });
 
-    test('auto_release.sh marks the new release latest explicitly', () {
-      final creates = extractCreates(read('scripts/auto_release.sh'));
-      expect(creates, isNotEmpty);
-      for (final c in creates) {
-        expect(c.text, contains('--latest'));
+    test('auto_release.sh creates no release; latest moves only with assets', () {
+      // gh-1801: the empty-asset create is gone — an asset-less create
+      // publishes an empty `latest` and fa update 404s until backfill.
+      // The binaries job creates draft-first and flips latest only after
+      // its fa-*.tar.gz/zip upload; the attach path re-asserts it.
+      expect(
+        extractCreates(read('scripts/auto_release.sh')),
+        isEmpty,
+        reason: 'gh-1801: auto_release.sh must not create a release',
+      );
+      final attachScript = read('scripts/release_attach_or_create.sh');
+      expect(
+        attachScript,
+        contains('--draft=false --latest'),
+        reason: 'the attach path is where latest/published is re-asserted',
+      );
+      for (final wf in ['.github/workflows/ci.yml']) {
+        expect(
+          read(wf),
+          contains('--draft=false --latest'),
+          reason: '$wf binaries publish + latest only after the CLI upload',
+        );
       }
     });
   });
@@ -2252,15 +2276,11 @@ gh release create "v9.9.9" \
               .toList();
           expect(
             creates,
-            hasLength(1),
-            reason: 'exactly one GitHub Release is created per run',
-          );
-          expect(
-            creates.single,
-            startsWith('release create v0.1.497 '),
+            hasLength(0),
             reason:
-                'the raced-out v0.1.496 must never get a release object '
-                '(the notes may mention it as the previous release)',
+                'NO GitHub Release is created per run (gh-1801: the script '
+                'resolves an empty asset list — an asset-less create '
+                'publishes an empty latest; the binaries job owns creation)',
           );
           expect(
             r.originHeadAfter,
@@ -2321,7 +2341,8 @@ gh release create "v9.9.9" \
           );
           expect(
             r1.ghLog().where((l) => l.contains('release create v0.1.496')),
-            hasLength(1),
+            hasLength(0),
+            reason: 'gh-1801: no release object is created by auto_release',
           );
           expect(
             r1.originSubjects(3).where((s) => s.startsWith('chore(release):')),

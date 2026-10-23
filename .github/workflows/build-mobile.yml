@@ -65,8 +65,17 @@ permissions:
 # by design (#359 — decoupled from each other): their runs tell apart by
 # the run-name correlation (#343), not by serialization, and the single
 # self-hosted macOS runner serializes the iOS builds physically.
+# gh-1801: the key ALSO embeds the leg/content selection
+# (android_content/ios_content) — the discriminator keeps the Play
+# (android-only) and TestFlight (iOS-only) dispatches in different groups
+# even if the run_id scoping is ever relaxed, and a REG test
+# (test/release_empty_latest_guard_test.dart) fails any concurrency key
+# that drops either guard. Evidence note: the 2026-10-23 cancelled
+# TestFlight child (run 39905802767) was killed by its OWN 90m job
+# ceiling on fa-m5-2, not by a sibling cancel — the discriminator is a
+# structural guard, not the incident's cause.
 concurrency:
-  group: Build Mobile Apps-${{ github.ref }}-${{ github.run_id }}
+  group: Build Mobile Apps-${{ github.ref }}-${{ inputs.android_content }}-${{ inputs.ios_content }}-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:

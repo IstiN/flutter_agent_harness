@@ -31,13 +31,14 @@ List<String> extractCreateCommands(String text) {
   final cmds = <String>[];
   for (var i = 0; i < lines.length; i++) {
     if (!RegExp(r'gh\s+release\s+create\b').hasMatch(lines[i])) continue;
-    final buf = StringBuffer(lines[i].trimRight());
-    while (buf.toString().trimRight().endsWith(r'\') &&
-        i < lines.length - 1) {
+    final parts = <String>[lines[i]];
+    while (parts.last.trimRight().endsWith(r'\') && i < lines.length - 1) {
       i++;
-      buf.write(' ${lines[i].replaceAll(r'\', '').trim()}');
+      parts.add(lines[i]);
     }
-    cmds.add(buf.toString().replaceAll(r'\', ' ').trim());
+    cmds.add(
+      parts.map((p) => p.replaceAll(r'\', ' ').trim()).join(' ').trim(),
+    );
   }
   return cmds;
 }
@@ -299,11 +300,12 @@ void main() {
         '-m',
         'seed',
       ], env: {
-        'GIT_COMMITTER_DATE': DateTime.now()
-            .subtract(const Duration(hours: 3))
-            .millisecondsSinceEpoch ~/
-            1000
-            .toString(),
+        'GIT_COMMITTER_DATE':
+            (DateTime.now()
+                        .subtract(const Duration(hours: 3))
+                        .millisecondsSinceEpoch ~/
+                    1000)
+                .toString(),
       });
       git([
         'tag',
@@ -312,11 +314,12 @@ void main() {
         '-m',
         'Release v0.1.495',
       ], env: {
-        'GIT_COMMITTER_DATE': DateTime.now()
-            .subtract(const Duration(hours: 3))
-            .millisecondsSinceEpoch ~/
-            1000
-            .toString(),
+        'GIT_COMMITTER_DATE':
+            (DateTime.now()
+                        .subtract(const Duration(hours: 3))
+                        .millisecondsSinceEpoch ~/
+                    1000)
+                .toString(),
       });
       File('$seed/README.md').writeAsStringSync('pending\n');
       git(['add', '-A']);
