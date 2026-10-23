@@ -862,6 +862,11 @@ class _JsAppViewState extends State<JsAppView> {
           voxelWorld: engine.voxelWorld,
           onScene3dTap: (sceneId, payload) =>
               engine.dispatchHostEvent('scene3d.tap:$sceneId', payload),
+          // gh-1784: high-frequency gesture streams (onPanUpdate,
+          // onLongPressMoveUpdate, onScroll) bypass the serialized callEvent
+          // queue via the fire-and-forget host-event lane (`gesture:<id>`).
+          onGestureEvent: (actionId, payload) =>
+              engine.dispatchHostEvent('gesture:$actionId', payload),
           onEvent: (actionId, payload) {
             unawaited(engine.callEvent(actionId, payload));
           },

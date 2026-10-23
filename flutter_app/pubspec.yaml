@@ -244,6 +244,15 @@ dependency_overrides:
   # (composer fa_tui needs LineEditor, which the hosted 2.x predates.)
   dart_tui:
     path: ../vendor/dart_tui
+  # PR #1785 rework: hosted quickjs_runtime 0.4.2 (pulled in by the
+  # js_widget_runtime 0.4.180 bump) fails its Native Assets build on the
+  # Build Android APK leg (`-lpthread` — the NDK has no libpthread since
+  # r18) and the Lockfile smoke windows leg (the QuickJS 2024-01-13
+  # sources are not MSVC-clean). Consume the patched vendored fork until
+  # upstream publishes the fix; pinned by
+  # ../test/quickjs_runtime_vendor_pin_test.dart (root).
+  quickjs_runtime:
+    path: ../vendor/quickjs_runtime
   wasm_run:
     path: ../vendor/wasm_run
   wasm_run_flutter:
