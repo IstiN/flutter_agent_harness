@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-23T12:31:49.116Z",
+  "ticketKey": "gh-1800",
+  "headSha": "538b4668ba941962794fa7369ba05aea27cafba0",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:565bb0fbfb609577",
+      "size": 17059
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:5aa04c1bb6a1f9a9",
+      "size": 16412
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:2e332981ed4f9eb5",
+      "size": 816
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:1bf592ace5995906",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:24b89d0a9170d44b",
+      "size": 14629
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3cc175febe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:56c1cc482ac4d809",
+      "size": 3275
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:9407b89ec9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:62b2387d7f3c88f7",
+      "size": 2717
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:95329f3429cba107",
+      "size": 2637
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:0abb1f04",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: Misspelled env var in the fail-loud remediation message — it names a knob the tool never reads**\n\nLine 115 (this file) tells the operator: *\"Remediation: keep the FLUTER_SWIFT_PACKAGE_MANAGER=0 job pin …\"*. That name is missing a \"T\" (`FLUTER_SWIFT_PACKAGE_MANAGER` — F-L-U-T-E-R — vs the name the tool actually reads, `FLUTTER_SWIFT_PACKAGE_MANAGER`, F-L-U-T-E-R) and is therefore a **no-op**: the only env override flutter_tools consults for this feature is `FLUTTER_SWIFT_PACKAGE_MANAGER` — verified in the Flutter tool source, `packages/flutter_tools/lib/src/features.dart`:\n\n```dart\nconst swiftPackageManager = Feature(\n  ...\n  environmentOverride: 'FLUTTER_SWIFT_PACKAGE_MANAGER',\n```\n\nIn this diagnostic branch the specific `fail` exits before the generic message on line 123 (which is spelled correctly) is ever printed, so the misspelled name is the **only** remediation the operator sees for the literal gh-180 shape — copy-pasting it into the job env reproduces the same red leg. The same typo is in the header comment, line 22.\n\nThe workflow pin itself (build-macos.yml:131) and the test assertion keys are byte-verified correct, so the lane works — but a fail-loud gate's remediation text is its product on the failure path and must name a real knob.\n\nSuggested fix (both occurrences: lines 22 and 115) — replace the 28-char misspelling with the 29-char real name:\n\n```bash\nsed -i 's/FLUTER_SWIFT_PACKAGE_MANAGER/FLUTTER_SWIFT_PACKAGE_MANAGER/g' scripts/assert_macos_min_platform.sh\n```\n\nTests keep passing after the fix: AC3/AC4b assert the corrected line-123 generic message (`contains('FLUTTER_SWIFT_PACKAGE_MANAGER')`), and AC3's `contains('minimum platform version')` matches this line's floor text, which the fix doesn't touch."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:b27803ba",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: This real-repo-state test makes the root `dart test` suite host-state dependent — red on macOS dev checkouts after any Flutter build**\n\nThe test runs the gate against the *working tree* (`Process.runSync('bash', [scriptPath, appMin])`, default repo root). On a macOS dev machine, Flutter 3.47 ships SwiftPM enabled-by-default and migrates the clone at build time (the exact mechanism this PR documents): after any local `flutter build`/`run`:\n\n- `flutter_app/macos/Runner.xcodeproj/project.pbxproj` carries the `FlutterGeneratedPluginSwiftPackage` marker (a tracked-file mutation), and/or\n- `flutter_app/macos/Flutter/ephemeral/Packages/` exists (gitignored, so invisible in `git status`).\n\nEither condition fails this test with the gate's lane-remediation error — so the PR description's own note (\"dev machines with default SwiftPM unaffected\") does not hold for macOS contributors running the suite (incl. the pre-commit fast gate). CI is unaffected (root `dart test` runs on Linux only), which is why this is not blocking.\n\nSuggested hardening (pick one):\n\n```dart\ntest('the committed tree passes the gate (real repo state)', () {\n  if (Directory('flutter_app/macos/Flutter/ephemeral/Packages').existsSync() ||\n      File('flutter_app/macos/Runner.xcodeproj/project.pbxproj')\n          .readAsStringSync()\n          .contains('FlutterGeneratedPluginSwiftPackage')) {\n    // A local SwiftPM-enabled build migrated this checkout; the committed\n    // state is what the lane pins — assert that instead of the live tree.\n  }\n  ...\n});\n```\n\n- or assert the *committed* shape via `git show HEAD:flutter_app/macos/Runner.xcodeproj/project.pbxproj` instead of the file on disk;\n- or `@Tags(['io'])`-style scope it to CI hosts per the repo's existing tag conventions."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:1949ebf9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Same env-var misspelling in test comments/titles**\n\nLines 15 and 52 (this file) and `test/macos_min_platform_gate_test.dart:21` spell the env var `FLUTER_SWIFT_PACKAGE_MANAGER` (28 chars — missing a \"T\"); the tool reads `FLUTTER_SWIFT_PACKAGE_MANAGER` (29 chars). The *assertions* in both files use the correct 29-char key, so nothing is behaviorally wrong — but these doc strings are what future readers will copy when reproducing the pin (the same failure mode as the gate script's remediation message). Same one-line sweep fixes all three:\n\n```bash\nsed -i 's/FLUTER_SWIFT_PACKAGE_MANAGER/FLUTTER_SWIFT_PACKAGE_MANAGER/g' test/build_macos_spm_lane_guard_test.dart test/macos_min_platform_gate_test.dart\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:508931c5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Heads-up — the SwiftPM-off knob this lane pins on is slated for removal upstream**\n\nThe fix's linchpin is the `FLUTTER_SWIFT_PACKAGE_MANAGER=0` job pin (correctly spelled here — byte-verified against the tool source). Two data points from the Flutter tool, both read this run:\n\n- `packages/flutter_tools/lib/src/features.dart` declares the feature with `warningMessageOnDisable`: *\"Enabling Swift Package Manager will be required in a future version of Flutter.\"* — i.e. the disable path is deprecation-warned.\n- Upstream issue https://github.com/flutter/flutter/issues/193978 (\"No longer allow SwiftPM to be disabled globally or per project\") tracks removing the flag entirely.\n\nWhen that lands, the pure-CocoaPods lane decision needs a different mechanism (e.g. pinning the tool version tighter, or migrating the generated package's floor control). Nothing to change in this PR — the gate will fail loud the day the pin stops working, which is exactly its job. Worth a tracking issue so the removal doesn't arrive as a surprise red leg."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:53b9fabd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — misspelled env var in the fail-loud remediation (`scripts/assert_macos_min_platform.sh:115`)\n\nFixed — both occurrences (`FLUTER_SWIFT_PACKAGE_MANAGER` → `FLUTTER_SWIFT_PACKAGE_MANAGER`, 28 → 29 chars):\n\n- `scripts/assert_macos_min_platform.sh:22` (header comment, lane decision)\n- `scripts/assert_macos_min_platform.sh:115` (the gh-180-shape diagnostic branch — the only remediation an operator sees on that failure path)\n\nA whole-tree grep confirms **zero** remaining 28-char spellings anywhere (`scripts/`, `test/`, `.github/`, docs); the correctly spelled knob remains in `build-macos.yml:131,612`, the script's generic message (`:123`), and both suites' assertion keys — all untouched.\n\nTDD: added a regression test that was RED before the sweep and is GREEN after — `test/macos_min_platform_gate_test.dart` → **\"the lane pin documents the REAL SwiftPM knob — FLUTTER_SWIFT_PACKAGE_MANAGER, the only env override flutter_tools reads (no 28-char FLUTER_ misspelling anywhere)\"**. It scans all three files that document the pin for the 28-char spelling and asserts the gate's remediation branch names `FLUTTER_SWIFT_PACKAGE_MANAGER=0`. (The checker builds the misspelling via `replaceFirst` so the forbidden literal cannot re-enter the tree from the test itself.) Existing AC2a/AC3/AC4b assertions (`contains('FLUTTER_SWIFT_PACKAGE_MANAGER')`, `contains('minimum platform version')`) still pass — 16/16 in the two lane suites."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:94966c46",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — real-repo-state test is host-state dependent (`test/macos_min_platform_gate_test.dart:271`)\n\nFixed by your option 2 (assert the committed shape), applied deterministically — the test no longer touches the live working tree at all:\n\n- `test/macos_min_platform_gate_test.dart` → **\"the committed tree passes the gate (asserted against HEAD, not the live working tree)\"** now materializes the COMMITTED gate inputs from `git show HEAD:` into a temp repo root and runs the gate against that root (the script's `[REPO_ROOT]` argument): committed `project.pbxproj` + committed `Podfile` are written in, the vendored `Package.swift` is materialized only if HEAD regressed to tracking it, and `flutter_app/macos/Flutter/ephemeral/` is gitignored (never in HEAD), so its absence in the temp root *is* the committed state. Result: identical behavior on Linux CI and on a macOS dev checkout after any local `flutter build`/`run` — the pre-commit fast gate included. No `@Tags(['io'])` scoping needed, so the check stays in the default suite.\n\nRED/GREEN proof (run on this leg, Linux): with the migration condition simulated exactly as you described (marker line appended to the live `project.pbxproj` + `Flutter/ephemeral/Packages/` created), the **old** test failed with the gate's lane-remediation error; the rewritten test passes both with the simulation active and on a clean checkout.\n\nSame-pattern sweep (your finding generalized): `test/build_macos_spm_lane_guard_test.dart` AC3 had the identical flaw — it read the *live* pbxproj and asserted `isFalse(contains('FlutterGeneratedPluginSwiftPackage'))`, which a local migration also breaks (its own title says \"committed pbxproj\"). It now reads the committed content via a `readCommitted()` helper (`git show HEAD:`). Verified: with the simulated migration state active, both suites are 16/16 GREEN; the old code failed both.\n\nNote: the dropped \"default repo-root resolution\" aspect is still exercised on every release build — the lane invokes the gate as `bash ../scripts/assert_macos_min_platform.sh 14.0`, and the script resolves the root from its own location, so no host-dependent unit test is needed for it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:556bb126",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — same env-var misspelling in test comments/titles (`test/build_macos_spm_lane_guard_test.dart:52`)\n\nFixed — all three occurrences swept (`FLUTER_SWIFT_PACKAGE_MANAGER` → `FLUTTER_SWIFT_PACKAGE_MANAGER`):\n\n- `test/build_macos_spm_lane_guard_test.dart:15` (AC1 doc comment)\n- `test/build_macos_spm_lane_guard_test.dart:52` (AC1 test title)\n- `test/macos_min_platform_gate_test.dart:21` (lane-decision comment)\n\nAssertion keys were already correct (29 chars) and are untouched. Guarded against regression by the new sweep test in `test/macos_min_platform_gate_test.dart` (\"the lane pin documents the REAL SwiftPM knob …\"), which scans **both test files plus the gate script** for the 28-char spelling and fails with a pointer at the offending file — it was RED for exactly these three lines before the sweep, GREEN after."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:a3cd4e35",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 4 — SwiftPM-off knob slated for removal upstream (`.github/workflows/build-macos.yml:131`)\n\nThanks for the tool-source dig — agreed on both data points, and per your \"worth a tracking note\" suggestion the shelf life is now documented **in the repo itself**, right next to the pin (`.github/workflows/build-macos.yml`, job `env` block above `FLUTTER_SWIFT_PACKAGE_MANAGER: \"0\"`): it names `warningMessageOnDisable` in `features.dart`, the upstream removal tracker (flutter/flutter#193978), the two replacement mechanisms you listed (tighter tool-version pin, or migrating the generated package's floor control), and why the arrival mode is safe — any SwiftPM state after the config pass fails the gate, *including* the env name being removed, so the knob's removal cannot arrive as a silent red leg; it fails loud in seconds by design.\n\nNo behavior change (comment-only, YAML re-validated, lane-guard suite green), and no tracking issue was filed from this pass — rework posts only to this PR; the in-tree note keeps the context where the pin lives for whoever owns the lane when upstream lands."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:c15a70ca",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: Well-built fix for the gh-180 DMG lane: the `FLUTTER_SWIFT_PACKAGE_MANAGER=0` job pin and the `flutter build macos --config-only` + gate ordering were verified against the actual flutter_tools sources (`features.dart`, `flutter_features_config.dart`, `build_macos.dart`), the new gate script passes its 15 tests on this tree, and `dart analyze`/`dart format` are clean. No blocking issues; two important nits should be fixed.\n\n**Key Issues**:\n- ⚠️ IMPORTANT: `scripts/assert_macos_min_platform.sh:115` (and :22) — the fail-loud remediation message names a misspelled env var (`FLUTER_SWIFT_PACKAGE_MANAGER`, 28 chars) that the tool never reads; it is the only remediation printed for the literal gh-180 shape.\n- ⚠️ IMPORTANT: `test/macos_min_platform_gate_test.dart:271` — the \"committed tree passes the gate\" test reads the live working tree, so it goes red on macOS dev checkouts where Flutter 3.47's default SwiftPM migration has run (contradicts the PR's \"dev machines unaffected\" note).\n- 💡 SUGGESTION: same 28-char misspelling in test comments/titles (`build_macos_spm_lane_guard_test.dart:15,52`, `macos_min_platform_gate_test.dart:21`).\n- 💡 SUGGESTION: upstream is moving to remove the SwiftPM disable path (`warningMessageOnDisable` in `features.dart`; flutter/flutter#193978) — the pure-CocoaPods lane pin has a limited shelf life; worth a tracking note.\n\n**Next Steps**:\n1. Fix the misspelled env var in the gate script (sed one-liner in the inline comment; tests keep passing).\n2. Scope the real-repo-state gate test to committed state or skip when local SwiftPM state exists.\n3. Sweep the 28-char misspelling from the two test files' comments/titles."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:93168cd3",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1800 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 538b4668ba941962794fa7369ba05aea27cafba0 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:501c5a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "✅ Rework finished. `pr_approved` is sticky (approved once — never re-reviewed): the new head re-validates and merges directly."
+    }
+  ]
+}
