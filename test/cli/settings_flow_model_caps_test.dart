@@ -209,6 +209,56 @@ void main() {
     },
   );
 
+  test('the pre-write parse guard refuses a malformed edited doc', () async {
+    // A file already carrying a duplicate mapping key: the upsert edit
+    // itself succeeds, but the edited text must not be persisted — the
+    // PARSE sits inside the guard (gh-1787) and the write is refused
+    // with a print, never a throw up the flow.
+    const duplicatedSeed = '''
+provider: openrouter
+model: m1
+note: first
+note: second
+''';
+    await env.writeFile('/home/u/.fah/config.yaml', duplicatedSeed);
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call, homeDir: '/home/u');
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('1'); // pin or edit an override
+    await waitForIt(
+      () => io.out.toString().contains('model capabilities — provider'),
+    );
+    io.sendLine('${providerRow('zai')}');
+    await waitForIt(() => io.out.toString().contains('model id (empty keeps'));
+    io.sendLine('glm-5.3-flash');
+    await waitForIt(
+      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
+    );
+    io.sendLine('2'); // max output tokens
+    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    io.sendLine('5'); // the 65536 preset
+    await waitForIt(
+      () => io.out.toString().contains('Duplicate mapping key'),
+      reason: 'the parse guard names the yaml error',
+    );
+    await waitForIt(() => io.out.toString().contains('not saved:'));
+    io.sendLine('5'); // done (caps loop — no entry pinned, Done is row 5)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('2'); // done (flow menu)
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
+    // AC4: the malformed file is untouched — nothing was persisted.
+    final written = (await env.readTextFile(
+      '/home/u/.fah/config.yaml',
+    )).valueOrNull;
+    expect(written, duplicatedSeed);
+  });
+
   test('removing the last override drops the emptied yaml blocks', () async {
     const seed = '''
 provider: openrouter
