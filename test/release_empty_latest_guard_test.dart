@@ -226,32 +226,62 @@ void main() {
         // guard keyed on run+job alone would let one failed leg delete a
         // SIBLING leg's mid-upload draft — the exact destruction the
         // ownership scoping (review of #294) was built to prevent.
-        final ciBinaries = runBlocks('.github/workflows/ci.yml').entries
-            .firstWhere(
-              (e) =>
-                  e.key.startsWith('binaries/') &&
-                  e.value.contains('release_lazy_draft.sh'),
-            );
-        expect(
-          ciBinaries.value,
-          contains('RELEASE_DRAFT_IDENTITY'),
-          reason:
-              'ci.yml binaries matrix legs must stamp a leg-suffixed draft '
-              'identity (e.g. binaries-linux-x64) — the failure-path guard '
-              'is only sibling-safe at leg resolution',
+        // RELEASE_DRAFT_IDENTITY rides the step env, so inspect the step
+        // maps, not just the run bodies.
+        Map<String, YamlMap> stepMaps(String workflowPath) {
+          final steps = <String, YamlMap>{};
+          (workflowYaml(workflowPath)['jobs'] as YamlMap).forEach((jobId, job) {
+            for (final step in (job as YamlMap)['steps'] as YamlList) {
+              if (step is YamlMap && step.containsKey('run')) {
+                steps['$jobId/${step['name'] ?? '?'}'] = step;
+              }
+            }
+          });
+          return steps;
+        }
+
+        void expectLegIdentity(
+          Map<String, YamlMap> steps,
+          String jobPrefix,
+          String wf,
+        ) {
+          final step = steps.entries.firstWhere(
+            (e) =>
+                e.key.startsWith(jobPrefix) &&
+                e.value['run'].toString().contains('release_lazy_draft.sh'),
+          );
+          expect(
+            step.value['env']?['RELEASE_DRAFT_IDENTITY']?.toString() ?? '',
+            contains('matrix.'),
+            reason:
+                '$wf step "${step.key}": matrix legs must stamp a '
+                'leg-suffixed draft identity (e.g. '
+                '${step.key.split('/').first}-<leg>) — the failure-path '
+                'guard is only sibling-safe at leg resolution',
+          );
+          final guard = steps.entries.firstWhere(
+            (e) =>
+                e.key.startsWith(jobPrefix) &&
+                e.value['run'].toString().contains('release_draft_guard.sh'),
+          );
+          expect(
+            guard.value['env']?['RELEASE_DRAFT_IDENTITY']?.toString() ?? '',
+            contains('matrix.'),
+            reason:
+                '$wf guard step "${guard.key}" must carry the same '
+                'leg-suffixed identity as the create step',
+          );
+        }
+
+        expectLegIdentity(
+          stepMaps('.github/workflows/ci.yml'),
+          'binaries/',
+          '.github/workflows/ci.yml',
         );
-        final macCli = runBlocks('.github/workflows/build-macos.yml').entries
-            .firstWhere(
-              (e) =>
-                  e.key.startsWith('build-macos-cli/') &&
-                  e.value.contains('release_lazy_draft.sh'),
-            );
-        expect(
-          macCli.value,
-          contains('RELEASE_DRAFT_IDENTITY'),
-          reason:
-              'build-macos-cli matrix legs must stamp a leg-suffixed draft '
-              'identity (e.g. build-macos-cli-arm64)',
+        expectLegIdentity(
+          stepMaps('.github/workflows/build-macos.yml'),
+          'build-macos-cli/',
+          '.github/workflows/build-macos.yml',
         );
       },
     );
@@ -348,6 +378,24 @@ void main() {
               'publish the release it rides (gh-1801)',
         );
       }
+    });
+
+    test('AGENTS.md documents the provenance-owned release contract', () {
+      // Review threads 3/7 + the summary's SUGESTION: the "Commits and
+      // releases" paragraph must describe the implemented flow — tag-only
+      // auto_release.sh, draft-first binaries create, provenance-owned
+      // publish — never the retired "tag + GitHub Release" one-liner.
+      final doc = read('AGENTS.md');
+      expect(doc, contains('release_lazy_draft.sh'));
+      expect(doc, contains('release-provenance'));
+      expect(
+        doc,
+        isNot(contains('TAG + GitHub Release')),
+        reason:
+            'the retired tag+release one-liner contradicts the gh-1801 '
+            'no-create contract (an asset-less create published an empty '
+            'latest)',
+      );
     });
 
     test(

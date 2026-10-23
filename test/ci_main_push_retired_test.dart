@@ -186,13 +186,18 @@ void main() {
               orElse: () =>
                   throw TestFailure('release must run scripts/auto_release.sh'),
             );
+        // gh-1801 (rework): auto_release.sh no longer calls `gh` — the
+        // asset-less create published an empty `latest` and broke `fa
+        // update`. GH_TOKEN on the cut step became a dead write-capable
+        // credential: the tag push rides the checkout App token (gh-1172)
+        // and the step must not export GH_TOKEN.
         expect(
-          (cut['env'] as YamlMap)['GH_TOKEN']?.toString(),
-          r'${{ steps.app-token.outputs.token }}',
+          (cut['env'] as YamlMap?)?.containsKey('GH_TOKEN') ?? false,
+          isFalse,
           reason:
-              'gh release create rides the App token (gh-1172) — without '
-              'an explicit GH_TOKEN the create would be a silent no-op; '
-              'the wiring must survive the gh-1537 main-trigger removal',
+              'the cut step must not export GH_TOKEN anymore — no gh '
+              'surface is left in auto_release.sh (gh-1801: the create '
+              'moved to the tag-run binaries job, draft-first)',
         );
       },
     );

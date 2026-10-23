@@ -1984,10 +1984,18 @@ workspace.
   (main's required status checks reject both, #1098).
 - Commit subjects: `type(scope): ...` (`feat:`, `fix:`, `fix(example):`,
   `ci:`, `test(providers):`, `refactor(prompts):`).
-- Every push to `main` cuts an annotated TAG + GitHub Release
-  (`scripts/auto_release.sh` via `ci.yml`) — ZERO commits land on main
-  (gh-1522: the retired flow pushed a 4-file `chore(release):` bot commit
-  per release). The git TAG is the single source of truth for versions:
+- Every push to `main` cuts an annotated TAG (`scripts/auto_release.sh`
+  via `ci.yml`) — ZERO commits land on main (gh-1522: the retired flow
+  pushed a 4-file `chore(release):` bot commit per release). gh-1801: NO
+  GitHub Release is created at tag-cut time (an asset-less create
+  published an empty `latest` that broke `fa update`): the tag-run
+  `binaries` job creates the release DRAFT-first via
+  `scripts/release_lazy_draft.sh` (curated CHANGELOG notes via
+  `release_notes.sh` + a `release-draft-owner` marker), every leg attaches
+  into it, and `release-provenance` publishes + flags `latest` ONLY after
+  the signed SHA256SUMS(.sig) is attached — `latest` never points at a
+  release that cannot serve `fa update`. The git TAG is the single source
+  of truth for versions:
   both pubspecs carry the FIXED `0.0.0-dev` placeholder (a hand-bump fails
   the Static `Version placeholder guard`), `pubspec.lock` never churns, and
   CI stamps the version at the edges: the `publish` job stamps the STAGED
@@ -2004,7 +2012,8 @@ workspace.
   `CFBundleShortVersionString`, so the pre-promotion `0.1.<counter>`
   train can never upload again). Release checklist: push to main (or the
   `releaseDispatch` dispatch) → watch the ci.yml `release` job cut the tag
-  → watch the tag-scoped `publish` + `binaries` jobs. `fa --version` reads
+  → watch the tag-scoped `publish` + `binaries` + `release-provenance`
+  jobs (the release publishes at the provenance step). `fa --version` reads
   the stamped `version.txt` first, the placeholder pubspec second.
 - `packages/fa_llm` publishes per `fa_llm-v*` tag via
   `.github/workflows/publish-fa-llm.yml` (OIDC, no secrets). First

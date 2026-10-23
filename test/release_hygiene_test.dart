@@ -648,8 +648,11 @@ case "\$cmd" in
     case "\$2" in
       view)
         # Scripted view sequence for the attach-or-create tests: one word
-        # per call (exists|missing), popped off the top.
-        if [ -f "\$GH_STUB_DIR/view-seq.txt" ]; then
+        # per call (exists|missing), popped off the top. An EXHAUSTED
+        # (empty) sequence file falls through to the structured answers —
+        # the gh-1801 rework adds a servability query (assets) after the
+        # scripted exists/missing verdicts.
+        if [ -s "\$GH_STUB_DIR/view-seq.txt" ]; then
           w=\$(head -1 "\$GH_STUB_DIR/view-seq.txt")
           sed -i.bak '1d' "\$GH_STUB_DIR/view-seq.txt" && rm -f "\$GH_STUB_DIR/view-seq.txt.bak"
           [ "\$w" = "exists" ] && exit 0
@@ -657,6 +660,7 @@ case "\$cmd" in
           exit 1
         fi
         case " \$*" in
+          *--json\\ assets*) cat "\$GH_STUB_DIR/asset-names.txt" 2>/dev/null || echo "" ;;
           *--json\\ body*) cat "\$GH_STUB_DIR/release-body.txt" 2>/dev/null || echo "" ;;
           *) cat "\$GH_STUB_DIR/release-state.txt" 2>/dev/null || echo "missing" ;;
         esac
@@ -801,19 +805,28 @@ void main() {
     for (final wf in [
       '.github/workflows/build-macos.yml',
       '.github/workflows/build-mobile.yml',
+      '.github/workflows/ci.yml',
     ]) {
       test('$wf: asset-carrying create -> guard step in the same job', () {
         final jobs = jobsOf(wf);
         var checked = 0;
         bool draftCapable(dynamic job) {
           // A job is draft-capable when it creates a release with assets —
-          // inline, or routed through release_attach_or_create.sh (whose
-          // create uploads through a draft).
+          // inline, routed through release_attach_or_create.sh (whose
+          // create uploads through a draft), or via the gh-1801 lazy draft
+          // helper (release_lazy_draft.sh).
           if (job is! Map || !job.containsKey('steps')) return false;
+          // continue-on-error jobs (ci.yml web-spa) must NOT guard: on
+          // failure the train CONTINUES and needs the draft alive; a true
+          // orphan is reclaimed by the 24h sweeper.
+          if ((job['continue-on-error']?.toString() ?? 'false') == 'true') {
+            return false;
+          }
           for (final step in (job['steps'] as YamlList)) {
             if (step is YamlMap && step.containsKey('run')) {
               final run = step['run'].toString();
               if (run.contains('release_attach_or_create.sh')) return true;
+              if (run.contains('release_lazy_draft.sh')) return true;
               if (extractCreates(run).any((c) => c.carriesAssets)) return true;
             }
           }
@@ -874,25 +887,36 @@ jobs:
     );
 
     test(
-      'AC6: ci.yml tag-publish path stays untouched (its creates are not draft-capable)',
+      'AC6: ci.yml tag-publish path stays draft-capable only via the lazy draft helper',
       () {
+        // gh-1801 rework: ci.yml has NO inline creates anymore — the lazy
+        // draft create lives in scripts/release_lazy_draft.sh (curated
+        // notes + ownership marker) and the failure-path guard lives in
+        // the binaries job itself (AC1).
         final jobs = jobsOf('.github/workflows/ci.yml');
         var creates = 0;
         jobs.forEach((_, job) => creates += jobCreates(job).length);
         expect(
           creates,
-          greaterThan(0),
-          reason: 'ci.yml tag release create must still exist',
+          0,
+          reason: 'ci.yml must not inline `gh release create` (gh-1801 rework)',
         );
+        var helperCalls = 0;
         jobs.forEach((_, job) {
-          for (final c in jobCreates(job)) {
-            expect(
-              c.carriesAssets,
-              isFalse,
-              reason: 'ci.yml create must stay asset-free (AC6)',
-            );
+          if (job is! Map || !job.containsKey('steps')) return;
+          for (final step in (job['steps'] as YamlList)) {
+            if (step is YamlMap &&
+                step['run'].toString().contains('release_lazy_draft.sh')) {
+              helperCalls++;
+            }
           }
         });
+        expect(
+          helperCalls,
+          greaterThan(0),
+          reason: 'the binaries/web-spa upload steps must route their '
+              'draft-first create through release_lazy_draft.sh',
+        );
       },
     );
 
@@ -1012,6 +1036,7 @@ jobs:
       String name,
       List<String> viewSeq, {
       bool createFails = false,
+      List<String> assetNames = const [],
     }) {
       final dir = Directory(
         '${_fixtureRoot.path}/attach-$name-${DateTime.now().microsecondsSinceEpoch}',
@@ -1021,6 +1046,11 @@ jobs:
         '${dir.path}/view-seq.txt',
       ).writeAsStringSync('${viewSeq.join('\n')}\n');
       if (createFails) File('${dir.path}/create-fails').writeAsStringSync('');
+      if (assetNames.isNotEmpty) {
+        File(
+          '${dir.path}/asset-names.txt',
+        ).writeAsStringSync('${assetNames.join('\n')}\n');
+      }
       File('${dir.path}/a.zip').writeAsStringSync('asset-a');
       File('${dir.path}/b.zip').writeAsStringSync('asset-b');
       File('${dir.path}/release-notes.md').writeAsStringSync('curated notes\n');
@@ -1054,8 +1084,11 @@ jobs:
     }
 
     test(
-      'release exists → attach: upload every asset --clobber, re-assert --latest, no create',
+      'release exists → attach: upload every asset --clobber, NO publish without SHA256SUMS',
       () {
+        // gh-1801 rework (threads 1/5 + 2/6): a release without the signed
+        // checksums cannot serve `fa update` — the attach must not publish
+        // or flag latest; the provenance step owns the flip.
         final run = runAttach('exists', ['exists']);
         expect(run.exitCode, 0);
         expect(
@@ -1072,15 +1105,43 @@ jobs:
           contains('release upload v1.2.3 b.zip --clobber --repo OWNER/REPO'),
         );
         expect(
-          run.log,
-          contains('release edit v1.2.3 --draft=false --latest --repo OWNER/REPO'),
+          run.log.where((l) => l.contains('release edit')),
+          isEmpty,
+          reason:
+              'the stub serves no SHA256SUMS asset — an un-servable release '
+              'must stay unflipped (publish left to release-provenance)',
         );
       },
     );
 
     test(
-      'missing → create: bare-tag title, --latest, assets ride the create, body carries the ownership marker',
+      'release exists and already carries SHA256SUMS → recovery publish + latest',
       () {
+        // The signed checksums are on the release (servable) but it was
+        // left a draft (e.g. the provenance job's own flip failed) — the
+        // attach recovers publish + latest.
+        final run = runAttach(
+          'exists-servable',
+          ['exists'],
+          assetNames: ['SHA256SUMS', 'SHA256SUMS.sig'],
+        );
+        expect(run.exitCode, 0);
+        expect(
+          run.log,
+          contains('release edit v1.2.3 --draft=false --latest --repo OWNER/REPO'),
+          reason:
+              'a servable release (signed checksums on board) may be '
+              'published + flagged latest by the attach (recovery path)',
+        );
+      },
+    );
+
+    test(
+      'missing → create: bare-tag title, DRAFT-only, assets ride the create, body carries the ownership marker',
+      () {
+        // gh-1801 rework (threads 2/6): the create is draft-only — a leg
+        // that arrives first must never publish, let alone flag latest;
+        // the tag-run provenance job owns the flip.
         final run = runAttach('create', ['missing']);
         expect(run.exitCode, 0);
         final createLine = run.log.firstWhere(
@@ -1088,7 +1149,12 @@ jobs:
         );
         expect(createLine, contains('v1.2.3'));
         expect(createLine, contains('--title v1.2.3'));
-        expect(createLine, contains('--latest'));
+        expect(createLine, contains('--draft'));
+        expect(
+          createLine,
+          isNot(contains('--latest')),
+          reason: 'a leg create never carries the latest badge (gh-1801)',
+        );
         expect(createLine, contains('a.zip'));
         expect(createLine, contains('b.zip'));
         expect(run.createdNotes, isNotNull);
@@ -1129,11 +1195,12 @@ jobs:
           reason: 'the loser must attach to the winner\'s release',
         );
         expect(
-          run.log,
-          contains('release edit v1.2.3 --draft=false --latest --repo OWNER/REPO'),
+          run.log.where((l) => l.contains('release edit')),
+          isEmpty,
           reason:
-              'the loser must leave the winner\'s release published + latest '
-              '(gh-1801: the draft-first lazy creates make this publish too)',
+              'the loser must NOT publish the winner\'s release — without '
+              'the signed checksums it cannot serve `fa update`; the '
+              'provenance step owns the flip (gh-1801 rework)',
         );
         expect(run.out.toLowerCase(), contains('race'));
       },
@@ -1193,7 +1260,10 @@ jobs:
         expect(creates.single.carriesAssets, isTrue);
         expect(creates.single.hasTitle, isTrue);
         expect(creates.single.title, creates.single.tag);
-        expect(creates.single.text, contains('--latest'));
+        // gh-1801 rework (threads 2/6): the create is DRAFT-only — a leg
+        // create never publishes or flags latest.
+        expect(creates.single.text, contains('--draft'));
+        expect(creates.single.text, isNot(contains('--latest')));
       },
     );
     test(
@@ -1686,45 +1756,71 @@ gh release create "v9.9.9" \
     );
   });
 
-  // ── AC4 — truthful Latest (IT-latest) ───────────────────────────────────
-  group('AC4 — latest is explicit on publishes, impossible for drafts', () {
-    for (final wf in [
+  // ── AC4 — truthful Latest (IT-latest, gh-1801 rework) ───────────────────
+  //
+  // The `latest` badge is PROVENANCE-OWNED: `fa update` resolves
+  // `releases/latest` and hard-fails without the signed SHA256SUMS(.sig)
+  // (bin/self_manage.dart), so latest may move only onto a release that
+  // carries them. Every create path in the train is draft-only; the single
+  // flip point is release-provenance's upload step (ci.yml), with a
+  // SHA256SUMS-gated recovery publish in release_attach_or_create.sh.
+  group('AC4 — latest is provenance-owned (drafts never carry it)', () {
+    const trainWorkflows = [
+      '.github/workflows/ci.yml',
       '.github/workflows/build-macos.yml',
       '.github/workflows/build-mobile.yml',
-    ]) {
-      test(
-        '$wf: publish paths carry --latest (create) or edit --latest (attach to existing)',
-        () {
-          // Draft-capable creates live in release_attach_or_create.sh; the
-          // workflow must route through it and not inline a parallel path.
-          expect(read(wf), contains('release_attach_or_create.sh'));
-          final script = read('scripts/release_attach_or_create.sh');
-          expect(
-            script,
-            contains('--latest'),
-            reason: 'release create must mark latest explicitly',
-          );
-          expect(
-            script,
-            contains('gh release edit'),
-            reason: 'attach-to-existing path must re-assert latest',
-          );
-          expect(extractCreates(script).single.text, contains('--latest'));
-          jobsOf(wf).forEach((jobId, job) {
-            for (final c in jobCreates(job)) {
-              if (c.carriesAssets) {
-                expect(
-                  c.text,
-                  contains('--latest'),
-                  reason:
-                      '$wf job "$jobId": asset-carrying create must pass --latest',
-                );
-              }
-            }
-          });
-        },
+    ];
+
+    test('no workflow in the train inlines a release create anymore', () {
+      // gh-1801 rework: the lazy creates live in release_lazy_draft.sh
+      // (curated notes + ownership marker) and the leg creates in
+      // release_attach_or_create.sh — no inline create may regress in.
+      for (final wf in trainWorkflows) {
+        expect(
+          extractCreates(read(wf)),
+          isEmpty,
+          reason: '$wf must not inline `gh release create` (gh-1801 rework)',
+        );
+      }
+    });
+
+    test('the two shared create paths are the only creates, both draft-only', () {
+      expect(
+        extractCreates(read('scripts/auto_release.sh')),
+        isEmpty,
+        reason: 'gh-1801: auto_release.sh must not create a release',
       );
-    }
+      final lazy = extractCreates(read('scripts/release_lazy_draft.sh'));
+      expect(lazy, hasLength(1));
+      expect(lazy.single.text, contains('--draft'));
+      expect(lazy.single.text, isNot(contains('--latest')));
+      final attach = extractCreates(read('scripts/release_attach_or_create.sh'));
+      expect(attach, hasLength(1));
+      expect(attach.single.text, contains('--draft'));
+      expect(attach.single.text, isNot(contains('--latest')));
+    });
+
+    test('the publish flip exists exactly once per owner, next to SHA256SUMS', () {
+      final provenance = read('.github/workflows/ci.yml');
+      expect(
+        provenance,
+        contains('--draft=false --latest'),
+        reason:
+            'release-provenance is the single flip owner: it runs after '
+            'every fa-* asset AND uploads the signed SHA256SUMS',
+      );
+      final attachScript = read('scripts/release_attach_or_create.sh');
+      expect(
+        attachScript,
+        contains('--draft=false --latest'),
+        reason: 'the SHA256SUMS-gated recovery publish stays',
+      );
+      expect(
+        attachScript.contains('SHA256SUMS'),
+        isTrue,
+        reason: 'the recovery publish must be gated on servability',
+      );
+    });
 
     test('guards and sweeper never touch the latest badge', () {
       for (final script in [
@@ -1732,31 +1828,6 @@ gh release create "v9.9.9" \
         'scripts/sweep_stale_drafts.sh',
       ]) {
         expect(read(script), isNot(contains('--latest')));
-      }
-    });
-
-    test('auto_release.sh creates no release; latest moves only with assets', () {
-      // gh-1801: the empty-asset create is gone — an asset-less create
-      // publishes an empty `latest` and fa update 404s until backfill.
-      // The binaries job creates draft-first and flips latest only after
-      // its fa-*.tar.gz/zip upload; the attach path re-asserts it.
-      expect(
-        extractCreates(read('scripts/auto_release.sh')),
-        isEmpty,
-        reason: 'gh-1801: auto_release.sh must not create a release',
-      );
-      final attachScript = read('scripts/release_attach_or_create.sh');
-      expect(
-        attachScript,
-        contains('--draft=false --latest'),
-        reason: 'the attach path is where latest/published is re-asserted',
-      );
-      for (final wf in ['.github/workflows/ci.yml']) {
-        expect(
-          read(wf),
-          contains('--draft=false --latest'),
-          reason: '$wf binaries publish + latest only after the CLI upload',
-        );
       }
     });
   });
@@ -1917,10 +1988,18 @@ gh release create "v9.9.9" \
             .firstWhere(
               (s) => s['run']?.toString().contains('auto_release.sh') ?? false,
             );
+        // gh-1801 (rework): auto_release.sh no longer calls `gh` at all —
+        // the asset-less create published an empty `latest` and broke `fa
+        // update`. GH_TOKEN on this step became a dead write-capable
+        // credential; the tag push rides the checkout App token above
+        // (gh-1172), so the env must stay absent (least privilege).
         expect(
-          (cutStep['env'] as YamlMap)['GH_TOKEN']?.toString(),
-          equals(r'${{ steps.app-token.outputs.token }}'),
-          reason: 'gh release create needs GH_TOKEN=App token (#1093 review)',
+          (cutStep['env'] as YamlMap?)?.containsKey('GH_TOKEN') ?? false,
+          isFalse,
+          reason:
+              'the Cut-release-tag step must not export GH_TOKEN anymore — '
+              'auto_release.sh has no gh surface; the push rides the '
+              'checkout App token',
         );
         for (final banned in [
           'subosito/flutter-action',
