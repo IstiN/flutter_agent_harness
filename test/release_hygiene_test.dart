@@ -2407,9 +2407,8 @@ gh release create "v9.9.9" \
               .ghLog()
               .where((l) => l.contains('release create'))
               .toList();
-          expect(creates, hasLength(2));
-          expect(creates[0], contains('release create v0.1.496'));
-          expect(creates[1], contains('release create v0.1.497'));
+          expect(creates, hasLength(0),
+              reason: 'gh-1801: no release object across the sequence');
           expect(
             r2.originSubjects(4).where((s) => s.startsWith('chore(release):')),
             isEmpty,
