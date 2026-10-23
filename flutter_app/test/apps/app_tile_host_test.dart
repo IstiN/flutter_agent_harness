@@ -103,6 +103,20 @@ const _tree = <String, dynamic>{
           'style': {'fontSize': 10},
         },
       },
+      {
+        'type': 'gestureDetector',
+        'onPanUpdate': 'panMove',
+        'child': {
+          'type': 'sizedBox',
+          'width': 60,
+          'height': 24,
+          'child': {
+            'type': 'text',
+            'data': 'DragZone',
+            'style': {'fontSize': 10},
+          },
+        },
+      },
     ],
   },
 };
@@ -240,6 +254,23 @@ void main() {
       expect(harness.opened, 0);
       expect(harness.engines.single.receivedEvents, ['tap']);
     });
+
+    testWidgets(
+      'an interactive tile routes onPanUpdate via dispatchHostEvent(gesture:...) '
+      'instead of callEvent (gh-1784)',
+      (tester) async {
+        final harness = await _pumpHost(tester, interactive: true);
+        final engine = harness.engines.single;
+        await tester.drag(find.text('DragZone'), const Offset(20, 10));
+        await tester.pumpAndSettle();
+        expect(harness.opened, 0);
+        // Pan updates bypass callEvent and land on the fire-and-forget
+        // host-event lane (`gesture:panMove`).
+        expect(engine.receivedEvents, isNot(contains('panMove')));
+        expect(engine.hostPayloads, contains('gesture:panMove'));
+        expect(engine.hostPayloads['gesture:panMove']!['dx'], isNotNull);
+      },
+    );
 
     testWidgets('refreshSeconds fires tile.refresh on the cadence', (
       tester,
