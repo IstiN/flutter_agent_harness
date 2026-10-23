@@ -102,8 +102,27 @@ jobs:
           FA_BIN: ${{ github.workspace }}/fa-local/bundle/bin/fah
         run: |
           mkdir -p test-results
+          # Issue #1696: capture the raw exit code so the classification
+          # step below can tell the runner-process SIGABRT class (134)
+          # apart from ordinary test failures.
+          set +e
           dart test --tags integration --exclude-tags browser-ext \
             --file-reporter="json:test-results/integration.json"
+          code=$?
+          set -e
+          echo "$code" > test-results/exit-code
+          exit "$code"
+      # Issue #1696: the runner process itself can abort natively (glibc
+      # heap detector, exit 134) with a fully green report — the leg goes
+      # red without any test failure. Annotate that class in the step
+      # summary so a recurrence self-identifies; the leg stays red and the
+      # file-bot behavior is unchanged.
+      - name: classify native abort (issue #1696)
+        if: failure()
+        run: >-
+          python3 scripts/classify_native_abort.py
+          test-results/exit-code
+          test-results/integration.json >> "$GITHUB_STEP_SUMMARY"
       # Issue #928 review: the file-reporter writes the json even on a RED
       # leg — convert + upload must not be chained into the failing step.
       # The RAW dart json is the machine-parseable form the gate itself
