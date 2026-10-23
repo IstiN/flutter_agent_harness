@@ -4485,7 +4485,9 @@ jobs:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           # Least privilege (gh-1172 round-2 review): contents:write covers
-          # the tag push + `gh release create`, nothing else.
+          # the tag push, nothing else. gh-1801: auto_release.sh no longer
+          # creates the GitHub Release (an asset-less create publishes an
+          # empty `latest`) — the tag-run binaries job owns creation.
           permissions: contents:write
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4501,13 +4503,14 @@ jobs:
           # (read-only per the job permissions block).
           token: ${{ steps.app-token.outputs.token || github.token }}
 
-      - name: Cut release tag + GitHub Release
+      - name: Cut release tag
         env:
           RELEASE_DRY_RUN: ${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}
-          # gh release create rides the App token (gh-1172): without an
-          # explicit GH_TOKEN the create || true in auto_release.sh would be
-          # a guaranteed silent no-op and the curated notes would never reach
-          # the release object.
+          # The App token rides the step (gh-1172) for the script's git
+          # surface (the annotated-tag push). gh-1801: no `gh release
+          # create` happens here anymore — an empty-asset create published
+          # an empty `latest` and broke `fa update`; the binaries job
+          # creates the release draft-first after its build.
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: bash scripts/auto_release.sh
 
