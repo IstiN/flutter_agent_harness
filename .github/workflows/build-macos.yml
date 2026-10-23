@@ -1057,6 +1057,13 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Blobless full history: the lazy draft create (gh-1801 rework)
+          # builds the release body via scripts/release_notes.sh — same
+          # reason as release-macos's checkout (gh-1477: the notes read
+          # commit MESSAGES, never historical file blobs).
+          fetch-depth: 0
+          filter: blob:none
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
@@ -1080,31 +1087,35 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          # Matrix legs share GITHUB_JOB=build-macos-cli — the leg-suffixed
+          # draft owner identity keeps the guard below scoped to the leg
+          # that created the draft, never the sibling's mid-upload one.
+          RELEASE_DRAFT_IDENTITY: run/${{ github.run_id }}/job/${{ github.job }}-${{ matrix.arch }}
         run: |
           set -euo pipefail
           asset="fa-macos-${{ matrix.arch }}.tar.gz"
           tar -czf "$asset" -C build/out bundle
           ls -lh "$asset"
 
-          # Ensure the release exists (race-safe with release-macos). Title
-          # is the bare tag vX.Y.Z (issue #282: one naming scheme, no
-          # "Fa " prefixes), latest is explicit.
-          if ! gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" \
-              --title "$RELEASE_TAG" \
-              --generate-notes \
-              --latest \
-              --repo "${GITHUB_REPOSITORY}" || true
-          fi
+          # gh-1801 (rework): DRAFT-first, publish is PROVENANCE-OWNED.
+          # The CLI tarball is a `fa update` asset, but servability needs
+          # the SIGNED SHA256SUMS — which only the tag-run's
+          # release-provenance job uploads (ci.yml). So: create the draft
+          # lazily (curated notes via release_notes.sh + THIS leg's
+          # draft-owner marker the guard below can reclaim), upload, and
+          # let provenance own the --draft=false --latest flip.
+          bash scripts/release_lazy_draft.sh "$RELEASE_TAG"
           gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
 
       # Draft lifecycle invariant (issue #282): this job creates releases,
       # so a failed/cancelled run must not leave one behind as a draft.
+      # Leg-scoped (gh-1801): matches only THIS arch leg's marker.
       - name: Draft lifecycle guard (delete orphaned draft on failure)
         if: always() && job.status != 'success'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          RELEASE_DRAFT_IDENTITY: run/${{ github.run_id }}/job/${{ github.job }}-${{ matrix.arch }}
         run: bash scripts/release_draft_guard.sh "$RELEASE_TAG"
 
   build-extension:
@@ -1118,6 +1129,12 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Blobless full history: the lazy draft create (gh-1801 rework)
+          # builds the release body via scripts/release_notes.sh — same
+          # reason as release-macos's checkout (gh-1477).
+          fetch-depth: 0
+          filter: blob:none
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
@@ -1165,15 +1182,14 @@ jobs:
           cp build/fa-extension.zip "$asset"
           ls -lh "$asset"
 
-          # Ensure the release exists (race-safe with release-macos). Title
-          # is the bare tag vX.Y.Z (issue #282), latest is explicit.
-          if ! gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" \
-              --title "$RELEASE_TAG" \
-              --generate-notes \
-              --latest \
-              --repo "${GITHUB_REPOSITORY}" || true
-          fi
+          # gh-1801 (rework): DRAFT-first, NEVER publish here. The
+          # extension zip is not a `fa update` asset — and even a CLI
+          # asset alone would not make the release servable: the SIGNED
+          # SHA256SUMS only lands in the tag-run's release-provenance job,
+          # which owns the --draft=false --latest flip. Create the draft
+          # with the curated notes + the draft-owner marker (so the guard
+          # step below can reclaim it on failure) and upload.
+          bash scripts/release_lazy_draft.sh "$RELEASE_TAG"
           gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
 
       # Draft lifecycle invariant (issue #282): this job creates releases,
