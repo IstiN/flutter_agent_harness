@@ -138,64 +138,66 @@ void main() {
   });
 
   group('AC3 — the release flow keeps working without main CI', () {
-    test(
-      'the ci.yml release job owns the tag cut (gh-1522 tag-only flow) — '
-      'no release-tag job anywhere',
-      () {
-        // gh-1522 retired the bump flow BEFORE this PR merged: zero
-        // commits land on main, so there is no 'chore(release):' bump
-        // push to key a tag-on-bump workflow off — and with the
-        // post-merge main CI run retired (gh-1537) ci.yml has no
-        // main-push trigger to hand such a workflow either. The release
-        // job cuts the annotated tag + GitHub Release in one step,
-        // armed by the 2h coalesce schedule and the gated dispatches
-        // (AC2); the pushed v* tag fires this workflow's tags arm,
-        // which runs the full quality gate BEFORE publish/binaries.
-        final ci = read('.github/workflows/ci.yml');
-        expect(
-          ci,
-          isNot(contains('release-tag')),
-          reason:
-              'the release-tag job (and scripts/tag_release.sh) retired '
-              'with the bot bump flow (gh-1522) — auto_release.sh cuts '
-              'the tag directly; a tag-on-bump workflow would also be '
-              'dead code now that nothing pushes chore(release) commits '
-              'and ci.yml has no main-push trigger (gh-1537)',
-        );
-        expect(
-          File('.github/workflows/release-tag.yml').existsSync(),
-          isFalse,
-          reason:
-              'gh-1537 originally extracted release-tag.yml to carry the '
-              'tag-on-bump off the retired ci.yml main trigger — but '
-              'gh-1522 retired the bump flow itself (this workflow goes '
-              'with it, as its own header anticipated)',
-        );
-        expect(
-          ci,
-          isNot(contains('tag_release.sh')),
-          reason: 'the script is deleted from the repo',
-        );
-        final jobs = loadYaml(ci)['jobs'] as YamlMap;
-        final release = jobs['release'] as YamlMap;
-        final steps = release['steps'] as YamlList;
-        final cut = steps
-            .map((s) => s as YamlMap)
-            .firstWhere(
-              (s) => s['run']?.toString().contains('auto_release.sh') ?? false,
-              orElse: () =>
-                  throw TestFailure('release must run scripts/auto_release.sh'),
-            );
-        expect(
-          (cut['env'] as YamlMap)['GH_TOKEN']?.toString(),
-          r'${{ steps.app-token.outputs.token }}',
-          reason:
-              'gh release create rides the App token (gh-1172) — without '
-              'an explicit GH_TOKEN the create would be a silent no-op; '
-              'the wiring must survive the gh-1537 main-trigger removal',
-        );
-      },
-    );
+    test('the ci.yml release job owns the tag cut (gh-1522 tag-only flow) — '
+        'no release-tag job anywhere', () {
+      // gh-1522 retired the bump flow BEFORE this PR merged: zero
+      // commits land on main, so there is no 'chore(release):' bump
+      // push to key a tag-on-bump workflow off — and with the
+      // post-merge main CI run retired (gh-1537) ci.yml has no
+      // main-push trigger to hand such a workflow either. The release
+      // job cuts the annotated tag + GitHub Release in one step,
+      // armed by the 2h coalesce schedule and the gated dispatches
+      // (AC2); the pushed v* tag fires this workflow's tags arm,
+      // which runs the full quality gate BEFORE publish/binaries.
+      final ci = read('.github/workflows/ci.yml');
+      expect(
+        ci,
+        isNot(contains('release-tag')),
+        reason:
+            'the release-tag job (and scripts/tag_release.sh) retired '
+            'with the bot bump flow (gh-1522) — auto_release.sh cuts '
+            'the tag directly; a tag-on-bump workflow would also be '
+            'dead code now that nothing pushes chore(release) commits '
+            'and ci.yml has no main-push trigger (gh-1537)',
+      );
+      expect(
+        File('.github/workflows/release-tag.yml').existsSync(),
+        isFalse,
+        reason:
+            'gh-1537 originally extracted release-tag.yml to carry the '
+            'tag-on-bump off the retired ci.yml main trigger — but '
+            'gh-1522 retired the bump flow itself (this workflow goes '
+            'with it, as its own header anticipated)',
+      );
+      expect(
+        ci,
+        isNot(contains('tag_release.sh')),
+        reason: 'the script is deleted from the repo',
+      );
+      final jobs = loadYaml(ci)['jobs'] as YamlMap;
+      final release = jobs['release'] as YamlMap;
+      final steps = release['steps'] as YamlList;
+      final cut = steps
+          .map((s) => s as YamlMap)
+          .firstWhere(
+            (s) => s['run']?.toString().contains('auto_release.sh') ?? false,
+            orElse: () =>
+                throw TestFailure('release must run scripts/auto_release.sh'),
+          );
+      // gh-1801 (rework): auto_release.sh no longer calls `gh` — the
+      // asset-less create published an empty `latest` and broke `fa
+      // update`. GH_TOKEN on the cut step became a dead write-capable
+      // credential: the tag push rides the checkout App token (gh-1172)
+      // and the step must not export GH_TOKEN.
+      expect(
+        (cut['env'] as YamlMap?)?.containsKey('GH_TOKEN') ?? false,
+        isFalse,
+        reason:
+            'the cut step must not export GH_TOKEN anymore — no gh '
+            'surface is left in auto_release.sh (gh-1801: the create '
+            'moved to the tag-run binaries job, draft-first)',
+      );
+    });
   });
 
   group('AC4 — flake intake consumes PR-dispatch runs', () {
@@ -249,18 +251,14 @@ void main() {
       final doc =
           loadYaml(read('.github/workflows/sm-merge-guard.yml')) as YamlMap;
       final steps =
-          ((doc['jobs'] as YamlMap)['guard'] as YamlMap)['steps']
-              as YamlList;
-      final checkout =
-          steps
-              .map((s) => s as YamlMap)
-              .firstWhere(
-                (s) =>
-                    s['uses']?.toString().startsWith('actions/checkout') ??
-                    false,
-                orElse: () =>
-                    throw TestFailure('guard must check out the repo'),
-              );
+          ((doc['jobs'] as YamlMap)['guard'] as YamlMap)['steps'] as YamlList;
+      final checkout = steps
+          .map((s) => s as YamlMap)
+          .firstWhere(
+            (s) =>
+                s['uses']?.toString().startsWith('actions/checkout') ?? false,
+            orElse: () => throw TestFailure('guard must check out the repo'),
+          );
       final options = checkout['with'] as YamlMap;
       expect(
         options['ref'].toString(),
