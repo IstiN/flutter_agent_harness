@@ -13,6 +13,13 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1805): modifier chords no longer type their base letter into the
+  composer while the slash menu is open — the vendored dart_tui decoder
+  puts the base letter into the keystroke's `text` for control bytes
+  (Ctrl+S → `ctrl+s` with text `s`), and the slash-menu edit cluster was
+  the one insert surface missing the `_isCommandKeystroke` guard, so a
+  chord pressed mid-menu poisoned the typed prefix (`/memory` landed as
+  `/smemory`). Plain letters and Shift+letters still type and filter.
 - feat(1515): ONE model-limits settings surface — the settings hub's
   standalone "Model parameters" row is retired and bare `/model-edit`
   (TUI) aliases into `/settings` → Model capabilities, pre-focused on the
