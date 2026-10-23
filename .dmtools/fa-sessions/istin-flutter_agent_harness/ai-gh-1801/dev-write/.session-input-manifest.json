@@ -1,0 +1,297 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-23T12:39:42.947Z",
+  "ticketKey": "pr-1803",
+  "headSha": "0e4b12af7677baa3c954c6f55d4fe178ca76177e",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:2347194cd34fa26a",
+      "size": 116344
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:981a60dec9af421b",
+      "size": 2081470
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:d8b4365e2d3ce6e8",
+      "size": 503
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:649c3ad8a81509db",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:af4e841853fb0677",
+      "size": 51449
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:a4b1a333373f7662",
+      "size": 3603
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:59eff0cc3d33a3fc",
+      "size": 3362
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7b0b3c4e5e82cb82",
+      "size": 1037
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:016b6668c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:4019e749f8514c6e",
+      "size": 3101
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:ed2db44086e3f469",
+      "size": 3022
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6vmdtY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/release_hygiene_test.dart:1088",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: CI is red on this head — the rework breached the repo's 2800-line LOC ceiling (`test/release_hygiene_test.dart` = 2817)**\n\nBoth failed checks on `0e4b12af` trace to one root cause introduced by this PR:\n\n- **CRAP + duplication** — `[FAIL] loc: 1/979 files over their limit — test/release_hygiene_test.dart: 2817 lines > max 280` (exit 2, reproduced locally byte-identical with `dart pub global run crap4dart check --config crap4dart.loc-scope.yaml --only loc`)\n- **Quality gate** — failed on its `guards` leg, which IS this same job (`ci.yml:1689` — job id `guards`, `name: CRAP + duplication`); same root cause, no second defect.\n\nThe ceiling is a ratchet, not a baseline: `crap4dart.loc-scope.yaml:45` — `max_lines: 280`, \"max_lines only DOWN\", deliberately **no baseline** (\"nothing exceeds 2800 today, and the ceiling itself is the point\"). The rework grew the file past it (+285 lines of new AC4/gh-1801 groups), so validation on the head is red 1/3 and the merge gate is closed.\n\nEverything else in this rework verified green on this head: 193/193 tests across the 9 release/CI suites, `dart analyze` clean, `dart format` clean, and all four review findings verified fixed in the tree.\n\n**Fix:** shrink the file back under 280 — the clean cut is to move the gh-1801 groups (the `gh-1801: no release may be published without assets` + rework behavioral groups, ~700 lines) into their own file (e.g. keep `release_empty_latest_guard_test.dart` as that home and slim the hygiene file back to its pre-rework scope), or trim the duplicated fixture helpers into a shared test helper. Any split must keep every REG pin green."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vmdv4",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/ci.yml:4367",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the PR description's \"Fix\"/\"Notes\" sections now describe the pre-rework design — update them to the implemented contract**\n\nTwo claims in the PR description are stale after the rework commits (`608292af57`, `0414e25572`):\n\n1. *\"`ci.yml` binaries / `build-macos.yml` CLI matrix: draft-first create, `--draft=false --latest` only after the `fa-*.tar.gz`/`.zip` upload\"* — no longer true: the binaries and macOS CLI legs only create the draft (`scripts/release_lazy_draft.sh`) and upload; **nobody publishes from an upload step**. The single publish point is `release-provenance`'s \"Upload provenance assets\" step (`ci.yml:4367`), with the SHA256SUMS-gated recovery branch in `release_attach_or_create.sh:59`.\n2. *\"The `release: published` twin run (gh-1625 dedupe) now fires from the binaries publish\"* — the binaries job publishes nothing and rides `secrets.GITHUB_TOKEN` (whose events fire no workflow runs); on cron trains no twin fires at all. The dedupe machinery is unaffected, but the note misleads a reader auditing the train.\n\nThe description is the first thing the rework/audit legs and humans read — a stale \"Fix\" section caused this very rework round to be re-verified three times. Rewrite both bullets to the provenance-owned flow (AGENTS.md \"Commits and releases\" already documents it correctly as of this PR)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:52ca7886",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — the lazy drafts are now guard-visible, and ci.yml's got guards\n\nThe suggested mechanism is implemented, with one correctness hardening for matrix legs:\n\n- `scripts/release_lazy_draft.sh` stamps the draft body with `<!-- release-draft-owner: run/${GITHUB_RUN_ID}/job/${GITHUB_JOB} -->` (same marker class the attach path uses), so `release_draft_guard.sh`'s ownership check can match drafts the lazy creates made. All four lazy-create sites (`ci.yml` binaries, `ci.yml` web-spa, `build-macos.yml` build-macos-cli + build-extension) route through it — no inline `--generate-notes` create remains.\n- **Leg-suffixed identities for matrices**: `binaries` (5 legs) and `build-macos-cli` (2 parallel arch legs) share `GITHUB_JOB`, so a plain run+job marker would let one failed leg's guard delete a **sibling leg's mid-upload draft** — the exact destruction the #294 ownership scoping prevents. Those steps stamp/verify `RELEASE_DRAFT_IDENTITY: run/<run_id>/job/<job>-<leg>` (e.g. `binaries-linux-x64`, `build-macos-cli-arm64`); `release_draft_guard.sh` honors the same env (validated against the marker regex, so a malformed identity fails loud instead of orphaning the draft forever). Single-job steps (web-spa, build-extension) keep the default run+job identity.\n- **`ci.yml` `binaries` now has a guard step** (`if: always() && job.status != 'success'`, leg-scoped) — the \"no guard step at all\" half of this thread. `web-spa` deliberately has none: it is `continue-on-error`, so on failure the train (binaries → provenance) continues and must find the draft alive; a genuinely orphaned GITHUB_TOKEN-authored draft is reclaimed by the 24h sweeper. Both facts are documented in the step and pinned by lint.\n- The AC1 lint (`test/release_hygiene_test.dart`) now also scans `ci.yml`, recognizes `release_lazy_draft.sh` callers as draft-capable, and exempts `continue-on-error` jobs.\n\nPinned by `test/release_empty_latest_guard_test.dart`:\n\n- `matrix lazy creates carry a leg-suffixed draft identity (sibling-safe guard)` — create + guard steps must both carry the leg-suffixed `RELEASE_DRAFT_IDENTITY`.\n- Behavioral `draft guard: RELEASE_DRAFT_IDENTITY match deletes the leg-stamped draft` / `sibling leg identity never deletes (refuses, exit 0)`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:0f630d64",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the daily legs can still make `latest` point at a CLI-asset-less release — the invariant is not enforced on this path**\n\nThe PR's stated rule is \"non-CLI assets must not ride `latest` alone\", and the new tests pin it for web-spa/extension. But `release_attach_or_create.sh` — the one create path the mobile and macOS legs actually use — violates it in two ways:\n\n1. **Create path (`:107-111`)**: `gh release create \"$tag\" ... --latest \"${assets[@]}\"` publishes with *whatever the leg resolved* — AAB/IPA/store-APK/god-APK (release-mobile) or DMGs/macos-zips (release-macos). Before gh-1801 this path could never be the first publisher (auto_release.sh created the release seconds after the tag push, so the incident leg logged \"✅ attached ... to existing release\"). **After this PR removes that create, a leg that arrives first now takes the create branch and publishes `latest` with zero CLI assets** — `fa update` 404s until the tag-run binaries + provenance backfill (15–45 min). The exact leg from the v1.0.629/630 forensics flips from attach to create-and-publish.\n2. **Attach path (this line)**: `--draft=false --latest` publishes a sibling draft unconditionally — including a web-spa/bare draft carrying no CLI asset — based solely on the attaching leg's asset list.\n\nConsequence: on daily-publish trains the ticket's failure mode (a `latest` that cannot serve `fa update`) survives through the one create path the PR kept.\n\n**Suggested fix:** assert publish+latest here only when the resolved asset list can actually serve `fa update` (contains a `fa-*.tar.gz`/`fa-*.zip`/`SHA256SUMS` class asset), otherwise attach into the draft and leave the publish to the CLI/provenance step (see the provenance-gap thread on `ci.yml:4136`). At minimum, add the same \"CLI asset or no publish\" lint for this script that the new test enforces for the workflows."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:64b07cce",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: curated release notes no longer reach the release on the cron train — body becomes `--generate-notes`, and racy on daily trains**\n\n`auto_release.sh` was the only main-train path that invoked `release_notes.sh`; this PR removes that call and hands creation to the ci.yml binaries lazy create, which uses `--generate-notes` (`ci.yml:4132`). Two regressions vs. the documented contract (AGENTS.md → \"Commits and releases\": release body folds the curated `## <version>` CHANGELOG section via `release_notes.sh`, preference curated → Unreleased → conventional commits; the gh-1172 comment you edited here still says the point of the App token was that \"the curated notes would never reach the release object\"):\n\n1. **Every 2h-catchup/schedule train** (no dispatch legs involved): the binaries create wins by default, so the GitHub Release body degrades from the curated CHANGELOG section to GitHub auto-generated notes — permanently, not just for a window.\n2. **Daily-publish trains**: `release-macos`/`release-mobile` (which do build `release-notes.md` via `release_notes.sh`) now race the binaries `--generate-notes` create for the body — first creator wins, so the release body is nondeterministic per train.\n\nIf the curated-notes contract still stands, restore it on the new owner: have the binaries create use `release_notes.sh` output (the attach path's `--notes-file` pattern) instead of `--generate-notes`, or create the release in the `release` job right after the tag push as a *draft* with the curated body (draft ≠ empty `latest`, so the gh-1801 breaker does not apply). Please confirm if dropping curated notes on the train is intended — the PR description does not mention it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:7456ce5c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the new lazy drafts are invisible to the draft lifecycle guard — failed runs orphan drafts the guard refuses to delete**\n\n`release_draft_guard.sh` deletes only a draft whose body carries this run+job's `release-draft-owner: run/<id>/job/<id>` marker (ownership-scoped, review of #294). `release_attach_or_create.sh` stamps that marker; **the lazy `gh release create --draft` in this step does not** — the draft body only has `--generate-notes` output. So the guard's ownership check can never match a draft this step created:\n\n- `build-macos-cli` / `build-extension` fail after create but before publish → guard runs → `state == draft`, `owner == <unmarked>` → `::warning` + **refuses to delete** → orphaned draft, contradicting the step comment right below (\"a failed/canceled run must not leave one behind as a draft\"). The daily sweeper only reclaims bot-authored drafts after 24h — drafts created here ride `RELEASE_PAT`, so they are swept only if that PAT's account is a `[bot]`; otherwise they linger forever as listed-not-deleted \"human\" drafts.\n- `ci.yml` binaries/web-spa drafts (`ci.yml:4131`, `ci.yml:4234`) have **no guard step at all** — same orphaning on a failed upload, GITHUB_TOKEN-authored (swept after 24h).\n\nBefore this PR the lazy creates published immediately, so the guard had nothing to match; the gap is newly reachable.\n\n**Suggested fix:** stamp the ownership marker into the lazy create's body (create with `--notes`/`--notes-file` carrying `<!-- release-draft-owner: run/${GITHUB_RUN_ID}/job/${GITHUB_JOB} -->`) so the existing guard can reclaim its own drafts on failure — the same invariant, the same mechanism the attach path already uses."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:f7f576d3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: `latest` still moves before the release can serve `fa update` — the provenance gap recreates the incident window**\n\nThis line publishes + flags `latest` as soon as the **first** binaries matrix leg uploads. But `fa update` does more than download the archive — it hard-fails without signed checksums:\n\n- `bin/self_manage.dart:320` — `if (sums.statusCode != 200 || sig.statusCode != 200) return false;` (any missing provenance asset ⇒ verification fails)\n- `bin/self_manage.dart:489` — `_warn('update aborted: release provenance check failed for $archive')` → exit 1\n\n`SHA256SUMS(.sig)` is uploaded by `release-provenance`, which is gated on the **whole** matrix plus web-spa (`ci.yml:4268` — `needs: [binaries, web-spa]`). So on every train there is a window — from this first `--draft=false --latest` until provenance lands, realistically 10–30+ min — where `latest` points at a release whose `fa update` **aborts on the provenance check for every platform**, even those whose asset is already present. Same for `build-macos.yml:1059` (CLI matrix leg). The PR note \"between first and last matrix upload it can be briefly partial (minutes)\" underestimates this: the binding constraint is the provenance upload, not the last matrix leg, and it breaks all platforms, not just un-uploaded ones.\n\nThe new REG test (\"publish happens only in steps that upload a CLI asset\") passes while the user-visible breakage — the exact ticket symptom — persists.\n\n**Suggested fix:** keep the release in DRAFT through the binaries uploads and move the publish to the one step that runs after *all* CLI assets *and* `SHA256SUMS` — `release-provenance`'s \"Upload provenance assets\" step (`ci.yml:4325`, `if` already covers both the tag-push and release arms): upload checksums, then `gh release edit --draft=false --latest`. Failure degradation is safe: a red provenance leaves the previous release as `latest` instead of stranding a provenance-less one. Same change for `build-macos.yml:1059` (or drop its `--latest` and let provenance own the flip)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:8ac5a340",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — `latest` is now provenance-owned\n\nThe publish flip moved out of every upload step and into the one step that runs after **all** CLI assets **and** `SHA256SUMS(.sig)`:\n\n- `ci.yml` `binaries` (\"Upload archive to GitHub Release\"): creates the draft via `scripts/release_lazy_draft.sh`, uploads its `fa-*.tar.gz/zip`, and **no longer publishes**.\n- `ci.yml` `release-provenance` (\"Upload provenance assets\"): after uploading `SHA256SUMS` + `SHA256SUMS.sig` it runs `gh release edit --draft=false --latest` — the single publish point of the train. Its `needs: [binaries, web-spa]` gating is unchanged, so the flip fires only after the full matrix + web-spa; a red provenance leaves the previous release as `latest` (the failure degradation this thread asked for).\n- `build-macos.yml` `build-macos-cli`: the `--draft=false --latest` edit is removed entirely — provenance owns the flip (the \"or drop its `--latest`\" arm of the suggested fix). The leg keeps the draft-first lazy create + upload.\n\nPinned by `test/release_empty_latest_guard_test.dart`:\n\n- `publish (--draft=false) happens ONLY in steps that upload SHA256SUMS` — any run block carrying `--draft=false` must carry `SHA256SUMS` (comments stripped), across `ci.yml` + `build-macos.yml`.\n- `release-provenance owns the publish flip after signing` — asserts the `needs` set and the flip riding the \"Upload provenance assets\" step.\n- `web-spa / extension uploads never publish the release` still holds (both now route through the draft-only helper)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:617dc9ec",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — publish+latest on this path is now servability-gated\n\nBoth violations are closed in `scripts/release_attach_or_create.sh`:\n\n1. **Create path (`:107`)**: the create is **draft-only** — `gh release create \"$tag\" --draft --title --notes-file <assets>` with **no `--latest`**. A leg that arrives first (the exact v1.0.629/630 forensics flip) now leaves a marker-stamped draft for the tag-run binaries job to fill and `release-provenance` to publish — it can never publish `latest` with AAB/IPA/DMG-only assets.\n2. **Attach path (`upload_all`)**: assets are uploaded unconditionally, but the `--draft=false --latest` edit now fires **only when the release's actual asset list already carries `SHA256SUMS`/`SHA256SUMS.sig`** (`release_serves_fa_update` — the exact class `fa update` hard-fails without, `bin/self_manage.dart`). That residual branch is the recovery path (provenance landed but its own flip failed); every other case logs \"not yet servable\" and leaves the publish to the provenance step.\n\nBeyond the static-lint minimum, the gate is dynamic: it checks the release's served asset list, so a CLI-asset-less or provenance-less release can never be flipped from this script on any train.\n\nPinned by:\n\n- `test/release_empty_latest_guard_test.dart` — `attach-or-create: create is draft-only, the attach publish is SHA256SUMS-gated` (static) plus behavioral `attach path: release without SHA256SUMS → upload only` / `release already carrying SHA256SUMS → recovery publish + latest` / `create path: draft-only create, ownership marker, never --latest`.\n- `test/release_hygiene_test.dart` — AC4 group rewritten to the provenance-owned contract (the previous \"attach must end published+latest\" invariant this thread flagged as the bug is gone)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:87222305",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — curated notes restored on the new create owner\n\nThe curated-notes contract stands; the downgrade was not intended. Per the first suggested arm, the binaries lazy create now builds its body from `release_notes.sh` instead of `--generate-notes`:\n\n- New `scripts/release_lazy_draft.sh` (the single lazy-create owner, called by `ci.yml` binaries, `ci.yml` web-spa, `build-macos.yml` build-macos-cli/build-extension): creates the release as a **draft** with `--notes-file` built from `release_notes.sh <tag>` — curated `## <version>` section → curated `## Unreleased` → conventional commits, with a minimal fallback (`Release <tag> — see the CHANGELOG.`) when the generator fails. No `--generate-notes` remains in the train.\n- The determinism half: since every creator uses the same `release_notes.sh` output for the same tag, the first-creator-wins race can no longer flip between curated and auto-generated bodies — all racers produce the same curated body.\n- `scripts/auto_release.sh` header updated (it no longer claims `--generate-notes` owns the notes), and the AGENTS.md \"Commits and releases\" paragraph now documents the implemented flow (tag-only cut → draft-first binaries create with curated notes → provenance publish).\n\nPinned by `test/release_empty_latest_guard_test.dart`:\n\n- `every lazy create routes through release_lazy_draft.sh (curated notes + ownership marker)` — asserts the workflows carry no inline creates, the helper invokes `release_notes.sh`, and never `--generate-notes`/`--latest`.\n- Behavioral `release_lazy_draft.sh: draft-first, curated notes + owner marker, never latest` — a fixture CHANGELOG's curated section lands verbatim in the captured `--notes-file` body.\n\n(The binaries/web-spa checkouts got the same blobless full fetch `release-macos` already used so the conventional-commit fallback reads real history — gh-1477 pattern.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:2b161d00",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: `latest` still moves before the release can serve `fa update` — the provenance gap recreates the incident window**\n\nThis line publishes + flags `latest` as soon as the **first** binaries matrix leg uploads. But `fa update` does more than download the archive — it hard-fails without signed checksums:\n\n- `bin/self_manage.dart:320` — `if (sums.statusCode != 200 || sig.statusCode != 200) return false;` (any missing provenance asset ⇒ verification fails)\n- `bin/self_manage.dart:484` — `_warn('update aborted: release provenance check failed for $archive')` → exit 1\n\n`SHA256SUMS(.sig)` is uploaded by `release-provenance`, which is gated on the **whole** matrix plus web-spa (`ci.yml:4268` — `needs: [binaries, web-spa]`). So on every train there is a window — from this first `--draft=false --latest` until provenance lands, realistically 10–30+ min — where `latest` points at a release whose `fa update` **aborts on the provenance check for every platform**, even those whose asset is already present. Same for `build-macos.yml:1059` (CLI matrix leg). The PR note \"between first and last matrix upload it can be briefly partial (minutes)\" underestimates this: the binding constraint is the provenance upload, not the last matrix leg, and it breaks all platforms, not just un-uploaded ones.\n\nThe new REG test (\"publish happens only in steps that upload a CLI asset\") passes while the user-visible breakage — the exact ticket symptom — persists.\n\n**Suggested fix:** keep the release in DRAFT through the binaries uploads and move the publish to the one step that runs after *all* CLI assets *and* `SHA256SUMS` — `release-provenance`'s \"Upload provenance assets\" step (`ci.yml:4325`, `if` already covers both the tag-push and release arms): upload checksums, then `gh release edit --draft=false --latest`. Failure degradation is safe: a red provenance leaves the previous release as `latest` instead of stranding a provenance-less one. Same change for `build-macos.yml:1059` (or drop its `--latest` and let provenance own the flip)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:d645d7e9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Duplicate of thread 1 (same finding, re-raised by the re-review on the unchanged head) — same fix, see the commit referenced there.\n\n## Fixed — `latest` is now provenance-owned\n\nThe publish flip moved out of every upload step and into the one step that runs after **all** CLI assets **and** `SHA256SUMS(.sig)`:\n\n- `ci.yml` `binaries` (\"Upload archive to GitHub Release\"): creates the draft via `scripts/release_lazy_draft.sh`, uploads its `fa-*.tar.gz/zip`, and **no longer publishes**.\n- `ci.yml` `release-provenance` (\"Upload provenance assets\"): after uploading `SHA256SUMS` + `SHA256SUMS.sig` it runs `gh release edit --draft=false --latest` — the single publish point of the train. Its `needs: [binaries, web-spa]` gating is unchanged, so the flip fires only after the full matrix + web-spa; a red provenance leaves the previous release as `latest` (the failure degradation this thread asked for).\n- `build-macos.yml` `build-macos-cli`: the `--draft=false --latest` edit is removed entirely — provenance owns the flip (the \"or drop its `--latest`\" arm of the suggested fix). The leg keeps the draft-first lazy create + upload.\n\nPinned by `test/release_empty_latest_guard_test.dart`:\n\n- `publish (--draft=false) happens ONLY in steps that upload SHA256SUMS` — any run block carrying `--draft=false` must carry `SHA256SUMS` (comments stripped), across `ci.yml` + `build-macos.yml`.\n- `release-provenance owns the publish flip after signing` — asserts the `needs` set and the flip riding the \"Upload provenance assets\" step.\n- `web-spa / extension uploads never publish the release` still holds (both now route through the draft-only helper)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:898b7642",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Duplicate of thread 2 (same finding, re-raised by the re-review on the unchanged head) — same fix, see the commit referenced there.\n\n## Fixed — publish+latest on this path is now servability-gated\n\nBoth violations are closed in `scripts/release_attach_or_create.sh`:\n\n1. **Create path (`:107`)**: the create is **draft-only** — `gh release create \"$tag\" --draft --title --notes-file <assets>` with **no `--latest`**. A leg that arrives first (the exact v1.0.629/630 forensics flip) now leaves a marker-stamped draft for the tag-run binaries job to fill and `release-provenance` to publish — it can never publish `latest` with AAB/IPA/DMG-only assets.\n2. **Attach path (`upload_all`)**: assets are uploaded unconditionally, but the `--draft=false --latest` edit now fires **only when the release's actual asset list already carries `SHA256SUMS`/`SHA256SUMS.sig`** (`release_serves_fa_update` — the exact class `fa update` hard-fails without, `bin/self_manage.dart`). That residual branch is the recovery path (provenance landed but its own flip failed); every other case logs \"not yet servable\" and leaves the publish to the provenance step.\n\nBeyond the static-lint minimum, the gate is dynamic: it checks the release's served asset list, so a CLI-asset-less or provenance-less release can never be flipped from this script on any train.\n\nPinned by:\n\n- `test/release_empty_latest_guard_test.dart` — `attach-or-create: create is draft-only, the attach publish is SHA256SUMS-gated` (static) plus behavioral `attach path: release without SHA256SUMS → upload only` / `release already carrying SHA256SUMS → recovery publish + latest` / `create path: draft-only create, ownership marker, never --latest`.\n- `test/release_hygiene_test.dart` — AC4 group rewritten to the provenance-owned contract (the previous \"attach must end published+latest\" invariant this thread flagged as the bug is gone)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:bee3a2d2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Duplicate of thread 3 (same finding, re-raised by the re-review on the unchanged head) — same fix, see the commit referenced there.\n\n## Fixed — curated notes restored on the new create owner\n\nThe curated-notes contract stands; the downgrade was not intended. Per the first suggested arm, the binaries lazy create now builds its body from `release_notes.sh` instead of `--generate-notes`:\n\n- New `scripts/release_lazy_draft.sh` (the single lazy-create owner, called by `ci.yml` binaries, `ci.yml` web-spa, `build-macos.yml` build-macos-cli/build-extension): creates the release as a **draft** with `--notes-file` built from `release_notes.sh <tag>` — curated `## <version>` section → curated `## Unreleased` → conventional commits, with a minimal fallback (`Release <tag> — see the CHANGELOG.`) when the generator fails. No `--generate-notes` remains in the train.\n- The determinism half: since every creator uses the same `release_notes.sh` output for the same tag, the first-creator-wins race can no longer flip between curated and auto-generated bodies — all racers produce the same curated body.\n- `scripts/auto_release.sh` header updated (it no longer claims `--generate-notes` owns the notes), and the AGENTS.md \"Commits and releases\" paragraph now documents the implemented flow (tag-only cut → draft-first binaries create with curated notes → provenance publish).\n\nPinned by `test/release_empty_latest_guard_test.dart`:\n\n- `every lazy create routes through release_lazy_draft.sh (curated notes + ownership marker)` — asserts the workflows carry no inline creates, the helper invokes `release_notes.sh`, and never `--generate-notes`/`--latest`.\n- Behavioral `release_lazy_draft.sh: draft-first, curated notes + owner marker, never latest` — a fixture CHANGELOG's curated section lands verbatim in the captured `--notes-file` body.\n\n(The binaries/web-spa checkouts got the same blobless full fetch `release-macos` already used so the conventional-commit fallback reads real history — gh-1477 pattern.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:20b69ca2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "> Duplicate of thread 4 (same finding, re-raised by the re-review on the unchanged head) — same fix, see the commit referenced there.\n\n## Fixed — the lazy drafts are now guard-visible, and ci.yml's got guards\n\nThe suggested mechanism is implemented, with one correctness hardening for matrix legs:\n\n- `scripts/release_lazy_draft.sh` stamps the draft body with `<!-- release-draft-owner: run/${GITHUB_RUN_ID}/job/${GITHUB_JOB} -->` (same marker class the attach path uses), so `release_draft_guard.sh`'s ownership check can match drafts the lazy creates made. All four lazy-create sites (`ci.yml` binaries, `ci.yml` web-spa, `build-macos.yml` build-macos-cli + build-extension) route through it — no inline `--generate-notes` create remains.\n- **Leg-suffixed identities for matrices**: `binaries` (5 legs) and `build-macos-cli` (2 parallel arch legs) share `GITHUB_JOB`, so a plain run+job marker would let one failed leg's guard delete a **sibling leg's mid-upload draft** — the exact destruction the #294 ownership scoping prevents. Those steps stamp/verify `RELEASE_DRAFT_IDENTITY: run/<run_id>/job/<job>-<leg>` (e.g. `binaries-linux-x64`, `build-macos-cli-arm64`); `release_draft_guard.sh` honors the same env (validated against the marker regex, so a malformed identity fails loud instead of orphaning the draft forever). Single-job steps (web-spa, build-extension) keep the default run+job identity.\n- **`ci.yml` `binaries` now has a guard step** (`if: always() && job.status != 'success'`, leg-scoped) — the \"no guard step at all\" half of this thread. `web-spa` deliberately has none: it is `continue-on-error`, so on failure the train (binaries → provenance) continues and must find the draft alive; a genuinely orphaned GITHUB_TOKEN-authored draft is reclaimed by the 24h sweeper. Both facts are documented in the step and pinned by lint.\n- The AC1 lint (`test/release_hygiene_test.dart`) now also scans `ci.yml`, recognizes `release_lazy_draft.sh` callers as draft-capable, and exempts `continue-on-error` jobs.\n\nPinned by `test/release_empty_latest_guard_test.dart`:\n\n- `matrix lazy creates carry a leg-suffixed draft identity (sibling-safe guard)` — create + guard steps must both carry the leg-suffixed `RELEASE_DRAFT_IDENTITY`.\n- Behavioral `draft guard: RELEASE_DRAFT_IDENTITY match deletes the leg-stamped draft` / `sibling leg identity never deletes (refuses, exit 0)`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:f292701e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: CI is red on this head — the rework breached the repo's 2800-line LOC ceiling (`test/release_hygiene_test.dart` = 2817)**\n\nBoth failed checks on `0e4b12af` trace to one root cause introduced by this PR:\n\n- **CRAP + duplication** — `[FAIL] loc: 1/979 files over their limit — test/release_hygiene_test.dart: 2817 lines > max 280` (exit 2, reproduced locally byte-identical with `dart pub global run crap4dart check --config crap4dart.loc-scope.yaml --only loc`)\n- **Quality gate** — failed on its `guards` leg, which IS this same job (`ci.yml:1689` — job id `guards`, `name: CRAP + duplication`); same root cause, no second defect.\n\nThe ceiling is a ratchet, not a baseline: `crap4dart.loc-scope.yaml:45` — `max_lines: 280`, \"max_lines only DOWN\", deliberately **no baseline** (\"nothing exceeds 2800 today, and the ceiling itself is the point\"). The rework grew the file past it (+285 lines of new AC4/gh-1801 groups), so validation on the head is red 1/3 and the merge gate is closed.\n\nEverything else in this rework verified green on this head: 193/193 tests across the 9 release/CI suites, `dart analyze` clean, `dart format` clean, and all four review findings verified fixed in the tree.\n\n**Fix:** shrink the file back under 280 — the clean cut is to move the gh-1801 groups (the `gh-1801: no release may be published without assets` + rework behavioral groups, ~700 lines) into their own file (e.g. keep `release_empty_latest_guard_test.dart` as that home and slim the hygiene file back to its pre-rework scope), or trim the duplicated fixture helpers into a shared test helper. Any split must keep every REG pin green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:2cd20133",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the PR description's \"Fix\"/\"Notes\" sections now describe the pre-rework design — update them to the implemented contract**\n\nTwo claims in the PR description are stale after the rework commits (`608292af57`, `0414e25572`):\n\n1. *\"`ci.yml` binaries / `build-macos.yml` CLI matrix: draft-first create, `--draft=false --latest` only after the `fa-*.tar.gz`/`.zip` upload\"* — no longer true: the binaries and macOS CLI legs only create the draft (`scripts/release_lazy_draft.sh`) and upload; **nobody publishes from an upload step**. The single publish point is `release-provenance`'s \"Upload provenance assets\" step (`ci.yml:4367`), with the SHA256SUMS-gated recovery branch in `release_attach_or_create.sh:59`.\n2. *\"The `release: published` twin run (gh-1625 dedupe) now fires from the binaries publish\"* — the binaries job publishes nothing and rides `secrets.GITHUB_TOKEN` (whose events fire no workflow runs); on cron trains no twin fires at all. The dedupe machinery is unaffected, but the note misleads a reader auditing the train.\n\nThe description is the first thing the rework/audit legs and humans read — a stale \"Fix\" section caused this very rework round to be re-verified three times. Rewrite both bullets to the provenance-owned flow (AGENTS.md \"Commits and releases\" already documents it correctly as of this PR)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:77cd3b09",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The draft-first rework is the right shape and the regression tests are real (verified: guard suite 12 ✅, hygiene 54 ✅, neighbor suites 28 ✅, analyzer clean), but `latest` still moves before a release can serve `fa update`: the first `--draft=false --latest` fires before `SHA256SUMS` exists (`release-provenance` needs the full matrix + web-spa, `ci.yml:4268`), and `release_attach_or_create.sh` can still publish a CLI-asset-less release as `latest` on daily trains.\n\n**Key Issues**:\n- 🚨 BLOCKING ×2 — provenance gap after first-leg publish (`ci.yml:4136`, `build-macos.yml:1059`; `fa update` aborts when `SHA256SUMS` 404s, `bin/self_manage.dart:320,484`) · attach-or-create publishes non-CLI-only releases as `latest` (`release_attach_or_create.sh:52,107-111`)\n- ⚠️ IMPORTANT ×2 — curated CHANGELOG notes no longer reach the release body (binaries create uses `--generate-notes`; racy vs. release-macos/mobile) · lazy drafts carry no `release-draft-owner` marker, so the draft lifecycle guard can never reclaim them (ci.yml drafts have no guard at all)\n- 💡 SUGGESTION ×3 — `GH_TOKEN` on the \"Cut release tag\" step is now inert and the \"release twin fires from the binaries publish\" claim in the PR description is wrong (GITHUB_TOKEN events fire no runs) · AGENTS.md \"Commits and releases\" section now contradicts the implemented no-create contract · dead `for` loop + single-element workflow list in `release_hygiene_test.dart`\n\n**Next Steps**:\n1. Move the `--draft=false --latest` flip to `release-provenance` after the `SHA256SUMS` upload (binaries/macos legs keep the release draft); gate `release_attach_or_create.sh` publish+latest on a `fa update`-serving asset being present\n2. Restore the curated notes body on the new create owner (or confirm the downgrade)\n3. Stamp `release-draft-owner` into the lazy creates so the existing guard works\n4. Fix the AGENTS.md release paragraph + PR-description twin claim while touching this area"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:e34e06b6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (re-review: diff unchanged since the previous pass; all 4 threads still open, none addressed by new commits)\n\n**Summary**: The draft-first rework is the right shape and the regression tests are real (re-verified on this head: guard suite 12 ✅ + hygiene/neighbor suites 82 ✅, analyzer clean), but `latest` still moves before a release can serve `fa update`: the first `--draft=false --latest` fires before `SHA256SUMS` exists (`release-provenance` needs the full matrix + web-spa, `ci.yml:4268`), and `release_attach_or_create.sh` can still publish a CLI-asset-less release as `latest` on daily trains.\n\n**Key Issues**:\n- 🚨 BLOCKING ×2 — provenance gap after first-leg publish (`ci.yml:4136`, `build-macos.yml:1059`; `fa update` aborts when `SHA256SUMS` 404s, `bin/self_manage.dart:320,489`) · attach-or-create publishes non-CLI-only releases as `latest` (`release_attach_or_create.sh:52,107-111`)\n- ⚠️ IMPORTANT ×2 — curated CHANGELOG notes no longer reach the release body (binaries create uses `--generate-notes`; racy vs. release-macos/mobile) · lazy drafts carry no `release-draft-owner` marker, so the draft lifecycle guard can never reclaim them (ci.yml drafts have no guard at all)\n- 💡 SUGGESTION ×3 — `GH_TOKEN` on the \"Cut release tag\" step is now inert and the \"release twin fires from the binaries publish\" claim in the PR description is wrong (GITHUB_TOKEN events fire no runs) · AGENTS.md \"Commits and releases\" section now contradicts the implemented no-create contract · dead `for` loop + single-element workflow list in `release_hygiene_test.dart`\n\n**Next Steps**:\n1. Move the `--draft=false --latest` flip to `release-provenance` after the `SHA256SUMS` upload (binaries/macos legs keep the release draft); gate `release_attach_or_create.sh` publish+latest on a `fa update`-serving asset being present\n2. Restore the curated notes body on the new create owner (or confirm the downgrade)\n3. Stamp `release-draft-owner` into the lazy creates so the existing guard works\n4. Fix the AGENTS.md release paragraph + PR-description twin claim while touching this area"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:9a1bae91",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 008126aef4ad0b394c5acdad4e2058e751c11e35 — stale base at 2026-10-23T11:56:23.056Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:1a5ad755",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-1801\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:e72aed1c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 0e4b12af7677baa3c954c6f55d4fe178ca76177e — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:b32ccc45",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (re-review after rework: 1 blocking = red CI)\n\n**Summary**: All four review findings are verified fixed in the tree at `0e4b12af` (publish is provenance-owned with a SHA256SUMS-gated recovery branch; leg creates are draft-only; curated notes via `release_lazy_draft.sh`; guard-visible ownership markers with leg-suffixed identities — re-verified: 193/193 tests over the 9 release/CI suites, analyzer + format clean), but the head is RED: the rework grew `test/release_hygiene_test.dart` to 2817 lines, over the repo's hard 2800 LOC ratchet — failing both the `CRAP + duplication` check and the Quality gate's `guards` leg (same job, one root cause; reproduced locally).\n\n**Key Issues**:\n- 🚨 BLOCKING ×1 (two failed checks, one root cause) — `test/release_hygiene_test.dart: 2817 lines > max 280` (`crap4dart.loc-scope.yaml:45`, no-baseline ratchet); split/trim the file back under the ceiling\n- 💡 SUGGESTION ×1 — the PR description's Fix/Notes still describe the pre-rework design (binaries publishing; twin-run claim); rewrite to the provenance-owned flow\n- ✅ 8/8 review threads resolved and their fixes confirmed in the tree this pass (`resolvedThreadIds` set)\n\n**Next Steps**:\n1. Shrink `test/release_hygiene_test.dart` under 280 lines (move the gh-1801 groups to their own file or extract shared fixture helpers) so the LOC ratchet passes and the head goes green\n2. Update the PR description's Fix/Notes bullets to the implemented provenance-owned release flow\n3. Re-validate — everything else is already merge-ready"
+    }
+  ]
+}
