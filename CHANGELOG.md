@@ -13,6 +13,22 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1814): the desktop DMG lane ADOPTS the SwiftPM lane — Flutter
+  3.47.7 removed the FLUTTER_SWIFT_PACKAGE_MANAGER disable knob
+  (flutter/flutter#193978), so the gh-180 pure-CocoaPods pin became a no-op
+  and the min-platform gate (which forbade any SwiftPM state) failed both
+  DMG legs on every pinned-3.47.7 run (39991663029, 40022900373); the
+  #1813 escape (pin 3.47.4) is unreachable on the ~60kB/s runner link.
+  `scripts/assert_macos_min_platform.sh` now ASSERTS the SPM lane instead:
+  SwiftPM state expected after `flutter build macos --config-only`,
+  generated package floor ≥ the app floor (the silent bump must not skip —
+  the original gh-180 killer), no SwiftPM product above the app minimum,
+  vendored inappwebview manifest floored at 14.0 if it ever reappears.
+  Floors were audited and need no raising: Runner pbxproj 3×14.0, Podfile
+  `:osx, '14.0'`, generated floor 14.0 on 3.47.7, vendored podspec 14.0
+  (its Package.swift stays deleted — the plugin rides the CocoaPods half of
+  the hybrid lane via Podfile.lock). The dead env pin left the build-macos
+  job env; the SDK pin reverts #1813 back to 3.47.7.
 - fix(gh-1805): modifier chords no longer type their base letter into the
   composer while the slash menu is open — the vendored dart_tui decoder
   puts the base letter into the keystroke's `text` for control bytes
