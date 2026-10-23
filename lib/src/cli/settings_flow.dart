@@ -2243,6 +2243,26 @@ extension SettingsFlow on AgentCli {
     }
   }
 
+  /// Reads the config file [path] for a surgical yaml edit: the current
+  /// source text — an empty string when the file does not exist yet — or
+  /// null when the read failed (already reported "not saved"; the caller
+  /// writes nothing). Split out of [_upsertConfigYaml] to stay under the
+  /// repo's CRAP ratchet (crap4dart threshold 12 — the gh-1787 parse
+  /// guard pushed the body over it), the established
+  /// split-into-a-helper pattern of this library.
+  Future<String?> _readConfigSource(String path) async {
+    final read = await _env.readTextFile(path);
+    switch (read) {
+      case Ok(:final value):
+        return value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        return '';
+      case Err(:final error):
+        io.writeln('cannot read $path: $error — not saved');
+        return null;
+    }
+  }
+
   /// Upserts [segments] → [value] in the project or user config file,
   /// validating the edited section with [validate] (the real parser)
   /// BEFORE the write — and, when [validateDoc] is given, the WHOLE
@@ -2264,28 +2284,29 @@ extension SettingsFlow on AgentCli {
     final path = projectScope
         ? '${_env.cwd}/.fah/config.yaml'
         : _userConfigPath()!;
-    final read = await _env.readTextFile(path);
-    final String source;
-    switch (read) {
-      case Ok(:final value):
-        source = value;
-      case Err(:final error) when error.code == FileErrorCode.notFound:
-        source = '';
-      case Err(:final error):
-        io.writeln('cannot read $path: $error — not saved');
-        return false;
-    }
+    final source = await _readConfigSource(path);
+    if (source == null) return false;
     final edited = upsertYamlPath(
       source,
       segments,
       configLeafLines(value, depth: segments.length - 1),
     );
-    // Never persist a file the next boot would reject.
-    final doc = loadYaml(edited);
-    final section = doc is YamlMap ? doc[segments.first] : null;
+    // Never persist a file the next boot would reject. The PARSE sits
+    // inside the guard too (gh-1787): a malformed edit is a "not saved"
+    // print, never a throw escaping up the submit path as a raw stack
+    // (the incident: a duplicated-key chain threw YamlException here,
+    // before the write, and crashed the TUI submit boundary).
+    final Object? parsed;
+    try {
+      parsed = loadYaml(edited);
+    } on Object catch (error) {
+      io.writeln('not saved: $error');
+      return false;
+    }
+    final section = parsed is YamlMap ? parsed[segments.first] : null;
     try {
       validate?.call(section);
-      if (doc is YamlMap) validateDoc?.call(doc);
+      if (parsed is YamlMap) validateDoc?.call(parsed);
     } on Object catch (error) {
       io.writeln('not saved: $error');
       return false;
@@ -2571,9 +2592,17 @@ extension SettingsFlow on AgentCli {
   McpManager? get mcpManagerForTest => _mcp.manager;
 
   /// A settings-hub selection launches the same flow its dedicated slash
-  /// command would open.
+  /// command would open — CONTAINED like the composer submit boundary
+  /// (gh-1787 rework): the hub is the flows' primary entry, its dispatch
+  /// future is consumed by dart_tui's `runCmd` (a raw stack on stderr),
+  /// so a throwing flow renders the clean one-line error panel here.
   Future<void> _tuiPickSetting(String key) async {
-    await _settingsPickerHandlers[key]?.call();
+    final handler = _settingsPickerHandlers[key];
+    if (handler == null) return;
+    await runContainedSubmit(
+      handler,
+      (error) => io.writeln(tuiError(submitErrorPanelLine(error))),
+    );
   }
 
   /// Settings-hub key → the flow its dedicated slash command would open.
