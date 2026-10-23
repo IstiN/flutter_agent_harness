@@ -20,12 +20,22 @@ extension AgentCliPickers on AgentCli {
   );
 
   /// Routes a generic TUI picker selection (sessions/mode/approval) to the
-  /// same handlers the typed slash command would use.
+  /// same handlers the typed slash command would use — CONTAINED like the
+  /// composer submit boundary (gh-1787 rework): the settings hub reachable
+  /// from here launches the very same flows, this future is consumed by
+  /// dart_tui's `runCmd` (which prints `Caught command exception` plus the
+  /// full stack to stderr), so a throwing handler renders the clean
+  /// one-line error panel instead.
   Future<void> _tuiPickerSelected(String pickerId, String key) async {
     // Wizard pickers (a guided flow's multiple-choice questions) complete
     // their pending answer instead of the command handlers.
     if (_completeWizardPicker(pickerId, key)) return;
-    await _tuiPickerHandlers[pickerId]?.call(key);
+    final handler = _tuiPickerHandlers[pickerId];
+    if (handler == null) return;
+    await runContainedSubmit(
+      () => handler(key),
+      (error) => io.writeln(tuiError(submitErrorPanelLine(error))),
+    );
   }
 
   /// Completes the pending wizard-picker answer for [pickerId] (null [key]

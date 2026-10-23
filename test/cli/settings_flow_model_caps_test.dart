@@ -209,6 +209,56 @@ void main() {
     },
   );
 
+  test('the pre-write parse guard refuses a malformed edited doc', () async {
+    // A file already carrying a duplicate mapping key: the upsert edit
+    // itself succeeds, but the edited text must not be persisted — the
+    // PARSE sits inside the guard (gh-1787) and the write is refused
+    // with a print, never a throw up the flow.
+    const duplicatedSeed = '''
+provider: openrouter
+model: m1
+note: first
+note: second
+''';
+    await env.writeFile('/home/u/.fah/config.yaml', duplicatedSeed);
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call, homeDir: '/home/u');
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('1'); // pin or edit an override
+    await waitForIt(
+      () => io.out.toString().contains('model capabilities — provider'),
+    );
+    io.sendLine('${providerRow('zai')}');
+    await waitForIt(() => io.out.toString().contains('model id (empty keeps'));
+    io.sendLine('glm-5.3-flash');
+    await waitForIt(
+      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
+    );
+    io.sendLine('2'); // max output tokens
+    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    io.sendLine('5'); // the 65536 preset
+    await waitForIt(
+      () => io.out.toString().contains('Duplicate mapping key'),
+      reason: 'the parse guard names the yaml error',
+    );
+    await waitForIt(() => io.out.toString().contains('not saved:'));
+    io.sendLine('5'); // done (caps loop — no entry pinned, Done is row 5)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('2'); // done (flow menu)
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
+    // AC4: the malformed file is untouched — nothing was persisted.
+    final written = (await env.readTextFile(
+      '/home/u/.fah/config.yaml',
+    )).valueOrNull;
+    expect(written, duplicatedSeed);
+  });
+
   test('removing the last override drops the emptied yaml blocks', () async {
     const seed = '''
 provider: openrouter
@@ -773,6 +823,81 @@ models:
     );
     io.sendLine('/exit');
     await run;
+  });
+
+  test('gh-1787 repro: maxTokens 65536 lands beside a host-rendered quoted '
+      'contextWindow pin (the copilot incident)', () async {
+    // The incident's on-disk state: the contextWindow write landed
+    // first and the host's whole-file persist re-rendered the overrides
+    // block with jsonEncode'd keys (ModelCapabilityOverrides.toYaml).
+    // The SECOND write (max output 65536) used to miss the quoted keys,
+    // insert a duplicate bare chain, and die on the pre-write loadYaml
+    // with `YamlException: Duplicate mapping key` — the raw stack trace
+    // the transcript showed, with the maxTokens write never landing.
+    const seed = '''
+provider: copilot
+model: gemini-4-argon
+models:
+  overrides:
+    "copilot":
+      "gemini-4-argon":
+        contextWindow: 204800
+''';
+    await env.writeFile('/home/u/.fah/config.yaml', seed);
+    final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      homeDir: '/home/u',
+      modelsConfig: ModelsConfig.fromYaml((loadYaml(seed) as Map)['models']),
+      model: const Model(
+        id: 'gemini-4-argon',
+        api: 'copilot',
+        provider: 'copilot',
+        baseUrl: 'https://api.githubcopilot.com/',
+        contextWindow: 204800,
+        maxTokens: 16384,
+      ),
+    );
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('2'); // the copilot/gemini-4-argon entry row
+    await waitForIt(
+      () => io.out.toString().contains('capabilities — copilot/gemini-4-argon'),
+    );
+    io.sendLine('2'); // max output tokens
+    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    io.sendLine('5'); // the 65536 preset
+    await waitForIt(
+      () => io.out.toString().contains(
+        'models.overrides.copilot.gemini-4-argon.maxTokens = 65536',
+      ),
+    );
+    io.sendLine('6'); // done (caps loop)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('3'); // done (flow menu)
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
+    // AC1: the maxTokens write LANDED beside the surviving pin — the
+    // file parses as ONE entry carrying BOTH fields.
+    final written = (await env.readTextFile(
+      '/home/u/.fah/config.yaml',
+    )).valueOrNull;
+    expect(written, isNotNull);
+    final doc = loadYaml(written!) as YamlMap;
+    final overrides = (doc['models'] as YamlMap)['overrides'] as YamlMap;
+    expect(overrides.length, 1);
+    final caps = (overrides['copilot'] as YamlMap)['gemini-4-argon'] as YamlMap;
+    expect(caps['maxTokens'], 65536);
+    expect(caps['contextWindow'], 204800);
+    // The live layer picked the write up (E6 reload-after-write).
+    expect(
+      modelCapabilityOverrides?.lookup('copilot', 'gemini-4-argon')?.maxTokens,
+      65536,
+    );
   });
 
   test(
