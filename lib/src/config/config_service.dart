@@ -888,10 +888,7 @@ String _insertChain(
   List<String> leafLines,
   bool hadTrailingNewline,
 ) {
-  final insertAt = depth == 0 ? lines.length : cursor;
-  if (depth == 0 && lines.isNotEmpty && lines.last.trim().isNotEmpty) {
-    lines.add('');
-  }
+  final insertAt = _topLevelInsertAt(lines, depth, cursor);
   final childSpelling = depth > 0
       ? _childKeySpelling(lines, cursor - 1, depth)
       : _bareKey;
@@ -915,6 +912,19 @@ String _insertChain(
     }
   }
   return _join(lines, hadTrailingNewline);
+}
+
+/// The index a missing-chain insert starts at: the top of the parent's
+/// block for a nested level; EOF for a new top-level section, after
+/// appending the blank separator line that keeps it off the last entry.
+/// Split out of [_insertChain] to keep it under the repo's CRAP ratchet
+/// (crap4dart threshold 12 — the method has no headroom at CC 12).
+int _topLevelInsertAt(List<String> lines, int depth, int cursor) {
+  if (depth > 0) return cursor;
+  if (lines.isNotEmpty && lines.last.trim().isNotEmpty) {
+    lines.add('');
+  }
+  return lines.length;
 }
 
 /// The bare spelling (the identity) — the legacy shape for a block whose
