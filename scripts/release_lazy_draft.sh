@@ -54,9 +54,12 @@ fi
 
 # Body: curated notes (CHANGELOG section / Unreleased / conventional
 # commits) plus the ownership marker the guard verifies before deleting.
+# stderr is NOT swallowed: release_notes.sh's ::error gates (e.g. the
+# duplicate-'## Unreleased' curation guard) must stay visible even when
+# the minimal fallback below keeps the train moving.
 notes_file="$(mktemp "${TMPDIR:-/tmp}/release-lazy-notes.XXXXXX")"
 trap 'rm -f "$notes_file"' EXIT
-if ! bash "$(dirname "$0")/release_notes.sh" "$tag" >"$notes_file" 2>/dev/null ||
+if ! bash "$(dirname "$0")/release_notes.sh" "$tag" >"$notes_file" ||
   [ ! -s "$notes_file" ]; then
   printf 'Release %s — see the CHANGELOG.\n' "$tag" >"$notes_file"
 fi
