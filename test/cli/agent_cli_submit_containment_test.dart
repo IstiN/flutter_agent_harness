@@ -248,6 +248,35 @@ void main() {
       expect(line, isNot(contains('#1')));
       expect(line, isNot(contains('.dart:')));
     });
+
+    test(
+      'the zone-dump header never rides the panel — the cause line does',
+      () {
+        // The fixture's first non-empty line is the bare zone-print
+        // header, which names nothing; the CAUSE sits on the next line.
+        final line = submitErrorPanelLine(_incidentStackFixture);
+        expect(line, 'StateError: host persist failed');
+        expect(line, isNot(contains('Unhandled exception')));
+      },
+    );
+
+    test('a leading header behind blank space still resolves to the cause',
+        () {
+      final line = submitErrorPanelLine(
+        '\n  Unhandled exception:  \nStateError: boot failed\n#1 frame',
+      );
+      expect(line, 'StateError: boot failed');
+    });
+
+    test('a body that merely mentions the header keeps its message', () {
+      // Only a LEADING line that IS the literal is the zone header; an
+      // error message containing the words is content, not boilerplate.
+      final line = submitErrorPanelLine(
+        StateError('sub-task failed with: Unhandled exception: rerun it'),
+      );
+      expect(line, contains('rerun it'));
+      expect(line, contains('Unhandled exception'));
+    });
   });
 
   group('the live TUI submit boundary (IT-2/IT-3, REG-1)', () {
@@ -266,12 +295,9 @@ void main() {
     tearDown(() => io.close());
 
     /// Boots the real CLI in TUI mode headlessly over the incident's
-    /// config, and drives the bare `/model-edit` flow to the 65536 max
-    /// output preset through the real submit boundary. Returns
-    /// `(submit, cli)`: the still-running flow's submit future (await it
-    /// once the forced failure has been contained) and the booted cli
-    /// (drive further submits; quit with [quitTui]).
-    Future<(Future<void> submit, AgentCli cli)> openIncidentFlow({
+    /// config. Returns the booted cli (drive submits; quit with
+    /// [quitTui]).
+    Future<AgentCli> bootIncidentCli({
       Future<void> Function(Model model)? onModelChanged,
       _ThrowingWriteEnv? throwingEnv,
     }) async {
@@ -305,7 +331,22 @@ void main() {
       // surface as this test's timeout, not a dangling zone error.
       unawaited(run.catchError((Object _) {}));
       await waitForIt(() => frames.text.contains('\x1b[?1049h'));
+      return cli;
+    }
 
+    /// Boots the CLI and drives the bare `/model-edit` flow to the 65536
+    /// max output preset through the real submit boundary. Returns
+    /// `(submit, cli)`: the still-running flow's submit future (await it
+    /// once the forced failure has been contained) and the booted cli
+    /// (drive further submits; quit with [quitTui]).
+    Future<(Future<void> submit, AgentCli cli)> openIncidentFlow({
+      Future<void> Function(Model model)? onModelChanged,
+      _ThrowingWriteEnv? throwingEnv,
+    }) async {
+      final cli = await bootIncidentCli(
+        onModelChanged: onModelChanged,
+        throwingEnv: throwingEnv,
+      );
       // Bare /model-edit in TUI mode opens the caps flow pre-focused on
       // the ACTIVE model — the incident's exact entry.
       final submit = cli.tuiSubmitForTest('/model-edit', const []);

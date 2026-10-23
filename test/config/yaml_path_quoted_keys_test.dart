@@ -27,6 +27,22 @@ models:
         contextWindow: 204800
 ''';
 
+/// The hand-edited shape the rework review flagged (gh-1787): SINGLE-quoted
+/// keys are legal yaml and spell the SAME mapping key — `'copilot':` ≡
+/// `"copilot":` ≡ `copilot:` — so the edit primitives must find them, or a
+/// second write inserts a duplicate chain whose pre-write parse throws
+/// `YamlException: Duplicate mapping key` (the incident's failure class,
+/// surviving for hand-edited files).
+const _singleQuotedConfig = '''
+provider: copilot
+model: gemini-4-argon
+models:
+  overrides:
+    'copilot':
+      'gemini-4-argon':
+        contextWindow: 204800
+''';
+
 void main() {
   group('upsertYamlPath into a quoted overrides block (gh-1787)', () {
     test('a missing field merges into the existing quoted entry', () {
@@ -216,6 +232,145 @@ models:
       expect(edited, isNot(contains('overrides')));
       final doc = loadYaml(edited) as YamlMap;
       expect(doc.containsKey('models'), isFalse);
+    });
+  });
+
+  group('upsertYamlPath into a single-quoted block (gh-1787 rework)', () {
+    test('a missing field merges into the existing single-quoted entry', () {
+      final edited = upsertYamlPath(
+        _singleQuotedConfig,
+        ['models', 'overrides', 'copilot', 'gemini-4-argon', 'maxTokens'],
+        ['65536'],
+      );
+      // The blind-spot duplicate chain would throw
+      // `YamlException: Duplicate mapping key` right here.
+      final doc = loadYaml(edited) as YamlMap;
+      final overrides = (doc['models'] as YamlMap)['overrides'] as YamlMap;
+      expect(overrides.length, 1, reason: 'edited in place, not duplicated');
+      final caps =
+          (overrides['copilot'] as YamlMap)['gemini-4-argon'] as YamlMap;
+      expect(caps['maxTokens'], 65536);
+      expect(caps['contextWindow'], 204800);
+    });
+
+    test(
+      'a new model id under single-quoted siblings inserts single-quoted',
+      () {
+        final edited = upsertYamlPath(
+          _singleQuotedConfig,
+          ['models', 'overrides', 'copilot', 'gpt-5', 'maxTokens'],
+          ['32768'],
+        );
+        // Emitter parity: the inserted key adopts the block's own
+        // single-quoted spelling, so the next whole-file persist
+        // round-trips without quote churn.
+        expect(edited, contains("'gpt-5':"));
+        final doc = loadYaml(edited) as YamlMap;
+        final overrides = (doc['models'] as YamlMap)['overrides'] as YamlMap;
+        expect(overrides.length, 1);
+        expect((overrides['copilot'] as YamlMap).containsKey('gpt-5'), isTrue);
+      },
+    );
+
+    test('rewriting an existing single-quoted leaf keeps its spelling', () {
+      final edited = upsertYamlPath(
+        _singleQuotedConfig,
+        ['models', 'overrides', 'copilot', 'gemini-4-argon', 'contextWindow'],
+        ['131072'],
+      );
+      expect(edited, contains("'gemini-4-argon':"));
+      expect(edited, isNot(contains('"gemini-4-argon":')));
+      expect(edited, contains('contextWindow: 131072'));
+      final doc = loadYaml(edited) as YamlMap;
+      final caps =
+          ((doc['models'] as YamlMap)['overrides'] as YamlMap)['copilot']
+              as YamlMap;
+      expect((caps['gemini-4-argon'] as YamlMap)['contextWindow'], 131072);
+    });
+
+    test('a single-quoted key holding a quote matches (the doubled escape)',
+        () {
+      // `it''s` is the yaml single-quoted escape of `it's`.
+      const quoted = '''
+models:
+  custom:
+    'it''s a model':
+      provider: openai-completions
+''';
+      final edited = upsertYamlPath(
+        quoted,
+        ['models', 'custom', "it's a model", 'modelId'],
+        ['gpt-5'],
+      );
+      final doc = loadYaml(edited) as YamlMap;
+      final entry = (doc['models'] as YamlMap)['custom'] as YamlMap;
+      expect(entry.length, 1, reason: 'edited in place, not duplicated');
+      expect((entry["it's a model"] as YamlMap)['modelId'], 'gpt-5');
+    });
+  });
+
+  group('removeYamlPath on a single-quoted block (gh-1787 rework)', () {
+    test(
+      'a field remove edits the single-quoted entry, the sibling survives',
+      () {
+        const twoFields = '''
+models:
+  overrides:
+    'copilot':
+      'gemini-4-argon':
+        contextWindow: 204800
+        maxTokens: 65536
+''';
+        final edited = removeYamlPath(twoFields, [
+          'models',
+          'overrides',
+          'copilot',
+          'gemini-4-argon',
+          'contextWindow',
+        ]);
+        final doc = loadYaml(edited) as YamlMap;
+        final overrides = (doc['models'] as YamlMap)['overrides'] as YamlMap;
+        final caps =
+            (overrides['copilot'] as YamlMap)['gemini-4-argon'] as YamlMap;
+        expect(caps.containsKey('contextWindow'), isFalse);
+        expect(caps['maxTokens'], 65536);
+      },
+    );
+  });
+
+  group('the inserted chain spelling is per level (gh-1787 rework)', () {
+    test(
+      'only the first inserted level takes the block spelling; deeper '
+      'fresh levels stay bare',
+      () {
+        final edited = upsertYamlPath(
+          _incidentConfig,
+          ['models', 'overrides', 'copilot', 'gpt-5', 'maxTokens'],
+          ['32768'],
+        );
+        // First inserted level: real siblings (the quoted gemini entry) —
+        // the block's quoted spelling.
+        expect(edited, contains('"gpt-5":'));
+        // Deeper fresh levels have no visible children — the legacy bare
+        // shape (the key-spelling helper's own doc: a parent with no
+        // visible children stays bare).
+        expect(edited, contains('maxTokens: 32768'));
+        expect(edited, isNot(contains('"maxTokens":')));
+      },
+    );
+
+    test('a single-level insert into a quoted block stays quoted', () {
+      final edited = upsertYamlPath(
+        _incidentConfig,
+        ['models', 'overrides', 'note'],
+        ['kept for the rework'],
+      );
+      // The only inserted level IS the first one — real siblings, the
+      // block's quoted spelling.
+      expect(edited, contains('"note": kept for the rework'));
+      final doc = loadYaml(edited) as YamlMap;
+      final overrides = (doc['models'] as YamlMap)['overrides'] as YamlMap;
+      expect(overrides['note'], 'kept for the rework');
     });
   });
 }
