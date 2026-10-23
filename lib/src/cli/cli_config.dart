@@ -384,19 +384,47 @@ _parseAgentSection(Object? node) {
         throw ConfigException('unknown "agent" key: $key');
     }
   }
-  return (
+  return _composeAgentSection(
     contextWindowCap: cap,
+    mode: mode,
+    misuseBreaker: misuseBreaker,
+    stuckTool: stuckTool,
+    budgetSeconds: fgBudgetSeconds,
+    autoConvert: fgAutoConvert,
+  );
+}
+
+/// Composes the parsed `agent:` leaves into the section record. Issue
+/// #1786: both budget leaves absent → null (the loop's defaults apply);
+/// one present keeps the other's default via
+/// [ForegroundCallBudgetConfig.fromLeaves].
+({
+  int? contextWindowCap,
+  String? mode,
+  String? agentMode,
+  bool? misuseBreaker,
+  StuckToolConfig? stuckTool,
+  ForegroundCallBudgetConfig? foregroundCall,
+})
+_composeAgentSection({
+  required int? contextWindowCap,
+  required String? mode,
+  required bool? misuseBreaker,
+  required StuckToolConfig? stuckTool,
+  required Object? budgetSeconds,
+  required Object? autoConvert,
+}) {
+  return (
+    contextWindowCap: contextWindowCap,
     mode: mode,
     agentMode: mode == 'pi' ? 'pi' : null,
     misuseBreaker: misuseBreaker,
     stuckTool: stuckTool,
-    // Both leaves absent → null (the loop's defaults apply); one present
-    // keeps the other's default via fromLeaves.
-    foregroundCall: fgBudgetSeconds == null && fgAutoConvert == null
+    foregroundCall: budgetSeconds == null && autoConvert == null
         ? null
         : ForegroundCallBudgetConfig.fromLeaves(
-            budgetSeconds: fgBudgetSeconds,
-            autoConvert: fgAutoConvert,
+            budgetSeconds: budgetSeconds,
+            autoConvert: autoConvert,
           ),
   );
 }
