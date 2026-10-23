@@ -3019,6 +3019,28 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    env:
+      # gh-1806: keep the debug leg on the pure CocoaPods lane — the same
+      # lane decision the release DMG legs took in gh-180 (build-macos.yml
+      # pins the identical env; guard: build_macos_spm_lane_guard_test.dart).
+      # With the feature on, Flutter 3.47 stable re-runs "Adding Swift
+      # Package Manager integration" on every fresh runner and git-clones
+      # the Firebase iOS SPM packages from github.com SINGLE-SHOT: CI run
+      # 39957271246 (v1.0.631) died mid-clone of GoogleDataTransport with
+      # "curl 92 HTTP/2 stream 5 was not closed cleanly: CANCEL (err 8)" →
+      # "fatal: early EOF" → xcodebuild could not resolve package
+      # dependencies → the leg and the Quality-gate aggregate went red,
+      # while the identical SHA went green in the release-triggered run
+      # 399572012 (SPM pass 77.2s vs 513.4s). The env override is read per
+      # flutter invocation (flutter_features_config.dart); with the feature
+      # off the SPM migration skips cleanly and every macOS plugin builds
+      # from the Podfile.lock pins (Pods are cache-restored in this job) —
+      # the exact configuration the release legs ship. The pin also removes
+      # the silent FlutterGeneratedPluginSwiftPackage floor bump gh-180
+      # identified; upstream is deprecating the disable path, and when that
+      # lands BOTH lanes need a different mechanism (see the build-macos.yml
+      # env comment). Pinned by test/ci_macos_debug_spm_lane_guard_test.dart.
+      FLUTTER_SWIFT_PACKAGE_MANAGER: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
