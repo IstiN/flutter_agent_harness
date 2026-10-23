@@ -144,6 +144,7 @@ import '../mcp/mcp_config.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
+import '../model_roles/provider_model_binding.dart';
 import '../session_deadline.dart';
 import 'tool_phase_labels.dart';
 import 'tool_rows.dart';
@@ -163,8 +164,10 @@ import '../agent/image_registry.dart'
         imageCapLearnedNotice,
         imageDropNotice,
         imageRegistryConfig;
+import '../event_stream.dart';
 import '../providers/provider_common.dart'
     show
+        ProviderStreamState,
         authExpiredProvider,
         effectiveProviderConnectTimeout,
         effectiveProviderStreamIdleTimeout,
@@ -203,6 +206,7 @@ import 'startup.dart';
 import 'cli_config.dart';
 import 'pi_mode.dart';
 import 'custom_providers.dart';
+import 'model_switch_coherence.dart';
 import 'folder_model_state.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
@@ -298,6 +302,7 @@ part 'provider_export_command.dart';
 part 'chatgpt_import_command.dart';
 part 'agent_cli_compaction.dart';
 part 'provider_models.dart';
+part 'provider_model_coherence.dart';
 part 'codemie_provider_commands.dart';
 part 'aiin_provider_commands.dart';
 part 'provider_keys.dart';
@@ -1043,6 +1048,14 @@ class AgentCli {
   void recordCustomModelForTest(String modelId) {
     unawaited(_recordCustomModel(modelId));
   }
+
+  /// Test seam driving [_switchModel] with a RAW model id — no router
+  /// resolution, the shape an unresolved caller would hand it. Pins the G1
+  /// backstop refusal (gh-1788): a cross-provider reference that reaches
+  /// the same-provider reuse path is refused loudly, state untouched.
+  @visibleForTesting
+  Future<void> switchModelUnresolvedForTest(String modelId) =>
+      _switchModel(modelId);
 
   /// Test seam driving the TUI picker's Edit action in line mode: opens
   /// the prefilled edit wizard for [entry] (or the active provider when
@@ -1836,9 +1849,11 @@ class AgentCli {
   /// episode instead of one per watchdog tick.
   bool _runStalledPushed = false;
 
-  /// Model ids shown by the most recent `/model` picker, so `/model N` can
-  /// select by number without retyping the full id.
-  List<String>? _lastModelList;
+  /// The `(providerIdentity, modelId)` rows of the most recent `/model`
+  /// listing, so `/model N` can select by number — each row carries its
+  /// provider identity (gh-178 G1: a numbered pick of a cross-provider row
+  /// moves the whole triple, never reuses the current one).
+  List<(String, String)>? _lastModelList;
 
   /// Cache of model ids fetched from an OpenAI-compatible `/models` endpoint,
   /// plus the in-flight refresh future so concurrent callers coalesce.

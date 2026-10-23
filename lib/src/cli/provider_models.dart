@@ -277,23 +277,95 @@ extension on AgentCli {
     }
     final pipe = key.indexOf('|');
     if (pipe < 0) return _handleModelCommand(key);
-    await _switchCrossProviderModel(key, pipe);
+    await _switchCrossProviderModel(key);
   }
 
   /// Switches to the provider/model encoded as `provider|model`. A failing
   /// switch (key store, SSO mint, dead endpoint) must surface as a notice,
   /// never bubble into the picker command and take the TUI down.
-  Future<void> _switchCrossProviderModel(String key, int pipe) async {
+  ///
+  /// G1 (gh-178): the gate runs FIRST — a cross-provider pick moves the
+  /// whole triple or is refused up front (unknown provider E1, no target
+  /// key E3); the plain same-provider switch below is reached only when the
+  /// pick's provider identity IS the active one (or the flow above already
+  /// moved the triple onto it).
+  Future<void> _switchCrossProviderModel(String key) async {
+    final pipe = key.indexOf('|');
+    if (pipe < 0) return;
     final providerName = key.substring(0, pipe);
     final modelId = key.substring(pipe + 1);
+    final refusal = _crossProviderSwitchGate(providerName);
+    if (refusal != null) {
+      io.writeln(refusal.message);
+      return;
+    }
     try {
       await _maybeSwitchToSavedEntry(providerName);
       if (!await _switchToEnvCatalogProvider(providerName, modelId)) {
-        await _switchModel(modelId);
+        // The pick's provider identity was resolved by the `|` key split
+        // (and the triple already moved onto it, or the pick rides the
+        // active one) — same-provider for the CURRENT triple.
+        await _switchModel(modelId, preResolvedSameProvider: true);
       }
     } on Object catch (e) {
       io.writeln('error: model switch to $providerName/$modelId failed: $e');
     }
+  }
+
+  /// The G1 up-front gate for a cross-provider pick (gh-178): null when
+  /// the whole-triple switch may proceed, else the refusal to print.
+  ///
+  /// - E1: the entry's provider no longer resolves (removed since the list
+  ///   was built) — no partial triple is applied.
+  /// - E3: legacy wiring bakes the key at switch time; when the TARGET
+  ///   provider's own family resolves nothing, the request would leave
+  ///   credential-less — refused with the target's `/key set` repair, the
+  ///   request never built. Roles mode resolves per chain entry at request
+  ///   time (skip notices name the right slot), so it is exempt.
+  ModelCoherenceRefusal? _crossProviderSwitchGate(String providerName) {
+    // The active identity's own rows are same-provider picks — the gate
+    // judges CROSS-provider targets only (the session-only explicit-token
+    // case resolves no store slot yet and must keep switching).
+    if (sameProviderIdentity(
+      providerName,
+      _agent.state.model.provider,
+      _activeCustomName,
+    )) {
+      return null;
+    }
+    final entry = config.customProviders?.find(providerName);
+    final spec = catalogProvider(providerName);
+    final resolvable = entry != null || spec != null;
+    final rolesMode = config.modelRolesResolver != null;
+    String? keySlot;
+    var keyResolved = true;
+    if (resolvable && !rolesMode) {
+      final targetSpec = entry?.spec ?? spec!;
+      final endpoint = entry?.baseUrl ?? spec!.defaultBaseUrl;
+      keySlot = entry?.keyName ?? CustomProviderRegistry.keyNameFor(endpoint);
+      // The key the switch itself will bind: a saved entry's OWN slot
+      // first (two entries can share one endpoint with separate slots —
+      // the shared-endpoint probe would find the OTHER entry's slot or
+      // none), then the spec's env/shared resolution for slot-less
+      // entries and catalog providers.
+      String? key;
+      if (entry != null) {
+        key = config.secureKeys == null
+            ? null
+            : (config.secureKeys?.available ?? false
+                  ? config.secureKeys?.read(keySlot)
+                  : null);
+      }
+      key ??= _providerKeyFor(targetSpec, endpoint);
+      keyResolved = key != null && key.isNotEmpty;
+    }
+    return crossProviderSwitchRefusal(
+      providerName: providerName,
+      targetResolvable: resolvable,
+      rolesMode: rolesMode,
+      targetKeyResolved: keyResolved,
+      targetKeySlot: keySlot,
+    );
   }
 
   /// Lands a cross-provider pick on an env-keyed CATALOG provider (no
@@ -873,16 +945,14 @@ extension on AgentCli {
   }
 
   /// The numbered `(provider, model)` rows of the `/models` listing plus the
-  /// `_lastModelList` snapshot powering `/model <n>`.
+  /// `_lastModelList` snapshot powering `/model <n>` — pairs, so each
+  /// numbered pick keeps its provider identity (gh-178 G1).
   void _printNumberedModels(List<(String, String)> entries) {
     for (var i = 0; i < entries.length; i++) {
       io.writeln('  ${i + 1}) ${entries[i].$1}/${entries[i].$2}');
     }
-    _lastModelList = [for (final e in entries) '${e.$1}/${e.$2}'];
+    _lastModelList = List.of(entries);
   }
-
-  /// Returns the full list of known model ids for the active provider.
-  List<String> _listModelsForMenu() => _modelCandidates('');
 
   /// Returns known model ids for the ACTIVE provider only (used by
   /// `/model <id>` line-mode switches and the number picker). The TUI
@@ -1062,7 +1132,27 @@ extension on AgentCli {
       await _switchToCustomModel(trimmed, custom);
       return;
     }
-    await _switchModel(trimmed);
+    // G1 switch gate (gh-178): resolve a `provider/model` form BEFORE the
+    // plain switch. A cross-provider prefix moves the WHOLE triple through
+    // the provider-switch flow; the same-provider reuse path below is for
+    // current-triple model ids only.
+    switch (parseTypedModelTarget(
+      trimmed,
+      activeProvider: _agent.state.model.provider,
+      activeCustomName: _activeCustomName,
+      activeModelIds: _modelCandidates('').toSet(),
+      isKnownProvider: _isKnownModelProvider,
+    )) {
+      case SameModelSwitch(:final modelId):
+        // The router resolved this id against the REAL resolver — the
+        // backstop's cache-evidence re-parse is skipped (it judges only
+        // unresolved shapes).
+        await _switchModel(modelId, preResolvedSameProvider: true);
+      case CrossProviderSwitch(:final provider, :final modelId):
+        await _switchCrossProviderModel('$provider|$modelId');
+      case RefusedSwitch(:final refusal):
+        io.writeln(refusal.message);
+    }
   }
 
   /// The `/model N` branch of [_handleModelCommand]: resolves a 1-based
@@ -1071,18 +1161,64 @@ extension on AgentCli {
   Future<bool> _switchModelByNumber(String trimmed) async {
     final number = int.tryParse(trimmed);
     if (number == null) return false;
-    await _switchModelOrReport(number, _lastModelList ?? _listModelsForMenu());
+    await _switchModelOrReport(
+      number,
+      _lastModelList ?? _numberedListFallback(),
+    );
     return true;
   }
 
+  /// The numbered-list fallback when no `/models` listing ran yet: the
+  /// ACTIVE identity's own ids, each tagged with that identity (gh-178 G1
+  /// — a number is a `(provider, model)` row, never a bare id riding a
+  /// possibly-foreign triple).
+  List<(String, String)> _numberedListFallback() {
+    final identity = _activeModelIdentity;
+    return [for (final id in _modelCandidates('')) (identity, id)];
+  }
+
   /// Switches to list entry [number] (1-based) or reports the range error.
-  Future<void> _switchModelOrReport(int number, List<String> list) async {
-    if (!_validModelNumber(number, list.length)) {
-      io.writeln('invalid selection: $number (1-${list.length})');
+  Future<void> _switchModelOrReport(
+    int number,
+    List<(String, String)> entries,
+  ) async {
+    if (!_validModelNumber(number, entries.length)) {
+      io.writeln('invalid selection: $number (1-${entries.length})');
       return;
     }
-    await _switchModel(list[number - 1]);
+    await _applyModelEntryPick(entries[number - 1]);
   }
+
+  /// G1 (gh-178): ONE entry point for every `(providerIdentity, modelId)`
+  /// pick — the numbered listing, the typed `provider/model` form, and the
+  /// TUI table rows. The active identity's entries take the plain
+  /// same-provider switch; anything else moves the WHOLE triple through
+  /// the cross-provider flow (or is refused there), never the same-provider
+  /// reuse path.
+  Future<void> _applyModelEntryPick((String, String) entry) async {
+    if (sameProviderIdentity(
+      entry.$1,
+      _agent.state.model.provider,
+      _activeCustomName,
+    )) {
+      // The identity check already judged this pick same-provider with the
+      // routing-layer predicate — skip the backstop's narrower re-parse.
+      await _switchModel(entry.$2, preResolvedSameProvider: true);
+      return;
+    }
+    await _switchCrossProviderModel('${entry.$1}|${entry.$2}');
+  }
+
+  /// The provider identity the active model belongs to: the active saved
+  /// entry's name, else the model's provider name.
+  String get _activeModelIdentity =>
+      _activeCustomName ?? _agent.state.model.provider;
+
+  /// Whether [name] resolves to a switchable provider identity: a saved
+  /// registry entry or a catalog record (E1's "known when listed" test).
+  bool _isKnownModelProvider(String name) =>
+      config.customProviders?.find(name) != null ||
+      catalogProvider(name) != null;
 
   /// Whether [number] is a valid 1-based index into a list of [length].
   bool _validModelNumber(int number, int length) =>
@@ -1202,13 +1338,41 @@ extension on AgentCli {
     );
   }
 
-  Future<void> _switchModel(String modelId) async {
+  Future<void> _switchModel(
+    String modelId, {
+    bool preResolvedSameProvider = false,
+  }) async {
     final current = _agent.state.model;
     final rolesResolver = config.modelRolesResolver;
     if (modelId.isEmpty) {
       io.writeln('model: ${current.id} (${current.api})');
       if (rolesResolver != null) io.writeln(rolesResolver.describeRoles());
       return;
+    }
+    // G1 backstop (gh-178): EVERY construction site below reuses the
+    // CURRENT triple (`provider: current.provider` / `baseUrl:
+    // current.baseUrl` / `authHeader: current.authHeader`) — that shape is
+    // valid ONLY for a same-provider pick. A cross-provider reference that
+    // reaches here (a flow the routing above should have caught) is
+    // refused loudly instead of silently producing the incident's mixed
+    // triple; the repair routes through the whole-triple flow.
+    //
+    // [preResolvedSameProvider] marks callers whose id the ROUTING LAYER
+    // already resolved same-provider with the real resolver (the
+    // parseTypedModelTarget SameModelSwitch plan, the entry-pick identity
+    // check, the cross-provider `provider|model` key split): the backstop
+    // is skipped for them. Its own predicate is cache-evidence-gated and
+    // NARROWER than the router's — re-parsing a resolved id here would
+    // veto legitimate picks (an active-identity head with a nested
+    // vendor-prefixed id the cold cache does not list resolves
+    // CrossProviderSwitch on cache evidence). Unresolved shapes — a
+    // future caller handing a raw id — are still judged.
+    if (!preResolvedSameProvider) {
+      final refusal = _backstopCrossProviderRefusal(modelId);
+      if (refusal != null) {
+        io.writeln(refusal);
+        return;
+      }
     }
     // An endpoint-reported window/cap beats the carried one (the catalog
     // defaults) when the id is known to /models.
@@ -1305,6 +1469,54 @@ extension on AgentCli {
     // _recordCustomModel ALWAYS notifies the host (not just with an active
     // custom entry) — the single onModelChanged fire for this switch.
     await _recordCustomModel(modelId);
+  }
+
+  /// The G1 backstop verdict (gh-178) for an id reaching [_switchModel]
+  /// UNRESOLVED — no [preResolvedSameProvider] caller vouches for it: null
+  /// when the same-provider reuse shape may apply, the refusal message
+  /// when the shape is a cross-provider reference. Kept as its own
+  /// dispatcher so the switch lives in one cohesive, directly testable
+  /// place (the CRAP ratchet: CC-12 in one body measures above the 12.0
+  /// line at any less-than-perfect coverage).
+  ///
+  /// The predicate is cache-evidence-gated and NARROWER than the router's
+  /// (see the [parseTypedModelTarget] kdoc): with no model list for the
+  /// active endpoint there is nothing to distinguish a cross-provider
+  /// reference from a vendor-prefixed id that endpoint serves (OpenRouter's
+  /// `openai/gpt-4o`), and the coherent legacy pasthrough wins. The
+  /// routing paths above use the real resolver.
+  ///
+  /// The `RefusedSwitch` arm exists for the sealed-class exhaustiveness
+  /// check only — [parseTypedModelTarget] currently never constructs one —
+  /// so it stays a straight passthrough of the carried refusal.
+  String? _backstopCrossProviderRefusal(String modelId) {
+    final current = _agent.state.model;
+    final activeCandidates = _modelCandidates('');
+    switch (parseTypedModelTarget(
+      modelId,
+      activeProvider: current.provider,
+      activeCustomName: _activeCustomName,
+      activeModelIds: activeCandidates.toSet(),
+      isKnownProvider: activeCandidates.isNotEmpty
+          ? _isKnownModelProvider
+          : (_) => false,
+    )) {
+      case SameModelSwitch():
+        return null;
+      case CrossProviderSwitch():
+        return const ModelCoherenceRefusal(
+          problem:
+              '"/model" reuse cannot carry a cross-provider pick — '
+              'model ids never ride a foreign provider/endpoint/key '
+              'triple',
+          fields: ['provider', 'baseUrl', 'key'],
+          repair:
+              '/model <provider>/<id> resolves the whole triple, or '
+              '/provider <provider> first',
+        ).message;
+      case RefusedSwitch(:final refusal):
+        return refusal.message;
+    }
   }
 
   /// `/model-edit [contextWindow|maxTokens <n>]`: shows or overrides the
