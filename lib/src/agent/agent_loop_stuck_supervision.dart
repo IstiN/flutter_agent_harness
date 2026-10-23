@@ -641,8 +641,21 @@ Future<_SupervisedAttempt> _supervisedAttempt({
     }
   }
 
+  // The executor's token: the RUN token itself unless the stuck stage
+  // machine is armed (it needs a per-call token to cancel-and-RETRY this
+  // call). Issue #1786 review fix: the budget-only path must preserve the
+  // loop's hook/executor identity contract — beforeToolCall and the
+  // executor observe the SAME token instance, and esc cancels the executor
+  // natively. The budget's own escalation rides the YIELD token (bash's
+  // soft hand-back) plus the bounded grace for everything else; it never
+  // needed to swap this token. A run without a token (runAgentLoop(null))
+  // keeps the per-call token so the budget's abort path still has a
+  // cancel handle.
+  final executorToken = stuck == null
+      ? (runToken ?? callSource.token)
+      : callSource.token;
   final inner = runZoned<Future<ToolExecutionResult>>(
-    () => run(callSource.token, observe),
+    () => run(executorToken, observe),
     zoneValues: {yieldTokenZoneKey: yieldSource.token},
   );
 
