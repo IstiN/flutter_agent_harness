@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-23T23:51:14.914Z",
+  "ticketKey": "pr-1815",
+  "headSha": "6d1ea6cccec8018eb6d764d5e9adc27d3b245600",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:77344e66c56ccb56",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:e23e1f33b82305d3",
+      "size": 10749
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:fdfb9452e3d915f2",
+      "size": 5024
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:a671ae4ea6d5f64c",
+      "size": 3244
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:3911214fa46bcf5c",
+      "size": 1285
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:0940f0bac9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:36225df935b1b64a",
+      "size": 2982
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:87af110a647aaec2",
+      "size": 2906
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6vzjaK",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/build_macos_spm_lane_guard_test.dart:94",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: The same dead-knob argument applies verbatim to `ci.yml` — the asymmetry is now documented debt**\n\nThis AC1 reason (\"the job env must not carry the dead knob\") is exactly why `.github/workflows/ci.yml:3043` still needs the same treatment:\n\n```yaml\n      FLUTTER_SWIFT_PACKAGE_MANAGER: \"0\"\n```\n\n- The knob is removed in 3.47.7 (this PR's own root cause), and the ci.yml macOS debug job pins `flutter-version: '3.47.x'` — a floating stable that already resolves past the removal, so the pin is a no-op there too.\n- The ci.yml comment above the pin is now **false**: it says \"with the feature off the SPM migration skips cleanly\" — on the resolved 3.47.x there is no \"feature off\" anymore (the leg is green precisely because SPM rides enabled, run 399572012 as the PR notes).\n- `test/ci_macos_debug_spm_lane_guard_test.dart` AC1/AC2 still assert the pin, so the guard suite now enforces a lane decision this PR declares retired.\n\nThe PR description flags this as out-of-scope follow-up, which is fair — but since the follow-up must touch ci.yml + its guard test together, please land it immediately after (or in) this PR so the two lanes don't diverge in documentation: one says the knob is dead, the other still praises it."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vzjbk",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/macos_min_platform_gate_test.dart:370",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Not `dart format` clean**\n\nLine 370 is 85 chars and the formatter rewraps it:\n\n```dart\nexpect('${r.stdout}${r.stderr}', contains('FlutterGeneratedPluginSwiftPackage'));\n```\n\n→ `dart format test/macos_min_platform_gate_test.dart test/build_macos_spm_lane_guard_test.dart` (the lane-guard file also gets tall-style rewraps under the current SDK). AGENTS.md lists \"dart analyze + dart format clean\" as the convention and the pre-commit hook self-heals staged files — these two were edited but left unformatted (`dart analyze` is clean on both; only formatting drifts)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vzjcW",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/assert_macos_min_platform.sh:118",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Three new fail-loud branches of the rewritten gate have no test coverage**\n\nThe rewrite adds exactly the \"upstream shape change\" detectors this gate exists for, but the suite never exercises them:\n\n1. **Line 118 branch** — ephemeral `Packages/` dir exists, marker present, but `$EPHEMERAL_PKGS/$SPM_PACKAGE_NAME/Package.swift` is missing. `addSpmState` only creates the dir together with the manifest, so no test reaches this `fail`.\n2. **Unparseable generated floor** — generated manifest present but `sed` extracts no `.macOS(\"…\")` (the \"could not read a .macOS floor\" branch). A manifest shaped `.macOS(14.0)` (unquoted) or a renamed getter would land here; nothing pins it.\n3. **Vendored manifest with no readable floor** — `writeVendoredPackageSwift` always writes a parseable floor, so the \"reappeared with no readable .macOS floor\" branch is untested (AC5a/b/c only cover at/below/above).\n\nEach is a one-line fixture tweak away (e.g. `addSpmState` writing a floorless Package.swift, or creating `Packages/` without the manifest). Worth adding while the contract is fresh — these are the branches that must never degrade into a silent pass."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6vzjdm",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/assert_macos_min_platform.sh:157",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: The OK line asserts \"manifest deleted\" even when the gate now tolerates its presence**\n\n```bash\necho \"min-platform gate: OK — SPM lane adopted (gh-1814): app floor $APP_MIN (pbxproj + Podfile), generated floor $generated_floor, all product floors ≤ $APP_MIN, vendored plugin on the pods half (manifest deleted)\"\n```\n\nSince this same rewrite made vendored-manifest **presence** legal (section 3b audits its floor instead of failing), the unconditional \"(manifest deleted)\" tail is wrong in exactly the state section 3b added: a vendored `Package.swift` floored at 14.0 passes the gate and then the success line claims it was deleted. Make the tail conditional (e.g. `vendored plugin on the pods half` + ` (manifest deleted)` only when `[ ! -e \"$VENDORED_PACKAGE_SWIFT\" ]`), or drop the parenthetical — operators grep this line on the failure path and it should not lie."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:ac302c98",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: The same dead-knob argument applies verbatim to `ci.yml` — the asymmetry is now documented debt**\n\nThis AC1 reason (\"the job env must not carry the dead knob\") is exactly why `.github/workflows/ci.yml:3043` still needs the same treatment:\n\n```yaml\n      FLUTTER_SWIFT_PACKAGE_MANAGER: \"0\"\n```\n\n- The knob is removed in 3.47.7 (this PR's own root cause), and the ci.yml macOS debug job pins `flutter-version: '3.47.x'` — a floating stable that already resolves past the removal, so the pin is a no-op there too.\n- The ci.yml comment above the pin is now **false**: it says \"with the feature off the SPM migration skips cleanly\" — on the resolved 3.47.x there is no \"feature off\" anymore (the leg is green precisely because SPM rides enabled, run 399572012 as the PR notes).\n- `test/ci_macos_debug_spm_lane_guard_test.dart` AC1/AC2 still assert the pin, so the guard suite now enforces a lane decision this PR declares retired.\n\nThe PR description flags this as out-of-scope follow-up, which is fair — but since the follow-up must touch ci.yml + its guard test together, please land it immediately after (or in) this PR so the two lanes don't diverge in documentation: one says the knob is dead, the other still praises it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:b029f8b2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Not `dart format` clean**\n\nLine 370 is 85 chars and the formatter rewraps it:\n\n```dart\nexpect('${r.stdout}${r.stderr}', contains('FlutterGeneratedPluginSwiftPackage'));\n```\n\n→ `dart format test/macos_min_platform_gate_test.dart test/build_macos_spm_lane_guard_test.dart` (the lane-guard file also gets tall-style rewraps under the current SDK). AGENTS.md lists \"dart analyze + dart format clean\" as the convention and the pre-commit hook self-heals staged files — these two were edited but left unformatted (`dart analyze` is clean on both; only formatting drifts)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:9014174b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Three new fail-loud branches of the rewritten gate have no test coverage**\n\nThe rewrite adds exactly the \"upstream shape change\" detectors this gate exists for, but the suite never exercises them:\n\n1. **Line 118 branch** — ephemeral `Packages/` dir exists, marker present, but `$EPHEMERAL_PKGS/$SPM_PACKAGE_NAME/Package.swift` is missing. `addSpmState` only creates the dir together with the manifest, so no test reaches this `fail`.\n2. **Unparseable generated floor** — generated manifest present but `sed` extracts no `.macOS(\"…\")` (the \"could not read a .macOS floor\" branch). A manifest shaped `.macOS(14.0)` (unquoted) or a renamed getter would land here; nothing pins it.\n3. **Vendored manifest with no readable floor** — `writeVendoredPackageSwift` always writes a parseable floor, so the \"reappeared with no readable .macOS floor\" branch is untested (AC5a/b/c only cover at/below/above).\n\nEach is a one-line fixture tweak away (e.g. `addSpmState` writing a floorless Package.swift, or creating `Packages/` without the manifest). Worth adding while the contract is fresh — these are the branches that must never degrade into a silent pass."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:f9d9b89b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: The OK line asserts \"manifest deleted\" even when the gate now tolerates its presence**\n\n```bash\necho \"min-platform gate: OK — SPM lane adopted (gh-1814): app floor $APP_MIN (pbxproj + Podfile), generated floor $generated_floor, all product floors ≤ $APP_MIN, vendored plugin on the pods half (manifest deleted)\"\n```\n\nSince this same rewrite made vendored-manifest **presence** legal (section 3b audits its floor instead of failing), the unconditional \"(manifest deleted)\" tail is wrong in exactly the state section 3b added: a vendored `Package.swift` floored at 14.0 passes the gate and then the success line claims it was deleted. Make the tail conditional (e.g. `vendored plugin on the pods half` + ` (manifest deleted)` only when `[ ! -e \"$VENDORED_PACKAGE_SWIFT\" ]`), or drop the parenthetical — operators grep this line on the failure path and it should not lie."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-23:f7f28fb8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: gh-1814 correctly adopts the SPM lane: the rewritten `assert_macos_min_platform.sh` fails loud on every floor drift (sub-min generated floor, product above app min, half-migrated trees) and the verified floor audit (pbxproj 3×14.0, Podfile 14.0, generated floor 14.0) checks out. Verified locally: all 26 tests across the two rewritten suites + the adjacent `ci_macos_debug_spm_lane_guard_test.dart` / `inappwebview_macos_pods_lane_test.dart` suites pass; `dart analyze` clean; gate script keeps +x/shebang; gate ordering (config-only → gate → release) intact in `build-macos.yml`.\n\n**Key Issues**:\n- ⚠️ IMPORTANT — `.github/workflows/ci.yml:3043` still carries the dead `FLUTTER_SWIFT_PACKAGE_MANAGER: \"0\"` pin whose comment now misdescribes the lane (\"the SPM migration skips cleanly\" — no longer true on the resolved 3.47.x); its guard test still enforces it. Author-flagged follow-up; please land it right behind this PR (comment1).\n- 💡 SUGGESTION — the two rewritten test files are not `dart format` clean (85-char line at `test/macos_min_platform_gate_test.dart:370`; pre-commit self-heal would have caught it) (comment2).\n- 💡 SUGGESTION — three new fail-loud branches of the gate (missing generated manifest, unparseable generated floor, floorless vendored manifest) have no test coverage (comment3).\n- 💡 SUGGESTION — the gate's OK line claims \"(manifest deleted)\" unconditionally, wrong in the state section 3b just legalized (comment4).\n\n**Next Steps**:\n1. Land the ci.yml dead-pin removal + guard-test update as the immediate follow-up.\n2. Run `dart format` on the two test files.\n3. Optionally add the three missing gate-branch fixtures while the contract is fresh."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-23:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-23",
+      "updatedAt": "2026-10-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
