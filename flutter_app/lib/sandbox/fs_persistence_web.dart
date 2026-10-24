@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 import 'package:fa/sandbox/fs_persistence.dart';
 import 'package:web/web.dart' as web;

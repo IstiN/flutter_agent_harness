@@ -53,8 +53,6 @@ void main() {
     return parts.skip(3).join('/');
   }
 
-  Uint8List bytesOf(String s) => Uint8List.fromList(utf8.encode(s));
-
   String bodyFor(String rel) => switch (rel) {
     'manifest.json' => manifestJson,
     'widget.js' => entryJs,
