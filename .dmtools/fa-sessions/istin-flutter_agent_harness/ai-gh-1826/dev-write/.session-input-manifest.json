@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-24T09:27:30.526Z",
+  "ticketKey": "pr-1828",
+  "headSha": "774afb5568e1b83ee66bfa393b307860c87e6b3c",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "merge_conflicts.md": {
+      "hash": "fnv1a64:2cb9240c4dfc599e",
+      "size": 498
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:76640548de0c16cf",
+      "size": 3577
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:0bcb0c4526df2789",
+      "size": 8367
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:832520f69036fc19",
+      "size": 3504
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:1987d33604305057",
+      "size": 2458
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:c6e7918183769a7b",
+      "size": 1003
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:03a2a4a4c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:79ad088f355f4e0b",
+      "size": 2197
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:9b6f41782abe08f8",
+      "size": 2123
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6v3L4s",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/setup_flutter_selfhosted_test.dart:517",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the exact-patch guard is keyed to a hard-coded 2-entry map — a future self-hosted leg silently escapes it**\n\nThe new gh-1826 guard iterates `const {build-mobile.yml: build-ios, build-macos.yml: build-macos}`. Today that covers every `setup-flutter-selfhosted` usage in the repo (verified: only `.github/workflows/build-macos.yml:301` and `.github/workflows/build-mobile.yml:799`), but nothing fails when a **third** self-hosted leg is added with a wildcard pin — the exact bug class this test exists to prevent walks straight past the guard.\n\nThe sibling guard in the same file already establishes the right pattern — it scans **all** workflow files dynamically and asserts a presence floor so a topology change can't silently shrink its coverage:\n\n```dart\n// test/setup_flutter_selfhosted_test.dart:422-492\nfinal workflows = Directory('.github/workflows').listSync()...\nexpect(checked, greaterThanOrEqualTo(3),\n    reason: '... the workflow topology changed and this guard scanned nothing');\n```\n\nSuggested shape (keeps the equal-`3.47.7` assertion for the two known lanes, adds the completeness floor):\n\n```dart\nconst pinnedVersion = '3.47.7';\nfinal usages = <String, String>{}; // file -> job, discovered by scanning\n// every workflow's steps for `uses: ./.github/actions/setup-flutter-selfhosted`\nexpect(usages.keys, containsAll(const {\n  '.github/workflows/build-mobile.yml',\n  '.github/workflows/build-macos.yml',\n}));\nfor (final entry in usages.entries) {\n  // ... existing expect(version, pinnedVersion, reason: ...)\n}\n```\n\n(An alternative that matches the test's own name even more literally: assert every discovered pin matches `RegExp(r'^\\d+\\.\\d+\\.\\d+$')` — \"exact patch, never a wildcard\" — instead of equality with one const, so a conscious two-PR rolling bump of the lanes doesn't need a simultaneous edit here. Either closing the topology hole is the point.)"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v3L5i",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/setup_flutter_selfhosted_test.dart:529",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `?? ''` conflates a missing `with.flutter-version` input with a wrong version**\n\n```dart\nfinal version =\n    ((setup['with'] as YamlMap?)?['flutter-version'] ?? '')\n        .toString();\n```\n\nIf a refactor drops the `with:` block (or renames the input), this degrades to `version == ''` and the guard fails with the long gh-1826 wildcard narrative — correct verdict, misleading diagnosis. The sibling structural test (`'the self-hosted build legs set Flutter up via the composite action'`) only pins the `uses:` line, so the missing-input case has no targeted message today.\n\nCheap fix:\n\n```dart\nfinal with_ = setup['with'] as YamlMap?;\nexpect(with_?['flutter-version'], isNotNull,\n    reason: '${entry.key} ${entry.value}: setup-flutter-selfhosted '\n        'must declare a `flutter-version` input');\nfinal version = with_!['flutter-version'].toString();\n```\n\nPurely a failure-message clarity improvement — the guard holds either way."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:8b457fdc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the exact-patch guard is keyed to a hard-coded 2-entry map — a future self-hosted leg silently escapes it**\n\nThe new gh-1826 guard iterates `const {build-mobile.yml: build-ios, build-macos.yml: build-macos}`. Today that covers every `setup-flutter-selfhosted` usage in the repo (verified: only `.github/workflows/build-macos.yml:301` and `.github/workflows/build-mobile.yml:799`), but nothing fails when a **third** self-hosted leg is added with a wildcard pin — the exact bug class this test exists to prevent walks straight past the guard.\n\nThe sibling guard in the same file already establishes the right pattern — it scans **all** workflow files dynamically and asserts a presence floor so a topology change can't silently shrink its coverage:\n\n```dart\n// test/setup_flutter_selfhosted_test.dart:422-492\nfinal workflows = Directory('.github/workflows').listSync()...\nexpect(checked, greaterThanOrEqualTo(3),\n    reason: '... the workflow topology changed and this guard scanned nothing');\n```\n\nSuggested shape (keeps the equal-`3.47.7` assertion for the two known lanes, adds the completeness floor):\n\n```dart\nconst pinnedVersion = '3.47.7';\nfinal usages = <String, String>{}; // file -> job, discovered by scanning\n// every workflow's steps for `uses: ./.github/actions/setup-flutter-selfhosted`\nexpect(usages.keys, containsAll(const {\n  '.github/workflows/build-mobile.yml',\n  '.github/workflows/build-macos.yml',\n}));\nfor (final entry in usages.entries) {\n  // ... existing expect(version, pinnedVersion, reason: ...)\n}\n```\n\n(An alternative that matches the test's own name even more literally: assert every discovered pin matches `RegExp(r'^\\d+\\.\\d+\\.\\d+$')` — \"exact patch, never a wildcard\" — instead of equality with one const, so a conscious two-PR rolling bump of the lanes doesn't need a simultaneous edit here. Either closing the topology hole is the point.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:fe5045ec",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `?? ''` conflates a missing `with.flutter-version` input with a wrong version**\n\n```dart\nfinal version =\n    ((setup['with'] as YamlMap?)?['flutter-version'] ?? '')\n        .toString();\n```\n\nIf a refactor drops the `with:` block (or renames the input), this degrades to `version == ''` and the guard fails with the long gh-1826 wildcard narrative — correct verdict, misleading diagnosis. The sibling structural test (`'the self-hosted build legs set Flutter up via the composite action'`) only pins the `uses:` line, so the missing-input case has no targeted message today.\n\nCheap fix:\n\n```dart\nfinal with_ = setup['with'] as YamlMap?;\nexpect(with_?['flutter-version'], isNotNull,\n    reason: '${entry.key} ${entry.value}: setup-flutter-selfhosted '\n        'must declare a `flutter-version` input');\nfinal version = with_!['flutter-version'].toString();\n```\n\nPurely a failure-message clarity improvement — the guard holds either way."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:10157acb",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: Correct, well-scoped fix for gh-1826 — the `build-ios` TestFlight leg now pins `3.47.7` exactly like the desktop lane, and the new guard test is verified red on the parent commit (`3.47.x`) and green after (28/28; analyzer clean; no CI failures reported). Two non-blocking findings on the guard's future-proofing.\n\n**Key Issues**:\n- ⚠️ `test/setup_flutter_selfhosted_test.dart:517` — the exact-patch guard is keyed to a hard-coded `{build-mobile: build-ios, build-macos: build-macos}` map; a future third self-hosted leg with a wildcard pin silently escapes it. The sibling subosito guard in the same file scans all workflows dynamically and asserts a coverage floor — mirror that.\n- 💡 `test/setup_flutter_selfhosted_test.dart:529` — `?? ''` masks a missing `with.flutter-version` input as a wrong-version failure; a targeted null-check would keep the diagnosis accurate.\n\n**Next Steps**:\n1. (Optional, non-blocking) Extend the guard to discover all `setup-flutter-selfhosted` usages across `.github/workflows/*.yml` and assert every pin is an exact patch, with a presence floor for the two known lanes.\n2. Mergeable as-is; both findings are guard-hardening polish, not correctness."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
