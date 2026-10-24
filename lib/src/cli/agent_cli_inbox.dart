@@ -47,6 +47,7 @@ extension AgentCliMessagingFlow on AgentCli {
           message.fromId,
           message.text,
           userInput: message.isUserInput,
+          channel: message.toId,
         ),
     ]);
     // Plugin inboxes (e.g. the hub) join the same steering flow, after
@@ -79,6 +80,7 @@ extension AgentCliMessagingFlow on AgentCli {
             message.fromId,
             message.text,
             userInput: message.kind == AgentMessageKind.user,
+            channel: message.toId,
           ),
       ]);
     }
@@ -92,9 +94,20 @@ extension AgentCliMessagingFlow on AgentCli {
     String fromId,
     String text, {
     required bool userInput,
-  }) => userInput
-      ? UserMessage.text('[from $fromId] ${text.trim()}')
-      : UserMessage.text('from $fromId: ${text.trim()}');
+    String? channel,
+  }) {
+    // Channel mail names its channel AND the reply route: without the
+    // explicit hint agents tend to DM the sender (a dead end for app
+    // members) instead of posting back into the channel (gh-1825).
+    final isChannel = channel != null && channel.startsWith('#');
+    final where = isChannel ? ' in $channel' : '';
+    final hint = isChannel
+        ? '\n[reply into this channel with agent_message to: "$channel"]'
+        : '';
+    return userInput
+        ? UserMessage.text('[from $fromId$where] ${text.trim()}$hint')
+        : UserMessage.text('from $fromId$where: ${text.trim()}$hint');
+  }
 
   /// The steering probe: fabric mail pending, or any plugin inbox
   /// reports unread mail. Never throws — a broken plugin probe counts

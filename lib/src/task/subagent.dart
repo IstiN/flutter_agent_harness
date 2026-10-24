@@ -16,6 +16,7 @@ final class SubagentMessage {
     required this.sentAt,
     this.hops = 0,
     this.isUserInput = false,
+    this.toId = '',
   });
 
   /// Sender id (`parent` for parent-originated messages).
@@ -30,6 +31,11 @@ final class SubagentMessage {
   /// Remaining hop budget (sibling-relay cap; 0 refuses further relaying).
   final int hops;
 
+  /// Recipient id as delivered by the fabric: `#channel` for channel
+  /// traffic, the agent/mailbox id otherwise ('' when unknown). Lets the
+  /// steering renderer teach channel replies instead of DMs (gh-1825).
+  final String toId;
+
   /// True when the message is user input forwarded by an attached client
   /// (the Fa app's attach view) — the recipient delivers it as the user's
   /// own words, not agent chat.
@@ -41,6 +47,7 @@ final class SubagentMessage {
     sentAt: sentAt,
     hops: hops - 1,
     isUserInput: isUserInput,
+    toId: toId,
   );
 
   Map<String, dynamic> toJson() => {
@@ -49,6 +56,7 @@ final class SubagentMessage {
     'sentAt': sentAt,
     'hops': hops,
     if (isUserInput) 'isUserInput': true,
+    if (toId.isNotEmpty) 'toId': toId,
   };
 
   factory SubagentMessage.fromJson(Map<String, dynamic> json) =>
@@ -58,6 +66,7 @@ final class SubagentMessage {
         sentAt: json['sentAt'] as String? ?? '',
         hops: json['hops'] as int? ?? 0,
         isUserInput: json['isUserInput'] as bool? ?? false,
+        toId: json['toId'] as String? ?? '',
       );
 }
 

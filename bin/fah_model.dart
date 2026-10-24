@@ -117,9 +117,14 @@ _resolvePlugins(
     _fail(error.message);
   }
   final enabled = resolveEnabledPlugins(args.plugins, config);
+  // gh-1825: the hub layer no longer requires DAP_MASTER_SECRET —
+  // enrolled, name-bound credentials (/network join) make the hub
+  // usable too, and the layer resolves the host's ACTIVE repository
+  // lazily, so a runtime join starts routing without a restart.
+  // Without it, agent_message could not address #channels at all and
+  // hub peer mail dead-dropped into file inboxes.
   final hubEnabled = hubFabricWired(
     hubPluginEnabled: enabled.contains('hub'),
-    dapUnlocked: (dapEnvironment[envMasterSecret] ?? '').isNotEmpty,
     fabricHubAllowed: fabricHubAllowed,
   );
   final hubFabric = hubEnabled

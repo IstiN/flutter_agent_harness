@@ -35,9 +35,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 /// listing byte-for-byte (REG).
 bool hubFabricWired({
   required bool hubPluginEnabled,
-  required bool dapUnlocked,
   required bool fabricHubAllowed,
-}) => hubPluginEnabled && dapUnlocked && fabricHubAllowed;
+}) => hubPluginEnabled && fabricHubAllowed;
 
 /// Hub-backed [MessagingRepository] over a [hub.HubPlugin].
 final class HubFabricRepository
