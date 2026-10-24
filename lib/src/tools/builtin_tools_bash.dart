@@ -149,7 +149,7 @@ String? foregroundSleepDenial(String command, {required bool canJob}) {
 /// tool result, pi semantics).
 ///
 /// With [jobs] (and an environment implementing [BackgroundShell]) the tool
-/// gains two background behaviors:
+/// gains three background behaviors:
 ///
 /// - `background: true` starts the command detached and returns immediately
 ///   with the job id; completion is reported back as a follow-up message.
@@ -158,12 +158,26 @@ String? foregroundSleepDenial(String command, {required bool canJob}) {
 ///   into a background job WITHOUT killing it: the tool call answers with the
 ///   job id and a partial-output tail, and the user message is delivered at
 ///   the next step boundary.
+/// - Auto-background (gh-1835): a foreground run still going after
+///   [autoBackgroundAfter] (the liveness threshold, default
+///   [defaultShellAutoBackgroundSeconds]; `Duration.zero` disables) is
+///   CONVERTED to a background job — the same process keeps running, the
+///   pending tool call resolves exactly once with the backgrounded result
+///   (job id, elapsed, log path, inline guidance), and the model decides:
+///   wait for the settle, poll `bash_job output`, or stop and retry
+///   differently. An explicit `timeout` at or below the threshold keeps the
+///   classic foreground path (the cap fires first, behavior unchanged); one
+///   above the threshold carries over to the job as its cap. Hosts without
+///   the jobs capability keep the legacy foreground behavior.
 AgentTool shellTool(
   ExecutionEnv env, {
   ShellJobRegistry? jobs,
   Duration retryBackoff = _bashRetryBackoff,
   PasswordPromptCallback? onPasswordPrompt,
   Duration passwordQuiet = _bashPasswordQuiet,
+  Duration autoBackgroundAfter = const Duration(
+    seconds: defaultShellAutoBackgroundSeconds,
+  ),
 
   /// The host's resolved redaction config for the shape interceptor
   /// (issue #1408 AC3, review 5456649624): the same `redact:` section
@@ -282,11 +296,22 @@ AgentTool shellTool(
         );
       }
 
+      // gh-1835 auto-background: with the threshold armed (and a timeout
+      // that cannot fire before it) the foreground call runs as a registry
+      // job from the start, so the conversion at the threshold changes
+      // NOTHING about the process — same pid/group/log, no re-execution.
+      final autoConvertActive =
+          canJob &&
+          autoBackgroundAfter > Duration.zero &&
+          (timeout == null || timeout > autoBackgroundAfter);
+
       // Yield-aware foreground run: executed as a job from the start so a
       // steering message can move it to the background mid-flight without
       // killing the process. Settled before any yield → identical result to
-      // the classic inline path.
-      if (canJob && currentYieldToken() != null) {
+      // the classic inline path. With auto-background armed the same path
+      // also converts at the liveness threshold — with or without a yield
+      // token.
+      if (canJob && (currentYieldToken() != null || autoConvertActive)) {
         return _shellViaJob(
           env,
           jobs,
@@ -295,7 +320,8 @@ AgentTool shellTool(
           timeout: timeout,
           timeoutArg: timeoutArg,
           cancelToken: cancelToken,
-          yieldToken: currentYieldToken()!,
+          yieldToken: currentYieldToken(),
+          autoBackgroundAfter: autoConvertActive ? autoBackgroundAfter : null,
           onPasswordPrompt: onPasswordPrompt,
           passwordQuiet: passwordQuiet,
           rewriteNotice: rewriteNotice,
@@ -469,7 +495,10 @@ String _retryNoticePrefix(List<String> notices) =>
 
 /// The yield-aware foreground bash path: the command runs as a registry job
 /// from the start; settling before the yield token fires produces the
-/// classic inline result, a yield moves it to the background untouched.
+/// classic inline result, a yield moves it to the background untouched, and
+/// — when [autoBackgroundAfter] is armed (gh-1835) — a run still going at
+/// the liveness threshold converts to the background with the
+/// backgrounded tool result while the process keeps running untouched.
 Future<ToolExecutionResult> _shellViaJob(
   ExecutionEnv env,
   ShellJobRegistry jobs,
@@ -478,7 +507,8 @@ Future<ToolExecutionResult> _shellViaJob(
   required Duration? timeout,
   required num? timeoutArg,
   required CancelToken? cancelToken,
-  required CancelToken yieldToken,
+  required CancelToken? yieldToken,
+  required Duration? autoBackgroundAfter,
   PasswordPromptCallback? onPasswordPrompt,
   required Duration passwordQuiet,
   String? rewriteNotice,
