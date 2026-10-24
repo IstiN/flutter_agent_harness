@@ -146,7 +146,13 @@ final class HubFabricRepository
     final inbox = _agentId;
     if (repo == null || inbox == null) return const [];
     try {
-      return _fromHub(await repo.peek(inbox));
+      final channels = channelLister == null
+          ? const <String>[]
+          : await channelLister!.call(_plugin);
+      return _fromHub([
+        ...await repo.peek(inbox),
+        for (final channel in channels) ...await repo.peek('#$channel'),
+      ]);
     } on Object {
       return const [];
     }

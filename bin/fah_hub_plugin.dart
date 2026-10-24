@@ -1198,15 +1198,25 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
-  /// Non-draining probe: unread mail in our own hub inbox.
+  /// Non-draining probe: unread mail in our own hub inbox AND every
+  /// joined `#channel` inbox. Uses the ACTIVE (scoped) repository — the
+  /// vendored one is null/dead in enrolled-credential mode, which used
+  /// to silence the idle wake for all hub mail.
   Future<bool> _hasPendingHubMail() async {
-    final repository = _hub.repository;
-    final agentId = _hub.agentId;
+    final repository = _activeRepository;
+    final agentId = repository?.client.agentId;
     // No agentId yet (pre-welcome): peek the '' mailbox would report the
     // frames parked there forever and churn the wake loop — report empty.
     if (repository == null || agentId == null) return false;
-    final pending = await repository.peek(agentId);
-    return pending.isNotEmpty;
+    try {
+      if ((await repository.peek(agentId)).isNotEmpty) return true;
+      for (final channel in await joinedChannelsFor(_hub)) {
+        if ((await repository.peek('#$channel')).isNotEmpty) return true;
+      }
+    } on Object {
+      return false;
+    }
+    return false;
   }
 
   /// The `dap_*` tools: status/peers are read-only; dm/invite/connect
