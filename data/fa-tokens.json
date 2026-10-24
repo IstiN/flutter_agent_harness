@@ -66,36 +66,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-1484": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T12:09:06Z",
-      "prompt": 32010,
-      "completion": 4218,
-      "total": 36228,
-      "model": ""
-    }
-  ],
-  "pr-1485": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T12:16:35Z",
-      "prompt": 26693,
-      "completion": 9048,
-      "total": 35741,
-      "model": ""
-    }
-  ],
-  "pr-1486": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T12:24:39Z",
-      "prompt": 42195,
-      "completion": 12980,
-      "total": 55175,
-      "model": ""
-    }
-  ],
   "pr-1487": [
     {
       "leg": "review",
@@ -4870,6 +4840,17 @@
       "completion": 58466,
       "total": 198373,
       "cacheRead": 9128256,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-1836": [
+    {
+      "leg": "review",
+      "at": "2026-10-24T12:26:54Z",
+      "prompt": 53361,
+      "completion": 21429,
+      "total": 74790,
+      "cacheRead": 1663936,
       "model": "glm-5.3-flash"
     }
   ]
