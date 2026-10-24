@@ -307,17 +307,23 @@ void main() {
       expect(registry.jobs.single.notifyOnSettle, isFalse);
     });
 
-    test('AC4: threshold 0 is the kill switch — the classic path runs',
-        () async {
-      final killSwitch = shellTool(
-        env,
-        jobs: registry,
-        autoBackgroundAfter: Duration.zero,
-      );
-      final result = await killSwitch.execute({'command': 'make'}, null, null);
-      expect(_text(result), 'exec-ran');
-      expect(env.jobs, isEmpty);
-    });
+    test(
+      'AC4: threshold 0 is the kill switch — the classic path runs',
+      () async {
+        final killSwitch = shellTool(
+          env,
+          jobs: registry,
+          autoBackgroundAfter: Duration.zero,
+        );
+        final result = await killSwitch.execute(
+          {'command': 'make'},
+          null,
+          null,
+        );
+        expect(_text(result), 'exec-ran');
+        expect(env.jobs, isEmpty);
+      },
+    );
 
     test('AC4: an explicit timeout at or below the threshold keeps the '
         'classic foreground path (no job)', () async {
@@ -455,11 +461,7 @@ void main() {
           }
         } else if (context.messages.whereType<ToolResultMessage>().isEmpty) {
           for (final event in _toolTurn([
-            ToolCall(
-              id: 'c1',
-              name: 'bash',
-              arguments: {'command': 'make'},
-            ),
+            ToolCall(id: 'c1', name: 'bash', arguments: {'command': 'make'}),
           ])) {
             stream.push(event);
           }

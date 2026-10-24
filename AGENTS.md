@@ -265,7 +265,17 @@ factual: paths, commands, invariants — no essays.
   count, waiting row) hangs off it (issue #562). The model-facing notice
   (steered mid-run or a fresh idle turn; app `sendText` system-notice)
   is skipped when a foreground call consumed the result inline
-  (`suppressSettleNotification`). Headless `fa -p` DRAINS live shell
+  (`suppressSettleNotification`). gh-1835: a foreground bash call still
+  running after `waiting.autoBackgroundSeconds` (default 60; 0 = kill
+  switch) is auto-backgrounded — CONVERTED, never restarted (it already
+  runs as a registry job under the soft-yield path): the pending tool call
+  resolves exactly once with the backgrounded result (`bash_auto_background
+  .dart` text, anchored on the hand-back sentence so the loop's stuck
+  supervisor and budget ladder classify it as a real conversion), the
+  settle notification stays armed, an explicit `timeout` at/below the
+  threshold keeps the classic path while one above carries over as the
+  job's cap, and hosts without `BackgroundShell` keep legacy behavior.
+  Headless `fa -p` DRAINS live shell
   jobs after the final answer like in-flight subagents — the settles
   steer fresh reaction turns, loop (10 rounds) under ONE shared
   wall-clock ceiling `headless.shellJobDrainMs` (default 30 min; 0 =

@@ -600,7 +600,8 @@ Future<ToolExecutionResult> _awaitJobOutcome(
       // gh-1455: the RUN aborting (Agent.abort, the idle watchdog) must not
       // kill the job either — it unwinds this call exactly like a yield,
       // handing the still-running process to the background.
-      if (yieldToken != null) yieldToken.onCancel.then((_) => _JobOutcome.unwound),
+      if (yieldToken != null)
+        yieldToken.onCancel.then((_) => _JobOutcome.unwound),
       if (cancelToken != null)
         cancelToken.onCancel.then((_) => _JobOutcome.unwound),
       if (conversionTimer != null)

@@ -24,8 +24,7 @@
 /// single source of the model-facing conversion notice.
 library;
 
-import '../agent/stuck_tool.dart'
-    show stuckBackgroundHandbackSentence;
+import '../agent/stuck_tool.dart' show stuckBackgroundHandbackSentence;
 
 /// Default liveness threshold for the auto-background conversion
 /// (`waiting.autoBackgroundSeconds`; `0` disables the feature): about the
