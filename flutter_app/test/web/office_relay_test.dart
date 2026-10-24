@@ -503,10 +503,9 @@ void main() {
 
   /// A provider POST carrying the credentials the core adapter attaches
   /// (plus a custom header no leg has any business dropping).
-  http.Request keyedProviderRequest() =>
-      providerRequest()
-        ..headers['authorization'] = 'Bearer sk-or-v1-gh1830'
-        ..headers['x-request-id'] = 'fa-gh1830';
+  http.Request keyedProviderRequest() => providerRequest()
+    ..headers['authorization'] = 'Bearer sk-or-v1-gh1830'
+    ..headers['x-request-id'] = 'fa-gh1830';
 
   /// The init.headers of the recorded fetch call (null when absent).
   Map<Object?, Object?>? headersOf(JSObject? init) =>
@@ -534,7 +533,8 @@ void main() {
     expect(
       directHeaders?['authorization'],
       'Bearer sk-or-v1-gh1830',
-      reason: 'the provider credential must survive the direct fallback — '
+      reason:
+          'the provider credential must survive the direct fallback — '
           'dropping it is the gh-1830 keyless-401 bug',
     );
     expect(directHeaders?['x-request-id'], 'fa-gh1830');
@@ -546,8 +546,7 @@ void main() {
   });
 
   test('gh-1830 AC2 add-in lane: the hub envelope carries the provider '
-      'Authorization verbatim — the hub re-dispatches it upstream',
-      () async {
+      'Authorization verbatim — the hub re-dispatches it upstream', () async {
     officeHubRelayToken = 'hub-secret';
     Map<Object?, Object?>? envelope;
     final fetchDouble = FetchDouble((url, init) async {
@@ -568,28 +567,28 @@ void main() {
     expect(envelopeHeaders['authorization'], 'Bearer sk-or-v1-gh1830');
     // The outer request to the HUB carries the hub bearer, never the
     // provider credential.
-    final hubCallHeaders = headersOf(
-      fetchDouble.calls.last.init as JSObject?,
-    );
+    final hubCallHeaders = headersOf(fetchDouble.calls.last.init);
     expect(hubCallHeaders?['authorization'], 'Bearer hub-secret');
   });
 
-  test('gh-1830 AC2 add-in lane: the extension-bridge envelope carries the '
-      'provider Authorization verbatim — the SW re-dispatches it upstream',
-      () async {
-    final fetchDouble = FetchDouble((url, init) async => fail(url));
-    addTearDown(fetchDouble.dispose);
-    final relay = RelayDouble(onStream: (_) async => RelayDouble.sseFrames);
-    addTearDown(relay.dispose);
+  test(
+    'gh-1830 AC2 add-in lane: the extension-bridge envelope carries the '
+    'provider Authorization verbatim — the SW re-dispatches it upstream',
+    () async {
+      final fetchDouble = FetchDouble((url, init) async => fail(url));
+      addTearDown(fetchDouble.dispose);
+      final relay = RelayDouble(onStream: (_) async => RelayDouble.sseFrames);
+      addTearDown(relay.dispose);
 
-    final response = await newClient().send(keyedProviderRequest());
+      final response = await newClient().send(keyedProviderRequest());
 
-    expect(response.statusCode, 200);
-    final req = relay.streams.single['req']! as Map;
-    final reqHeaders = req['headers']! as Map<Object?, Object?>;
-    expect(reqHeaders['authorization'], 'Bearer sk-or-v1-gh1830');
-    expect(reqHeaders['x-request-id'], 'fa-gh1830');
-  });
+      expect(response.statusCode, 200);
+      final req = relay.streams.single['req']! as Map;
+      final reqHeaders = req['headers']! as Map<Object?, Object?>;
+      expect(reqHeaders['authorization'], 'Bearer sk-or-v1-gh1830');
+      expect(reqHeaders['x-request-id'], 'fa-gh1830');
+    },
+  );
 }
 
 /// The rejection a dead fetch produces, named for the test.
