@@ -119,7 +119,7 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
   return MediaEndpoint(
     baseUrl: override.baseUrl,
     modelId: override.modelId,
-    apiKey: mainApiKey,
+    apiKey: key,
   );
 }
 
