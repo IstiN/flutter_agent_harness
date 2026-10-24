@@ -298,6 +298,31 @@ class PricingOverrideTest(SummaryTestBase):
         self.assertIn("repo default", resolved.source)
         self.assertIn("kimi-for-coding", resolved.table)
 
+    def test_shapeless_override_does_not_claim_active(self):
+        """gh-1838 review: an override rejected by _pricing_parts must not
+        flip the Pricing source row to "override active" — it contributed
+        nothing and takes the same suffix as the load-failed path."""
+        base = self.write_pricing("base.json", self.BASE)
+        for shapeless in ('{"rates": {}}', "{}"):
+            over = self.write_pricing("shapeless.json", shapeless)
+            resolved = self.resolved(base, override=over)
+            self.assertNotIn("over repo default", resolved.source, shapeless)
+            self.assertIn("see pricing warnings", resolved.source, shapeless)
+            self.assertTrue(
+                any("no usd_per_mtok table" in w for w in resolved.warnings),
+                resolved.warnings,
+            )
+
+    def test_accepted_empty_override_still_claims_active(self):
+        base = self.write_pricing("base.json", self.BASE)
+        over = self.write_pricing("empty.json", {"usd_per_mtok": {}})
+        resolved = self.resolved(base, override=over)
+        self.assertIn("over repo default", resolved.source)
+        self.assertFalse(
+            any("no usd_per_mtok table" in w for w in resolved.warnings),
+            resolved.warnings,
+        )
+
     def test_render_logs_pricing_source(self):
         run = make_run(self.tmp, ["a"], score={"a": {"t1": True}})
         over = self.write_pricing("over.json", {"usd_per_mtok": {}})
@@ -410,6 +435,120 @@ class AliasEstimateTest(SummaryTestBase):
         self.assertEqual(code, 0)
         cost_doc = json.loads((run / "_stats" / "cost.json").read_text())
         self.assertNotIn("a", cost_doc, "estimate never rides the wire")
+
+
+class AliasLoudnessTest(SummaryTestBase):
+    """gh-1838 review rounds 1–2: alias resolution must be LOUD — a
+    typo'd/dead alias target must never silently degrade to the direct
+    entry (AC5), a non-dict `aliases` value warns like every other
+    malformation, and chains resolve hop-by-hop."""
+
+    BASE = {
+        "usd_per_mtok": {
+            "plan": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0},
+            "kimi-k3": {"input": 3.0, "output": 15.0, "cache_read": 0.3},
+        }
+    }
+
+    def resolved_alias(self, aliases, name="alias.json"):
+        doc = json.loads(json.dumps(self.BASE))
+        doc["aliases"] = aliases
+        return self.resolved(self.write_pricing(name, doc))
+
+    def render_with(self, resolved, model="kimi-for-coding"):
+        run = make_run(
+            self.tmp,
+            ["a"],
+            score={"a": {"t1": True}},
+            sessions={"a": [_session_line(model, 100, 50, 10, 2)]},
+        )
+        return summary.render(
+            run,
+            expected=1,
+            total=1,
+            mode="smoke",
+            run_label="s",
+            fa_ref="x",
+            run_url="",
+            resolved=resolved,
+        )
+
+    # — IMPORTANT thread: alias → missing target must warn, never go silent
+    def test_alias_to_missing_target_warns_loud(self):
+        resolved = self.resolved_alias({"kimi-for-coding": "kimi-k2-7-code"})
+        self.assertTrue(
+            any(
+                "kimi-for-coding" in w and "kimi-k2-7-code" in w
+                for w in resolved.warnings
+            ),
+            resolved.warnings,
+        )
+        self.assertTrue(
+            any("has no entry in the loaded table" in w for w in resolved.warnings),
+            resolved.warnings,
+        )
+
+    def test_alias_to_missing_target_render_surfaces_warning(self):
+        resolved = self.resolved_alias({"kimi-for-coding": "kimi-k2-7-code"})
+        result = self.render_with(resolved)
+        self.assertIn("⚠️ pricing:", result.text)
+        self.assertIn('alias "kimi-for-coding"', result.text)
+        self.assertIn("kimi-k2-7-code", result.text)
+
+    def test_valid_alias_stays_warning_free(self):
+        resolved = self.resolved_alias({"plan": "kimi-k3"})
+        self.assertFalse(
+            [w for w in resolved.warnings if "alias" in w], resolved.warnings
+        )
+
+    # — thread re-post addendum: chains resolve hop-by-hop
+    def test_alias_chain_resolves_through_hops(self):
+        doc = {
+            "usd_per_mtok": {
+                "plan": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0},
+                "c": {"input": 2.0, "output": 5.0, "cache_read": 0.2},
+            },
+            "aliases": {"plan": "b", "b": "c"},
+        }
+        resolved = self.resolved(self.write_pricing("chain.json", doc))
+        self.assertFalse(
+            [w for w in resolved.warnings if "alias" in w], resolved.warnings
+        )
+        entry, alias = fa_usage.resolve_entry(resolved.table, resolved.aliases, "plan")
+        self.assertEqual(alias, "c", "chain resolves to the terminal target")
+        self.assertEqual(entry["input"], 2.0, "priced at the terminal target's rates")
+
+    def test_alias_chain_dead_end_warns(self):
+        resolved = self.resolved_alias({"a": "b", "b": "c"})
+        self.assertTrue(
+            any('"a"' in w and "has no entry" in w for w in resolved.warnings),
+            resolved.warnings,
+        )
+        self.assertTrue(
+            any('"b"' in w and "has no entry" in w for w in resolved.warnings),
+            resolved.warnings,
+        )
+
+    def test_alias_cycle_terminates_loud(self):
+        resolved = self.resolved_alias({"zz1": "zz2", "zz2": "zz1"})
+        self.assertTrue(
+            any('"zz1"' in w and "has no entry" in w for w in resolved.warnings),
+            resolved.warnings,
+        )
+        entry, alias = fa_usage.resolve_entry(resolved.table, resolved.aliases, "zz1")
+        self.assertIsNone(entry, "a dead cycle never invents a price")
+        self.assertIsNone(alias)
+
+    # — SUGGESTION thread: non-dict aliases warns like the siblings
+    def test_non_dict_aliases_warn(self):
+        doc = json.loads(json.dumps(self.BASE))
+        doc["aliases"] = ["plan", "kimi-k3"]
+        resolved = self.resolved(self.write_pricing("listalias.json", doc))
+        self.assertTrue(
+            any("aliases is not an object" in w for w in resolved.warnings),
+            resolved.warnings,
+        )
+        self.assertEqual(resolved.aliases, {})
 
 
 class CostSplitTest(SummaryTestBase):

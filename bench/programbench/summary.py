@@ -110,6 +110,16 @@ def instance_usage(tdir: Path, table: dict, aliases: dict) -> dict:
     return result
 
 
+class SummaryResult(NamedTuple):
+    """(text, exit_code, costs, calls) — text is the full summary output;
+    costs/calls mirror the _stats wire (tests pin the no-estimate rule)."""
+
+    text: str
+    exit_code: int
+    costs: dict
+    calls: dict
+
+
 def render(
     run_dir: Path,
     expected: int = 0,
@@ -119,7 +129,7 @@ def render(
     fa_ref: str = "",
     run_url: str = "",
     resolved: fa_usage.ResolvedPricing | None = None,
-):
+) -> SummaryResult:
     """Build the whole summary. Returns SummaryResult(text, exit_code,
     costs, calls) — costs/calls are exactly what lands in _stats (the
     wire), so tests can pin the wire contract (gh-1838: alias estimates
@@ -285,16 +295,6 @@ def render(
                 "100% of scored tests."
             )
     return SummaryResult(text, exit_code, costs, calls)
-
-
-class SummaryResult(NamedTuple):
-    """(text, exit_code, costs, calls) — text is the full summary output;
-    costs/calls mirror the _stats wire (tests pin the no-estimate rule)."""
-
-    text: str
-    exit_code: int
-    costs: dict
-    calls: dict
 
 
 def main() -> int:

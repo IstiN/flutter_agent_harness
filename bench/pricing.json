@@ -1,7 +1,7 @@
 {
   "source": "glm entries: https://docs.z.ai/guides/overview/pricing; kimi entries: https://platform.kimi.ai/docs/pricing/chat (official rate card, verified live 2026-10-24; CNY card platform.moonshot.cn/docs/pricing cross-checked)",
   "as_of": "2026-10-24",
-  "comment": "USD per million tokens. cache_read = 'Cached Input'; cache_write = cache-write fee where the card bills one (z.ai 'Cached Input Storage', limited-time free; Kimi K3-series 5m-TTL tier — the card's default — with the 1h tier double). Data only (issue #1123): model ids missing here render n/a, never a made-up price; FA_BENCH_PRICING overrides without editing the repo (gh-1838 AC6).",
+  "comment": "USD per million tokens. cache_read = 'Cached Input'; cache_write = cache-write fee where the card bills one (z.ai 'Cached Input Storage', limited-time free; Kimi K3-series 5m-TTL tier — the card's default — with the 1h tier double). K2 series sunset (platform.kimi.ai/docs/models, 2026-10-24): no new users after 2026-10-31, full retirement planned end of 2026 — re-verify the kimi-k2.* entries or alias onto a K3.1 model via FA_BENCH_PRICING before then. Data only (issue #1123): model ids missing here render n/a, never a made-up price; FA_BENCH_PRICING overrides without editing the repo (gh-1838 AC6).",
   "usd_per_mtok": {
     "glm-5.3-flash": {"input": 0.15, "output": 0.5, "cache_read": 0.03, "cache_write": 0.0},
     "glm-5.3-flashx": {"input": 0.37, "output": 1.25, "cache_read": 0.075, "cache_write": 0.0},

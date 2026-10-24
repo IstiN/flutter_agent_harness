@@ -367,14 +367,53 @@ def _read_pricing_doc(path):
         return None, exc
 
 
-def _pricing_parts(doc, what: str, warnings: list) -> tuple[dict, dict]:
-    """(usd_per_mtok, aliases) from one pricing doc; loud shape warning."""
+def _pricing_parts(doc, what: str, warnings: list) -> tuple[dict, dict, bool]:
+    """(usd_per_mtok, aliases, accepted) from one pricing doc; loud shape
+    warnings. accepted=False means the doc was rejected outright (no
+    usd_per_mtok table) and contributed nothing — callers must not claim
+    it as an active source."""
     if not isinstance(doc, dict) or not isinstance(doc.get("usd_per_mtok"), dict):
         warnings.append(f"{what}: no usd_per_mtok table — ignored")
-        return {}, {}
+        return {}, {}, False
     aliases = doc.get("aliases")
-    aliases = dict(aliases) if isinstance(aliases, dict) else {}
-    return dict(doc["usd_per_mtok"]), aliases
+    if aliases is None:
+        aliases = {}
+    elif isinstance(aliases, dict):
+        aliases = dict(aliases)
+    else:
+        warnings.append(f"{what}: aliases is not an object — ignored")
+        aliases = {}
+    return dict(doc["usd_per_mtok"]), aliases, True
+
+
+def _validate_aliases(table: dict, aliases: dict, warnings: list) -> None:
+    """Loud dead-end detection over the merged alias map (gh-1838 review:
+    an alias whose target has no entry must never silently degrade to the
+    direct entry — that is exactly the silent-resolution failure AC5
+    bans). Chains are followed hop-by-hop; a chain is valid when ANY hop
+    lands on a table entry; cycles and dead ends warn, naming the alias,
+    the target, and the verdict."""
+    for alias in sorted(aliases, key=str):
+        target = aliases[alias]
+        seen = {str(alias)}
+        current = target
+        while (
+            isinstance(current, str)
+            and current
+            and price_entry(table, current) is None
+            and str(current) not in seen
+        ):
+            seen.add(str(current))
+            current = aliases.get(current)
+        if (
+            not isinstance(current, str)
+            or not current
+            or price_entry(table, current) is None
+        ):
+            warnings.append(
+                f'alias "{alias}" → "{target}" has no entry in the '
+                "loaded table — alias ignored"
+            )
 
 
 def load_pricing_resolved(default_path, override=None) -> ResolvedPricing:
@@ -386,9 +425,13 @@ def load_pricing_resolved(default_path, override=None) -> ResolvedPricing:
     and per alias — an existing base rate survives unless the override
     names it. Every load/parse failure appends a LOUD warning naming the
     path + the error (an entry that exists must never degrade to a
-    silent n/a); a failed override falls back to the repo default.
-    Unknown models stay unpriced — an override never invents rates, it
-    only supplies them (#1123 rule).
+    silent n/a); a failed — or shape-rejected, contributing-nothing —
+    override falls back to the repo default and the `source` label says
+    so instead of claiming an active override. Alias targets are
+    validated against the MERGED table: a dead-end alias warns loudly
+    (naming alias + target) instead of silently degrading to the direct
+    entry (gh-1838 review). Unknown models stay unpriced — an override
+    never invents rates, it only supplies them (#1123 rule).
     """
     default = str(default_path)
     warnings: list[str] = []
@@ -397,7 +440,7 @@ def load_pricing_resolved(default_path, override=None) -> ResolvedPricing:
         warnings.append(f"pricing file {default} failed to load: {err}")
         table, aliases = {}, {}
     else:
-        table, aliases = _pricing_parts(doc, f"pricing file {default}", warnings)
+        table, aliases, _ = _pricing_parts(doc, f"pricing file {default}", warnings)
     source = f"repo default — {default}"
     if override is not None and override.strip():
         stripped = override.strip()
@@ -414,7 +457,7 @@ def load_pricing_resolved(default_path, override=None) -> ResolvedPricing:
             warnings.append(f"{what} failed to load: {oerr}")
             source += " (⚠️ FA_BENCH_PRICING override failed — see pricing warnings)"
         else:
-            otable, oaliases = _pricing_parts(odoc, what, warnings)
+            otable, oaliases, oaccepted = _pricing_parts(odoc, what, warnings)
             for model, entry in otable.items():
                 if not isinstance(entry, dict):
                     warnings.append(
@@ -423,7 +466,13 @@ def load_pricing_resolved(default_path, override=None) -> ResolvedPricing:
                     continue
                 table[model] = {**table.get(model, {}), **entry}
             aliases.update(oaliases)
-            source = f"{what} over repo default {default}"
+            if oaccepted:
+                source = f"{what} over repo default {default}"
+            else:
+                source += (
+                    " (⚠️ FA_BENCH_PRICING override failed — see pricing warnings)"
+                )
+    _validate_aliases(table, aliases, warnings)
     return ResolvedPricing(table, aliases, source, warnings)
 
 
@@ -440,6 +489,21 @@ def price_entry(pricing: dict, model) -> dict | None:
     return None
 
 
+def _alias_target(aliases: dict, model) -> str | None:
+    """The alias target configured for model (exact, then
+    case-insensitive); None when there is no usable string target."""
+    if not model:
+        return None
+    target = aliases.get(model)
+    if target is None:
+        lowered = str(model).lower()
+        for key, candidate in aliases.items():
+            if key.lower() == lowered:
+                target = candidate
+                break
+    return target if isinstance(target, str) and target else None
+
+
 def resolve_entry(table: dict, aliases: dict, model) -> tuple[dict | None, str | None]:
     """Pricing entry for a model id, resolving the `aliases` map (gh-1838 AC7).
 
@@ -451,19 +515,26 @@ def resolve_entry(table: dict, aliases: dict, model) -> tuple[dict | None, str |
     a subscription plan's $0 entry gets upgraded to a labelled estimate);
     (None, None) = unpriced: unknown models stay n/a, an alias never
     invents rates.
+
+    Chains resolve hop-by-hop (a→b, b→c prices `a` at c's rates, labelled
+    "estimate @ c rates"); cycles and dead ends stop following and fall
+    back to the model's own direct entry. load_pricing_resolved has
+    already warned loudly about every dead-end alias at load time (gh-1838
+    review), so this fallback is silent only for callers holding an
+    unvalidated map.
     """
     if model:
-        target = aliases.get(model)
-        if target is None:
-            lowered = str(model).lower()
-            for key, candidate in aliases.items():
-                if key.lower() == lowered:
-                    target = candidate
-                    break
-        if isinstance(target, str) and target:
+        seen: set[str] = set()
+        current = model
+        for _ in range(5):  # chains are config, not a graph — cap the hops
+            target = _alias_target(aliases, current)
+            if target is None or str(target) in seen:
+                break
+            seen.add(str(current))
             entry = price_entry(table, target)
             if entry is not None:
                 return entry, target
+            current = target
     entry = price_entry(table, model)
     if entry is not None:
         return entry, None
