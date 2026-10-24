@@ -119,6 +119,25 @@ final class FallbackMessagingRepository
     }
   }
 
+  /// Resolves through the routing primary and reports whether the QUERY
+  /// itself failed (drop/timeout mid-query — the primary rethrows, e.g.
+  /// the lib hub router's presence door or bin adapter's roster call).
+  /// `(null, false)` is a CONFIRMED roster miss — the connected primary
+  /// answered and does not know the recipient; `(null, true)` means the
+  /// roster could not be consulted and the answer is unknown. The flush
+  /// may untrack only on a confirmed miss: a failed query keeps the
+  /// queue for the next connected call (gh-1838 hostile-env strand —
+  /// a query failure used to untrack queued hub mail permanently).
+  Future<(String?, bool)> _resolveOrQueryFailure(String toId) async {
+    final router = _router;
+    if (router == null || !router.isConnected) return (null, false);
+    try {
+      return (await router.resolveTarget(toId), false);
+    } on Object {
+      return (null, true);
+    }
+  }
+
   void _trackForForward(AgentMessage message) => _pendingForward
       .putIfAbsent(message.toId, () => <String>{})
       .add(message.id);
@@ -136,11 +155,14 @@ final class FallbackMessagingRepository
     if (router == null || !router.isConnected) return;
     for (final entry in _pendingForward.entries.toList()) {
       final recipient = entry.key;
-      final target = await _safeResolve(recipient);
+      final (target, queryFailed) = await _resolveOrQueryFailure(recipient);
       if (target == null) {
-        // Connected, and the roster does not know this recipient: the file
-        // fabric owns this mail — stop tracking, never forward it.
-        _pendingForward.remove(recipient);
+        if (!queryFailed) {
+          // Connected, and the roster answered without this recipient: the
+          // file fabric owns this mail — stop tracking, never forward it.
+          _pendingForward.remove(recipient);
+        }
+        // A failed roster query is "unknown, retry later" — keep tracking.
         continue;
       }
       final pending = await _safePeek(recipient);
