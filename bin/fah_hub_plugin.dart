@@ -142,6 +142,8 @@ final class HubPluginHost implements FahPlugin {
   /// Whether [channel] is a keyless (PUBLIC showcase) membership on the
   /// host's active hub — public channels use the raw-payload contract,
   /// not chankey E2E.
+  ExecutionEnv? _pluginEnv;
+
   /// The channel ids joined on the host's active hub — the fabric must
   /// drain `#channel` inboxes too: `drain(agentId)` alone only ever
   /// returns DMs, which is why channel traffic never reached the agent.
@@ -191,6 +193,7 @@ final class HubPluginHost implements FahPlugin {
   @override
   void register(PluginContext context) {
     _pluginIo = context.io;
+    _pluginEnv = context.env;
     _byPlugin[_hub] = this;
     _hub.register(
       hub.PluginContext(
@@ -419,7 +422,15 @@ final class HubPluginHost implements FahPlugin {
     final scopedSecret = _environment['DAP_CLIENT_SECRET'] ?? '';
     final client = hub.HubClient(
       config: hub.HubConfig(url: normalized, name: settings.name),
-      identity: await hub.HubIdentity.load(settings.keyPath),
+      identity: await hub.HubIdentity.load(
+        scopedIdentityKeyPath(
+          defaultKeyPath: settings.keyPath,
+          explicitKeyPath:
+              liveConfig.keyPath != null ||
+              (_environment[hub.HubConfig.envKeyPath] ?? '').isNotEmpty,
+          projectCwd: _pluginEnv?.cwd ?? _home ?? '',
+        ),
+      ),
       channelStore: store,
       clientSecret: (scopedSecret.isEmpty ? null : scopedSecret),
       enroll: false,

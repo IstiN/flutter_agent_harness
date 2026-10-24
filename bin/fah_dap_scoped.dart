@@ -12,6 +12,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:fa_hub_client/fa_hub_client.dart' as client;
 import 'package:flutter_agent_harness/src/hub/dap_env_channels.dart';
 import 'package:flutter_agent_harness/src/hub/dap_invite_import.dart';
@@ -651,4 +652,30 @@ final class DapScopedMemberships {
       }
     }
   }
+}
+
+/// Identity key path for scoped (enrolled-credential) connections.
+///
+/// The vendored default (`~/.dap/keys/fah/<name>.key`) is shared by EVERY
+/// process using the same display name, and the hub evicts the previous
+/// connection of an agent id: two projects enrolled as `public-agent`
+/// kept kicking each other offline — inbound arrived only right after a
+/// reconnect, sends reported "hub is not connected yet" (gh-1825).
+/// Scoped identities are therefore per PROJECT: stable across restarts
+/// (offline mailbox preserved), distinct across working directories. An
+/// explicit `DAP_KEY_PATH` / `hub.keyPath` is respected verbatim.
+String scopedIdentityKeyPath({
+  required String defaultKeyPath,
+  required bool explicitKeyPath,
+  required String projectCwd,
+}) {
+  if (explicitKeyPath) return defaultKeyPath;
+  final digest = sha256
+      .convert(utf8.encode(projectCwd))
+      .toString()
+      .substring(0, 10);
+  return defaultKeyPath.endsWith('.key')
+      ? '${defaultKeyPath.substring(0, defaultKeyPath.length - 4)}'
+            '-$digest.key'
+      : '$defaultKeyPath-$digest.key';
 }

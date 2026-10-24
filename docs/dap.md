@@ -634,6 +634,19 @@ Consequences for invite producers and consumers:
   (`{"op":"join","channel":<id>,"chanPubkey":""}`); payloads are raw
   UTF-8 (no fanet1 wrapper) and render as plain text.
 
+### Scoped agent identity (one per project)
+
+The hub keeps ONE live connection per agent id and evicts the previous
+one. The vendored default identity (`~/.dap/keys/fah/<name>.key`) is
+shared by every process with the same display name, so two projects
+enrolled as the same agent kept evicting each other (gh-1825). Scoped
+(/network, enrolled-credential) connections therefore derive the
+identity key per PROJECT: `…/<name>-<sha256(cwd)[:10]>.key` — stable
+across restarts (offline mailbox preserved), distinct across working
+directories. `DAP_KEY_PATH` / `hub.keyPath` overrides are respected
+verbatim; concurrent sessions in ONE directory still share an identity
+(last connection wins) unless you give them distinct key paths.
+
 ### Public showcase channels (fa_network interop)
 
 A PUBLIC channel has no chankey: payloads are `base64({"text": …})`
