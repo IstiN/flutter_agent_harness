@@ -12,11 +12,15 @@
 #       Anything missing → ::error:: + exit 1 → the release run goes red
 #       and the release stays a draft (the previous release stays latest).
 #       This is the rehearsal-proven guard for the v1.0.635 incident, where
-#       the extension's producer (build-macos.yml build-extension, a daily
-#       leg that derives "latest+1 at its own dispatch moment") attached
-#       fa-extension.zip to an orphaned v1.0.636 draft while the tag train
-#       published v1.0.635 without it — every leg green, nothing asserted
-#       the published set.
+#       the extension's then-only producer (build-macos.yml build-extension,
+#       a daily leg that derives "latest+1 at its own dispatch moment")
+#       attached fa-extension.zip to an orphaned v1.0.636 draft while the
+#       tag train published v1.0.635 without it — every leg green, nothing
+#       asserted the published set. gh-1847: the tag train now builds
+#       fa-extension.zip itself (ci.yml build-extension), so the
+#       v1.0.637/v1.0.638 stranding (a train landing after the daily leg)
+#       cannot recur; this gate stays the loud last line of defense for
+#       ANY required asset going missing.
 #
 #   assert_release_assets.sh --smoke <tag|latest>
 #       POST-PUBLISH SMOKE: ranged-GET (1 byte) every required asset's

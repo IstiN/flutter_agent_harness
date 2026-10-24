@@ -4299,18 +4299,6 @@ jobs:
             echo 'The web SPA bundle job failed (continue-on-error: the release ships without it). See the failed steps above.'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # SEC-07 (#795): the installer's default trust path is SIGNED checksums.
-  # This job aggregates every fa-* asset of the release into SHA256SUMS and
-  # signs it with the FA_RELEASE_SIGNING_KEY repo secret (openssl RSA —
-  # already available on runners, no new dependency). The signing key is a
-  # channel separate from the release assets, so a checksum file served from
-  # the same compromised source as the binary cannot vouch for itself.
-  # Fail-closed: without the secret the release publishes NO provenance and
-  # this job goes red — install.sh aborts with E_PROVENANCE_MISSING on it.
-  # Needs web-spa (#1100, continue-on-error) for ordering only: the web
-  # bundle cannot hold CLI provenance hostage. The ordering makes the fa-*
-  # sweep deterministic — web-spa success -> zip signed, web-spa failure ->
-  # zip absent — never a half-updated manifest.
   # gh-1847: the tag train builds fa-extension.zip ITSELF. The leg
   # mirrors web-spa (additive attach, quality-gate keyed) because the
   # failure mode it kills is identical in shape: the extension's former
@@ -4417,10 +4405,24 @@ jobs:
             echo 'The extension build job failed (continue-on-error: the gh-1832 gate strands the release without it). See the failed steps above.'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # SEC-07 (#795): the installer's default trust path is SIGNED checksums.
+  # This job aggregates every fa-* asset of the release into SHA256SUMS and
+  # signs it with the FA_RELEASE_SIGNING_KEY repo secret (openssl RSA —
+  # already available on runners, no new dependency). The signing key is a
+  # channel separate from the release assets, so a checksum file served from
+  # the same compromised source as the binary cannot vouch for itself.
+  # Fail-closed: without the secret the release publishes NO provenance and
+  # this job goes red — install.sh aborts with E_PROVENANCE_MISSING on it.
+  # Needs web-spa (#1100, continue-on-error) and build-extension
+  # (gh-1847, continue-on-error) for ordering only: the web bundle and
+  # the extension zip cannot hold CLI provenance hostage. The ordering
+  # makes the fa-* sweep deterministic — web-spa/extension success ->
+  # zip signed, failure -> zip absent — never a half-updated manifest,
+  # and the gh-1832 gate below never races a slow attach.
   release-provenance:
     name: Sign release checksums
     runs-on: ubuntu-latest
-    needs: [binaries, web-spa]
+    needs: [binaries, web-spa, build-extension]
     timeout-minutes: 10
     if: >-
       !cancelled() && needs.binaries.result == 'success' &&
