@@ -251,7 +251,12 @@ bool isOpenRouterBaseUrl(String baseUrl) {
 /// (`{origin}/api/v1/models`).
 Uri openRouterModelsUri(String baseUrl) {
   final uri = Uri.parse(baseUrl);
-  return Uri(scheme: uri.scheme.isEmpty ? 'https' : uri.scheme, host: uri.host, port: uri.hasPort ? uri.port : null, path: '/api/v1/models');
+  return Uri(
+    scheme: uri.scheme.isEmpty ? 'https' : uri.scheme,
+    host: uri.host,
+    port: uri.hasPort ? uri.port : null,
+    path: '/api/v1/models',
+  );
 }
 
 /// Resolves the effective input modalities for a media call:

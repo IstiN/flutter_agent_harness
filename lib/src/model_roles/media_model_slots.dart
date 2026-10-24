@@ -119,7 +119,9 @@ final class MediaSlotModelConfig {
       );
     }
     return MediaSlotModelConfig(
-      providerKind: useMain ? _optString(node['providerKind']) : required('providerKind'),
+      providerKind: useMain
+          ? _optString(node['providerKind'])
+          : required('providerKind'),
       baseUrl: useMain ? _optString(node['baseUrl']) : required('baseUrl'),
       modelId: useMain ? _optString(node['modelId']) : required('modelId'),
       apiKeyName: (apiKeyName as String?)?.trim(),
@@ -142,7 +144,11 @@ final class MediaSlotModelConfig {
     return value;
   }
 
-  static List<String> _parseModalities(Object? value, String slot, String field) {
+  static List<String> _parseModalities(
+    Object? value,
+    String slot,
+    String field,
+  ) {
     if (value == null) return const [];
     if (value is! YamlList || value.isEmpty) {
       throw ConfigException(
