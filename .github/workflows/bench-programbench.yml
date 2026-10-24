@@ -701,8 +701,17 @@ jobs:
         run: |
           set -euo pipefail
           artifact_url=""
-          if artifact_id=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
-              --jq '.artifacts[] | select(.name=="programbench-submission") | .id' 2>/dev/null | head -1) \
+          # gh-182 review: a re-run keeps the run id and accumulates one
+          # programbench-submission artifact per attempt (next to every
+          # pbench-shard-* artifact). A page-1-first lookup can link a
+          # stale attempt's artifact — or miss the artifact entirely
+          # once the page fills. Paginate everything and pin the newest
+          # by created_at (the id breaks ties), keeping the graceful
+          # empty fallback.
+          if artifact_id=$(gh api --paginate \
+              "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+              --jq '.artifacts[] | select(.name=="programbench-submission") | "\(.created_at)\t\(.id)"' 2>/dev/null \
+              | sort -r | head -1 | cut -f2) \
               && [ -n "$artifact_id" ]; then
             artifact_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/$artifact_id"
           fi

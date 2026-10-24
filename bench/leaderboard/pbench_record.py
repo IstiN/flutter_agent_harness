@@ -90,6 +90,13 @@ def read_stats(stats_dir: Path) -> dict:
         raise FileNotFoundError(f"no score.json under {stats_dir} — "
                                 "record runs only after `programbench "
                                 "submit package`")
+    # gh-182 review round 2: a JSON list passes the `is None` check —
+    # `[]` would silently record an empty "result" row, a non-empty
+    # list would die on .get outside main's (OSError, ValueError)
+    # catch. Same robustness class as the cost/calls guards below.
+    if not isinstance(score, dict):
+        raise ValueError(f"score.json must be an object — got "
+                         f"{type(score).__name__}")
     costs = json.loads((stats_dir / "cost.json").read_text()) \
         if (stats_dir / "cost.json").is_file() else {}
     calls = json.loads((stats_dir / "calls.json").read_text()) \

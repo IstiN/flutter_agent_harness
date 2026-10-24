@@ -8,6 +8,7 @@ the render tests feed ledger dicts directly — no test touches the
 network (the run/artifact URLs are plain strings by contract).
 """
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -188,6 +189,34 @@ class PbenchRecordTest(unittest.TestCase):
     def test_read_stats_missing_score_json_errors(self):
         with self.assertRaises(FileNotFoundError):
             pbench_record.read_stats(Path(self.tmp.name) / "nope")
+
+    def test_read_stats_rejects_a_non_object_score_json(self):
+        # gh-182 review round 2: score.json's top level must be an
+        # object. A stray JSON list passed the `is None` check — `[]`
+        # silently recorded an empty "result" row, a non-empty list
+        # died with an uncaught AttributeError outside main's
+        # (OSError, ValueError) catch. Same class thread 5 fixed for
+        # cost/calls.
+        stats = Path(self.tmp.name) / "_stats"
+        stats.mkdir(parents=True)
+        (stats / "score.json").write_text("[]")
+        with self.assertRaises(ValueError):
+            pbench_record.read_stats(stats)
+
+    def test_main_rejects_a_non_object_score_json(self):
+        stats = Path(self.tmp.name) / "_stats"
+        stats.mkdir(parents=True)
+        (stats / "score.json").write_text("[]")
+        rc = pbench_record.main([
+            "--ledger", str(self.ledger), "--stats-dir", str(stats),
+            "--mode", "smoke", "--model", "kimi-for-coding",
+            "--taskset-ref", "895f65916bc5", "--total", "201",
+        ])
+        self.assertEqual(rc, 2)
+        self.assertTrue(
+            not self.ledger.exists()
+            or json.loads(self.ledger.read_text())["results"] == [],
+            "a rejected score.json never touches the ledger")
 
     def test_read_stats_tolerates_null_and_non_numeric_cost_calls(self):
         # gh-182 review thread 5: a hand-backfilled cost.json/calls.json
@@ -503,6 +532,126 @@ class WorkflowLedgerStepTest(unittest.TestCase):
         # default 90-day window while the README still points at it.
         body = self._step_body("Upload submission folder")
         self.assertIn("retention-days:", body)
+
+    def test_artifact_lookup_pins_the_newest_attempt(self):
+        # gh-182 review round 2: a re-run keeps the run id and
+        # accumulates one programbench-submission artifact per attempt
+        # (next to every pbench-shard-* artifact). A page-1-first
+        # lookup can link a stale attempt's artifact — or miss the
+        # artifact entirely once the page fills. The lookup must page
+        # through everything and pin the newest by created_at, while
+        # keeping the graceful empty fallback.
+        body = self._step_body("Resolve artifact link")
+        self.assertIn("gh api --paginate", body)
+        self.assertIn("created_at", body)
+        self.assertIn("sort -r", body)
+        self.assertIn('artifact_url=""', body)
+
+
+class HomepageSectionTest(unittest.TestCase):
+    """gh-182 R2 (round-2 review thread 1): the fa1.dev HOMEPAGE
+    carries a Benchmarks section rendered from the committed ledgers —
+    every number links to its proof (the ticket's link/target check),
+    smoke rows never read as a leaderboard headline, and the deploy
+    splice is deterministic. The source page is checked for real
+    (site/index.html), the row-level proof-link discipline on fixture
+    rows (the deployed page renders the same block)."""
+
+    SITE_INDEX = REPO_ROOT / "site" / "index.html"
+
+    def _render(self, doc=None, fa=None):
+        return pbench_render.render_homepage(
+            doc if doc is not None else {"schema": 1, "results": []},
+            fa if fa is not None else {"schema": 1, "results": []})
+
+    def test_site_source_carries_the_marked_region_and_nav_target(self):
+        html = self.SITE_INDEX.read_text()
+        self.assertIn(pbench_render.HOME_MARKER_BEGIN, html)
+        self.assertIn(pbench_render.HOME_MARKER_END, html)
+        self.assertIn('id="benchmarks"', html)
+        # "a Benchmarks section (nav link included)" — the header nav
+        # targets the on-page section.
+        self.assertIn('href="#benchmarks"', html)
+
+    def test_homepage_renders_placeholder_when_ledgers_are_empty(self):
+        block = self._render()
+        self.assertIn("No benchmark results recorded yet", block)
+        self.assertNotIn("<table", block)
+
+    def test_homepage_rows_link_every_number_to_its_proof(self):
+        doc = {"schema": 1, "results": [_ledger_row()]}
+        fa = {"schema": 1, "results": [{
+            "dataset_version": "2.1", "model": "kimi-for-coding",
+            "resolved": 300, "total": 445, "date": "2026-10-18",
+            "run_urls": ["https://github.com/o/r/actions/runs/900"],
+            "self_reported": True, "fa_version": "2fd100169e"}]}
+        block = self._render(doc, fa)
+        rows = re.findall(r"<tr>(.*?)</tr>", block, re.S)[1:]  # skip thead
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertIn('href="https://github.com/o/r/actions/runs/',
+                          row, "every result row links its run proof")
+        # The metric cells are anchor-wrapped (the number IS the link).
+        self.assertIn('<a href="https://github.com/o/r/actions/runs/500">66.7%</a>',
+                      block)
+        self.assertIn('<a href="https://github.com/o/r/actions/runs/500">0/1</a>',
+                      block)
+        self.assertIn('<a href="https://github.com/o/r/actions/runs/900">67.4%</a>',
+                      block)
+        # Cross-link to the full results page (per-instance detail).
+        self.assertIn('./programbench.html', block)
+        # Terminal-Bench rows carry the self-reported marker.
+        self.assertIn("⭐ kimi-for-coding", block)
+
+    def test_homepage_labels_smoke_as_pipeline_proof(self):
+        doc = {"schema": 1, "results": [
+            _ledger_row(mode="smoke", total=201,
+                        instances={})["results"][0],
+            _ledger_row()["results"][0],
+        ]}
+        block = self._render(doc)
+        self.assertIn("pipeline proof", block)
+        # Full runs lead; the smoke proof never headlines.
+        self.assertLess(block.index("full — pass@1"),
+                        block.index("pipeline proof"))
+
+    def test_homepage_handles_a_missing_fa_ledger_file(self):
+        block = pbench_render.render_homepage(
+            {"schema": 1, "results": []}, None)
+        self.assertIn("No Terminal-Bench", block)
+
+    def test_homepage_splice_is_deterministic_and_main_wires_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "index.html"
+            home.write_text(self.SITE_INDEX.read_text())
+            ledger = Path(tmp) / "pbench_results.json"
+            ledger.write_text(json.dumps({"schema": 1, "results": []}))
+            argv = ["--ledger", str(ledger), "--homepage", str(home)]
+            self.assertEqual(pbench_render.main(argv), 0)
+            rendered = home.read_text()
+            self.assertIn(pbench_render.HOME_MARKER_BEGIN, rendered)
+            # Second run is a no-op; --check agrees.
+            self.assertEqual(pbench_render.main(argv), 0)
+            self.assertEqual(pbench_render.main(argv + ["--check"]), 0)
+            self.assertEqual(rendered, home.read_text())
+
+    def test_homepage_splice_fails_loudly_without_markers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "index.html"
+            home.write_text("<html>no benchmarks region</html>")
+            ledger = Path(tmp) / "pbench_results.json"
+            ledger.write_text(json.dumps({"schema": 1, "results": []}))
+            rc = pbench_render.main(
+                ["--ledger", str(ledger), "--homepage", str(home)])
+            self.assertEqual(rc, 2)
+            self.assertEqual(home.read_text(),
+                             "<html>no benchmarks region</html>")
+
+    def test_homepage_splice_rejects_an_orphaned_begin_marker(self):
+        text = (f"{pbench_render.HOME_MARKER_BEGIN}\nstale\n"
+                "<p>rest</p>")
+        with self.assertRaises(ValueError):
+            pbench_render.splice_homepage(text, "<p>fresh</p>")
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ rely on that). Stdlib only.
 """
 import argparse
 import html
+import json
 import sys
 from pathlib import Path
 
@@ -54,6 +55,14 @@ LEDGER_PATH = pbench_record.LEDGER_PATH
 
 MARKER_BEGIN = "<!-- pbench-leaderboard:begin (gh-182) -->"
 MARKER_END = "<!-- pbench-leaderboard:end (gh-182) -->"
+# fa1.dev homepage (gh-182 R2): the Benchmarks section's generated
+# region. The committed source page ships the markers around an honest
+# placeholder; pages.yml re-renders the block into the built deploy
+# copy (--homepage). The Terminal-Bench self-reported rows come from
+# the gh-1682 ledger, same proof-links discipline.
+HOME_MARKER_BEGIN = "<!-- benchmarks:begin (gh-182) -->"
+HOME_MARKER_END = "<!-- benchmarks:end (gh-182) -->"
+FA_LEDGER_PATH = LEDGER_PATH.parent / "fa_results.json"
 # Insert point when the marked region doesn't exist yet: right after the
 # Terminal-Bench leaderboard block (the sections read as one board).
 AFTER_ANCHOR = "<!-- leaderboard:end (gh-1682) -->"
@@ -263,6 +272,137 @@ def splice_readme(text: str, section: str) -> str:
     return text[:heading] + block + "\n" + text[heading:]
 
 
+def render_homepage(ledger: dict, fa_ledger) -> str:
+    """The fa1.dev homepage Benchmarks section body (gh-182 R2).
+
+    The ticket: "a `Benchmarks` section (nav link included), rendered
+    from the committed snapshot(s) — result rows where every number
+    links to its proof". ProgramBench rows come from the gh-182 ledger,
+    Terminal-Bench self-reported rows from the gh-1682 ledger (where
+    snapshots exist). Site-styled: reuses the page's .matrix table; the
+    deploy splice fills the marked region in the built index.html —
+    the source page keeps an honest placeholder between the markers.
+    Deterministic, stdlib only.
+    """
+    rows = _sorted_rows(ledger)
+    fa_rows = sorted(
+        list((fa_ledger or {}).get("results") or []),
+        key=lambda r: -(r.get("resolved", 0) / r.get("total", 1) or 0))
+    if not rows and not fa_rows:
+        return ("*No benchmark results recorded yet — the committed "
+                "ledgers (`bench/leaderboard/pbench_results.json`, "
+                "`bench/leaderboard/fa_results.json`) fill on green CI "
+                "runs.*")
+
+    def esc(text) -> str:
+        return html.escape(str(text), quote=True)
+
+    def run_link(url: str) -> str:
+        return (f'<a href="{esc(url)}">run {esc(_run_id(url))}</a>')
+
+    def run_links(row: dict) -> str:
+        return " · ".join(run_link(u) for u in row.get("run_urls") or [])
+
+    def metric(value: str, url) -> str:
+        if not url:
+            return esc(value)
+        return f'<a href="{esc(url)}">{esc(value)}</a>'
+
+    def artifact_links(row: dict) -> "list[str]":
+        return [f'<a href="{esc(a["url"])}">'
+                f'{esc(a.get("label") or "artifacts")}</a>'
+                for a in row.get("artifact_urls") or [] if a.get("url")]
+
+    parts: "list[str]" = []
+    if rows:
+        parts += ["<h3>ProgramBench — rebuild the codebase "
+                  "(self-reported ⭐)</h3>",
+                  "",
+                  '<div class="matrix-wrap">',
+                  '<table class="matrix bench-matrix">',
+                  "  <thead><tr><th>Benchmark</th><th>Model</th>"
+                  "<th>Mode</th><th>Solved</th><th>Test-pass %</th>"
+                  "<th>Date</th><th>Proof</th></tr></thead>",
+                  "  <tbody>"]
+        for r in rows:
+            first = (r.get("run_urls") or [None])[0]
+            attempted, solved = r.get("attempted", 0), r.get("solved", 0)
+            pct = r.get("score_pct")
+            proof = artifact_links(r) + [run_links(r)] if run_links(r) \
+                else artifact_links(r)
+            ref = r.get("taskset_ref", "")
+            bench = (f'<a href="{UPSTREAM_TREE_URL}/{esc(ref)}">'
+                     f"ProgramBench@{esc(ref)}</a>") if ref else "ProgramBench"
+            parts.append(
+                "  <tr>"
+                f"<td>{bench}</td>"
+                f"<td>⭐ {esc(r.get('model', '—'))}</td>"
+                f"<td>{esc(mode_label(r))}</td>"
+                f"<td>{metric(f'{solved}/{attempted}', first)}</td>"
+                f"<td>{metric(f'{pct}%' if pct is not None else '—', first)}</td>"
+                f"<td>{esc(r.get('date', '—'))}</td>"
+                f"<td>{' · '.join(proof) or '—'}</td></tr>")
+        parts += ["  </tbody>", "</table>", "</div>", ""]
+    if fa_rows:
+        parts += ["<h3>Terminal-Bench (self-reported ⭐)</h3>",
+                  "",
+                  '<div class="matrix-wrap">',
+                  '<table class="matrix bench-matrix">',
+                  "  <thead><tr><th>Bench</th><th>Model</th>"
+                  "<th>Accuracy</th><th>Trials</th><th>Date</th>"
+                  "<th>fa</th><th>Runs</th></tr></thead>",
+                  "  <tbody>"]
+        for r in fa_rows:
+            first = (r.get("run_urls") or [None])[0]
+            resolved, total = r.get("resolved", 0), r.get("total", 0)
+            acc = (f"{100.0 * resolved / total:.1f}%" if total else "n/a")
+            fa = r.get("fa_version") or "—"
+            parts.append(
+                "  <tr>"
+                f"<td>TB {esc(r.get('dataset_version', ''))}</td>"
+                f"<td>⭐ {esc(r.get('model', '—'))}</td>"
+                f"<td>{metric(acc, first)}</td>"
+                f"<td>{metric(f'{resolved}/{total}', first)}</td>"
+                f"<td>{esc(r.get('date', '—'))}</td>"
+                f"<td><code>{esc(fa)}</code></td>"
+                f"<td>{run_links(r) or '—'}</td></tr>")
+        parts += ["  </tbody>", "</table>", "</div>", ""]
+    else:
+        parts += ["<p><em>No Terminal-Bench snapshots recorded yet — "
+                  "`bench/leaderboard/fa_results.json` fills via "
+                  "`bench-harbor` runs.</em></p>", ""]
+    parts.append(
+        "<sub>Every number links its proof — the GitHub Actions run and "
+        "the analysis artifacts. Artifact links expire with GitHub's "
+        "retention window; the run pages stay. Self-reported ⭐: never "
+        'auto-submitted to the official boards. Per-instance detail: '
+        '<a href="./programbench.html">full ProgramBench results</a>.'
+        "</sub>")
+    return "\n".join(parts) + "\n"
+
+
+def splice_homepage(text: str, block: str) -> str:
+    """Replace the homepage Benchmarks marked region.
+
+    The region is committed in site/index.html — a missing or corrupt
+    region is a loud ValueError (main turns it into the clean exit-2
+    path): the deploy step must never ship a page whose board silently
+    vanished, and it must never append a second section.
+    """
+    begin = text.find(HOME_MARKER_BEGIN)
+    end = text.find(HOME_MARKER_END)
+    if begin < 0 or end < 0 or end < begin:
+        raise ValueError(
+            "benchmarks markers missing or corrupt — expected a "
+            "<!-- benchmarks:begin (gh-182) --> … <!-- benchmarks:end "
+            "(gh-182) --> region in the homepage")
+    after = end + len(HOME_MARKER_END)
+    tail = (text[after + 1:] if text[after:after + 1] == "\n"
+            else text[after:])
+    return (text[:begin] + f"{HOME_MARKER_BEGIN}\n{block}"
+            + f"{HOME_MARKER_END}" + tail)
+
+
 _PAGE_STYLE = """
     body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
            margin: 2rem auto; max-width: 68rem; padding: 0 1rem;
@@ -427,14 +567,23 @@ def main(argv=None) -> int:
                              "a bare run renders nothing)")
     parser.add_argument("--html", type=Path, default=None,
                         help="write the standalone fa1.dev page here")
+    parser.add_argument("--homepage", type=Path, default=None,
+                        help="splice the Benchmarks section (gh-182 R2) "
+                             "into this page's <!-- benchmarks:begin/end "
+                             "(gh-182) --> region (opt-in)")
+    parser.add_argument("--fa-ledger", type=Path, default=FA_LEDGER_PATH,
+                        help="Terminal-Bench self-reported ledger for the "
+                             "homepage section (a missing file renders the "
+                             "explicit no-snapshots note)")
     parser.add_argument("--check", action="store_true",
                         help="exit 1 if any target would change (CI "
                              "hygiene) — writes nothing")
     args = parser.parse_args(argv)
 
-    if not args.readme and not args.html:
+    if not args.readme and not args.html and not args.homepage:
         parser.print_usage(sys.stderr)
-        print("error: nothing to render — pass --readme and/or --html",
+        print("error: nothing to render — pass --readme and/or --html "
+              "and/or --homepage",
               file=sys.stderr)
         return 2
 
@@ -464,6 +613,27 @@ def main(argv=None) -> int:
         elif _write_if_changed(args.html, page):
             stale = True
             print(f"pbench-leaderboard: wrote {args.html}")
+    if args.homepage:
+        # gh-182 R2: the homepage Benchmarks section — ProgramBench rows
+        # plus the Terminal-Bench self-reported snapshots, every number
+        # linked to its proof. Missing markers are a loud exit-2 (the
+        # deploy page must not silently lose its board), mirroring the
+        # README splice's corrupt-region handling.
+        fa = None
+        if args.fa_ledger is not None and args.fa_ledger.is_file():
+            fa = json.loads(args.fa_ledger.read_text())
+        block = render_homepage(ledger, fa)
+        old = args.homepage.read_text() if args.homepage.exists() else ""
+        try:
+            new = splice_homepage(old, block)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if new != old:
+            stale = True
+            if not args.check:
+                args.homepage.write_text(new)
+                print(f"pbench-leaderboard: updated {args.homepage}")
     if stale and args.check:
         print("pbench-leaderboard: outputs are stale — run "
               "bench/leaderboard/pbench_render.py", file=sys.stderr)
