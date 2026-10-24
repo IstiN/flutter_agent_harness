@@ -387,6 +387,24 @@ void main() {
       );
       expect(plainRegistry.jobs, isEmpty);
     });
+
+    test('the command-rewrite notice rides the conversion result', () async {
+      final rewriteTool = shellTool(
+        env,
+        jobs: registry,
+        autoBackgroundAfter: _conversionThreshold,
+        redactionConfig: const RedactionConfig(),
+      );
+      final resultFuture = rewriteTool.execute({
+        'command': 'export GH_TOKEN=ghp_${'A' * 36}',
+      }, null, null);
+      final job = await _waitForJob(env);
+      final text = _text(await resultFuture);
+      // The rewrite notice leads, the conversion facts follow.
+      expect(text, startsWith('[bash interceptor rewrote 1 secret-shaped'));
+      expect(text, contains('moved to background job ${job.id}'));
+      env.jobs.single.complete(0);
+    });
   });
 
   group('bash auto-background through the agent loop (AC1/AC2/AC3)', () {
