@@ -266,6 +266,11 @@ class JsAppEngine {
   String get sourceRevision => _sourceRevision ?? '';
   String? _sourceRevision;
 
+  /// The assembled entry JS the current boot ran — the never-rendered
+  /// watchdog scans it for the assembler's "file not found" markers so a
+  /// torn install names its missing sources (gh-1831 AC4).
+  String _bootJs = '';
+
   /// Whether this engine joins the process-wide per-app live-engine
   /// sibling group (gh-1164 review): live view engines (board tile +
   /// fullscreen) sync `jsr.storage` state across viewports through the
@@ -468,6 +473,7 @@ class JsAppEngine {
     // be indistinguishable between apps (and tiles vs full apps).
     AppLog.i('apps', 'engine start: ${app.id}/$entryFile');
     final js = await _assembleEntryJs();
+    _bootJs = js;
     // gh-1164: the error gate dedups per source revision — hash the WHOLE
     // app source tree (entry + sibling source files), so an edit to any
     // app source file re-arms reporting (a helper-only fix used to leave
@@ -549,15 +555,58 @@ class JsAppEngine {
     final waited = uiTreeWarnAfter.inSeconds >= 1
         ? '${uiTreeWarnAfter.inSeconds}s'
         : '${uiTreeWarnAfter.inMilliseconds}ms';
-    bootError.value =
-        "widget '${app.id}' ($entryFile) produced no UI tree within $waited "
-        'of engine start — the app source likely fails to parse (syntax '
-        'error); fix the widget source and retry';
+    // gh-1831 AC4: when the assembler left "file not found" markers (a
+    // torn/partial install — the web catalog path used to drop a
+    // multi-file widget's siblings), the card must name WHAT is missing
+    // and the remedy instead of blaming a syntax error.
+    final message = bootTimeoutMessage(
+      appId: app.id,
+      entryFile: entryFile,
+      waited: waited,
+      missingFiles: missingSourceFiles(_bootJs),
+    );
+    bootError.value = message;
     AppLog.i(
       'apps',
       'WARNING: ${app.id}/$entryFile: uiTree not set $waited after '
           'engine start — eval failed before the first render',
     );
+  }
+
+  /// The `/* … file not found: <path> */` markers the entry assembler
+  /// (js_widget_runtime `WidgetManifest.readJs`) leaves for every relative
+  /// import / `jsr.include` whose file did not make it into the app dir.
+  /// Returns the referenced paths, deduplicated, first-occurrence order.
+  @visibleForTesting
+  static List<String> missingSourceFiles(String assembledJs) {
+    final missing = <String>[];
+    final marker = RegExp(r"/\* (?:import|jsr\.include): file not found: (.+?) \*/");
+    for (final match in marker.allMatches(assembledJs)) {
+      final path = match.group(1)!;
+      if (!missing.contains(path)) missing.add(path);
+    }
+    return missing;
+  }
+
+  /// The never-rendered watchdog card text. With a torn install
+  /// ([missingFiles] non-empty) it names the files and the remedy;
+  /// otherwise it keeps the historical parse-error wording (issue #1336).
+  @visibleForTesting
+  static String bootTimeoutMessage({
+    required String appId,
+    required String entryFile,
+    required String waited,
+    List<String> missingFiles = const [],
+  }) {
+    if (missingFiles.isEmpty) {
+      return "widget '$appId' ($entryFile) produced no UI tree within "
+          '$waited of engine start — the app source likely fails to parse '
+          '(syntax error); fix the widget source and retry';
+    }
+    return "widget '$appId' ($entryFile) produced no UI tree within $waited "
+        'of engine start — missing source files: '
+        '${missingFiles.join(', ')} (the install is incomplete or torn); '
+        'reinstall the app from the widgets catalog and retry';
   }
 
   Future<void> callEvent(String actionId, [Map<String, dynamic>? payload]) {
