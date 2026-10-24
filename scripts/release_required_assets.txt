@@ -15,6 +15,12 @@
 # `fa update` channels (linux/macos/windows archives), the web SPA and the
 # Chrome extension the landing page links directly.
 #
+# Producers (gh-1847): fa-extension.zip is built by the TAG TRAIN itself
+# (ci.yml build-extension, additive leg) since the once-daily build-macos
+# producer kept stranding tag trains that landed after the daily leg
+# (v1.0.637/v1.0.638, 2026-10-24); the daily build-macos leg survives as
+# the next-tag-draft pre-stager and the n_1012 emergency producer.
+#
 # Deliberately NOT here: SHA256SUMS(.sig) — release-provenance itself
 # produces them after this gate runs; DMGs/zips/latest-mac.yml and the
 # store artifacts (apk/aab/ipa) — they come from the separately-dispatched

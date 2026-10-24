@@ -4299,6 +4299,112 @@ jobs:
             echo 'The web SPA bundle job failed (continue-on-error: the release ships without it). See the failed steps above.'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # gh-1847: the tag train builds fa-extension.zip ITSELF. The leg
+  # mirrors web-spa (additive attach, quality-gate keyed) because the
+  # failure mode it kills is identical in shape: the extension's former
+  # ONLY producer was build-macos.yml build-extension, a once-daily leg
+  # deriving "latest+1 at its own dispatch moment" — any v* tag train
+  # landing after the daily leg published a draft WITHOUT fa-extension.zip
+  # and the gh-1832 required-assets gate correctly stranded it
+  # (v1.0.637/v1.0.638 stuck, 2026-10-24; the manual recovery dispatch
+  # from memory note n_1012 risked becoming the operating mode). With the
+  # train producing the zip, the gate's precondition is met by the train
+  # no matter when the daily leg ran; the daily leg keeps pre-staging the
+  # next-tag draft and stays the n_1012 emergency producer.
+  build-extension:
+    name: Build Chrome extension (release)
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    timeout-minutes: 30
+    # Additive REQUIRED asset, same semantics as web-spa: an SDK flake or
+    # vendor-fetch hiccup must NOT hold CLI provenance hostage — the
+    # release-provenance required-assets gate (gh-1832) is the single
+    # publish blocker and strands the draft loudly on the MISSING asset
+    # (previous release stays latest). continue-on-error keeps the check
+    # green; the failed steps stay visible on the run page.
+    continue-on-error: true
+    if: >-
+      !cancelled() && needs.quality-gate.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
+    permissions:
+      contents: write # attach fa-extension.zip to the GitHub Release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Blobless full history: the lazy draft create (gh-1801 rework)
+          # builds the release body via scripts/release_notes.sh — same
+          # reason as the web-spa job's checkout (gh-1477).
+          fetch-depth: 0
+          filter: blob:none
+
+      # gh-1684 decision 4 + #1431 exact-patch pin: the SAME pinned SDK
+      # every other fa-extension.zip leg carries (extension-size-gate,
+      # build-macos.yml build-extension) — the rev normalization absorbs
+      # canvaskit/skwasm churn, the pin keeps every build comparable.
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.7'
+          channel: stable
+          cache: true
+
+      # browser_ext/dart is a separate package (path dep on this root), so
+      # its pub get must follow the root's — same as the PR-time
+      # extension-size-gate leg and build-macos.yml build-extension.
+      - name: dart pub get (root + browser_ext/dart)
+        run: |
+          dart pub get
+          cd browser_ext/dart && dart pub get
+
+      # Full artifact: SW agent (dart2js) + the Flutter panel app embedded,
+      # exactly what the landing page's releases/latest/download link
+      # serves. Identical invocation as the PR-time gate leg (gh-1684 AC3)
+      # and the build-macos.yml release leg.
+      - name: Build extension zip
+        run: bash scripts/build_browser_ext.sh --with-app
+
+      # AC1 (#1096) + gh-1684 AC5: one baseline, one enforcement rule — the
+      # IDENTICAL invocation the extension-size-gate PR leg and the
+      # build-macos.yml release leg run, gate BEFORE upload (a budget
+      # regression must not reach the release assets). Baseline is
+      # committed — no --init-if-missing here.
+      - name: Size manifest + budget gate (fa-extension.zip)
+        run: python3 scripts/size_manifest.py check build/fa-extension.zip --baseline scripts/size_budget/fa-extension.tsv
+
+      # gh-1801 (rework): DRAFT-first, NEVER publish here. fa-extension.zip
+      # is a gh-1832 REQUIRED asset, but even a complete asset set must not
+      # go live without the SIGNED SHA256SUMS — only the tag-run
+      # release-provenance job owns the --draft=false --latest flip. Create
+      # the draft with the curated notes + the draft-owner marker and
+      # upload; --clobber keeps the stable asset name pointing at the
+      # newest build. No guard step ON PURPOSE (same reasoning as web-spa):
+      # this job is continue-on-error — on failure the train (binaries →
+      # provenance) CONTINUES and must find the draft alive; a genuinely
+      # orphaned draft is reclaimed by the 24h sweeper.
+      - name: Upload extension to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          asset="fa-extension.zip"
+          cp build/fa-extension.zip "$asset"
+          ls -lh "$asset"
+          bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
+          gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+
+      # Mirror of the web-spa summary flag: surface the miss in the run's
+      # step summary (covers build/size-gate/upload flakes); the failed
+      # steps remain visible in the job view. The release-provenance
+      # required-assets gate is what actually blocks the publish.
+      - name: Flag missing extension in step summary
+        if: failure()
+        run: |
+          {
+            echo '## fa-extension.zip NOT shipped this release'
+            echo ''
+            echo 'The extension build job failed (continue-on-error: the gh-1832 gate strands the release without it). See the failed steps above.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # SEC-07 (#795): the installer's default trust path is SIGNED checksums.
   # This job aggregates every fa-* asset of the release into SHA256SUMS and
   # signs it with the FA_RELEASE_SIGNING_KEY repo secret (openssl RSA —
@@ -4307,14 +4413,16 @@ jobs:
   # the same compromised source as the binary cannot vouch for itself.
   # Fail-closed: without the secret the release publishes NO provenance and
   # this job goes red — install.sh aborts with E_PROVENANCE_MISSING on it.
-  # Needs web-spa (#1100, continue-on-error) for ordering only: the web
-  # bundle cannot hold CLI provenance hostage. The ordering makes the fa-*
-  # sweep deterministic — web-spa success -> zip signed, web-spa failure ->
-  # zip absent — never a half-updated manifest.
+  # Needs web-spa (#1100, continue-on-error) and build-extension
+  # (gh-1847, continue-on-error) for ordering only: the web bundle and
+  # the extension zip cannot hold CLI provenance hostage. The ordering
+  # makes the fa-* sweep deterministic — web-spa/extension success ->
+  # zip signed, failure -> zip absent — never a half-updated manifest,
+  # and the gh-1832 gate below never races a slow attach.
   release-provenance:
     name: Sign release checksums
     runs-on: ubuntu-latest
-    needs: [binaries, web-spa]
+    needs: [binaries, web-spa, build-extension]
     timeout-minutes: 10
     if: >-
       !cancelled() && needs.binaries.result == 'success' &&
