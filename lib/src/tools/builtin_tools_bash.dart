@@ -149,7 +149,7 @@ String? foregroundSleepDenial(String command, {required bool canJob}) {
 /// tool result, pi semantics).
 ///
 /// With [jobs] (and an environment implementing [BackgroundShell]) the tool
-/// gains two background behaviors:
+/// gains three background behaviors:
 ///
 /// - `background: true` starts the command detached and returns immediately
 ///   with the job id; completion is reported back as a follow-up message.
@@ -158,12 +158,26 @@ String? foregroundSleepDenial(String command, {required bool canJob}) {
 ///   into a background job WITHOUT killing it: the tool call answers with the
 ///   job id and a partial-output tail, and the user message is delivered at
 ///   the next step boundary.
+/// - Auto-background (gh-1835): a foreground run still going after
+///   [autoBackgroundAfter] (the liveness threshold, default
+///   [defaultShellAutoBackgroundSeconds]; `Duration.zero` disables) is
+///   CONVERTED to a background job — the same process keeps running, the
+///   pending tool call resolves exactly once with the backgrounded result
+///   (job id, elapsed, log path, inline guidance), and the model decides:
+///   wait for the settle, poll `bash_job output`, or stop and retry
+///   differently. An explicit `timeout` at or below the threshold keeps the
+///   classic foreground path (the cap fires first, behavior unchanged); one
+///   above the threshold carries over to the job as its cap. Hosts without
+///   the jobs capability keep the legacy foreground behavior.
 AgentTool shellTool(
   ExecutionEnv env, {
   ShellJobRegistry? jobs,
   Duration retryBackoff = _bashRetryBackoff,
   PasswordPromptCallback? onPasswordPrompt,
   Duration passwordQuiet = _bashPasswordQuiet,
+  Duration autoBackgroundAfter = const Duration(
+    seconds: defaultShellAutoBackgroundSeconds,
+  ),
 
   /// The host's resolved redaction config for the shape interceptor
   /// (issue #1408 AC3, review 5456649624): the same `redact:` section
@@ -196,7 +210,8 @@ AgentTool shellTool(
         'id immediately and are notified when it finishes; check progress '
         'with bash_job. A foreground command that is still running when the '
         'user sends a message is moved to a background job untouched (never '
-        'killed) so the user gets an answer right away.',
+        'killed) so the user gets an answer right away.'
+        '${autoBackgroundAfter > Duration.zero ? ' A foreground command still running after ${autoBackgroundAfter.inSeconds}s is also moved to a background job automatically (never restarted): the call returns the job id and you decide — wait for the completion notice, poll bash_job output, or stop the job and retry differently.' : ''}',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -282,11 +297,22 @@ AgentTool shellTool(
         );
       }
 
+      // gh-1835 auto-background: with the threshold armed (and a timeout
+      // that cannot fire before it) the foreground call runs as a registry
+      // job from the start, so the conversion at the threshold changes
+      // NOTHING about the process — same pid/group/log, no re-execution.
+      final autoConvertActive =
+          canJob &&
+          autoBackgroundAfter > Duration.zero &&
+          (timeout == null || timeout > autoBackgroundAfter);
+
       // Yield-aware foreground run: executed as a job from the start so a
       // steering message can move it to the background mid-flight without
       // killing the process. Settled before any yield → identical result to
-      // the classic inline path.
-      if (canJob && currentYieldToken() != null) {
+      // the classic inline path. With auto-background armed the same path
+      // also converts at the liveness threshold — with or without a yield
+      // token.
+      if (canJob && (currentYieldToken() != null || autoConvertActive)) {
         return _shellViaJob(
           env,
           jobs,
@@ -295,7 +321,8 @@ AgentTool shellTool(
           timeout: timeout,
           timeoutArg: timeoutArg,
           cancelToken: cancelToken,
-          yieldToken: currentYieldToken()!,
+          yieldToken: currentYieldToken(),
+          autoBackgroundAfter: autoConvertActive ? autoBackgroundAfter : null,
           onPasswordPrompt: onPasswordPrompt,
           passwordQuiet: passwordQuiet,
           rewriteNotice: rewriteNotice,
@@ -469,7 +496,10 @@ String _retryNoticePrefix(List<String> notices) =>
 
 /// The yield-aware foreground bash path: the command runs as a registry job
 /// from the start; settling before the yield token fires produces the
-/// classic inline result, a yield moves it to the background untouched.
+/// classic inline result, a yield moves it to the background untouched, and
+/// — when [autoBackgroundAfter] is armed (gh-1835) — a run still going at
+/// the liveness threshold converts to the background with the
+/// backgrounded tool result while the process keeps running untouched.
 Future<ToolExecutionResult> _shellViaJob(
   ExecutionEnv env,
   ShellJobRegistry jobs,
@@ -478,7 +508,8 @@ Future<ToolExecutionResult> _shellViaJob(
   required Duration? timeout,
   required num? timeoutArg,
   required CancelToken? cancelToken,
-  required CancelToken yieldToken,
+  required CancelToken? yieldToken,
+  required Duration? autoBackgroundAfter,
   PasswordPromptCallback? onPasswordPrompt,
   required Duration passwordQuiet,
   String? rewriteNotice,
@@ -521,6 +552,7 @@ Future<ToolExecutionResult> _shellViaJob(
       cancelToken: cancelToken,
       timeoutArg: timeoutArg,
       rewriteNotice: rewriteNotice,
+      autoBackgroundAfter: autoBackgroundAfter,
     );
   } finally {
     await outputSub?.cancel();
@@ -528,50 +560,108 @@ Future<ToolExecutionResult> _shellViaJob(
   }
 }
 
+/// The three ways [_awaitJobOutcome]'s race can resolve.
+enum _JobOutcome {
+  /// The job settled: classic inline result (the settle notice is
+  /// suppressed — the result is already here).
+  settled,
+
+  /// The yield/cancel token fired: the existing hand-back (steering, run
+  /// abort, or supervisor follow-up classification).
+  unwound,
+
+  /// The gh-1835 liveness threshold fired: the conversion — the job keeps
+  /// running in the background and the tool call answers with the
+  /// backgrounded result (settle notice stays armed).
+  converted,
+}
+
 Future<ToolExecutionResult> _awaitJobOutcome(
   ExecutionEnv env,
   ShellJobRegistry jobs,
   ShellJobEntry entry,
-  CancelToken yieldToken, {
+  CancelToken? yieldToken, {
   CancelToken? cancelToken,
   required num? timeoutArg,
   String? rewriteNotice,
+  Duration? autoBackgroundAfter,
 }) async {
-  final finished = await Future.any<bool>([
-    entry.settled.then((_) => true),
-    yieldToken.onCancel.then((_) => false),
-    // gh-1455: the RUN aborting (Agent.abort, the idle watchdog) must not
-    // kill the job either — it unwinds this call exactly like a yield,
-    // handing the still-running process to the background.
-    if (cancelToken != null) cancelToken.onCancel.then((_) => false),
-  ]);
-
-  if (!finished) {
-    return _backgroundHandbackResult(
-      env,
-      jobs,
-      entry,
-      yieldToken,
-      cancelToken: cancelToken,
-      rewriteNotice: rewriteNotice,
-    );
+  // The gh-1835 conversion timer: fires once at the liveness threshold.
+  // Cancelled the moment the race resolves, so a settled/unwound call can
+  // never be converted afterwards (exactly-once resolution).
+  final conversion = Completer<void>();
+  final conversionTimer = autoBackgroundAfter == null
+      ? null
+      : Timer(autoBackgroundAfter, conversion.complete);
+  _JobOutcome outcome;
+  try {
+    outcome = await Future.any<_JobOutcome>([
+      entry.settled.then((_) => _JobOutcome.settled),
+      // gh-1455: the RUN aborting (Agent.abort, the idle watchdog) must not
+      // kill the job either — it unwinds this call exactly like a yield,
+      // handing the still-running process to the background.
+      if (yieldToken != null)
+        yieldToken.onCancel.then((_) => _JobOutcome.unwound),
+      if (cancelToken != null)
+        cancelToken.onCancel.then((_) => _JobOutcome.unwound),
+      if (conversionTimer != null)
+        conversion.future.then((_) => _JobOutcome.converted),
+    ]);
+  } finally {
+    conversionTimer?.cancel();
   }
-  return _settledInlineResult(
-    env,
-    entry,
-    timeoutArg: timeoutArg,
-    rewriteNotice: rewriteNotice,
+
+  switch (outcome) {
+    case _JobOutcome.converted:
+      return _autoBackgroundResult(entry, rewriteNotice: rewriteNotice);
+    case _JobOutcome.unwound:
+      return _backgroundHandbackResult(
+        env,
+        jobs,
+        entry,
+        yieldToken,
+        cancelToken: cancelToken,
+        rewriteNotice: rewriteNotice,
+      );
+    case _JobOutcome.settled:
+      return _settledInlineResult(
+        env,
+        entry,
+        timeoutArg: timeoutArg,
+        rewriteNotice: rewriteNotice,
+      );
+  }
+}
+
+/// The gh-1835 conversion branch: the pending tool call resolves with the
+/// backgrounded result (job id, elapsed, log path, inline guidance). The
+/// settle notification is deliberately NOT suppressed — the model chose (or
+/// defaulted to) waiting on the settle, and the headless drain still sees
+/// the job.
+Future<ToolExecutionResult> _autoBackgroundResult(
+  ShellJobEntry entry, {
+  String? rewriteNotice,
+}) async {
+  final elapsed = DateTime.now().difference(entry.startedAt);
+  final text = autoBackgroundHandbackText(
+    jobId: entry.id,
+    logPath: entry.logPath,
+    elapsed: elapsed,
+    carriedTimeout: entry.timeout,
+  );
+  return ToolExecutionResult.text(
+    rewriteNotice == null ? text : '$rewriteNotice\n$text',
   );
 }
 
 /// gh-1455: the supervisor's cancel_retry cancel (StuckCallFollowUp on the
 /// CALL token) is a cancel-and-RETRY, not a background conversion — this
 /// predicate tells that case apart from a run abort / steering yield.
-bool _isSupervisorAbort(CancelToken? cancelToken, CancelToken yieldToken) =>
+bool _isSupervisorAbort(CancelToken? cancelToken, CancelToken? yieldToken) =>
     cancelToken != null &&
     cancelToken.isCancelled &&
     cancelToken.cancelReason is StuckCallFollowUp &&
-    !yieldToken.isCancelled;
+    !(yieldToken?.isCancelled ?? false);
 
 /// The unwound-call branch of [_awaitJobOutcome]: the supervisor's
 /// cancel-retry fails the call exactly like the pre-gh-1455 token-kill did
@@ -583,7 +673,7 @@ Future<ToolExecutionResult> _backgroundHandbackResult(
   ExecutionEnv env,
   ShellJobRegistry jobs,
   ShellJobEntry entry,
-  CancelToken yieldToken, {
+  CancelToken? yieldToken, {
   CancelToken? cancelToken,
   String? rewriteNotice,
 }) async {
@@ -599,7 +689,7 @@ Future<ToolExecutionResult> _backgroundHandbackResult(
   // while steering cancels the phase yield — a cancel from either means
   // the handback must name its real cause, so check both reasons.
   final supervisorMoved =
-      yieldToken.cancelReason is StuckCallFollowUp ||
+      yieldToken?.cancelReason is StuckCallFollowUp ||
       (cancelToken?.cancelReason is StuckCallFollowUp);
   final tail = await jobs.tail(entry.id, maxLines: 20);
   final handback = stuckBackgroundHandbackText(

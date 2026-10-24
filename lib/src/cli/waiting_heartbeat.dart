@@ -15,6 +15,7 @@ import 'dart:async';
 
 import '../exceptions.dart';
 import '../env/job_log_ceiling.dart';
+import '../tools/bash_auto_background.dart';
 import 'tool_liveness.dart';
 
 /// Default waiting-heartbeat cadence in minutes (`waiting:
@@ -24,6 +25,11 @@ const defaultWaitHeartbeatMinutes = 20;
 /// Default hard ceiling for `--wait-for-jobs` headless runs in minutes
 /// (`waiting: waitCeilingMinutes`).
 const defaultWaitForJobsCeilingMinutes = 30;
+
+/// Re-export of the gh-1835 auto-background threshold default
+/// (`waiting: autoBackgroundSeconds`): one source of truth for the config
+/// default and the bash tool's default parameter.
+const defaultWaitingAutoBackgroundSeconds = defaultShellAutoBackgroundSeconds;
 
 /// The `waiting:` yaml section: waiting-heartbeat cadence, the
 /// `--wait-for-jobs` ceiling, and the per-call foreground liveness knobs
@@ -37,6 +43,7 @@ final class WaitingConfig {
     this.toolLivenessTickSeconds = defaultToolLivenessTickSeconds,
     this.toolEscalateSeconds = defaultToolEscalateSeconds,
     this.toolNudge = true,
+    this.autoBackgroundSeconds = defaultWaitingAutoBackgroundSeconds,
   });
 
   /// Waiting-heartbeat cadence in minutes; `0` disables the heartbeat.
@@ -63,6 +70,17 @@ final class WaitingConfig {
   /// liveness lines stay, only the injection goes away.
   final bool toolNudge;
 
+  /// The gh-1835 auto-background liveness threshold: a foreground bash
+  /// call still running after this many seconds is CONVERTED to a
+  /// background shell job — the same process keeps running, the pending
+  /// tool call resolves with the backgrounded result (job id, elapsed, log
+  /// path, inline guidance), and the model decides: wait for the settle,
+  /// poll `bash_job output`, or stop the job and retry differently.
+  /// `0` is the kill switch (legacy foreground behavior: the call waits
+  /// for its result or its timeout). Hosts without the `BackgroundShell`
+  /// capability keep the legacy behavior regardless.
+  final int autoBackgroundSeconds;
+
   factory WaitingConfig.fromYaml(Object? node) {
     if (node == null) return const WaitingConfig();
     if (node is! Map) {
@@ -88,6 +106,7 @@ final class WaitingConfig {
         'toolLivenessTickSeconds',
         'toolEscalateSeconds',
         'toolNudge',
+        'autoBackgroundSeconds',
       }.contains('$key')) {
         throw ConfigException('unknown "waiting" key: $key');
       }
@@ -118,6 +137,10 @@ final class WaitingConfig {
         defaultToolEscalateSeconds,
       ),
       toolNudge: toolNudge is bool ? toolNudge : true,
+      autoBackgroundSeconds: parse(
+        'autoBackgroundSeconds',
+        defaultWaitingAutoBackgroundSeconds,
+      ),
     );
     // Ordering (gh-1055 review): the hint fires at a LONGER threshold than
     // the reminders — AC1 starts the reminders at the configured threshold,
@@ -144,7 +167,8 @@ final class WaitingConfig {
       '  toolLivenessSeconds: $toolLivenessSeconds\n'
       '  toolLivenessTickSeconds: $toolLivenessTickSeconds\n'
       '  toolEscalateSeconds: $toolEscalateSeconds\n'
-      '  toolNudge: $toolNudge\n';
+      '  toolNudge: $toolNudge\n'
+      '  autoBackgroundSeconds: $autoBackgroundSeconds\n';
 }
 
 /// Default age belt for cross-run job manifest entries (`jobs:

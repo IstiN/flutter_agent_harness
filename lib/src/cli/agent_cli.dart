@@ -529,6 +529,12 @@ class AgentCli {
             const RedactionConfig(enabled: false),
         approvedSecretLiterals: () =>
             config.redactionPipeline?.registeredSecrets.toSet() ?? const {},
+        // gh-1835: the auto-background liveness threshold — the config key
+        // (0 = kill switch) rides `waiting:` next to the other liveness
+        // knobs; the bash tool converts (never restarts) at it.
+        shellAutoBackgroundAfter: Duration(
+          seconds: config.waiting.autoBackgroundSeconds,
+        ),
         configServiceFactory: (coreEnv) =>
             ConfigService(env: coreEnv, homeDir: config.homeDir),
         memory: _memory,

@@ -13,21 +13,27 @@ block a release again.
 
 ## Unreleased
 
-- fix(gh-1832): release v1.0.635 published without `fa-extension.zip` — the
-  landing-page download 404'd. The extension's only producer (the daily
-  `build-macos.yml` build-extension leg) derives its tag as "latest+1 at its
-  own dispatch moment"; on 2026-10-24 the `v1.0.635` tag was cut by
-  `auto_release` before those legs ran, so the extension (and the DMGs)
-  landed on an orphaned `v1.0.636` draft while the tag train published
-  v1.0.635 — every leg green, nothing asserted the published asset set.
-  Now `scripts/release_required_assets.txt` is the single source of truth,
-  `scripts/assert_release_assets.sh` gates the `release-provenance` publish
-  flip (a missing asset leaves the release a draft and fails the run
-  loudly) and a new `release-asset-smoke` ci.yml job post-publish probes
-  every landing-page release link + the full required set (red on non-200).
-  Remediation: the exact-tag `fa-extension.zip` (built from the v1.0.635
-  tree by run 40064876732) was uploaded to release v1.0.635 — the landing
-  link serves 200 again.
+- feat(gh-1835): long foreground bash calls are AUTO-BACKGROUNDED at the
+  liveness threshold — a call still running after
+  `waiting.autoBackgroundSeconds` (default 60; `0` = kill switch → legacy
+  behavior) is CONVERTED, never restarted: the command always ran as a
+  `ShellJobRegistry` job under the soft-yield path, so at the threshold the
+  pending tool call simply resolves exactly once with the backgrounded
+  result — job id, elapsed, log path, and short inline guidance (if the
+  duration is unexpected, `bash_job` stop + retry differently; otherwise
+  continue and the settle wakes you, or poll `bash_job output`) — while the
+  SAME process keeps running. The notice rides the TOOL RESULT only (no
+  separate steering record, no extra turn; the result is anchored on the
+  existing hand-back sentence so the stuck supervisor and the foreground
+  budget classify it as a real conversion). An explicit `timeout` at or
+  below the threshold keeps the classic foreground path unchanged; one
+  above it carries over to the job as its cap and is named in the result.
+  Settle notifications stay armed for converted jobs, so the headless drain
+  (`headless.shellJobDrainMs`) and the settle → reaction wake work
+  unchanged; hosts without the `BackgroundShell` capability keep the legacy
+  foreground behavior (documented degradation). New pure module
+  `lib/src/tools/bash_auto_background.dart` (text + default), `bash` tool
+  description teaches the behavior.
 
 - fix(gh-1820): the arm64 DMG leg's stale size floor is reseeded onto the
   shipped v1.0.634 shape — run 4004758753 (post-#1815 SPM-lane adoption)
