@@ -243,7 +243,7 @@ class PbenchRenderTest(unittest.TestCase):
 
     def test_missing_artifacts_fall_back_to_run_link(self):
         section = pbench_render.render_section(self._smoke_ledger())
-        self.assertIn("see the run page", section.lower())
+        self.assertIn("see the [run page]", section.lower())
         self.assertIn(
             "https://github.com/o/r/actions/runs/40072410719", section)
 
