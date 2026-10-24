@@ -16,6 +16,7 @@ import 'fa_network_ws.dart';
 import 'key_wallet.dart';
 import 'models.dart';
 import 'showcase_viewer.dart';
+import '../services/app_log.dart';
 
 /// One decrypted channel message, ready for the chat UI.
 final class ChannelMessage {
@@ -145,6 +146,7 @@ final class NetworkSession extends ChangeNotifier {
       roster
         ..clear()
         ..addEntries(members.map((m) => MapEntry(m.id, m)));
+      _logRoster('rest', members);
       error = null;
     } on FaNetworkException catch (e) {
       error = e.message;
@@ -340,22 +342,50 @@ final class NetworkSession extends ChangeNotifier {
     }
   }
 
+  /// Presence diagnostics (fa_network#4): the online count is derived
+  /// from this roster — log exactly what the server sent so a 0-online
+  /// report can be attributed to server vs client in one shot.
+  void _logRoster(String source, Iterable<Member> members) {
+    AppLog.i(
+      'fa_network',
+      'roster.$source: ${members.map((m) => '${m.id}:${m.displayName}:${m.memberClass.name}:${m.presence.name}').join(', ')}',
+    );
+  }
+
   void _onWsEvent(WsEvent event) {
     switch (event) {
       case RosterSnapshot(:final members):
         roster
           ..clear()
           ..addEntries(members.map((m) => MapEntry(m.id, m)));
+        _logRoster('snapshot', members);
         notifyListeners();
       case EnvelopeReceived(:final envelope):
         unawaited(_onEnvelope(envelope));
-      case PresenceChanged(:final memberId, :final presence):
+      case PresenceChanged(
+        :final memberId,
+        :final presence,
+        :final displayName,
+        :final memberClass,
+      ):
         final member = roster[memberId];
         if (member != null) {
           roster[memberId] = Member(
             id: member.id,
             memberClass: member.memberClass,
             displayName: member.displayName,
+            presence: presence,
+          );
+          notifyListeners();
+        } else if (memberId.isNotEmpty &&
+            (displayName.isNotEmpty || memberClass != null)) {
+          // A hub agent that came online AFTER the snapshot: the server
+          // includes displayName/class precisely so clients can insert
+          // it instead of dropping the event (online stayed 0).
+          roster[memberId] = Member(
+            id: memberId,
+            memberClass: memberClass ?? MemberClass.unknown,
+            displayName: displayName,
             presence: presence,
           );
           notifyListeners();

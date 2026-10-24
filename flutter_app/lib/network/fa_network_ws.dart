@@ -35,10 +35,20 @@ final class EnvelopeReceived extends WsEvent {
 
 /// `presence.changed` — one member's presence flipped.
 final class PresenceChanged extends WsEvent {
-  const PresenceChanged(this.memberId, this.presence);
+  const PresenceChanged(
+    this.memberId,
+    this.presence, {
+    this.displayName = '',
+    this.memberClass,
+  });
 
   final String memberId;
   final Presence presence;
+
+  /// Additive hub-agent fields (fa_network#6): present for DAP agents so
+  /// clients can insert members missing from the roster snapshot.
+  final String displayName;
+  final MemberClass? memberClass;
 }
 
 /// `network.offline` — the dap hub is unreachable; the server queues
@@ -315,6 +325,10 @@ class FaNetworkWs {
               PresenceChanged(
                 payload['memberId']?.toString() ?? '',
                 Presence.parse(payload['presence']),
+                displayName: payload['displayName']?.toString() ?? '',
+                memberClass: payload.containsKey('class')
+                    ? MemberClass.parse(payload['class'])
+                    : null,
               ),
             );
           }

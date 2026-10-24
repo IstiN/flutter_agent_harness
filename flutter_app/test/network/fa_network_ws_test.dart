@@ -193,6 +193,26 @@ void main() {
       expect(e.presence, Presence.busy);
     });
 
+    test('presence.changed parses hub-agent displayName + class', () async {
+      channel().incoming.add(
+        jsonEncode({
+          'type': 'presence.changed',
+          'payload': {
+            'memberId': 'dap-1',
+            'presence': 'live',
+            'displayName': 'public-agent',
+            'class': 'agent',
+          },
+        }),
+      );
+      await pump();
+      final e = events.single as PresenceChanged;
+      expect(e.memberId, 'dap-1');
+      expect(e.presence, Presence.live);
+      expect(e.displayName, 'public-agent');
+      expect(e.memberClass, MemberClass.agent);
+    });
+
     test('network.offline / network.drain / wakeup.dispatched', () async {
       channel().incoming
         ..add(
