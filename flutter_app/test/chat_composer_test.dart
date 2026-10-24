@@ -693,7 +693,7 @@ void main() {
       expect(users.single.content, 'What does DAP_CLIENT_SECRET do?');
     });
 
-    testWidgets('unsupported web build consumes the secret and shows status', (
+    testWidgets('web join failure consumes the secret and shows status', (
       tester,
     ) async {
       final service = _fakeService(
@@ -709,15 +709,18 @@ void main() {
         onSubmit: (context, text) => interceptDapEnrollmentSubmit(
           context,
           text,
-          supported: false,
-          join: (_) async => joins++,
+          supported: true,
+          join: (_) async {
+            joins++;
+            throw StateError('test-only transport failure');
+          },
         ),
       );
 
       await _typeAndSend(tester, paste);
       await tester.pumpAndSettle();
 
-      expect(joins, 0);
+      expect(joins, 1);
       expect(service.messages.where((m) => m.role == 'user'), isEmpty);
       expect(
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
@@ -725,8 +728,8 @@ void main() {
       );
       expect(
         find.text(
-          'DAP join is not supported in the web build yet — use the '
-          'macOS/iOS app or the fa CLI.',
+          "Couldn't join DAP channel #$channel. Check the invite and hub "
+          'connection, then try again.',
         ),
         findsOneWidget,
       );

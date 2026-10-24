@@ -3,9 +3,9 @@
 /// fa_hub_client's pure functions, and backoff reconnects. Failures are
 /// quiet by contract — nothing here throws into the host loop.
 ///
-/// Cycle: connect → hello → welcome (agentId assigned) → auto-flush the
-/// offline mailbox. Channels v1 is not implemented (the extension carries
-/// no channel key store), so auto-join never fires.
+/// Cycle: connect → hello → welcome (agentId assigned) → rejoin the enrolled
+/// channel and auto-flush the offline mailbox. Public and invited keyed
+/// channels use the same runtime as ordinary hub presence.
 library;
 
 import 'dart:async';
@@ -30,16 +30,26 @@ enum DapPhase {
 
 /// One status snapshot (panel shows `hub: connected as <agentId>` etc.).
 final class DapStatus {
-  DapStatus({required this.phase, this.agentId, this.reason});
+  DapStatus({
+    required this.phase,
+    this.agentId,
+    this.reason,
+    this.channels = const [],
+    this.joinFailed = false,
+  });
 
   final DapPhase phase;
   final String? agentId;
   final String? reason;
+  final List<String> channels;
+  final bool joinFailed;
 
   Map<String, dynamic> toMap() => {
     'phase': phase.name,
     if (agentId != null) 'agentId': agentId,
     if (reason != null) 'reason': reason,
+    if (channels.isNotEmpty) 'channels': channels,
+    if (joinFailed) 'joinFailed': true,
   };
 }
 
@@ -87,6 +97,10 @@ final class DapClient {
     required this.onMail,
     required this.onStatus,
     this.secret = '',
+    this.clientSecret = '',
+    this.channel = '',
+    this.channelPub,
+    this.channelPriv,
   });
 
   final DapIdentity identity;
@@ -96,6 +110,15 @@ final class DapClient {
   /// param (browser WebSocket cannot set headers; the hub accepts the
   /// query form). Empty = open hub. Never logged.
   final String secret;
+
+  /// Hub-issued enrollment credential (`?token=`). Never logged.
+  final String clientSecret;
+
+  /// Enrolled channel and its optional imported keypair. Empty channel =
+  /// ordinary hub presence; null keypair = keyless PUBLIC channel.
+  final String channel;
+  final String? channelPub;
+  final String? channelPriv;
 
   /// Display name advertised in the hello (cosmetic, unique per hub).
   final String name;
@@ -117,6 +140,9 @@ final class DapClient {
   DapPhase _phase = DapPhase.disconnected;
   String? _reason;
   Timer? _retry;
+  final _joinedChannels = <String>{};
+  var _joinPending = false;
+  var _joinFailed = false;
 
   /// Peer agentId → advertised x25519 key (whois/presence cache).
   final _peers = <String, String>{};
@@ -135,6 +161,8 @@ final class DapClient {
     _retry?.cancel();
     final ws = _ws;
     _ws = null;
+    _joinedChannels.clear();
+    _joinPending = false;
     ws?.close();
     _set(DapPhase.disconnected, reason: 'stopped');
   }
@@ -211,9 +239,12 @@ final class DapClient {
     return (id, x);
   }
 
-  /// The URL actually dialed: [url] plus the `dap_token` credential when
-  /// a hub password is configured (never logged — [_connect] logs [url]).
-  String get wsUrl => dapWsUrlWithToken(url, secret);
+  /// The credential-bearing URL actually dialed. Never log it: it can carry
+  /// both the legacy hub password and the enrollment bearer equivalent.
+  String get wsUrl => dapWsUrlWithEnrollmentSecret(
+    dapWsUrlWithToken(url, secret),
+    clientSecret,
+  );
 
   // -- Connection cycle -------------------------------------------------------
 
@@ -221,7 +252,7 @@ final class DapClient {
     if (_stopped || _fatal) return;
     final gen = ++_generation;
     _dialAt = DateTime.now();
-    print('[dap] ws → $url (attempt ${_attempt + 1})');
+    print('[dap] ws dial (attempt ${_attempt + 1})');
     final ws = _WebSocket(wsUrl);
     _ws = ws;
     _awaitingWelcome = true;
@@ -249,9 +280,15 @@ final class DapClient {
       } on Object {
         // Non-CloseEvent close — fall through with an empty reason.
       }
+      // A rejecting peer can echo the credentialed upgrade URI in its close
+      // reason. Authenticated connections never log or propagate that text.
+      final safeReason = secret.isEmpty && clientSecret.isEmpty ? reason : '';
+      if (_joinPending) _joinFailed = true;
+      _joinPending = false;
+      _joinedChannels.clear();
       print(
         '[dap] ws closed'
-        '${reason.isEmpty ? '' : ' ($reason)'} — retry #$_attempt',
+        '${safeReason.isEmpty ? '' : ' ($safeReason)'} — retry #$_attempt',
       );
       final dialAt = _dialAt;
       final fast =
@@ -259,21 +296,21 @@ final class DapClient {
       _fastCloseStreak = fast ? _fastCloseStreak + 1 : 0;
       if (looksLikeCredentialRejection(
         _fastCloseStreak,
-        hasCredential: secret.isNotEmpty,
+        hasCredential: secret.isNotEmpty || clientSecret.isNotEmpty,
       )) {
         if (_fastCloseStreak == 3) {
           print(
-            '[dap] the hub keeps rejecting the credential — wrong Hub '
-            'password? holding at a ${credentialRecheckInterval.inSeconds}s '
-            're-check (save the connection to apply a new password)',
+            '[dap] the hub keeps rejecting the credential — holding at a '
+            '${credentialRecheckInterval.inSeconds}s re-check (save or '
+            'rejoin with a new credential)',
           );
         }
-        _set(DapPhase.unauthorized, reason: reason);
+        _set(DapPhase.unauthorized, reason: safeReason);
         _retry?.cancel();
         _retry = Timer(credentialRecheckInterval, _connect);
         return;
       }
-      _set(DapPhase.reconnecting, reason: reason);
+      _set(DapPhase.reconnecting, reason: safeReason);
       _retry?.cancel();
       _retry = Timer(reconnectBackoff(_attempt), _connect);
     }
@@ -316,9 +353,11 @@ final class DapClient {
         _dialAt = null;
         agentId = frame['agentId'] as String? ?? agentId;
         print('[dap] welcome — online as $agentId');
+        _joinedChannels.clear();
+        _joinFailed = false;
         _set(DapPhase.connected);
+        await _joinEnrolledChannel();
         _send(jsonEncode(flushFrame())); // drain offline mail
-      // No auto-join: channels v1 skipped (no channel key store here).
       case 'msg':
         await _onMsg(frame);
       case 'agent_info':
@@ -340,19 +379,31 @@ final class DapClient {
       case 'flushed':
         break; // delivered mail already arrived as msg frames
       case 'joined':
-        break; // join ack — channels v1 not implemented
+        final joined = frame['channel'] as String? ?? '';
+        if (joined.isNotEmpty && joined == channel) {
+          _joinedChannels.add(joined);
+          _joinPending = false;
+          _joinFailed = false;
+          _notify();
+        }
       case 'error':
         final code = frame['code'] as String? ?? 'error';
+        final safeCode = clientSecret.isEmpty ? code : 'error';
         if (_awaitingWelcome) {
           // Rejected hello is fatal (§3.1): surface it and stop retrying.
-          print('[dap] hub rejected hello: $code — stopped');
+          print('[dap] hub rejected hello: $safeCode — stopped');
           _fatal = true;
           _generation++;
           _ws?.close();
           _ws = null;
           _retry?.cancel();
-          _set(DapPhase.disconnected, reason: 'hub rejected hello: $code');
+          _set(DapPhase.disconnected, reason: 'hub rejected hello: $safeCode');
         } else {
+          if (_joinPending) {
+            _joinPending = false;
+            _joinFailed = true;
+            _notify();
+          }
           // Hub errors carry no target id — fail every pending peer lookup
           // so sendDm reports instead of hanging to the timeout.
           for (final waiter in _whoisWaiters.values) {
@@ -365,9 +416,61 @@ final class DapClient {
     }
   }
 
+  Future<void> _joinEnrolledChannel() async {
+    if (channel.isEmpty || _ws == null) return;
+    _joinPending = true;
+    try {
+      _send(
+        jsonEncode(
+          await joinFrame(
+            identity: identity,
+            channel: channel,
+            chanPubkey: channelPub ?? '',
+          ),
+        ),
+      );
+    } on Object {
+      _joinPending = false;
+      _joinFailed = true;
+      _notify();
+    }
+  }
+
   Future<void> _onMsg(Map<String, dynamic> frame) async {
     final from = frame['from'] as String? ?? 'unknown';
-    if (frame['channel'] != null) return; // channels v1: not implemented
+    final channelName = frame['channel'] as String?;
+    if (channelName != null) {
+      if (channelName != channel || from == agentId) return;
+      String? channelText;
+      try {
+        final pub = channelPub;
+        final priv = channelPriv;
+        if (pub == null && priv == null) {
+          channelText = decodeDapPublicChannelPayload(
+            frame['ciphertext'] as String? ?? '',
+          );
+        } else {
+          if (pub == null || priv == null) {
+            throw StateError('incomplete channel keypair');
+          }
+          final senderX = await _whoisKey(from);
+          if (senderX == null) throw StateError('no sender DH key');
+          channelText = await decryptDapChannelPayload(
+            channelPub: pub,
+            channelPriv: priv,
+            senderX25519B64: senderX,
+            frameId: frame['id'] as String? ?? '',
+            channel: channelName,
+            ciphertextB64: frame['ciphertext'] as String? ?? '',
+          );
+        }
+      } on Object {
+        // Never print parser/decryption errors: they can contain key material.
+        channelText = null;
+      }
+      onMail(from, '[#$channelName] ${channelText ?? undecryptableText(from)}');
+      return;
+    }
     String? text;
     try {
       final senderX = await _whoisKey(from);
@@ -409,6 +512,16 @@ final class DapClient {
     if (phase == _phase && reason == _reason) return;
     _phase = phase;
     _reason = reason;
-    onStatus(DapStatus(phase: phase, agentId: agentId, reason: reason));
+    _notify();
   }
+
+  void _notify() => onStatus(
+    DapStatus(
+      phase: _phase,
+      agentId: agentId,
+      reason: _reason,
+      channels: List<String>.unmodifiable(_joinedChannels),
+      joinFailed: _joinFailed,
+    ),
+  );
 }

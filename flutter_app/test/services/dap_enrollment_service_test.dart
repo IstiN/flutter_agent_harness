@@ -64,7 +64,7 @@ void main() {
     expect((await attempt!.result).status, DapEnrollmentStatus.failed);
   });
 
-  test('web-unsupported result never invokes the native join', () async {
+  test('unsupported fallback never invokes the platform join', () async {
     var joins = 0;
     final service = DapEnrollmentService(
       supported: false,

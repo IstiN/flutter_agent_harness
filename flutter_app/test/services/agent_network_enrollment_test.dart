@@ -7,6 +7,7 @@ import 'dart:convert';
 
 import 'package:fa/services/agent_network_controller.dart';
 import 'package:fa/services/dap_enrollment_service.dart';
+import 'package:fa/services/dap_service_web_core.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -30,7 +31,7 @@ void main() {
         fileLayer: file,
         fileFabric: fabric,
         transport: transport,
-        loadIdentity: (path) async {
+        loadIdentity: (env, path) async {
           identityPaths.add(path);
           return HubIdentity.generate();
         },
@@ -106,7 +107,7 @@ void main() {
       fileLayer: file,
       fileFabric: fabric,
       transport: transport,
-      loadIdentity: (_) async => HubIdentity.generate(),
+      loadIdentity: (_, _) async => HubIdentity.generate(),
       enrollmentStore: DapEnrollmentStore.inMemory(),
       projectCwd: '/work/project',
     );
@@ -124,6 +125,51 @@ void main() {
     expect(join['chanPubkey'], pub);
     expect(transport.unauthenticatedDials, 1);
   });
+
+  test(
+    'extension enrollment uses the worker without a second runtime',
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/app');
+      final file = _fileLayer(env);
+      final transport = _FakeTransport();
+      var identityLoads = 0;
+      final sent = <Map<String, Object?>>[];
+      final worker = ExtensionDapHubService(
+        sendMessage: (message) async {
+          sent.add(message);
+          return {'ok': true};
+        },
+        storageGet: (_) async => const {},
+      );
+      final enrollments = DapEnrollmentStore.inMemory();
+      final controller = AgentNetworkController(
+        env: env,
+        fileLayer: file,
+        fileFabric: SwappableMessagingRepository(file),
+        transport: transport,
+        loadIdentity: (_, _) async {
+          identityLoads++;
+          return HubIdentity.generate();
+        },
+        enrollmentStore: enrollments,
+        dapHubService: worker,
+        projectCwd: '/work/project',
+      );
+      addTearDown(controller.dispose);
+
+      await controller.setEnabled(true);
+      await controller.joinEnrollment(parseDapJoinBundle(invite));
+
+      expect(controller.supported, isTrue);
+      expect(controller.usesExternalEnrollment, isTrue);
+      expect(sent.single['type'], 'hub.join');
+      expect(sent.single['channel'], channel);
+      expect(transport.sockets, isEmpty);
+      expect(identityLoads, 0);
+      expect(controller.state, isNull);
+      expect(enrollments.enrollment, isNull);
+    },
+  );
 }
 
 FileMessagingRepository _fileLayer(MemoryExecutionEnv env) =>

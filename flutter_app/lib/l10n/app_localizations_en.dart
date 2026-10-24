@@ -2492,7 +2492,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get dapEnrollmentUnsupported =>
-      'DAP join is not supported in the web build yet — use the macOS/iOS app or the fa CLI.';
+      'DAP join is not supported on this platform — use a native app or the fa CLI.';
 
   @override
   String get networkAddAgentEnroll => 'Enroll agent';

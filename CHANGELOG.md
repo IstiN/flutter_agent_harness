@@ -13,6 +13,14 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1825): resumed CLI sessions rejoin their DAP channels and
+  receive channel mail again — session replay now re-arms membership
+  synchronization (plugin session-ready listeners on boot/resume and
+  in-process switches) and idle channel probes complete deferred joins
+  before inbox peek/drain. App channel history no longer flashes raw
+  payloads on first open: decoding waits for startup's channel listing
+  instead of caching an undecoded guess until a manual switch.
+
 - feat(gh-1825): the fa app consumes the same DAP enrollment block as the
   CLI — paste it into the agent chat composer (macOS/iOS/Android; the
   smart-paste .txt chip path included) and the channel join happens
@@ -24,10 +32,12 @@ block a release again.
   `HubMessagingRepository.joinChannel`/`waitForConnection` with
   rejoin-before-drain on reconnect, keyed channel decrypt
   (`hubDecryptPayloadWithKeyPair`), public showcase payloads, and
-  `HubBearerTransport` (the enrollment secret travels only in the
-  WebSocket authorization header, never in dial URLs or logs). Plain web
-  intercepts the paste too but reports the honest unsupported status —
-  the browser backend is follow-up work. Add agent now defaults to the
+  `HubBearerTransport` (native `Authorization` header or the browser
+  `?token=` equivalent; authed dials never stringify transport errors
+  into logs). Plain web joins through the browser
+  `WebHubTransport` (`?token=` bearer equivalent, IndexedDB identity);
+  the browser extension rides the service worker's existing DAP client
+  (`hub.join` op), never a panel-local second connection. Add agent now defaults to the
   DAP tab with a paste-into-chat hint; web gains ai-native provider
   sign-in through the existing popup/callback OAuth flow.
 

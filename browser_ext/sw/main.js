@@ -70,6 +70,24 @@ function snapshot() {
   };
 }
 
+// A composer enrollment is complete only after the worker's existing client
+// received the hub's joined ack. Poll status without ever logging the URL,
+// credential, invite keys, or raw server errors.
+async function waitForHubJoin(channel) {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const hub = agent?.getState()?.hub;
+    if (hub?.joinFailed || hub?.phase === 'unauthorized') {
+      return { ok: false, error: 'hub rejected the enrollment' };
+    }
+    if (hub?.phase === 'connected' && Array.isArray(hub.channels) && hub.channels.includes(channel)) {
+      return { ok: true };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return { ok: false, error: 'hub channel join timed out' };
+}
+
 // Browser op table for the embedded agent (same ops as the wire protocol).
 globalThis.__faOps = (op, args) => dispatch(op, args || {});
 
@@ -168,6 +186,36 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const cur = await store.get(['faApproval', 'faDap']);
         agent?.boot({ provider, approvalMode: cur.faApproval, dap: cur.faDap });
         return { ok: true };
+      }
+      case 'hub.join': {
+        // Composer DAP enrollment rides the worker's existing DapClient —
+        // never a panel-local WebSocket (a second connection would evict the
+        // worker). One active enrollment mirrors the native app controller.
+        if (!agent) return { ok: false, error: 'agent not built (missing sw/agent.js)' };
+        const url = String(msg.url ?? '').trim();
+        const channel = String(msg.channel ?? '').trim();
+        const clientSecret = typeof msg.clientSecret === 'string' ? msg.clientSecret : '';
+        const pub = typeof msg.pub === 'string' ? msg.pub : null;
+        const priv = typeof msg.priv === 'string' ? msg.priv : null;
+        if (!url || !channel || (pub === null) !== (priv === null)) {
+          return { ok: false, error: 'invalid enrollment' };
+        }
+        const prev = (await store.get(['faDap'])).faDap;
+        const next = {
+          url,
+          name: String(msg.name ?? '').trim(),
+          ...(prev?.boundSession ? { boundSession: prev.boundSession } : {}),
+          ...(Array.isArray(prev?.savedConnections) ? { savedConnections: prev.savedConnections } : {}),
+          enrollment: {
+            channel,
+            ...(clientSecret ? { clientSecret } : {}),
+            ...(pub !== null ? { pub, priv } : {}),
+          },
+        };
+        await store.set({ faDap: next });
+        const cur = await store.get(['faProvider', 'faApproval']);
+        await agent.boot({ provider: cur.faProvider, approvalMode: cur.faApproval, dap: next });
+        return await waitForHubJoin(channel);
       }
       case 'hub.save': {
         // faDap {url, name, secret?, boundSession?, savedConnections?}; empty
@@ -270,6 +318,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           url: String(cur.url),
           name: String(cur.name ?? ''),
           ...(cur.secret ? { secret: cur.secret } : {}), // the hub password survives rebinds
+          ...(cur.enrollment ? { enrollment: cur.enrollment } : {}),
           ...(Array.isArray(cur.savedConnections) ? { savedConnections: cur.savedConnections } : {}),
         };
         next.boundSession = { mode };

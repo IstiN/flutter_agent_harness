@@ -2521,7 +2521,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get dapEnrollmentUnsupported =>
-      'Подключение к DAP пока не поддерживается в веб-версии — используйте приложение для macOS/iOS или fa CLI.';
+      'Подключение к DAP не поддерживается на этой платформе — используйте нативное приложение или fa CLI.';
 
   @override
   String get networkAddAgentEnroll => 'Заэнроллить агента';

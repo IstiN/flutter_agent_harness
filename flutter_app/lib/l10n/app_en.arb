@@ -1330,9 +1330,9 @@
       }
     }
   },
-  "dapEnrollmentUnsupported": "DAP join is not supported in the web build yet — use the macOS/iOS app or the fa CLI.",
+  "dapEnrollmentUnsupported": "DAP join is not supported on this platform — use a native app or the fa CLI.",
   "@dapEnrollmentUnsupported": {
-    "description": "Snack bar for a recognized DAP enrollment paste on an unsupported web build"
+    "description": "Snack bar for a recognized DAP enrollment paste on an unsupported platform"
   },
   "networkAddAgentEnroll": "Enroll agent",
   "@networkAddAgentEnroll": {

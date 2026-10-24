@@ -4406,7 +4406,7 @@ abstract class AppLocalizations {
   /// **'Couldn\'t join DAP channel #{channel}. Check the invite and hub connection, then try again.'**
   String dapEnrollmentFailed(String channel);
 
-  /// Snack bar for a recognized DAP enrollment paste on an unsupported web build
+  /// Snack bar for a recognized DAP enrollment paste on an unsupported platform
   ///
   /// In en, this message translates to:
   /// **'DAP join is not supported in the web build yet — use the macOS/iOS app or the fa CLI.'**

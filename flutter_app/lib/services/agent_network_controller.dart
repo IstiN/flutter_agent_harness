@@ -10,6 +10,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'agent_network_store.dart';
 import 'agent_network_transport.dart';
 import 'dap_enrollment_service.dart';
+import 'dap_service.dart';
+import 'dap_service_web_core.dart';
 import 'project_mount_env.dart';
 
 /// The app agent's membership in the DAP hub network (issue #402 AC3).
@@ -29,17 +31,20 @@ class AgentNetworkController extends ChangeNotifier {
   /// repository (the fallback side of the composition) and [fileFabric]
   /// the swappable wrapper the agent actually uses — [start] swaps the
   /// composite in. [transport] and the identity loader come from the
-  /// platform seam — null where the network is unsupported (web).
+  /// platform seam. In an extension, enrollment instead uses the service
+  /// worker's existing connection so no second hub runtime is opened.
   AgentNetworkController({
     required this._env,
     required this._fileLayer,
     required this._fileFabric,
     HubTransport? transport,
-    Future<HubIdentity?> Function(String? path)? loadIdentity,
+    Future<HubIdentity?> Function(ExecutionEnv env, String? path)? loadIdentity,
     DapEnrollmentStore? enrollmentStore,
+    DapHubService? dapHubService,
     String? projectCwd,
   }) : _transport = transport ?? platformHubTransport,
        _loadIdentity = loadIdentity ?? loadOrCreateIdentity,
+       _dapHubService = dapHubService ?? createDapHubService(),
        // ignore: prefer_initializing_formals
        _enrollmentStore = enrollmentStore,
        // ignore: prefer_initializing_formals
@@ -51,7 +56,9 @@ class AgentNetworkController extends ChangeNotifier {
   final FileMessagingRepository _fileLayer;
   final SwappableMessagingRepository _fileFabric;
   final HubTransport? _transport;
-  final Future<HubIdentity?> Function(String? path)? _loadIdentity;
+  final Future<HubIdentity?> Function(ExecutionEnv env, String? path)?
+  _loadIdentity;
+  final DapHubService _dapHubService;
   final String? _projectCwd;
   DapEnrollmentStore? _enrollmentStore;
 
@@ -60,8 +67,14 @@ class AgentNetworkController extends ChangeNotifier {
   StreamSubscription<HubLinkState>? _linkSub;
   bool _disposed = false;
 
-  /// The platform seam answers (false on web).
-  bool get supported => _transport != null && _loadIdentity != null;
+  /// Whether enrollment is available locally or through the extension host.
+  bool get supported => usesExternalEnrollment || _localRuntimeSupported;
+
+  /// True when the extension service worker owns the live hub runtime.
+  bool get usesExternalEnrollment => _dapHubService is ExtensionDapHubService;
+
+  bool get _localRuntimeSupported =>
+      _transport != null && _loadIdentity != null;
 
   AgentNetworkStore get store => _store;
 
@@ -75,10 +88,12 @@ class AgentNetworkController extends ChangeNotifier {
   /// (the service construction path).
   Future<void> start() async {
     _store = await AgentNetworkStore.load(_env);
-    _enrollmentStore ??= await DapEnrollmentStore.load(
-      _env,
-      projectCwd: _effectiveProjectCwd,
-    );
+    if (!usesExternalEnrollment) {
+      _enrollmentStore ??= await DapEnrollmentStore.load(
+        _env,
+        projectCwd: _effectiveProjectCwd,
+      );
+    }
     if (_store.enabled) await _joinSaved();
     notifyListeners();
   }
@@ -102,6 +117,9 @@ class AgentNetworkController extends ChangeNotifier {
   /// Boot/toggle reconnect: a failed dial stays owned by the repository's
   /// reconnect loop; settings interactions never surface a raw hub error.
   Future<void> _joinSaved() async {
+    // The extension worker restores its own persisted enrollment. A local
+    // reconnect here would be a second connection for the same agent.
+    if (usesExternalEnrollment) return;
     try {
       final enrollment = (await _enrollments()).enrollment;
       if (enrollment != null) {
@@ -146,15 +164,22 @@ class AgentNetworkController extends ChangeNotifier {
     }
   }
 
-  /// Connects the SAME repository used by the agent fabric to an invited
-  /// channel, imports its keys, and persists the scoped reconnect record.
-  /// The credential goes only to the bearer transport and secure store —
-  /// never to [SecretsExecutionEnv], session records, or model context.
+  /// Connects the app repository (or the extension's existing worker client)
+  /// to an invited channel and persists the scoped reconnect record. The
+  /// credential goes only to the bearer transport and secure store — never
+  /// to [SecretsExecutionEnv], session records, or model context.
   Future<void> joinEnrollment(DapJoinBundle bundle) async {
     if (!supported) throw StateError('DAP enrollment is unsupported');
     final normalized = _normalizeEnrollment(bundle);
     if ((normalized.invite.pub == null) != (normalized.invite.priv == null)) {
       throw const FormatException('incomplete channel keypair');
+    }
+    final dapHub = _dapHubService;
+    if (dapHub is ExtensionDapHubService) {
+      await dapHub.joinEnrollment(normalized);
+      if (_disposed) return;
+      notifyListeners();
+      return;
     }
     final enrollments = await _enrollments();
     await enrollments.save(normalized);
@@ -184,7 +209,9 @@ class AgentNetworkController extends ChangeNotifier {
   }
 
   Future<void> _join({DapJoinBundle? enrollment}) async {
-    if (!supported || _hub != null) return;
+    if (usesExternalEnrollment || !_localRuntimeSupported || _hub != null) {
+      return;
+    }
     final enrolled = enrollment != null;
     final identityPath = enrolled
         ? identityPathFor(
@@ -192,7 +219,7 @@ class AgentNetworkController extends ChangeNotifier {
             '${dapEnrollmentProjectScope(_effectiveProjectCwd)}',
           )
         : identityPathFor(_env.cwd);
-    final identity = await _loadIdentity!(identityPath);
+    final identity = await _loadIdentity!(_env, identityPath);
     final hub = HubMessagingRepository(
       url: Uri.parse(enrollment?.hubUrl ?? _store.url),
       transport: _transport!,

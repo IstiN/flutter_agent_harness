@@ -779,6 +779,13 @@ drain). Saving the manual `/settings` connection form clears the invite
 enrollment. One live hub connection per app agent: a new paste replaces
 the previous enrollment.
 
-Plain web builds intercept the paste as well but report a localized
-unsupported status: `fa_hub_client` is `dart:io`-only, so the browser
-backend (and the extension service-worker join) is follow-up work.
+Plain web builds join through the browser `WebHubTransport`
+(`web_socket_channel`, no `dart:io`): the enrollment secret rides the
+hub's browser bearer equivalent `?token=` (same server-side credential
+check as `Authorization: Bearer`; the credentialed URI is never logged
+or propagated into errors), and the identity persists in the
+IndexedDB-backed app sandbox through the same key-file codec as native.
+In the browser EXTENSION the join instead rides the service worker's
+existing DAP client (`hub.join` op + `joined`-ack polling): a
+panel-local socket would evict the worker's presence for the same
+agent, and the worker restores its persisted enrollment itself.

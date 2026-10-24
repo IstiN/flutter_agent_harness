@@ -61,7 +61,7 @@ void main() {
       fileLayer: fileLayer(env),
       fileFabric: fabric,
       transport: const IoHubTransport(),
-      loadIdentity: (_) async => null,
+      loadIdentity: (_, _) async => null,
     );
     addTearDown(controller.dispose);
     await controller.start();
@@ -124,7 +124,7 @@ void main() {
       fileLayer: fileLayer(env),
       fileFabric: fabric,
       transport: const IoHubTransport(),
-      loadIdentity: (_) async => null,
+      loadIdentity: (_, _) async => null,
     );
     addTearDown(controller.dispose);
     // Even a dead hub URL changes nothing: opt-in is off, so no dialing.
