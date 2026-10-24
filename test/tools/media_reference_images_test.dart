@@ -8,6 +8,10 @@ import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show MemoryExecutionEnv;
+import 'package:flutter_agent_harness/src/cli/paste_image.dart'
+    show maxPasteImageBytes;
+import 'package:flutter_agent_harness/src/tools/generate_image.dart'
+    show MediaException;
 import 'package:flutter_agent_harness/src/tools/media_reference_images.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -24,7 +28,7 @@ void main() {
     test('parses a b64: payload', () {
       final input = parseMediaImageInput('b64:${base64Encode([1, 2])}');
       expect(input, isA<MediaImageBase64>());
-      expect((input as MediaImageBase64).data, base64Encode([1, 2]));
+      expect((input as MediaImageBase64).base64, base64Encode([1, 2]));
     });
 
     test('parses a data: URL', () {
@@ -32,7 +36,7 @@ void main() {
         'data:image/png;base64,${base64Encode([3])}',
       );
       expect(input, isA<MediaImageBase64>());
-      expect((input as MediaImageBase64).data, base64Encode([3]));
+      expect((input as MediaImageBase64).base64, base64Encode([3]));
     });
 
     test('treats anything else as a sandbox path', () {
@@ -59,7 +63,7 @@ void main() {
   group('resolveMediaImageInputs', () {
     test('resolves a sandbox path to sniffed inline bytes', () async {
       final env = MemoryExecutionEnv();
-      await env.writeFile('refs/a.png', Uint8List.fromList([0x89, 0x50]));
+      await env.writeFile('refs/a.png', String.fromCharCodes([0x89, 0x50]));
       final resolved = await resolveMediaImageInputs(
         env,
         const [MediaImagePath('refs/a.png')],

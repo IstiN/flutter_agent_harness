@@ -2,18 +2,15 @@
 // gh-1844: media slot override parsing — useMainConnection opt-in and
 // declared input/output modalities ride the per-slot YAML map.
 
+import 'package:flutter_agent_harness/src/exceptions.dart';
 import 'package:flutter_agent_harness/src/model_roles/media_model_slots.dart';
-import 'package:flutter_agent_harness/src/model_roles/models_config.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
 void main() {
   group('parseMediaSlotModelOverride (gh-1844)', () {
     MediaSlotModelConfig parse(String yaml) =>
-        ModelsConfig.parseMediaSlotModelOverride(
-          'imageGeneration',
-          loadYaml(yaml),
-        );
+        MediaSlotModelConfig.fromYaml(loadYaml(yaml), slot: 'imageGeneration');
 
     test('parses the full override form with modalities', () {
       final config = parse('''
@@ -112,10 +109,10 @@ input: [image, 7]
     });
   });
 
-  group('mediaModelSlotNames', () {
+  group('mediaModelSlotIds', () {
     test('covers both media slots', () {
-      expect(mediaModelSlotNames, contains('imageGeneration'));
-      expect(mediaModelSlotNames, contains('videoGeneration'));
+      expect(mediaModelSlotIds, contains('imageGeneration'));
+      expect(mediaModelSlotIds, contains('videoGeneration'));
     });
   });
 }

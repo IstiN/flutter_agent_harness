@@ -80,7 +80,7 @@ MediaImageInput parseMediaImageInput(String raw) {
   if (value.isEmpty) {
     throw MediaException('reference image entries must be non-empty');
   }
-  if (value.startsWith('b' + '64:')) {
+  if (value.startsWith('b64:')) {
     final data = value.substring(4);
     if (data.isEmpty) {
       throw MediaException(
@@ -94,7 +94,11 @@ MediaImageInput parseMediaImageInput(String raw) {
     if (comma < 0) {
       throw MediaException('data URL reference image is missing its payload');
     }
-    return MediaImageInput.base64(value.substring(comma + 1));
+    final payload = value.substring(comma + 1);
+    if (payload.isEmpty) {
+      throw MediaException('data URL reference image is missing its payload');
+    }
+    return MediaImageInput.base64(payload);
   }
   if (value.startsWith('http://') || value.startsWith('https://')) {
     return MediaImageInput.url(value);
