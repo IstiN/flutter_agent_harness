@@ -137,17 +137,34 @@ final class DeliverableRecord {
 
   /// One parent-visible line.
   String render() => switch (kind) {
-    DeliverableRecordKind.artifact =>
-      'deliverable ${status!.name}${reportId == null ? '' : ' (report $reportId)'}: '
-          'agent://$outputId ($chars chars)',
-    DeliverableRecordKind.chunk =>
-      'report ${reportId!} part ${partIndex!}: '
-          '${outputId == null ? 'delivered directly' : 'agent://$outputId'} '
-          '($chars chars)',
-    DeliverableRecordKind.manifest =>
-      'report ${reportId!} manifest: '
-          '${manifestComplete ? 'complete ($partCount parts)' : 'INCOMPLETE${verdictNote.isEmpty ? '' : ' — $verdictNote'}${missingParts.isEmpty ? '' : '; missing parts $missingParts'}'}',
+    DeliverableRecordKind.artifact => _renderArtifact(),
+    DeliverableRecordKind.chunk => _renderChunk(),
+    DeliverableRecordKind.manifest => _renderManifest(),
   };
+
+  String _renderArtifact() =>
+      'deliverable ${status!.name}'
+      '${reportId == null ? '' : ' (report $reportId)'}: '
+      'agent://$outputId ($chars chars)';
+
+  String _renderChunk() =>
+      'report ${reportId!} part ${partIndex!}: '
+      '${outputId == null ? 'delivered directly' : 'agent://$outputId'} '
+      '($chars chars)';
+
+  String _renderManifest() {
+    if (manifestComplete) {
+      return 'report ${reportId!} manifest: complete ($partCount parts)';
+    }
+    final line = StringBuffer('report ${reportId!} manifest: INCOMPLETE');
+    if (verdictNote.isNotEmpty) {
+      line.write(' — $verdictNote');
+    }
+    if (missingParts.isNotEmpty) {
+      line.write('; missing parts $missingParts');
+    }
+    return line.toString();
+  }
 }
 
 /// The harness-observed state of one child report's chunk set: arrival

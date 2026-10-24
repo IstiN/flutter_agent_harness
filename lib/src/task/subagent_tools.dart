@@ -642,16 +642,9 @@ AgentTool _agentMessageTool(
       final to = args['to'] as String;
       final message = args['message'] as String? ?? '';
       final fromId = currentSubagentId?.call() ?? manager.selfId;
-      if (message.trim().isEmpty) {
-        return ToolExecutionResult.text('error: message is required');
-      }
-      if (to == fromId) {
-        return ToolExecutionResult.text('error: cannot message yourself');
-      }
-      final reportId = args['report_id'] as String?;
-      final partIndex = args['part_index'] as int?;
-      if (partIndex != null && reportId == null) {
-        return ToolExecutionResult.text('error: part_index requires report_id');
+      final validationError = _validateMessageSend(args, message, fromId);
+      if (validationError != null) {
+        return ToolExecutionResult.text(validationError);
       }
       final (target, resolveError) = await _resolveFabricAddress(manager, to);
       if (resolveError != null) {
@@ -660,34 +653,19 @@ AgentTool _agentMessageTool(
       if (target == fromId || target == manager.mailboxOf(fromId)) {
         return ToolExecutionResult.text('error: cannot message yourself');
       }
-      var body = message;
-      var artifactNote = '';
-      final deliverable = capture?.call();
-      if (deliverable != null) {
-        try {
-          final record = deliverable.deliverAgentMessage(
-            childId: fromId,
-            target: target,
-            body: message,
-            reportId: reportId,
-            partIndex: partIndex,
-          );
-          // Only an ACTUAL artifact (over-cap body) is enveloped; a direct
-          // in-budget chunk record is pure ledger bookkeeping.
-          if (record != null && record.pointer != null) {
-            body = deliverable.envelopeText(record, message);
-            artifactNote =
-                ' Report body stored as agent://${record.outputId} '
-                '(${record.chars} chars).';
-          }
-        } on StateError catch (error) {
-          return ToolExecutionResult.text('error: $error');
-        } on Object catch (error) {
-          return ToolExecutionResult.text(
-            'error: message could not be stored safely (artifact '
-            'unavailable: $error) — split it into smaller parts',
-          );
-        }
+      final reportId = args['report_id'] as String?;
+      final partIndex = args['part_index'] as int?;
+      final (body, artifactNote, deliverError) = _applyDeliverableEnvelope(
+        capture?.call(),
+        manager: manager,
+        childId: fromId,
+        target: target,
+        message: message,
+        reportId: reportId,
+        partIndex: partIndex,
+      );
+      if (deliverError != null) {
+        return ToolExecutionResult.text(deliverError);
       }
       try {
         await manager.enqueueMessage(
@@ -702,23 +680,96 @@ AgentTool _agentMessageTool(
       } on StateError catch (error) {
         return ToolExecutionResult.text('error: $error');
       }
-      var note = '';
-      if (target.contains('@')) {
-        note = ' Cross-machine delivery rode the A2A gateway.';
-      } else if (target.contains('/')) {
-        note = await _asleepTargetNote(manager, target, args['wake'] != false);
-        // Cross-root honesty (issue #516): when the id owns mailboxes
-        // under several project roots, name where delivery landed — the
-        // live registration wins, a stale corpse is never silent.
-        final entries =
-            await manager.messaging?.directory() ?? const <MailboxEntry>[];
-        note += mailboxMisrouteNote(entries, target);
-      }
+      final note = await _agentMessageDeliveryNote(manager, target, args);
       return ToolExecutionResult.text(
         'message queued for "$to".$artifactNote$note',
       );
     },
   );
+}
+
+/// Cheap argument validation shared by the agent_message dispatch: an
+/// explicit error line, or null when the send may proceed.
+String? _validateMessageSend(
+  Map<String, dynamic> args,
+  String message,
+  String fromId,
+) {
+  if (message.trim().isEmpty) {
+    return 'error: message is required';
+  }
+  if (args['to'] as String == fromId) {
+    return 'error: cannot message yourself';
+  }
+  if (args['part_index'] != null && args['report_id'] == null) {
+    return 'error: part_index requires report_id';
+  }
+  return null;
+}
+
+/// Core flow A + chunk observation for one outbound message body: applies
+/// the durable-deliverable envelope when the capture stored an artifact.
+/// Returns the body to queue, the artifact note for the tool result, and a
+/// tool-result error line when storage failed closed (E5).
+(String body, String artifactNote, String? error) _applyDeliverableEnvelope(
+  DeliverableCapture? deliverable, {
+  required SubagentManager manager,
+  required String childId,
+  required String target,
+  required String message,
+  required String? reportId,
+  required int? partIndex,
+}) {
+  if (deliverable == null) return (message, '', null);
+  try {
+    final record = deliverable.deliverAgentMessage(
+      childId: childId,
+      target: target,
+      body: message,
+      reportId: reportId,
+      partIndex: partIndex,
+    );
+    // Only an ACTUAL artifact (over-cap body) is enveloped; a direct
+    // in-budget chunk record is pure ledger bookkeeping.
+    if (record != null && record.pointer != null) {
+      return (
+        deliverable.envelopeText(record, message),
+        ' Report body stored as agent://${record.outputId} '
+            '(${record.chars} chars).',
+        null,
+      );
+    }
+    return (message, '', null);
+  } on StateError catch (error) {
+    return (message, '', 'error: $error');
+  } on Object catch (error) {
+    return (
+      message,
+      '',
+      'error: message could not be stored safely (artifact '
+          'unavailable: $error) — split it into smaller parts',
+    );
+  }
+}
+
+/// The delivery-note suffix for an accepted message: A2A honesty, the
+/// asleep-target hint, and cross-root misroute naming.
+Future<String> _agentMessageDeliveryNote(
+  SubagentManager manager,
+  String target,
+  Map<String, dynamic> args,
+) async {
+  if (target.contains('@')) {
+    return ' Cross-machine delivery rode the A2A gateway.';
+  }
+  if (!target.contains('/')) return '';
+  final note = await _asleepTargetNote(manager, target, args['wake'] != false);
+  // Cross-root honesty (issue #516): when the id owns mailboxes
+  // under several project roots, name where delivery landed — the
+  // live registration wins, a stale corpse is never silent.
+  final entries =
+      await manager.messaging?.directory() ?? const <MailboxEntry>[];
+  return note + mailboxMisrouteNote(entries, target);
 }
 
 /// After a cross-session delivery, checks whether the target's watcher is

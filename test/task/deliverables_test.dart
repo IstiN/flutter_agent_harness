@@ -433,6 +433,101 @@ void main() {
     });
   });
 
+  group('render coverage (every record form)', () {
+    test('artifact complete without report id', () {
+      final rig = _rig(cap: 200);
+      final record = rig.capture.deliverReply('kid', 'x' * 250)!;
+      expect(
+        record.render(),
+        'deliverable complete: agent://${record.outputId} (250 chars)',
+      );
+    });
+
+    test('artifact partial with report id', () {
+      final rig = _rig(cap: 200);
+      rig.capture.captureSalvaged(
+        'kid',
+        _call('agent_message', {'message': 'y' * 250, 'report_id': 'r9'}),
+      );
+      final line = rig.manager['kid']!.deliverables.single.render();
+      expect(line, startsWith('deliverable partial (report r9): '));
+      expect(line, contains('agent://'));
+    });
+
+    test('chunk direct and chunk via artifact', () {
+      final rig = _rig(cap: 200);
+      rig.capture.deliverAgentMessage(
+        childId: 'kid',
+        target: 'main',
+        body: 'small part',
+        reportId: 'r1',
+        partIndex: 0,
+      );
+      expect(
+        rig.manager['kid']!.deliverables.single.render(),
+        contains('part 0: delivered directly (10 chars)'),
+      );
+      rig.capture.deliverAgentMessage(
+        childId: 'kid',
+        target: 'main',
+        body: 'h' * 250,
+        reportId: 'r1',
+        partIndex: 1,
+      );
+      final oversize = rig.manager['kid']!.deliverables.last;
+      // An oversize part records as an artifact tagged with its report id.
+      expect(
+        oversize.render(),
+        'deliverable complete (report r1): agent://${oversize.outputId} '
+        '(250 chars)',
+      );
+    });
+
+    test('manifest complete / incomplete with note / missing parts', () {
+      final rig = _rig();
+      rig.capture.deliverAgentMessage(
+        childId: 'kid',
+        target: 'main',
+        body: 'a',
+        reportId: 'r1',
+        partIndex: 0,
+      );
+      rig.capture.deliverAgentMessage(
+        childId: 'kid',
+        target: 'main',
+        body: 'a2',
+        reportId: 'r1',
+        partIndex: 0,
+      );
+      rig.capture.deliverReply('kid', 'm', reportId: 'r1', reportParts: 3);
+      final line = rig.manager['kid']!.deliverables.last.render();
+      expect(line, contains('INCOMPLETE'));
+      expect(line, contains('duplicate part(s)'));
+      expect(line, contains('missing parts [1, 2]'));
+
+      final clean = _rig();
+      clean.capture.deliverAgentMessage(
+        childId: 'kid',
+        target: 'main',
+        body: 'a',
+        reportId: 'r2',
+        partIndex: 0,
+      );
+      clean.capture.deliverReply('kid', 'm', reportId: 'r2', reportParts: 1);
+      expect(
+        clean.manager['kid']!.deliverables.last.render(),
+        'report r2 manifest: complete (1 parts)',
+      );
+
+      final noCount = _rig();
+      noCount.capture.deliverReply('kid', 'm', reportId: 'r3');
+      expect(
+        noCount.manager['kid']!.deliverables.last.render(),
+        contains('manifest does not declare the part count'),
+      );
+    });
+  });
+
   group('same-session scoping (E11)', () {
     test('cross-session and A2A targets are never captured', () {
       final rig = _rig();
