@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-24T13:56:47.019Z",
+  "ticketKey": "pr-1839",
+  "headSha": "2db666ff635cc2b507679d38d7757a31b5c009f8",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:1bfa50bae6468be6",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:35fb9ed8362d4fb9",
+      "size": 28759
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:fec09fe44b6e2571",
+      "size": 13119
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:12d8168f66eabfb4",
+      "size": 3552
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:e474c2e5e021c71c",
+      "size": 2152
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:63d9d366c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:275eff23f57e2848",
+      "size": 3287
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:f9c0a63e226930c6",
+      "size": 3214
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6v4Vw9",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/apps/catalog_service.dart:265",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: depth-cap parity with the boot assembler is false — a chain deeper than 5 installs cleanly but still boots broken**\n\nThe doc here claims the walk mirrors `WidgetManifest`'s inliner \"*exactly: … the same depth cap ([_maxClosureDepth])*\", but the runtime's cap is **5 per chain** (`js_widget_runtime` `widget_manifest.dart:108` `_maxIncludeDepth = 5`, checked at `:138`), while this fetch walk allows **32 levels**. I verified with the real assembler (lockfile js_widget_runtime 0.4.180, `JsAppEngine.assembleEntryJsForTest`): a widget entry → 6 chained imports assembles to a script that still contains the literal `import './c6.js';` statement and produces **no** `file not found` marker — at depth ≥ 5 the assembler returns the source untouched (no marker, the import survives as a statement).\n\nConsequence for a catalog widget with a >5-deep import chain:\n\n- the install **succeeds** (all files fetched, ≤32 is plenty) — the \"install fetches exactly the files boot will inline\" contract from the class doc (`catalog_service.dart:397-406`) does not hold;\n- boot then dies as a script syntax error (bare `import` in eval'd source) and the watchdog card shows the OLD wording — \"the app source likely fails to parse (syntax error)\" — because `missingSourceFiles` finds no marker. That is precisely the gh-1831 symptom class (installed but never opens, misleading error), reintroduced for deep-chain widgets.\n\nNo live catalog widget is affected today (fa-craft is 2 deep), so this is not a regression — but the PR's own contract is the thing being sold here.\n\nSuggested fix (pick one):\n1. fetch-walk with the assembler's own budget — stop and throw a `CatalogError` (\"source chain deeper than 5 — boot would leave the import unresolved\") when a chain would exceed `_maxIncludeDepth = 5`; matches the never-installs-a-broken-widget contract, or\n2. at minimum, correct the \"same depth cap\" doc and make `bootTimeoutMessage` also detect a leftover literal `import` statement so the card names the real cause.\n\nThe closure tests pin depth 2–3; a depth-6 negative test through `assembleEntryJsForTest` would lock whatever you choose."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4Vxa",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/apps/catalog_service.dart:570",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: root-level `../` imports — the runtime clamps them in-root, this resolver rejects them**\n\n`WidgetManifest._resolvePath` (`js_widget_runtime` `widget_manifest.dart:202-214`) never fails: `if (segment == '..') { if (out.isNotEmpty) out.removeLast(); continue; }` — a `..` at the widget root is silently clamped, so `import './../shared.js';` from the entry resolves to `shared.js` (in-root) and boots fine if the file is installed.\n\nThis resolver returns `null` for the same input → `CatalogError(\"… escapes the widget directory\")` → the install refuses a widget the runtime would actually boot. The doc claims \"the same lexical `./`/`../` resolution\" — it is stricter in exactly this corner.\n\nDirection is fail-closed, so this is a polish item, not a bug: either clamp like the runtime (fetch the clamped in-root path) or adjust the doc/comment to state the deliberate strictness so a future catalog entry that spells paths this way is diagnosable in one step."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4Vx1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/apps/catalog_service.dart:509",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: two failure paths bypass the CatalogError contract**\n\nThe web install's stated contract is \"malformed content fails LOUDLY (never installs)\" via readable `CatalogError`s, but two paths here escape it:\n\n1. `utf8.decode(files[sourceRel]!)` (this line) throws a raw `FormatException` for a non-UTF-8 referenced file (the manifest decode right above is wrapped in `on Object → CatalogError`; this one is not).\n2. A fetched path whose segment carries a character outside `AppStorage`'s `[A-Za-z0-9._-]` segment pattern (e.g. a space — the closure resolver accepts it, the import regex only stops at quotes) survives the whole walk and only blows up later as a raw `ArgumentError` from `AppStorage.appFile` inside `installWidget`, after all the bytes were fetched.\n\nBoth still fail the install, so nothing silently breaks — but `services/apps_catalog_tool.dart` (`widgets_catalog install/get-source`) catches only `on CatalogError`, so the agent-facing path surfaces these as generic tool errors instead of the readable message shape.\n\nCheap hardening: wrap the decode (`CatalogError('$id: $rel is not valid UTF-8')`) and validate the resolved segments against the same pattern at fetch time, before spending the request."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4VyM",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/apps/catalog_service.dart:472",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the manifest `files:` style is still not covered by the web install**\n\n`WidgetManifest.readJs` has two assembly modes: when the installed manifest declares a non-empty `files:` list it concatenates those files directly and never reads the entry's import statements (`widget_manifest.dart:87-96`); the import/include closure walked here only follows what `widget.js` itself references. A future catalog widget using the `files:` style would therefore still install incomplete on web — boot would emit `/* jsr.include: file not found: … */` markers for every listed file, which the new watchdog card now at least names (good), but the widget still won't open.\n\nNot a regression (the same widget was equally broken before this PR) and no live catalog manifest uses `files:` today (checked all 11 fa_widgets manifests on `main` — none declare it; fa-craft uses the stub-import style this PR fixes). Worth a follow-up if the `files:` style is ever published: walk the manifest's `files:` list in `_downloadSourceClosure` as additional roots."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4kdH",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/apps/catalog_service.dart:265",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT (re-posted, still open): depth-cap parity with the boot assembler is false — a chain deeper than 5 installs cleanly but still boots broken**\n\nRe-verified this run against the locked package source (js_widget_runtime **0.4.180**, fetched from pub.dev): `_maxIncludeDepth = 5` (`widget_manifest.dart:108`), and at `:138` the assembler does `if (depth >= _maxIncludeDepth) return source;` — the source comes back **untouched**: the import survives as a literal statement and **no** `file not found` marker is emitted. The doc here still claims the walk mirrors the inliner \"*exactly: … the same depth cap ([_maxClosureDepth])*\", while this walk allows **32 levels**.\n\nFor a catalog widget with a >5-deep import chain:\n\n- the install **succeeds** (all files fetched, ≤32 is plenty) — the \"install fetches exactly the files boot will inline\" contract from the class doc (`:397-406`) does not hold;\n- boot then dies as a script syntax error (bare `import` in eval'd source) and `bootTimeoutMessage` shows the OLD \"fails to parse (syntax error)\" wording, because `missingSourceFiles` finds no marker. That is the gh-1831 symptom class (installed but never opens, misleading error) reintroduced for deep-chain widgets.\n\nNo live catalog widget is affected today (fa-craft is 2 deep), so this stays non-blocking — but it is the PR's own sold contract.\n\nSuggested fix (pick one):\n1. fetch-walk with the assembler's own budget — throw a `CatalogError` (\"source chain deeper than 5 — boot would leave the import unresolved\") when a chain would exceed `_maxIncludeDepth = 5`; matches the never-installs-a-broken-widget contract, or\n2. at minimum, correct the \"same depth cap\" doc and make `bootTimeoutMessage` also detect a leftover literal `import` statement so the card names the real cause.\n\nThe closure tests pin depth 2–3; a depth-6 negative test through `JsAppEngine.assembleEntryJsForTest` would lock whichever you choose."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4kdw",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/apps/catalog_service.dart:570",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-posted, still open): root-level `../` imports — the runtime clamps them in-root, this resolver rejects them**\n\nVerified this run in the locked package source (js_widget_runtime 0.4.180): `WidgetManifest._resolvePath` (`widget_manifest.dart:202-214`) never fails — `if (segment == '..') { if (out.isNotEmpty) out.removeLast(); continue; }` — a `..` at the widget root is silently clamped, so `import './../shared.js';` from the entry resolves to `shared.js` (in-root) and boots fine if the file is installed.\n\nThis resolver (line 570) returns `null` for the same input → `CatalogError(\"… escapes the widget directory\")` → the install refuses a widget the runtime would actually boot. The doc claims \"the same lexical `./`/`../` resolution\" — it is stricter in exactly this corner.\n\nDirection is fail-closed, so this remains polish, not a bug: either clamp like the runtime (fetch the clamped in-root path) or adjust the doc/comment to state the deliberate strictness so a future catalog entry that spells paths this way is diagnosable in one step."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4ke-",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/apps/catalog_service.dart:509",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-posted, still open): two failure paths bypass the CatalogError contract**\n\nThe web install's stated contract is \"malformed content fails LOUDLY (never installs)\" via readable `CatalogError`s, but two paths here escape it (both re-verified in the current tree):\n\n1. `utf8.decode(files[sourceRel]!)` (this line) throws a raw `FormatException` for a non-UTF-8 referenced file — the manifest decode a few lines above IS wrapped in `on Object → CatalogError`; this one is not.\n2. A fetched path whose segment carries a character outside `AppStorage`'s `^[A-Za-z0-9._-]{1,128}$` segment pattern (`app_storage.dart:61`) — e.g. a space; the closure resolver accepts it, the import regex only stops at quotes — survives the whole walk and only blows up later as a raw `ArgumentError` from `AppStorage.appFile` inside `installWidget`, after all the bytes were fetched.\n\nBoth still fail the install (nothing silently breaks; fail-closed), but `services/apps_catalog_tool.dart` catches `on CatalogError` in its install/get-source paths (`:185`, `:229`, `:261`), so the agent-facing path surfaces these as generic tool errors instead of the readable message shape.\n\nCheap hardening: wrap the decode (`CatalogError('$id: $rel is not valid UTF-8')`) and validate the resolved segments against the same pattern at fetch time, before spending the request."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4kfr",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/apps/catalog_service.dart:472",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-posted, still open): the manifest `files:` style is still not covered by the web install**\n\nVerified this run in the locked package source (js_widget_runtime 0.4.180): `WidgetManifest.readJs` has two assembly modes — when the installed manifest declares a non-empty `files:` list it concatenates those files directly and never reads the entry's own import statements (`widget_manifest.dart:87-96`); the import/include closure walked here only follows what `widget.js` itself references. A future catalog widget using the `files:` style would therefore still install incomplete on web — boot would emit `/* jsr.include: file not found: … */` markers for every listed file, which the new watchdog card now at least names (good), but the widget still won't open.\n\nNot a regression (the same widget was equally broken before this PR) and no live catalog manifest uses `files:` today (checked the fa_widgets manifests on `main` — none declare it; fa-craft uses the stub-import style this PR fixes). Worth a follow-up if the `files:` style is ever published: walk the manifest's `files:` list in `_downloadSourceClosure` as additional roots."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:a7412583",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: depth-cap parity with the boot assembler is false — a chain deeper than 5 installs cleanly but still boots broken**\n\nThe doc here claims the walk mirrors `WidgetManifest`'s inliner \"*exactly: … the same depth cap ([_maxClosureDepth])*\", but the runtime's cap is **5 per chain** (`js_widget_runtime` `widget_manifest.dart:108` `_maxIncludeDepth = 5`, checked at `:138`), while this fetch walk allows **32 levels**. I verified with the real assembler (lockfile js_widget_runtime 0.4.180, `JsAppEngine.assembleEntryJsForTest`): a widget entry → 6 chained imports assembles to a script that still contains the literal `import './c6.js';` statement and produces **no** `file not found` marker — at depth ≥ 5 the assembler returns the source untouched (no marker, the import survives as a statement).\n\nConsequence for a catalog widget with a >5-deep import chain:\n\n- the install **succeeds** (all files fetched, ≤32 is plenty) — the \"install fetches exactly the files boot will inline\" contract from the class doc (`catalog_service.dart:397-406`) does not hold;\n- boot then dies as a script syntax error (bare `import` in eval'd source) and the watchdog card shows the OLD wording — \"the app source likely fails to parse (syntax error)\" — because `missingSourceFiles` finds no marker. That is precisely the gh-1831 symptom class (installed but never opens, misleading error), reintroduced for deep-chain widgets.\n\nNo live catalog widget is affected today (fa-craft is 2 deep), so this is not a regression — but the PR's own contract is the thing being sold here.\n\nSuggested fix (pick one):\n1. fetch-walk with the assembler's own budget — stop and throw a `CatalogError` (\"source chain deeper than 5 — boot would leave the import unresolved\") when a chain would exceed `_maxIncludeDepth = 5`; matches the never-installs-a-broken-widget contract, or\n2. at minimum, correct the \"same depth cap\" doc and make `bootTimeoutMessage` also detect a leftover literal `import` statement so the card names the real cause.\n\nThe closure tests pin depth 2–3; a depth-6 negative test through `assembleEntryJsForTest` would lock whatever you choose."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:3b76ab00",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: root-level `../` imports — the runtime clamps them in-root, this resolver rejects them**\n\n`WidgetManifest._resolvePath` (`js_widget_runtime` `widget_manifest.dart:202-214`) never fails: `if (segment == '..') { if (out.isNotEmpty) out.removeLast(); continue; }` — a `..` at the widget root is silently clamped, so `import './../shared.js';` from the entry resolves to `shared.js` (in-root) and boots fine if the file is installed.\n\nThis resolver returns `null` for the same input → `CatalogError(\"… escapes the widget directory\")` → the install refuses a widget the runtime would actually boot. The doc claims \"the same lexical `./`/`../` resolution\" — it is stricter in exactly this corner.\n\nDirection is fail-closed, so this is a polish item, not a bug: either clamp like the runtime (fetch the clamped in-root path) or adjust the doc/comment to state the deliberate strictness so a future catalog entry that spells paths this way is diagnosable in one step."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:327ef82c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: two failure paths bypass the CatalogError contract**\n\nThe web install's stated contract is \"malformed content fails LOUDLY (never installs)\" via readable `CatalogError`s, but two paths here escape it:\n\n1. `utf8.decode(files[sourceRel]!)` (this line) throws a raw `FormatException` for a non-UTF-8 referenced file (the manifest decode right above is wrapped in `on Object → CatalogError`; this one is not).\n2. A fetched path whose segment carries a character outside `AppStorage`'s `[A-Za-z0-9._-]` segment pattern (e.g. a space — the closure resolver accepts it, the import regex only stops at quotes) survives the whole walk and only blows up later as a raw `ArgumentError` from `AppStorage.appFile` inside `installWidget`, after all the bytes were fetched.\n\nBoth still fail the install, so nothing silently breaks — but `services/apps_catalog_tool.dart` (`widgets_catalog install/get-source`) catches only `on CatalogError`, so the agent-facing path surfaces these as generic tool errors instead of the readable message shape.\n\nCheap hardening: wrap the decode (`CatalogError('$id: $rel is not valid UTF-8')`) and validate the resolved segments against the same pattern at fetch time, before spending the request."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:382509d7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the manifest `files:` style is still not covered by the web install**\n\n`WidgetManifest.readJs` has two assembly modes: when the installed manifest declares a non-empty `files:` list it concatenates those files directly and never reads the entry's import statements (`widget_manifest.dart:87-96`); the import/include closure walked here only follows what `widget.js` itself references. A future catalog widget using the `files:` style would therefore still install incomplete on web — boot would emit `/* jsr.include: file not found: … */` markers for every listed file, which the new watchdog card now at least names (good), but the widget still won't open.\n\nNot a regression (the same widget was equally broken before this PR) and no live catalog manifest uses `files:` today (checked all 11 fa_widgets manifests on `main` — none declare it; fa-craft uses the stub-import style this PR fixes). Worth a follow-up if the `files:` style is ever published: walk the manifest's `files:` list in `_downloadSourceClosure` as additional roots."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:e67f7ea9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT (re-posted, still open): depth-cap parity with the boot assembler is false — a chain deeper than 5 installs cleanly but still boots broken**\n\nRe-verified this run against the locked package source (js_widget_runtime **0.4.180**, fetched from pub.dev): `_maxIncludeDepth = 5` (`widget_manifest.dart:108`), and at `:138` the assembler does `if (depth >= _maxIncludeDepth) return source;` — the source comes back **untouched**: the import survives as a literal statement and **no** `file not found` marker is emitted. The doc here still claims the walk mirrors the inliner \"*exactly: … the same depth cap ([_maxClosureDepth])*\", while this walk allows **32 levels**.\n\nFor a catalog widget with a >5-deep import chain:\n\n- the install **succeeds** (all files fetched, ≤32 is plenty) — the \"install fetches exactly the files boot will inline\" contract from the class doc (`:397-406`) does not hold;\n- boot then dies as a script syntax error (bare `import` in eval'd source) and `bootTimeoutMessage` shows the OLD \"fails to parse (syntax error)\" wording, because `missingSourceFiles` finds no marker. That is the gh-1831 symptom class (installed but never opens, misleading error) reintroduced for deep-chain widgets.\n\nNo live catalog widget is affected today (fa-craft is 2 deep), so this stays non-blocking — but it is the PR's own sold contract.\n\nSuggested fix (pick one):\n1. fetch-walk with the assembler's own budget — throw a `CatalogError` (\"source chain deeper than 5 — boot would leave the import unresolved\") when a chain would exceed `_maxIncludeDepth = 5`; matches the never-installs-a-broken-widget contract, or\n2. at minimum, correct the \"same depth cap\" doc and make `bootTimeoutMessage` also detect a leftover literal `import` statement so the card names the real cause.\n\nThe closure tests pin depth 2–3; a depth-6 negative test through `JsAppEngine.assembleEntryJsForTest` would lock whichever you choose."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:f9100f22",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-posted, still open): root-level `../` imports — the runtime clamps them in-root, this resolver rejects them**\n\nVerified this run in the locked package source (js_widget_runtime 0.4.180): `WidgetManifest._resolvePath` (`widget_manifest.dart:202-214`) never fails — `if (segment == '..') { if (out.isNotEmpty) out.removeLast(); continue; }` — a `..` at the widget root is silently clamped, so `import './../shared.js';` from the entry resolves to `shared.js` (in-root) and boots fine if the file is installed.\n\nThis resolver (line 570) returns `null` for the same input → `CatalogError(\"… escapes the widget directory\")` → the install refuses a widget the runtime would actually boot. The doc claims \"the same lexical `./`/`../` resolution\" — it is stricter in exactly this corner.\n\nDirection is fail-closed, so this remains polish, not a bug: either clamp like the runtime (fetch the clamped in-root path) or adjust the doc/comment to state the deliberate strictness so a future catalog entry that spells paths this way is diagnosable in one step."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:bf121a2b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-posted, still open): two failure paths bypass the CatalogError contract**\n\nThe web install's stated contract is \"malformed content fails LOUDLY (never installs)\" via readable `CatalogError`s, but two paths here escape it (both re-verified in the current tree):\n\n1. `utf8.decode(files[sourceRel]!)` (this line) throws a raw `FormatException` for a non-UTF-8 referenced file — the manifest decode a few lines above IS wrapped in `on Object → CatalogError`; this one is not.\n2. A fetched path whose segment carries a character outside `AppStorage`'s `^[A-Za-z0-9._-]{1,128}$` segment pattern (`app_storage.dart:61`) — e.g. a space; the closure resolver accepts it, the import regex only stops at quotes — survives the whole walk and only blows up later as a raw `ArgumentError` from `AppStorage.appFile` inside `installWidget`, after all the bytes were fetched.\n\nBoth still fail the install (nothing silently breaks; fail-closed), but `services/apps_catalog_tool.dart` catches `on CatalogError` in its install/get-source paths (`:185`, `:229`, `:261`), so the agent-facing path surfaces these as generic tool errors instead of the readable message shape.\n\nCheap hardening: wrap the decode (`CatalogError('$id: $rel is not valid UTF-8')`) and validate the resolved segments against the same pattern at fetch time, before spending the request."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:a222174e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (re-posted, still open): the manifest `files:` style is still not covered by the web install**\n\nVerified this run in the locked package source (js_widget_runtime 0.4.180): `WidgetManifest.readJs` has two assembly modes — when the installed manifest declares a non-empty `files:` list it concatenates those files directly and never reads the entry's own import statements (`widget_manifest.dart:87-96`); the import/include closure walked here only follows what `widget.js` itself references. A future catalog widget using the `files:` style would therefore still install incomplete on web — boot would emit `/* jsr.include: file not found: … */` markers for every listed file, which the new watchdog card now at least names (good), but the widget still won't open.\n\nNot a regression (the same widget was equally broken before this PR) and no live catalog manifest uses `files:` today (checked the fa_widgets manifests on `main` — none declare it; fa-craft uses the stub-import style this PR fixes). Worth a follow-up if the `files:` style is ever published: walk the manifest's `files:` list in `_downloadSourceClosure` as additional roots."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:72d737f8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: Correct, well-tested fix for both gh-1831 root causes — the fs_store probe now checks the `__fahFs*` helpers `web/fs_store.js` actually ships (verified against the committed helper), and the web install fetches the whole transitive import/`jsr.include` closure, pinned end-to-end through the real boot assembler. 14 new tests pass locally, `flutter analyze` clean on all touched files, and the `test/apps` suite is green (584 passed). No blocking findings.\n\n**Key Issues**:\n- ⚠️ IMPORTANT — depth-cap parity claim is false: the walk allows 32 levels but the runtime assembler stops inlining at 5 per chain; a >5-deep import chain installs cleanly yet still boots broken with the old misleading \"syntax error\" card (probed against the real 0.4.180 assembler; no live widget affected). → inline comment on `catalog_service.dart:265`\n- ⚠️ IMPORTANT — 107 regenerated screenshot binaries (+ new `90_settings_model_caps.png`) ride the PR from the auto-save bot's full-suite runs, contradicting the \"restored to HEAD\" note; the cli_visual lane regenerates them as artifacts and does not gate on committed copies, so they are pure ~4.5 MB churn. Restore `test/integration/screenshots/` to `origin/main` before merge.\n- 💡 SUGGESTION ×3 (inline) — root-level `../` clamp divergence vs the runtime resolver; two failure paths (non-UTF-8 sibling, invalid segment name) bypass the CatalogError contract; the manifest `files:` assembly style remains uncovered on web (no live manifest uses it).\n\n**Next Steps**:\n1. Align the closure depth budget with the assembler's `_maxIncludeDepth = 5` (or fix the doc + watchdog wording for leftover literal imports).\n2. `git checkout origin/main -- test/integration/screenshots/` and commit, to drop the binary churn.\n3. Optional: capture the AC4 boot-404 disposition (pruned mobile-only assets / stale cached page — currently only in the PR description) somewhere durable (issue comment or docs), per the AC's \"explicitly whitelisted with a comment\"."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:89bbda66",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (re-review, findings unchanged)\n\n**Summary**: Re-review of the same tree (only merges from `main` landed since the last pass — no rework commits): both gh-1831 root causes stay correctly fixed; all 14 targeted tests re-run green on the merged branch. The four open threads stand re-verified against primary sources this run (`js_widget_runtime` 0.4.180 fetched from pub.dev — `_maxIncludeDepth = 5` at `widget_manifest.dart:108`, `depth >= _maxIncludeDepth → return source` at `:138`, clamp-at-root `_resolvePath` at `:202-214`, `files:` mode at `:87-96`). No blocking findings.\n\n**Key Issues**:\n- ⚠️ IMPORTANT — `catalog_service.dart:265`: the closure walk allows 32 levels but the boot assembler stops inlining at **5 per chain** (verified in the locked package source); a >5-deep chain installs cleanly then boots broken with the old \"syntax error\" card. No live widget affected today. → inline thread on :265\n- ⚠️ IMPORTANT — 107 regenerated `test/integration/screenshots/*.png` binaries (9 added, ~7.6 MB net growth) still ride the PR, contradicting the \"restored to HEAD\" note; the cli_visual lane regenerates them as artifacts and does not gate on committed copies. Restore the directory to `origin/main` before merge.\n- 💡 SUGGESTION ×3 (inline) — root-level `../` clamp divergence vs the runtime resolver (:570); two failure paths bypass the `CatalogError` contract (:509); the manifest `files:` assembly style remains uncovered on web (:472).\n- 💡 18 `memory/note/*` files ride along (auto-save bot `level:` backfill + one useful web-verification recipe note) — trivial, non-blocking.\n\n**Next Steps**:\n1. Align the closure budget with the assembler's `_maxIncludeDepth = 5` (or fix the \"same depth cap\" doc and teach `bootTimeoutMessage` to detect a leftover literal `import`).\n2. `git checkout origin/main -- test/integration/screenshots/` and commit, to drop the ~7.6 MB binary churn.\n3. Optional: capture the AC4 boot-404 disposition (pruned mobile-only assets / stale cached page) somewhere durable per the AC's \"explicitly whitelisted with a comment\"."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
