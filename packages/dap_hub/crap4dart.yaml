@@ -1,0 +1,57 @@
+# crap4dart configuration for the dap_hub package.
+# https://github.com/IstiN/crap4dart
+#
+# RATCHET (issue #1848): the threshold is pinned at the CURRENT worst score
+# measured by the SAME pipeline the card mandates — `dart test --coverage`
+# lcov via `crap4dart analyze --run-tests` in this directory. Pushes may only
+# make the codebase BETTER, never worse; lower the threshold whenever the
+# top offenders are fixed. Only down.
+
+sources: [lib]
+
+exclude:
+  - '**.g.dart'
+  - '**.freezed.dart'
+  - '**.mocks.dart'
+  - 'build/**'
+
+crap:
+  enabled: true
+  # Bootstrap (issue #1848, AC3): measured max CRAP 9.00 over 118 methods
+  # (whole package suite green) — already at/below the campaign's 12.0 line,
+  # so this config only freezes the ratchet; no code change in this package.
+  # Only down.
+  threshold: 9.0
+
+coverage:
+  lcov_path: coverage/lcov.info
+  required: true
+  branch_coverage: true
+  run_tests: false
+
+# Same "everything not enforced below is disabled" invariant as the root and
+# flutter_app configs — the enforced gates (loc 2800, duplication, similarity,
+# broken goldens) are repo-wide concerns of the ROOT crap4dart.yaml.
+gates:
+  loc: {enabled: false}
+  test_coverage: {enabled: false}
+  complexity: {enabled: false} # CRAP ratchet above already covers it
+  method_size: {enabled: false}
+  nesting: {enabled: false}
+  class_size: {enabled: false}
+  weight_of_class: {enabled: false}
+  unused_code: {enabled: false}
+  unused_files: {enabled: false}
+  banned_imports: {enabled: false}
+  duplication: {enabled: false}
+  file_naming: {enabled: false}
+  magic_constants: {enabled: false}
+  test_assertions: {enabled: false}
+  folder_structure: {enabled: false}
+  external: {enabled: false}
+  public_docs: {enabled: false}
+  golden: {enabled: false}
+  broken_goldens: {enabled: false}
+  accessibility: {enabled: false}
+  hardcoded_strings: {enabled: false}
+  similarity: {enabled: false}
