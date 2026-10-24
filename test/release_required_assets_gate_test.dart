@@ -248,7 +248,10 @@ void main() {
         for (final a in requiredAssets) '/OWNER/REPO/releases/download/v9.9.9/$a': 200,
       });
       final base = 'http://127.0.0.1:${server.port}';
-      ProcessResult run(String tag) => Process.runSync(
+      // Process.run (NOT runSync): the fixture HttpServer lives in THIS
+      // isolate's event loop — a synchronous run would block accepts while
+      // the script's curl waits, deadlocking to curl's --max-time.
+      Future<ProcessResult> run(String tag) => Process.run(
             'bash',
             [gateScript, '--smoke', tag],
             environment: {
@@ -259,7 +262,8 @@ void main() {
             includeParentEnvironment: false,
             workingDirectory: Directory.current.path,
           );
-      expect(run('v9.9.9').exitCode, 0, reason: 'all assets serve → green');
+      expect((await run('v9.9.9')).exitCode, 0,
+          reason: 'all assets serve → green');
 
       // Now fa-extension.zip 404s (the v1.0.635 condition).
       await server.close(force: true);
@@ -269,7 +273,7 @@ void main() {
             '/OWNER/REPO/releases/download/v9.9.9/$a': 200,
         '/OWNER/REPO/releases/download/v9.9.9/fa-extension.zip': 404,
       });
-      final res = Process.runSync(
+      final res = await Process.run(
         'bash',
         [gateScript, '--smoke', 'v9.9.9'],
         environment: {
@@ -304,7 +308,8 @@ void main() {
           'Download</a> and '
           'href="http://127.0.0.1:${server.port}/IstiN/flutter_agent_harness/releases/download/v9.9.9/fa-web-spa.zip". '
           'Trailing-comma guard: .../fa-extension.zip,\n');
-      final res = Process.runSync(
+      // Async run — see the --smoke note: runSync starves the server.
+      final res = await Process.run(
         'bash',
         [gateScript, '--landing', page],
         environment: {'PATH': Platform.environment['PATH']!},
@@ -318,7 +323,7 @@ void main() {
       server = await serverWith(true);
       File(page).writeAsStringSync('<a href="http://127.0.0.1:${server.port}'
           '/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip">d</a>\n');
-      final res2 = Process.runSync(
+      final res2 = await Process.run(
         'bash',
         [gateScript, '--landing', page],
         environment: {'PATH': Platform.environment['PATH']!},
