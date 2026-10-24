@@ -390,7 +390,7 @@ void main() {
   });
 
   group('bash auto-background through the agent loop (AC1/AC2/AC3)', () {
-    AssistantMessage _assistant({
+    AssistantMessage makeAssistant({
       List<ContentBlock> content = const [],
       StopReason stopReason = StopReason.stop,
     }) => AssistantMessage(
@@ -403,9 +403,9 @@ void main() {
       timestamp: DateTime.utc(2026),
     );
 
-    List<AssistantMessageEvent> _toolTurn(List<ToolCall> calls) {
-      final empty = _assistant();
-      final partial = _assistant(
+    List<AssistantMessageEvent> makeToolTurn(List<ToolCall> calls) {
+      final empty = makeAssistant();
+      final partial = makeAssistant(
         content: calls,
         stopReason: StopReason.toolUse,
       );
@@ -425,9 +425,9 @@ void main() {
       return events;
     }
 
-    List<AssistantMessageEvent> _textTurn(String text) {
-      final empty = _assistant();
-      final partial = _assistant(content: [TextContent(text: text)]);
+    List<AssistantMessageEvent> makeTextTurn(String text) {
+      final empty = makeAssistant();
+      final partial = makeAssistant(content: [TextContent(text: text)]);
       return [
         StartEvent(partial: empty),
         TextStartEvent(contentIndex: 0, partial: empty),
@@ -456,18 +456,18 @@ void main() {
         if (turn2Context.isCompleted) {
           // Third call: finish quietly (should never happen — two turns
           // only).
-          for (final event in _textTurn('unexpected extra turn')) {
+          for (final event in makeTextTurn('unexpected extra turn')) {
             stream.push(event);
           }
         } else if (context.messages.whereType<ToolResultMessage>().isEmpty) {
-          for (final event in _toolTurn([
+          for (final event in makeToolTurn([
             ToolCall(id: 'c1', name: 'bash', arguments: {'command': 'make'}),
           ])) {
             stream.push(event);
           }
         } else {
           turn2Context.complete(context);
-          for (final event in _textTurn('continued after the conversion')) {
+          for (final event in makeTextTurn('continued after the conversion')) {
             stream.push(event);
           }
         }
