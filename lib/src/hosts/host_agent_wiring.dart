@@ -195,6 +195,11 @@ final class SubagentServices {
   /// `agent.misuseBreaker` covers children too (issue #862).
   final bool misuseBreaker;
 
+  /// Pre-persistence redaction gate for subagent deliverable artifacts
+  /// (issue #1829, I3): the host's redaction pipeline applied to report
+  /// text before it lands in the session output store. Null = no pipeline.
+  final String Function(String text)? deliverableRedactor;
+
   /// Real JSONL child sessions, created at child COMPLETION (fast
   /// register keeps the steering race away; the transcript lands when the
   /// child finishes).
@@ -220,6 +225,7 @@ final class SubagentServices {
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
+    this.deliverableRedactor,
     this.childSessionFactory,
     this.sessionIoRetry,
   });
@@ -951,6 +957,7 @@ _WiredTaskSurface? _wireTaskSurface({
     contextWindowRegistry: bundle.contextWindowRegistry,
     contextWindowCap: bundle.contextWindowCap,
     misuseBreaker: bundle.misuseBreaker,
+    deliverableRedactor: bundle.deliverableRedactor,
     childSessionFactory: bundle.childSessionFactory,
     // Issue #222: the resume path reopens a child's JSONL session by
     // path so task_resume/task_send continue the child in the SAME file.
