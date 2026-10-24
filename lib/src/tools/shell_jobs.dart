@@ -150,9 +150,10 @@ String shellJobSettleNoticeText(ShellJobEntry job) {
   final capSeconds = job.timeout?.inSeconds;
   final timeoutLine = job.stopReason == 'timeout'
       ? 'Stop reason: timeout — the job\'s timeout cap '
-            '${capSeconds == null ? '' : 'of ${capSeconds}s '}fired; this '
-            'is the cap the command was started with, not a crash. Retry '
-            'the command yourself if you still need the result.\n'
+            '${capSeconds == null || capSeconds <= 0 ? '' : 'of ${capSeconds}s '}'
+            'fired; this is the cap the command was started with, not a '
+            'crash. Retry the command yourself if you still need the '
+            'result.\n'
       : '';
   return '<system-notice>\n'
       'Background shell job ${job.id} finished with exit code '
