@@ -262,48 +262,54 @@ class _FocusRing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          SizedBox(
-            width: size,
-            height: size,
-            child: CircularProgressIndicator(
-              value: 0.75,
-              strokeWidth: size * 0.05,
-              backgroundColor: Colors.white.withValues(alpha: 0.12),
-              valueColor: const AlwaysStoppedAnimation(Color(0xFF5B8DEF)),
-              strokeCap: StrokeCap.round,
+    // Fixed-size art in a width-flexible slot: when the slot is narrower
+    // than [size], scale the ring down uniformly instead of overflowing
+    // the card (issue #1824, the 7.3px right overflow on page 1).
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox(
+              width: size,
+              height: size,
+              child: CircularProgressIndicator(
+                value: 0.75,
+                strokeWidth: size * 0.05,
+                backgroundColor: Colors.white.withValues(alpha: 0.12),
+                valueColor: const AlwaysStoppedAnimation(Color(0xFF5B8DEF)),
+                strokeCap: StrokeCap.round,
+              ),
             ),
-          ),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '25:00',
-                  style: TextStyle(
-                    fontSize: timeSize,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    letterSpacing: -0.5,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '25:00',
+                    style: TextStyle(
+                      fontSize: timeSize,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: -0.5,
+                    ),
                   ),
-                ),
-                Text(
-                  'Focus time',
-                  style: TextStyle(
-                    fontSize: timeSize * 0.38,
-                    color: Colors.white70,
+                  Text(
+                    'Focus time',
+                    style: TextStyle(
+                      fontSize: timeSize * 0.38,
+                      color: Colors.white70,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -740,7 +746,7 @@ class _PermCard extends StatelessWidget {
     );
     final allow = Container(
       width: 62,
-      height: 30,
+      height: 32,
       decoration: BoxDecoration(
         color: _kSelBg,
         borderRadius: BorderRadius.circular(8),
@@ -758,7 +764,7 @@ class _PermCard extends StatelessWidget {
     );
     final later = Container(
       width: 62,
-      height: 30,
+      height: 32,
       decoration: BoxDecoration(
         color: const Color(0xFFF3F4F8),
         borderRadius: BorderRadius.circular(8),
@@ -804,8 +810,14 @@ class _PermCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             askPill,
-            const SizedBox(height: 12),
-            Row(children: [allow, const SizedBox(width: 8), later]),
+            const SizedBox(height: 14),
+            // Fixed-width pair in a narrow card: scale down uniformly when
+            // the card is tighter than the pair instead of clipping its
+            // right edge (issue #1824, the 8.2px right overflow on page 3).
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(children: [allow, const SizedBox(width: 10), later]),
+            ),
           ],
         ),
       );

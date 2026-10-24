@@ -739,9 +739,12 @@ class _WideFit extends StatelessWidget {
   }
 }
 
-/// Narrow-viewport wrapper: scales the whole page content down uniformly so
-/// the full page fits the viewport without scrolling, matching the reference
-/// prototype proportions on phones.
+/// Narrow-viewport wrapper: renders the page at its natural size (capped at
+/// the reference prototype width) and scrolls vertically when it is taller
+/// than the viewport. Scaling the whole page down uniformly — the previous
+/// behavior — squashed the mockups relative to the chrome around them and
+/// shrank interactive controls (the Allow/Later pills) to near-unusable
+/// sizes on phones (issue #1824).
 class _NarrowFit extends StatelessWidget {
   const _NarrowFit({required this.child});
 
@@ -752,18 +755,12 @@ class _NarrowFit extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final w = constraints.maxWidth > 460 ? 460.0 : constraints.maxWidth;
-        return SizedBox(
-          width: constraints.maxWidth,
-          height: constraints.maxHeight,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.topCenter,
-            child: SizedBox(
-              width: w,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: child,
-              ),
+        return SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: w),
+              child: child,
             ),
           ),
         );
@@ -1397,19 +1394,7 @@ class _P2State extends State<_P2> {
         SizedBox(height: widget.wide ? 28 : 20),
       ],
     );
-    // The full provider list is taller than a phone viewport: scroll it
-    // instead of the scale-to-fit used by the other pages.
-    if (!widget.wide) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: body,
-          ),
-        ),
-      );
-    }
+    if (!widget.wide) return _NarrowFit(child: body);
     return _WideFit(child: body);
   }
 
