@@ -443,6 +443,7 @@ final class AgentLoopConfig {
     this.reportedOrphanKeys,
     this.budgetLineProvider,
     this.imageCapLatches,
+    this.onTruncatedToolCall,
   });
 
   /// The model to call each turn.
@@ -547,6 +548,14 @@ final class AgentLoopConfig {
   /// active pipeline and cap before persisting. Default: false.
   final bool wireDump;
 
+  /// Observer for every tool call failed by output truncation (issue
+  /// #1829, Core flow B): fired with the salvage-parsed call so a
+  /// harness-owned capture can persist deliverable TEXT (reply /
+  /// agent_message bodies) as a partial artifact. Capture-only — the call
+  /// is still failed unexecuted (the fail-closed boundary is unchanged),
+  /// and the callback must never execute anything.
+  final void Function(ToolCall call)? onTruncatedToolCall;
+
   /// The tool-misuse circuit breaker (issue #862): N consecutive identical
   /// rejections of the same tool arm a corrective note for the next request
   /// payload; M stop executing that identical call for the rest of the run.
@@ -647,6 +656,7 @@ final class AgentLoopConfig {
       reportedOrphanKeys: reportedOrphanKeys,
       budgetLineProvider: budgetLineProvider,
       imageCapLatches: imageCapLatches,
+      onTruncatedToolCall: onTruncatedToolCall,
     );
   }
 }
@@ -1433,7 +1443,11 @@ Future<({List<ToolResultMessage> results, bool hasMore})> _executeToolCallPhase(
     // every tool call in the message may carry truncated arguments. Fail
     // them all instead of executing potentially borked calls.
     final batch = message.stopReason == StopReason.length
-        ? await _failToolCallsFromTruncatedMessage(toolCalls, emit)
+        ? await _failToolCallsFromTruncatedMessage(
+            toolCalls,
+            emit,
+            config: currentConfig,
+          )
         : await _executeToolCalls(
             currentContext,
             message,
@@ -2126,10 +2140,16 @@ AssistantMessage _terminalMessage(
 /// Port of pi's `failToolCallsFromTruncatedMessage`.
 Future<_ExecutedToolCallBatch> _failToolCallsFromTruncatedMessage(
   List<ToolCall> toolCalls,
-  AgentEventSink emit,
-) async {
+  AgentEventSink emit, {
+  AgentLoopConfig? config,
+}) async {
   final messages = <ToolResultMessage>[];
   for (final toolCall in toolCalls) {
+    // Issue #1829 Core flow B: a non-executing capture side path may
+    // persist salvage-parsed deliverable text BEFORE the failure is
+    // reported. The fail-closed boundary is unchanged — every call below
+    // is still failed unexecuted.
+    config?.onTruncatedToolCall?.call(toolCall);
     await emit(
       ToolExecutionStartEvent(
         toolCallId: toolCall.id,

@@ -588,6 +588,12 @@ class AgentCli {
           // CLI publishes on detection/pin (invariant 2), under the
           // same owner cap.
           contextWindowRegistry: contextWindowRegistry,
+          // Issue #1829: deliverable artifacts redact through the same
+          // assembled pipeline tool results pass (I3) — no new secrets
+          // surface.
+          deliverableRedactor: config.redactionPipeline == null
+              ? null
+              : (String text) => config.redactionPipeline!.redact(text),
           homeDir: config.homeDir,
           machineName: config.machineName,
           a2a: config.a2aConfig,
