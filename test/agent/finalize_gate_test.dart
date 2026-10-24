@@ -364,23 +364,51 @@ void main() {
       expect(contract, contains('request_secret'));
     });
 
-    test('gh-1605/gh-1652: documents the grader-parity step (2.5, not a named check)', () {
-      // The verifier runs produced entry points itself — a fresh
-      // subprocess from a different working directory with a clean env —
-      // so an in-session pass proves nothing about what the grader sees.
-      // The checklist must pin the parity re-run and its outcome:
-      // divergence is a `fail` ledger item, never a silent pass.
-      expect(contract, contains('Grader parity'));
-      expect(contract, contains('different working directory'));
-      expect(contract, contains('clean env'));
-      expect(contract, contains('fresh subprocess'));
-      expect(contract, contains('relative paths'));
-      expect(contract, contains('divergence'));
-      // gh-1652 C1: the check is a NUMBERED step (2.5) inside the loop
-      // — between verify and fix — not a named-checks bullet; flash
-      // executes numbered steps but skimmed the bullet list.
-      expect(contract, contains('2.5. **Grader parity**'));
-      expect(contract, isNot(contains('- **Grader parity**')));
+    test(
+      'gh-1605/gh-1652: documents the grader-parity step (2.5, not a named check)',
+      () {
+        // The verifier runs produced entry points itself — a fresh
+        // subprocess from a different working directory with a clean env —
+        // so an in-session pass proves nothing about what the grader sees.
+        // The checklist must pin the parity re-run and its outcome:
+        // divergence is a `fail` ledger item, never a silent pass.
+        expect(contract, contains('Grader parity'));
+        expect(contract, contains('different working directory'));
+        expect(contract, contains('clean env'));
+        expect(contract, contains('fresh subprocess'));
+        expect(contract, contains('relative paths'));
+        expect(contract, contains('divergence'));
+        // gh-1652 C1: the check is a NUMBERED step (2.5) inside the loop
+        // — between verify and fix — not a named-checks bullet; flash
+        // executes numbered steps but skimmed the bullet list.
+        expect(contract, contains('2.5. **Grader parity**'));
+        expect(contract, isNot(contains('- **Grader parity**')));
+      },
+    );
+
+    test('gh-1834: conformance claims count as verified only with negative '
+        '+ combination checks (AC1/AC2), taught abstractly', () {
+      // AC1 — a "verified" conformance item counts only with negative and
+      // combination checks (rejected incompatible options, empty/corrupt
+      // inputs, boundary values, must-NOT-work cases); a blanket
+      // "everything matches" is not verified.
+      expect(contract, contains('2.6. **Conformance coverage**'));
+      expect(contract, contains('negative and combination checks'));
+      expect(contract, contains('empty and corrupt inputs'));
+      expect(contract, contains('boundary values'));
+      expect(contract, contains('"must NOT work"'));
+      expect(contract, contains('without such coverage is not verified'));
+      // AC2 — the general principle rides an abstract example, and no
+      // benchmark/task/flag names leak into the model-facing prompt.
+      expect(contract, contains('certifies nothing about rejection paths'));
+      expect(contract, contains('well-formed'));
+      for (final banned in ['terminal-bench', 'harbor', 'gh-18']) {
+        expect(contract, isNot(contains(banned)), reason: banned);
+      }
+      // AC3 — tasks with no conformance claim see no gate change: the
+      // step is explicitly conditional, never a new unconditional
+      // requirement.
+      expect(contract, contains('applies ONLY when'));
     });
 
     test('mandates command-verified state, never memory', () {
