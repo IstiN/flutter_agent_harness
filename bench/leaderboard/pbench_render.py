@@ -216,7 +216,7 @@ def render_section(ledger: dict) -> str:
     lines.append("<sub>Source: "
                  "`bench/leaderboard/pbench_results.json`, rendered by "
                  "`bench/leaderboard/pbench_render.py` (gh-182).</sub>")
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n"
 
 
 def splice_readme(text: str, section: str) -> str:

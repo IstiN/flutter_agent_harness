@@ -390,12 +390,17 @@ jobs:
       # a rotted run_shard.py must fail the dispatch HERE, at setup, not
       # after hours of solving. Stdlib unittest only; mirrors
       # bench-tests.yml's discovery root for this workflow's scripts.
+      # gh-182: bench/leaderboard joins the gate — the aggregate's
+      # record/render step lives there, so a rotted pbench_record.py /
+      # pbench_render.py fails at setup too.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
 
       - name: Unit-test bench scripts
-        run: python -m unittest discover -s bench/programbench -v
+        run: |
+          python -m unittest discover -s bench/programbench -v
+          python -m unittest discover -s bench/leaderboard -v
 
       # The official task set at the pinned ref — the inventory comes from
       # THIS checkout (dir names under src/programbench/data/tasks), never
@@ -580,6 +585,14 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # gh-182: the aggregate records the run into the committed
+    # pbench_results.json ledger and pushes the regenerated README
+    # section (contents: write), resolving the submission artifact's
+    # download link from the Actions API (actions: read) so the ledger
+    # carries reachable analysis-artifact links, not just the run id.
+    permissions:
+      contents: write
+      actions: read
     env:
       PB_VERSION: ${{ inputs.programbench-version }}
       RUN_ID: fa-${{ inputs.tasks || 'full' }}-${{ github.run_id }}
@@ -669,3 +682,70 @@ jobs:
         with:
           name: programbench-submission
           path: pbench-run/
+
+      # gh-182: resolve the submission artifact's download link (the run
+      # dir: trajectories, eval logs, _stats — the post-run analysis
+      # surface). Best-effort: an API hiccup degrades to the run-page
+      # fallback the renderer already speaks; it must never flip a green
+      # aggregate red.
+      - name: Resolve artifact link
+        id: artifact
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_url=""
+          if artifact_id=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+              --jq '.artifacts[] | select(.name=="programbench-submission") | .id' 2>/dev/null | head -1) \
+              && [ -n "$artifact_id" ]; then
+            artifact_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/$artifact_id"
+          fi
+          {
+            echo "artifact_url=$artifact_url"
+          } >> "$GITHUB_OUTPUT"
+
+      # gh-182: append the run to the committed ProgramBench ledger
+      # (bench/leaderboard/pbench_results.json — the fa_results.json
+      # pattern: keyed by task-set pin x model x mode, run/artifact URLs
+      # unioned, idempotent) and regenerate the README section next to
+      # the Terminal-Bench one. Runs only on a GREEN aggregate (the
+      # verdict + Tier-0 verify steps passed) — a partial or failing run
+      # never lands. Smoke/lite/globs runs record too, and the renderer
+      # labels them pipeline proofs — never a leaderboard headline. The
+      # official ProgramBench registry is NOT touched (manual owner PR).
+      - name: Update ProgramBench ledger & README
+        if: success()
+        env:
+          MODE: ${{ needs.setup.outputs.mode }}
+          MODEL: ${{ needs.setup.outputs.bench_model }}
+          TOTAL: ${{ needs.setup.outputs.total }}
+          PB_REF: ${{ inputs.programbench-ref }}
+          FA_REF: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact_url }}
+        run: |
+          set -euo pipefail
+          record_args=(--ledger bench/leaderboard/pbench_results.json
+            --stats-dir "pbench-run/$RUN_ID/_stats"
+            --taskset-ref "${PB_REF:0:12}"
+            --pbench-version "$PB_VERSION"
+            --mode "$MODE" --model "$MODEL" --total "$TOTAL"
+            --fa-version "${FA_REF:0:12}" --date "$(date -u +%F)"
+            --run-url "$RUN_URL")
+          if [ -n "$ARTIFACT_URL" ]; then
+            record_args+=(--artifact "programbench-submission=$ARTIFACT_URL")
+          fi
+          python bench/leaderboard/pbench_record.py "${record_args[@]}"
+          python bench/leaderboard/pbench_render.py \
+            --readme README.md \
+            --ledger bench/leaderboard/pbench_results.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md bench/leaderboard
+          if git diff --cached --quiet; then
+            echo "pbench leaderboard: ledger and table already up to date"
+          else
+            git commit -m "bench: programbench ledger update · ${MODE} · ${MODEL} (gh-182)"
+            git push origin "HEAD:${GITHUB_REF#refs/heads/}"
+          fi

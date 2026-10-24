@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "results": [
+    {
+      "taskset_ref": "895f65916bc5",
+      "model": "kimi-for-coding",
+      "mode": "smoke",
+      "date": "2026-10-24",
+      "total": 201,
+      "attempted": 2,
+      "solved": 2,
+      "instances": {
+        "cmatrix": {
+          "score_pct": 98.0,
+          "tests": 506,
+          "solved": true
+        },
+        "zip-password-finder": {
+          "score_pct": 98.0,
+          "tests": 680,
+          "solved": true
+        }
+      },
+      "score_pct": 98.0,
+      "cost_usd": null,
+      "calls": null,
+      "run_urls": [
+        "https://github.com/IstiN/flutter_agent_harness/actions/runs/40023718645"
+      ],
+      "artifact_urls": [],
+      "self_reported": true,
+      "pbench_version": "1.2.5"
+    }
+  ]
+}
