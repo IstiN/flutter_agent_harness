@@ -3019,28 +3019,25 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-    env:
-      # gh-1806: keep the debug leg on the pure CocoaPods lane — the same
-      # lane decision the release DMG legs took in gh-180 (build-macos.yml
-      # pins the identical env; guard: build_macos_spm_lane_guard_test.dart).
-      # With the feature on, Flutter 3.47 stable re-runs "Adding Swift
-      # Package Manager integration" on every fresh runner and git-clones
-      # the Firebase iOS SPM packages from github.com SINGLE-SHOT: CI run
-      # 39957271246 (v1.0.631) died mid-clone of GoogleDataTransport with
-      # "curl 92 HTTP/2 stream 5 was not closed cleanly: CANCEL (err 8)" →
-      # "fatal: early EOF" → xcodebuild could not resolve package
-      # dependencies → the leg and the Quality-gate aggregate went red,
-      # while the identical SHA went green in the release-triggered run
-      # 399572012 (SPM pass 77.2s vs 513.4s). The env override is read per
-      # flutter invocation (flutter_features_config.dart); with the feature
-      # off the SPM migration skips cleanly and every macOS plugin builds
-      # from the Podfile.lock pins (Pods are cache-restored in this job) —
-      # the exact configuration the release legs ship. The pin also removes
-      # the silent FlutterGeneratedPluginSwiftPackage floor bump gh-180
-      # identified; upstream is deprecating the disable path, and when that
-      # lands BOTH lanes need a different mechanism (see the build-macos.yml
-      # env comment). Pinned by test/ci_macos_debug_spm_lane_guard_test.dart.
-      FLUTTER_SWIFT_PACKAGE_MANAGER: "0"
+    # gh-1814: this job deliberately carries NO SwiftPM lane pin — the
+    # FLUTTER_SWIFT_PACKAGE_MANAGER disable knob the gh-1806 fix set to "0"
+    # here was REMOVED upstream between 3.47.4 and 3.47.7
+    # (flutter/flutter#193978), and this leg pins `flutter-version: 3.47.x` —
+    # a floating stable that already resolves past the removal, so the pin
+    # was a silent no-op. The debug leg rides the SwiftPM lane and is green
+    # that way (run 399572012, SPM pass 77.2s) — the same lane the release
+    # DMG legs adopted in gh-1814 (build-macos.yml; floors asserted
+    # post-config by scripts/assert_macos_min_platform.sh). gh-1806
+    # history for the record: run 39957271246 (v1.0.631) died mid-clone of
+    # GoogleDataTransport ("curl 92 HTTP/2 stream 5 was not closed cleanly:
+    # CANCEL (err 8)") — a single-shot github.com transfer during the SPM
+    # dependency resolution; the identical SHA went green 34 minutes later
+    # (run 399572012), i.e. a transient network flake, and it is the mode
+    # this lane already lives with on 3.47.7. The old "with the feature off
+    # the SPM migration skips cleanly" comment described a knob that no
+    # longer exists — removed instead of left to lie. Pinned by
+    # test/ci_macos_debug_spm_lane_guard_test.dart (AC1/AC2: the knob must
+    # not re-enter the job, at job or step level).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
