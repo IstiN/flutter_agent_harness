@@ -1167,9 +1167,10 @@ final class HubPluginHost implements FahPlugin {
       final scoped = _scoped;
       final hubUrl = _connectedHubUrl;
       final repository = _activeRepository;
+      final selfId = repository?.client.agentId;
       final inbound = repository != null
           ? [
-              ...await repository.drain(repository.client.agentId ?? ''),
+              ...await repository.drain(selfId ?? ''),
               for (final channel in await joinedChannelsFor(_hub))
                 ...await repository.drain('#$channel'),
             ]
@@ -1178,12 +1179,13 @@ final class HubPluginHost implements FahPlugin {
         for (final message in inbound)
           // Live LEAVE filter (AC4): a channel left at every scope
           // stops delivering immediately; one scope left keeps the rest.
-          if (scoped == null ||
-              !message.toId.startsWith('#') ||
-              await scoped.acceptsChannel(
-                hubUrl ?? scoped.defaultHubUrl,
-                message.toId.substring(1),
-              ))
+          if (!(message.fromId == selfId && message.toId.startsWith('#')) &&
+              (scoped == null ||
+                  !message.toId.startsWith('#') ||
+                  await scoped.acceptsChannel(
+                    hubUrl ?? scoped.defaultHubUrl,
+                    message.toId.substring(1),
+                  )))
             AgentMessage(
               id: message.id,
               fromId: message.fromId,

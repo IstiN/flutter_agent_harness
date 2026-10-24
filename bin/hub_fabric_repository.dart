@@ -166,10 +166,13 @@ final class HubFabricRepository
       final channels = channelLister == null
           ? const <String>[]
           : await channelLister!.call(_plugin);
+      final me = _agentId;
       return _fromHub([
         ...await repo.drain(inbox),
         for (final channel in channels) ...await repo.drain('#$channel'),
-      ]);
+        // Channel sends echo back to the sender: my own posts are not
+        // new mail (and must never trigger a self-reply loop).
+      ]).where((m) => m.fromId != me || !m.toId.startsWith('#')).toList();
     } on Object {
       return const [];
     }

@@ -485,6 +485,19 @@ final class SubagentManager {
   /// refuse them too (nothing drains their local inbox — see the guard).
   Future<void> _guardRecipient(String id, SubagentHandle? handle) async {
     if (!await _isDeliverable(id, handle)) {
+      // A hub-shaped target while the hub is still connecting is a
+      // transient state, not an unknown recipient: say so, so the model
+      // retries instead of rerouting the message into a dead file inbox
+      // (gh-1825).
+      final router = messaging is RoutingMessagingRepository
+          ? messaging as RoutingMessagingRepository
+          : null;
+      if (id.startsWith('#') && router != null && !router.isConnected) {
+        throw StateError(
+          'DAP hub is not connected yet — the channel "$id" will be '
+          'reachable in a few seconds; retry the same agent_message then',
+        );
+      }
       throw StateError(
         'unknown subagent "$id" — available: ${_handles.keys.join(', ')}',
       );
