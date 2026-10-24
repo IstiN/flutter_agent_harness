@@ -634,6 +634,18 @@ Consequences for invite producers and consumers:
   (`{"op":"join","channel":<id>,"chanPubkey":""}`); payloads are raw
   UTF-8 (no fanet1 wrapper) and render as plain text.
 
+### Public showcase channels (fa_network interop)
+
+A PUBLIC channel has no chankey: payloads are `base64({"text": …})`
+(raw utf8 tolerated), not DAP/1 chankey E2E. The CLI joins public
+channels keyless (never minting a channel keypair), sends through
+`sendChannelEnvelope` with the public codec, and drains `#channel`
+inboxes alongside the agent DM inbox (draining only the agent id drops
+channel traffic entirely). Inbound public decoding requires
+fa_hub_client with the public-payload fallback (0.2.11+ /
+feat/public-channel-payloads); on older clients inbound public frames
+surface as "undecryptable".
+
 ### Enrolled hub credentials (the app's DAP tab)
 
 A bare invite link is enough only on hubs that accept the machine's

@@ -122,7 +122,14 @@ _resolvePlugins(
     dapUnlocked: (dapEnvironment[envMasterSecret] ?? '').isNotEmpty,
     fabricHubAllowed: fabricHubAllowed,
   );
-  final hubFabric = hubEnabled ? HubFabricRepository(hubPlugin) : null;
+  final hubFabric = hubEnabled
+      ? HubFabricRepository(
+          hubPlugin,
+          repositoryResolver: HubPluginHost.activeRepositoryFor,
+          publicChannelChecker: HubPluginHost.publicChannelFor,
+          channelLister: HubPluginHost.joinedChannelsFor,
+        )
+      : null;
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
     final plugin = _builtInPlugin(

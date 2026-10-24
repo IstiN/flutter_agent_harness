@@ -114,6 +114,73 @@ final class HubPluginHost implements FahPlugin {
   /// first drain with memberships, the AGENT itself must learn which
   /// channels it is on and how to write — otherwise it has no idea DAP
   /// channels exist (live user report).
+  /// The scoped connection: owned by THIS host when a join/boot carries
+  /// an enrolled name-bound credential. The vendored plugin cannot
+  /// retrofit a new secret onto its (possibly dead) client — its failed
+  /// start leaves `_repository` non-null but unconnected, which is
+  /// exactly why joins reported NOT live after a 401 at boot.
+  hub.HubMessagingRepository? _scopedRepository;
+  PluginIO? _pluginIo;
+
+  /// Test seam: replaces the live scoped connect so unit tests never
+  /// touch the network.
+  Future<void> Function(String hubUrl)? scopedConnectOverride;
+
+  hub.HubMessagingRepository? get _activeRepository =>
+      _scopedRepository ?? _hub.repository;
+
+  /// Lets [HubFabricRepository] route through the ACTIVE repository
+  /// (scoped client included) while keeping its lazy vendored fallback.
+  static final Map<hub.HubPlugin, HubPluginHost> _byPlugin = {};
+
+  /// The active repository for [plugin]'s host, or null when the host
+  /// has none (the caller falls back to `plugin.repository`).
+  static hub.HubMessagingRepository? activeRepositoryFor(
+    hub.HubPlugin plugin,
+  ) => _byPlugin[plugin]?._activeRepository;
+
+  /// Whether [channel] is a keyless (PUBLIC showcase) membership on the
+  /// host's active hub — public channels use the raw-payload contract,
+  /// not chankey E2E.
+  /// The channel ids joined on the host's active hub — the fabric must
+  /// drain `#channel` inboxes too: `drain(agentId)` alone only ever
+  /// returns DMs, which is why channel traffic never reached the agent.
+  static Future<List<String>> joinedChannelsFor(hub.HubPlugin plugin) async {
+    final host = _byPlugin[plugin];
+    final scoped = host?._scoped;
+    if (host == null || scoped == null) return const [];
+    try {
+      final hubUrl = host._connectedHubUrl;
+      return [
+        for (final m in await scoped.runtimeEffective())
+          if (hubUrl == null || m.hubUrl == hubUrl) m.channelId,
+      ];
+    } on Object {
+      return const [];
+    }
+  }
+
+  static Future<bool> publicChannelFor(
+    hub.HubPlugin plugin,
+    String channel,
+  ) async {
+    final host = _byPlugin[plugin];
+    final scoped = host?._scoped;
+    if (host == null || scoped == null) return false;
+    try {
+      final effective = await scoped.runtimeEffective();
+      final hubUrl = host._connectedHubUrl;
+      return effective.any(
+        (m) =>
+            m.channelId == channel &&
+            (hubUrl == null || m.hubUrl == hubUrl) &&
+            (m.pub == null || m.priv == null),
+      );
+    } on Object {
+      return false;
+    }
+  }
+
   final List<AgentMessage> _networkNotices = [];
   var _networkNoticeSeq = 0;
   var _bootNoticeSent = false;
@@ -123,6 +190,8 @@ final class HubPluginHost implements FahPlugin {
 
   @override
   void register(PluginContext context) {
+    _pluginIo = context.io;
+    _byPlugin[_hub] = this;
     _hub.register(
       hub.PluginContext(
         io: _HubPluginIO(context.io),
@@ -210,7 +279,15 @@ final class HubPluginHost implements FahPlugin {
         _connectedHubUrl = preferred.hubUrl;
       }
       await scoped?.seedOverlay();
-      await _startHub();
+      if (preferred?.hubClientSecret != null) {
+        try {
+          await _ensureChannelConnection(preferred!.hubUrl);
+        } on Object catch (e) {
+          _pluginIo?.writeln('[hub] scoped boot connect failed: $e');
+        }
+      } else {
+        await _startHub();
+      }
       _connectedHubUrl ??= scoped?.defaultHubUrl;
     } on Object catch (error) {
       if (_hub.isDefaultUrl) {
@@ -258,7 +335,7 @@ final class HubPluginHost implements FahPlugin {
   Future<void> _syncRuntimeMemberships() async {
     if (!_runtimeSyncPending) return;
     final scoped = _scoped;
-    final client = _hub.repository?.client;
+    final client = _activeRepository?.client;
     // No live client yet (hub down / still connecting): RETRY on the
     // next drain instead of consuming the one-shot sync.
     if (scoped == null || client == null) return;
@@ -268,14 +345,18 @@ final class HubPluginHost implements FahPlugin {
     for (final m in await scoped.runtimeEffective()) {
       try {
         final priv = m.priv;
-        if (priv != null && m.pub != null) {
-          await store?.accept(
-            m.channelId,
-            hub.ChannelKeys(pub: m.pub!, priv: priv),
-          );
+        if (m.pub == null || priv == null) {
+          // PUBLIC showcase channel: join keyless and NEVER mint a
+          // chankey — the client decodes the raw base64 public payload
+          // contract instead of attempting (and failing) chankey E2E.
+          client.join(m.channelId, '');
+          continue;
         }
-        final pub = m.pub ?? (await store?.keysFor(m.channelId))?.pub;
-        if (pub != null) client.join(m.channelId, pub);
+        await store?.accept(
+          m.channelId,
+          hub.ChannelKeys(pub: m.pub!, priv: priv),
+        );
+        client.join(m.channelId, m.pub!);
       } on Object {
         // A single bad channel must not block the others.
       }
@@ -286,23 +367,75 @@ final class HubPluginHost implements FahPlugin {
   /// configured default hub (E3). Starts the client when it is down.
   Future<void> _ensureChannelConnection(String hubUrl) async {
     final normalized = DapScopedMemberships.normalizeHubUrl(hubUrl);
-    final repository = _hub.repository;
+    final hasScopedCredential =
+        (_environment['DAP_CLIENT_SECRET'] ?? '').isNotEmpty;
+    if (hasScopedCredential) {
+      if (_connectedHubUrl == normalized &&
+          _scopedRepository?.client.connected == true) {
+        return;
+      }
+      await _connectScoped(normalized);
+      return;
+    }
+    final repository = _activeRepository;
     if (repository == null) {
       _environment['DAP_HUB_URL'] = normalized;
       await _startHub();
     } else if (_connectedHubUrl != normalized) {
-      if (_environment['DAP_CLIENT_SECRET'] != null) {
-        // A name-bound credential cannot be retrofitted onto the live
-        // client (no public mutator): switching hubs with it needs a
-        // fresh process. The membership is stored; say so honestly.
-        throw StateError(
-          'this hub credential is name-bound — restart fa so the '
-          'stored membership reconnects with it',
-        );
-      }
       await repository.connectTo(normalized);
+    } else if (!repository.client.connected) {
+      // The vendored start leaves a DEAD repository after a failed
+      // dial (401 at boot): retry instead of doing nothing.
+      await repository.start();
     }
     _connectedHubUrl = normalized;
+  }
+
+  /// Dials [normalized] with the process-local enrolled credential on a
+  /// client THIS host owns (the vendored plugin's client keeps the
+  /// secret it was constructed with — it can never learn a new one).
+  Future<void> _connectScoped(String normalized) async {
+    final override = scopedConnectOverride;
+    if (override != null) {
+      await override(normalized);
+      _connectedHubUrl = normalized;
+      return;
+    }
+    // DAP_AGENT_NAME enters settings ONLY through HubConfig.fromMap —
+    // resolveDapSettings alone reads the name from ~/.dap/config.json,
+    // which is the LOCAL agent's name and fails name-bound enrollment.
+    final liveConfig = hub.HubConfig.fromMap(
+      const <String, dynamic>{},
+      _environment,
+    );
+    final settings = hub.resolveDapSettings(
+      config: liveConfig,
+      environment: _environment,
+      home: _home,
+    );
+    final store = await hub.ChannelStore.fromFile(
+      _scoped?.overlayChannelsFile ?? settings.channelsFile,
+    );
+    final scopedSecret = _environment['DAP_CLIENT_SECRET'] ?? '';
+    final client = hub.HubClient(
+      config: hub.HubConfig(url: normalized, name: settings.name),
+      identity: await hub.HubIdentity.load(settings.keyPath),
+      channelStore: store,
+      clientSecret: (scopedSecret.isEmpty ? null : scopedSecret),
+      enroll: false,
+      secretSource: hub.DapSecretSource.env,
+    );
+    client.errors.listen(
+      (e) => _pluginIo?.writeln(
+        '[hub] hub rejected a frame — ${e.code}: ${e.msg}',
+      ),
+    );
+    final repository = hub.HubMessagingRepository(client);
+    // Throws on rejection: the previous (working) state is kept.
+    await repository.start();
+    _scopedRepository = repository;
+    _connectedHubUrl = normalized;
+    _pluginIo?.writeln('[hub] connected as ${client.agentId}');
   }
 
   void _queueNetworkNotice(String text) {
@@ -451,7 +584,7 @@ final class HubPluginHost implements FahPlugin {
     // configured default); a down hub leaves the membership stored and
     // the reconnect path picks it up.
     try {
-      await _ensureChannelConnection(invite.hubUrl);
+      await _ensureChannelConnection(bundle.hubUrl);
     } on Object catch (e) {
       io.writeln(
         'network: hub unreachable ($e) — membership stored, auto-join '
@@ -460,7 +593,7 @@ final class HubPluginHost implements FahPlugin {
     }
     _runtimeSyncPending = true;
     await _syncRuntimeMemberships();
-    final live = _hub.repository?.client.connected ?? false;
+    final live = _activeRepository?.client.connected ?? false;
     if (!live) {
       io.writeln(
         'network: membership stored but NOT live — the hub rejected or '
@@ -1033,8 +1166,16 @@ final class HubPluginHost implements FahPlugin {
       await _syncRuntimeMemberships();
       final scoped = _scoped;
       final hubUrl = _connectedHubUrl;
+      final repository = _activeRepository;
+      final inbound = repository != null
+          ? [
+              ...await repository.drain(repository.client.agentId ?? ''),
+              for (final channel in await joinedChannelsFor(_hub))
+                ...await repository.drain('#$channel'),
+            ]
+          : await _hub.externalSteeringSource();
       return [
-        for (final message in await _hub.externalSteeringSource())
+        for (final message in inbound)
           // Live LEAVE filter (AC4): a channel left at every scope
           // stops delivering immediately; one scope left keeps the rest.
           if (scoped == null ||

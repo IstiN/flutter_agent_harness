@@ -100,6 +100,51 @@ void main() {
     timeout: timeout,
   );
 
+  test('PUBLIC channel: fabric sends the raw base64({"text":…}) contract, '
+      'keyless members decode it, and #channel inboxes drain', () async {
+    final (adapter, plugin) = await newFabric();
+    final fabric = HubFabricRepository(
+      plugin,
+      publicChannelChecker: (_, channel) async => channel == 'room',
+      channelLister: (_) async => ['room'],
+    );
+    // Keyless joins on both ends (the public showcase membership).
+    plugin.repository!.client.join('room', '');
+    sender.join('room', '');
+
+    // Fabric → sender: the payload is the public contract, decoded by
+    // a keyless client (no "undecryptable" placeholder).
+    final arrived = sender.inbound
+        .firstWhere((m) => m.channel == 'room')
+        .timeout(const Duration(seconds: 5));
+    await fabric.send(
+      AgentMessage(
+        id: 'pub1',
+        fromId: 'main',
+        toId: '#room',
+        text: 'hello public',
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
+    expect((await arrived).plaintext, 'hello public');
+
+    // Sender → fabric: the #room inbox is drained ALONGSIDE the agent
+    // inbox (drain(agentId) alone drops channel traffic).
+    final received = plugin.repository!.client.inbound
+        .firstWhere((m) => m.channel == 'room')
+        .timeout(const Duration(seconds: 5));
+    await sender.sendChannelEnvelope(
+      'room',
+      (frameId) async => encodePublicChannelText('back at you'),
+    );
+    await received;
+    final drained = await fabric.drain('main');
+    expect(drained, hasLength(1));
+    expect(drained.single.toId, '#room');
+    expect(drained.single.text, 'back at you');
+    expect(drained.single.fromId, sender.agentId);
+  }, timeout: timeout);
+
   test('resolveTarget answers the roster; channels pass through', () async {
     final (adapter, plugin) = await newFabric();
     expect(await adapter.resolveTarget(sender.agentId!), sender.agentId);

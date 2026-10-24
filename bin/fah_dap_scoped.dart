@@ -167,9 +167,11 @@ final class DapScopedMemberships {
     if (uri == null) return url;
     final params = Map<String, String>.from(uri.queryParameters)
       ..remove('channel');
-    return uri
-        .replace(queryParameters: params.isEmpty ? null : params)
-        .toString();
+    // NOTE: queryParameters: null means "keep the old query" to
+    // Uri.replace — an EMPTY map strips `channel` but leaves a bare
+    // trailing '?', so drop that too (dedup/leave compare strings).
+    final out = uri.replace(queryParameters: params).toString();
+    return out.endsWith('?') ? out.substring(0, out.length - 1) : out;
   }
 
   String? get _envPassphrase {

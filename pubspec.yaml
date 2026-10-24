@@ -52,7 +52,7 @@ dependencies:
   dart_tui: ^2.0.0
   # DAP hub client (IstiN/fa_hub_client on GitHub). 0.2.8 carries the
   # backoff-overflow CPU fix — the dead-hub reconnect tight loop.
-  fa_hub_client: ^0.2.8
+  fa_hub_client: ^0.2.10
   # 0.2.2/0.2.3: conflict-free deletions — KbTombstoneCapable tombstones
   # entity files in place (no git delete/modify conflicts), per-record
   # `deleted/` files + set-difference consolidation progress, union merge

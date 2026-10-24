@@ -30,6 +30,7 @@ void main() {
       '&priv=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA';
 
   late Directory tmp;
+  late List<String> scopedConnects;
   late Map<String, String> env;
   late List<Map<String, Object?>> sessionRecords;
   late _IO io;
@@ -38,6 +39,7 @@ void main() {
     tmp = await Directory.systemTemp.createTemp('network-wizard-test');
     env = {'DAP_KEY_PASSPHRASE': 'pass'};
     sessionRecords = [];
+    scopedConnects = [];
     io = _IO();
   });
 
@@ -64,11 +66,18 @@ void main() {
       },
       readSessionRecords: (type) async => sessionRecords,
     );
-    HubPluginHost(
+    final host = HubPluginHost(
       hub.HubPlugin(environment: env, home: tmp.path),
       environment: env,
       home: tmp.path,
-    ).register(context);
+    );
+    // Never dial a real hub from unit tests: the scoped connection is
+    // replaced by a recording stub (production dials the enrolled
+    // credential on the host-owned client).
+    host.scopedConnectOverride = (hubUrl) async {
+      scopedConnects.add(hubUrl);
+    };
+    host.register(context);
     return context;
   }
 
@@ -196,6 +205,7 @@ void main() {
       expect(record['agentName'], 'public-agent');
       expect(record['hubClientSecret'], startsWith('dapkey1.'));
       expect(io.text, contains('NOT live'));
+      expect(scopedConnects, ['wss://hub.fa1.dev/ws']);
     },
   );
 

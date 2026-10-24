@@ -22,6 +22,8 @@
 ///   mailbox entries.
 library;
 
+import 'dart:convert';
+
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -40,13 +42,37 @@ bool hubFabricWired({
 /// Hub-backed [MessagingRepository] over a [hub.HubPlugin].
 final class HubFabricRepository
     implements MessagingRepository, RoutingMessagingRepository {
-  HubFabricRepository(this._plugin);
+  HubFabricRepository(
+    this._plugin, {
+    this.repositoryResolver,
+    this.publicChannelChecker,
+    this.channelLister,
+  });
 
   final hub.HubPlugin _plugin;
 
-  hub.HubMessagingRepository? get _repo => _plugin.repository;
+  /// Resolves the host's ACTIVE repository (a scoped, host-owned client
+  /// when a join enrolled a name-bound credential) — falls back to the
+  /// vendored plugin's repository when absent.
+  final hub.HubMessagingRepository? Function(hub.HubPlugin plugin)?
+  repositoryResolver;
 
-  String? get _agentId => _plugin.agentId;
+  /// Whether [channel] is a PUBLIC showcase channel (keyless membership):
+  /// those carry `base64({"text": …})` payloads, not DAP/1 chankey E2E —
+  /// sending encrypted frames there renders "(unable to decrypt)" in
+  /// the app (fa_network showcase contract).
+  final Future<bool> Function(hub.HubPlugin plugin, String channel)?
+  publicChannelChecker;
+
+  /// Lists the joined channel ids: their `#channel` inboxes are drained
+  /// alongside the agent's own inbox (DM-only draining drops channel
+  /// traffic entirely).
+  final Future<List<String>> Function(hub.HubPlugin plugin)? channelLister;
+
+  hub.HubMessagingRepository? get _repo =>
+      repositoryResolver?.call(_plugin) ?? _plugin.repository;
+
+  String? get _agentId => _repo?.client.agentId ?? _plugin.agentId;
 
   @override
   bool get isConnected => _repo?.client.connected ?? false;
@@ -92,11 +118,22 @@ final class HubFabricRepository
     if (repo == null || agentId == null) {
       throw StateError('hub fabric not connected — no hub client');
     }
+    final toId = message.toId;
+    if (toId.startsWith('#') &&
+        await (publicChannelChecker?.call(_plugin, toId.substring(1)) ??
+            false)) {
+      // Public showcase channel: raw base64({"text": …}) payload — the
+      // app's contract, readable by every member with the link.
+      await repo.client.sendChannelEnvelope(toId.substring(1), (frameId) async {
+        return base64Encode(utf8.encode(jsonEncode({'text': message.text})));
+      });
+      return;
+    }
     await repo.send(
       hub.AgentMessage(
         id: message.id,
         fromId: agentId,
-        toId: message.toId,
+        toId: toId,
         text: message.text,
         sentAt: message.sentAt,
       ),
@@ -121,21 +158,28 @@ final class HubFabricRepository
     final inbox = _agentId;
     if (repo == null || inbox == null) return const [];
     try {
-      return _fromHub(await repo.drain(inbox));
+      final channels = channelLister == null
+          ? const <String>[]
+          : await channelLister!.call(_plugin);
+      return _fromHub([
+        ...await repo.drain(inbox),
+        for (final channel in channels) ...await repo.drain('#$channel'),
+      ]);
     } on Object {
       return const [];
     }
   }
 
   /// Maps the package's mirrored AgentMessage onto the harness type. The
-  /// recipient is OUR hub inbox — reported as the hub agent id so the
-  /// steering attribution reads the true sender.
+  /// package already reports the true recipient: OUR hub agent id for
+  /// DMs, `#channel` for channel traffic — preserving it keeps channel
+  /// attribution (and the leave filter) intact.
   List<AgentMessage> _fromHub(List<hub.AgentMessage> messages) => [
     for (final message in messages)
       AgentMessage(
         id: message.id,
         fromId: message.fromId,
-        toId: _agentId ?? message.toId,
+        toId: message.toId,
         text: message.text,
         sentAt: message.sentAt,
         hops: message.hops,
