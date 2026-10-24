@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-24T08:42:18.467Z",
+  "ticketKey": "gh-1822",
+  "headSha": "40986752fb1250c76042e850b1a5badef2611dd2",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:2863fd5f7ea12f50",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:8a842dfebd1ac5b8",
+      "size": 25248
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:8f904f9c0a9d17d9",
+      "size": 10316
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:42adbc3f6d943005",
+      "size": 2767
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:c695ccf371c3cd12",
+      "size": 1901
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:80c9fff3c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:c8567791327de194",
+      "size": 3143
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:e6c1a438c202fd97",
+      "size": 3065
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6v25VP",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/leaderboard/pbench_results.json:14",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: The seeded ledger row records a RED run as a green \"2/2 solved\" pipeline proof — and its numbers are impossible under this PR's own tooling**\n\nThree independent problems with the seed row (`bench/leaderboard/pbench_results.json:11-24`, rendered at `README.md:109-116`):\n\n**1. The run is not green.** Run [40023718645](https://api.github.com/repos/IstiN/flutter_agent_harness/actions/runs/40023718645) concluded **`failure`** — the `Package submission` and `Summary & verdict` steps both failed (verified via the Actions API during this review). This PR's own aggregate step says: *\"Runs only on a GREEN aggregate (the verdict + Tier-0 `submit verify` passed) — a partial or failing run never lands\"*, and `pbench_record.py`'s docstring says the ledger is written *\"on every GREEN run\"*. The Tier-0 verify never ran for this run — its numbers were never validated by the gate the PR builds.\n\n**2. The per-instance numbers contradict the repo's own solved convention.** `pbench_record.read_stats` (lines 100-104) and `bench/programbench/summary.py:19-20,38-43` define `solved = every scored test true` — i.e. `solved: true` **implies** `score_pct == 100.0` (\"a 100-after-rounding instance that isn't solved is NOT solved\"). The seed asserts `98.0%` **and** `solved: true` for both instances; the README consequently renders `| cmatrix | 98.0% | 506 | ✅ |` and a headline `Solved 2/2` — self-contradictory on its face.\n\n**3. `98.0` cannot even be produced by the tool for these test counts.** `round(100.0*passed/len(tests), 1)` yields `98.0` for **no** integer passed-count with 680 tests (667→98.1, 666→97.9); for 506 tests it implies 496/506 passed → `solved: false`. So this row was not produced by `read_stats` from a packaged `_stats/` (which also never existed — `submit package` failed).\n\nSince the PR's entire deliverable is *honest, committed, self-reported* results (gh-182 R1), the first published row must satisfy the honesty contract it establishes. Please either re-run the smoke dispatch to a **green** aggregate and record that run via the tool, or fix the seed to match the run's actual packaged `_stats` (correct `score_pct` with `solved` derived by the tool's rule, or drop the row). Also note the missing `fa_version` — a recorded row would carry `--fa-version` (renders `—` today)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v25V-",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/leaderboard/pbench_render.py:122",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: The \"Score\" column is labeled pass@1 but shows a different metric**\n\n`render_row_table` fills the Score column with `score_pct` — the **unweighted mean of per-instance test-pass percentages** (`read_stats`: `100 × passed/len(tests)` averaged in `upsert`) — while the Mode column says *\"full — pass@1, all N instances\"* and the section intro says *\"Pass@1: one attempt per instance\"*. Those are different numbers: summary.py's headline pass@1 convention is the **instance-solved fraction** (`Solved {n}/{len} — headline pass@1 over the full official set`), and the official ProgramBench board ranks the same way.\n\nThe seeded row already shows the drift: Mode reads \"pipeline proof\", Score reads `98.0%` (mean test-pass rate), while pass@1 for that row would be `2/2 = 100%`. On a full run the gap grows (one 40% instance among 201 barely moves a tests-weighted mean but visibly moves the solved fraction). A reader comparing this table against the official board will misread every row.\n\nSuggest one of:\n- record/display the solved fraction (`solved/attempted`) as Score to match the pass@1 headline, or\n- rename the column to what it is (e.g. `Test-pass %`) and say in the section intro that it is the mean per-instance scored-test rate."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v25XD",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/bench-programbench.yml:750",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: Re-running an old green run silently regresses the committed ledger**\n\nThis step records and pushes the ledger **from the run's pinned checkout**: `actions/checkout` (top of the job) pins the dispatch-time sha, so the working tree holds the ledger **as it was when the run was dispatched**. The record → render → `git push` chain then writes that whole stale tree back:\n\n- Run A dispatched at sha S1 (ledger L0) → records L0+A → pushes.\n- Run B dispatched later at S2 (ledger L0+A) → records L0+A+B → pushes.\n- Someone clicks **\"Re-run all jobs\"** on run A months later → checkout is S1 again → the step records **L0+A**, regenerates the README section from it, and pushes — **B's row (and any hand-backfilled rows) silently disappear from the public board**, and the README section rewinds with them.\n\nThe `concurrency` group serializes *concurrent* runs but does nothing against this cross-time overwrite. The gh-1682 sibling step (`bench-harbor.yml` \"Update leaderboard ledger & table\") has the same shape, so this is a copied pattern — but this PR is the moment to harden it cheaply, e.g.:\n\n```bash\ngit fetch origin \"${GITHUB_REF#refs/heads/}\"\ngit rebase \"FETCH_HEAD\"   # or: check out the branch's ledger before recording\n```\n\nbefore `pbench_record.py` runs (a non-fast-forward push rejection failing the step would already be better than a silent revert). Worth a follow-up for the harbor step too."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v25YJ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/bench-programbench.yml:691",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Artifact links expire with the retention window — say so (or extend it)**\n\nThe ledger rows link the `programbench-submission` artifact (`…/runs/<id>/artifacts/<artifact-id>`), and the renderer presents them as the lasting analysis surface (\"the run's value survives the CI artifact retention window and stays reachable\" — `pbench_render.py` docstring). But the artifact itself **expires** on the default retention schedule (the seeded run's artifact shows `expired: false` today; it will 404 later), so README and fa1.dev will accumulate dead links while the run links stay alive.\n\nCheap options:\n- add `retention-days:` (e.g. `365`) to the pre-existing \"Upload submission folder\" step so trajectories/eval logs outlive the default window;\n- and/or have the renderer note \"(artifact link expires with GitHub's retention window)\" so the page stays honest after expiry."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v25ZN",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/leaderboard/pbench_record.py:106",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `read_stats` dies with an uncaught `TypeError` on null/non-numeric cost or calls entries**\n\n`float(costs[iid])` / `int(calls[iid])` raise `TypeError` for a JSON `null` or a string value in `cost.json`/`calls.json`, and `main` only catches `(OSError, ValueError)` around `read_stats` — so a malformed stats file produces a raw traceback instead of the tool's clean `error: … ` exit-2 path (the same file class that gets the friendly `FileNotFoundError` treatment two lines up). Since `summary.py` writes these files it's unlikely in CI, but hand-backfills and future format drift hit this path. Guard with `isinstance(costs[iid], (int, float))` / drop the entry, or add `TypeError` to the caught set — a one-line test (`cost.json` with `{\"cmatrix\": null}`) pins it."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v25aJ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/leaderboard/pbench_render.py:357",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: HTML page drops the run-page fallback in an edge case the Markdown render handles**\n\nHere the fallback is suppressed whenever `artifact_urls` is **non-empty**, even if no entry actually rendered a link — compare `render_detail_blocks` (Markdown), which collects `links` filtered by `a.get(\"url\")` and falls back when *no link was rendered*. A hand-edited ledger row like `\"artifact_urls\": [{\"label\": \"programbench-submission\"}]` (url lost in a merge) therefore renders the HTML page with **no artifact link and no run-page fallback**, while the README section for the same row still shows the run-page link. Reuse the Markdown condition: emit the fallback when no artifact `<p>` was appended."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v25a4",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/leaderboard/pbench_render.py:228",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `splice_readme` duplicates the block when the begin marker is orphaned, and hardcodes one trailing char**\n\nTwo edge cases in the splice:\n\n1. If `MARKER_BEGIN` exists but `MARKER_END` is missing or precedes it (a merge-conflict remnant of the generated region is the classic way), the function falls through to the anchor/heading insertion and appends a **second** generated block next to the orphaned one — the README then carries two ProgramBench sections and `--check` can never converge. Failing loudly (exit 2, \"orphaned pbench-leaderboard:begin marker\") would surface the corrupt README immediately.\n2. `text[end + len(MARKER_END) + 1:]` assumes exactly one character (the `\\n`) after the end marker; a marker at EOF without a trailing newline would silently swallow the following character into the replaced span. `text.find(\"\\n\", end)` with an EOF fallback is the robust form.\n\nNeither bites the committed README today (the round-trip test covers the healthy shape) — this is cheap armor for the CI-only writer."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:9b03709d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: The seeded ledger row records a RED run as a green \"2/2 solved\" pipeline proof — and its numbers are impossible under this PR's own tooling**\n\nThree independent problems with the seed row (`bench/leaderboard/pbench_results.json:11-24`, rendered at `README.md:109-116`):\n\n**1. The run is not green.** Run [40023718645](https://api.github.com/repos/IstiN/flutter_agent_harness/actions/runs/40023718645) concluded **`failure`** — the `Package submission` and `Summary & verdict` steps both failed (verified via the Actions API during this review). This PR's own aggregate step says: *\"Runs only on a GREEN aggregate (the verdict + Tier-0 `submit verify` passed) — a partial or failing run never lands\"*, and `pbench_record.py`'s docstring says the ledger is written *\"on every GREEN run\"*. The Tier-0 verify never ran for this run — its numbers were never validated by the gate the PR builds.\n\n**2. The per-instance numbers contradict the repo's own solved convention.** `pbench_record.read_stats` (lines 100-104) and `bench/programbench/summary.py:19-20,38-43` define `solved = every scored test true` — i.e. `solved: true` **implies** `score_pct == 100.0` (\"a 100-after-rounding instance that isn't solved is NOT solved\"). The seed asserts `98.0%` **and** `solved: true` for both instances; the README consequently renders `| cmatrix | 98.0% | 506 | ✅ |` and a headline `Solved 2/2` — self-contradictory on its face.\n\n**3. `98.0` cannot even be produced by the tool for these test counts.** `round(100.0*passed/len(tests), 1)` yields `98.0` for **no** integer passed-count with 680 tests (667→98.1, 666→97.9); for 506 tests it implies 496/506 passed → `solved: false`. So this row was not produced by `read_stats` from a packaged `_stats/` (which also never existed — `submit package` failed).\n\nSince the PR's entire deliverable is *honest, committed, self-reported* results (gh-182 R1), the first published row must satisfy the honesty contract it establishes. Please either re-run the smoke dispatch to a **green** aggregate and record that run via the tool, or fix the seed to match the run's actual packaged `_stats` (correct `score_pct` with `solved` derived by the tool's rule, or drop the row). Also note the missing `fa_version` — a recorded row would carry `--fa-version` (renders `—` today)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:2aa86917",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: The \"Score\" column is labeled pass@1 but shows a different metric**\n\n`render_row_table` fills the Score column with `score_pct` — the **unweighted mean of per-instance test-pass percentages** (`read_stats`: `100 × passed/len(tests)` averaged in `upsert`) — while the Mode column says *\"full — pass@1, all N instances\"* and the section intro says *\"Pass@1: one attempt per instance\"*. Those are different numbers: summary.py's headline pass@1 convention is the **instance-solved fraction** (`Solved {n}/{len} — headline pass@1 over the full official set`), and the official ProgramBench board ranks the same way.\n\nThe seeded row already shows the drift: Mode reads \"pipeline proof\", Score reads `98.0%` (mean test-pass rate), while pass@1 for that row would be `2/2 = 100%`. On a full run the gap grows (one 40% instance among 201 barely moves a tests-weighted mean but visibly moves the solved fraction). A reader comparing this table against the official board will misread every row.\n\nSuggest one of:\n- record/display the solved fraction (`solved/attempted`) as Score to match the pass@1 headline, or\n- rename the column to what it is (e.g. `Test-pass %`) and say in the section intro that it is the mean per-instance scored-test rate."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:095044ad",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: Re-running an old green run silently regresses the committed ledger**\n\nThis step records and pushes the ledger **from the run's pinned checkout**: `actions/checkout` (top of the job) pins the dispatch-time sha, so the working tree holds the ledger **as it was when the run was dispatched**. The record → render → `git push` chain then writes that whole stale tree back:\n\n- Run A dispatched at sha S1 (ledger L0) → records L0+A → pushes.\n- Run B dispatched later at S2 (ledger L0+A) → records L0+A+B → pushes.\n- Someone clicks **\"Re-run all jobs\"** on run A months later → checkout is S1 again → the step records **L0+A**, regenerates the README section from it, and pushes — **B's row (and any hand-backfilled rows) silently disappear from the public board**, and the README section rewinds with them.\n\nThe `concurrency` group serializes *concurrent* runs but does nothing against this cross-time overwrite. The gh-1682 sibling step (`bench-harbor.yml` \"Update leaderboard ledger & table\") has the same shape, so this is a copied pattern — but this PR is the moment to harden it cheaply, e.g.:\n\n```bash\ngit fetch origin \"${GITHUB_REF#refs/heads/}\"\ngit rebase \"FETCH_HEAD\"   # or: check out the branch's ledger before recording\n```\n\nbefore `pbench_record.py` runs (a non-fast-forward push rejection failing the step would already be better than a silent revert). Worth a follow-up for the harbor step too."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:9be403f4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Artifact links expire with the retention window — say so (or extend it)**\n\nThe ledger rows link the `programbench-submission` artifact (`…/runs/<id>/artifacts/<artifact-id>`), and the renderer presents them as the lasting analysis surface (\"the run's value survives the CI artifact retention window and stays reachable\" — `pbench_render.py` docstring). But the artifact itself **expires** on the default retention schedule (the seeded run's artifact shows `expired: false` today; it will 404 later), so README and fa1.dev will accumulate dead links while the run links stay alive.\n\nCheap options:\n- add `retention-days:` (e.g. `365`) to the pre-existing \"Upload submission folder\" step so trajectories/eval logs outlive the default window;\n- and/or have the renderer note \"(artifact link expires with GitHub's retention window)\" so the page stays honest after expiry."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:ac623d1e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `read_stats` dies with an uncaught `TypeError` on null/non-numeric cost or calls entries**\n\n`float(costs[iid])` / `int(calls[iid])` raise `TypeError` for a JSON `null` or a string value in `cost.json`/`calls.json`, and `main` only catches `(OSError, ValueError)` around `read_stats` — so a malformed stats file produces a raw traceback instead of the tool's clean `error: … ` exit-2 path (the same file class that gets the friendly `FileNotFoundError` treatment two lines up). Since `summary.py` writes these files it's unlikely in CI, but hand-backfills and future format drift hit this path. Guard with `isinstance(costs[iid], (int, float))` / drop the entry, or add `TypeError` to the caught set — a one-line test (`cost.json` with `{\"cmatrix\": null}`) pins it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:62f5fa69",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: HTML page drops the run-page fallback in an edge case the Markdown render handles**\n\nHere the fallback is suppressed whenever `artifact_urls` is **non-empty**, even if no entry actually rendered a link — compare `render_detail_blocks` (Markdown), which collects `links` filtered by `a.get(\"url\")` and falls back when *no link was rendered*. A hand-edited ledger row like `\"artifact_urls\": [{\"label\": \"programbench-submission\"}]` (url lost in a merge) therefore renders the HTML page with **no artifact link and no run-page fallback**, while the README section for the same row still shows the run-page link. Reuse the Markdown condition: emit the fallback when no artifact `<p>` was appended."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:38a0d902",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `splice_readme` duplicates the block when the begin marker is orphaned, and hardcodes one trailing char**\n\nTwo edge cases in the splice:\n\n1. If `MARKER_BEGIN` exists but `MARKER_END` is missing or precedes it (a merge-conflict remnant of the generated region is the classic way), the function falls through to the anchor/heading insertion and appends a **second** generated block next to the orphaned one — the README then carries two ProgramBench sections and `--check` can never converge. Failing loudly (exit 2, \"orphaned pbench-leaderboard:begin marker\") would surface the corrupt README immediately.\n2. `text[end + len(MARKER_END) + 1:]` assumes exactly one character (the `\\n`) after the end marker; a marker at EOF without a trailing newline would silently swallow the following character into the replaced span. `text.find(\"\\n\", end)` with an EOF fallback is the robust form.\n\nNeither bites the committed README today (the round-trip test covers the healthy shape) — this is cheap armor for the CI-only writer."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:2bdaa4d9",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 77088113ba381b58d7a7906a688abc50d2e8566c — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:6b233fe6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — pr-1823\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:4ce5929e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The seeded ProgramBench ledger row publishes a RED run ([40023718645](https://api.github.com/repos/IstiN/flutter_agent_harness/actions/runs/40023718645) — `Package submission` + `Summary & verdict` failed) as a green \"Solved 2/2 ✅ … 98.0%\" pipeline proof, with numbers the PR's own tooling cannot produce. Two important issues (Score column mislabeled pass@1; a stale re-run can silently regress the committed ledger) and four suggestions round it out.\n\n**Key Issues**:\n- 🚨 `bench/leaderboard/pbench_results.json:14` — seed row violates the PR's own green-only contract and `summary.py`'s ✅ convention (98.0% + `solved: true` is impossible per `read_stats`; 680 tests cannot round to 98.0) — see comment1\n- ⚠️ `bench/leaderboard/pbench_render.py:122` — \"Score\" shows mean per-instance test-pass % while the Mode column says pass@1 (comment2)\n- ⚠️ `.github/workflows/bench-programbench.yml:750` — re-running an old green run regenerates the ledger from its stale checkout and drops rows recorded since (comment3; the gh-1682 harbor step shares the shape)\n- 💡 artifact links expire with the retention window; `read_stats` uncaught `TypeError` on null costs; HTML fallback asymetry; `splice_readme` orphan-marker edge (comments 4-7)\n\n**Next Steps**:\n1. Re-derive the seed from the run's actual `_stats` (or re-run to a green aggregate and record that) so `score_pct`/`solved` agree with the tool's math\n2. Align or relabel the Score metric with the pass@1 headline; guard the record step against stale-checkout ledger pushes\n3. Sweep the four suggestions"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
