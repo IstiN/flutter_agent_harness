@@ -68,14 +68,6 @@
   ],
   "pr-1487": [
     {
-      "leg": "review",
-      "at": "2026-10-10T12:36:20Z",
-      "prompt": 21001,
-      "completion": 6051,
-      "total": 27052,
-      "model": ""
-    },
-    {
       "leg": "rework",
       "at": "2026-10-15T06:58:50Z",
       "prompt": 41705,
@@ -4838,6 +4830,15 @@
       "completion": 31676,
       "total": 113995,
       "cacheRead": 4898112,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-24T12:45:40Z",
+      "prompt": 49912,
+      "completion": 13938,
+      "total": 63850,
+      "cacheRead": 2127424,
       "model": "glm-5.3-flash"
     }
   ],
