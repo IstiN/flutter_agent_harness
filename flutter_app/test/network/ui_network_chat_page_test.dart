@@ -2,20 +2,38 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/network/showcase_viewer.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 
 import 'fakes.dart';
 
 import 'package:fa/ui/network/add_agent_dialog.dart';
+
+/// Holds only the channel-list response. The concurrent history request is
+/// allowed to finish first, reproducing restored-session first-open timing.
+final class _HoldChannelsHttpClient extends FakeHttpClient {
+  final Completer<void> channelsReady = Completer<void>();
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final response = await super.send(request);
+    if (request.url.path == '/api/networks/net1/channels') {
+      await channelsReady.future;
+    }
+    return response;
+  }
+}
 
 void main() {
   group('NetworkChatPage', () {
@@ -195,5 +213,106 @@ void main() {
       );
       await rig.session.close();
     });
+
+    testWidgets(
+      'first open waits for public-channel decoding and never shows the '
+      'raw payload',
+      (tester) async {
+        final payload = encodePublicChannelText('first-open plaintext');
+        final httpClient = _HoldChannelsHttpClient()
+          ..respond(
+            200,
+            body:
+                '[{"id":"pc1","networkId":"net1","name":"public",'
+                '"public":true}]',
+          )
+          // start() is holding the channel response, so the concurrently
+          // opened history consumes this response before members is asked.
+          ..respond(
+            200,
+            body: jsonEncode({
+              'items': [
+                {
+                  'id': 'e-public',
+                  'channelId': 'pc1',
+                  'senderId': 'hub-agent',
+                  'senderName': 'public-agent',
+                  'payload': payload,
+                },
+              ],
+              'nextCursor': '',
+            }),
+          )
+          ..respond(200, body: membersBody);
+        final wallet = await walletWithChannel(
+          channelPub: channelKeys.pub,
+          channelPriv: channelKeys.priv,
+        );
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: FakeWsConnector(),
+          wallet: wallet,
+        );
+        addTearDown(session.close);
+        final controller = NetworkModeController.inMemory(
+          mode: AppMode.network,
+          networkId: 'net1',
+          channelId: 'pc1',
+        );
+        final manager = NetworkSessionManager(
+          baseUrl: testBase,
+          wallet: wallet,
+          httpClient: FakeHttpClient(),
+          wsConnector: FakeWsConnector(),
+        );
+        manager.sessions['net1'] = session;
+        addTearDown(manager.disconnectAll);
+
+        // The manager publishes the session before start() completes. Open
+        // the page in that window, with history winning the metadata race.
+        unawaited(session.start());
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFahTheme(),
+            home: Scaffold(
+              body: NetworkChatPage(controller: controller, manager: manager),
+            ),
+          ),
+        );
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(session.channels, isEmpty);
+        expect(
+          httpClient.requests.map((r) => r.url.path),
+          contains('/api/channels/pc1/messages'),
+        );
+        expect(find.textContaining(payload), findsNothing);
+
+        // Metadata becoming ready must drive the decoded bubble by itself —
+        // no channel switch or other manual refresh.
+        httpClient.channelsReady.complete();
+        for (var i = 0; i < 8; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(find.textContaining('first-open plaintext'), findsOneWidget);
+        expect(find.text('public-agent'), findsOneWidget);
+        expect(find.textContaining(payload), findsNothing);
+        expect(find.textContaining('unable to decrypt'), findsNothing);
+
+        // The established later behavior is unchanged: revisiting the
+        // channel reuses its decoded history and senderName.
+        await controller.backToChannels();
+        await tester.pump();
+        await controller.selectChannel('pc1');
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(find.textContaining('first-open plaintext'), findsOneWidget);
+        expect(find.text('public-agent'), findsOneWidget);
+        expect(find.textContaining(payload), findsNothing);
+        await session.close();
+      },
+    );
   });
 }

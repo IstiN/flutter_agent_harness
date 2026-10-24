@@ -118,6 +118,7 @@ final class NetworkSession extends ChangeNotifier {
   final Uuid _uuid;
 
   StreamSubscription<WsEvent>? _events;
+  Future<void>? _startup;
 
   /// The member roster by id, presence included (roster.snapshot +
   /// presence.changed folded in).
@@ -137,8 +138,13 @@ final class NetworkSession extends ChangeNotifier {
   String? error;
 
   /// Fetches channels + roster and connects the socket. Idempotent.
-  Future<void> start() async {
-    if (_events != null) return;
+  ///
+  /// The manager publishes this session before startup completes, so the
+  /// shared future is also the decoder-readiness barrier for an early
+  /// channel open or realtime envelope.
+  Future<void> start() => _startup ??= _start();
+
+  Future<void> _start() async {
     _events = _ws.events.listen(_onWsEvent);
     try {
       channels = await _client.listChannels(networkId);
@@ -281,6 +287,12 @@ final class NetworkSession extends ChangeNotifier {
   }
 
   Future<ChannelMessage> _decode(Envelope envelope) async {
+    // Never guess that an unknown channel is private: on first open the
+    // history response can win the race with start()'s channel listing.
+    // Waiting here keeps the envelope out of the decoded-message cache
+    // until the public/private decoder is known; the history/realtime
+    // completion notification then rebuilds the chat with plaintext.
+    await _startup;
     final isOwn = envelope.senderId == identity.id;
     final known = channels.where((c) => c.id == envelope.channelId);
     // Public showcase channels have no chankey at all: the payload is
