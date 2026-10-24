@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
+import 'package:fa/apps/app_storage.dart';
 import 'package:fa/apps/manifest_i18n.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -258,11 +259,18 @@ class CatalogService {
     r'''jsr\.include\(\s*['"]([^'"]+)['"]\s*\)''',
   );
 
-  /// Safety bound for the closure walk. The runtime assembler stops
-  /// inlining at depth 5 per chain and the fetch-once worklist already
-  /// bounds the walk by the file count, so this only fires on a
-  /// pathological (machine-generated) graph.
-  static const int _maxClosureDepth = 32;
+  /// Per-chain depth budget of the boot assembler — js_widget_runtime
+  /// `WidgetManifest._maxIncludeDepth`, verbatim. At depth 5 the runtime
+  /// inliner returns a source UNTOUCHED (`if (depth >= _maxIncludeDepth)
+  /// return source;`), so any import/`jsr.include` a depth-5 file still
+  /// carries would boot as a literal statement (an `import` is a syntax
+  /// error in the eval'd script — the gh-1831 "installed but never opens"
+  /// symptom class). The install therefore REFUSES any chain the
+  /// assembler would give up on, instead of shipping a widget that cannot
+  /// open (never-installs-a-broken-widget contract). Doubles as the
+  /// cycle guard: every recursion step deepens, so include cycles throw
+  /// here instead of recursing forever like the runtime would.
+  static const int _maxChainDepth = 5;
 
   final ExecutionEnv _env;
   final http.Client _client;
@@ -458,18 +466,20 @@ class CatalogService {
       }
       files[source.key] = response.bodyBytes;
     }
+    Map<String, dynamic> manifest;
     try {
-      final manifest = jsonDecode(utf8.decode(files['manifest.json']!));
-      if (manifest is! Map<String, dynamic>) {
+      final decoded = jsonDecode(utf8.decode(files['manifest.json']!));
+      if (decoded is! Map<String, dynamic>) {
         throw const FormatException('not a JSON object');
       }
+      manifest = decoded;
     } on Object {
       throw CatalogError('$id: manifest.json is not a valid JSON object');
     }
     if (files['widget.js']!.isEmpty) {
       throw CatalogError('$id: widget.js is empty');
     }
-    await _downloadSourceClosure(entry, files);
+    await _downloadSourceClosure(entry, files, manifest);
     return files;
   }
 
@@ -478,71 +488,141 @@ class CatalogService {
   /// referenced sibling under its app-relative path; the FIRST missing
   /// referenced file throws [CatalogError].
   ///
-  /// Mirrors `WidgetManifest`'s inliner exactly: the same import/include
-  /// regexes, the same lexical `./`/`../` resolution against the importing
-  /// file's directory, the same depth cap ([_maxClosureDepth]) — and its
-  /// once-per-assembly `visited` semantics as a fetch-once worklist. Unlike
-  /// the assembler (which comments a missing file out), a missing file here
-  /// fails the install: booting without it is precisely the gh-1831
-  /// failure.
+  /// Mirrors `WidgetManifest`'s inliner: the same import/include regexes,
+  /// the same lexical `./`/`../` resolution against the importing file's
+  /// directory (`..` at the widget root clamps in-root, exactly like
+  /// `WidgetManifest._resolvePath`), imports-then-includes in source
+  /// order with import-once (`visited`) semantics, and the runtime's OWN
+  /// per-chain depth budget ([_maxChainDepth]) — a chain the assembler
+  /// would give up on is refused here, because booting it leaves the
+  /// import as a literal statement. Unlike the assembler (which comments
+  /// a missing file out), a missing file fails the install: booting
+  /// without it is precisely the gh-1831 failure.
+  ///
+  /// Assembly modes, mirroring `WidgetManifest.readJs`: a non-empty
+  /// manifest `files:` list is concatenated DIRECTLY (widget.js's own
+  /// import statements are never read), so the listed files are the
+  /// closure roots; otherwise widget.js is the single root.
   Future<void> _downloadSourceClosure(
     CatalogEntry entry,
     Map<String, Uint8List> files,
+    Map<String, dynamic> manifest,
   ) async {
     final entryUrl = entry.previewJsUrl;
     final baseUri = entryUrl == null ? null : Uri.tryParse(entryUrl);
     if (baseUri == null) return; // preview URL already validated above
     final entryDir = baseUri.resolve('.');
-    final pending = <(String, String)>[('widget.js', '')];
-    final fetched = <String>{'widget.js'};
-    var depth = 0;
-    while (pending.isNotEmpty) {
-      if (depth++ > _maxClosureDepth) {
-        throw CatalogError(
-          '${entry.id}: source closure deeper than $_maxClosureDepth '
-          'levels — refusing to install a possibly-cyclic widget',
-        );
-      }
-      final nextLevel = List.of(pending);
-      pending.clear();
-      for (final (sourceRel, sourceDir) in nextLevel) {
-        final text = utf8.decode(files[sourceRel]!);
-        for (final match in _importRegex.allMatches(text)) {
-          await _fetchClosureFile(
-            entry, files, fetched, pending, match.group(1)!, sourceDir,
-            entryDir: entryDir,
-          );
-        }
-        for (final match in _includeRegex.allMatches(text)) {
-          await _fetchClosureFile(
-            entry, files, fetched, pending, match.group(1)!, sourceDir,
-            entryDir: entryDir,
-          );
-        }
-      }
+    final rawFiles = manifest['files'];
+    final roots = <String>['widget.js'];
+    if (rawFiles is List && rawFiles.isNotEmpty) {
+      roots
+        ..clear()
+        ..addAll(rawFiles.map((file) {
+          if (file is! String) {
+            throw CatalogError(
+              '${entry.id}: manifest files: entry is not a string: $file',
+            );
+          }
+          return file;
+        }));
+    }
+    final claimed = <String>{};
+    for (final root in roots) {
+      // Listed files are relative to the widget root, exactly like the
+      // assembler's `'$base/$filename'` reads.
+      final rel = _requireClosurePath(entry, root, '');
+      await _ensureClosureFile(entry, files, rel, entryDir: entryDir);
+      await _walkClosureFile(entry, files, claimed, rel, 0,
+          entryDir: entryDir);
     }
   }
 
-  /// One closure edge: resolves [ref] against [sourceDir] (lexically, like
-  /// the runtime assembler), fetches the file from the pinned preview
-  /// directory when not already in [files], and queues it for its own
-  /// imports. A path escaping the widget root (or a failed fetch) throws.
-  Future<void> _fetchClosureFile(
+  /// Depth-first mirror of the assembler's `_preprocessIncludes` walk
+  /// over one already-fetched file. Imports claim their target once
+  /// ([claimed] — the assembler's `visited` set); includes re-walk on
+  /// every occurrence (the assembler re-inlines them). A file whose
+  /// references the budget would leave un-inlined fails the install.
+  Future<void> _walkClosureFile(
     CatalogEntry entry,
     Map<String, Uint8List> files,
-    Set<String> fetched,
-    List<(String, String)> pending,
-    String ref,
-    String sourceDir, {
+    Set<String> claimed,
+    String rel,
+    int depth, {
     required Uri entryDir,
   }) async {
-    final id = entry.id;
+    final String text;
+    try {
+      text = utf8.decode(files[rel]!);
+    } on FormatException catch (error) {
+      throw CatalogError('${entry.id}: $rel is not valid UTF-8 ($error)');
+    }
+    if (depth >= _maxChainDepth &&
+        (_importRegex.hasMatch(text) || _includeRegex.hasMatch(text))) {
+      throw CatalogError(
+        '${entry.id}: source chain deeper than $_maxChainDepth — boot '
+        'would leave an import unresolved (the runtime inliner stops at '
+        '$_maxChainDepth levels); refusing to install a widget that '
+        'cannot open',
+      );
+    }
+    if (depth >= _maxChainDepth) return;
+    final sourceDir = _parentOf(rel);
+    // Imports first (source order), then includes — the assembler's
+    // processing order. The claim happens BEFORE the fetch, exactly like
+    // `load()`'s `visited.add` precedes the read.
+    for (final match in _importRegex.allMatches(text)) {
+      final target = _requireClosurePath(entry, match.group(1)!, sourceDir);
+      if (!claimed.add(target)) continue; // already inlined — skip subtree
+      await _ensureClosureFile(entry, files, target, entryDir: entryDir);
+      await _walkClosureFile(entry, files, claimed, target, depth + 1,
+          entryDir: entryDir);
+    }
+    for (final match in _includeRegex.allMatches(text)) {
+      final target = _requireClosurePath(entry, match.group(1)!, sourceDir);
+      await _ensureClosureFile(entry, files, target, entryDir: entryDir);
+      await _walkClosureFile(entry, files, claimed, target, depth + 1,
+          entryDir: entryDir);
+    }
+  }
+
+  /// Resolves [ref] against [sourceDir] and requires an in-root file
+  /// path: null (resolves to nothing, or steps above the widget root)
+  /// fails the install with the reason named.
+  String _requireClosurePath(CatalogEntry entry, String ref, String sourceDir) {
     final rel = _resolveClosurePath(sourceDir, ref);
     if (rel == null || rel.isEmpty) {
-      throw CatalogError('$id: import "$ref" escapes the widget directory');
+      throw CatalogError(
+        '${entry.id}: import "$ref" resolves above the widget directory — '
+        'the runtime reads such paths from the app namespace '
+        '(`WidgetManifest._resolvePath` against the app dir), which the '
+        'pinned preview cannot provide; booting it would leave a '
+        'file-not-found marker',
+      );
     }
+    return rel;
+  }
+
+  /// Fetches [rel] from the pinned preview directory unless [files]
+  /// already holds it. Fails the install loudly on transport errors,
+  /// non-200, or a path that could never be a safe in-namespace storage
+  /// path (checked BEFORE the request — `AppStorage.appFile` would only
+  /// reject it later, as a raw ArgumentError after all bytes were
+  /// fetched, and `services/apps_catalog_tool.dart` surfaces
+  /// [CatalogError]s as the readable agent-facing shape).
+  Future<void> _ensureClosureFile(
+    CatalogEntry entry,
+    Map<String, Uint8List> files,
+    String rel, {
+    required Uri entryDir,
+  }) async {
     if (files.containsKey(rel)) return;
-    if (!fetched.add(rel)) return; // queued already — fetch-once
+    final id = entry.id;
+    if (!AppStorage.isValidRelativePath(rel)) {
+      throw CatalogError(
+        '$id: source path "$rel" is not a valid in-namespace path — '
+        'refusing to fetch or install it',
+      );
+    }
     final http.Response response;
     try {
       response = await _client.get(entryDir.resolve(rel));
@@ -554,20 +634,27 @@ class CatalogService {
           '${response.statusCode}) — the entry imports it at boot');
     }
     files[rel] = response.bodyBytes;
-    pending.add((rel, _parentOf(rel)));
   }
 
   /// Lexical `./`/`../` resolution of an import reference against the
-  /// importing file's directory — the runtime assembler's
-  /// `WidgetManifest._resolvePath`, minus the out-of-root escape: returns
-  /// null when the resolved path would leave the widget root.
+  /// importing file's directory, in widget-root-relative space — the
+  /// runtime assembler's `WidgetManifest._resolvePath` minus the app-dir
+  /// prefix. One deliberate divergence, documented for the reviewer:
+  /// `_resolvePath` never fails because it resolves against the FULL app
+  /// dir (`apps/<id>`), so a `..` past the widget root silently lands in
+  /// the app namespace (`./../x.js` from the entry → `apps/x.js`) — a
+  /// location the pinned preview URL cannot serve and a cross-widget read
+  /// the install must not perform. This resolver returns null instead,
+  /// and the install refuses loudly (verified against the real assembler:
+  /// such an entry assembles to `/* import: file not found: … */` — the
+  /// gh-1831 broken-boot shape).
   static String? _resolveClosurePath(String sourceDir, String ref) {
     final segments = '$sourceDir/$ref'.split('/');
     final out = <String>[];
     for (final segment in segments) {
       if (segment == '.' || segment.isEmpty) continue;
       if (segment == '..') {
-        if (out.isEmpty) return null; // escapes above the widget root
+        if (out.isEmpty) return null; // would leave the widget root
         out.removeLast();
         continue;
       }

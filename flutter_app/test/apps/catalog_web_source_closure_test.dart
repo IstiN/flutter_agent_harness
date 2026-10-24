@@ -462,8 +462,12 @@ void main() {
     final spaceServer = MockClient((request) async {
       final rel = relOf(request.url.path);
       requested.add(rel);
+      // Uri resolution percent-encodes the space — serve it 200 so the
+      // pre-fix walk fetches and installs it (the finding: the error then
+      // surfaces only later, as AppStorage's raw ArgumentError).
       final body = switch (rel) {
         'widget.js' => "import './has space.js';\n",
+        'has%20space.js' => 'var spaced = 1;\n',
         'manifest.json' => manifestJson,
         'widgets/fa-craft/icon.svg' => '<svg/>',
         _ => 'nf',
