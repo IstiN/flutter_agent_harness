@@ -59,7 +59,8 @@ void main() {
       expect(
         text,
         contains(RegExp(r'follow-up gh-\d+', caseSensitive: false)),
-        reason: 'review thread PRRT_kwDOTXdlLc6v6eZe: file + reference the '
+        reason:
+            'review thread PRRT_kwDOTXdlLc6v6eZe: file + reference the '
             'systemic-fix issue',
       );
     });
@@ -73,7 +74,8 @@ void main() {
       expect(
         MemoryIdScheme.hashSuffix(text),
         id,
-        reason: 'the 4-hex suffix is md5(normalizeMemoryText(body))[:4]; '
+        reason:
+            'the 4-hex suffix is md5(normalizeMemoryText(body))[:4]; '
             'after editing the body, recompute the suffix and rename the '
             'file + frontmatter id',
       );
