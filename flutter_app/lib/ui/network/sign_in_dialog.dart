@@ -5,7 +5,6 @@
 import 'dart:async';
 
 import 'package:fa_ui/fa_ui.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
@@ -16,7 +15,7 @@ import 'package:fa/network/network_session_manager.dart';
 
 /// Opens the sign-in dialog (issue #955 iteration 3): OAuth provider
 /// buttons driven by `GET /api/oauth-proxy/providers` (falling back to
-/// the known four), each running the real loopback flow via
+/// the known four), each running the platform callback flow via
 /// [NetworkSessionManager.signInWithProvider], plus a collapsed
 /// developer section with the local-only dev login.
 Future<void> showSignInDialog(
@@ -34,9 +33,10 @@ Future<void> showSignInDialog(
   );
 }
 
-/// The sign-in form: provider buttons (everywhere but web, which has no
-/// callback receiver), the developer login form, the server's error
-/// message on failure, and busy indicators while a flow is in flight.
+/// The sign-in form: provider buttons backed by the platform callback
+/// receiver (loopback on desktop, deep link on mobile, popup on web), the
+/// developer login form, the server's error message on failure, and busy
+/// indicators while a flow is in flight.
 class SignInDialog extends StatefulWidget {
   const SignInDialog({super.key, required this.manager});
 
@@ -61,12 +61,6 @@ class _SignInDialogState extends State<SignInDialog> {
   String? _error;
   String? _busyProvider;
   bool _devBusy = false;
-
-  /// Provider sign-in rides the platform callback receiver: desktop uses
-  /// the RFC 8252 loopback, iOS/Android the `fah://oauth/network`
-  /// deep-link (both wired in `startOAuthCallbackReceiverImpl`). Web has
-  /// no receiver at all — the loopback stub throws there.
-  bool get _providerSignInSupported => !kIsWeb;
 
   @override
   void initState() {
@@ -184,16 +178,7 @@ class _SignInDialogState extends State<SignInDialog> {
             ).textTheme.bodySmall?.copyWith(color: colors.dim),
           ),
           const SizedBox(height: 12),
-          if (!_providerSignInSupported)
-            Text(
-              context.l10n.networkSignInMobileNote,
-              key: const ValueKey('signInMobileNote'),
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: colors.dim),
-            )
-          else
-            ..._buildProviders(context, busyProvider),
+          ..._buildProviders(context, busyProvider),
           if (busyProvider != null) ...[
             const SizedBox(height: 8),
             Text(
