@@ -140,8 +140,10 @@ void main() {
           mainBaseUrl: () => 'https://main.example/v1',
           mainModelId: () => 'main-model',
           mainApiKey: () => 'main-key',
-          httpClient: _captureClient((request, body) {},
-              imageBytes: Uint8List.fromList([5])),
+          httpClient: _captureClient(
+            (request, body) {},
+            imageBytes: Uint8List.fromList([5]),
+          ),
         );
 
         expect(
@@ -151,9 +153,7 @@ void main() {
               (e) => e.toString(),
               'message',
               allOf(
-                contains(
-                  'no endpoint configured for slot imageGeneration',
-                ),
+                contains('no endpoint configured for slot imageGeneration'),
                 contains('useMainConnection: true'),
               ),
             ),
@@ -170,9 +170,7 @@ void main() {
           env: env,
           modelsConfig: ModelsConfig(
             slots: {
-              'imageGeneration': MediaSlotModelConfig(
-                useMainConnection: true,
-              ),
+              'imageGeneration': MediaSlotModelConfig(useMainConnection: true),
             },
           ),
           mainBaseUrl: () => 'https://main.example/v1',
@@ -436,10 +434,7 @@ void main() {
                     'content': '',
                     'custom_content': {
                       'attachments': [
-                        {
-                          'type': 'image/png',
-                          'url': 'files/test/img.png',
-                        },
+                        {'type': 'image/png', 'url': 'files/test/img.png'},
                       ],
                     },
                   },
@@ -518,7 +513,9 @@ void main() {
                   'message': {
                     'custom_content': {
                       'attachments': [
-                        {'b64_json': base64Encode([1, 2])},
+                        {
+                          'b64_json': base64Encode([1, 2]),
+                        },
                       ],
                     },
                   },
@@ -594,7 +591,7 @@ void main() {
           'data': [
             {
               'b64_json': base64Encode([7]),
-              if (mediaType != null) 'media_type': mediaType,
+              'media_type': ?mediaType,
             },
           ],
         };
@@ -613,10 +610,12 @@ void main() {
         return result.path.split('.').last;
       }
 
-      test('structured types map to the clean subtype (svg+xml → svg)',
-          () async {
-        expect(await savedExtensionFor('image/svg+xml'), 'svg');
-      });
+      test(
+        'structured types map to the clean subtype (svg+xml → svg)',
+        () async {
+          expect(await savedExtensionFor('image/svg+xml'), 'svg');
+        },
+      );
 
       test('known types keep their subtype', () async {
         expect(await savedExtensionFor('image/png'), 'png');
@@ -669,22 +668,28 @@ void main() {
         mainModelId: () => 'main-model',
         mainApiKey: () => 'main-key',
         resolveKey: (name) async => name == 'MINIMAX_KEY' ? 'slot-key' : null,
-        httpClient: _captureClient((request, body) {},
-            imageBytes: Uint8List.fromList([1])),
+        httpClient: _captureClient(
+          (request, body) {},
+          imageBytes: Uint8List.fromList([1]),
+        ),
       );
 
       expect(
-        tool.execute({
-          'prompt': 'same scene',
-          'images': ['b64:${base64Encode([8, 9])}'],
-        }, null, null),
+        tool.execute(
+          {
+            'prompt': 'same scene',
+            'images': [
+              'b64:${base64Encode([8, 9])}',
+            ],
+          },
+          null,
+          null,
+        ),
         throwsA(
           isA<MediaException>().having(
             (e) => e.toString(),
             'message',
-            contains(
-              'reference images are only supported by the OpenRouter',
-            ),
+            contains('reference images are only supported by the OpenRouter'),
           ),
         ),
       );
@@ -698,22 +703,26 @@ void main() {
         mainModelId: () => 'main-model',
         mainApiKey: () => 'main-key',
         resolveKey: (name) async => 'slot-key',
-        httpClient: _captureClient((request, body) {},
-            imageBytes: Uint8List.fromList([1])),
+        httpClient: _captureClient(
+          (request, body) {},
+          imageBytes: Uint8List.fromList([1]),
+        ),
       );
 
       expect(
-        tool.execute({
-          'prompt': 'same scene',
-          'images': ['https://example.com/ref.png'],
-        }, null, null),
+        tool.execute(
+          {
+            'prompt': 'same scene',
+            'images': ['https://example.com/ref.png'],
+          },
+          null,
+          null,
+        ),
         throwsA(
           isA<MediaException>().having(
             (e) => e.toString(),
             'message',
-            contains(
-              'reference images are only supported by the OpenRouter',
-            ),
+            contains('reference images are only supported by the OpenRouter'),
           ),
         ),
       );
@@ -727,15 +736,23 @@ void main() {
         mainModelId: () => 'main-model',
         mainApiKey: () => 'main-key',
         resolveKey: (name) async => 'or-key',
-        httpClient: _captureClient((request, body) {},
-            imageBytes: Uint8List.fromList([1])),
+        httpClient: _captureClient(
+          (request, body) {},
+          imageBytes: Uint8List.fromList([1]),
+        ),
       );
 
       expect(
-        tool.execute({
-          'prompt': 'same scene',
-          'images': ['b64:${base64Encode([1])}'],
-        }, null, null),
+        tool.execute(
+          {
+            'prompt': 'same scene',
+            'images': [
+              'b64:${base64Encode([1])}',
+            ],
+          },
+          null,
+          null,
+        ),
         throwsA(
           isA<MediaException>().having(
             (e) => e.toString(),
@@ -765,7 +782,9 @@ void main() {
               'data': [
                 {
                   'id': 'google/gemini-3-pro-image-preview',
-                  'architecture': {'input_modalities': ['text']},
+                  'architecture': {
+                    'input_modalities': ['text'],
+                  },
                 },
               ],
             },
@@ -773,10 +792,16 @@ void main() {
         );
 
         expect(
-          tool.execute({
-            'prompt': 'same scene',
-            'images': ['b64:${base64Encode([1])}'],
-          }, null, null),
+          tool.execute(
+            {
+              'prompt': 'same scene',
+              'images': [
+                'b64:${base64Encode([1])}',
+              ],
+            },
+            null,
+            null,
+          ),
           throwsA(
             isA<MediaException>().having(
               (e) => e.toString(),
@@ -800,24 +825,32 @@ void main() {
           mainModelId: () => 'main-model',
           mainApiKey: () => 'main-key',
           resolveKey: (name) async => 'or-key',
-          httpClient: _captureClient((request, body) {
-            seenRequest = request;
-            seenBody = body;
-          },
-              payload: {
-                'data': [
-                  {
-                    'b64_json': base64Encode([7]),
-                    'media_type': 'image/png',
-                  },
-                ],
-              }),
+          httpClient: _captureClient(
+            (request, body) {
+              seenRequest = request;
+              seenBody = body;
+            },
+            payload: {
+              'data': [
+                {
+                  'b64_json': base64Encode([7]),
+                  'media_type': 'image/png',
+                },
+              ],
+            },
+          ),
         );
 
-        final result = await tool.execute({
-          'prompt': 'same scene, but at night',
-          'images': ['b64:${base64Encode([8, 9])}'],
-        }, null, null);
+        final result = await tool.execute(
+          {
+            'prompt': 'same scene, but at night',
+            'images': [
+              'b64:${base64Encode([8, 9])}',
+            ],
+          },
+          null,
+          null,
+        );
 
         expect(result.content.whereType<ImageContent>(), hasLength(1));
         expect(
@@ -827,8 +860,8 @@ void main() {
         expect(seenRequest!.headers['authorization'], 'Bearer or-key');
         final body = jsonDecode(seenBody!) as Map<String, dynamic>;
         expect(body['model'], 'google/gemini-3-pro-image-preview');
-        final refs =
-            (body['input_references'] as List).cast<Map<String, dynamic>>();
+        final refs = (body['input_references'] as List)
+            .cast<Map<String, dynamic>>();
         expect(refs, hasLength(1));
         expect(refs[0]['type'], 'image_url');
         final imageUrl =

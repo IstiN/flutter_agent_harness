@@ -482,29 +482,31 @@ void main() {
       expect(await resolveVideoGenerationEndpoint(config), isNull);
     });
 
-    test('slot override without a key name reuses the main key same-host',
-        () async {
-      final config = ModelsConfig(
-        slots: {
-          'videoGeneration': MediaSlotModelConfig(
-            providerKind: 'openai-completions',
-            baseUrl: 'https://api.minimax.io/v1',
-            modelId: 'MiniMax-H3',
-          ),
-        },
-      );
-      // gh-1844 review: aligned with the image resolver — same-host
-      // reuse of the main connection's key.
-      final endpoint = await resolveVideoGenerationEndpoint(
-        config,
-        mainBaseUrl: 'https://api.minimax.io/v1',
-        mainApiKey: 'main-key',
-      );
-      expect(endpoint, isNotNull);
-      expect(endpoint!.baseUrl, 'https://api.minimax.io/v1');
-      expect(endpoint.modelId, 'MiniMax-H3');
-      expect(endpoint.apiKey, 'main-key');
-    });
+    test(
+      'slot override without a key name reuses the main key same-host',
+      () async {
+        final config = ModelsConfig(
+          slots: {
+            'videoGeneration': MediaSlotModelConfig(
+              providerKind: 'openai-completions',
+              baseUrl: 'https://api.minimax.io/v1',
+              modelId: 'MiniMax-H3',
+            ),
+          },
+        );
+        // gh-1844 review: aligned with the image resolver — same-host
+        // reuse of the main connection's key.
+        final endpoint = await resolveVideoGenerationEndpoint(
+          config,
+          mainBaseUrl: 'https://api.minimax.io/v1',
+          mainApiKey: 'main-key',
+        );
+        expect(endpoint, isNotNull);
+        expect(endpoint!.baseUrl, 'https://api.minimax.io/v1');
+        expect(endpoint.modelId, 'MiniMax-H3');
+        expect(endpoint.apiKey, 'main-key');
+      },
+    );
 
     test('slot override without a key name on another host throws an '
         'actionable error', () async {
@@ -535,24 +537,27 @@ void main() {
       );
     });
 
-    test('slot override with apiKeyName resolves the key via the seam',
-        () async {
-      final config = ModelsConfig(
-        slots: {
-          'videoGeneration': MediaSlotModelConfig(
-            providerKind: 'openai-completions',
-            baseUrl: 'https://api.minimax.io/v1',
-            modelId: 'MiniMax-H3',
-            apiKeyName: 'MINIMAX_API_KEY',
-          ),
-        },
-      );
-      final endpoint = await resolveVideoGenerationEndpoint(
-        config,
-        resolveKey: (name) async => name == 'MINIMAX_API_KEY' ? 'sk-test' : null,
-      );
-      expect(endpoint!.apiKey, 'sk-test');
-    });
+    test(
+      'slot override with apiKeyName resolves the key via the seam',
+      () async {
+        final config = ModelsConfig(
+          slots: {
+            'videoGeneration': MediaSlotModelConfig(
+              providerKind: 'openai-completions',
+              baseUrl: 'https://api.minimax.io/v1',
+              modelId: 'MiniMax-H3',
+              apiKeyName: 'MINIMAX_API_KEY',
+            ),
+          },
+        );
+        final endpoint = await resolveVideoGenerationEndpoint(
+          config,
+          resolveKey: (name) async =>
+              name == 'MINIMAX_API_KEY' ? 'sk-test' : null,
+        );
+        expect(endpoint!.apiKey, 'sk-test');
+      },
+    );
 
     test('missing key resolution falls back to same-host reuse, else '
         'throws', () async {
@@ -607,14 +612,17 @@ void main() {
       expect(endpoint.apiKey, 'main-key');
     });
 
-    test('opt-in with an empty main connection resolves to no endpoint', () async {
-      final config = ModelsConfig(
-        slots: {
-          'videoGeneration': MediaSlotModelConfig(useMainConnection: true),
-        },
-      );
-      expect(await resolveVideoGenerationEndpoint(config), isNull);
-    });
+    test(
+      'opt-in with an empty main connection resolves to no endpoint',
+      () async {
+        final config = ModelsConfig(
+          slots: {
+            'videoGeneration': MediaSlotModelConfig(useMainConnection: true),
+          },
+        );
+        expect(await resolveVideoGenerationEndpoint(config), isNull);
+      },
+    );
   });
 
   group('OpenRouterVideoDialect (gh-1844)', () {
@@ -639,8 +647,7 @@ void main() {
       );
     });
 
-    test('poll budget matches OpenRouter job durations (review, gh-1844)',
-        () {
+    test('poll budget matches OpenRouter job durations (review, gh-1844)', () {
       // The official docs: jobs run 30 s to several minutes, poll at a
       // ~30 s interval. The MiniMax ~2-minute window must not transfer.
       expect(OpenRouterVideoDialect.defaultMaxPolls, greaterThanOrEqualTo(30));
@@ -733,9 +740,7 @@ void main() {
       expect(result.bytes, bytes);
       expect(result.path, endsWith('.mp4'));
       expect(
-        hits.any(
-          (h) => h.startsWith('POST') && h.contains('/api/v1/videos'),
-        ),
+        hits.any((h) => h.startsWith('POST') && h.contains('/api/v1/videos')),
         isTrue,
         reason: 'OpenRouter endpoints must reach the /videos job API: $hits',
       );
@@ -778,8 +783,8 @@ void main() {
       );
 
       final body = jsonDecode(submitBody!) as Map<String, dynamic>;
-      final refs =
-          (body['input_references'] as List).cast<Map<String, dynamic>>();
+      final refs = (body['input_references'] as List)
+          .cast<Map<String, dynamic>>();
       expect(refs, hasLength(1));
       expect(refs[0]['type'], 'image_url');
       final imageUrl =
@@ -812,9 +817,7 @@ void main() {
           isA<VideoException>().having(
             (e) => e.toString(),
             'message',
-            contains(
-              'reference images are only supported by the OpenRouter',
-            ),
+            contains('reference images are only supported by the OpenRouter'),
           ),
         ),
       );

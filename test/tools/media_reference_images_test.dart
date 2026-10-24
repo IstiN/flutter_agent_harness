@@ -90,10 +90,7 @@ void main() {
     });
 
     test('rejects an empty entry', () {
-      expect(
-        () => parseMediaImageInput('   '),
-        throwsA(isA<MediaException>()),
-      );
+      expect(() => parseMediaImageInput('   '), throwsA(isA<MediaException>()));
     });
 
     test('rejects a data URL without payload', () {
@@ -108,23 +105,19 @@ void main() {
     test('resolves a sandbox path to sniffed inline bytes', () async {
       final env = MemoryExecutionEnv();
       await env.writeFile('refs/a.png', String.fromCharCodes([0x89, 0x50]));
-      final resolved = await resolveMediaImageInputs(
-        env,
-        const [MediaImagePath('refs/a.png')],
-      );
+      final resolved = await resolveMediaImageInputs(env, const [
+        MediaImagePath('refs/a.png'),
+      ]);
       expect(resolved, hasLength(1));
       expect(resolved[0].url, startsWith('data:image/'));
     });
 
     test('resolves multiple entries (2+) in order', () async {
       final env = MemoryExecutionEnv();
-      final resolved = await resolveMediaImageInputs(
-        env,
-        const [
-          MediaImageUrl('https://example.com/1.png'),
-          MediaImageBase64('Qk0='),
-        ],
-      );
+      final resolved = await resolveMediaImageInputs(env, const [
+        MediaImageUrl('https://example.com/1.png'),
+        MediaImageBase64('Qk0='),
+      ]);
       expect(resolved, hasLength(2));
       expect(resolved[0].url, 'https://example.com/1.png');
       expect(resolved[1].url, startsWith('data:image/'));
@@ -166,7 +159,9 @@ void main() {
         'data': [
           {
             'id': 'other/model',
-            'architecture': {'input_modalities': ['text']},
+            'architecture': {
+              'input_modalities': ['text'],
+            },
           },
           {
             'id': 'google/gemini-3-pro-image-preview',
@@ -211,34 +206,37 @@ void main() {
       expect(modalities, ['image']);
     });
 
-    test('discovers from the models endpoint when nothing is declared', () async {
-      final client = MockClient((request) async {
-        expect(request.url.path, '/api/v1/models');
-        return http.Response(
-          jsonEncode({
-            'data': [
-              {
-                'id': 'm',
-                'architecture': {'input_modalities': ['text']},
-              },
-            ],
-          }),
-          200,
+    test(
+      'discovers from the models endpoint when nothing is declared',
+      () async {
+        final client = MockClient((request) async {
+          expect(request.url.path, '/api/v1/models');
+          return http.Response(
+            jsonEncode({
+              'data': [
+                {
+                  'id': 'm',
+                  'architecture': {
+                    'input_modalities': ['text'],
+                  },
+                },
+              ],
+            }),
+            200,
+          );
+        });
+        final modalities = await resolveInputModalities(
+          baseUrl: baseUrl,
+          apiKey: 'k',
+          modelId: 'm',
+          client: client,
         );
-      });
-      final modalities = await resolveInputModalities(
-        baseUrl: baseUrl,
-        apiKey: 'k',
-        modelId: 'm',
-        client: client,
-      );
-      expect(modalities, ['text']);
-    });
+        expect(modalities, ['text']);
+      },
+    );
 
     test('probe failure degrades to unknown (null)', () async {
-      final client = MockClient(
-        (request) async => http.Response('boom', 500),
-      );
+      final client = MockClient((request) async => http.Response('boom', 500));
       final modalities = await resolveInputModalities(
         baseUrl: baseUrl,
         apiKey: 'k',

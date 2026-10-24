@@ -20,17 +20,11 @@ void main() {
         criteriaFalse: 'works as designed',
       );
       expect(question.type, 'noul');
-      expect(
-        question.toJson(),
-        {
-          'type': 'noul',
-          'instructions': 'Is this a defect?',
-          'criteria': {
-            'true': 'visibly broken',
-            'false': 'works as designed',
-          },
-        },
-      );
+      expect(question.toJson(), {
+        'type': 'noul',
+        'instructions': 'Is this a defect?',
+        'criteria': {'true': 'visibly broken', 'false': 'works as designed'},
+      });
     });
 
     test('choice and score questions carry their criteria', () {
@@ -39,10 +33,10 @@ void main() {
         criteria: {'low': 'cosmetic', 'high': 'blocking'},
       );
       expect(choice.type, 'choice');
-      expect(
-        choice.toJson()['criteria'],
-        {'low': 'cosmetic', 'high': 'blocking'},
-      );
+      expect(choice.toJson()['criteria'], {
+        'low': 'cosmetic',
+        'high': 'blocking',
+      });
       const score = DecisionScoreQuestion(
         instructions: 'Rate the fix',
         criteria: ['poor', 'good'],
@@ -95,11 +89,7 @@ void main() {
                   'probabilities': {'poor': 0.2, 'good': 0.8},
                 },
               },
-              'usage': {
-                'input_tokens': 10,
-                'output_tokens': 5,
-                'cost': 0.0001,
-              },
+              'usage': {'input_tokens': 10, 'output_tokens': 5, 'cost': 0.0001},
             }),
             200,
           );
@@ -138,8 +128,8 @@ void main() {
       final body = jsonDecode(seenBody!) as Map<String, dynamic>;
       expect(body['model'], model);
       expect(body['state'], {'log': 'boom'});
-      final wireQuestions =
-          (body['questions'] as Map<String, dynamic>).keys.toSet();
+      final wireQuestions = (body['questions'] as Map<String, dynamic>).keys
+          .toSet();
       expect(wireQuestions, {'isDefect', 'severity', 'quality'});
     });
 
@@ -240,15 +230,19 @@ void main() {
         ),
       );
 
-      final result = await tool.execute({
-        'model': 'inception/mercury-decide:free',
-        'state': 'the widget is broken',
-        'questions': questionsArg,
-      }, null, null);
+      final result = await tool.execute(
+        {
+          'model': 'inception/mercury-decide:free',
+          'state': 'the widget is broken',
+          'questions': questionsArg,
+        },
+        null,
+        null,
+      );
 
       final payload =
-          jsonDecode((result.content.first as TextContent).text) as
-              Map<String, dynamic>;
+          jsonDecode((result.content.first as TextContent).text)
+              as Map<String, dynamic>;
       expect(payload['error'], isNull);
       final answers = (payload['answers'] as Map).cast<String, dynamic>();
       expect(answers['isDefect'], {'type': 'noul', 'noul': 0.75});
@@ -264,15 +258,19 @@ void main() {
         ),
       );
 
-      final result = await tool.execute({
-        'model': 'inception/mercury-decide:free',
-        'state': 'x',
-        'questions': questionsArg,
-      }, null, null);
+      final result = await tool.execute(
+        {
+          'model': 'inception/mercury-decide:free',
+          'state': 'x',
+          'questions': questionsArg,
+        },
+        null,
+        null,
+      );
 
       final payload =
-          jsonDecode((result.content.first as TextContent).text) as
-              Map<String, dynamic>;
+          jsonDecode((result.content.first as TextContent).text)
+              as Map<String, dynamic>;
       final error = (payload['error'] as Map).cast<String, dynamic>();
       expect(error['validation'], isTrue);
       expect(
@@ -288,17 +286,21 @@ void main() {
         mainApiKey: () => 'or-key',
       );
 
-      final result = await tool.execute({
-        'model': 'inception/mercury-decide:free',
-        'state': 'x',
-        'questions': {
-          'bad': {'type': 'boolean', 'instructions': 'huh?'},
+      final result = await tool.execute(
+        {
+          'model': 'inception/mercury-decide:free',
+          'state': 'x',
+          'questions': {
+            'bad': {'type': 'boolean', 'instructions': 'huh?'},
+          },
         },
-      }, null, null);
+        null,
+        null,
+      );
 
       final payload =
-          jsonDecode((result.content.first as TextContent).text) as
-              Map<String, dynamic>;
+          jsonDecode((result.content.first as TextContent).text)
+              as Map<String, dynamic>;
       final error = (payload['error'] as Map).cast<String, dynamic>();
       expect(error['validation'], isTrue);
       expect(error['message'].toString(), contains('"bad"'));

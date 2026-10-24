@@ -27,8 +27,17 @@ models:
 - app: the settings "Media models" pick **"Same as main connection"** saves
   the same opt-in into `media_models.json`; rows show **Not configured**
   instead of an inherited main endpoint.
-- an override remains its own provider configuration: it never inherits the
-  main provider's API key (same-host reuse only, matching the CLI rule).
+- API-key inheritance is deliberately PER SURFACE (one unambiguous rule
+  each):
+  - **CLI** (`generate_image` / `generate_video`): an override without
+    `apiKeyName` reuses the MAIN connection's key when (and only when)
+    the override's endpoint is on the **same host**; a named-but-
+    unresolvable or cross-host key fails with an actionable
+    "the &lt;slot&gt; slot has no resolvable API key" error **before any
+    provider call**. Both CLI resolvers share this one rule.
+  - **app** (`MediaModelsStore.resolve`): an override **never** inherits
+    the main connection's key — app overrides must name `apiKeyName`;
+    without one the endpoint is unusable (no key is sent anywhere).
 
 ## Multimodal image/video input (text + reference images)
 
@@ -51,10 +60,11 @@ bare base64), reusing the chat image-input size and count guards.
 ## Decisions API (`decide` tool)
 
 OpenRouter's Decisions API (`POST {base}/systemone`) is a new modality, not
-a chat dialect: send a `state` plus typed questions — `bool` (yes/no),
-`choice` (pick one from a fixed map), `score` (calibrated score over an
-ordered legend) — and receive answers with calibrated probabilities plus
-usage accounting. Provider errors and local validation failures are
-returned as structured JSON results (never thrown). The API is
-OpenRouter-only and non-streaming; the tool gates on the main connection's
-provider kind before any network call.
+a chat dialect: send a `state` plus typed questions — `bool` (yes/no; the
+API's wire discriminator is `noul` per the official OpenAPI spec, the tool
+accepts both spellings), `choice` (pick one from a fixed map), `score`
+(calibrated score over an ordered legend) — and receive answers with
+calibrated probabilities plus usage accounting. Provider errors and local
+validation failures are returned as structured JSON results (never
+thrown). The API is OpenRouter-only and non-streaming; the tool gates on
+the main connection's provider kind before any network call.
