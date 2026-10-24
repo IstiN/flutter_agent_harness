@@ -79,6 +79,48 @@ final class AgentOutputStore {
 
   /// All stored ids, in insertion order.
   List<String> get availableIds => List.unmodifiable(_outputs.keys);
+
+  /// Deliverable artifact metadata by output id (issue #1829). Recorded by
+  /// the durable deliverable path beside the stored content; plain `put`s
+  /// (schema outputs, result snapshots) carry no metadata.
+  final _artifacts = <String, AgentArtifactMeta>{};
+
+  /// Records artifact [meta] for output [id].
+  void recordArtifact(String id, AgentArtifactMeta meta) =>
+      _artifacts[id] = meta;
+
+  /// The artifact metadata for [id], or null (a plain stored output).
+  AgentArtifactMeta? artifactMeta(String id) => _artifacts[id];
+}
+
+/// Completeness metadata of a stored deliverable artifact (issue #1829):
+/// `complete` for a fully generated over-cap report, `partial` for text
+/// salvaged from an output-truncated tool call.
+enum AgentArtifactStatus { complete, partial }
+
+/// Metadata the durable deliverable path records beside an artifact
+/// (issue #1829): explicit completeness, the producing child, the report /
+/// chunk id when the child sent one, and the redacted character count.
+final class AgentArtifactMeta {
+  /// Creates artifact metadata.
+  const AgentArtifactMeta({
+    required this.status,
+    required this.childId,
+    this.reportId,
+    required this.chars,
+  });
+
+  /// Whether the artifact is the complete report or salvaged partial text.
+  final AgentArtifactStatus status;
+
+  /// The child that produced the deliverable.
+  final String childId;
+
+  /// Child-selected report/chunk manifest id, when present.
+  final String? reportId;
+
+  /// Character count of the stored (redacted) text.
+  final int chars;
 }
 
 /// Thrown when an `agent://` URL cannot be resolved (port of omp's
@@ -138,10 +180,20 @@ AgentUrlResolution resolveAgentUrl(String url, AgentOutputStore store) {
   final extract =
       parsed.query != null || (hasPathExtraction && !resolvedNested);
   if (!extract) {
+    // Issue #1829: a deliverable artifact resolves with explicit
+    // completeness — a partial (salvaged) report is never silently
+    // indistinguishable from a complete one. Extraction forms keep their
+    // existing semantics (the note would corrupt the JSON payload).
+    final meta = store.artifactMeta(resolved.id);
     return AgentUrlResolution(
       id: resolved.id,
       content: resolved.content,
       contentType: 'text/markdown',
+      notes: [
+        if (meta != null)
+          'deliverable: ${meta.status.name} (${meta.chars} chars, '
+              'child ${meta.childId}${meta.reportId == null ? '' : ', report ${meta.reportId}'})',
+      ],
     );
   }
   return _extractJsonContent(resolved, parsed.query, hop.segments.join('.'));

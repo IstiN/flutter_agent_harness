@@ -19,6 +19,7 @@ import 'package:flutter_agent_harness/src/messaging/messaging_repository.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import 'deliverables.dart';
 import 'subagent.dart';
 import 'subagent_manager.dart';
 import 'task_executor.dart';
@@ -44,6 +45,11 @@ typedef ChildResumeRunner = Future<void> Function(String id, String message);
 /// tools know whose handle to use.
 typedef CurrentSubagentIdProvider = String? Function();
 
+/// Optional durable-deliverable capture (issue #1829) wired by the task
+/// executor: over-cap deliverables are stored as redacted artifacts and
+/// delivered as bounded envelopes instead of bare truncations.
+typedef DeliverableCaptureProvider = DeliverableCapture? Function();
+
 /// Tool names the executor injects into every child registry per spawn
 /// (`_childToolRegistry`). `subagentMonitoringTools` carries the same pair
 /// for the PARENT surface, so a host building a child surface from its
@@ -66,6 +72,7 @@ List<AgentTool> subagentMonitoringTools({
   CurrentSubagentIdProvider? currentSubagentId,
   TaskJobManager? jobs,
   TaskExecutor? executor,
+  DeliverableCaptureProvider? capture,
 
   /// How long `task_send` waits for a resumed child to acknowledge before
   /// reporting (issue #647). The default equals the delivery SLO: the
@@ -81,8 +88,8 @@ List<AgentTool> subagentMonitoringTools({
     _taskSendTool(manager, resumeChild, taskSendWaitCap),
     _taskResumeTool(manager, resumeChild),
     if (jobs != null) _taskCancelTool(jobs, manager, executor),
-    _replyTool(manager, currentSubagentId),
-    _agentMessageTool(manager, currentSubagentId),
+    _replyTool(manager, currentSubagentId, capture),
+    _agentMessageTool(manager, currentSubagentId, capture),
     _agentDirectoryTool(manager),
   ];
 }
@@ -457,10 +464,13 @@ String _shortCwd(String cwd, String? homeDir) {
 /// `reply` — the CHILD-only tool: delivers the child's explicit answer to
 /// the parent (prime-agent's `reply`). A reply replaces the default
 /// completed_without_reply notice: the parent event/envelope carries the
-/// reply text verbatim.
+/// reply text verbatim. Over-cap replies go through the durable deliverable
+/// path (issue #1829): the full redacted report is stored as an `agent://`
+/// artifact and a bounded envelope is delivered in its place.
 AgentTool _replyTool(
   SubagentManager manager,
   CurrentSubagentIdProvider? currentSubagentId,
+  DeliverableCaptureProvider? capture,
 ) {
   return AgentTool(
     name: 'reply',
@@ -469,13 +479,32 @@ AgentTool _replyTool(
         'your task output is ready — the text becomes the parent-visible '
         'reply. If you never call it, the parent still sees your final '
         'message as a completion notice, but an explicit reply is the '
-        'reliable channel.',
+        'reliable channel.\n\n'
+        '${deliverableChunkContract(manager.maxReplyChars)}\n\n'
+        'When you used the agent_message chunk protocol, the final reply is '
+        'the manifest: set report_id to the chunk report id and report_parts '
+        'to the total part count. The harness validates the manifest against '
+        'the parts it actually observed — a "complete" label without the '
+        'parts does not make the report complete.',
     parameters: {
       'type': 'object',
       'properties': {
         'message': {
           'type': 'string',
           'description': 'The answer/deliverable for the parent.',
+        },
+        'report_id': {
+          'type': 'string',
+          'description':
+              'Chunk protocol: the report id of the agent_message parts '
+              'this reply is the final manifest for. Omit for plain '
+              'replies.',
+        },
+        'report_parts': {
+          'type': 'integer',
+          'description':
+              'Chunk protocol: the total number of parts the report was '
+              'split into. Requires report_id.',
         },
       },
       'required': ['message'],
@@ -492,6 +521,46 @@ AgentTool _replyTool(
           'reply is only available inside a subagent run',
         );
       }
+      final reportId = args['report_id'] as String?;
+      final reportParts = args['report_parts'] as int?;
+      if (reportParts != null && reportId == null) {
+        return ToolExecutionResult.text(
+          'error: report_parts requires report_id',
+        );
+      }
+      final deliverable = capture?.call();
+      if (deliverable != null) {
+        try {
+          final record = deliverable.deliverReply(
+            id,
+            message,
+            reportId: reportId,
+            reportParts: reportParts,
+          );
+          if (record != null) {
+            // Core flow A: the envelope — bounded excerpt + pointer +
+            // explicit completeness — replaces the bare body.
+            final envelope = deliverable.envelopeText(record, message);
+            await manager.recordReply(id, envelope);
+            return ToolExecutionResult.text(
+              'reply delivered to the parent via artifact '
+              'agent://${record.outputId} (${record.status!.name}, '
+              '${record.chars} chars)',
+            );
+          }
+        } on StateError catch (error) {
+          // AC8: the cap cannot hold a valid envelope — an explicit
+          // configuration error, never a malformed pointer.
+          return ToolExecutionResult.text('error: $error');
+        } on Object catch (error) {
+          // E5: redaction/storage failed — no raw fallback, no pointer.
+          return ToolExecutionResult.text(
+            'error: reply could not be stored safely '
+            '(artifact unavailable: $error) — re-issue shorter chunks via '
+            'agent_message',
+          );
+        }
+      }
       await manager.recordReply(id, message);
       return ToolExecutionResult.text('reply delivered to the parent');
     },
@@ -501,10 +570,15 @@ AgentTool _replyTool(
 /// `agent_message` — sibling↔sibling messaging within the session family
 /// (Phase 3b). Rate-limited by the pending-queue guard, hop-capped via the
 /// message's hop counter, and restricted to known siblings (no arbitrary
-/// sessions; the parent uses `task_send`).
+/// sessions; the parent uses `task_send`). Same-session report chunks go
+/// through the durable deliverable path (issue #1829): an over-cap body is
+/// stored as an `agent://` artifact and delivered as a bounded envelope;
+/// cross-session/A2A targets keep the existing bare cap (they cannot
+/// resolve a same-session pointer).
 AgentTool _agentMessageTool(
   SubagentManager manager,
   CurrentSubagentIdProvider? currentSubagentId,
+  DeliverableCaptureProvider? capture,
 ) {
   return AgentTool(
     name: 'agent_message',
@@ -519,7 +593,8 @@ AgentTool _agentMessageTool(
         '"goal_builder" or "goal_builder/main" resolve to that session\'s '
         'live mailbox. The recipient sees the message in its inbox on its '
         'next turn; completed siblings are resumed. Unknown ids and full '
-        'queues are rejected.',
+        'queues are rejected.\n\n'
+        '${deliverableChunkContract(manager.maxReplyChars)}',
     parameters: {
       'type': 'object',
       'properties': {
@@ -533,6 +608,20 @@ AgentTool _agentMessageTool(
         'message': {
           'type': 'string',
           'description': 'The message body for the sibling.',
+        },
+        'report_id': {
+          'type': 'string',
+          'description':
+              'Chunk protocol: the child-selected report id this message '
+              'is a part of. Same-session recipients only.',
+        },
+        'part_index': {
+          'type': 'integer',
+          'description':
+              'Chunk protocol: the 0-based index of this part. Parts must '
+              'arrive in order (0, 1, 2, …) without duplicates; the final '
+              'reply manifest is validated against what the harness '
+              'observed. Requires report_id.',
         },
         'wake': {
           'type': 'boolean',
@@ -557,6 +646,11 @@ AgentTool _agentMessageTool(
       if (to == fromId) {
         return ToolExecutionResult.text('error: cannot message yourself');
       }
+      final reportId = args['report_id'] as String?;
+      final partIndex = args['part_index'] as int?;
+      if (partIndex != null && reportId == null) {
+        return ToolExecutionResult.text('error: part_index requires report_id');
+      }
       final (target, resolveError) = await _resolveFabricAddress(manager, to);
       if (resolveError != null) {
         return ToolExecutionResult.text('error: $resolveError');
@@ -564,12 +658,41 @@ AgentTool _agentMessageTool(
       if (target == fromId || target == manager.mailboxOf(fromId)) {
         return ToolExecutionResult.text('error: cannot message yourself');
       }
+      var body = message;
+      var artifactNote = '';
+      final deliverable = capture?.call();
+      if (deliverable != null) {
+        try {
+          final record = deliverable.deliverAgentMessage(
+            childId: fromId,
+            target: target,
+            body: message,
+            reportId: reportId,
+            partIndex: partIndex,
+          );
+          // Only an ACTUAL artifact (over-cap body) is enveloped; a direct
+          // in-budget chunk record is pure ledger bookkeeping.
+          if (record != null && record.pointer != null) {
+            body = deliverable.envelopeText(record, message);
+            artifactNote =
+                ' Report body stored as agent://${record.outputId} '
+                '(${record.chars} chars).';
+          }
+        } on StateError catch (error) {
+          return ToolExecutionResult.text('error: $error');
+        } on Object catch (error) {
+          return ToolExecutionResult.text(
+            'error: message could not be stored safely (artifact '
+            'unavailable: $error) — split it into smaller parts',
+          );
+        }
+      }
       try {
         await manager.enqueueMessage(
           target,
           SubagentMessage(
             fromId: fromId,
-            text: message,
+            text: body,
             sentAt: DateTime.now().toUtc().toIso8601String(),
             hops: 2,
           ),
@@ -589,7 +712,9 @@ AgentTool _agentMessageTool(
             await manager.messaging?.directory() ?? const <MailboxEntry>[];
         note += mailboxMisrouteNote(entries, target);
       }
-      return ToolExecutionResult.text('message queued for "$to".$note');
+      return ToolExecutionResult.text(
+        'message queued for "$to".$artifactNote$note',
+      );
     },
   );
 }

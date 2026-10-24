@@ -44,6 +44,7 @@ import '../session/session_tree.dart';
 import '../types.dart';
 import 'agent_registry.dart';
 import 'child_session_io.dart';
+import 'deliverables.dart';
 import 'delivery_slo.dart';
 import 'output_manager.dart';
 import 'parallel.dart';
@@ -91,7 +92,25 @@ final class TaskExecutor {
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
+    this.deliverableRedactor,
   });
+
+  /// Pre-persistence redaction gate for deliverable artifacts (issue
+  /// #1829, I3): the same pipeline tool results pass. Null = the host runs
+  /// no redactor (artifact text passes unredacted, like tool results on
+  /// such a host).
+  final String Function(String text)? deliverableRedactor;
+
+  /// The session's durable-deliverable capture (issue #1829). One instance
+  /// per executor — it owns the chunk ledgers. Null without a
+  /// [subagentManager] — no handles to record on and no budget to honor.
+  late final DeliverableCapture? _capture = subagentManager == null
+      ? null
+      : DeliverableCapture(
+          store: store,
+          manager: subagentManager!,
+          redact: deliverableRedactor,
+        );
 
   /// The tool-misuse circuit breaker switch (issue #862, default true):
   /// every spawned child agent gets a breaker wired into its loop.
@@ -789,7 +808,11 @@ final class TaskExecutor {
       // the transcript does not carry the system prompt, so a resume that
       // rebuilt the prompt without it would silently drop the batch's
       // shared background.
-      systemPrompt: _buildSystemPrompt(definition, handle.context),
+      systemPrompt: _buildSystemPrompt(
+        definition,
+        handle.context,
+        replyBudget: manager.maxReplyChars,
+      ),
       streamFunction: wiring.stream,
       toolRegistry: toolRegistry,
       externalSteeringSource: () => _inboxSteeringMessages(id),
@@ -799,6 +822,9 @@ final class TaskExecutor {
       toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
     );
     final agent = child;
+    // Issue #1829 Core flow B: same truncated-call capture as a fresh
+    // spawn — a resumed child's lost reply is recovered identically.
+    child.onTruncatedToolCall = (call) => _capture?.captureSalvaged(id, call);
     final inboxWakeSub = manager.events.listen((event) {
       if (event.handle.id == id && event.message != null) {
         agent.pokeSteering();
@@ -857,7 +883,11 @@ final class TaskExecutor {
     final childRegistry = _childToolRegistry(definition);
     final (child, inboxWakeSub) = _buildChild(
       id: id,
-      systemPrompt: _buildSystemPrompt(definition, context),
+      systemPrompt: _buildSystemPrompt(
+        definition,
+        context,
+        replyBudget: subagentManager?.maxReplyChars,
+      ),
       toolRegistry: childRegistry,
       wiring: wiring,
       cancelToken: cancelToken,
@@ -909,7 +939,29 @@ final class TaskExecutor {
 
       // Phase 3b: the child's explicit reply (if any) rides the result; a
       // missing reply is surfaced via completedWithoutReply.
-      final reply = subagentManager?[id]?.lastReply;
+      final handle = subagentManager?[id];
+      final reply = handle?.lastReply;
+
+      // Issue #1829: deliverable pointers ride the completion OUT OF BAND,
+      // independent of any later model-written recovery stub (I4): a stub
+      // overwrites lastReply, never the recorded artifacts. When a
+      // deliverable call was recorded truncated and the child still
+      // finished without any reply, the tier-2 fallback surfaces the
+      // transcript pointer honestly (AC11).
+      final deliverables = List<DeliverableRecord>.of(
+        handle?.deliverables ?? const [],
+      );
+      String? stubFallback;
+      if (handle != null &&
+          handle.hadTruncatedDeliverable &&
+          !failed &&
+          (reply == null || reply.trim().isEmpty)) {
+        stubFallback =
+            'the child attempted a report that was cut off by the output '
+            'token limit and finished without a usable reply; its '
+            'transcript is at ${handle.sessionId}'
+            '${deliverables.isEmpty ? ' — no salvageable report text was captured' : ''}';
+      }
 
       // Update the retained-subagent handle with the final status. Usage
       // was billed incrementally at turn boundaries (plus the final delta
@@ -939,6 +991,8 @@ final class TaskExecutor {
         error: failed ? 'schema_violation: ${structured!.error}' : null,
         structuredOutput: structured,
         reply: reply,
+        deliverables: deliverables,
+        stubFallback: stubFallback,
       );
     } finally {
       // Last-chance usage bill (idempotent — the cursor makes a second
@@ -995,6 +1049,10 @@ final class TaskExecutor {
       // parent loop — the luna death was a child.
       toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
     );
+    // Issue #1829 Core flow B: an output-truncated reply/agent_message
+    // call is captured as a partial artifact (never executed — I2); the
+    // pointer rides the child completion out of band.
+    child.onTruncatedToolCall = (call) => _capture?.captureSalvaged(id, call);
     final inboxWakeSub = subagentManager?.events.listen((event) {
       if (event.handle.id == id && event.message != null) {
         child.pokeSteering();
@@ -1028,6 +1086,7 @@ final class TaskExecutor {
       for (final tool in subagentMonitoringTools(
         manager: subagentManager,
         currentSubagentId: currentSubagentId,
+        capture: () => _capture,
       ).where((t) => childInjectedToolNames.contains(t.name))) {
         toolRegistry.register(tool);
       }
@@ -1280,7 +1339,11 @@ final class TaskExecutor {
 
   /// The child's system prompt: the definition's prompt plus the shared
   /// batch context under a `# CONTEXT` heading.
-  String _buildSystemPrompt(TaskAgentDefinition definition, String context) {
+  String _buildSystemPrompt(
+    TaskAgentDefinition definition,
+    String context, {
+    int? replyBudget,
+  }) {
     final systemPrompt = StringBuffer(definition.systemPrompt.trim());
     if (context.trim().isNotEmpty) {
       systemPrompt
@@ -1288,6 +1351,14 @@ final class TaskExecutor {
         ..writeln()
         ..writeln('# CONTEXT')
         ..write(context.trim());
+    }
+    // Issue #1829 Core flow C: children with the reply/agent_message
+    // surface get the report-size contract with the live budget.
+    if (replyBudget != null) {
+      systemPrompt
+        ..writeln()
+        ..writeln()
+        ..write(deliverableChunkContract(replyBudget));
     }
     return systemPrompt.toString();
   }
