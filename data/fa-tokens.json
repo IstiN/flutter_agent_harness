@@ -67,46 +67,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-1491": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T14:24:44Z",
-      "prompt": 48332,
-      "completion": 18147,
-      "total": 66479,
-      "model": ""
-    }
-  ],
-  "pr-1490": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T13:53:54Z",
-      "prompt": 57334,
-      "completion": 12982,
-      "total": 70316,
-      "model": ""
-    }
-  ],
-  "pr-1492": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T13:59:31Z",
-      "prompt": 24337,
-      "completion": 8936,
-      "total": 33273,
-      "model": ""
-    }
-  ],
-  "pr-1495": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T14:15:33Z",
-      "prompt": 27886,
-      "completion": 10300,
-      "total": 38186,
-      "model": ""
-    }
-  ],
   "pr-1500": [
     {
       "leg": "review",
@@ -4864,6 +4824,15 @@
       "completion": 19424,
       "total": 104845,
       "cacheRead": 1371264,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-24T14:35:31Z",
+      "prompt": 118551,
+      "completion": 36640,
+      "total": 155191,
+      "cacheRead": 6897792,
       "model": "glm-5.3-flash"
     }
   ]
