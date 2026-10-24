@@ -132,12 +132,49 @@ void main() {
     );
 
     test(
-      'falls back to the main connection when no slot override exists',
+      'no slot override fails with an actionable unconfigured error',
+      () async {
+        final tool = generateImageTool(
+          env: env,
+          modelsConfig: ModelsConfig(),
+          mainBaseUrl: () => 'https://main.example/v1',
+          mainModelId: () => 'main-model',
+          mainApiKey: () => 'main-key',
+          httpClient: _captureClient((request, body) {},
+              imageBytes: Uint8List.fromList([5])),
+        );
+
+        expect(
+          tool.execute({'prompt': 'x'}, null, null),
+          throwsA(
+            isA<MediaException>().having(
+              (e) => e.toString(),
+              'message',
+              allOf(
+                contains(
+                  'no endpoint configured for slot imageGeneration',
+                ),
+                contains('useMainConnection: true'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'useMainConnection: true serves the slot from the main connection',
       () async {
         http.BaseRequest? seenRequest;
         final tool = generateImageTool(
           env: env,
-          modelsConfig: ModelsConfig(),
+          modelsConfig: ModelsConfig(
+            slots: {
+              'imageGeneration': MediaSlotModelConfig(
+                useMainConnection: true,
+              ),
+            },
+          ),
           mainBaseUrl: () => 'https://main.example/v1',
           mainModelId: () => 'main-model',
           mainApiKey: () => 'main-key',
@@ -513,6 +550,206 @@ void main() {
         final result = await tool.execute({'prompt': 'a rose'}, null, null);
         expect(result.content.whereType<ImageContent>(), isNotEmpty);
         expect(seenRequest!.headers['api-key'], 'dial-main-key');
+      },
+    );
+  });
+
+  group('OpenRouterImageDialect (gh-1844)', () {
+    final dialect = OpenRouterImageDialect();
+
+    test('matches openrouter.ai endpoints', () {
+      expect(
+        dialect.matches(
+          MediaEndpoint(
+            baseUrl: 'https://openrouter.ai/api/v1',
+            modelId: 'google/gemini-3-pro-image-preview',
+            apiKey: 'k',
+          ),
+        ),
+        isTrue,
+      );
+    });
+
+    test('does not match non-openrouter endpoints', () {
+      expect(
+        dialect.matches(
+          MediaEndpoint(
+            baseUrl: 'https://api.minimax.io/v1',
+            modelId: 'MiniMax-M3',
+            apiKey: 'k',
+          ),
+        ),
+        isFalse,
+      );
+    });
+
+    test('declares reference-image support', () {
+      expect(dialect.supportsReferenceImages, isTrue);
+    });
+  });
+
+  group('generateImageTool reference images (gh-1844)', () {
+    late MemoryExecutionEnv env;
+
+    setUp(() {
+      env = MemoryExecutionEnv();
+    });
+
+    ModelsConfig slotConfig(String model) => ModelsConfig(
+      slots: {
+        'imageGeneration': MediaSlotModelConfig(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://api.example.com/v1',
+          modelId: model,
+          apiKeyName: 'MINIMAX_KEY',
+        ),
+      },
+    );
+
+    ModelsConfig openRouterSlot(List<String> modalities) => ModelsConfig(
+      slots: {
+        'imageGeneration': MediaSlotModelConfig(
+          providerKind: 'openrouter',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          modelId: 'google/gemini-3-pro-image-preview',
+          apiKeyName: 'OR_KEY',
+          inputModalities: modalities,
+        ),
+      },
+    );
+
+    test('MiniMax endpoint rejects reference images before any call', () async {
+      final tool = generateImageTool(
+        env: env,
+        modelsConfig: slotConfig('MiniMax-M3'),
+        mainBaseUrl: () => 'https://main.example/v1',
+        mainModelId: () => 'main-model',
+        mainApiKey: () => 'main-key',
+        resolveKey: (name) async => name == 'MINIMAX_KEY' ? 'slot-key' : null,
+        httpClient: _captureClient((request, body) {},
+            imageBytes: Uint8List.fromList([1])),
+      );
+
+      expect(
+        tool.execute({
+          'prompt': 'same scene',
+          'images': ['b64:${base64Encode([8, 9])}'],
+        }, null, null),
+        throwsA(
+          isA<MediaException>().having(
+            (e) => e.toString(),
+            'message',
+            contains(
+              'reference images are only supported by the OpenRouter',
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('OpenAI-compatible endpoint rejects reference images too', () async {
+      final tool = generateImageTool(
+        env: env,
+        modelsConfig: slotConfig('gpt-image-2'),
+        mainBaseUrl: () => 'https://main.example/v1',
+        mainModelId: () => 'main-model',
+        mainApiKey: () => 'main-key',
+        resolveKey: (name) async => 'slot-key',
+        httpClient: _captureClient((request, body) {},
+            imageBytes: Uint8List.fromList([1])),
+      );
+
+      expect(
+        tool.execute({
+          'prompt': 'same scene',
+          'images': ['https://example.com/ref.png'],
+        }, null, null),
+        throwsA(
+          isA<MediaException>().having(
+            (e) => e.toString(),
+            'message',
+            contains(
+              'reference images are only supported by the OpenRouter',
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('OpenRouter endpoint without declared modalities rejects images', () {
+      final tool = generateImageTool(
+        env: env,
+        modelsConfig: openRouterSlot(const []),
+        mainBaseUrl: () => 'https://main.example/v1',
+        mainModelId: () => 'main-model',
+        mainApiKey: () => 'main-key',
+        resolveKey: (name) async => 'or-key',
+        httpClient: _captureClient((request, body) {},
+            imageBytes: Uint8List.fromList([1])),
+      );
+
+      expect(
+        tool.execute({
+          'prompt': 'same scene',
+          'images': ['b64:${base64Encode([1])}'],
+        }, null, null),
+        throwsA(
+          isA<MediaException>().having(
+            (e) => e.toString(),
+            'message',
+            contains('does not declare support for image input'),
+          ),
+        ),
+      );
+    });
+
+    test(
+      'OpenRouter endpoint carries reference images as input_references',
+      () async {
+        http.BaseRequest? seenRequest;
+        String? seenBody;
+        final tool = generateImageTool(
+          env: env,
+          modelsConfig: openRouterSlot(const ['image', 'text']),
+          mainBaseUrl: () => 'https://main.example/v1',
+          mainModelId: () => 'main-model',
+          mainApiKey: () => 'main-key',
+          resolveKey: (name) async => 'or-key',
+          httpClient: _captureClient((request, body) {
+            seenRequest = request;
+            seenBody = body;
+          },
+              payload: {
+                'data': [
+                  {
+                    'b64_json': base64Encode([7]),
+                    'media_type': 'image/png',
+                  },
+                ],
+              }),
+        );
+
+        final result = await tool.execute({
+          'prompt': 'same scene, but at night',
+          'images': ['b64:${base64Encode([8, 9])}'],
+        }, null, null);
+
+        expect(result.content.whereType<ImageContent>(), hasLength(1));
+        expect(
+          seenRequest!.url.toString(),
+          'https://openrouter.ai/api/v1/images',
+        );
+        expect(seenRequest!.headers['authorization'], 'Bearer or-key');
+        final body = jsonDecode(seenBody!) as Map<String, dynamic>;
+        expect(body['model'], 'google/gemini-3-pro-image-preview');
+        final refs =
+            (body['input_references'] as List).cast<Map<String, dynamic>>();
+        expect(refs, hasLength(1));
+        expect(refs[0]['type'], 'image_url');
+        final imageUrl =
+            (refs[0]['image_url'] as Map<String, dynamic>)['url'] as String;
+        expect(imageUrl, startsWith('data:image/'));
+        expect(imageUrl, endsWith(base64Encode([8, 9])));
       },
     );
   });
