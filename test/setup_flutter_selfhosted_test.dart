@@ -513,33 +513,101 @@ void main() {
 
     test('self-hosted legs pin an EXACT Flutter patch, never a wildcard '
         '(gh-1826)', () {
+      // Discovered by scanning EVERY workflow for the composite action —
+      // the sibling cache-guard pattern: a future third self-hosted leg
+      // must fall UNDER this guard, not walk past a hard-coded lane map
+      // (gh-1826 review hardening).
+      const exactPatch = r'^\d+\.\d+\.\d+$';
       const pinnedVersion = '3.47.7';
-      for (final entry in const {
+      const knownLanes = {
         '.github/workflows/build-mobile.yml': 'build-ios',
         '.github/workflows/build-macos.yml': 'build-macos',
-      }.entries) {
-        final steps = ((loadYaml(
-          File(entry.key).readAsStringSync(),
-        )['jobs'] as YamlMap)[entry.value] as YamlMap)['steps'] as YamlList;
-        final setup = steps.whereType<YamlMap>().firstWhere(
-          (s) => (s['uses']?.toString() ?? '')
-              .contains('setup-flutter-selfhosted'),
-        );
-        final version =
-            ((setup['with'] as YamlMap?)?['flutter-version'] ?? '')
-                .toString();
+      };
+      final usages = <String, String>{}; // workflow path -> job name
+      for (final file in workflows) {
+        final yaml = loadYaml(File(file.path).readAsStringSync()) as Map;
+        for (final jobEntry in (yaml['jobs'] as Map? ?? {}).entries) {
+          final steps =
+              ((jobEntry.value as Map)['steps'] as Iterable? ?? const []);
+          for (final step in steps) {
+            final s = step as Map;
+            if (!'${s['uses']}'.contains('setup-flutter-selfhosted')) {
+              continue;
+            }
+            usages[file.path] = '${jobEntry.key}';
+            // A dropped/renamed `flutter-version` input must fail with a
+            // targeted message, not the wildcard narrative below (gh-1826
+            // review hardening: `?? ''` conflated the two verdicts).
+            final withBlock = s['with'] as YamlMap?;
+            expect(
+              withBlock?['flutter-version'],
+              isNotNull,
+              reason:
+                  '${file.path} job `${jobEntry.key}`: '
+                  'setup-flutter-selfhosted must declare a '
+                  '`flutter-version` input',
+            );
+            final version = withBlock!['flutter-version'].toString();
+            expect(
+              version,
+              matches(exactPatch),
+              reason:
+                  '${file.path} job `${jobEntry.key}`: a wildcard spec '
+                  '(3.47.x) re-resolves a freshly released patch the '
+                  'fa-m5 runners have not cached — run 40066130883 '
+                  '(2026-10-24) resolved 3.47.x to 3.47.8 and the '
+                  'TestFlight leg died downloading the 2.27 GB SDK '
+                  'inside the bounded curl budget (600s/attempt, 900s '
+                  'total) with 1.48 GB received. Exact-patch discipline '
+                  '(#1431): the pin moves consciously, in a PR, '
+                  'matching the desktop lane.',
+            );
+          }
+        }
+      }
+      expect(
+        usages,
+        hasLength(greaterThanOrEqualTo(2)),
+        reason:
+            'expected the two known setup-flutter-selfhosted usages — '
+            'the workflow topology changed and this guard scanned '
+            'nothing',
+      );
+      expect(
+        usages.keys,
+        containsAll(knownLanes.keys),
+        reason:
+            'the two known self-hosted lanes (gh-1826 mobile '
+            'build-ios, #1431 desktop build-macos) must stay under the '
+            'exact-patch guard',
+      );
+      // The known lanes share ONE conscious pin so a rolling bump stays
+      // desktop/mobile in lockstep (#1431).
+      for (final lane in knownLanes.entries) {
         expect(
-          version,
+          usages[lane.key],
+          lane.value,
+          reason:
+              '${lane.key}: expected the setup-flutter-selfhosted '
+              'usage in job `${lane.value}` — the job was renamed',
+        );
+        final steps =
+            ((loadYaml(File(lane.key).readAsStringSync())['jobs']
+                        as YamlMap)[lane.value]
+                    as YamlMap)['steps']
+                as YamlList;
+        final setup = steps.whereType<YamlMap>().firstWhere(
+          (s) => (s['uses']?.toString() ?? '').contains(
+            'setup-flutter-selfhosted',
+          ),
+        );
+        expect(
+          (setup['with'] as YamlMap)['flutter-version'].toString(),
           pinnedVersion,
           reason:
-              '${entry.key} ${entry.value}: a wildcard spec (3.47.x) '
-              're-resolves a freshly released patch the fa-m5 runners '
-              'have not cached — run 40066130883 (2026-10-24) resolved '
-              '3.47.x to 3.47.8 and the TestFlight leg died downloading '
-              'the 2.27 GB SDK inside the bounded curl budget '
-              '(600s/attempt, 900s total) with 1.48 GB received. '
-              'Exact-patch discipline (#1431): the pin moves consciously, '
-              'in a PR, matching the desktop lane.',
+              '${lane.key} ${lane.value}: the known self-hosted '
+              'lanes share one exact pin — bump them together, in a PR, '
+              'matching the desktop lane (#1431).',
         );
       }
     });
