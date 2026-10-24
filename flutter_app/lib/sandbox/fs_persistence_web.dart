@@ -68,8 +68,9 @@ final class IdbFsSnapshotStore implements FsSnapshotStore {
   /// every web host failed with `[fah] sandbox persist failed` while the
   /// helper sat right there in the page (gh-1831, and the persistence half
   /// of the Outlook install failure #1830). Probe the functions the
-  /// helper actually defines; `test/fs_store_script_gate_guard_test.dart`
-  /// pins the probe/helper pair in sync.
+  /// helper actually defines;
+  /// `flutter_app/test/fs_store_script_gate_guard_test.dart` pins the
+  /// probe/helper pair in sync.
   static bool _helperDefined() {
     final w = web.window;
     return w.hasProperty('__fahFsGetAll'.toJS).toDart &&
