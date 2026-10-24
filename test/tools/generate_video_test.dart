@@ -676,7 +676,7 @@ void main() {
         maxPolls: 4,
         pollDelay: (_) => Duration.zero,
       );
-      expect(
+      await expectLater(
         tiny.generate(
           env: env,
           endpoint: endpoint,

@@ -45,6 +45,50 @@ void main() {
       expect((input as MediaImagePath).path, '/tmp/ref.png');
     });
 
+    // gh-1844 CRAP gate: the bare-base64 auto-detect must be covered on
+    // every branch of _looksLikeBase64 (all-valid, invalid character,
+    // too short, path separator present).
+    group('bare base64 auto-detect (CRAP coverage)', () {
+      final bare64 = base64Encode(List<int>.filled(96, 7));
+
+      test('a long base64-only string is base64', () {
+        final input = parseMediaImageInput(bare64);
+        expect(input, isA<MediaImageBase64>());
+        expect((input as MediaImageBase64).base64, bare64);
+      });
+
+      test('the + padding character stays in the base64 alphabet', () {
+        // No '/' — a path separator demotes to a path before the base64
+        // sniff (separately covered below).
+        final padded = '${'A' * 70}+==';
+        final input = parseMediaImageInput(padded);
+        expect(input, isA<MediaImageBase64>());
+        expect((input as MediaImageBase64).base64, padded);
+      });
+
+      test('a non-base64 character demotes the entry to a path', () {
+        // Interior '!' (trim only strips the ends) — not in the base64
+        // alphabet, no path separator.
+        final invalid = '${bare64.substring(0, bare64.length - 1)}!';
+        final input = parseMediaImageInput(invalid);
+        expect(input, isA<MediaImagePath>());
+        expect((input as MediaImagePath).path, invalid);
+      });
+
+      test('a too-short base64-ish string is a path', () {
+        final short = base64Encode([1, 2, 3, 4]); // well under 64 chars
+        final input = parseMediaImageInput(short);
+        expect(input, isA<MediaImagePath>());
+        expect((input as MediaImagePath).path, short);
+      });
+
+      test('a path separator demotes the entry to a path', () {
+        final withSlash = 'a$bare64/b';
+        final input = parseMediaImageInput(withSlash);
+        expect(input, isA<MediaImagePath>());
+      });
+    });
+
     test('rejects an empty entry', () {
       expect(
         () => parseMediaImageInput('   '),

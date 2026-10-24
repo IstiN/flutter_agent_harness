@@ -240,10 +240,7 @@ final class OpenRouterImageDialect extends ImageDialect {
     if (first is! Map<String, dynamic>) {
       throw MediaException('image generation: no image in OpenRouter response');
     }
-    final mediaType = first['media_type']?.toString();
-    final ext = mediaType != null && mediaType.startsWith('image/')
-        ? mediaType.substring('image/'.length)
-        : 'png';
+    final ext = _extensionForMediaType(first['media_type']?.toString());
     final b64 = first['b64_json'];
     if (b64 is String && b64.isNotEmpty) {
       final bytes = base64Decode(b64);
@@ -257,6 +254,23 @@ final class OpenRouterImageDialect extends ImageDialect {
       return (path: path, bytes: bytes, detail: 'saved to $path');
     }
     throw MediaException('image generation: no image in OpenRouter response');
+  }
+
+  /// The saved file extension for an OpenRouter `media_type`: structured
+  /// types map to their clean subtype (`image/svg+xml` → `svg` — the raw
+  /// subtype would put a `+` in the filename), known types keep their
+  /// subtype, anything else falls back to `png` (review, gh-1844).
+  String _extensionForMediaType(String? mediaType) {
+    if (mediaType == null || !mediaType.startsWith('image/')) return 'png';
+    var subtype = mediaType.substring('image/'.length);
+    // Structured types: the file extension is the clean base subtype
+    // (`svg+xml` → `svg`), never the raw `+`-carrying parameter.
+    final plus = subtype.indexOf('+');
+    if (plus >= 0) subtype = subtype.substring(0, plus);
+    return switch (subtype) {
+      'png' || 'jpeg' || 'webp' || 'svg' => subtype,
+      _ => 'png',
+    };
   }
 
   String _trimSlash(String url) =>

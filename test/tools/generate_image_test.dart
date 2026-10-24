@@ -586,6 +586,49 @@ void main() {
     test('declares reference-image support', () {
       expect(dialect.supportsReferenceImages, isTrue);
     });
+
+    group('extension from media_type (review, gh-1844)', () {
+      Future<String> savedExtensionFor(String? mediaType) async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final payload = <String, Object?>{
+          'data': [
+            {
+              'b64_json': base64Encode([7]),
+              if (mediaType != null) 'media_type': mediaType,
+            },
+          ],
+        };
+        final result = await dialect.generate(
+          env: env,
+          endpoint: MediaEndpoint(
+            baseUrl: 'https://openrouter.ai/api/v1',
+            modelId: 'recraft/recraft-3',
+            apiKey: '[REDACTED:Sensitive Value]',
+          ),
+          prompt: 'a logo',
+          client: http_testing.MockClient(
+            (request) async => http.Response(jsonEncode(payload), 200),
+          ),
+        );
+        return result.path.split('.').last;
+      }
+
+      test('structured types map to the clean subtype (svg+xml → svg)',
+          () async {
+        expect(await savedExtensionFor('image/svg+xml'), 'svg');
+      });
+
+      test('known types keep their subtype', () async {
+        expect(await savedExtensionFor('image/png'), 'png');
+        expect(await savedExtensionFor('image/jpeg'), 'jpeg');
+        expect(await savedExtensionFor('image/webp'), 'webp');
+      });
+
+      test('unknown or missing media types fall back to png', () async {
+        expect(await savedExtensionFor('image/x-not-a-format'), 'png');
+        expect(await savedExtensionFor(null), 'png');
+      });
+    });
   });
 
   group('generateImageTool reference images (gh-1844)', () {

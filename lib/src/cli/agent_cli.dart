@@ -554,6 +554,10 @@ class AgentCli {
           mainApiKey: () => _apiKey,
           resolveKey: _resolveMediaKey,
         ),
+        // gh-1844 (review): `decide` rides its own facility bundle — it
+        // only needs the live main-connection accessors, not the media
+        // config.
+        decisions: DecisionsServices(mainApiKey: () => _apiKey),
         browserController: config.browserController,
         // Builder hands the decorated env (review #1230) — screenshot
         // saves clamp like every other fs-touching tool.
