@@ -26,6 +26,12 @@ import '../widgets/snackbars.dart';
 /// NOT here — it is the single transient status row ([FaRunStatusRow],
 /// issues #459, #1042), mounted by hosts as the transcript's last entry.
 ///
+/// Synchronous submit interception for host-owned commands/enrollments.
+/// Return true to consume the draft without calling [FaChatService.sendText]
+/// or analytics. The composer clears the consumed text and attachments.
+typedef FaChatSubmitInterceptor =
+    bool Function(BuildContext context, String text);
+
 /// Backend-agnostic: sends through [FaChatService], picks files/images
 /// through [FaChatHost] hooks (or the constructor overrides, which tests
 /// inject), and reports analytics through [FaChatHost.track]. All strings
@@ -44,6 +50,7 @@ class ChatComposer extends StatefulWidget {
     this.leadingBuilder,
     this.hideMicWhenNotEmpty = false,
     this.onSent,
+    this.onSubmit,
     this.onFocusChanged,
     this.autofocus = true,
   });
@@ -99,6 +106,10 @@ class ChatComposer extends StatefulWidget {
   /// Fired after a message was sent successfully (the launcher's bar uses
   /// it to open the session panel).
   final VoidCallback? onSent;
+
+  /// Host-owned submit path (for example a credential-bearing enrollment
+  /// block). Runs before clearing/analytics/sendText; true consumes it.
+  final FaChatSubmitInterceptor? onSubmit;
 
   /// Fired when the input field's focus changes (the launcher's bar opens
   /// the session panel the moment the user starts typing).
@@ -510,6 +521,29 @@ class ChatComposerState extends State<ChatComposer>
   Future<void> _send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty && _pendingAttachments.isEmpty) return;
+    final interceptor = widget.onSubmit;
+    if (interceptor != null) {
+      var candidate = trimmed;
+      // Smart paste stages a multi-line block as one .txt chip. Inspect
+      // that exact payload too, so an enrollment secret cannot reach the
+      // model through sendAttachments instead of sendText.
+      if (candidate.isEmpty && _pendingAttachments.length == 1) {
+        try {
+          candidate = utf8.decode(_pendingAttachments.single.bytes);
+        } on Object {
+          // Binary attachments are never enrollment text.
+        }
+      }
+      if (candidate.isNotEmpty && interceptor(context, candidate)) {
+        final consumed = List.of(_pendingAttachments);
+        setState(() => _pendingAttachments.clear());
+        _textController.clear();
+        for (final attachment in consumed) {
+          unawaited(widget.service.discardStagedAttachment(attachment.path));
+        }
+        return;
+      }
+    }
     // The IME's send action UNFOCUSES the field (EditableText finalizes
     // editing with shouldUnfocus for send/done/go/search). A chat composer
     // keeps the keyboard up instead — the follow-up message must not need a

@@ -754,3 +754,31 @@ display name to `goal_builder`, stable across resumes, addressable via
 `agent_message to: "goal_builder"`. Hub down or a rejected secret → a
 loud warning and the agent's primary job proceeds; the file-fabric
 fallback is unchanged.
+
+## App composer enrollment (gh-1825)
+
+The Flutter app accepts the same enrollment block as the CLI: paste the
+whole `fa dap import … && DAP_HUB_URL=… DAP_CLIENT_SECRET=…
+DAP_AGENT_NAME=… fa` block into the agent chat composer (a smart-pasted
+`.txt` attachment with exactly that payload is recognized too). The
+composer consumes the paste synchronously — no `sendText`, no analytics,
+no session record — and shows a localized joined/failed status.
+
+Native (macOS/iOS/Android) joins through the SAME hub repository that
+feeds the agent fabric, so inbound channel mail wakes the agent and
+`agent_message to: "#channel"` answers into the channel. Identity is
+scoped per project (stable across restarts, distinct across working
+directories); invite `pub`/`priv` are imported for private channels,
+public channels join keyless and speak the public showcase payload
+(`base64({"text": …})`, raw UTF-8 tolerated). The enrollment secret goes
+only to the WebSocket `Authorization` header and the dedicated secure
+enrollment store (Keychain/Keystore where available, app-sandboxed JSON
+otherwise) — never to `SecretsExecutionEnv`, model context, or logs.
+Membership is restored on reconnect (rejoin precedes the outbound
+drain). Saving the manual `/settings` connection form clears the invite
+enrollment. One live hub connection per app agent: a new paste replaces
+the previous enrollment.
+
+Plain web builds intercept the paste as well but report a localized
+unsupported status: `fa_hub_client` is `dart:io`-only, so the browser
+backend (and the extension service-worker join) is follow-up work.

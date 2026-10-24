@@ -4391,8 +4391,26 @@ abstract class AppLocalizations {
   /// Agent invite helper under the DAP format explaining how to paste the enrollment block into fa chat
   ///
   /// In en, this message translates to:
-  /// **'Copy this block and paste it into the fa chat (CLI, macOS, iOS or web) — the agent joins the channel automatically.'**
+  /// **'Copy this block and paste it into the fa chat (CLI, macOS or iOS) — the agent joins the channel automatically.'**
   String get networkAddAgentDapHint;
+
+  /// Snack bar after a pasted DAP enrollment joined successfully
+  ///
+  /// In en, this message translates to:
+  /// **'Joined DAP channel #{channel}. Channel mail now reaches this agent.'**
+  String dapEnrollmentJoined(String channel);
+
+  /// Snack bar after a pasted DAP enrollment failed; never includes credential or raw transport error
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t join DAP channel #{channel}. Check the invite and hub connection, then try again.'**
+  String dapEnrollmentFailed(String channel);
+
+  /// Snack bar for a recognized DAP enrollment paste on an unsupported web build
+  ///
+  /// In en, this message translates to:
+  /// **'DAP join is not supported in the web build yet — use the macOS/iOS app or the fa CLI.'**
+  String get dapEnrollmentUnsupported;
 
   /// Agent invite: button that enrolls the typed agent name against the fa_network backend (DAP format)
   ///

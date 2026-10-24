@@ -5,6 +5,7 @@
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa_ui/fa_ui.dart' show FaClipboardImageReader;
 import 'package:flutter/material.dart';
@@ -85,6 +86,7 @@ Future<void> _pumpComposer(
   WidgetTester tester,
   AgentService service, {
   FaClipboardImageReader? clipboardImageReader,
+  bool Function(BuildContext context, String text)? onSubmit,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -96,6 +98,7 @@ Future<void> _pumpComposer(
         body: ChatComposer(
           service: service,
           clipboardImageReader: clipboardImageReader,
+          onSubmit: onSubmit,
         ),
       ),
     ),
@@ -531,9 +534,7 @@ void main() {
 
       await tester.tap(find.byType(TextField));
       await tester.pump();
-      await Clipboard.setData(
-        const ClipboardData(text: 'annotated caption'),
-      );
+      await Clipboard.setData(const ClipboardData(text: 'annotated caption'));
       await _pressPaste(tester);
 
       expect(find.byIcon(Icons.close), findsOneWidget);
@@ -607,6 +608,128 @@ void main() {
       // Nothing staged: the uploads dir may not even exist yet.
       final uploads = await env.listDir('uploads');
       expect(uploads.valueOrNull ?? const <FileInfo>[], isEmpty);
+    });
+  });
+
+  group('DAP enrollment interception', () {
+    const channel =
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    const paste =
+        "fa dap import 'wss://hub.fa1.dev/ws?channel=$channel' && "
+        'DAP_HUB_URL=wss://hub.fa1.dev/ws '
+        "DAP_CLIENT_SECRET='test-only-enrollment-credential' "
+        'DAP_AGENT_NAME=app-agent fa';
+
+    testWidgets('DAP paste clears the draft, joins, and never calls sendText', (
+      tester,
+    ) async {
+      final service = _fakeService(
+        MemoryExecutionEnv(),
+        _singleTextResponse('must not run'),
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      var joins = 0;
+      await _pumpComposer(
+        tester,
+        service,
+        onSubmit: (context, text) => interceptDapEnrollmentSubmit(
+          context,
+          text,
+          supported: true,
+          join: (_) async => joins++,
+        ),
+      );
+
+      await _typeAndSend(tester, paste);
+      await tester.pumpAndSettle();
+
+      expect(joins, 1);
+      expect(service.messages.where((m) => m.role == 'user'), isEmpty);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      expect(
+        find.textContaining('Joined DAP channel #$channel'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('plain text mentioning DAP still reaches the model', (
+      tester,
+    ) async {
+      final service = _fakeService(
+        MemoryExecutionEnv(),
+        _singleTextResponse('answer'),
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      var joins = 0;
+      await _pumpComposer(
+        tester,
+        service,
+        onSubmit: (context, text) => interceptDapEnrollmentSubmit(
+          context,
+          text,
+          supported: true,
+          join: (_) async => joins++,
+        ),
+      );
+
+      await tester.runAsync(() async {
+        await _typeAndSend(tester, 'What does DAP_CLIENT_SECRET do?');
+        for (
+          var i = 0;
+          i < 100 && service.messages.where((m) => m.role == 'user').isEmpty;
+          i++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+
+      expect(joins, 0);
+      final users = service.messages.where((m) => m.role == 'user').toList();
+      expect(users.single.content, 'What does DAP_CLIENT_SECRET do?');
+    });
+
+    testWidgets('unsupported web build consumes the secret and shows status', (
+      tester,
+    ) async {
+      final service = _fakeService(
+        MemoryExecutionEnv(),
+        _singleTextResponse('must not run'),
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      var joins = 0;
+      await _pumpComposer(
+        tester,
+        service,
+        onSubmit: (context, text) => interceptDapEnrollmentSubmit(
+          context,
+          text,
+          supported: false,
+          join: (_) async => joins++,
+        ),
+      );
+
+      await _typeAndSend(tester, paste);
+      await tester.pumpAndSettle();
+
+      expect(joins, 0);
+      expect(service.messages.where((m) => m.role == 'user'), isEmpty);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      expect(
+        find.text(
+          'DAP join is not supported in the web build yet — use the '
+          'macOS/iOS app or the fa CLI.',
+        ),
+        findsOneWidget,
+      );
     });
   });
 }

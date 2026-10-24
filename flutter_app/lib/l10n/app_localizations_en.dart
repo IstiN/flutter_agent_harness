@@ -2478,7 +2478,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkAddAgentDapHint =>
-      'Copy this block and paste it into the fa chat (CLI, macOS, iOS or web) — the agent joins the channel automatically.';
+      'Copy this block and paste it into the fa chat (CLI, macOS or iOS) — the agent joins the channel automatically.';
+
+  @override
+  String dapEnrollmentJoined(String channel) {
+    return 'Joined DAP channel #$channel. Channel mail now reaches this agent.';
+  }
+
+  @override
+  String dapEnrollmentFailed(String channel) {
+    return 'Couldn\'t join DAP channel #$channel. Check the invite and hub connection, then try again.';
+  }
+
+  @override
+  String get dapEnrollmentUnsupported =>
+      'DAP join is not supported in the web build yet — use the macOS/iOS app or the fa CLI.';
 
   @override
   String get networkAddAgentEnroll => 'Enroll agent';

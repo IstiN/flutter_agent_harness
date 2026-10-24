@@ -13,6 +13,31 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1825): the fa app consumes the same DAP enrollment block as the
+  CLI — paste it into the agent chat composer (macOS/iOS/Android; the
+  smart-paste .txt chip path included) and the channel join happens
+  without the block ever reaching `sendText`, analytics, or session
+  records. Native joins ride the live agent-fabric hub repository:
+  per-project scoped identity, invite pub/priv import, keyless public
+  channels, reconnect-persisted membership in a dedicated secure
+  enrollment store (Keychain/Keystore where available). Harness additions:
+  `HubMessagingRepository.joinChannel`/`waitForConnection` with
+  rejoin-before-drain on reconnect, keyed channel decrypt
+  (`hubDecryptPayloadWithKeyPair`), public showcase payloads, and
+  `HubBearerTransport` (the enrollment secret travels only in the
+  WebSocket authorization header, never in dial URLs or logs). Plain web
+  intercepts the paste too but reports the honest unsupported status —
+  the browser backend is follow-up work. Add agent now defaults to the
+  DAP tab with a paste-into-chat hint; web gains ai-native provider
+  sign-in through the existing popup/callback OAuth flow.
+
+- fix(fa_network#4): the app inserts hub agents arriving via
+  `presence.changed` into the roster (additive displayName/class fields)
+  instead of dropping them, so the online counter no longer sticks at 0
+  when an agent comes online after `roster.snapshot`; legacy frames
+  without those fields create no phantom members. `roster.snapshot`/REST
+  contents are logged for decisive presence debugging.
+
 - feat(gh-1825): `/network` + scoped DAP channel membership — join by
   paste (invite url / url+keys / bare channel id / whole `fa dap import`
   command) with session/project/global scopes, live join without

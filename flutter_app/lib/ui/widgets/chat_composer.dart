@@ -34,6 +34,7 @@ class ChatComposer extends StatelessWidget {
     this.leadingBuilder,
     this.hideMicWhenNotEmpty = false,
     this.onSent,
+    this.onSubmit,
     this.onFocusChanged,
     this.autofocus = true,
   });
@@ -74,6 +75,9 @@ class ChatComposer extends StatelessWidget {
 
   /// Fired after a message was sent successfully.
   final VoidCallback? onSent;
+
+  /// Host-owned submit interception (DAP enrollment in the full chat).
+  final fa_ui.FaChatSubmitInterceptor? onSubmit;
 
   /// Fired when the input field's focus changes (the session chat sheet
   /// opens its panel on focus).
@@ -116,6 +120,7 @@ class ChatComposer extends StatelessWidget {
       leadingBuilder: leadingBuilder,
       hideMicWhenNotEmpty: hideMicWhenNotEmpty,
       onSent: onSent,
+      onSubmit: onSubmit,
       onFocusChanged: onFocusChanged,
       autofocus: autofocus,
     );

@@ -2507,7 +2507,21 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkAddAgentDapHint =>
-      'Скопируйте этот блок и вставьте его в чат fa (CLI, macOS, iOS или веб) — агент автоматически присоединится к каналу.';
+      'Скопируйте этот блок и вставьте его в чат fa (CLI, macOS или iOS) — агент автоматически присоединится к каналу.';
+
+  @override
+  String dapEnrollmentJoined(String channel) {
+    return 'Подключились к DAP-каналу #$channel. Сообщения канала теперь поступают этому агенту.';
+  }
+
+  @override
+  String dapEnrollmentFailed(String channel) {
+    return 'Не удалось подключиться к DAP-каналу #$channel. Проверьте приглашение и соединение с хабом, затем повторите попытку.';
+  }
+
+  @override
+  String get dapEnrollmentUnsupported =>
+      'Подключение к DAP пока не поддерживается в веб-версии — используйте приложение для macOS/iOS или fa CLI.';
 
   @override
   String get networkAddAgentEnroll => 'Заэнроллить агента';
