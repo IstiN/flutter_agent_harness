@@ -405,6 +405,30 @@ void main() {
       expect(text, contains('moved to background job ${job.id}'));
       env.jobs.single.complete(0);
     });
+
+    test('the command-rewrite notice rides the background: true start '
+        'result', () async {
+      final rewriteTool = shellTool(
+        env,
+        jobs: registry,
+        redactionConfig: const RedactionConfig(),
+      );
+      final text = _text(
+        await rewriteTool.execute(
+          {'command': 'export GH_TOKEN=ghp_${'A' * 36}', 'background': true},
+          null,
+          null,
+        ),
+      );
+      // The rewrite notice leads, the job facts follow — issue #1408 AC3
+      // through the background fast path (the CRAP-ratchet decomposition
+      // moved this branch into _startBackgroundBash; the notice contract
+      // is unchanged).
+      expect(text, startsWith('[bash interceptor rewrote 1 secret-shaped'));
+      expect(text, contains('Started background job'));
+      expect(env.jobs.single.command, contains('[REDACTED:GitHub Token]'));
+      env.jobs.single.complete(0);
+    });
   });
 
   group('bash auto-background through the agent loop (AC1/AC2/AC3)', () {

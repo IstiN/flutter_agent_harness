@@ -196,22 +196,7 @@ AgentTool shellTool(
     name: bashToolName,
     label: 'bash',
     tier: ApprovalTier.exec,
-    description:
-        'Execute a bash command in the current working directory. Returns '
-        'stdout and stderr. Output is truncated to the last '
-        '$defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
-        '(whichever is hit first). Optionally provide a timeout in seconds. '
-        'Timeouts you set are retried automatically '
-        '(${bashToolMaxRetries + 1} attempts total); retries appear as '
-        '[bash attempt N]. Environment-default timeouts fail once with the '
-        'partial output. '
-        'For long-running commands (builds, servers, watchers) pass '
-        'background: true — the command keeps running as a job, you get its '
-        'id immediately and are notified when it finishes; check progress '
-        'with bash_job. A foreground command that is still running when the '
-        'user sends a message is moved to a background job untouched (never '
-        'killed) so the user gets an answer right away.'
-        '${autoBackgroundAfter > Duration.zero ? ' A foreground command still running after ${autoBackgroundAfter.inSeconds}s is also moved to a background job automatically (never restarted): the call returns the job id and you decide — wait for the completion notice, poll bash_job output, or stop the job and retry differently.' : ''}',
+    description: _shellToolDescription(autoBackgroundAfter),
     parameters: const {
       'type': 'object',
       'properties': {
@@ -240,106 +225,256 @@ AgentTool shellTool(
       },
       'required': ['command'],
     },
-    execute: (arguments, cancelToken, onUpdate) async {
-      cancelToken?.throwIfCancelled();
-      final command = arguments['command'] as String;
-      // Issue #1408 AC3: the shape interceptor rewrites recognized secret
-      // SHAPES (and only those — key-like-but-unmatched text, e.g. a
-      // filename the agent is creating, stays byte-identical) and the
-      // result notice names every rewrite so the agent sees what changed
-      // instead of discovering corruption by I/O error.
-      final rewrite = redactBashCommandSecretShapes(
-        command,
-        config: redactionConfig ?? const RedactionConfig(),
-        approvedLiterals: approvedSecretLiterals?.call() ?? const {},
-      );
-      final effectiveCommand = rewrite?.command ?? command;
-      final rewriteNotice = rewrite?.notice;
-      final timeoutArg = arguments['timeout'] as num?;
-      final timeout = timeoutArg == null ? null : _resolveTimeout(timeoutArg);
-      final background = arguments['background'] as bool? ?? false;
-      final stdinData = arguments['stdin'] as String?;
-      final canJob = jobs != null && jobs.isSupported;
+    execute: (arguments, cancelToken, onUpdate) => _executeShellCall(
+      env,
+      jobs,
+      arguments: arguments,
+      cancelToken: cancelToken,
+      retryBackoff: retryBackoff,
+      onPasswordPrompt: onPasswordPrompt,
+      passwordQuiet: passwordQuiet,
+      autoBackgroundAfter: autoBackgroundAfter,
+      redactionConfig: redactionConfig,
+      approvedSecretLiterals: approvedSecretLiterals,
+    ),
+  );
+}
 
-      // Issue #1349: a bare long foreground sleep is rejected at call
-      // validation — it parks the turn; background: true is the fix. An
-      // explicit `timeout` is a deliberate bail cap (the call unwinds at
-      // the cap, so steering and cancel reach the agent), not a park.
-      if (!background && timeout == null) {
-        final sleepDenial = foregroundSleepDenial(command, canJob: canJob);
-        if (sleepDenial != null) return ToolExecutionResult.text(sleepDenial);
-      }
+/// The `bash` tool description. The gh-1835 auto-background sentence joins
+/// only when the threshold is armed (`Duration.zero` = the kill switch —
+/// legacy foreground behavior, so the model must not be taught the
+/// conversion it will never get).
+String _shellToolDescription(Duration autoBackgroundAfter) =>
+    'Execute a bash command in the current working directory. Returns '
+    'stdout and stderr. Output is truncated to the last '
+    '$defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
+    '(whichever is hit first). Optionally provide a timeout in seconds. '
+    'Timeouts you set are retried automatically '
+    '(${bashToolMaxRetries + 1} attempts total); retries appear as '
+    '[bash attempt N]. Environment-default timeouts fail once with the '
+    'partial output. '
+    'For long-running commands (builds, servers, watchers) pass '
+    'background: true — the command keeps running as a job, you get its '
+    'id immediately and are notified when it finishes; check progress '
+    'with bash_job. A foreground command that is still running when the '
+    'user sends a message is moved to a background job untouched (never '
+    'killed) so the user gets an answer right away.'
+    '${autoBackgroundAfter > Duration.zero ? ' A foreground command still running after ${autoBackgroundAfter.inSeconds}s is also moved to a background job automatically (never restarted): the call returns the job id and you decide — wait for the completion notice, poll bash_job output, or stop the job and retry differently.' : ''}';
 
-      if (background) {
-        if (!canJob) {
-          return ToolExecutionResult.text(
-            'Background execution is not supported in this environment — '
-            'run the command in the foreground with an explicit timeout.',
-          );
-        }
-        final entry = await jobs.start(
-          effectiveCommand,
-          options: ShellExecOptions(
-            cwd: env.cwd,
-            timeout: timeout,
-            // gh-1455: no caller cancel token — a background job outlives
-            // this call and is stopped through `bash_job stop` only; the
-            // registry firewalls stray tokens too.
-            stdinData: stdinData,
-          ),
-        );
-        return ToolExecutionResult.text(
-          '${rewriteNotice == null ? '' : '$rewriteNotice\n'}'
-          'Started background job ${entry.id}.\n'
-          'Log: ${entry.logPath}\n'
-          'You will be notified when it finishes; check progress with '
-          'bash_job (action: status | output | stop).',
-        );
-      }
+/// The `bash` tool call body ([shellTool]'s `execute`): parse the
+/// arguments, then dispatch — `background: true` fast path, the bare-sleep
+/// denial, or the foreground run. Split out of the [shellTool] closure so
+/// the tool factory stays under the CRAP ratchet (crap4dart.yaml pins the
+/// threshold at 12.0): the closure's decision points live in the small
+/// helpers below, each independently covered by the bash tool tests.
+Future<ToolExecutionResult> _executeShellCall(
+  ExecutionEnv env,
+  ShellJobRegistry? jobs, {
+  required Map<String, dynamic> arguments,
+  required CancelToken? cancelToken,
+  required Duration retryBackoff,
+  required PasswordPromptCallback? onPasswordPrompt,
+  required Duration passwordQuiet,
+  required Duration autoBackgroundAfter,
+  required RedactionConfig? redactionConfig,
+  required Set<String> Function()? approvedSecretLiterals,
+}) async {
+  cancelToken?.throwIfCancelled();
+  final command = arguments['command'] as String;
+  final (effectiveCommand, rewriteNotice) = _rewriteShellCommand(
+    command,
+    redactionConfig: redactionConfig,
+    approvedSecretLiterals: approvedSecretLiterals,
+  );
+  final timeoutArg = arguments['timeout'] as num?;
+  final timeout = timeoutArg == null ? null : _resolveTimeout(timeoutArg);
+  final background = arguments['background'] as bool? ?? false;
+  final stdinData = arguments['stdin'] as String?;
+  final canJob = jobs != null && jobs.isSupported;
 
-      // gh-1835 auto-background: with the threshold armed (and a timeout
-      // that cannot fire before it) the foreground call runs as a registry
-      // job from the start, so the conversion at the threshold changes
-      // NOTHING about the process — same pid/group/log, no re-execution.
-      final autoConvertActive =
-          canJob &&
-          autoBackgroundAfter > Duration.zero &&
-          (timeout == null || timeout > autoBackgroundAfter);
+  if (background) {
+    return _startBackgroundBash(
+      env,
+      jobs,
+      effectiveCommand,
+      timeout: timeout,
+      stdinData: stdinData,
+      rewriteNotice: rewriteNotice,
+    );
+  }
 
-      // Yield-aware foreground run: executed as a job from the start so a
-      // steering message can move it to the background mid-flight without
-      // killing the process. Settled before any yield → identical result to
-      // the classic inline path. With auto-background armed the same path
-      // also converts at the liveness threshold — with or without a yield
-      // token.
-      if (canJob && (currentYieldToken() != null || autoConvertActive)) {
-        return _shellViaJob(
-          env,
-          jobs,
-          effectiveCommand,
-          stdinData: stdinData,
-          timeout: timeout,
-          timeoutArg: timeoutArg,
-          cancelToken: cancelToken,
-          yieldToken: currentYieldToken(),
-          autoBackgroundAfter: autoConvertActive ? autoBackgroundAfter : null,
-          onPasswordPrompt: onPasswordPrompt,
-          passwordQuiet: passwordQuiet,
-          rewriteNotice: rewriteNotice,
-        );
-      }
+  // Issue #1349: a bare long foreground sleep is rejected at call
+  // validation — it parks the turn; background: true is the fix. An
+  // explicit `timeout` is a deliberate bail cap (the call unwinds at
+  // the cap, so steering and cancel reach the agent), not a park.
+  final sleepDenial = _foregroundSleepDenialResult(
+    command,
+    timeout: timeout,
+    canJob: canJob,
+  );
+  if (sleepDenial != null) return sleepDenial;
 
-      return _runForegroundBash(
-        env,
-        effectiveCommand,
-        timeout: timeout,
-        timeoutArg: timeoutArg,
-        cancelToken: cancelToken,
-        stdinData: stdinData,
-        retryBackoff: retryBackoff,
-        rewriteNotice: rewriteNotice,
-      );
-    },
+  return _runForegroundBashCall(
+    env,
+    jobs,
+    effectiveCommand,
+    stdinData: stdinData,
+    timeout: timeout,
+    timeoutArg: timeoutArg,
+    cancelToken: cancelToken,
+    retryBackoff: retryBackoff,
+    onPasswordPrompt: onPasswordPrompt,
+    passwordQuiet: passwordQuiet,
+    autoBackgroundAfter: autoBackgroundAfter,
+    rewriteNotice: rewriteNotice,
+  );
+}
+
+/// Issue #1408 AC3: the shape interceptor rewrites recognized secret
+/// SHAPES (and only those — key-like-but-unmatched text, e.g. a filename
+/// the agent is creating, stays byte-identical) and the result notice
+/// names every rewrite so the agent sees what changed instead of
+/// discovering corruption by I/O error. Returns the effective command and
+/// the rewrite notice (null when nothing matched).
+(String, String?) _rewriteShellCommand(
+  String command, {
+  required RedactionConfig? redactionConfig,
+  required Set<String> Function()? approvedSecretLiterals,
+}) {
+  final rewrite = redactBashCommandSecretShapes(
+    command,
+    config: redactionConfig ?? const RedactionConfig(),
+    approvedLiterals: approvedSecretLiterals?.call() ?? const {},
+  );
+  return (rewrite?.command ?? command, rewrite?.notice);
+}
+
+/// The bare-long-sleep foreground denial ([foregroundSleepDenial]) as the
+/// tool result, or null when the call may run in the foreground: the
+/// denial applies only without `background: true` and only without an
+/// explicit `timeout` (issue #1349 — a deliberate bail cap is not a park).
+ToolExecutionResult? _foregroundSleepDenialResult(
+  String command, {
+  required Duration? timeout,
+  required bool canJob,
+}) {
+  if (timeout != null) return null;
+  final denial = foregroundSleepDenial(command, canJob: canJob);
+  if (denial == null) return null;
+  return ToolExecutionResult.text(denial);
+}
+
+/// The `background: true` fast path of [shellTool]: start the command as a
+/// registry job and return the job id immediately (the completion notice
+/// and `bash_job` management are the model's follow-up handles). Without
+/// the jobs capability the honest degradation text returns instead.
+Future<ToolExecutionResult> _startBackgroundBash(
+  ExecutionEnv env,
+  ShellJobRegistry? jobs,
+  String command, {
+  required Duration? timeout,
+  required String? stdinData,
+  required String? rewriteNotice,
+}) async {
+  if (jobs == null || !jobs.isSupported) {
+    return ToolExecutionResult.text(
+      'Background execution is not supported in this environment — '
+      'run the command in the foreground with an explicit timeout.',
+    );
+  }
+  final entry = await jobs.start(
+    command,
+    options: ShellExecOptions(
+      cwd: env.cwd,
+      timeout: timeout,
+      // gh-1455: no caller cancel token — a background job outlives
+      // this call and is stopped through `bash_job stop` only; the
+      // registry firewalls stray tokens too.
+      stdinData: stdinData,
+    ),
+  );
+  return ToolExecutionResult.text(
+    '${rewriteNotice == null ? '' : '$rewriteNotice\n'}'
+    'Started background job ${entry.id}.\n'
+    'Log: ${entry.logPath}\n'
+    'You will be notified when it finishes; check progress with '
+    'bash_job (action: status | output | stop).',
+  );
+}
+
+/// The gh-1835 auto-background gate: with the jobs capability and the
+/// threshold armed (and a timeout that cannot fire before it) the
+/// foreground call runs as a registry job from the start, so the
+/// conversion at the threshold changes NOTHING about the process — same
+/// pid/group/log, no re-execution. `autoBackgroundAfter == Duration.zero`
+/// is the kill switch (legacy foreground behavior).
+bool _autoBackgroundActive(
+  bool canJob,
+  Duration autoBackgroundAfter,
+  Duration? timeout,
+) =>
+    canJob &&
+    autoBackgroundAfter > Duration.zero &&
+    (timeout == null || timeout > autoBackgroundAfter);
+
+/// The foreground run dispatch: with the jobs capability and either a
+/// yield token (steering) or the gh-1835 auto-background threshold armed,
+/// the command runs through the yield-aware job path ([_shellViaJob]) so it
+/// can move to the background mid-flight untouched; otherwise the classic
+/// inline exec ([_runForegroundBash]) runs it.
+Future<ToolExecutionResult> _runForegroundBashCall(
+  ExecutionEnv env,
+  ShellJobRegistry? jobs,
+  String command, {
+  required String? stdinData,
+  required Duration? timeout,
+  required num? timeoutArg,
+  required CancelToken? cancelToken,
+  required Duration retryBackoff,
+  required PasswordPromptCallback? onPasswordPrompt,
+  required Duration passwordQuiet,
+  required Duration autoBackgroundAfter,
+  required String? rewriteNotice,
+}) {
+  final canJob = jobs != null && jobs.isSupported;
+  final autoConvertActive = _autoBackgroundActive(
+    canJob,
+    autoBackgroundAfter,
+    timeout,
+  );
+
+  // Yield-aware foreground run: executed as a job from the start so a
+  // steering message can move it to the background mid-flight without
+  // killing the process. Settled before any yield → identical result to
+  // the classic inline path. With auto-background armed the same path
+  // also converts at the liveness threshold — with or without a yield
+  // token.
+  if (canJob && (currentYieldToken() != null || autoConvertActive)) {
+    return _shellViaJob(
+      env,
+      jobs,
+      command,
+      stdinData: stdinData,
+      timeout: timeout,
+      timeoutArg: timeoutArg,
+      cancelToken: cancelToken,
+      yieldToken: currentYieldToken(),
+      autoBackgroundAfter: autoConvertActive ? autoBackgroundAfter : null,
+      onPasswordPrompt: onPasswordPrompt,
+      passwordQuiet: passwordQuiet,
+      rewriteNotice: rewriteNotice,
+    );
+  }
+
+  return _runForegroundBash(
+    env,
+    command,
+    timeout: timeout,
+    timeoutArg: timeoutArg,
+    cancelToken: cancelToken,
+    stdinData: stdinData,
+    retryBackoff: retryBackoff,
+    rewriteNotice: rewriteNotice,
   );
 }
 

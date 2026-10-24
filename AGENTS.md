@@ -195,6 +195,14 @@ factual: paths, commands, invariants — no essays.
   estimating the duration against the time-left notices and switching to
   a cheaper satisfying strategy — or, when none fits, the next-best
   partial — rather than gambling the window on a known-infeasible path.
+  Conformance claims are the self-certification blind spot (gh-1834):
+  when the final claim includes parity/conformance to a reference or
+  specification (any domain), a "verified" item counts only with
+  negative and combination checks — refused incompatible options,
+  empty/corrupt inputs, boundary values, must-NOT-work cases — alongside
+  happy paths; a blanket "everything matches" is not verified (prompt
+  step 2.6, conditional: tasks with no conformance claim are
+  unchanged).
   The loop parses
   the final answer's `task-ledger` fenced block (`parseTaskLedger`,
   last block wins) and emits `TaskLedgerEvent`; hosts persist the hidden
