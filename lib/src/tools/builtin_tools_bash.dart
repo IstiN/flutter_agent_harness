@@ -244,22 +244,24 @@ AgentTool shellTool(
 /// only when the threshold is armed (`Duration.zero` = the kill switch —
 /// legacy foreground behavior, so the model must not be taught the
 /// conversion it will never get).
+///
+/// Token-budget note (gh-1835 CI): the description is priced into every
+/// request estimate at 4 chars/token, and the host_agent_wiring telemetry
+/// fixture runs a full 27-tool stack at an 8192-token window with ~13
+/// tokens of headroom on main. The wording is deliberately tight — do not
+/// expand it without re-checking that fixture.
 String _shellToolDescription(Duration autoBackgroundAfter) =>
-    'Execute a bash command in the current working directory. Returns '
-    'stdout and stderr. Output is truncated to the last '
-    '$defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
-    '(whichever is hit first). Optionally provide a timeout in seconds. '
-    'Timeouts you set are retried automatically '
-    '(${bashToolMaxRetries + 1} attempts total); retries appear as '
-    '[bash attempt N]. Environment-default timeouts fail once with the '
-    'partial output. '
-    'For long-running commands (builds, servers, watchers) pass '
-    'background: true — the command keeps running as a job, you get its '
-    'id immediately and are notified when it finishes; check progress '
-    'with bash_job. A foreground command that is still running when the '
-    'user sends a message is moved to a background job untouched (never '
-    'killed) so the user gets an answer right away.'
-    '${autoBackgroundAfter > Duration.zero ? ' A foreground command still running after ${autoBackgroundAfter.inSeconds}s is also moved to a background job automatically (never restarted): the call returns the job id and you decide — wait for the completion notice, poll bash_job output, or stop the job and retry differently. Once converted, a carried timeout is enforced by the job itself and is NOT auto-retried — retry the command yourself if the completion notice reports a timeout.' : ''}';
+    'Execute a bash command in the working directory; returns stdout and '
+    'stderr, truncated to the last $defaultToolMaxLines lines or '
+    '${defaultToolMaxBytes ~/ 1024}KB. Timeouts you '
+    'set are retried automatically (${bashToolMaxRetries + 1} attempts '
+    'total) as [bash attempt N]; environment-default timeouts fail once '
+    'with the partial output. For long-running commands (builds, servers, '
+    'watchers) pass background: true — you get the job id immediately and '
+    'get a completion notice; check progress with bash_job. A '
+    'foreground command still running when the user sends a message is '
+    'moved to a background job untouched (never killed).'
+    '${autoBackgroundAfter > Duration.zero ? ' A command still running after ${autoBackgroundAfter.inSeconds}s is moved to a background job automatically (never restarted); carried timeouts are NOT auto-retried — retry if the completion notice reports a timeout.' : ''}';
 
 /// The `bash` tool call body ([shellTool]'s `execute`): parse the
 /// arguments, then dispatch — `background: true` fast path, the bare-sleep
