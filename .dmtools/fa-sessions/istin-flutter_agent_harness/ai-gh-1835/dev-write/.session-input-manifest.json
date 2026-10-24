@@ -1,0 +1,407 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-24T19:08:36.047Z",
+  "ticketKey": "gh-1835",
+  "headSha": "685134829aa69740a5c4d4fc3988d202157fdcda",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:3352e13368b19837",
+      "size": 90442
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:a799b232f9fe15e4",
+      "size": 247930
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:45cbf00b049a846e",
+      "size": 918
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:4fe5fb15151ec458",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:cff587b652366b65",
+      "size": 49383
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:fa2e01cced7f3b6a",
+      "size": 114
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:e062f9197c207dc0",
+      "size": 2848
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:020fd336c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:408d699170763073",
+      "size": 5958
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:6380b8b412430134",
+      "size": 5864
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:eb2a1036",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 5 — `lib/src/cli/waiting_heartbeat.dart:140` — ordering guard (or doc line) for `autoBackgroundSeconds` vs `toolLivenessSeconds`\n\n**Fixed with the doc-line option** (the thread offers either; the reasoning for the choice is below).\n\nThe `autoBackgroundSeconds` field doc in `WaitingConfig` now states the coexistence explicitly:\n\n> *Ordering vs `toolLivenessSeconds` (gh-1835 review): an `autoBackgroundSeconds` at or BELOW a configured `toolLivenessSeconds` converts every long foreground bash call before the first liveness reminder can fire — on a job-capable host the reminders become a dead knob for bash. This shadowing is accepted, not rejected at boot (unlike the `toolEscalateSeconds`/`toolLivenessSeconds` ordering below): the conversion supersedes the reminder and carries strictly more information, and a boot error would outlaw a working configuration.*\n\nWhy the doc line and not a boot-time `autoBackgroundSeconds >= toolLivenessSeconds` check: the thread itself records that the shadowed configuration is **not broken** (\"the conversion supersedes the reminder and carries strictly more information\"). The established `toolEscalateSeconds < toolLivenessSeconds` guard rejects an actual inconsistency (a hint firing before the reminders it escalates from); rejecting `toolLivenessSeconds: 120, autoBackgroundSeconds: 60` would instead outlaw a configuration that works — every long call still gets its (richer) conversion, only the reminder tier goes unused for bash. Documenting the accepted shadowing keeps the knob set honest without a boot failure."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:21e98e7c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the tool description's unconditional retry promise is now wrong for `timeout` > threshold**\n\nWith auto-background armed (the default, 60s), a call with `timeout: 120` no\nlonger retries:\n\n1. it converts at 60s into a job that carries the 120s cap;\n2. when the cap fires, `_settledOutcome` throws the timeout `StateError` —\n   `_runForegroundBash`'s retry loop (`bashToolMaxRetries`) is not on the job\n   path, so there are **no harness retries**.\n\nYet this line still promises, unconditionally: *\"Timeouts you set are\nretried automatically (3 attempts total)\"*. Timeouts above 60s are exactly\nthe caps models set most often, so the drift is on the common path. (The\ndrift predates this PR on the CLI yield path, but gh-1835 codifies the\ncarry-over and extends it to every job-capable host — this PR owns the\nsentence now.)\n\nSuggested fix — amend the description where the new conversion sentence is\nappended, e.g.:\n\n```\n... A foreground command still running after ${autoBackgroundAfter.inSeconds}s\nis also moved to a background job automatically (never restarted): the call\nreturns the job id and you decide — wait for the completion notice, poll\nbash_job output, or stop the job and retry differently. Once converted, a\ncarried timeout is enforced by the job itself and is NOT auto-retried —\nretry the command yourself if the completion notice reports a timeout.\n```\n\nRelated (unchanged code, noted in the general comment): when the carried cap\nkills the job, `shellJobSettleNoticeText` reports only\n\"finished with exit code -9\" — the settle notice never names the timeout\n(`stopReason == 'timeout'` is not surfaced), so the model can misread its\nown cap firing as a crash."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:32504920",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the supervisor anchor breaks when a rewrite notice precedes the conversion text**\n\n`_isBackgroundHandback` (agent_loop_stuck_supervision.dart:80) classifies a\nresult as a background conversion only when its text **starts with**\n`stuckBackgroundHandbackSentence`. When the secret-shape interceptor\nrewrote the command, this branch returns `'$rewriteNotice\\n$text'`, so the\nresult starts with `[bash interceptor rewrote …]` and the anchor check\nfails — the stuck supervisor and the foreground budget ladder then do NOT\nclassify the call as a conversion, contradicting the module doc's claim\nthat the anchor guarantees classification.\n\nThe identical pattern exists in `_backgroundHandbackResult` (steering\nhand-back), so this is consistent with the status quo and needs no\nrework — but the clean fix is tiny: anchor on the FIRST occurrence\n(`text.contains(stuckBackgroundHandbackSentence)`) or make\n`_isBackgroundHandback` skip a leading `[bash interceptor rewrote …\\n`\nprefix. Worth a follow-up issue since the supervisor's conversion\nclassification drives the budget ladder."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:b9c97ee0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the kill-switch branch of `_shellToolDescription` is untested**\n\nThe conditional sentence is behavior the model consumes: armed →\n\"...still running after Ns is also moved to a background job\nautomatically...\"; `Duration.zero` → absent (\"the model must not be taught\nthe conversion it will never get\", per the comment). Neither branch has a\ntest — the new suite covers the runtime behavior but never asserts the\ndescription. Two cheap assertions close the gap:\n\n```dart\ntest('bash description teaches the conversion only when armed', () {\n  final armed = shellTool(env, jobs: registry,\n      autoBackgroundAfter: _conversionThreshold);\n  expect(armed.description, contains('moved to a background job'));\n  final killed = shellTool(env, jobs: registry,\n      autoBackgroundAfter: Duration.zero);\n  expect(killed.description, isNot(contains('moved to a background job')));\n});\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:6c5614c6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: consider an ordering guard (or a doc line) for `autoBackgroundSeconds` vs `toolLivenessSeconds`**\n\nThis factory already rejects `toolEscalateSeconds < toolLivenessSeconds`\n(the gh-1055 ordering invariant: a hint must not fire before the reminders\nit escalates from). The new key can produce a similar silent shadowing:\nwith `toolLivenessSeconds: 120, autoBackgroundSeconds: 60` (defaults 60/60\nmake this easy to hit by tuning one side), every foreground bash call on a\njob-capable host converts at 60s — the liveness reminders at 120s become a\ndead knob that can never fire. Not broken (the conversion supersedes the\nreminder and carries strictly more information), and AGENTS.md now\ndocuments the coexistence — but the established pattern in this very\nfunction is to validate cross-key ordering at boot. Either a\n`autoBackgroundSeconds >= toolLivenessSeconds` check (exempting `0`) or one\nexplicit doc sentence would keep the knob set honest."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:da16990c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: test file is still not `dart format` clean (unchanged since the last round)**\n\nRe-verified on the current head (6158753520, after the rework + main merge):\n\n```\n$ dart format --output=none --set-exit-if-changed test/tools/bash_auto_background_test.dart\nChanged test/tools/bash_auto_background_test.dart   # exit 1\n```\n\nThe formatter still wants exactly this change at lines 398–400:\n\n```dart\n// current (lines 398–400)\nfinal resultFuture = rewriteTool.execute({\n  'command': 'export GH_TOKEN=ghp_${'A' * 36}',\n}, null, null);\n\n// formatter wants\nfinal resultFuture = rewriteTool.execute(\n  {'command': 'export GH_TOKEN=ghp_${'A' * 36}'},\n  null,\n  null,\n);\n```\n\nAGENTS.md (\"Quality gates\") requires `dart analyze` + **dart format clean**;\nthe pre-commit hook self-heals exactly this, so it was evidently bypassed\nagain — the rework reformatted `builtin_tools_bash.dart` but left this file\nuntouched (it only appended a test at the end). One command fixes it:\n\n```\ndart format test/tools/bash_auto_background_test.dart\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:2118d8b9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the unconditional retry promise is still wrong for `timeout` > threshold (unchanged since the last round)**\n\nRe-verified on the current head: `_shellToolDescription` still states,\nunconditionally — *\"Timeouts you set are retried automatically\n(3 attempts total)\"* — while with auto-background armed (the default, 60s)\na call with `timeout: 120` no longer retries:\n\n1. it converts at 60s into a job that carries the 120s cap (verified:\n   `_autoBackgroundActive` requires `timeout > threshold`, and the cap rides\n   the job's exec options);\n2. when the cap fires, `_settledOutcome` throws the timeout `StateError` —\n   `_runForegroundBash`'s retry loop (`bashToolMaxRetries`) is not on the\n   job path, so there are **no harness retries**.\n\nTimeouts above 60s are exactly the caps models set most often, so the drift\nis on the common path. The rework moved this text into\n`_shellToolDescription` verbatim without amending the sentence.\n\nSuggested fix — extend the sentence added in this PR:\n\n```\n... A foreground command still running after ${autoBackgroundAfter.inSeconds}s\nis also moved to a background job automatically (never restarted): the call\nreturns the job id and you decide — wait for the completion notice, poll\nbash_job output, or stop the job and retry differently. Once converted, a\ncarried timeout is enforced by the job itself and is NOT auto-retried —\nretry the command yourself if the completion notice reports a timeout.\n```\n\nRelated (unchanged code, general-comment territory): when the carried cap\nkills the job, `shellJobSettleNoticeText`\n(`lib/src/tools/shell_jobs.dart:142`) reports only \"finished with exit code\n-9\" — the settle notice never names the timeout (`stopReason == 'timeout'`\nis not surfaced), so the model can misread its own cap firing as a crash."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:f6ba976f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the supervisor anchor still breaks when a rewrite notice precedes the conversion text (re-raised, unchanged)**\n\n`_isBackgroundHandback`\n(`lib/src/agent/agent_loop_stuck_supervision.dart:80`) classifies a result\nas a background conversion only when its text **starts with**\n`stuckBackgroundHandbackSentence`. On this line the conversion branch\nprepends the interceptor notice — `'$rewriteNotice\\n$text'` — so a\nrewritten command's result starts with\n`[bash interceptor rewrote …]` and the anchor check fails: the stuck\nsupervisor and the foreground budget ladder then do NOT classify the call\nas a conversion, contradicting `bash_auto_background.dart`'s doc claim that\nthe anchor \"guarantees\" classification.\n\nThe identical pattern exists in `_backgroundHandbackResult` (steering\nhand-back), so this is consistent with the status quo — but the fix is\ntiny: anchor on the first occurrence\n(`text.contains(stuckBackgroundHandbackSentence)`) or make\n`_isBackgroundHandback` skip a leading `[bash interceptor rewrote …\\n`\nprefix. Worth a follow-up issue, since the supervisor's conversion\nclassification drives the budget ladder."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:7de28d51",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the kill-switch branch of `_shellToolDescription` is still untested (re-raised, unchanged)**\n\nThe conditional sentence on this line is behavior the model consumes:\narmed → *\"...still running after Ns is also moved to a background job\nautomatically...\"*; `Duration.zero` → absent (\"the model must not be taught\nthe conversion it will never get\", per the doc comment). The suite asserts\nthe runtime kill switch (`threshold 0 is the kill switch — the classic path\nruns`) but never asserts either description branch. Two cheap assertions\nclose the gap:\n\n```dart\ntest('bash description teaches the conversion only when armed', () {\n  final armed = shellTool(env, jobs: registry,\n      autoBackgroundAfter: _conversionThreshold);\n  expect(armed.description, contains('moved to a background job'));\n  final killed = shellTool(env, jobs: registry,\n      autoBackgroundAfter: Duration.zero);\n  expect(killed.description, isNot(contains('moved to a background job')));\n});\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:2c7985a8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: consider an ordering guard (or a doc line) for `autoBackgroundSeconds` vs `toolLivenessSeconds` (re-raised, unchanged)**\n\nThis factory already rejects `toolEscalateSeconds < toolLivenessSeconds`\n(the gh-1055 ordering invariant, a few lines below this parse call: a hint\nmust not fire before the reminders it escalates from). The new key can\nproduce a similar silent shadowing: with `toolLivenessSeconds: 120,\nautoBackgroundSeconds: 60` (defaults 60/60 make this easy to hit by tuning\none side), every foreground bash call on a job-capable host converts at\n60s — the liveness reminders at 120s become a dead knob that can never\nfire. Not broken (the conversion supersedes the reminder and carries\nstrictly more information), and AGENTS.md now documents the coexistence —\nbut the established pattern in this very function is to validate cross-key\nordering at boot. Either an\n`autoBackgroundSeconds >= toolLivenessSeconds` check (exempting `0`) or one\nexplicit doc sentence would keep the knob set honest."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:d3225a9d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_FakeShellJob.stop()` — the `'stopped'` stop-reason assignment is dead code**\n\n`stop()` sets `_stopReason = 'stopped'` and then calls `complete(143)`,\nwhich immediately overwrites it:\n\n```dart\nFuture<void> stop() async {\n  _stopReason = 'stopped';   // dead — complete() overwrites it below\n  complete(143);             // complete(): _stopReason = reason;  // reason == null\n}\n```\n\n`complete()` assigns `_stopReason = reason` with `reason` defaulting to\nnull, so after `stop()` the fake reports `stopReason == null` instead of\n`'stopped'`. No current assertion reads it, but the fake's contract lies\nfor the next test that does. One-token fix:\n\n```dart\ncomplete(143, reason: 'stopped');\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:3c973cfe",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — `test/tools/bash_auto_background_test.dart:398` — test file not `dart format` clean\n\n**Fixed.** `dart format test/tools/bash_auto_background_test.dart` ran on the rework head; the call at (former) lines 398–400 is now formatted the way the formatter wants, and the file passes the gate:\n\n```bash\n$ dart format --output=none --set-exit-if-changed test/tools/bash_auto_background_test.dart\nFormatted 1 file (0 changed) in 0.01 seconds.   # exit 0\n```\n\nThe same sweep formatted every other file this pass touches (see also thread 6, which is the same finding re-raised)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:461e5b33",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — `lib/src/tools/builtin_tools_bash.dart:252` — unconditional retry promise wrong for `timeout` > threshold\n\n**Fixed, including the related settle-notice note.**\n\n1. **Description sentence amended** (`_shellToolDescription`, the gh-1835 conversion sentence) exactly along the suggested wording — the conversion sentence now ends:\n\n   > *Once converted, a carried timeout is enforced by the job itself and is NOT auto-retried — retry the command yourself if the completion notice reports a timeout.*\n\n   The classic-path promise (\"Timeouts you set are retried automatically (3 attempts total)\") stays — it is still true for the foreground path; the conversion sentence scopes its exception.\n\n2. **The related note is closed too**: `shellJobSettleNoticeText` (`lib/src/tools/shell_jobs.dart`) now surfaces the stop reason — when a job dies by its cap (`stopReason == 'timeout'`), the settle notice no longer reports only \"finished with exit code -9\" but adds:\n\n   > *Stop reason: timeout — the job's timeout cap of Ns fired; this is the cap the command was started with, not a crash. Retry the command yourself if you still need the result.*\n\n   Without this, the amended sentence's \"if the completion notice reports a timeout\" would have been unusable — the notice never named the timeout, so the model could misread its own cap firing as a crash. The cap length comes from the entry's recorded exec timeout (the honest gh-1444 source, never \"unknown seconds\").\n\nBoth behaviors are pinned by tests (see `## Test Coverage` in the fix summary): the description assertions in `test/tools/bash_auto_background_test.dart` (\"a converted carried timeout is NOT auto-retried\") and the settle-notice tests in `test/tools/shell_jobs_test.dart` (\"a cap-killed job (stopReason timeout) is not reported as a crash\" + the no-timeout-line negative)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:69d16c3c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — `lib/src/tools/builtin_tools_bash.dart:788` — supervisor anchor breaks when a rewrite notice precedes the conversion text\n\n**Fixed** (the reviewer's second suggested option — skip a leading notice prefix — chosen over `contains`, for the reason the thread itself supplies).\n\n`_isBackgroundHandback` (`lib/src/agent/agent_loop_stuck_supervision.dart`) now skips exactly ONE leading `[bash interceptor rewrote …]\\n` notice line before the `startsWith(stuckBackgroundHandbackSentence)` anchor check:\n\n```dart\nfinal _interceptorNoticeLine = RegExp(\n  r'^\\[bash interceptor rewrote [^\\n]*\\]\\n',\n);\n\nbool _isBackgroundHandback(ToolExecutionResult result) {\n  if (_resultOutputSize(result) <= 0) return false;\n  final text = _resultPartialText(result, max: 1 << 20).replaceFirst(\n    _interceptorNoticeLine,\n    '',\n  );\n  return text.startsWith(stuckBackgroundHandbackSentence);\n}\n```\n\nWhy prefix-skip and not `text.contains(...)`: the thread quotes the gh-1054 round-2 invariant — *a retry that merely QUOTES the hand-back text must not be audited as a conversion*. `contains` would break that protection (any mid-body quote would classify); the bounded prefix skip preserves it — the anchor stays positional, so ordinary output leading a quoted sentence still fails recognition.\n\nCoverage (both consumers of the predicate):\n- `test/agent/foreground_call_budget_test.dart` — \"a rewrite-notice-prefixed hand-back still classifies as a background conversion (gh-1835 review)\": budget ladder lands `ForegroundBudgetAction.background` for the prefixed result (before the fix it misclassified as an ordinary completion).\n- `test/agent/stuck_tool_test.dart` — \"a hand-back carrying a leading rewrite notice is still marked as a background conversion (gh-1835 review)\": the supervisor reclassifies with the `backgroundConvert` mark.\n- Negative guards kept green: the existing gh-1054 round-2 test (quoted mention ≠ conversion) and a new \"anchor sentence quoted mid-body … is still not a conversion under the rewrite-notice skip\" test.\n\nThe same pattern in `_backgroundHandbackResult` (steering hand-back) needs no producer-side change: the classifier fix covers both producers in one place."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:ab1eb051",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 4 — `lib/src/tools/builtin_tools_bash.dart:247` — kill-switch branch of `_shellToolDescription` untested\n\n**Fixed** — the suggested test now exists in `test/tools/bash_auto_background_test.dart`, group `bash tool description (gh-1835 review)`:\n\n```dart\ntest('teaches the conversion only when armed', () {\n  final armed = shellTool(env, jobs: registry,\n      autoBackgroundAfter: _conversionThreshold);\n  expect(armed.description, contains('moved to a background job automatically'));\n  final killed = shellTool(env, jobs: registry,\n      autoBackgroundAfter: Duration.zero);\n  expect(killed.description,\n      isNot(contains('moved to a background job automatically')));\n});\n```\n\nOne deliberate adjustment to the suggested assertion: the plain phrase `moved to a background job` also appears in the **pre-existing** soft-yield sentence (\"A foreground command that is still running when the user sends a message is moved to a background job untouched (never killed)…\"), which stays on the kill switch too. The test therefore anchors on the conversion sentence's unique phrase `moved to a background job automatically` — the literal suggested assertion would have failed for the wrong reason (the RED run proved exactly that). The intent is unchanged: armed teaches the conversion, `Duration.zero` does not."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:131ef0e1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: test file is not `dart format` clean**\n\n`dart format --output=none --set-exit-if-changed test/tools/bash_auto_background_test.dart`\nexits 1 — the call at line 398 needs reformatting:\n\n```dart\n// current (lines 398–400)\nfinal resultFuture = rewriteTool.execute({\n  'command': 'export GH_TOKEN=ghp_${'A' * 36}',\n}, null, null);\n\n// formatter wants\nfinal resultFuture = rewriteTool.execute(\n  {'command': 'export GH_TOKEN=ghp_${'A' * 36}'},\n  null,\n  null,\n);\n```\n\nAGENTS.md (\"Quality gate\" section) requires `dart analyze` + **dart format\nclean**; the pre-commit hook self-heals exactly this, so it was evidently\nbypassed. CI's static leg only runs `dart analyze`, so this won't go red in\nCI — but the rework summary claims format cleanliness was verified, and it\nholds only for `builtin_tools_bash.dart`, not for this file. One command\nfixes it: `dart format test/tools/bash_auto_background_test.dart`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:9aacbdd7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 6 — `test/tools/bash_auto_background_test.dart:398` — test file still not `dart format` clean (re-raised)\n\n**Fixed** — same finding as thread 1, re-raised after the previous rework round. This pass ran `dart format test/tools/bash_auto_background_test.dart` (and then formatted every other file it touched) and verified the gate:\n\n```bash\n$ dart format --output=none --set-exit-if-changed test/tools/bash_auto_background_test.dart\nFormatted 1 file (0 changed) in 0.01 seconds.   # exit 0\n```\n\nThe new tests this pass adds to the file were written format-clean from the start (the file is formatted as the last step before the verification run)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:e8a43770",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 7 — `lib/src/tools/builtin_tools_bash.dart:252` — unconditional retry promise still wrong for `timeout` > threshold (re-raised)\n\n**Fixed** — this is thread 2 re-raised after the previous round; see `thread_2.md` for the full fix. In short:\n\n1. `_shellToolDescription`'s conversion sentence now states the no-retry contract verbatim: *\"Once converted, a carried timeout is enforced by the job itself and is NOT auto-retried — retry the command yourself if the completion notice reports a timeout.\"*\n2. The thread's related note is closed as well: `shellJobSettleNoticeText` (`lib/src/tools/shell_jobs.dart`) surfaces `stopReason == 'timeout'` — a cap-killed job's settle notice names the timeout cap (\"Stop reason: timeout — … not a crash. Retry the command yourself…\") instead of the bare \"finished with exit code -9\".\n\nPinned by the RED→GREEN tests: `test/tools/bash_auto_background_test.dart` (\"a converted carried timeout is NOT auto-retried\" — failed before the description change, passes after) and `test/tools/shell_jobs_test.dart` (cap-killed notice names the timeout; normally-exited notice carries no timeout line)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:6dda6fd4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 8 — `lib/src/tools/builtin_tools_bash.dart:788` — supervisor anchor still breaks when a rewrite notice precedes the conversion text (re-raised)\n\n**Fixed** — this is thread 3 re-raised after the previous round; see `thread_3.md` for the full fix. `_isBackgroundHandback` now skips exactly one leading `[bash interceptor rewrote …]\\n` notice line before the positional `startsWith(stuckBackgroundHandbackSentence)` anchor, so the conversion result of a rewritten command is classified by both consumers again (the stuck supervisor's `backgroundConvert` reclassification and the foreground budget ladder's `ForegroundBudgetAction.background`), while the gh-1054 round-2 protection (a mid-body quote of the sentence is not a conversion) holds — guarded by the existing round-2 test plus a new mid-body-quote negative.\n\nThe module doc's claim that the anchor guarantees classification is true again for the rewrite-prefixed path."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:fe9c4372",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 9 — `lib/src/tools/builtin_tools_bash.dart:262` — kill-switch branch of `_shellToolDescription` still untested (re-raised)\n\n**Fixed** — this is thread 4 re-raised after the previous round; see `thread_4.md` for the full detail. The description-branch test now exists (\"teaches the conversion only when armed\"): armed → the conversion sentence's unique phrase `moved to a background job automatically` is present; `Duration.zero` → absent. One deliberate anchor adjustment vs the suggested assertion: the plain phrase also occurs in the pre-existing soft-yield sentence, so the test anchors on the conversion sentence's unique phrase (the literal suggestion was proven to fail for the wrong reason in the RED run)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:c1bcbe1d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 10 — `lib/src/cli/waiting_heartbeat.dart:140` — ordering guard (or doc line) re-raised\n\n**Fixed** — this is thread 5 re-raised after the previous round; see `thread_5.md` for the full reasoning. The doc-line option is implemented on the `autoBackgroundSeconds` field: it documents the accepted shadowing (an at-or-below-`toolLivenessSeconds` threshold makes the reminders a dead knob for bash on job-capable hosts) and states explicitly why this one is documented rather than boot-rejected, unlike the `toolEscalateSeconds`/`toolLivenessSeconds` ordering guard."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:90a354f4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 11 — `test/tools/bash_auto_background_test.dart:90` — `_FakeShellJob.stop()` dead stop-reason assignment\n\n**Fixed** with the one-token change the thread suggests:\n\n```dart\n@override\nFuture<void> stop() async {\n  complete(143, reason: 'stopped');\n}\n```\n\n`complete()` assigns `_stopReason = reason`, so the fake now honestly reports `stopReason == 'stopped'` after `stop()`.\n\nThe same-pattern sweep (the identical dead assignment existed in five more test fakes) fixed all of them too:\n\n- `test/tools/bash_password_flow_test.dart:64`\n- `test/tools/shell_jobs_test.dart:68`\n- `test/tools/bash_job_resolution_test.dart:62`\n- `test/tools/shell_job_command_label_test.dart:45`\n- `test/task/msg_slo_delivery_test.dart:117`\n\nNo production behavior changed — the fakes' `stop()` results are now what `ShellJob.stopReason`'s contract says they are, so the next test that asserts on it will not be lied to."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:937d8931",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Merge conflict with main — the silent branch update could not merge main (conflict). (head `5f67c4d0b764937c73628df8d2c0bccbbfdea2fd`) Rework re-queued (linked issue #1835 re-armed): resolve the conflicts and push — validation re-runs automatically. (approval latch kept — no re-review after the fix)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:4bbe2106",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-1835\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:1f3f7a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: gh-1835 implements the ticket faithfully — conversion (never restart) rides the existing soft-yield job path with an exactly-once `converted` race outcome, the notice rides only the tool result, settle notifications stay armed, `0` is a real kill switch, and no-capability hosts keep legacy behavior. Verified in this review: the new suite passes 16/16, `dart analyze --fatal-infos` is clean on all changed files, no blocking or CI findings, all five ACs are covered by tests.\n\n**Key Issues**:\n- ⚠️ `test/tools/bash_auto_background_test.dart` is not `dart format` clean (AGENTS.md gate; hook-only, CI won't catch it)\n- ⚠️ The bash description's unconditional \"timeouts are retried automatically\" promise is now false for `timeout` > threshold (carried job caps are not retried)\n- 💡 Supervisor hand-back anchor fails when a rewrite notice precedes the conversion text; description kill-switch branch untested; `autoBackgroundSeconds` can silently shadow `toolLivenessSeconds`; unchanged-code note: `shellJobSettleNoticeText` reports a cap-killed job as \"finished with exit code -9\" without naming the timeout (`lib/src/tools/shell_jobs.dart`)\n\n**Next Steps**:\n1. Run `dart format test/tools/bash_auto_background_test.dart` (or accept the rework-bot's next pass)\n2. Amend the description's retry sentence to state that converted jobs enforce their carried cap without auto-retries\n3. Optional: follow-up for the `_isBackgroundHandback` anchor and the settle-notice timeout wording\n\nNo blocking findings — approve with suggestions; the items above do not gate the merge."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:624557e1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: Re-review of the rework verified its two claims: the CRAP-gate decomposition is behavior-preserving (`shellTool` now CC 1; every new helper ≤ CC 6 at 100% scoped coverage, worst CRAP 6.00 vs the pinned 12.0; `dart analyze` clean; the new suite passes 16/16), and the CHANGELOG merge resolution kept both sides intact. No blocking findings; the two previously reported important issues remain in the tree.\n\n**Key Issues**:\n- ⚠️ `test/tools/bash_auto_background_test.dart` still not `dart format` clean (lines 398–400; AGENTS.md quality gate — hook-only, CI won't catch it)\n- ⚠️ The bash description still promises unconditional timeout auto-retries; with the default threshold armed, a `timeout` above 60s converts to a job whose carried cap fires with no harness retry\n- 💡 `_isBackgroundHandback`'s `startsWith` anchor misses rewrite-prefixed conversions; `shellJobSettleNoticeText` reports a cap-killed job as \"exit code -9\" without naming the timeout (both unchanged code); description kill-switch branch untested; `autoBackgroundSeconds` can shadow `toolLivenessSeconds`; test-fake `stop()` dead assignment\n\n**Next Steps**:\n1. `dart format test/tools/bash_auto_background_test.dart`\n2. Amend the description's retry sentence: a converted job's carried cap is NOT auto-retried\n3. Optional follow-ups: hand-back anchor fix, settle-notice timeout wording, description-branch test, ordering guard"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:vabhzw17eg2qu4m9-bit:2026-10-24:e6125b9d",
+      "kind": "comment",
+      "author": "vabhzw17eg2qu4m9-bit",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Follow-up hint (red pattern telemetry→coverage ping-pong across laps): the token-estimate trim must NOT remove test surface — coverage-gate red on 68513482 suggests a lap deleted coverage-bearing code/tests to satisfy the estimate. The surgical fix is in the TEST fixture only: the wiring scenario's request estimate crossing its budget is a fixture-calibration problem — give the fixture's model/agent a larger context window or smaller probe payload in the test setup (the over-window guard is doing its job), or trim only non-coverage PROSE (tool description wording), never tests. Coverage ratchet + telemetry fixture are both satisfiable simultaneously."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:d088b8cd",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 44d7b1916bfff3e12041f91976f7f4c3a9de905b — zombie 1/3 at 2026-10-24T16:23:49.359Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:6b35cccd",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1835 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40111359631\n🔴 red head 44d7b1916bfff3e12041f91976f7f4c3a9de905b — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:501c5a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "✅ Rework finished. `pr_approved` is sticky (approved once — never re-reviewed): the new head re-validates and merges directly."
+    },
+    {
+      "id": "pr_discussions.md:vabhzw17eg2qu4m9-bit:2026-10-24:656f57e7",
+      "kind": "comment",
+      "author": "vabhzw17eg2qu4m9-bit",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Diagnostic hint from the #1829/#1837 lane (same test failed there, round 1): `host_agent_wiring_test.dart` 'services.telemetry wires the sink in one field' is token-estimate sensitive — the fixture runs at an 8192-token budget, and if a change adds surface to tool descriptions or the child system prompt, the over-window guard refuses the request, so `requestStart`/`firstToken` never fire and the sink sees only run-lifecycle events. On #1837 the culprit was inlining the report-size contract into tool descriptions (fixed by single-sourcing it in prompts/task/report_size_contract.md, regenerated via gen_prompts.dart — now on main). This branch carries that main plus gh-1835's own additions: if the failing scenario's measured request estimate is near/over 8192t, that is the mechanism — trim the added description/prompt surface rather than touching the wiring expectation. Also noted from the run log: test/tools/bash_auto_background_test.dart:398 is not dart-format-clean (repeat reviewer finding) — one dart-format pass on the file clears it."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:5c8a5efa",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1835 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 9fb1940ed1ef736e0584248f287ea5070df403ea — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:f6bd0cce",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1835 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 3b02b75b968dbf46460b32f12cd4693dd0c88ed9 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:0cba8a07",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1835 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40121068249\n🔴 red head 685134829aa69740a5c4d4fc3988d202157fdcda — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    }
+  ]
+}
