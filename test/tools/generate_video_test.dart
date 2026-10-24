@@ -498,7 +498,7 @@ void main() {
       final endpoint = await resolveVideoGenerationEndpoint(
         config,
         mainBaseUrl: 'https://api.minimax.io/v1',
-        mainApiKey: '[REDACTED:Sensitive Value]',
+        mainApiKey: 'main-key',
       );
       expect(endpoint, isNotNull);
       expect(endpoint!.baseUrl, 'https://api.minimax.io/v1');
@@ -523,7 +523,7 @@ void main() {
         resolveVideoGenerationEndpoint(
           config,
           mainBaseUrl: 'https://api.other.example/v1',
-          mainApiKey: '[REDACTED:Sensitive Value]',
+          mainApiKey: 'main-key',
         ),
         throwsA(
           isA<MediaException>().having(
@@ -566,23 +566,15 @@ void main() {
           ),
         },
       );
-      // The named key does not resolve, but the main connection shares
-      // the host — its key is reused (image-resolver parity).
-      final endpoint = await resolveVideoGenerationEndpoint(
-        config,
-        mainBaseUrl: 'https://api.minimax.io/v1',
-        mainApiKey: '[REDACTED:Sensitive Value]',
-        resolveKey: (name) async => null,
-      );
-      expect(endpoint!.apiKey, 'main-key');
-
-      // Cross-host with an unresolvable named key: named, actionable
-      // error instead of a silent empty Authorization header.
+      // Image-resolver parity: a NAMED key wins — when it does not
+      // resolve there is no silent fallback (not even same-host), the
+      // resolver throws the named, actionable error instead of sending
+      // an empty Authorization header.
       expect(
         resolveVideoGenerationEndpoint(
           config,
-          mainBaseUrl: 'https://api.other.example/v1',
-          mainApiKey: '[REDACTED:Sensitive Value]',
+          mainBaseUrl: 'https://api.minimax.io/v1',
+          mainApiKey: 'main-key',
           resolveKey: (name) async => null,
         ),
         throwsA(
@@ -647,6 +639,60 @@ void main() {
       );
     });
 
+    test('poll budget matches OpenRouter job durations (review, gh-1844)',
+        () {
+      // The official docs: jobs run 30 s to several minutes, poll at a
+      // ~30 s interval. The MiniMax ~2-minute window must not transfer.
+      expect(OpenRouterVideoDialect.defaultMaxPolls, greaterThanOrEqualTo(30));
+      final first = OpenRouterVideoDialect.defaultPollDelay(0);
+      final last = OpenRouterVideoDialect.defaultPollDelay(1000);
+      expect(first.inSeconds, greaterThanOrEqualTo(15));
+      expect(first.inSeconds, lessThanOrEqualTo(30));
+      expect(last.inSeconds, lessThanOrEqualTo(30));
+    });
+
+    test('a job that never completes exhausts the poll window', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      var polls = 0;
+      final client = MockClient((request) async {
+        final path = request.url.path;
+        if (request.method == 'POST' && path == '/api/v1/videos') {
+          return http.Response(
+            '{"id": "job-9", "status": "queued", '
+            '"polling_url": "https://openrouter.ai/api/v1/videos/job-9"}',
+            202,
+          );
+        }
+        if (request.method == 'GET' && path == '/api/v1/videos/job-9') {
+          polls++;
+          return http.Response('{"id": "job-9", "status": "pending"}', 200);
+        }
+        return http.Response('not found', 404);
+      });
+
+      // Inject a tiny window so the exhaustion path is testable without
+      // real minutes of backoff.
+      final tiny = OpenRouterVideoDialect(
+        maxPolls: 4,
+        pollDelay: (_) => Duration.zero,
+      );
+      expect(
+        tiny.generate(
+          env: env,
+          endpoint: endpoint,
+          prompt: 'a cat',
+          client: client,
+        ),
+        throwsA(
+          isA<VideoException>().having(
+            (e) => e.toString(),
+            'message',
+            contains('did not finish within the polling window'),
+          ),
+        ),
+      );
+      expect(polls, 4);
+    });
     test('declares reference-image support', () {
       expect(dialect.supportsReferenceImages, isTrue);
     });

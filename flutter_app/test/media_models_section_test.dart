@@ -113,7 +113,9 @@ void main() {
       expect(saved.apiKeyName, 'OPENROUTER_API_KEY');
       // …but the row summarizes with the provider name, never the URL.
       expect(find.text('gpt-image-1 · OpenRouter'), findsOneWidget);
-      expect(find.text('Same as main connection'), findsNWidgets(5));
+      // gh-1844: the other five slots stay UNCONFIGURED — never an
+      // inherited "Same as main connection" fallback.
+      expect(find.text('Not configured'), findsNWidgets(5));
     });
 
     testWidgets('a custom provider is picked by name and saved as its URL', (

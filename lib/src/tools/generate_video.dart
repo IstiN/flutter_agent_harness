@@ -27,7 +27,7 @@ import '../cancel_token.dart';
 import '../env/execution_env.dart';
 import '../model_roles/models_config.dart';
 import '../types.dart';
-import 'generate_image.dart' show MediaException;
+import 'generate_image.dart' show MediaException, resolveMediaSlotKey;
 import 'media_reference_images.dart';
 
 final Random _videoNameRandom = Random.secure();
@@ -81,6 +81,12 @@ final class VideoEndpoint {
 /// `/v1/models` never lists video models and the chat endpoint can't
 /// generate video). The main connection serves the slot only through
 /// the EXPLICIT per-slot opt-in (`useMainConnection: true`).
+///
+/// gh-1844 review: key resolution matches the image resolver exactly —
+/// the slot's `apiKeyName` (or the main key, SAME-HOST reuse only) via
+/// [resolveKey]; an override whose key resolves to nothing throws the
+/// actionable `MediaException` instead of sending a bare
+/// empty-Authorization 401 to the provider.
 Future<VideoEndpoint?> resolveVideoGenerationEndpoint(
   ModelsConfig? modelsConfig, {
   String mainBaseUrl = '',
@@ -98,9 +104,24 @@ Future<VideoEndpoint?> resolveVideoGenerationEndpoint(
       apiKey: mainApiKey,
     );
   }
-  final key = override.apiKeyName == null
-      ? ''
-      : (await resolveKey?.call(override.apiKeyName!)) ?? '';
+  final key = await resolveMediaSlotKey(
+    override,
+    mainBaseUrl: mainBaseUrl,
+    mainApiKey: mainApiKey,
+    resolveKey: resolveKey,
+  );
+  if (key.isEmpty) {
+    final keyName = override.apiKeyName;
+    final named = (keyName == null || keyName.isEmpty)
+        ? ''
+        : ' (named "$keyName")';
+    throw MediaException(
+      'the videoGeneration slot has no resolvable API key$named '
+      '— a slot override never uses the main provider key across hosts; '
+      'set models.slots.videoGeneration.apiKeyName to a stored key name '
+      '(/key set <name>) or an environment variable',
+    );
+  }
   return VideoEndpoint(
     baseUrl: override.baseUrl,
     modelId: override.modelId,
@@ -554,9 +575,31 @@ final class OpenRouterVideoDialect extends VideoDialect {
   @override
   bool get supportsReferenceImages => true;
 
-  /// Poll budget: 20 polls with a linear 3→10 s backoff, matching the
-  /// MiniMax dialects' worst case (~2 minutes).
-  static const int maxPolls = 20;
+  /// Poll budget: OpenRouter video jobs run 30 seconds to several
+  /// minutes (per the official docs, which recommend a ~30 s polling
+  /// interval), far longer than the MiniMax dialects' ~2-minute worst
+  /// case — so this dialect gets its own larger window: 30 polls at a
+  /// 15→30 s linear backoff (~11 minutes worst case).
+  static const int defaultMaxPolls = 30;
+
+  /// The default backoff before poll attempt [attempt]
+  /// (15 s + attempt, capped at 30 s — the docs' ~30 s recommendation).
+  static Duration defaultPollDelay(int attempt) =>
+      Duration(seconds: (15 + attempt).clamp(15, 30));
+
+  /// The poll budget for one job (injectable for tests).
+  final int maxPolls;
+
+  /// The delay before poll attempt [attempt] (injectable for tests).
+  final Duration Function(int attempt) pollDelay;
+
+  /// Creates the dialect; [maxPolls]/[pollDelay] default to
+  /// [defaultMaxPolls]/[defaultPollDelay].
+  OpenRouterVideoDialect({
+    int? maxPolls,
+    Duration Function(int attempt)? pollDelay,
+  }) : maxPolls = maxPolls ?? defaultMaxPolls,
+       pollDelay = pollDelay ?? defaultPollDelay;
 
   @override
   Future<({String path, Uint8List bytes, String detail})> generate({
@@ -669,8 +712,7 @@ final class OpenRouterVideoDialect extends VideoDialect {
         );
       }
       await onProgress?.call();
-      final delaySeconds = (3 + i).clamp(3, 10);
-      await Future<void>.delayed(Duration(seconds: delaySeconds));
+      await Future<void>.delayed(pollDelay(i));
     }
     throw VideoException(
       'video job $jobId did not finish within the polling window',
