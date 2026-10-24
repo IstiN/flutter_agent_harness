@@ -11,6 +11,7 @@ Usage:
                           [--budget-pct 5] [--init-if-missing]
                           [--manifest-out FILE] [--forbid REGEX]...
                           [--vendored REGEX]... [--strict-vendored]
+  size_manifest.py validate <baseline.tsv>...               # floor hygiene
   size_manifest.py selftest
 
 `<artifact>` is a zip-family file (.zip/.ipa/.aab — uncompressed entry sizes
@@ -77,6 +78,18 @@ MIN_BYTES = 64 * 1024
 # A brand-new tracked line heavier than this share of the old first-party
 # TOTAL is re-growth, not rounding — fail it.
 NEW_LINE_SHARE = 0.05
+# Comitted-floor invariant (gh-1819 review): TOTAL - sum(rows) is the
+# artifact's sub-MIN_BYTES tail — ~0.5% of TOTAL on every healthy floor
+# (fa-extension 0.50%, fa-ios 0.58%, fa-macos-arm64 0.53%). A stale TOTAL
+# (the pre-diet value kept when #1227's mac size diet dropped the wasm
+# rows: a 94.35 MB / 44.8% phantom gap on fa-macos-arm64.tsv) silently
+# hands the first-party TOTAL gate ~+80% of headroom. `validate` + the
+# CI-wired committed-floor unit test pin the bound; the check() load path
+# enforces only the physically-impossible negative gap, because a
+# legitimately small-files-heavy artifact can carry a fat sub-floor tail
+# and a gate that reds its own --reseed output is worse than soft
+# headroom.
+BASELINE_MAX_SLACK = 0.02
 # A path segment of 20+ hex chars is a content/rev-hash directory: the
 # Flutter engine renderer artifacts (canvaskit/skwasm wasm) ship under
 # `canvaskit/<rev>/` and the rev changes on every 3.47.x patch drop
@@ -153,6 +166,85 @@ def fmt_table(manifest: "dict[str, int]") -> str:
     return "\n".join(lines)
 
 
+def baseline_consistency_error(baseline: "dict[str, int]",
+                               enforce_slack_bound: bool = False
+                               ) -> "str | None":
+    """TOTAL-vs-rows invariant; None when consistent, else the complaint.
+
+    gap = TOTAL - sum(rows) is the artifact's sub-MIN_BYTES tail: always
+    >= 0 for anything write_baseline produced, and a small share of
+    TOTAL on the shipped apps. enforce_slack_bound adds stale-TOTAL
+    detection (phantom gap beyond BASELINE_MAX_SLACK * TOTAL) — used by
+    `validate` and the committed-floor unit test, not by the load path.
+    """
+    total = baseline.get("TOTAL")
+    if total is None:
+        return "no TOTAL row"
+    rows = [(k, n) for k, n in baseline.items() if k != "TOTAL"]
+    rows_sum = sum(n for _, n in rows)
+    gap = total - rows_sum
+    if gap < 0:
+        return (f"negative slack: TOTAL ({total}) is smaller than the sum "
+                f"of its {len(rows)} rows ({rows_sum}) — stale or "
+                f"hand-edited TOTAL; a real artifact scan can never "
+                f"produce this")
+    if enforce_slack_bound and gap > BASELINE_MAX_SLACK * total:
+        return (f"stale TOTAL: exceeds the sum of its {len(rows)} rows "
+                f"({rows_sum}) by {gap} bytes "
+                f"({gap / max(total, 1) * 100:.2f}%, bound "
+                f"{BASELINE_MAX_SLACK:.0%}) — a diet that dropped rows "
+                f"but kept the pre-diet TOTAL hands the TOTAL gate "
+                f"silent headroom; reseed the floor")
+    return None
+
+
+def validate_baseline_file(path: Path) -> "list[str]":
+    """Mechanical hygiene for a committed floor (gh-1819 review).
+
+    Catches the hand-edit/transcription classes locally — malformed row,
+    row below the tracking floor, unsorted/duplicate paths, missing or
+    stale TOTAL (phantom gap) — so a manual diet edit reds the CI unit
+    test instead of silently softening the gate. Empty list = clean.
+    """
+    errors: "list[str]" = []
+    baseline: "dict[str, int]" = {}
+    prev_key = ""
+    total_seen = False
+    if not path.exists():
+        raise SystemExit(f"size_manifest: baseline not found: {path}")
+    for lineno, line in enumerate(path.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        size, sep, name = line.partition("\t")
+        if not sep or not name or not size.isdigit():
+            errors.append(f"{path}:{lineno}: malformed row, want "
+                          f"`<bytes>\\t<path>`: {line!r}")
+            continue
+        if name == "TOTAL":
+            if total_seen:
+                errors.append(f"{path}:{lineno}: duplicate TOTAL row")
+            total_seen = True
+            baseline["TOTAL"] = int(size)
+            continue
+        if int(size) < MIN_BYTES:
+            errors.append(f"{path}:{lineno}: row below the {MIN_BYTES}-byte "
+                          f"tracking floor: {name} ({size})")
+        key = normalize_revpaths(name)
+        if key <= prev_key:
+            errors.append(f"{path}:{lineno}: rows must be path-sorted and "
+                          f"unique ({key!r} not after {prev_key!r})")
+        prev_key = key
+        baseline[key] = max(baseline.get(key, 0), int(size))
+    if not total_seen:
+        errors.append(f"{path}: no TOTAL row")
+    else:
+        complaint = baseline_consistency_error(baseline,
+                                               enforce_slack_bound=True)
+        if complaint:
+            errors.append(f"{path}: {complaint}")
+    return errors
+
+
 def load_baseline(path: Path) -> "dict[str, int]":
     baseline = {}
     for line in path.read_text().splitlines():
@@ -164,6 +256,11 @@ def load_baseline(path: Path) -> "dict[str, int]":
             baseline[key] = int(size)
     if "TOTAL" not in baseline:
         raise SystemExit(f"size_manifest: baseline {path} has no TOTAL line")
+    complaint = baseline_consistency_error(baseline)
+    if complaint:
+        raise SystemExit(f"size_manifest: baseline {path}: {complaint} — "
+                         f"fix the floor or reseed it from a fresh "
+                         f"artifact (--reseed)")
     return baseline
 
 
@@ -440,6 +537,12 @@ def main() -> int:
 
     sub.add_parser("selftest", help="synthetic end-to-end assertions")
 
+    p_val = sub.add_parser("validate",
+                           help="committed-baseline hygiene check")
+    p_val.add_argument("baselines", nargs="+", type=Path,
+                       help="baseline .tsv files, e.g. "
+                            "scripts/size_budget/*.tsv")
+
     args = ap.parse_args()
     if args.cmd == "emit":
         manifest = build_manifest(args.artifact, args.min_bytes)
@@ -452,6 +555,19 @@ def main() -> int:
                      manifest_out=args.manifest_out, forbid=args.forbid,
                      vendored=args.vendored,
                      strict_vendored=args.strict_vendored)
+    if args.cmd == "validate":
+        problems = []
+        for b in args.baselines:
+            problems += validate_baseline_file(b)
+        for p in problems:
+            print(f"::error::size_manifest: {p}")
+        if problems:
+            print(f"size manifest validate: {len(problems)} problem(s) "
+                  f"across {len(args.baselines)} baseline(s)")
+            return 1
+        print(f"size manifest validate: "
+              f"{len(args.baselines)} baseline(s) OK")
+        return 0
     return selftest()
 
 
