@@ -431,6 +431,66 @@ void main() {
     });
   });
 
+  group('bash tool description (gh-1835 review)', () {
+    late _FakeBackgroundEnv env;
+    late ShellJobRegistry registry;
+
+    setUp(() {
+      env = _FakeBackgroundEnv(
+        MemoryExecutionEnv(cwd: '/work'),
+        execShell: const _EchoShell(),
+      );
+      registry = ShellJobRegistry(env: env);
+    });
+
+    test('teaches the conversion only when armed', () {
+      final armed = shellTool(
+        env,
+        jobs: registry,
+        autoBackgroundAfter: _conversionThreshold,
+      );
+      // The gh-1835 conversion sentence's unique phrase ("also moved …
+      // automatically") — the plain "moved to a background job" also
+      // appears in the pre-existing soft-yield sentence, which stays
+      // regardless of the threshold.
+      expect(
+        armed.description,
+        contains('moved to a background job automatically'),
+      );
+      final killed = shellTool(
+        env,
+        jobs: registry,
+        autoBackgroundAfter: Duration.zero,
+      );
+      // The kill switch must not teach the model the conversion it will
+      // never get.
+      expect(
+        killed.description,
+        isNot(contains('moved to a background job automatically')),
+      );
+    });
+
+    test('a converted carried timeout is NOT auto-retried', () {
+      final armed = shellTool(
+        env,
+        jobs: registry,
+        autoBackgroundAfter: _conversionThreshold,
+      );
+      // The conversion sentence states the cap's no-retry contract: once
+      // converted, the carried timeout is enforced by the job itself and
+      // the harness retry loop is gone — the model must retry itself when
+      // the completion notice reports a timeout.
+      expect(armed.description, contains('NOT auto-retried'));
+      expect(
+        armed.description,
+        contains('completion notice reports a timeout'),
+      );
+      // The classic-path retry promise stays (the foreground path still
+      // retries); the conversion sentence scopes its exception.
+      expect(armed.description, contains('retried automatically'));
+    });
+  });
+
   group('bash auto-background through the agent loop (AC1/AC2/AC3)', () {
     AssistantMessage makeAssistant({
       List<ContentBlock> content = const [],

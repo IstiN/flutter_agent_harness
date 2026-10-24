@@ -77,12 +77,25 @@ final class _SupervisedAttempt {
 /// ordinary output (an echo, a log tail, a grep over this repo), and a
 /// retry that merely QUOTES the hand-back text must not be audited as a
 /// conversion (gh-1054 review round 2).
-bool _isBackgroundHandback(ToolExecutionResult result) =>
-    _resultOutputSize(result) > 0 &&
-    _resultPartialText(
-      result,
-      max: 1 << 20,
-    ).startsWith(stuckBackgroundHandbackSentence);
+///
+/// gh-1835 review: the secret-shape interceptor (issue #1408) prepends its
+/// notice line to the hand-back text, so a converted call's result can
+/// start with `[bash interceptor rewrote …]` — exactly one leading notice
+/// line is skipped before the anchor check. The anchor stays POSITIONAL:
+/// a sentence quoted after ordinary output (or after the second notice
+/// line) still fails the recognition.
+final _interceptorNoticeLine = RegExp(
+  r'^\[bash interceptor rewrote [^\n]*\]\n',
+);
+
+bool _isBackgroundHandback(ToolExecutionResult result) {
+  if (_resultOutputSize(result) <= 0) return false;
+  final text = _resultPartialText(result, max: 1 << 20).replaceFirst(
+    _interceptorNoticeLine,
+    '',
+  );
+  return text.startsWith(stuckBackgroundHandbackSentence);
+}
 
 Duration? _declaredTimeoutOf(Map<String, dynamic> args, {String? toolName}) {
   // Only bash declares a seconds-based `timeout` arg. A stray `timeout`

@@ -501,6 +501,42 @@ void main() {
       );
       expect(result.isError, isTrue);
     });
+
+    test('a rewrite-notice-prefixed hand-back still classifies as a '
+        'background conversion (gh-1835 review)', () async {
+      // The secret-shape interceptor prepends its notice to the hand-back
+      // text (issue #1408): the anchor classification must skip that one
+      // leading notice line, or the budget ladder reads a real conversion
+      // as an ordinary completion (the stuck supervisor's reclassification
+      // uses the same predicate).
+      final run = _startBudgetLoop(
+        executor: (attempt, onUpdate, cancelToken) async {
+          final yieldToken = currentYieldToken();
+          if (yieldToken != null) await yieldToken.onCancel;
+          return ToolExecutionResult.text(
+            '[bash interceptor rewrote 1 secret-shaped value in the '
+            'command (GitHub Token) — the executed command carries the '
+            '[REDACTED:GitHub Token] marker.]\n'
+            '${stuckBackgroundHandbackText(
+              jobId: 'sh-rw1',
+              logPath: '/tmp/sh-rw1.log',
+              supervisorMoved: false,
+            )}',
+          );
+        },
+      );
+      final messages = await run.done;
+      final events = _budgetEvents(run).toList();
+      expect(events, hasLength(1));
+      expect(events.single.rung, ForegroundBudgetRung.force);
+      expect(events.single.action, ForegroundBudgetAction.background);
+      final text = _resultText(messages);
+      expect(text, contains(stuckBackgroundHandbackSentence));
+      final result = messages.whereType<ToolResultMessage>().firstWhere(
+        (m) => m.toolCallId == 'c1',
+      );
+      expect(result.isError, isFalse);
+    });
   });
 
   group('token propagation (UT-5/IT-5, AC5 + E3)', () {

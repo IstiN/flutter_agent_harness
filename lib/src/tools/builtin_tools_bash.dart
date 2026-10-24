@@ -259,7 +259,7 @@ String _shellToolDescription(Duration autoBackgroundAfter) =>
     'with bash_job. A foreground command that is still running when the '
     'user sends a message is moved to a background job untouched (never '
     'killed) so the user gets an answer right away.'
-    '${autoBackgroundAfter > Duration.zero ? ' A foreground command still running after ${autoBackgroundAfter.inSeconds}s is also moved to a background job automatically (never restarted): the call returns the job id and you decide — wait for the completion notice, poll bash_job output, or stop the job and retry differently.' : ''}';
+    '${autoBackgroundAfter > Duration.zero ? ' A foreground command still running after ${autoBackgroundAfter.inSeconds}s is also moved to a background job automatically (never restarted): the call returns the job id and you decide — wait for the completion notice, poll bash_job output, or stop the job and retry differently. Once converted, a carried timeout is enforced by the job itself and is NOT auto-retried — retry the command yourself if the completion notice reports a timeout.' : ''}';
 
 /// The `bash` tool call body ([shellTool]'s `execute`): parse the
 /// arguments, then dispatch — `background: true` fast path, the bare-sleep
