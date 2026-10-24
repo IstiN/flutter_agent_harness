@@ -252,16 +252,6 @@
       "model": ""
     }
   ],
-  "pr-1524": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T23:06:25Z",
-      "prompt": 10562,
-      "completion": 2985,
-      "total": 13547,
-      "model": ""
-    }
-  ],
   "pr-1520": [
     {
       "leg": "rework",
@@ -4736,6 +4726,17 @@
       "completion": 7982,
       "total": 59453,
       "cacheRead": 947456,
+      "model": "kimi-for-coding"
+    }
+  ],
+  "pr-1859": [
+    {
+      "leg": "review",
+      "at": "2026-10-24T23:06:37Z",
+      "prompt": 39710,
+      "completion": 12268,
+      "total": 51978,
+      "cacheRead": 1152415,
       "model": "kimi-for-coding"
     }
   ]
