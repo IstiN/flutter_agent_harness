@@ -102,24 +102,9 @@ fa's own Terminal-Bench results next to the official field. Official rows are re
 <!-- pbench-leaderboard:begin (gh-182) -->
 ## Leaderboard: ProgramBench (fa, self-reported ⭐)
 
-fa's results on [facebookresearch/ProgramBench](https://github.com/facebookresearch/ProgramBench) — rebuild a complete codebase from a compiled binary + its docs. Pass@1: one attempt per instance, measured by our own `bench-programbench` runs. Rows marked ⭐ are **self-reported** and never auto-submitted to the official ProgramBench registry (that stays a manual owner decision). Smoke rows are pipeline proofs, not leaderboard rows. Every row links its run; the per-instance detail carries the analysis artifacts (trajectories, eval logs).
+fa's results on [facebookresearch/ProgramBench](https://github.com/facebookresearch/ProgramBench) — rebuild a complete codebase from a compiled binary + its docs. Pass@1: one attempt per instance — the **Solved** column (solved/attempted) is the pass@1 fraction the official board ranks by; **Test-pass %** is the mean share of scored tests that passed per instance (a 100% test-pass row can still fail an instance). Measured by our own `bench-programbench` runs. Rows marked ⭐ are **self-reported** and never auto-submitted to the official ProgramBench registry (that stays a manual owner decision). Smoke rows are pipeline proofs, not leaderboard rows. Every row links its run; the per-instance detail carries the analysis artifacts (trajectories, eval logs).
 
-| Model | Mode | Solved | Score | Cost | Calls | Date | fa | Run |
-|---|---|---|---|---|---|---|---|---|
-| ⭐ kimi-for-coding | smoke — pipeline proof (2 of 201), not a leaderboard row | 2/2 | 98.0% | n/a | n/a | 2026-10-24 | `—` | [40023718645](https://github.com/IstiN/flutter_agent_harness/actions/runs/40023718645) |
-
-<details>
-<summary>Per-instance detail — kimi-for-coding · smoke — pipeline proof (2 of 201), not a leaderboard row · 2026-10-24</summary>
-
-| Instance | Score | Tests | Solved | Cost | Calls |
-|---|---|---|---|---|---|
-| cmatrix | 98.0% | 506 | ✅ | — | — |
-| zip-password-finder | 98.0% | 680 | ✅ | — | — |
-
-Task set: [facebookresearch/ProgramBench@895f65916bc5](https://github.com/facebookresearch/ProgramBench/tree/895f65916bc5) · programbench 1.2.5
-Artifacts: see the [run page](https://github.com/IstiN/flutter_agent_harness/actions/runs/40023718645) — the run's artifacts (trajectories, eval logs) ride it.
-
-</details>
+*No ProgramBench results recorded yet — the ledger (`bench/leaderboard/pbench_results.json`) fills on the first green `bench-programbench` run.*
 
 <sub>Source: `bench/leaderboard/pbench_results.json`, rendered by `bench/leaderboard/pbench_render.py` (gh-182).</sub>
 <!-- pbench-leaderboard:end (gh-182) -->

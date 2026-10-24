@@ -682,6 +682,11 @@ jobs:
         with:
           name: programbench-submission
           path: pbench-run/
+          # gh-182 review: the ledger links this artifact as the run's
+          # analysis surface (trajectories, eval logs, _stats) — it must
+          # outlive the default 90-day retention window, or README and
+          # fa1.dev accumulate dead links.
+          retention-days: 365
 
       # gh-182: resolve the submission artifact's download link (the run
       # dir: trajectories, eval logs, _stats — the post-run analysis
@@ -726,6 +731,16 @@ jobs:
           ARTIFACT_URL: ${{ steps.artifact.outputs.artifact_url }}
         run: |
           set -euo pipefail
+          # gh-182 review: the checkout pins the dispatch sha, so a
+          # re-run of an OLD green run would record from — and push
+          # back — the stale dispatch-time tree, silently dropping
+          # every row (and hand-backfill) landed since. Sync to the
+          # branch tip first: the record → render → push chain then
+          # appends on top of the current ledger, and a non-fast-
+          # forward history fails the step loudly instead of
+          # regressing the public board.
+          git fetch origin "${GITHUB_REF#refs/heads/}"
+          git rebase "FETCH_HEAD"
           record_args=(--ledger bench/leaderboard/pbench_results.json
             --stats-dir "pbench-run/$RUN_ID/_stats"
             --taskset-ref "${PB_REF:0:12}"

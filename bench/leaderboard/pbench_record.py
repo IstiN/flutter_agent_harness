@@ -7,7 +7,9 @@ provider/model, run id + artifact links, and the smoke|lite|full mode —
 the `fa_results.json` pattern applied to bench-programbench.yml. It is
 written by the bench-programbench.yml aggregate step on every GREEN run
 (summary verdict + Tier-0 `submit verify` passed) and by hand for
-backfills (the seed smoke row was recorded this way).
+backfills — always through this tool: a hand-written JSON row is how the
+first seed went wrong (gh-182 review), publishing numbers the tool cannot
+produce from any packaged `_stats/`.
 
 Usage:
 
@@ -102,9 +104,12 @@ def read_stats(stats_dir: Path) -> dict:
             entry["score_pct"] = round(100.0 * passed / len(tests), 1)
             entry["tests"] = len(tests)
             entry["solved"] = passed == len(tests)
-        if iid in costs:
+        # gh-182 review: hand-backfilled maps can carry nulls/strings —
+        # a malformed entry degrades to "no field" (rendered n/a), the
+        # tool must not die on a TypeError mid-record.
+        if iid in costs and isinstance(costs[iid], (int, float)):
             entry["cost_usd"] = round(float(costs[iid]), 4)
-        if iid in calls:
+        if iid in calls and isinstance(calls[iid], int):
             entry["calls"] = int(calls[iid])
         instances[iid] = entry
     return instances

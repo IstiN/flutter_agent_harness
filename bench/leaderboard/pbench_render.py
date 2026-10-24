@@ -29,10 +29,10 @@ marker, its mode, and its run link. Smoke rows are labeled "pipeline
 proof ... not a leaderboard row" and never sort above full runs — the
 full-run headline (pass@1 over the official set) always leads. Rows
 link the GitHub Actions run AND the analysis artifacts (trajectories,
-eval logs, _stats) so a run's value survives the CI artifact retention
-window and stays reachable for post-run error analysis; a row without
-resolved artifact ids falls back to an explicit "see the run page"
-link instead of a dead link.
+eval logs, _stats); the ledger itself is committed and outlives artifact
+expiry, while artifact links expire with GitHub's retention window —
+the renders say so, and a row without resolved artifact ids falls back
+to an explicit "see the run page" link instead of a dead link.
 
 Nothing here submits anything to the official ProgramBench registry.
 
@@ -111,7 +111,8 @@ def _cost(v) -> str:
 
 def render_row_table(rows: "list[dict]") -> "list[str]":
     lines = [
-        "| Model | Mode | Solved | Score | Cost | Calls | Date | fa | Run |",
+        "| Model | Mode | Solved | Test-pass % | Cost | Calls | Date | fa "
+        "| Run |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
@@ -158,7 +159,7 @@ def render_detail_blocks(rows: "list[dict]") -> "list[str]":
             f"<summary>Per-instance detail — {_cell(r.get('model', '—'))}"
             f" · {mode_label(r)} · {r.get('date', '—')}</summary>",
             "",
-            "| Instance | Score | Tests | Solved | Cost | Calls |",
+            "| Instance | Test-pass % | Tests | Solved | Cost | Calls |",
             "|---|---|---|---|---|---|",
         ]
         for iid, e in sorted((r.get("instances") or {}).items()):
@@ -172,10 +173,14 @@ def render_detail_blocks(rows: "list[dict]") -> "list[str]":
                  for a in r.get("artifact_urls") or [] if a.get("url")]
         if links:
             # The submission artifact carries the whole run dir:
-            # trajectories (fa session logs), eval logs, _stats.
+            # trajectories (fa session logs), eval logs, _stats. The
+            # artifact itself expires on GitHub's retention schedule —
+            # say so (gh-182 review); the run link stays.
             lines.append("Artifacts: " + " · ".join(links)
                          + " — the submission artifact holds the run "
-                           "dir: trajectories, eval logs, _stats.")
+                           "dir: trajectories, eval logs, _stats. "
+                           "(Artifact links expire with GitHub's "
+                           "retention window; the run page stays.)")
         else:
             for u in r.get("run_urls") or []:
                 lines.append(f"Artifacts: see the [run page]({u}) — the "
@@ -195,13 +200,16 @@ def render_section(ledger: dict) -> str:
         f"fa's results on [{UPSTREAM_REPO}]"
         f"(https://github.com/{UPSTREAM_REPO}) — rebuild a complete "
         "codebase from a compiled binary + its docs. Pass@1: one attempt "
-        "per instance, measured by our own `bench-programbench` runs. "
-        f"Rows marked {FA_MARKER} are **self-reported** and never "
-        "auto-submitted to the official ProgramBench registry (that "
-        "stays a manual owner decision). Smoke rows are pipeline proofs, "
-        "not leaderboard rows. Every row links its run; the per-instance "
-        "detail carries the analysis artifacts (trajectories, eval "
-        "logs).",
+        "per instance — the **Solved** column (solved/attempted) is the "
+        "pass@1 fraction the official board ranks by; **Test-pass %** is "
+        "the mean share of scored tests that passed per instance "
+        "(a 100% test-pass row can still fail an instance). Measured by "
+        f"our own `bench-programbench` runs. Rows marked {FA_MARKER} are "
+        "**self-reported** and never auto-submitted to the official "
+        "ProgramBench registry (that stays a manual owner decision). "
+        "Smoke rows are pipeline proofs, not leaderboard rows. Every row "
+        "links its run; the per-instance detail carries the analysis "
+        "artifacts (trajectories, eval logs).",
         "",
     ]
     if rows:
@@ -220,12 +228,28 @@ def render_section(ledger: dict) -> str:
 
 
 def splice_readme(text: str, section: str) -> str:
-    """Replace the marked region (or insert after the gh-1682 block)."""
+    """Replace the marked region (or insert after the gh-1682 block).
+
+    Raises ValueError on an orphaned begin marker — the generated
+    region is corrupt (merge-conflict remnant), and appending a second
+    block would dual-section the README (gh-182 review).
+    """
     begin = text.find(MARKER_BEGIN)
     end = text.find(MARKER_END)
     block = f"{MARKER_BEGIN}\n{section}{MARKER_END}\n"
+    if begin >= 0 and (end < 0 or end < begin):
+        raise ValueError(
+            "orphaned pbench-leaderboard:begin marker — the generated "
+            "region is corrupt (the end marker is missing or precedes "
+            "it); remove the stale block and re-run")
     if begin >= 0 and end > begin:
-        return text[:begin] + block + text[end + len(MARKER_END) + 1:]
+        # Consume only a single newline right after the end marker —
+        # never the character(s) that follow when the marker sits at
+        # EOF without its trailing newline (gh-182 review).
+        after = end + len(MARKER_END)
+        tail = (text[after + 1:] if text[after:after + 1] == "\n"
+                else text[after:])
+        return text[:begin] + block + tail
     anchor = text.find(AFTER_ANCHOR)
     if anchor >= 0:
         anchor_end = text.find("\n", anchor)
@@ -281,8 +305,11 @@ def render_html(ledger: dict) -> str:
         f"({e(FA_MARKER)} self-reported)</h1>",
         f"<p>Fa's results on <a href=\"https://github.com/{UPSTREAM_REPO}\">"
         f"{e(UPSTREAM_REPO)}</a> — rebuild a complete codebase from a "
-        "compiled binary + its docs. Pass@1: one attempt per instance, "
-        "measured by our own <code>bench-programbench</code> runs. Every "
+        "compiled binary + its docs. Pass@1: one attempt per instance — "
+        "the Solved column (solved/attempted) is the pass@1 fraction the "
+        "official board ranks by; Test-pass % is the mean share of "
+        "scored tests that passed per instance. Measured by our own "
+        "<code>bench-programbench</code> runs. Every "
         "row is self-reported and never auto-submitted to the official "
         "registry; smoke rows are pipeline proofs, not leaderboard rows. "
         "Each row links its run and the analysis artifacts (trajectories, "
@@ -291,7 +318,8 @@ def render_html(ledger: dict) -> str:
     if rows:
         parts.append("<table>")
         parts.append("<tr><th>Model</th><th>Mode</th><th>Solved</th>"
-                     "<th>Score</th><th>Cost</th><th>Calls</th><th>Date</th>"
+                     "<th>Test-pass %</th><th>Cost</th><th>Calls</th>"
+                     "<th>Date</th>"
                      "<th>fa</th><th>Run</th></tr>")
         for r in rows:
             fa = r.get("fa_version") or "—"
@@ -323,7 +351,8 @@ def render_html(ledger: dict) -> str:
                 f"<summary>Per-instance detail — {e(r.get('model', '—'))}"
                 f" · {e(mode_label(r))} · {e(r.get('date', '—'))}</summary>")
             parts.append("<table>")
-            parts.append("<tr><th>Instance</th><th>Score</th><th>Tests</th>"
+            parts.append("<tr><th>Instance</th><th>Test-pass %</th>"
+                         "<th>Tests</th>"
                          "<th>Solved</th><th>Cost</th><th>Calls</th></tr>")
             for iid, entry in sorted((r.get("instances") or {}).items()):
                 pct = (f"{entry['score_pct']}%"
@@ -346,15 +375,22 @@ def render_html(ledger: dict) -> str:
                 f'<p>Task set: <a href="{UPSTREAM_TREE_URL}/{e(ref)}">'
                 f"{e(UPSTREAM_REPO)}@{e(ref)}</a> · programbench "
                 f"{e(r.get('pbench_version', '—'))}</p>")
+            # gh-182 review: emit the run-page fallback when NO artifact
+            # link actually rendered — the Markdown condition — not when
+            # artifact_urls merely exists (a url-less hand-edited entry
+            # would otherwise leave the page linkless AND fallbackless).
+            artifact_links = 0
             for a in r.get("artifact_urls") or []:
                 if a.get("url"):
+                    artifact_links += 1
                     parts.append(
                         f'<p>Artifacts: <a href="{html.escape(a["url"])}">'
                         f'{e(a["label"])}</a> — the submission artifact '
                         "holds the run dir: trajectories, eval logs, "
-                        "_stats.</p>")
-            for u in r.get("run_urls") or []:
-                if not (r.get("artifact_urls") or []):
+                        "_stats. (Artifact links expire with GitHub's "
+                        "retention window.)</p>")
+            if not artifact_links:
+                for u in r.get("run_urls") or []:
                     parts.append(
                         f'<p>Artifacts: see the <a href="{html.escape(u)}">'
                         "run page</a> — the run's artifacts (trajectories, "
@@ -407,7 +443,14 @@ def main(argv=None) -> int:
     if args.readme:
         section = render_section(ledger)
         old = args.readme.read_text() if args.readme.exists() else ""
-        new = splice_readme(old, section)
+        try:
+            new = splice_readme(old, section)
+        except ValueError as exc:
+            # Corrupt generated region (orphaned marker) — a clean
+            # exit-2, never a duplicated section written behind the
+            # caller's back.
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
         if new != old:
             stale = True
             if not args.check:
