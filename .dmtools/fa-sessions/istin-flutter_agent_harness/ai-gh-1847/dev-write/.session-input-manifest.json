@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-24T22:16:38.717Z",
+  "ticketKey": "pr-1853",
+  "headSha": "cb0161f074f8030d5cfe845e056dff2ea7bf8abf",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:b5cad401d4dac677",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:bce6ae973f5a6354",
+      "size": 4475
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:1db427399bd023f8",
+      "size": 1716
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:59d10e9ec1f25eb2",
+      "size": 2698
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:f273ff36b20fe048",
+      "size": 892
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:ec3b7218c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:7b81c9a04738d0e4",
+      "size": 2445
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:950cac41378847ca",
+      "size": 2361
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6v8Epw",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "memory/note/n_1012_9c1a.md:16",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: stale note id in the body heading**\n\nThe note was renamed `n_1012_96d1` → `n_1012_9c1a` (frontmatter `id` and filename both recomputed), but the in-body heading still carries the old id:\n\n```markdown\n# Note: n_1012_96d1\n```\n\n`note_id_scheme_test.dart` strips `# Note:` blocks before hashing, so this doesn't break the hash invariant — but a reader resolving the note by its heading id will look for a file that no longer exists. Update the heading to `# Note: n_1012_9c1a` for consistency with the frontmatter and filename."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v8EsQ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/gh1847_release_extension_train_test.dart:85",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: line exceeds 80 cols — not `dart format` clean**\n\n```dart\nfinal buildAt = steps.indexOf('bash scripts/build_browser_ext.sh --with-app');\n```\n\nThis line is 84 chars, so the file is not `dart format`-clean (`dart format --set-exit-if-changed` reports it as changed). CI has no format gate (the pre-commit hook self-heals staged files), so nothing blocks on it — but running `dart format` on the file keeps it consistent with the rest of the tree:\n\n```dart\nfinal buildAt =\n    steps.indexOf('bash scripts/build_browser_ext.sh --with-app');\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:39e23ee6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: stale note id in the body heading**\n\nThe note was renamed `n_1012_96d1` → `n_1012_9c1a` (frontmatter `id` and filename both recomputed), but the in-body heading still carries the old id:\n\n```markdown\n# Note: n_1012_96d1\n```\n\n`note_id_scheme_test.dart` strips `# Note:` blocks before hashing, so this doesn't break the hash invariant — but a reader resolving the note by its heading id will look for a file that no longer exists. Update the heading to `# Note: n_1012_9c1a` for consistency with the frontmatter and filename."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:216190ae",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: line exceeds 80 cols — not `dart format` clean**\n\n```dart\nfinal buildAt = steps.indexOf('bash scripts/build_browser_ext.sh --with-app');\n```\n\nThis line is 84 chars, so the file is not `dart format`-clean (`dart format --set-exit-if-changed` reports it as changed). CI has no format gate (the pre-commit hook self-heals staged files), so nothing blocks on it — but running `dart format` on the file keeps it consistent with the rest of the tree:\n\n```dart\nfinal buildAt =\n    steps.indexOf('bash scripts/build_browser_ext.sh --with-app');\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:d0e8d9ee",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The tag train now builds `fa-extension.zip` itself via a new additive `build-extension` job in ci.yml, mirroring the `web-spa` leg (quality-gate keyed, `continue-on-error`, draft-first via `release_lazy_draft.sh`, gate-before-upload, provenance-owned publish), and `release-provenance` gains the ordering-only `needs` edge so the gh-1832 gate never races the attach. This kills the v1.0.637/v1.0.638 stranding class where a tag train landing after the once-daily build-macos leg published a draft without the extension.\n\n**Key Issues**: None blocking. All 71 tests pass (`gh1847_release_extension_train_test`, `ci_1684_extension_size_gate_test`, `release_required_assets_gate_test`, `release_empty_latest_guard_test`, `note_id_scheme_test`); `dart analyze` is clean; workflow YAML parses; actions are SHA-pinned with minimal `contents: write` permissions and no secret exposure. Two suggestion-level nits: the renamed memory note keeps the old id in its body heading, and one test line is not `dart format`-clean (no CI format gate, cosmetic).\n\n**Next Steps**:\n1. (optional) Fix the `# Note: n_1012_96d1` heading in `memory/note/n_1012_9c1a.md` to match the renamed id\n2. (optional) Run `dart format` on `test/gh1847_release_extension_train_test.dart`"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
