@@ -4882,5 +4882,16 @@
       "cacheRead": 4301312,
       "model": "glm-5.3-flash"
     }
+  ],
+  "pr-1837": [
+    {
+      "leg": "review",
+      "at": "2026-10-24T16:14:06Z",
+      "prompt": 195182,
+      "completion": 31179,
+      "total": 226361,
+      "cacheRead": 5442048,
+      "model": "kimi-for-coding"
+    }
   ]
 }
