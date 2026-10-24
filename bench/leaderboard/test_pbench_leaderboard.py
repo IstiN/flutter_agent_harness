@@ -579,20 +579,21 @@ class HomepageSectionTest(unittest.TestCase):
         self.assertNotIn("<table", block)
 
     def test_homepage_rows_link_every_number_to_its_proof(self):
-        doc = {"schema": 1, "results": [_ledger_row()]}
+        doc = {"schema": 1, "results": [_ledger_row()["results"][0]]}
         fa = {"schema": 1, "results": [{
             "dataset_version": "2.1", "model": "kimi-for-coding",
             "resolved": 300, "total": 445, "date": "2026-10-18",
             "run_urls": ["https://github.com/o/r/actions/runs/900"],
             "self_reported": True, "fa_version": "2fd100169e"}]}
         block = self._render(doc, fa)
-        rows = re.findall(r"<tr>(.*?)</tr>", block, re.S)[1:]  # skip thead
+        rows = [r for r in re.findall(r"<tr>(.*?)</tr>", block, re.S)
+                if "<td>" in r]  # data rows only, not the thead
         self.assertEqual(len(rows), 2)
         for row in rows:
             self.assertIn('href="https://github.com/o/r/actions/runs/',
                           row, "every result row links its run proof")
         # The metric cells are anchor-wrapped (the number IS the link).
-        self.assertIn('<a href="https://github.com/o/r/actions/runs/500">66.7%</a>',
+        self.assertIn('<a href="https://github.com/o/r/actions/runs/500">98.0%</a>',
                       block)
         self.assertIn('<a href="https://github.com/o/r/actions/runs/500">0/1</a>',
                       block)
@@ -616,8 +617,8 @@ class HomepageSectionTest(unittest.TestCase):
                         block.index("pipeline proof"))
 
     def test_homepage_handles_a_missing_fa_ledger_file(self):
-        block = pbench_render.render_homepage(
-            {"schema": 1, "results": []}, None)
+        doc = {"schema": 1, "results": [_ledger_row()["results"][0]]}
+        block = pbench_render.render_homepage(doc, None)
         self.assertIn("No Terminal-Bench", block)
 
     def test_homepage_splice_is_deterministic_and_main_wires_it(self):

@@ -164,11 +164,16 @@ jobs:
       # renderer, no network — every run/artifact link is already an
       # absolute URL in the ledger. Deploy-time product (gh-1476): never
       # committed, generated straight into the deploy root.
+      # gh-182 R2 (review round 2): the homepage Benchmarks section is
+      # spliced from the same ledgers into the BUILT index.html (the
+      # source page carries the markers around a placeholder); the
+      # Terminal-Bench self-reported rows come from the gh-1682 ledger.
       - name: Render ProgramBench results page (gh-182)
         run: |
           python3 bench/leaderboard/pbench_render.py \
             --ledger bench/leaderboard/pbench_results.json \
-            --html build/pages/root/programbench.html
+            --html build/pages/root/programbench.html \
+            --homepage build/pages/root/index.html
 
       - name: Cache-bust static assets
         if: steps.web_build.outcome == 'success'

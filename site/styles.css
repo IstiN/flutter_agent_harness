@@ -565,6 +565,23 @@ section {
   max-width: 76ch;
 }
 
+/* ── Benchmarks (gh-182): the section body renders at deploy from the
+   committed ledgers (bench/leaderboard/pbench_render.py --homepage) —
+   every number in a row links its run/artifact proof. ──────────────── */
+.benchmarks h3 {
+  margin: 26px 0 12px;
+  font-size: 1.02rem;
+}
+.benchmarks .matrix { font-size: 0.84rem; }
+.benchmarks .matrix th, .benchmarks .matrix td { padding: 10px 14px; }
+.benchmarks sub {
+  display: block;
+  margin-top: 14px;
+  font-size: 0.78rem;
+  line-height: 1.7;
+  color: var(--dim);
+}
+
 /* ── Footer ──────────────────────────────────────────────────────────── */
 .footer {
   max-width: var(--max);
