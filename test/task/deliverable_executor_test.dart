@@ -21,6 +21,7 @@ const _secret = 'sk-live-canary-0123456789';
 AssistantMessage _assistant({
   List<ContentBlock> content = const [],
   StopReason stopReason = StopReason.stop,
+  String? errorMessage,
 }) {
   return AssistantMessage(
     content: content,
@@ -29,6 +30,7 @@ AssistantMessage _assistant({
     model: 'test-model',
     usage: Usage.zero,
     stopReason: stopReason,
+    errorMessage: errorMessage,
     timestamp: DateTime.utc(2026),
   );
 }
@@ -41,6 +43,21 @@ List<AssistantMessageEvent> _textTurn(String text) {
     TextStartEvent(contentIndex: 0, partial: empty),
     TextDeltaEvent(contentIndex: 0, delta: text, partial: partial),
     DoneEvent(reason: StopReason.stop, message: partial),
+  ];
+}
+
+/// A scripted provider-error turn (5xx-class) that hard-fails the run.
+List<AssistantMessageEvent> _errorTurn(String errorMessage) {
+  final empty = _assistant();
+  return [
+    StartEvent(partial: empty),
+    ErrorEvent(
+      reason: StopReason.error,
+      error: _assistant(
+        stopReason: StopReason.error,
+        errorMessage: errorMessage,
+      ),
+    ),
   ];
 }
 
@@ -307,7 +324,44 @@ void main() {
         );
         expect(result.stubFallback, isNotNull);
         expect(result.stubFallback, contains('output token limit'));
-        expect(result.stubFallback, contains(h.manager['Explorer']!.sessionId));
+        // The note references the stable CHILD ID, not the session path —
+        // the real session path attaches asynchronously with the first
+        // transcript flush, so at result-build time it is usually still
+        // the placeholder (review).
+        expect(
+          result.stubFallback,
+          contains('child id: ${h.manager['Explorer']!.id}'),
+        );
+      },
+    );
+
+    test(
+      'a provider-error failure still carries salvaged pointers (review)',
+      () async {
+        final h = await _harness(
+          rules: [
+            (
+              match: 'report job',
+              turns: [
+                // The truncated generation: the reply call never executes.
+                _toolTurn('reply', {
+                  'message': 'salvageable research body ' * 20,
+                }, reason: StopReason.length),
+                // Next turn the provider dies hard.
+                _errorTurn('upstream 503'),
+              ],
+            ),
+          ],
+          maxReplyChars: 150,
+        );
+        final result = await _spawnOne(h, 'Explorer', 'report job');
+        expect(result.status, TaskSpawnStatus.failed);
+        // The salvaged partial artifact rides the FAILED completion too —
+        // capture happened mid-run; the failure must not swallow it.
+        expect(result.deliverables, hasLength(1));
+        expect(result.deliverables.single.status, AgentArtifactStatus.partial);
+        // And the tier-2 note names the transcript (no reply was usable).
+        expect(result.stubFallback, isNotNull);
       },
     );
 

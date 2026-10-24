@@ -656,6 +656,7 @@ final class AgentLoopConfig {
       reportedOrphanKeys: reportedOrphanKeys,
       budgetLineProvider: budgetLineProvider,
       imageCapLatches: imageCapLatches,
+      onTruncatedToolCall: onTruncatedToolCall,
     );
   }
 }

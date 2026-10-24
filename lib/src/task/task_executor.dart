@@ -992,7 +992,6 @@ final class TaskExecutor {
     );
     final stubFallback = _stubFallbackNote(
       handle,
-      failed: failed,
       reply: reply,
       deliverables: deliverables,
     );
@@ -1031,24 +1030,26 @@ final class TaskExecutor {
   }
 
   /// Tier-2 fallback note (issue #1829, AC11): when a deliverable call was
-  /// recorded truncated and the child still finished without a usable
-  /// reply, the result names the transcript pointer honestly instead of a
-  /// silent stub. Null when the child replied or nothing was truncated.
+  /// recorded truncated and the child finished WITHOUT a usable reply —
+  /// completed-without-reply, schema-invalid, or a hard failure — the
+  /// result names the transcript honestly instead of a silent stub. The
+  /// note references the CHILD ID (stable, resolvable via the registry /
+  /// task_status) rather than [SubagentHandle.sessionId]: the real session
+  /// path attaches asynchronously with the first transcript flush, so at
+  /// result-build time it is usually still the placeholder.
   String? _stubFallbackNote(
     SubagentHandle? handle, {
-    required bool failed,
     required String? reply,
     required List<DeliverableRecord> deliverables,
   }) {
     if (handle == null ||
         !handle.hadTruncatedDeliverable ||
-        failed ||
         (reply != null && reply.trim().isNotEmpty)) {
       return null;
     }
     return 'the child attempted a report that was cut off by the output '
-        'token limit and finished without a usable reply; its '
-        'transcript is at ${handle.sessionId}'
+        'token limit and finished without a usable reply; its transcript '
+        'is recoverable from the child session (child id: ${handle.id})'
         '${deliverables.isEmpty ? ' — no salvageable report text was captured' : ''}';
   }
 
@@ -1655,6 +1656,19 @@ final class TaskExecutor {
     String error, {
     bool aborted = false,
   }) {
+    // Capture happens mid-run: a failed run can already carry salvaged
+    // deliverable artifacts and an explicit reply (issue #1829 review —
+    // a failed completion is still a completion; the pointers ride it).
+    final handle = subagentManager?[id];
+    final reply = handle?.lastReply;
+    final deliverables = List<DeliverableRecord>.of(
+      handle?.deliverables ?? const [],
+    );
+    final stubFallback = _stubFallbackNote(
+      handle,
+      reply: reply,
+      deliverables: deliverables,
+    );
     return TaskSingleResult(
       index: index,
       id: id,
@@ -1668,6 +1682,9 @@ final class TaskExecutor {
       requests: 0,
       model: model().id,
       error: error,
+      reply: reply,
+      deliverables: deliverables,
+      stubFallback: stubFallback,
     );
   }
 

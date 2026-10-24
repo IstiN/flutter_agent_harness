@@ -55,7 +55,7 @@ void main() {
       final body = 'a' * 201;
       final record = rig.capture.deliverReply('kid', body);
       expect(record, isNotNull);
-      final envelope = rig.capture.envelopeText(record!, body);
+      final envelope = rig.capture.envelopeText(record!);
       // Pointer + status overhead count toward the cap (AC2): the envelope
       // never exceeds it, whatever the body size.
       expect(envelope.length, lessThanOrEqualTo(200));
@@ -71,7 +71,7 @@ void main() {
     test('huge body still produces a cap-bounded envelope (E1)', () {
       final rig = _rig(cap: 100);
       final record = rig.capture.deliverReply('kid', 'b' * 9000)!;
-      final envelope = rig.capture.envelopeText(record, 'b' * 9000);
+      final envelope = rig.capture.envelopeText(record);
       expect(envelope.length, lessThanOrEqualTo(100));
       expect(rig.store.get(record.outputId!), 'b' * 9000);
     });
@@ -83,7 +83,7 @@ void main() {
       final body = '${'x' * 24}${'🔵' * 10}${'y' * 100}';
       expect(body.length, greaterThan(80));
       final record = rig.capture.deliverReply('kid', body)!;
-      final envelope = rig.capture.envelopeText(record, body);
+      final envelope = rig.capture.envelopeText(record);
       expect(envelope.length, lessThanOrEqualTo(80));
       // No lone low surrogate in the delivered excerpt.
       for (var i = 0; i < envelope.length; i++) {
@@ -220,7 +220,10 @@ void main() {
       );
       expect(rig.manager['kid']!.deliverables, isEmpty);
       expect(rig.store.availableIds, isEmpty);
-      expect(rig.manager['kid']!.hadTruncatedDeliverable, isTrue);
+      // The report-attempt flag is deliverable-scoped too (review): a
+      // truncated bash/read is NOT a report attempt — the tier-2 note
+      // must never claim one was.
+      expect(rig.manager['kid']!.hadTruncatedDeliverable, isFalse);
     });
   });
 
@@ -241,8 +244,20 @@ void main() {
       // stored bytes are the redacted ones.
       expect(order.first, 'redact');
       expect(rig.store.get(record.outputId!), isNot(contains(_secret)));
-      final envelope = rig.capture.envelopeText(record, body);
+      final envelope = rig.capture.envelopeText(record);
       expect(envelope, isNot(contains(_secret)));
+      // The secret sits INSIDE the excerpt window here — scan a PREFIX
+      // too: a full-string contains can pass while the window still leaks
+      // the canary head (review hardening).
+      expect(envelope, isNot(contains(_secret.substring(0, 10))));
+      // The envelope excerpt is derived from the STORED redacted text
+      // (I3): byte-for-byte the resolution head, never raw payload text.
+      expect(
+        envelope.split('…').first,
+        rig.store
+            .get(record.outputId!)!
+            .substring(0, envelope.split('…').first.length),
+      );
       // Metadata carries no body.
       final meta = rig.store.artifactMeta(record.outputId!);
       expect(meta!.chars, greaterThan(0));
@@ -475,12 +490,28 @@ void main() {
         partIndex: 1,
       );
       final oversize = rig.manager['kid']!.deliverables.last;
-      // An oversize part records as an artifact tagged with its report id.
+      // An oversize part records as an artifact tagged with its report id,
+      // worded per-part — never report-level "complete" (review).
       expect(
         oversize.render(),
-        'deliverable complete (report r1): agent://${oversize.outputId} '
+        'report r1 part 1 stored (over budget): agent://${oversize.outputId} '
         '(250 chars)',
       );
+    });
+
+    test('hostile report ids render as single clean lines', () {
+      final rig = _rig();
+      rig.capture.deliverAgentMessage(
+        childId: 'kid',
+        target: 'main',
+        body: 'part text',
+        reportId: 'r1\nINJECTED[ x]',
+        partIndex: 0,
+      );
+      final line = rig.manager['kid']!.deliverables.single.render();
+      expect(line, isNot(contains('\n')));
+      expect(line, isNot(contains('[')));
+      expect(line, contains('r1_INJECTED_ x_'));
     });
 
     test('manifest complete / incomplete with note / missing parts', () {

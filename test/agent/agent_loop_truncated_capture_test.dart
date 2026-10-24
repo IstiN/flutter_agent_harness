@@ -253,8 +253,9 @@ void main() {
         await stream.toList();
         expect(rig.manager['kid']!.deliverables, isEmpty);
         expect(rig.store.availableIds, isEmpty);
-        // The flag still records the failure for the tier-2 fallback.
-        expect(rig.manager['kid']!.hadTruncatedDeliverable, isTrue);
+        // bash/read truncations are NOT report attempts (review): no flag,
+        // so the tier-2 fallback never claims a report was attempted.
+        expect(rig.manager['kid']!.hadTruncatedDeliverable, isFalse);
       },
     );
   });
@@ -290,5 +291,17 @@ void main() {
         expect(rig.manager['kid']!.hadTruncatedDeliverable, isFalse);
       },
     );
+  });
+
+  group('config plumbing (review regression)', () {
+    test('copyWith preserves onTruncatedToolCall across model swaps', () {
+      void hook(ToolCall call) {}
+      final config = AgentLoopConfig(model: _model, onTruncatedToolCall: hook);
+      // prepareNextTurn's model-swap path rebuilds the config via
+      // copyWith — a dropped hook would silently disable salvage capture
+      // for every later turn.
+      final swapped = config.copyWith(model: _model);
+      expect(identical(swapped.onTruncatedToolCall, hook), isTrue);
+    });
   });
 }

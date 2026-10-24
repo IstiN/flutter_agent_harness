@@ -540,7 +540,7 @@ AgentTool _replyTool(
           if (record != null) {
             // Core flow A: the envelope — bounded excerpt + pointer +
             // explicit completeness — replaces the bare body.
-            final envelope = deliverable.envelopeText(record, message);
+            final envelope = deliverable.envelopeText(record);
             await manager.recordReply(id, envelope);
             return ToolExecutionResult.text(
               'reply delivered to the parent via artifact '
@@ -733,7 +733,7 @@ String? _validateMessageSend(
     // in-budget chunk record is pure ledger bookkeeping.
     if (record != null && record.pointer != null) {
       return (
-        deliverable.envelopeText(record, message),
+        deliverable.envelopeText(record),
         ' Report body stored as agent://${record.outputId} '
             '(${record.chars} chars).',
         null,

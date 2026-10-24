@@ -28,6 +28,7 @@
 /// (I6/E11).
 library;
 
+import '../prompts/prompts.g.dart' show taskReportSizeContractPrompt;
 import '../types.dart' show ToolCall;
 import 'output_manager.dart';
 import 'subagent_manager.dart';
@@ -55,9 +56,9 @@ final class DeliverableRecord {
     required this.outputId,
     required this.status,
     this.reportId,
+    this.partIndex,
     required this.chars,
   }) : kind = DeliverableRecordKind.artifact,
-       partIndex = null,
        partCount = null,
        missingParts = const [],
        verdictNote = '',
@@ -142,10 +143,18 @@ final class DeliverableRecord {
     DeliverableRecordKind.manifest => _renderManifest(),
   };
 
-  String _renderArtifact() =>
-      'deliverable ${status!.name}'
-      '${reportId == null ? '' : ' (report $reportId)'}: '
-      'agent://$outputId ($chars chars)';
+  /// Per-part artifacts say "part N stored", never report-level
+  /// "complete" — a parent skimming result lines must not read one
+  /// stored part as "report complete" (review, issue #1829).
+  String _renderArtifact() {
+    if (partIndex != null) {
+      return 'report ${reportId!} part ${partIndex!} stored '
+          '(over budget): agent://$outputId ($chars chars)';
+    }
+    return 'deliverable ${status!.name}'
+        '${reportId == null ? '' : ' (report $reportId)'}: '
+        'agent://$outputId ($chars chars)';
+  }
 
   String _renderChunk() =>
       'report ${reportId!} part ${partIndex!}: '
@@ -196,22 +205,13 @@ final class _ChunkLedger {
 /// The child-side chunk contract published through the `reply` /
 /// `agent_message` tool descriptions and the child system prompt (Core
 /// flow C, AC5). [budget] is the live per-message character cap.
+///
+/// The LM-facing text lives in `prompts/task/report_size_contract.md`
+/// (AGENTS.md: prompts live outside Dart code; edits regenerate
+/// `prompts.g.dart` and are drift-gated by `prompts_sync_test`). This
+/// wrapper is the single substitution seam for the dynamic budget.
 String deliverableChunkContract(int budget) =>
-    'REPORT SIZE CONTRACT — the '
-    'per-message delivery budget for report text is $budget characters. '
-    'Reports above the budget are NOT lost (the harness stores them and '
-    'delivers an excerpt plus an agent:// artifact pointer), but do not '
-    'rely on that: split a long report body into ordered agent_message '
-    'parts to the parent, each well below the budget, carrying a '
-    'report_id, a 0-based part_index, and more=true on every part except '
-    'the last (more=false). Never repeat earlier parts. Do NOT send one '
-    'near-the-output-limit response to probe the limit — a truncated tool '
-    'call fails unexecuted and only salvageable text is recovered. After '
-    'the last part, send a short final reply whose message names the '
-    'report_id and sets report_parts to the total part count — a manifest '
-    'pointing at the already delivered parts, not a second copy of the '
-    'report. Missing, duplicated, or out-of-order parts make the manifest '
-    'incomplete; the parent will not reconstruct missing text.';
+    taskReportSizeContractPrompt.replaceAll('{{budget}}', '$budget');
 
 /// Harness-owned capture + redacting artifact writer + envelope builder
 /// for one session (issue #1829). Bound to the session's existing
@@ -260,6 +260,7 @@ final class DeliverableCapture {
     required String redacted,
     required AgentArtifactStatus status,
     String? reportId,
+    int? partIndex,
     String idBase = 'report',
     bool checkEnvelopeFit = true,
   }) {
@@ -289,6 +290,7 @@ final class DeliverableCapture {
       outputId: id,
       status: status,
       reportId: reportId,
+      partIndex: partIndex,
       chars: redacted.length,
     );
   }
@@ -320,10 +322,11 @@ final class DeliverableCapture {
     String? reportId,
     int? reportParts,
   }) {
+    final cleanReportId = _cleanReportId(reportId);
     _recordManifest(
       childId,
       body,
-      reportId: reportId,
+      reportId: cleanReportId,
       reportParts: reportParts,
     );
     if (body.length <= cap) return null;
@@ -332,7 +335,7 @@ final class DeliverableCapture {
       childId: childId,
       redacted: redacted,
       status: AgentArtifactStatus.complete,
-      reportId: reportId,
+      reportId: cleanReportId,
     );
     manager[childId]?.deliverables.add(record);
     return record;
@@ -352,12 +355,13 @@ final class DeliverableCapture {
     int? partIndex,
   }) {
     if (!_isSameSession(target)) return null;
-    if (reportId != null && partIndex != null) {
-      _observeChunk(childId, reportId, partIndex);
+    final cleanReportId = _cleanReportId(reportId);
+    if (cleanReportId != null && partIndex != null) {
+      _observeChunk(childId, cleanReportId, partIndex);
       if (body.length <= cap) {
         final record = DeliverableRecord.chunk(
           childId: childId,
-          reportId: reportId,
+          reportId: cleanReportId,
           partIndex: partIndex,
           chars: body.length,
         );
@@ -371,7 +375,8 @@ final class DeliverableCapture {
       childId: childId,
       redacted: redacted,
       status: AgentArtifactStatus.complete,
-      reportId: reportId,
+      reportId: cleanReportId,
+      partIndex: partIndex,
       idBase: 'chunk',
     );
     manager[childId]?.deliverables.add(record);
@@ -383,9 +388,14 @@ final class DeliverableCapture {
   /// partial artifact when the call is a deliverable and its `message`
   /// field holds usable text (E2: empty/absent/malformed fields create no
   /// artifact). The failure itself always stands.
+  ///
+  /// AC11 scope: [SubagentHandle.hadTruncatedDeliverable] means "an
+  /// output-truncated DELIVERABLE call was recorded" — the flag is set
+  /// only past the allowlist check, so a truncated `bash`/`read` call
+  /// never produces a report-attempt claim in the tier-2 note.
   void captureSalvaged(String childId, ToolCall call) {
-    manager[childId]?.hadTruncatedDeliverable = true;
     if (!deliverableToolNames.contains(call.name)) return;
+    manager[childId]?.hadTruncatedDeliverable = true;
     final text = call.arguments['message'];
     if (text is! String || text.trim().isEmpty) return;
     try {
@@ -396,9 +406,11 @@ final class DeliverableCapture {
         childId: childId,
         redacted: redacted,
         status: AgentArtifactStatus.partial,
-        reportId: call.arguments['report_id'] is String
-            ? call.arguments['report_id'] as String
-            : null,
+        reportId: _cleanReportId(
+          call.arguments['report_id'] is String
+              ? call.arguments['report_id'] as String
+              : null,
+        ),
         checkEnvelopeFit: false,
       );
       manager[childId]?.deliverables.add(record);
@@ -409,6 +421,12 @@ final class DeliverableCapture {
       // .hadTruncatedDeliverable] flag drives the tier-2 fallback.
     }
   }
+
+  /// Child-selected ids are interpolated into parent-visible render lines
+  /// and ledger keys — strip structural characters so a hostile-looking id
+  /// cannot inject synthetic lines (review hygiene, issue #1829).
+  String? _cleanReportId(String? reportId) =>
+      reportId?.replaceAll(RegExp(r'[\r\n\[\]]'), '_');
 
   /// Whether [target] resolves INSIDE this session's shared store: a local
   /// child handle or the parent inbox. Cross-instance mailboxes (`/`),
@@ -475,17 +493,23 @@ final class DeliverableCapture {
   }
 
   /// The parent-visible envelope for a stored deliverable (Core flow A):
-  /// bounded redacted head excerpt + resolvable pointer + explicit
-  /// completeness, sized to fit [cap]. The fit was already verified before
-  /// persistence; this formats it.
-  String envelopeText(DeliverableRecord record, String body) {
+  /// bounded head excerpt + resolvable pointer + explicit completeness,
+  /// sized to fit [cap]. The fit was verified before persistence; this
+  /// formats it.
+  ///
+  /// I3: the excerpt is sliced from the STORED artifact text — the exact
+  /// redacted bytes `agent://` resolution returns — never from the raw
+  /// pre-pipeline payload. Redaction runs before ANY parent-visible
+  /// surface, envelope included.
+  String envelopeText(DeliverableRecord record) {
+    final stored = store.get(record.outputId!)!;
     final statusLine = _statusLine(
       record.status!,
       record.outputId!,
       record.chars,
     );
-    final excerptEnd = _safeExcerptEnd(body, cap - statusLine.length - 2);
-    final excerpt = body.substring(0, excerptEnd);
+    final excerptEnd = _safeExcerptEnd(stored, cap - statusLine.length - 2);
+    final excerpt = stored.substring(0, excerptEnd);
     return '$excerpt…\n$statusLine';
   }
 

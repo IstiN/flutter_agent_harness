@@ -136,6 +136,11 @@ void main() {
         expect(reply, contains(record.pointer!));
         // The stored artifact is the REDACTED text.
         expect(store.get(record.outputId!), isNot(contains(_secret)));
+        // And so is the delivered envelope (the parent-visible surface):
+        // canary AND canary prefix absent (review hardening — the
+        // excerpt window cuts the 25-char canary, so scan a prefix).
+        expect(reply, isNot(contains(_secret)));
+        expect(reply, isNot(contains(_secret.substring(0, 10))));
       },
     );
 
