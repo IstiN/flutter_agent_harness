@@ -4336,6 +4336,20 @@ jobs:
             --dir provenance --pattern 'fa-*'
           ls -l provenance
 
+      # gh-1832: PUBLISH-BLOCKING required-assets gate. The single source of
+      # truth is scripts/release_required_assets.txt, consumed by
+      # scripts/assert_release_assets.sh. v1.0.635 published without
+      # fa-extension.zip because the extension's only producer (the daily
+      # build-macos.yml build-extension leg) attached it to a "latest+1"
+      # draft while this train published the tagged release — every leg
+      # green, nothing asserted the published set. A missing asset here
+      # fails the release run loudly and leaves the release a DRAFT (the
+      # previous release stays latest) instead of publishing a partial one.
+      - name: Assert required release assets (gh-1832 gate)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/assert_release_assets.sh "${GITHUB_REF_NAME}"
+
       - name: Build and sign SHA256SUMS
         env:
           FA_RELEASE_SIGNING_KEY: ${{ secrets.FA_RELEASE_SIGNING_KEY }}
@@ -4384,6 +4398,32 @@ jobs:
           # instead of stranding a provenance-less one (the v1.0.630
           # empty/partial-latest window class).
           gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
+
+  # gh-1832 AC3: post-publish smoke. Probes (1) EVERY releases/(latest/)?
+  # download/ URL the fa1.dev landing page exposes (site/index.html) and
+  # (2) the full required set from scripts/release_required_assets.txt via
+  # a 1-byte ranged GET each — red on anything but HTTP 200/206. Rides the
+  # tag train only (PR runs never probe release URLs); a 404 here is the
+  # owner-facing v1.0.635 symptom caught the same hour it appears.
+  release-asset-smoke:
+    name: Release asset smoke (landing links + required set)
+    runs-on: ubuntu-latest
+    needs: release-provenance
+    timeout-minutes: 10
+    if: >-
+      !cancelled() && needs.release-provenance.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Probe every landing-page release link
+        run: bash scripts/assert_release_assets.sh --landing site/index.html
+      - name: Probe the full required asset set
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/assert_release_assets.sh --smoke "${GITHUB_REF_NAME}"
 
   # Advance the vpinned release marker to the freshly signed tag. PURE
   # RELEASE-ARTIFACT MANIPULATION — no commits, no pushes: pin_release.sh
