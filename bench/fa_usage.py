@@ -30,9 +30,33 @@ import math
 import sys
 import tarfile
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 # Same chars-per-token rate as lib/src/compaction/token_estimation.dart.
 _CHARS_PER_TOKEN = 4
+
+# gh-1838 AC6: pricing override channel. The value is inline JSON or a
+# path to a pricing JSON (the same usd_per_mtok shape); it merges OVER
+# bench/pricing.json per model key so a run can price/correct models
+# without editing the repo.
+PRICING_OVERRIDE_ENV = "FA_BENCH_PRICING"
+
+
+class ResolvedPricing(NamedTuple):
+    """Pricing after resolution (gh-1838 AC5/AC6).
+
+    table    — merged usd_per_mtok ({} when nothing loaded);
+    aliases  — merged {model_id: target_model_id} estimate map (AC7);
+    source   — human string for the summary's pricing line
+               ("repo default — <path>" / "env override FA_BENCH_PRICING
+               (file <path>) over repo default <path>");
+    warnings — loud resolution problems, each naming the path + error.
+    """
+
+    table: dict
+    aliases: dict
+    source: str
+    warnings: list
 
 
 class SessionUsage:
@@ -334,6 +358,75 @@ def load_pricing(path) -> dict:
     return table if isinstance(table, dict) else {}
 
 
+def _read_pricing_doc(path):
+    """(doc | None, error | None) — one pricing JSON read + parse."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle), None
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, exc
+
+
+def _pricing_parts(doc, what: str, warnings: list) -> tuple[dict, dict]:
+    """(usd_per_mtok, aliases) from one pricing doc; loud shape warning."""
+    if not isinstance(doc, dict) or not isinstance(doc.get("usd_per_mtok"), dict):
+        warnings.append(f"{what}: no usd_per_mtok table — ignored")
+        return {}, {}
+    aliases = doc.get("aliases")
+    aliases = dict(aliases) if isinstance(aliases, dict) else {}
+    return dict(doc["usd_per_mtok"]), aliases
+
+
+def load_pricing_resolved(default_path, override=None) -> ResolvedPricing:
+    """bench/pricing.json + the FA_BENCH_PRICING override (gh-1838 AC5/AC6).
+
+    `override` is the env channel's VALUE: inline JSON or a path to a
+    pricing JSON (usd_per_mtok shape, optional aliases). It merges OVER
+    the repo default per model key (input/output/cache_read/cache_write)
+    and per alias — an existing base rate survives unless the override
+    names it. Every load/parse failure appends a LOUD warning naming the
+    path + the error (an entry that exists must never degrade to a
+    silent n/a); a failed override falls back to the repo default.
+    Unknown models stay unpriced — an override never invents rates, it
+    only supplies them (#1123 rule).
+    """
+    default = str(default_path)
+    warnings: list[str] = []
+    doc, err = _read_pricing_doc(default)
+    if doc is None:
+        warnings.append(f"pricing file {default} failed to load: {err}")
+        table, aliases = {}, {}
+    else:
+        table, aliases = _pricing_parts(doc, f"pricing file {default}", warnings)
+    source = f"repo default — {default}"
+    if override is not None and override.strip():
+        stripped = override.strip()
+        if stripped.startswith("{"):
+            what = "env override FA_BENCH_PRICING (inline JSON)"
+            try:
+                odoc, oerr = json.loads(stripped), None
+            except json.JSONDecodeError as exc:
+                odoc, oerr = None, exc
+        else:
+            what = f"env override FA_BENCH_PRICING (file {stripped})"
+            odoc, oerr = _read_pricing_doc(stripped)
+        if odoc is None:
+            warnings.append(f"{what} failed to load: {oerr}")
+            source += " (⚠️ FA_BENCH_PRICING override failed — see pricing warnings)"
+        else:
+            otable, oaliases = _pricing_parts(odoc, what, warnings)
+            for model, entry in otable.items():
+                if not isinstance(entry, dict):
+                    warnings.append(
+                        f"{what}: entry for {model} is not an object — ignored"
+                    )
+                    continue
+                table[model] = {**table.get(model, {}), **entry}
+            aliases.update(oaliases)
+            source = f"{what} over repo default {default}"
+    return ResolvedPricing(table, aliases, source, warnings)
+
+
 def price_entry(pricing: dict, model) -> dict | None:
     """Pricing entry for a model id (exact, then case-insensitive); None = unpriced."""
     if not model:
@@ -347,14 +440,47 @@ def price_entry(pricing: dict, model) -> dict | None:
     return None
 
 
-def cost_usd(
+def resolve_entry(table: dict, aliases: dict, model) -> tuple[dict | None, str | None]:
+    """Pricing entry for a model id, resolving the `aliases` map (gh-1838 AC7).
+
+    Returns (entry, alias_target). alias_target is None for a direct
+    entry; when an alias maps the model onto another id's rates it is
+    that target id and the CALLER must label the cost as an estimate at
+    the target's rates — never mix it with real billing. The alias is
+    explicit config and takes precedence over a direct entry (it is how
+    a subscription plan's $0 entry gets upgraded to a labelled estimate);
+    (None, None) = unpriced: unknown models stay n/a, an alias never
+    invents rates.
+    """
+    if model:
+        target = aliases.get(model)
+        if target is None:
+            lowered = str(model).lower()
+            for key, candidate in aliases.items():
+                if key.lower() == lowered:
+                    target = candidate
+                    break
+        if isinstance(target, str) and target:
+            entry = price_entry(table, target)
+            if entry is not None:
+                return entry, target
+    entry = price_entry(table, model)
+    if entry is not None:
+        return entry, None
+    return None, None
+
+
+def cost_components(
     entry: dict | None,
     input_tokens: int,
     output_tokens: int,
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
-) -> float | None:
-    """USD for a token split under one pricing entry; None when unpriced (E3)."""
+) -> dict | None:
+    """Per-component USD (input/output/cache_read/cache_write) under one
+    pricing entry; None when unpriced. Sums to cost_usd — kept separate
+    so the summary can show the cache_read component (gh-1838 AC8: the
+    cached reads dominate API-style cost and must stay visible)."""
     if entry is None:
         return None
 
@@ -364,9 +490,23 @@ def cost_usd(
         # rest; an absent MODEL is handled by price_entry → None (n/a).
         return float(value) if isinstance(value, (int, float)) else 0.0
 
-    return (
-        input_tokens * rate("input")
-        + output_tokens * rate("output")
-        + cache_read_tokens * rate("cache_read")
-        + cache_write_tokens * rate("cache_write")
-    ) / 1e6
+    return {
+        "input": input_tokens * rate("input") / 1e6,
+        "output": output_tokens * rate("output") / 1e6,
+        "cache_read": cache_read_tokens * rate("cache_read") / 1e6,
+        "cache_write": cache_write_tokens * rate("cache_write") / 1e6,
+    }
+
+
+def cost_usd(
+    entry: dict | None,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> float | None:
+    """USD for a token split under one pricing entry; None when unpriced (E3)."""
+    components = cost_components(
+        entry, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+    )
+    return None if components is None else sum(components.values())
