@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-24T18:19:41.794Z",
+  "ticketKey": "pr-1846",
+  "headSha": "e8533fa6c1789848d079fd03efdda82d51320914",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:1d686a4bfdcb152e",
+      "size": 3286
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:315dd890f77a157e",
+      "size": 5057
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:cb9a10692111719b",
+      "size": 1633
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:c708b664da62e6c7",
+      "size": 2451
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:1fbd07c81af2c2f3",
+      "size": 775
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:ba8c07a2c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:04d528348e86b499",
+      "size": 2193
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:c28de7655bfffa99",
+      "size": 2116
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6v6eZe",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "memory/note/n_1012_24d4.md:18",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Track a systemic fix so the playbook stays an emergency procedure**\n\nThe note documents the recovery path well, and its own root-cause sentence is the real finding:\n\n> Root pattern: build-macos.yml build-extension derives \"latest+1 at its own dispatch moment\" and runs ~once daily, so any tag train landing after the daily leg has no fa-extension.zip and the gh-1832 gate correctly strands it as a draft (seen stuck: v1.0.637, v1.0.638 on 2026-10-24).\n\nThis has now bitten two consecutive releases (v1.0.637 left as a stuck draft, v1.0.638 stranded until a manual dispatch). The manual `gh workflow run build-macos.yml --ref <tag> …` + rerun dance is a fine stopgap, but as written into durable memory it risks becoming the accepted operating mode for every future tag train that lands after the daily leg. Please file a follow-up issue (and reference it here, e.g. `gh-NNNN`) for the systemic fix — cheapest options being:\n\n- have the tag train itself produce/attach `fa-extension.zip` (or trigger the producer with the tag's version), so the gh-1832 gate never strands a draft; or\n- schedule the producer more frequently than trains land / make it event-driven rather than once-daily \"latest+1\".\n\nNot blocking: the note is accurate and valuable as-is."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:8d4ab1f6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Track a systemic fix so the playbook stays an emergency procedure**\n\nThe note documents the recovery path well, and its own root-cause sentence is the real finding:\n\n> Root pattern: build-macos.yml build-extension derives \"latest+1 at its own dispatch moment\" and runs ~once daily, so any tag train landing after the daily leg has no fa-extension.zip and the gh-1832 gate correctly strands it as a draft (seen stuck: v1.0.637, v1.0.638 on 2026-10-24).\n\nThis has now bitten two consecutive releases (v1.0.637 left as a stuck draft, v1.0.638 stranded until a manual dispatch). The manual `gh workflow run build-macos.yml --ref <tag> …` + rerun dance is a fine stopgap, but as written into durable memory it risks becoming the accepted operating mode for every future tag train that lands after the daily leg. Please file a follow-up issue (and reference it here, e.g. `gh-NNNN`) for the systemic fix — cheapest options being:\n\n- have the tag train itself produce/attach `fa-extension.zip` (or trigger the producer with the tag's version), so the gh-1832 gate never strands a draft; or\n- schedule the producer more frequently than trains land / make it event-driven rather than once-daily \"latest+1\".\n\nNot blocking: the note is accurate and valuable as-is."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:3af992a3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Automated Code Review — APPROVE\n\n**Summary**: Memory-only PR (single note `memory/note/n_1012_24d4.md`) capturing the gh-1845 release-train recovery playbook. No product code changed, matching the ticket's \"both failures are CI/release ops\" conclusion after the rerun + dispatched producer cleared the v1.0.638 train. Verified: note id `n_1012_24d4` conforms to the merge-friendly id scheme (sequential index 1012 follows the highest existing `n_1011_6b73`; hash suffix = md5 of `normalizeMemoryText(body)` per `flutter_agent_memory-0.2.3` `kb_id_scheme.dart`), frontmatter/body shape matches sibling notes (e.g. `n_1007_7bf1`), content is public-safe (no secrets), and it is novel — no existing note covers the gh-1832 required-assets gate or this recovery procedure.\n\n**Key Issues**: None blocking. One suggestion: the note itself names the recurring systemic root cause (once-daily producer vs multiple-daily tag trains) — track a code/CI fix so the manual dispatch playbook stays an emergency procedure, not the operating mode.\n\n**Next Steps**:\n1. File a follow-up issue for the once-daily `build-extension` producer gap (gh-1832 class) — e.g. derive the version from the triggering tag or run the producer on tag events.\n2. Merge."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
