@@ -95,7 +95,7 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
     return MediaEndpoint(
       baseUrl: mainBaseUrl,
       modelId: mainModelId,
-      apiKey: XXX
+      apiKey: mainApiKey,
     );
   }
   final key = await _resolveSlotKey(
@@ -106,8 +106,9 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
   );
   if (key.isEmpty) {
     final keyName = override.apiKeyName;
-    final named =
-        (keyName == null || keyName.isEmpty) ? '' : ' (named "$keyName")';
+    final named = (keyName == null || keyName.isEmpty)
+        ? ''
+        : ' (named "$keyName")';
     throw MediaException(
       'the imageGeneration slot has no resolvable API key$named '
       '— a slot override never uses the main provider key across hosts; '
@@ -118,7 +119,7 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
   return MediaEndpoint(
     baseUrl: override.baseUrl,
     modelId: override.modelId,
-    apiKey: XXX
+    apiKey: mainApiKey,
   );
 }
 
@@ -366,9 +367,7 @@ final class DialImageDialect extends ImageDialect {
     }
     final imgResp = await client.get(
       Uri.parse(_dialDownloadUrl(relUrl, base)),
-      headers: {
-        if (apiKey.isNotEmpty) 'Api-Key': apiKey,
-      },
+      headers: {if (apiKey.isNotEmpty) 'Api-Key': apiKey},
     );
     if (imgResp.statusCode != 200) {
       throw MediaException(
@@ -569,7 +568,8 @@ Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
         slot: 'imageGeneration',
         modelId: endpoint.modelId,
         inputModalities: await resolveInputModalities(
-          endpoint: endpoint,
+          baseUrl: endpoint.baseUrl,
+          apiKey: endpoint.apiKey,
           modelId: endpoint.modelId,
           declared: declaredInputModalities,
           client: client,

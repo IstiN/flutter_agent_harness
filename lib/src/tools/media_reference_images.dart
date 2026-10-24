@@ -265,19 +265,19 @@ Uri openRouterModelsUri(String baseUrl) {
 /// (`null` when the discovery is unavailable — unknown means "let the
 /// provider validate", declared/discovered means "check before the call").
 Future<List<String>?> resolveInputModalities({
-  required MediaEndpoint endpoint,
+  required String baseUrl,
+  required String apiKey,
   required String modelId,
   List<String> declared = const [],
   required http.Client client,
 }) async {
   if (declared.isNotEmpty) return declared;
-  if (!isOpenRouterBaseUrl(endpoint.baseUrl)) return null;
+  if (!isOpenRouterBaseUrl(baseUrl)) return null;
   try {
     final response = await client.get(
-      openRouterModelsUri(endpoint.baseUrl),
+      openRouterModelsUri(baseUrl),
       headers: {
-        if (endpoint.apiKey.isNotEmpty)
-          'Authorization': 'Bearer ${endpoint.apiKey}',
+        if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
       },
     );
     if (response.statusCode != 200) return null;

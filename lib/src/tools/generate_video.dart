@@ -27,6 +27,7 @@ import '../cancel_token.dart';
 import '../env/execution_env.dart';
 import '../model_roles/models_config.dart';
 import '../types.dart';
+import 'media_reference_images.dart';
 
 final Random _videoNameRandom = Random.secure();
 
@@ -73,17 +74,29 @@ final class VideoEndpoint {
 
 /// Resolves the `videoGeneration` slot endpoint for the CLI.
 ///
-/// Mirrors the app's `MediaModelsStore.resolve`: a
+/// Mirrors the app's `MediaModelsStore.resolve` (gh-1844): a
 /// `models.slots.videoGeneration` override wins; without one the slot
-/// is treated as UNCONFIGURED (the main connection is not a fallback —
-/// its `/v1/models` never lists video models and the chat endpoint
-/// can't generate video).
+/// is UNCONFIGURED (null — the main connection is not a fallback: its
+/// `/v1/models` never lists video models and the chat endpoint can't
+/// generate video). The main connection serves the slot only through
+/// the EXPLICIT per-slot opt-in (`useMainConnection: true`).
 Future<VideoEndpoint?> resolveVideoGenerationEndpoint(
   ModelsConfig? modelsConfig, {
+  String mainBaseUrl = '',
+  String mainModelId = '',
+  String mainApiKey = '',
   VideoKeyResolver? resolveKey,
 }) async {
   final override = modelsConfig?.slots['videoGeneration'];
   if (override == null) return null;
+  if (override.useMainConnection) {
+    if (mainBaseUrl.isEmpty || mainModelId.isEmpty) return null;
+    return VideoEndpoint(
+      baseUrl: mainBaseUrl,
+      modelId: mainModelId,
+      apiKey: mainApiKey,
+    );
+  }
   final key = override.apiKeyName == null
       ? ''
       : (await resolveKey?.call(override.apiKeyName!)) ?? '';
@@ -101,6 +114,11 @@ abstract final class VideoDialect {
   /// Whether this dialect handles [endpoint].
   bool matches(VideoEndpoint endpoint);
 
+  /// Whether this dialect can carry [images] (reference images) — only
+  /// the OpenRouter dialect does (gh-1844); every other dialect rejects
+  /// them before any network call.
+  bool get supportsReferenceImages => false;
+
   /// Generates a video on the given endpoint. The implementation
   /// handles any async polling the provider requires and returns the
   /// downloaded MP4 bytes plus the saved path.
@@ -110,6 +128,7 @@ abstract final class VideoDialect {
     required String prompt,
     String? size,
     String? quality,
+    List<ResolvedMediaImage> images = const [],
     required http.Client client,
     Future<void> Function()? onPollProgress,
   });
@@ -121,7 +140,8 @@ abstract final class VideoDialect {
 /// first.
 final List<VideoDialect> videoGenerationDialects = [
   HailuoVideoDialect(), // Hailuo 2.3 async task (V1 endpoint)
-  MiniMaxVideoDialect(), // MiniMax H3 async task (V2, default)
+  MiniMaxVideoDialect(), // MiniMax H3 async task (V2)
+  OpenRouterVideoDialect(), // OpenRouter /videos async job
 ];
 
 /// MiniMax video generation (`POST {base}/video_generation`, async,
@@ -157,6 +177,7 @@ final class MiniMaxVideoDialect extends VideoDialect {
     required String prompt,
     String? size,
     String? quality,
+    List<ResolvedMediaImage> images = const [],
     required http.Client client,
     Future<void> Function()? onPollProgress,
   }) async {
@@ -346,6 +367,7 @@ final class HailuoVideoDialect extends VideoDialect {
     required String prompt,
     String? size,
     String? quality,
+    List<ResolvedMediaImage> images = const [],
     required http.Client client,
     Future<void> Function()? onPollProgress,
   }) async {
@@ -516,6 +538,197 @@ final class HailuoVideoDialect extends VideoDialect {
   }
 }
 
+/// OpenRouter video generation (gh-1844): the dedicated asynchronous
+/// `POST {base}/videos` contract — submit answers 202 with
+/// `{id, polling_url, status}`, the job is polled at the polling URL
+/// until `completed`, and the mp4 downloads from `unsigned_urls[0]`
+/// (authenticated, same origin). Reference images ride
+/// `input_references` (`image_url` entries). Detected by the
+/// `openrouter.ai` host — never by model names. Wire format pinned from
+/// https://openrouter.ai/docs/guides/overview/multimodal/video-generation.
+final class OpenRouterVideoDialect extends VideoDialect {
+  @override
+  bool matches(VideoEndpoint endpoint) => isOpenRouterBaseUrl(endpoint.baseUrl);
+
+  @override
+  bool get supportsReferenceImages => true;
+
+  /// Poll budget: 20 polls with a linear 3→10 s backoff, matching the
+  /// MiniMax dialects' worst case (~2 minutes).
+  static const int maxPolls = 20;
+
+  @override
+  Future<({String path, Uint8List bytes, String detail})> generate({
+    required ExecutionEnv env,
+    required VideoEndpoint endpoint,
+    required String prompt,
+    String? size,
+    String? quality,
+    List<ResolvedMediaImage> images = const [],
+    required http.Client client,
+    Future<void> Function()? onPollProgress,
+  }) async {
+    final base = _trimSlash(endpoint.baseUrl);
+    final headers = _openRouterHeaders(endpoint);
+    final created = await _submit(
+      client,
+      base,
+      headers,
+      endpoint.modelId,
+      prompt,
+      size,
+      images,
+    );
+    final jobId = created.jobId;
+    final pollUrl = created.pollingUrl ?? '$base/videos/$jobId';
+    final bytes = await _pollAndDownload(
+      client,
+      headers,
+      pollUrl,
+      jobId,
+      onPollProgress,
+    );
+    final path = await _save(env, 'videos', 'mp4', bytes);
+    return (path: path, bytes: bytes, detail: 'saved to $path');
+  }
+
+  String _trimSlash(String url) =>
+      url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+
+  Map<String, String> _openRouterHeaders(VideoEndpoint endpoint) => {
+    'Content-Type': 'application/json',
+    if (endpoint.apiKey.isNotEmpty) 'Authorization': 'Bearer $endpoint.apiKey',
+  };
+
+  Future<({String jobId, String? pollingUrl})> _submit(
+    http.Client client,
+    String base,
+    Map<String, String> headers,
+    String model,
+    String prompt,
+    String? size,
+    List<ResolvedMediaImage> images,
+  ) async {
+    final create = await client.post(
+      Uri.parse('$base/videos'),
+      headers: headers,
+      body: jsonEncode({
+        'model': model,
+        'prompt': prompt,
+        if (size != null && size.isNotEmpty) 'size': size,
+        if (images.isNotEmpty)
+          'input_references': [
+            for (final image in images) image.toOpenRouterJson(),
+          ],
+      }),
+    );
+    if (create.statusCode != 200 && create.statusCode != 202) {
+      throw VideoException(
+        'video generation failed: HTTP ${create.statusCode}: ${create.body}',
+      );
+    }
+    final body = jsonDecode(create.body);
+    if (body is! Map<String, dynamic>) {
+      throw VideoException(
+        'video generation: unexpected OpenRouter submit response',
+      );
+    }
+    final jobId = body['id']?.toString();
+    if (jobId == null || jobId.isEmpty) {
+      throw VideoException(
+        'video generation: OpenRouter response missing job id: ${create.body}',
+      );
+    }
+    final pollingUrl = body['polling_url']?.toString();
+    return (
+      jobId: jobId,
+      pollingUrl: pollingUrl != null && pollingUrl.isNotEmpty
+          ? pollingUrl
+          : null,
+    );
+  }
+
+  Future<Uint8List> _pollAndDownload(
+    http.Client client,
+    Map<String, String> headers,
+    String pollUrl,
+    String jobId,
+    Future<void> Function()? onProgress,
+  ) async {
+    for (var i = 0; i < maxPolls; i++) {
+      final job = await _pollOnce(client, headers, pollUrl, jobId);
+      final status = job['status']?.toString() ?? '';
+      if (status == 'completed' || status == 'succeeded') {
+        return _downloadCompleted(client, headers, job, jobId, pollUrl);
+      }
+      if (status == 'failed' || status == 'cancelled' || status == 'expired') {
+        final error = job['error'];
+        throw VideoException(
+          'video generation job $status${error == null ? '' : ': $error'}.',
+        );
+      }
+      await onProgress?.call();
+      final delaySeconds = (3 + i).clamp(3, 10);
+      await Future<void>.delayed(Duration(seconds: delaySeconds));
+    }
+    throw VideoException(
+      'video job $jobId did not finish within the polling window',
+    );
+  }
+
+  Future<Map<String, dynamic>> _pollOnce(
+    http.Client client,
+    Map<String, String> headers,
+    String pollUrl,
+    String jobId,
+  ) async {
+    final response = await client.get(Uri.parse(pollUrl), headers: headers);
+    if (response.statusCode != 200) {
+      throw VideoException(
+        'video status poll failed: HTTP ${response.statusCode}: '
+        '${response.body}',
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw VideoException('video status poll: unexpected OpenRouter response');
+    }
+    return decoded;
+  }
+
+  /// The mp4 bytes of a completed job: `unsigned_urls[0]` (same-origin,
+  /// authenticated) or `url`, else the job's content endpoint derived
+  /// from [pollUrl]'s base.
+  Future<Uint8List> _downloadCompleted(
+    http.Client client,
+    Map<String, String> headers,
+    Map<String, dynamic> job,
+    String jobId,
+    String pollUrl,
+  ) async {
+    String? url;
+    final unsigned = job['unsigned_urls'];
+    if (unsigned is List && unsigned.isNotEmpty) {
+      url = unsigned.first?.toString();
+    }
+    url ??= job['url']?.toString();
+    final uri = Uri.parse(
+      url != null && url.isNotEmpty ? url : '${_trimSlash(pollUrl)}/content',
+    );
+    // OpenRouter fills unsigned_urls with same-origin content endpoints
+    // that REQUIRE the API key; send it whenever the URL is not absolute
+    // or lives on the polling host.
+    final sendAuth = uri.host.isEmpty || uri.host == Uri.parse(pollUrl).host;
+    final response = await client.get(uri, headers: sendAuth ? headers : null);
+    if (response.statusCode != 200) {
+      throw VideoException(
+        'video download failed: HTTP ${response.statusCode} for $uri',
+      );
+    }
+    return response.bodyBytes;
+  }
+}
+
 int _gcd(int a, int b) {
   var x = a;
   var y = b;
@@ -554,33 +767,67 @@ Future<String> _save(
 }
 
 /// Generates a video on the `videoGeneration` endpoint and saves the MP4
-/// into [generatedVideoDir]. Dispatches to the first dialect in
-/// [videoGenerationDialects] whose `matches(endpoint)` returns true.
+/// into [generatedVideoDir].
+///
+/// [images] are reference images (gh-1844), validated against the
+/// endpoint's CAPABILITIES (declared on the slot or discovered from
+/// OpenRouter model metadata) BEFORE the submit call. Only the
+/// OpenRouter dialect can carry them.
+///
+/// Dispatches to the first dialect in [videoGenerationDialects] whose
+/// `matches(endpoint)` returns true.
 Future<({String path, Uint8List bytes, String detail})> generateVideoBytes({
   required ExecutionEnv env,
   required VideoEndpoint endpoint,
   required String prompt,
   String? size,
   String? quality,
+  List<MediaImageInput> images = const [],
+  List<String> declaredInputModalities = const [],
   http.Client? httpClient,
   Future<void> Function()? onPollProgress,
 }) async {
   final client = httpClient ?? http.Client();
   try {
-    for (final dialect in videoGenerationDialects) {
-      if (dialect.matches(endpoint)) {
-        return await dialect.generate(
-          env: env,
-          endpoint: endpoint,
-          prompt: prompt,
-          size: size,
-          quality: quality,
+    final dialect = videoGenerationDialects
+        .where((d) => d.matches(endpoint))
+        .firstOrNull;
+    if (dialect == null) {
+      throw VideoException('video generation: no matching dialect');
+    }
+    final resolvedImages = images.isEmpty
+        ? const <ResolvedMediaImage>[]
+        : await resolveMediaImageInputs(env, images);
+    if (resolvedImages.isNotEmpty) {
+      ensureImageInputSupported(
+        slot: 'videoGeneration',
+        modelId: endpoint.modelId,
+        inputModalities: await resolveInputModalities(
+          baseUrl: endpoint.baseUrl,
+          apiKey: endpoint.apiKey,
+          modelId: endpoint.modelId,
+          declared: declaredInputModalities,
           client: client,
-          onPollProgress: onPollProgress,
+        ),
+      );
+      if (!dialect.supportsReferenceImages) {
+        throw VideoException(
+          'reference images are only supported by the OpenRouter video '
+          'dialect — point the videoGeneration slot at an OpenRouter '
+          'endpoint (or drop the images argument)',
         );
       }
     }
-    throw VideoException('video generation: no matching dialect');
+    return await dialect.generate(
+      env: env,
+      endpoint: endpoint,
+      prompt: prompt,
+      size: size,
+      quality: quality,
+      images: resolvedImages,
+      client: client,
+      onPollProgress: onPollProgress,
+    );
   } finally {
     client.close();
   }
@@ -603,9 +850,15 @@ AgentTool generateVideoTool({
     label: generateVideoToolName,
     tier: ApprovalTier.write,
     description:
-        'Generates a video from a text prompt. Returns a path to the saved '
-        'MP4 file. Arguments: prompt (required), size (optional, e.g. '
-        '"1920x1080"), quality (optional).',
+        'Generates a video from a text prompt. Requires the '
+        'videoGeneration slot to be configured (models.slots.'
+        'videoGeneration in ~/.fah/config.yaml, or useMainConnection: '
+        'true to opt into the main connection explicitly). Returns a path '
+        'to the saved MP4 file. Arguments: prompt (required), size '
+        '(optional, e.g. "1920x1080"), quality (optional), images '
+        '(optional, list of reference images: sandbox paths, http(s) URLs, '
+        'or base64 — supported by OpenRouter video endpoints that accept '
+        'image input).',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -618,6 +871,13 @@ AgentTool generateVideoTool({
           'type': 'string',
           'description': 'video quality, e.g. standard or high',
         },
+        'images': {
+          'type': 'array',
+          'items': {'type': 'string'},
+          'description':
+              'optional reference images (sandbox path, http(s) URL, or '
+              'base64) for endpoints that accept image input',
+        },
       },
       'required': ['prompt'],
     },
@@ -627,6 +887,9 @@ AgentTool generateVideoTool({
       onUpdate: onUpdate,
       env: env,
       modelsConfig: modelsConfig,
+      mainBaseUrl: mainBaseUrl(),
+      mainModelId: mainModelId(),
+      mainApiKey: mainApiKey(),
       resolveKey: resolveKey,
       httpClient: httpClient,
     ),
@@ -643,6 +906,9 @@ Future<ToolExecutionResult> _runVideoGeneration({
   ToolUpdateCallback? onUpdate,
   required ExecutionEnv env,
   required ModelsConfig? modelsConfig,
+  required String mainBaseUrl,
+  required String mainModelId,
+  required String mainApiKey,
   VideoKeyResolver? resolveKey,
   http.Client? httpClient,
 }) async {
@@ -651,14 +917,29 @@ Future<ToolExecutionResult> _runVideoGeneration({
   if (prompt.trim().isEmpty) {
     throw VideoException('prompt is required');
   }
-  final endpoint = await _videoEndpointOrThrow(modelsConfig, resolveKey);
+  final endpoint = await _videoEndpointOrThrow(
+    modelsConfig,
+    resolveKey,
+    mainBaseUrl: mainBaseUrl,
+    mainModelId: mainModelId,
+    mainApiKey: mainApiKey,
+  );
   cancelToken?.throwIfCancelled();
+  final imageArgs = arguments['images'];
+  final images = <MediaImageInput>[
+    if (imageArgs is List)
+      for (final entry in imageArgs)
+        if (entry != null) parseMediaImageInput(entry.toString()),
+  ];
   final file = await generateVideoBytes(
     env: env,
     endpoint: endpoint,
     prompt: prompt,
     size: arguments['size'] as String?,
     quality: arguments['quality'] as String?,
+    images: images,
+    declaredInputModalities:
+        modelsConfig?.slots['videoGeneration']?.inputModalities ?? const [],
     httpClient: httpClient,
     onPollProgress: () async {
       // Surface progress to the UI — the polling can take up to
@@ -683,18 +964,25 @@ Future<ToolExecutionResult> _runVideoGeneration({
 /// [VideoException] the model can act on.
 Future<VideoEndpoint> _videoEndpointOrThrow(
   ModelsConfig? modelsConfig,
-  VideoKeyResolver? resolveKey,
-) async {
+  VideoKeyResolver? resolveKey, {
+  String mainBaseUrl = '',
+  String mainModelId = '',
+  String mainApiKey = '',
+}) async {
   final endpoint = await resolveVideoGenerationEndpoint(
     modelsConfig,
+    mainBaseUrl: mainBaseUrl,
+    mainModelId: mainModelId,
+    mainApiKey: mainApiKey,
     resolveKey: resolveKey,
   );
   if (endpoint == null) {
     throw VideoException(
       'no endpoint configured for slot videoGeneration; set one in '
-      'models.slots.videoGeneration (~/.fah/config.yaml). The chat '
-      'endpoint cannot generate video — you must pick a video '
-      'provider (e.g. MiniMax MiniMax-H3).',
+      'models.slots.videoGeneration (~/.fah/config.yaml), e.g. via '
+      '/models set videoGeneration <model> <baseUrl>. To serve the slot '
+      'from the main connection explicitly, set '
+      'models.slots.videoGeneration.useMainConnection: true.',
     );
   }
   return endpoint;
