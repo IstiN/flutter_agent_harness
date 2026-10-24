@@ -51,7 +51,7 @@ AgentTool decideTool({
         'Requires the main connection to be an OpenRouter provider. '
         'Arguments: model (required), state (required — text or JSON), '
         'questions (required — object keyed by question name; each entry '
-        'is {type: noul|choice|score, instructions, criteria}).',
+        'is {type: bool|choice|score, instructions, criteria}).',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -69,7 +69,7 @@ AgentTool decideTool({
           'type': 'object',
           'description':
               'typed questions keyed by name, e.g. {"is_bug": '
-              '{"type": "noul", "instructions": "Is this a defect?", '
+              '{"type": "bool", "instructions": "Is this a defect?", '
               '"criteria": {"true": "...", "false": "..."}}, "team": '
               '{"type": "choice", "instructions": "Which team?", '
               '"criteria": {"frontend": "...", "payments": "..."}}}',
@@ -113,7 +113,7 @@ AgentTool decideTool({
             validation: true,
             message:
                 'question "${entry.key}" must be an object with a '
-                'type of noul, choice, or score (and instructions)',
+                'type of bool, choice, or score (and instructions)',
           );
           break;
         }
@@ -163,10 +163,10 @@ DecisionQuestion? _parseQuestion(Object? value) {
   final type = value['type'];
   final instructions = value['instructions'];
   switch (type) {
-    case 'noul':
+    case 'bool':
       final criteria = value['criteria'];
       final map = criteria is Map ? criteria : const <Object?, Object?>{};
-      return DecisionNoulQuestion(
+      return DecisionBoolQuestion(
         instructions: instructions,
         criteriaTrue: map['true'],
         criteriaFalse: map['false'],

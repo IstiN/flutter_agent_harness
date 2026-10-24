@@ -564,6 +564,13 @@ Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
         ? const <ResolvedMediaImage>[]
         : await resolveMediaImageInputs(env, images);
     if (resolvedImages.isNotEmpty) {
+      if (!dialect.supportsReferenceImages) {
+        throw MediaException(
+          'reference images are only supported by the OpenRouter image '
+          'dialect — point the imageGeneration slot at an OpenRouter '
+          'endpoint (or drop the images argument)',
+        );
+      }
       ensureImageInputSupported(
         slot: 'imageGeneration',
         modelId: endpoint.modelId,
@@ -575,13 +582,6 @@ Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
           client: client,
         ),
       );
-      if (!dialect.supportsReferenceImages) {
-        throw MediaException(
-          'reference images are only supported by the OpenRouter image '
-          'dialect — point the imageGeneration slot at an OpenRouter '
-          'endpoint (or drop the images argument)',
-        );
-      }
     }
     return await dialect.generate(
       env: env,

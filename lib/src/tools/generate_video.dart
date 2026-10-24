@@ -799,6 +799,13 @@ Future<({String path, Uint8List bytes, String detail})> generateVideoBytes({
         ? const <ResolvedMediaImage>[]
         : await resolveMediaImageInputs(env, images);
     if (resolvedImages.isNotEmpty) {
+      if (!dialect.supportsReferenceImages) {
+        throw VideoException(
+          'reference images are only supported by the OpenRouter video '
+          'dialect — point the videoGeneration slot at an OpenRouter '
+          'endpoint (or drop the images argument)',
+        );
+      }
       ensureImageInputSupported(
         slot: 'videoGeneration',
         modelId: endpoint.modelId,

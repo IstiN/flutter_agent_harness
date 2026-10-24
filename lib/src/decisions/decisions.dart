@@ -27,7 +27,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 /// One typed question about the [state]. The wire discriminator is
-/// [type]: `noul` (yes/no probability), `choice` (pick from a keyed
+/// [type]: `bool` (yes/no probability), `choice` (pick from a keyed
 /// criteria map), `score` (position on an ordered criteria list).
 sealed class DecisionQuestion {
   const DecisionQuestion();
@@ -49,18 +49,18 @@ sealed class DecisionQuestion {
   };
 }
 
-/// A yes/no question answered with a calibrated probability (`noul`).
-final class DecisionNoulQuestion extends DecisionQuestion {
+/// A yes/no question answered with a calibrated probability (`bool`).
+final class DecisionBoolQuestion extends DecisionQuestion {
   /// Creates a yes/no question; [criteriaTrue]/[criteriaFalse] sharpen
   /// the calibration by describing each branch.
-  const DecisionNoulQuestion({
+  const DecisionBoolQuestion({
     required this.instructions,
     this.criteriaTrue,
     this.criteriaFalse,
   });
 
   @override
-  String get type => 'noul';
+  String get type => 'bool';
 
   @override
   final Object? instructions;
@@ -130,19 +130,19 @@ sealed class DecisionAnswer {
   Map<String, dynamic> toJson();
 }
 
-/// The answer to a [DecisionNoulQuestion]: [probability] of `true`
+/// The answer to a [DecisionBoolQuestion]: [probability] of `true`
 /// (1 - probability is the `false` probability).
-final class DecisionNoulAnswer extends DecisionAnswer {
-  const DecisionNoulAnswer({required this.probability});
+final class DecisionBoolAnswer extends DecisionAnswer {
+  const DecisionBoolAnswer({required this.probability});
 
   /// The calibrated probability of `true` (0..1).
   final double probability;
 
   @override
-  String get type => 'noul';
+  String get type => 'bool';
 
   @override
-  Map<String, dynamic> toJson() => {'type': type, 'noul': probability};
+  Map<String, dynamic> toJson() => {'type': type, 'bool': probability};
 }
 
 /// The answer to a [DecisionChoiceQuestion]: the picked option plus the
@@ -501,11 +501,11 @@ final class DecisionsAdapter {
     if (value is! Map) return null;
     final type = value['type'];
     switch (type) {
-      case 'noul':
-        final probability = _asDouble(value['noul']);
+      case 'bool':
+        final probability = _asDouble(value['bool']);
         return probability == null
             ? null
-            : DecisionNoulAnswer(probability: probability);
+            : DecisionBoolAnswer(probability: probability);
       case 'choice':
         final choice = value['choice'];
         if (choice is! String) return null;
