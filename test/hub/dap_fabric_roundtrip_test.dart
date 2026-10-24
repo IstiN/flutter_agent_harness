@@ -221,8 +221,9 @@ void main() {
     addTearDown(revived.stop);
     await _waitFor(() => fabric.isConnected);
     await _waitFor(() => browser.connected);
-    final arrived = browser.inbound
-        .firstWhere((m) => m.plaintext == 'queued while offline');
+    final arrived = browser.inbound.firstWhere(
+      (m) => m.plaintext == 'queued while offline',
+    );
     // The forward rides the production 2s inbox probe, not one drain:
     // EVERY fabric call re-triggers the flush, and each attempt's
     // presence/whois ride is 10s-capped on a loaded runner — a single

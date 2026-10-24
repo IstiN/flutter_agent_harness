@@ -229,30 +229,33 @@ void main() {
     expect(files.inboxes['hub-peer'], isNull);
   });
 
-  test('a FAILED roster query while connected keeps the queue tracked', () async {
-    hub.resolvable.add('hub-peer');
-    hub.connected = false;
-    await fabric.send(_msg('m1')); // queued while the hub is down
-    expect(files.inboxes['hub-peer'], hasLength(1));
+  test(
+    'a FAILED roster query while connected keeps the queue tracked',
+    () async {
+      hub.resolvable.add('hub-peer');
+      hub.connected = false;
+      await fabric.send(_msg('m1')); // queued while the hub is down
+      expect(files.inboxes['hub-peer'], hasLength(1));
 
-    // The hub comes back but the FIRST roster query fails (the
-    // reconnect-turbulence shape: presence/whois door dropped or timed
-    // out — the routing primary rethrows). A failed query is not a
-    // confirmed roster miss: the queue must stay tracked for the next
-    // connected call (the hostile-env strand, gh-1838 CI run
-    // 401030921 — the mail used to be untracked here and was lost).
-    hub.connected = true;
-    hub.failResolves = true;
-    await fabric.peek('main');
-    expect(hub.sent, isEmpty);
-    expect(files.inboxes['hub-peer'], hasLength(1));
+      // The hub comes back but the FIRST roster query fails (the
+      // reconnect-turbulence shape: presence/whois door dropped or timed
+      // out — the routing primary rethrows). A failed query is not a
+      // confirmed roster miss: the queue must stay tracked for the next
+      // connected call (the hostile-env strand, gh-1838 CI run
+      // 401030921 — the mail used to be untracked here and was lost).
+      hub.connected = true;
+      hub.failResolves = true;
+      await fabric.peek('main');
+      expect(hub.sent, isEmpty);
+      expect(files.inboxes['hub-peer'], hasLength(1));
 
-    // The next probe (query healthy again) forwards — at-least-once.
-    hub.failResolves = false;
-    await fabric.peek('main');
-    expect(hub.sent.map((m) => m.id), ['m1']);
-    expect(files.inboxes['hub-peer'], isNull);
-  });
+      // The next probe (query healthy again) forwards — at-least-once.
+      hub.failResolves = false;
+      await fabric.peek('main');
+      expect(hub.sent.map((m) => m.id), ['m1']);
+      expect(files.inboxes['hub-peer'], isNull);
+    },
+  );
 
   test(
     're-wrapped hub frames dedupe on sender+time+body, not just id',
