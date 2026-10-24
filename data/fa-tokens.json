@@ -144,14 +144,6 @@
   "issue-1521": [
     {
       "leg": "review",
-      "at": "2026-10-10T23:07:18Z",
-      "prompt": 19637,
-      "completion": 6701,
-      "total": 26338,
-      "model": ""
-    },
-    {
-      "leg": "review",
       "at": "2026-10-10T23:24:55Z",
       "prompt": 39581,
       "completion": 3471,
@@ -4684,6 +4676,15 @@
       "completion": 17668,
       "total": 176763,
       "cacheRead": 4936192,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-24T23:07:36Z",
+      "prompt": 257910,
+      "completion": 16746,
+      "total": 274656,
+      "cacheRead": 6819072,
       "model": "kimi-for-coding"
     }
   ],
