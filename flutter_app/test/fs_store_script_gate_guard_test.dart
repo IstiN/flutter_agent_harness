@@ -19,9 +19,27 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
-const dartGate = 'flutter_app/lib/sandbox/fs_persistence_web.dart';
-const helperJs = 'flutter_app/web/fs_store.js';
-const indexHtml = 'flutter_app/web/index.html';
+/// The flutter_app root, located by walking up from the cwd (under
+/// `flutter test` the cwd is flutter_app) — the android_icon_test.dart
+/// convention; Platform.script points into .dart_tool and is not stable.
+String get _appRoot {
+  var dir = Directory.current;
+  while (true) {
+    if (File('${dir.path}/pubspec.yaml').existsSync() &&
+        Directory('${dir.path}/ios').existsSync()) {
+      return dir.path;
+    }
+    final parent = dir.parent;
+    if (parent.path == dir.path) {
+      fail('could not locate the flutter_app root from ${Directory.current}');
+    }
+    dir = parent;
+  }
+}
+
+String get dartGate => '$_appRoot/lib/sandbox/fs_persistence_web.dart';
+String get helperJs => '$_appRoot/web/fs_store.js';
+String get indexHtml => '$_appRoot/web/index.html';
 
 void main() {
   /// Masks `//`/`///` comments and `/* */` blocks so the guard asserts
