@@ -492,9 +492,9 @@ class CatalogService {
   /// the same lexical `./`/`../` resolution against the importing file's
   /// directory in widget-root-relative space (one documented divergence:
   /// a `..` past the widget root is refused — the runtime would read it
-  /// from the app namespace, which the preview cannot serve), imports-
-  /// then-includes in source
-  /// order with import-once (`visited`) semantics, and the runtime's OWN
+  /// from the app namespace, which the preview cannot serve), the same
+  /// imports-then-includes source order with import-once (`visited`)
+  /// semantics, and the runtime's OWN
   /// per-chain depth budget ([_maxChainDepth]) — a chain the assembler
   /// would give up on is refused here, because booting it leaves the
   /// import as a literal statement. Unlike the assembler (which comments
