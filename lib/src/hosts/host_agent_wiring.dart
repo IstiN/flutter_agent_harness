@@ -89,6 +89,7 @@ import '../task/subagent_tools.dart' show subagentMonitoringTools;
 import '../task/task_tool.dart' show TaskToolConfig, taskTool;
 import '../telemetry/agent_telemetry.dart';
 import '../tools/ask_tool.dart';
+import '../tools/bash_auto_background.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/generate_image.dart';
 import '../tools/generate_video.dart';
@@ -396,6 +397,15 @@ final class AgentCoreServices {
   /// pipeline masks it in transcripts (review 5456649624).
   final Set<String> Function()? approvedSecretLiterals;
 
+  /// The gh-1835 auto-background liveness threshold for the bash tool: a
+  /// foreground call still running after this long is converted (never
+  /// restarted) to a background shell job, the pending tool call resolves
+  /// with the backgrounded result, and the model decides wait/watch/cancel.
+  /// `Duration.zero` is the kill switch (legacy foreground behavior). The
+  /// CLI threads `waiting.autoBackgroundSeconds` here; the default (60s)
+  /// keeps hosts that do not model the key — the app — at parity.
+  final Duration shellAutoBackgroundAfter;
+
   const AgentCoreServices({
     required this.baseEnv,
     this.sessionEnvVars,
@@ -432,6 +442,9 @@ final class AgentCoreServices {
     this.sessionCwd,
     this.redactionConfig,
     this.approvedSecretLiterals,
+    this.shellAutoBackgroundAfter = const Duration(
+      seconds: defaultShellAutoBackgroundSeconds,
+    ),
     this.telemetry,
     this.keyResolver,
     this.onKeySlotDrift,
@@ -730,6 +743,7 @@ List<AgentTool> _buildCoreTools({
       onPasswordPrompt: services.onPasswordPrompt,
       redactionConfig: services.redactionConfig,
       approvedSecretLiterals: services.approvedSecretLiterals,
+      shellAutoBackgroundAfter: services.shellAutoBackgroundAfter,
     ),
     ...memoryTools(services.memory, onChanged: services.onMemoryChanged),
     ...?services.scheduledMessages == null

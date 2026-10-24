@@ -13,6 +13,28 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1835): long foreground bash calls are AUTO-BACKGROUNDED at the
+  liveness threshold — a call still running after
+  `waiting.autoBackgroundSeconds` (default 60; `0` = kill switch → legacy
+  behavior) is CONVERTED, never restarted: the command always ran as a
+  `ShellJobRegistry` job under the soft-yield path, so at the threshold the
+  pending tool call simply resolves exactly once with the backgrounded
+  result — job id, elapsed, log path, and short inline guidance (if the
+  duration is unexpected, `bash_job` stop + retry differently; otherwise
+  continue and the settle wakes you, or poll `bash_job output`) — while the
+  SAME process keeps running. The notice rides the TOOL RESULT only (no
+  separate steering record, no extra turn; the result is anchored on the
+  existing hand-back sentence so the stuck supervisor and the foreground
+  budget classify it as a real conversion). An explicit `timeout` at or
+  below the threshold keeps the classic foreground path unchanged; one
+  above it carries over to the job as its cap and is named in the result.
+  Settle notifications stay armed for converted jobs, so the headless drain
+  (`headless.shellJobDrainMs`) and the settle → reaction wake work
+  unchanged; hosts without the `BackgroundShell` capability keep the legacy
+  foreground behavior (documented degradation). New pure module
+  `lib/src/tools/bash_auto_background.dart` (text + default), `bash` tool
+  description teaches the behavior.
+
 - feat(gh-1834): the FinalizeGate contract counts a parity/conformance
   claim as verified only with negative + combination self-checks — new
   numbered step 2.6 in `prompts/cli/finalize_gate.md` (refused
