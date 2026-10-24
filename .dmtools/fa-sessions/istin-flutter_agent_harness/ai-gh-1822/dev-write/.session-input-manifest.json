@@ -1,0 +1,299 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-24T09:55:12.287Z",
+  "ticketKey": "pr-1823",
+  "headSha": "4ac00bad8862dc8305bc2ff354e02c86df0bdec0",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:55aae974fba7d994",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:1875e332a652cba8",
+      "size": 42783
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:e4368dcd8287595d",
+      "size": 5634
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:1ad5306f6d943005",
+      "size": 2767
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:bef2e9eb03a642d0",
+      "size": 1245
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:31f07294c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:08ba9d4cdec0d385",
+      "size": 2516
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:0333559789ad184d",
+      "size": 2429
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6v3SF3",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "site/index.html:262",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: gh-182 R2/AC names a Benchmarks section ON the homepage — this PR ships nav links to a dedicated page instead (please confirm the shape)**\n\nThe ticket (read this run) requires the section itself on the homepage:\n\n> `input/gh-1822/ticket.md:24` — \"2. **fa1.dev HOMEPAGE** (`site/index.html`): a `Benchmarks` section (nav link included), rendered from the committed snapshot(s) — result rows where **every number links to its proof**…\"\n> `input/gh-1822/ticket.md:30` — \"…a following README + pages publish shows them **on the fa1.dev HOMEPAGE** with correct smoke labeling and WORKING run/artifact proof links.\"\n> `input/gh-1822/ticket.md:31` — \"…homepage section covered by a link/target check (every result row has a run URL).\"\n\nWhat the PR delivers: `site/index.html` gains only a nav link (`Bench`) and a footer link (`Bench results`) pointing at `fa1.dev/programbench.html`, where `pages.yml` renders the full results block as a deploy-time page. The homepage itself carries **no Benchmarks section**, and Terminal-Bench self-reported rows (R2: \"belong here too where snapshots exist\") are not surfaced on fa1.dev at all.\n\nThe testable core of the AC — results visible on fa1.dev with correct smoke labeling and working run/artifact links — is met on the subpage (and pinned by `test_html_page_renders_same_block` + the committed-ledger honesty test), and the PR description declares this shape as a key decision. But strictly, R2's \"a Benchmarks section (nav link included)\" reads as *section on the page, link in the nav* — not *link only*.\n\n**Please confirm the dedicated-page shape satisfies gh-182 R2** (it is arguably the better product call — keeps the homepage light — and round-1 review accepted it). If the owner confirms the on-homepage section is required, this escalates to blocking: the fix is a `render_html`-style block (or a small render variant) spliced into `site/index.html`'s deploy path plus the link/target check the AC names."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v3SG5",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/bench-programbench.yml:705",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Artifact-id lookup reads page 1 only — a re-run can link a stale attempt's artifact (or gracefully degrade)**\n\nThe `Resolve artifact link` step lists artifacts with the default page size and takes the first hit:\n\n```yaml\ngh api \"repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts\" \\\n    --jq '.artifacts[] | select(.name==\"programbench-submission\") | .id' 2>/dev/null | head -1\n```\n\nTwo edges on a run id that gets re-run (re-run failed steps keeps the same `run_id` and accumulates a fresh `programbench-submission` per attempt, alongside every `pbench-shard-*` artifact):\n\n- If the run's artifact count exceeds the default page (30), the current attempt's submission artifact can fall off page 1 → empty `artifact_url` → the renderer's run-page fallback (graceful, fine).\n- Worse: if an **older attempt's** `programbench-submission` is what page 1 yields first, the ledger records a link to a *different attempt's* artifact for this row's numbers — the union-by-label merge then keeps that stale URL until the next record.\n\nCheap hardening: fetch more / pick the newest explicitly, e.g.\n\n```bash\ngh api --paginate \".../artifacts\" \\\n  --jq '[.artifacts[] | select(.name==\"programbench-submission\")]\n         | sort_by(.created_at) | last | .id // empty'\n```\n\nNot blocking — the fallback keeps every green run recording — but the ledger is the permanent public record, so pinning the *current* attempt's artifact is worth the one-liner."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v3SIY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/leaderboard/pbench_record.py:88",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `read_stats` still trusts score.json's top-level shape — the same robustness class thread 5 fixed for cost/calls**\n\nThread 5 hardened `cost.json`/`calls.json` entries against nulls/strings, but `score.json`'s top level is assumed to be an object:\n\n```python\nscore = json.loads(score_path.read_text()) if score_path.is_file() else None\nif score is None:\n    raise FileNotFoundError(...)\n...\nfor iid in sorted(set(score) | set(costs) | set(calls)):\n    entry: dict = {}\n    tests = score.get(iid)\n```\n\n- A JSON **list** (format drift / a stray `[]` written by a tool) passes the `is None` check: `set([])` is empty, so the tool silently records a row with `attempted: 0, solved: 0, score_pct: null` — an empty \"result\" that renders as a real row — while a non-empty list dies with an uncaught `AttributeError` on `score.get` (outside `main`'s `(OSError, ValueError)` catch).\n\nOne line closes it, mirroring the thread-5 spirit:\n\n```python\nif not isinstance(score, dict):\n    raise ValueError(f\"score.json must be an object — got {type(score).__name__}\")\n```\n\nPinned with the same shape of test used for thread 5 (`score.json` = `[]` → clean exit 2, ledger untouched). CI writes this file, so this is armor for hand-backfills only — hence a suggestion, not blocking."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:ce539d76",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Thread 6 — `bench/leaderboard/pbench_render.py:357` — SUGGESTION: HTML page drops the run-page fallback in an edge case the Markdown render handles\n\n**Fixed — the HTML now reuses the Markdown condition.** `render_html` counts the artifact `<p>`s actually appended (`if a.get(\"url\")`) and emits the \"see the run page\" fallback when that count is zero, instead of keying off `artifact_urls` merely being non-empty. A hand-edited row like `\"artifact_urls\": [{\"label\": \"programbench-submission\"}]` now renders the run-page fallback exactly like the README section for the same row.\n\nPinned by `test_html_falls_back_to_run_link_when_artifact_has_no_url`, which builds the raw hand-edited row (bypassing `upsert`, which would sanitize the url-less entry away — the merge-casualty scenario skips that filter) and asserts the fallback paragraph renders with the run URL and no empty `href=\"\"` anchor."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:2aa86917",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: The \"Score\" column is labeled pass@1 but shows a different metric**\n\n`render_row_table` fills the Score column with `score_pct` — the **unweighted mean of per-instance test-pass percentages** (`read_stats`: `100 × passed/len(tests)` averaged in `upsert`) — while the Mode column says *\"full — pass@1, all N instances\"* and the section intro says *\"Pass@1: one attempt per instance\"*. Those are different numbers: summary.py's headline pass@1 convention is the **instance-solved fraction** (`Solved {n}/{len} — headline pass@1 over the full official set`), and the official ProgramBench board ranks the same way.\n\nThe seeded row already shows the drift: Mode reads \"pipeline proof\", Score reads `98.0%` (mean test-pass rate), while pass@1 for that row would be `2/2 = 100%`. On a full run the gap grows (one 40% instance among 201 barely moves a tests-weighted mean but visibly moves the solved fraction). A reader comparing this table against the official board will misread every row.\n\nSuggest one of:\n- record/display the solved fraction (`solved/attempted`) as Score to match the pass@1 headline, or\n- rename the column to what it is (e.g. `Test-pass %`) and say in the section intro that it is the mean per-instance scored-test rate."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:095044ad",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: Re-running an old green run silently regresses the committed ledger**\n\nThis step records and pushes the ledger **from the run's pinned checkout**: `actions/checkout` (top of the job) pins the dispatch-time sha, so the working tree holds the ledger **as it was when the run was dispatched**. The record → render → `git push` chain then writes that whole stale tree back:\n\n- Run A dispatched at sha S1 (ledger L0) → records L0+A → pushes.\n- Run B dispatched later at S2 (ledger L0+A) → records L0+A+B → pushes.\n- Someone clicks **\"Re-run all jobs\"** on run A months later → checkout is S1 again → the step records **L0+A**, regenerates the README section from it, and pushes — **B's row (and any hand-backfilled rows) silently disappear from the public board**, and the README section rewinds with them.\n\nThe `concurrency` group serializes *concurrent* runs but does nothing against this cross-time overwrite. The gh-1682 sibling step (`bench-harbor.yml` \"Update leaderboard ledger & table\") has the same shape, so this is a copied pattern — but this PR is the moment to harden it cheaply, e.g.:\n\n```bash\ngit fetch origin \"${GITHUB_REF#refs/heads/}\"\ngit rebase \"FETCH_HEAD\"   # or: check out the branch's ledger before recording\n```\n\nbefore `pbench_record.py` runs (a non-fast-forward push rejection failing the step would already be better than a silent revert). Worth a follow-up for the harbor step too."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:9be403f4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Artifact links expire with the retention window — say so (or extend it)**\n\nThe ledger rows link the `programbench-submission` artifact (`…/runs/<id>/artifacts/<artifact-id>`), and the renderer presents them as the lasting analysis surface (\"the run's value survives the CI artifact retention window and stays reachable\" — `pbench_render.py` docstring). But the artifact itself **expires** on the default retention schedule (the seeded run's artifact shows `expired: false` today; it will 404 later), so README and fa1.dev will accumulate dead links while the run links stay alive.\n\nCheap options:\n- add `retention-days:` (e.g. `365`) to the pre-existing \"Upload submission folder\" step so trajectories/eval logs outlive the default window;\n- and/or have the renderer note \"(artifact link expires with GitHub's retention window)\" so the page stays honest after expiry."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:ac623d1e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `read_stats` dies with an uncaught `TypeError` on null/non-numeric cost or calls entries**\n\n`float(costs[iid])` / `int(calls[iid])` raise `TypeError` for a JSON `null` or a string value in `cost.json`/`calls.json`, and `main` only catches `(OSError, ValueError)` around `read_stats` — so a malformed stats file produces a raw traceback instead of the tool's clean `error: … ` exit-2 path (the same file class that gets the friendly `FileNotFoundError` treatment two lines up). Since `summary.py` writes these files it's unlikely in CI, but hand-backfills and future format drift hit this path. Guard with `isinstance(costs[iid], (int, float))` / drop the entry, or add `TypeError` to the caught set — a one-line test (`cost.json` with `{\"cmatrix\": null}`) pins it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:62f5fa69",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: HTML page drops the run-page fallback in an edge case the Markdown render handles**\n\nHere the fallback is suppressed whenever `artifact_urls` is **non-empty**, even if no entry actually rendered a link — compare `render_detail_blocks` (Markdown), which collects `links` filtered by `a.get(\"url\")` and falls back when *no link was rendered*. A hand-edited ledger row like `\"artifact_urls\": [{\"label\": \"programbench-submission\"}]` (url lost in a merge) therefore renders the HTML page with **no artifact link and no run-page fallback**, while the README section for the same row still shows the run-page link. Reuse the Markdown condition: emit the fallback when no artifact `<p>` was appended."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:38a0d902",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `splice_readme` duplicates the block when the begin marker is orphaned, and hardcodes one trailing char**\n\nTwo edge cases in the splice:\n\n1. If `MARKER_BEGIN` exists but `MARKER_END` is missing or precedes it (a merge-conflict remnant of the generated region is the classic way), the function falls through to the anchor/heading insertion and appends a **second** generated block next to the orphaned one — the README then carries two ProgramBench sections and `--check` can never converge. Failing loudly (exit 2, \"orphaned pbench-leaderboard:begin marker\") would surface the corrupt README immediately.\n2. `text[end + len(MARKER_END) + 1:]` assumes exactly one character (the `\\n`) after the end marker; a marker at EOF without a trailing newline would silently swallow the following character into the replaced span. `text.find(\"\\n\", end)` with an EOF fallback is the robust form.\n\nNeither bites the committed README today (the round-trip test covers the healthy shape) — this is cheap armor for the CI-only writer."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:b1e137f1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Thread 1 — `bench/leaderboard/pbench_results.json:14` — BLOCKING: seeded row is a RED run with impossible numbers\n\n**Fixed by dropping the seed row.** All three problems traced back to the row being hand-written JSON rather than tool output, and no honest re-derivation exists: run 40023718645 concluded `failure`, so its `Package submission` never produced a `_stats/` for `read_stats` to consume — there is nothing to re-seed *from*. Re-running the smoke dispatch to a green aggregate is the owner's CI action, not something this push can do. Per your \"or drop the row\" option:\n\n- `bench/leaderboard/pbench_results.json` now ships `{\"schema\": 1, \"results\": []}`; the README section renders the explicit placeholder (\"*No ProgramBench results recorded yet — the ledger fills on the first green `bench-programbench` run*\") instead of a self-contradictory row. The next green aggregate records via the tool (the rerun 40072410719 dispatched with the #1817 eval fix).\n- The `fa_version` note is moot with the row gone, and now enforced: `PbenchRecordTest.test_committed_ledger_satisfies_honesty_contract` pins the honesty contract on the **real committed file** — every row must carry `run_urls` and `fa_version`, headline `solved` must equal the instance count, and any instance with `solved: true` must have `score_pct == 100.0` (summary.py's ✅ convention). The test fails against the old seed on all counts.\n- `pbench_record.py`'s docstring no longer cites \"the seed smoke row\" as a backfill example; it now warns that a hand-written JSON row is exactly how the first seed went wrong.\n- Test fixtures were aligned too (`_ledger_row`, `_smoke_ledger`, `test_seed_row_is_self_reported`): they no longer synthesize the impossible `98.0% + solved: true` shape — a non-100 instance is `solved: false`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:1c4aa20e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Thread 2 — `bench/leaderboard/pbench_render.py:122` — IMPORTANT: \"Score\" column labeled pass@1 but shows a different metric\n\n**Fixed by taking your second option — the column now says what it is, and the intro pins pass@1 to the Solved fraction.**\n\n- Both row tables (README + fa1.dev HTML) now render `Test-pass %` instead of the bare `Score`, in the headline table *and* the per-instance detail table.\n- The section intro on both surfaces now reads: \"Pass@1: one attempt per instance — the **Solved** column (solved/attempted) is the pass@1 fraction the official board ranks by; **Test-pass %** is the mean share of scored tests that passed per instance (a 100% test-pass row can still fail an instance).\" No label on the page claims the mean rate is pass@1 anymore.\n- The `Mode` column's \"full — pass@1, all N instances\" label stays correct: pass@1 is what the **Solved** column shows.\n- Pinned by `test_row_table_labels_the_test_pass_metric` / `test_html_labels_the_test_pass_metric` (header shape, no bare `Score` column left, intro carries the metric explanation).\n\nChose the relabel over displaying solved-fraction-as-Score because the Solved column already shows `solved/attempted` — a second identical column would have added nothing while discarding the per-test granularity the mean rate provides."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:e187f5fd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Thread 3 — `.github/workflows/bench-programbench.yml:750` — IMPORTANT: re-running an old green run silently regresses the committed ledger\n\n**Fixed in the \"Update ProgramBench ledger & README\" step.** It now syncs to the branch tip *before* recording:\n\n```bash\ngit fetch origin \"${GITHUB_REF#refs/heads/}\"\ngit rebase \"FETCH_HEAD\"\n```\n\nWith zero local commits on the pinned checkout this is a fast-forward onto the branch tip, so the record → render → `git add` → commit → push chain appends on top of the *current* ledger and README — your run-A/re-run scenario now produces run-A's numbers as an updated row on the fresh board instead of rewinding it. If the branch history moved in a way that can't fast-forward, the rebase (or the subsequent non-fast-forward push) fails the step loudly under `set -euo pipefail` — a visible red instead of a silent revert of rows and hand-backfills.\n\nPinned by `WorkflowLedgerStepTest.test_record_step_syncs_the_branch_before_recording`, which asserts the step's `git fetch` → `git rebase` order precedes `pbench_record.py` and its `git push`.\n\nThe same-shaped gh-1682 `bench-harbor.yml` step (\"Update leaderboard ledger & table\") is untouched — per your note it's a follow-up, and this PR keeps its diff scoped to the threads it owns."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:baa99291",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Thread 4 — `.github/workflows/bench-programbench.yml:691` — SUGGESTION: artifact links expire with the retention window — say so (or extend it)\n\n**Did both cheap options.**\n\n1. The pre-existing \"Upload submission folder\" step gained `retention-days: 365`, so trajectories/eval logs/_stats outlive the default window and the ledger's artifact links stay resolvable for a year.\n2. The renders now say the links expire: the Markdown artifact line reads \"… the submission artifact holds the run dir: trajectories, eval logs, _stats. (Artifact links expire with GitHub's retention window; the run page stays.)\" and the HTML page carries the same parenthetical. The `pbench_render.py` docstring no longer claims the *artifact* \"survives the CI artifact retention window\" — it now says the **committed ledger** outlives artifact expiry while the artifact links say they expire.\n\nPinned by `test_artifact_links_note_the_retention_window` (both surfaces) and `test_submission_artifact_outlives_the_default_retention` (the upload step's `retention-days:`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:5b31f934",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Thread 5 — `bench/leaderboard/pbench_record.py:106` — SUGGESTION: `read_stats` dies with an uncaught `TypeError` on null/non-numeric cost or calls entries\n\n**Fixed with your first option — the `isinstance` guard** (better than widening the catch: the rest of the record still lands):\n\n```python\nif iid in costs and isinstance(costs[iid], (int, float)):\n    entry[\"cost_usd\"] = round(float(costs[iid]), 4)\nif iid in calls and isinstance(calls[iid], int):\n    entry[\"calls\"] = int(calls[iid])\n```\n\nA `null` (or string) entry degrades to \"no field\" — rendered as `n/a`/`—` like any other gap — while the instance row itself still records. An instance known *only* from a malformed entry still lands as an honest empty gap (`{}` → \"no score\"), consistent with the existing missing-score behavior.\n\nPinned by `test_read_stats_tolerates_null_and_non_numeric_cost_calls` (your exact `{\"cmatrix\": null}` case plus a string cost/calls, asserting the clean entry shape) and `test_main_survives_a_null_cost_entry` (end-to-end `main()` → exit 0, ledger row written, no cost field)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:9b03709d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: The seeded ledger row records a RED run as a green \"2/2 solved\" pipeline proof — and its numbers are impossible under this PR's own tooling**\n\nThree independent problems with the seed row (`bench/leaderboard/pbench_results.json:11-24`, rendered at `README.md:109-116`):\n\n**1. The run is not green.** Run [40023718645](https://api.github.com/repos/IstiN/flutter_agent_harness/actions/runs/40023718645) concluded **`failure`** — the `Package submission` and `Summary & verdict` steps both failed (verified via the Actions API during this review). This PR's own aggregate step says: *\"Runs only on a GREEN aggregate (the verdict + Tier-0 `submit verify` passed) — a partial or failing run never lands\"*, and `pbench_record.py`'s docstring says the ledger is written *\"on every GREEN run\"*. The Tier-0 verify never ran for this run — its numbers were never validated by the gate the PR builds.\n\n**2. The per-instance numbers contradict the repo's own solved convention.** `pbench_record.read_stats` (lines 100-104) and `bench/programbench/summary.py:19-20,38-43` define `solved = every scored test true` — i.e. `solved: true` **implies** `score_pct == 100.0` (\"a 100-after-rounding instance that isn't solved is NOT solved\"). The seed asserts `98.0%` **and** `solved: true` for both instances; the README consequently renders `| cmatrix | 98.0% | 506 | ✅ |` and a headline `Solved 2/2` — self-contradictory on its face.\n\n**3. `98.0` cannot even be produced by the tool for these test counts.** `round(100.0*passed/len(tests), 1)` yields `98.0` for **no** integer passed-count with 680 tests (667→98.1, 666→97.9); for 506 tests it implies 496/506 passed → `solved: false`. So this row was not produced by `read_stats` from a packaged `_stats/` (which also never existed — `submit package` failed).\n\nSince the PR's entire deliverable is *honest, committed, self-reported* results (gh-182 R1), the first published row must satisfy the honesty contract it establishes. Please either re-run the smoke dispatch to a **green** aggregate and record that run via the tool, or fix the seed to match the run's actual packaged `_stats` (correct `score_pct` with `solved` derived by the tool's rule, or drop the row). Also note the missing `fa_version` — a recorded row would carry `--fa-version` (renders `—` today)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:4583c0bb",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Thread 7 — `bench/leaderboard/pbench_render.py:228` — SUGGESTION: `splice_readme` duplicates the block on an orphaned begin marker, and hardcodes one trailing char\n\n**Both edges armored.**\n\n1. **Orphaned begin marker fails loudly**: when `MARKER_BEGIN` exists but `MARKER_END` is missing or precedes it, `splice_readme` now raises `ValueError(\"orphaned pbench-leaderboard:begin marker — the generated region is corrupt (the end marker is missing or precedes it); remove the stale block and re-run\")`, and `main()` turns that into the tool's clean `error: …` exit-2 path writing nothing. No second generated block can ever be appended next to a corrupt region, so `--check` can always converge once the remnant is removed. (Verified the guard also catches the mirrored shape — a stale end-marker remnant *before* the block — which my e2e probe hit by accident.)\n2. **Trailing char no longer hardcoded**: the splice consumes only a single newline directly after the end marker (`tail = text[after + 1:] if text[after:after + 1] == \"\\n\" else text[after:]`) — a marker at EOF without its trailing newline keeps every following character, and the healthy `END\\n…` shape round-trips byte-identically as before.\n\nPinned by `test_splice_orphaned_begin_marker_fails_loudly` (raises, and `main()` returns 2 with the README untouched) and `test_splice_never_swallows_text_after_the_end_marker` (`END` + `TRAILING` at EOF keeps `TRAILING`; pure-EOF shape ends `…END\\n`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:8dba17e8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: gh-182 R2/AC names a Benchmarks section ON the homepage — this PR ships nav links to a dedicated page instead (please confirm the shape)**\n\nThe ticket (read this run) requires the section itself on the homepage:\n\n> `input/gh-1822/ticket.md:24` — \"2. **fa1.dev HOMEPAGE** (`site/index.html`): a `Benchmarks` section (nav link included), rendered from the committed snapshot(s) — result rows where **every number links to its proof**…\"\n> `input/gh-1822/ticket.md:30` — \"…a following README + pages publish shows them **on the fa1.dev HOMEPAGE** with correct smoke labeling and WORKING run/artifact proof links.\"\n> `input/gh-1822/ticket.md:31` — \"…homepage section covered by a link/target check (every result row has a run URL).\"\n\nWhat the PR delivers: `site/index.html` gains only a nav link (`Bench`) and a footer link (`Bench results`) pointing at `fa1.dev/programbench.html`, where `pages.yml` renders the full results block as a deploy-time page. The homepage itself carries **no Benchmarks section**, and Terminal-Bench self-reported rows (R2: \"belong here too where snapshots exist\") are not surfaced on fa1.dev at all.\n\nThe testable core of the AC — results visible on fa1.dev with correct smoke labeling and working run/artifact links — is met on the subpage (and pinned by `test_html_page_renders_same_block` + the committed-ledger honesty test), and the PR description declares this shape as a key decision. But strictly, R2's \"a Benchmarks section (nav link included)\" reads as *section on the page, link in the nav* — not *link only*.\n\n**Please confirm the dedicated-page shape satisfies gh-182 R2** (it is arguably the better product call — keeps the homepage light — and round-1 review accepted it). If the owner confirms the on-homepage section is required, this escalates to blocking: the fix is a `render_html`-style block (or a small render variant) spliced into `site/index.html`'s deploy path plus the link/target check the AC names."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:55f04bac",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Artifact-id lookup reads page 1 only — a re-run can link a stale attempt's artifact (or gracefully degrade)**\n\nThe `Resolve artifact link` step lists artifacts with the default page size and takes the first hit:\n\n```yaml\ngh api \"repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts\" \\\n    --jq '.artifacts[] | select(.name==\"programbench-submission\") | .id' 2>/dev/null | head -1\n```\n\nTwo edges on a run id that gets re-run (re-run failed steps keeps the same `run_id` and accumulates a fresh `programbench-submission` per attempt, alongside every `pbench-shard-*` artifact):\n\n- If the run's artifact count exceeds the default page (30), the current attempt's submission artifact can fall off page 1 → empty `artifact_url` → the renderer's run-page fallback (graceful, fine).\n- Worse: if an **older attempt's** `programbench-submission` is what page 1 yields first, the ledger records a link to a *different attempt's* artifact for this row's numbers — the union-by-label merge then keeps that stale URL until the next record.\n\nCheap hardening: fetch more / pick the newest explicitly, e.g.\n\n```bash\ngh api --paginate \".../artifacts\" \\\n  --jq '[.artifacts[] | select(.name==\"programbench-submission\")]\n         | sort_by(.created_at) | last | .id // empty'\n```\n\nNot blocking — the fallback keeps every green run recording — but the ledger is the permanent public record, so pinning the *current* attempt's artifact is worth the one-liner."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:4c179af2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `read_stats` still trusts score.json's top-level shape — the same robustness class thread 5 fixed for cost/calls**\n\nThread 5 hardened `cost.json`/`calls.json` entries against nulls/strings, but `score.json`'s top level is assumed to be an object:\n\n```python\nscore = json.loads(score_path.read_text()) if score_path.is_file() else None\nif score is None:\n    raise FileNotFoundError(...)\n...\nfor iid in sorted(set(score) | set(costs) | set(calls)):\n    entry: dict = {}\n    tests = score.get(iid)\n```\n\n- A JSON **list** (format drift / a stray `[]` written by a tool) passes the `is None` check: `set([])` is empty, so the tool silently records a row with `attempted: 0, solved: 0, score_pct: null` — an empty \"result\" that renders as a real row — while a non-empty list dies with an uncaught `AttributeError` on `score.get` (outside `main`'s `(OSError, ValueError)` catch).\n\nOne line closes it, mirroring the thread-5 spirit:\n\n```python\nif not isinstance(score, dict):\n    raise ValueError(f\"score.json must be an object — got {type(score).__name__}\")\n```\n\nPinned with the same shape of test used for thread 5 (`score.json` = `[]` → clean exit 2, ledger untouched). CI writes this file, so this is armor for hand-backfills only — hence a suggestion, not blocking."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:2bdaa4d9",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 77088113ba381b58d7a7906a688abc50d2e8566c — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:6b233fe6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — pr-1823\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:4ce5929e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The seeded ProgramBench ledger row publishes a RED run ([40023718645](https://api.github.com/repos/IstiN/flutter_agent_harness/actions/runs/40023718645) — `Package submission` + `Summary & verdict` failed) as a green \"Solved 2/2 ✅ … 98.0%\" pipeline proof, with numbers the PR's own tooling cannot produce. Two important issues (Score column mislabeled pass@1; a stale re-run can silently regress the committed ledger) and four suggestions round it out.\n\n**Key Issues**:\n- 🚨 `bench/leaderboard/pbench_results.json:14` — seed row violates the PR's own green-only contract and `summary.py`'s ✅ convention (98.0% + `solved: true` is impossible per `read_stats`; 680 tests cannot round to 98.0) — see comment1\n- ⚠️ `bench/leaderboard/pbench_render.py:122` — \"Score\" shows mean per-instance test-pass % while the Mode column says pass@1 (comment2)\n- ⚠️ `.github/workflows/bench-programbench.yml:750` — re-running an old green run regenerates the ledger from its stale checkout and drops rows recorded since (comment3; the gh-1682 harbor step shares the shape)\n- 💡 artifact links expire with the retention window; `read_stats` uncaught `TypeError` on null costs; HTML fallback asymetry; `splice_readme` orphan-marker edge (comments 4-7)\n\n**Next Steps**:\n1. Re-derive the seed from the run's actual `_stats` (or re-run to a green aggregate and record that) so `score_pct`/`solved` agree with the tool's math\n2. Align or relabel the Score metric with the pass@1 headline; guard the record step against stale-checkout ledger pushes\n3. Sweep the four suggestions"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:4fc43dc9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (re-review after rework)\n\n**Summary**: All 7 round-1 review threads verified fixed on `e78a6923c` (honest empty ledger + committed-file honesty test, `Test-pass %` metric relabel, pre-record fetch/rebase sync, 365-day artifact retention + expiry notes, cost/calls null guards, HTML run-page fallback, orphaned-marker splice guard). 51/51 unit tests pass, `pbench_render --check` is byte-clean, CI green on this head (incl. the previously red Site mobile E2E). No blocking findings; 1 IMPORTANT + 2 SUGGESTION posted as non-blocking threads.\n\n**Key Issues**:\n- ⚠️ `site/index.html:262` — gh-182 R2/AC names a Benchmarks section **on the homepage**; PR ships nav/footer links to a dedicated `fa1.dev/programbench.html` instead — please confirm the shape against `input/gh-1822/ticket.md:24,30`\n- 💡 `bench-programbench.yml:705` — artifact-id lookup reads page 1 only; a re-run can link a stale attempt's artifact (`sort_by(.created_at) | last`)\n- 💡 `pbench_record.py:88` — score.json top-level shape unvalidated (`[]` records an empty row; a list crashes outside the caught set)\n\n**Next Steps**:\n1. Owner: confirm homepage-section-vs-subpage against gh-182 R2 (escalates to blocking only if the on-page section is required)\n2. Optional one-liners: newest-artifact jq pick; `isinstance(score, dict)` guard\n3. Merge-able as-is per the verdict rules (0 blocking) — the ledger fills on the first green aggregate run"
+    }
+  ]
+}
