@@ -1,0 +1,277 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-24T14:22:07.052Z",
+  "ticketKey": "pr-1841",
+  "headSha": "2b97c1dff0d35121737ec8b67eb6d631ae55f2cf",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:e5a3d5abc425a8ed",
+      "size": 46370
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:19a1398369417c45",
+      "size": 57050
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:266a3a8ed25b5dbd",
+      "size": 552
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:0692ec5e9b13dc75",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:0099e31330fdc177",
+      "size": 26019
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:205b4bb3fb9dbafd",
+      "size": 12306
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:635f952187453312",
+      "size": 3976
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:12e85d384a3b5d1b",
+      "size": 2411
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:27d46039c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:9b8295c0a24ba43b",
+      "size": 3725
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:61ebce2d48f6a58a",
+      "size": 3639
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6v4qSK",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/fa_usage.py:443",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: alias with a missing/unresolvable target silently degrades to the direct entry — the exact silent-resolution failure mode AC5 bans**\n\n`resolve_entry` falls through to the model's own direct entry when the alias target has no row in the merged table (`bench/fa_usage.py:443-471`, fallthrough at line 467):\n\n```python\nif isinstance(target, str) and target:\n    entry = price_entry(table, target)\n    if entry is not None:\n        return entry, target\nentry = price_entry(table, model)   # ← silent fallback\n```\n\nConcrete failure: an operator dispatches with\n`FA_BENCH_PRICING='{\"usd_per_mtok\":{},\"aliases\":{\"kimi-for-coding\":\"kimi-k2-7-code\"}}'`\n(dash instead of dot — the official id is `kimi-k2.7-code`). The target resolves to no entry, the code silently prices `kimi-for-coding` at its own `$0` plan entry, and the summary renders a plain `0.0000` real-billing cell — no `*` label, no \"estimate @ … rates\" line, no warning. The operator believes they configured a labelled K2.7-Code-rate estimate and instead gets a silent misconfiguration, which is precisely the \"resolution must be loud\" contract this PR establishes (AC5).\n\nSuggested fix: validate the alias map once in `load_pricing_resolved` (after base + override merge, where `warnings` is in scope): for every `alias → target` pair, warn loudly when `price_entry(table, target)` is `None` (e.g. `⚠️ pricing: alias \"kimi-for-coding\" → \"kimi-k2-7-code\" has no entry in the loaded table — alias ignored`). Alternatively return a warning from `resolve_entry` and surface it in `render`. A regression test (alias → missing target ⇒ warning present + no unlabelled cost) would pin it."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4qSo",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/fa_usage.py:376",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: a non-dict `\"aliases\"` value is dropped silently — every other malformation in this PR warns loudly**\n\n`bench/fa_usage.py:376`:\n\n```python\naliases = dict(aliases) if isinstance(aliases, dict) else {}\n```\n\nAn override like `{\"usd_per_mtok\": {...}, \"aliases\": [\"kimi-for-coding\", \"kimi-k3\"]}` (list, string, or scalar) is silently ignored — the plan model then prices at its direct entry with no hint the configured alias never took effect. Every sibling failure mode here appends a loud named warning (`no usd_per_mtok table — ignored`, `entry for {model} is not an object — ignored`); this one should too, e.g. `warnings.append(f\"{what}: aliases is not an object — ignored\")`. One line, keeps the \"loud resolution\" contract uniform."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4qTl",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/programbench/summary.py:290",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `SummaryResult` is defined after (and below) its only producer, and `render()` has no return annotation**\n\n`bench/programbench/summary.py:290` — the `SummaryResult` NamedTuple sits between `render()` (which constructs it at lines ~266/279/283) and `main()`. It works at runtime (the name is resolved at call time), but the file now reads bottom-up: a reader of `render()` meets the return type ~40 lines later, and `render()` is the one public function in the module without a `-> SummaryResult` annotation.\n\nMove the class definition just above `def render(` (line 113) and annotate `def render(...) -> SummaryResult:`. Pure reorder + one annotation, no behavior change."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4qUU",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/pricing.json:2",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: pin the announced K2-series retirement window in the pricing metadata**\n\nVerified this run against the official docs: [platform.kimi.ai/docs/models.md](https://platform.kimi.ai/docs/models.md) states *\"starting October 31, 2026, K2 series models will no longer be available to newly registered users … plan to retire all K2 series models by the end of December 2026\"* (the same note is on the pricing page this file cites in `source`). This PR pins three K2-series entries (`kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6`) with `as_of: 2026-10-24` — correct today, but they go stale within ~2 months.\n\nSince this file's whole contract is \"data, with provenance\", a one-clause addition to the `source`/`comment` metadata (e.g. *\"K2 series: no new users after 2026-10-31, full retirement planned end of 2026 — re-verify or alias onto K3.1 before then\"*) keeps future readers from trusting retired rates. The `FA_BENCH_PRICING` override covers the transition either way, so this is polish, not a correctness gap."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4zmi",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/fa_usage.py:467",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: alias with a missing/unresolvable target still silently degrades to the direct entry — the exact silent-resolution failure mode AC5 bans** (re-post: round-1 thread `PRRT_kwDOTXdlLc6v4qSK`, code unchanged)\n\n`resolve_entry` falls through to the model's own direct entry when the alias target has no row in the merged table (`bench/fa_usage.py:461-467`):\n\n```python\nif isinstance(target, str) and target:\n    entry = price_entry(table, target)\n    if entry is not None:\n        return entry, target\nentry = price_entry(table, model)   # ← line 467: silent fallback\n```\n\nConcrete failure: an operator dispatches with\n`FA_BENCH_PRICING='{\"usd_per_mtok\":{},\"aliases\":{\"kimi-for-coding\":\"kimi-k2-7-code\"}}'`\n(dash instead of dot — the official id is `kimi-k2.7-code`). The target resolves to no entry, the code silently prices `kimi-for-coding` at its own `$0` plan entry, and the summary renders a plain `0.0000` real-billing cell — no `*` label, no \"estimate @ … rates\" line, no warning. The operator believes they configured a labelled K2.7-Code-rate estimate and instead gets a silent misconfiguration, which is precisely the \"resolution must be loud\" contract this PR establishes (AC5). The same fallthrough also swallows single-hop-only alias chains (`a→b`, `b→c`): `a` never resolves through `b` and quietly lands on `a`'s direct entry.\n\nSuggested fix: validate the alias map once in `load_pricing_resolved` (after the base + override merge, where `warnings` is in scope): for every `alias → target` pair, warn loudly when `price_entry(table, target)` is `None` (e.g. `⚠️ pricing: alias \"kimi-for-coding\" → \"kimi-k2-7-code\" has no entry in the loaded table — alias ignored`). Alternatively return a warning from `resolve_entry` and surface it in `render`. A regression test (alias → missing target ⇒ warning present + no unlabelled cost) would pin it."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4zng",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/fa_usage.py:376",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: a non-dict `\"aliases\"` value is dropped silently — every other malformation in this PR warns loudly** (re-post: round-1 thread `PRRT_kwDOTXdlLc6v4qSo`, code unchanged)\n\n`bench/fa_usage.py:376`:\n\n```python\naliases = dict(aliases) if isinstance(aliases, dict) else {}\n```\n\nAn override like `{\"usd_per_mtok\": {...}, \"aliases\": [\"kimi-for-coding\", \"kimi-k3\"]}` (list, string, or scalar) is silently ignored — the plan model then prices at its direct entry with no hint the configured alias never took effect. Every sibling failure mode here appends a loud named warning (`no usd_per_mtok table — ignored`, `entry for {model} is not an object — ignored`); this one should too, e.g. `warnings.append(f\"{what}: aliases is not an object — ignored\")`. One line, keeps the \"loud resolution\" contract uniform."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4zoR",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/programbench/summary.py:290",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `SummaryResult` is defined after (and below) its only producer, and `render()` has no return annotation** (re-post: round-1 thread `PRRT_kwDOTXdlLc6v4qTl`, code unchanged)\n\n`bench/programbench/summary.py:290` — the `SummaryResult` NamedTuple sits between `render()` (which constructs it at lines ~205/266/287) and `main()`. It works at runtime (the name is resolved at call time), but the file now reads bottom-up: a reader of `render()` meets the return type ~40 lines later, and `render()` is the one public function in the module without a `-> SummaryResult` annotation.\n\nMove the class definition just above `def render(` (line 113) and annotate `def render(...) -> SummaryResult:`. Pure reorder + one annotation, no behavior change."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4zpB",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/pricing.json:2",
+      "resolved": false,
+      "body": "💡 **SUGESTION: pin the announced K2-series retirement window in the pricing metadata** (re-post: round-1 thread `PRRT_kwDOTXdlLc6v4qUU`, code unchanged)\n\nVerified this run against the official docs: [platform.kimi.ai/docs/models.md](https://platform.kimi.ai/docs/models.md) states *\"starting October 31, 2026, K2 series models will no longer be available to newly registered users … plan to retire all K2 series models by the end of December 2026\"* (the same note is on the pricing page this file cites in `source`). This PR pins three K2-series entries (`kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6`) with `as_of: 2026-10-24` — correct today, but they go stale within ~2 months.\n\nSince this file's whole contract is \"data, with provenance\", a one-clause addition to the `source`/`comment` metadata (e.g. *\"K2 series: no new users after 2026-10-31, full retirement planned end of 2026 — re-verify or alias onto K3.1 before then\"*) keeps future readers from trusting retired rates. The `FA_BENCH_PRICING` override covers the transition either way, so this is polish, not a correctness gap."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v4zpu",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bench/fa_usage.py:426",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (new this round): a shapeless override still flips the `Pricing` source row to \"override active\" while contributing nothing**\n\n`bench/fa_usage.py:426`:\n\n```python\notable, oaliases = _pricing_parts(odoc, what, warnings)\nfor model, entry in otable.items():\n    ...\naliases.update(oaliases)\nsource = f\"{what} over repo default {default}\"   # ← set even when the doc was rejected\n```\n\nVerified this run: an override that parses as JSON but has no `usd_per_mtok` table (`{\"rates\": {}}`, or just `{}`) emits the loud warning (`env override FA_BENCH_PRICING (file …): no usd_per_mtok table — ignored`) — but the code then still sets `source` to `env override FA_BENCH_PRICING … over repo default …`, and the effective table is exactly the repo default. The summary's `| Pricing |` row therefore claims an active override on a run that priced entirely at the repo default.\n\nThe load-failed path right above (lines 413–415) gets this right — it appends `\"(⚠️ FA_BENCH_PRICING override failed — see pricing warnings)\"` to the source instead. A doc rejected by `_pricing_parts` contributed nothing and should take the same route (or at least the same source suffix), so the Pricing row can never overstate what the run used. The loudness contract is met by the warning; this only aligns the source label with reality."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:2d4afa32",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: alias with a missing/unresolvable target silently degrades to the direct entry — the exact silent-resolution failure mode AC5 bans**\n\n`resolve_entry` falls through to the model's own direct entry when the alias target has no row in the merged table (`bench/fa_usage.py:443-471`, fallthrough at line 467):\n\n```python\nif isinstance(target, str) and target:\n    entry = price_entry(table, target)\n    if entry is not None:\n        return entry, target\nentry = price_entry(table, model)   # ← silent fallback\n```\n\nConcrete failure: an operator dispatches with\n`FA_BENCH_PRICING='{\"usd_per_mtok\":{},\"aliases\":{\"kimi-for-coding\":\"kimi-k2-7-code\"}}'`\n(dash instead of dot — the official id is `kimi-k2.7-code`). The target resolves to no entry, the code silently prices `kimi-for-coding` at its own `$0` plan entry, and the summary renders a plain `0.0000` real-billing cell — no `*` label, no \"estimate @ … rates\" line, no warning. The operator believes they configured a labelled K2.7-Code-rate estimate and instead gets a silent misconfiguration, which is precisely the \"resolution must be loud\" contract this PR establishes (AC5).\n\nSuggested fix: validate the alias map once in `load_pricing_resolved` (after base + override merge, where `warnings` is in scope): for every `alias → target` pair, warn loudly when `price_entry(table, target)` is `None` (e.g. `⚠️ pricing: alias \"kimi-for-coding\" → \"kimi-k2-7-code\" has no entry in the loaded table — alias ignored`). Alternatively return a warning from `resolve_entry` and surface it in `render`. A regression test (alias → missing target ⇒ warning present + no unlabelled cost) would pin it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:e3b923ed",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: a non-dict `\"aliases\"` value is dropped silently — every other malformation in this PR warns loudly**\n\n`bench/fa_usage.py:376`:\n\n```python\naliases = dict(aliases) if isinstance(aliases, dict) else {}\n```\n\nAn override like `{\"usd_per_mtok\": {...}, \"aliases\": [\"kimi-for-coding\", \"kimi-k3\"]}` (list, string, or scalar) is silently ignored — the plan model then prices at its direct entry with no hint the configured alias never took effect. Every sibling failure mode here appends a loud named warning (`no usd_per_mtok table — ignored`, `entry for {model} is not an object — ignored`); this one should too, e.g. `warnings.append(f\"{what}: aliases is not an object — ignored\")`. One line, keeps the \"loud resolution\" contract uniform."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:84afb48d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `SummaryResult` is defined after (and below) its only producer, and `render()` has no return annotation**\n\n`bench/programbench/summary.py:290` — the `SummaryResult` NamedTuple sits between `render()` (which constructs it at lines ~266/279/283) and `main()`. It works at runtime (the name is resolved at call time), but the file now reads bottom-up: a reader of `render()` meets the return type ~40 lines later, and `render()` is the one public function in the module without a `-> SummaryResult` annotation.\n\nMove the class definition just above `def render(` (line 113) and annotate `def render(...) -> SummaryResult:`. Pure reorder + one annotation, no behavior change."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:25a1c4ba",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: pin the announced K2-series retirement window in the pricing metadata**\n\nVerified this run against the official docs: [platform.kimi.ai/docs/models.md](https://platform.kimi.ai/docs/models.md) states *\"starting October 31, 2026, K2 series models will no longer be available to newly registered users … plan to retire all K2 series models by the end of December 2026\"* (the same note is on the pricing page this file cites in `source`). This PR pins three K2-series entries (`kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6`) with `as_of: 2026-10-24` — correct today, but they go stale within ~2 months.\n\nSince this file's whole contract is \"data, with provenance\", a one-clause addition to the `source`/`comment` metadata (e.g. *\"K2 series: no new users after 2026-10-31, full retirement planned end of 2026 — re-verify or alias onto K3.1 before then\"*) keeps future readers from trusting retired rates. The `FA_BENCH_PRICING` override covers the transition either way, so this is polish, not a correctness gap."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:ce8ad718",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: alias with a missing/unresolvable target still silently degrades to the direct entry — the exact silent-resolution failure mode AC5 bans** (re-post: round-1 thread `PRRT_kwDOTXdlLc6v4qSK`, code unchanged)\n\n`resolve_entry` falls through to the model's own direct entry when the alias target has no row in the merged table (`bench/fa_usage.py:461-467`):\n\n```python\nif isinstance(target, str) and target:\n    entry = price_entry(table, target)\n    if entry is not None:\n        return entry, target\nentry = price_entry(table, model)   # ← line 467: silent fallback\n```\n\nConcrete failure: an operator dispatches with\n`FA_BENCH_PRICING='{\"usd_per_mtok\":{},\"aliases\":{\"kimi-for-coding\":\"kimi-k2-7-code\"}}'`\n(dash instead of dot — the official id is `kimi-k2.7-code`). The target resolves to no entry, the code silently prices `kimi-for-coding` at its own `$0` plan entry, and the summary renders a plain `0.0000` real-billing cell — no `*` label, no \"estimate @ … rates\" line, no warning. The operator believes they configured a labelled K2.7-Code-rate estimate and instead gets a silent misconfiguration, which is precisely the \"resolution must be loud\" contract this PR establishes (AC5). The same fallthrough also swallows single-hop-only alias chains (`a→b`, `b→c`): `a` never resolves through `b` and quietly lands on `a`'s direct entry.\n\nSuggested fix: validate the alias map once in `load_pricing_resolved` (after the base + override merge, where `warnings` is in scope): for every `alias → target` pair, warn loudly when `price_entry(table, target)` is `None` (e.g. `⚠️ pricing: alias \"kimi-for-coding\" → \"kimi-k2-7-code\" has no entry in the loaded table — alias ignored`). Alternatively return a warning from `resolve_entry` and surface it in `render`. A regression test (alias → missing target ⇒ warning present + no unlabelled cost) would pin it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:c675b30c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: a non-dict `\"aliases\"` value is dropped silently — every other malformation in this PR warns loudly** (re-post: round-1 thread `PRRT_kwDOTXdlLc6v4qSo`, code unchanged)\n\n`bench/fa_usage.py:376`:\n\n```python\naliases = dict(aliases) if isinstance(aliases, dict) else {}\n```\n\nAn override like `{\"usd_per_mtok\": {...}, \"aliases\": [\"kimi-for-coding\", \"kimi-k3\"]}` (list, string, or scalar) is silently ignored — the plan model then prices at its direct entry with no hint the configured alias never took effect. Every sibling failure mode here appends a loud named warning (`no usd_per_mtok table — ignored`, `entry for {model} is not an object — ignored`); this one should too, e.g. `warnings.append(f\"{what}: aliases is not an object — ignored\")`. One line, keeps the \"loud resolution\" contract uniform."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:de979d3d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `SummaryResult` is defined after (and below) its only producer, and `render()` has no return annotation** (re-post: round-1 thread `PRRT_kwDOTXdlLc6v4qTl`, code unchanged)\n\n`bench/programbench/summary.py:290` — the `SummaryResult` NamedTuple sits between `render()` (which constructs it at lines ~205/266/287) and `main()`. It works at runtime (the name is resolved at call time), but the file now reads bottom-up: a reader of `render()` meets the return type ~40 lines later, and `render()` is the one public function in the module without a `-> SummaryResult` annotation.\n\nMove the class definition just above `def render(` (line 113) and annotate `def render(...) -> SummaryResult:`. Pure reorder + one annotation, no behavior change."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:c058d06a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGESTION: pin the announced K2-series retirement window in the pricing metadata** (re-post: round-1 thread `PRRT_kwDOTXdlLc6v4qUU`, code unchanged)\n\nVerified this run against the official docs: [platform.kimi.ai/docs/models.md](https://platform.kimi.ai/docs/models.md) states *\"starting October 31, 2026, K2 series models will no longer be available to newly registered users … plan to retire all K2 series models by the end of December 2026\"* (the same note is on the pricing page this file cites in `source`). This PR pins three K2-series entries (`kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6`) with `as_of: 2026-10-24` — correct today, but they go stale within ~2 months.\n\nSince this file's whole contract is \"data, with provenance\", a one-clause addition to the `source`/`comment` metadata (e.g. *\"K2 series: no new users after 2026-10-31, full retirement planned end of 2026 — re-verify or alias onto K3.1 before then\"*) keeps future readers from trusting retired rates. The `FA_BENCH_PRICING` override covers the transition either way, so this is polish, not a correctness gap."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:fd936e6e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION (new this round): a shapeless override still flips the `Pricing` source row to \"override active\" while contributing nothing**\n\n`bench/fa_usage.py:426`:\n\n```python\notable, oaliases = _pricing_parts(odoc, what, warnings)\nfor model, entry in otable.items():\n    ...\naliases.update(oaliases)\nsource = f\"{what} over repo default {default}\"   # ← set even when the doc was rejected\n```\n\nVerified this run: an override that parses as JSON but has no `usd_per_mtok` table (`{\"rates\": {}}`, or just `{}`) emits the loud warning (`env override FA_BENCH_PRICING (file …): no usd_per_mtok table — ignored`) — but the code then still sets `source` to `env override FA_BENCH_PRICING … over repo default …`, and the effective table is exactly the repo default. The summary's `| Pricing |` row therefore claims an active override on a run that priced entirely at the repo default.\n\nThe load-failed path right above (lines 413–415) gets this right — it appends `\"(⚠️ FA_BENCH_PRICING override failed — see pricing warnings)\"` to the source instead. A doc rejected by `_pricing_parts` contributed nothing and should take the same route (or at least the same source suffix), so the Pricing row can never overstate what the run used. The loudness contract is met by the warning; this only aligns the source label with reality."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:fc4a62a7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: gh-1838 is fully implemented — all ACs verified (AC1–AC3 verdict wording + regression tests; AC5 loud pricing resolution; AC6 `FA_BENCH_PRICING` override plumbed env-only through the dispatch input, no shell interpolation, no secrets; AC7 six official Kimi entries whose model IDs and cache-billing structure I verified this run against platform.kimi.ai/docs/models.md and /docs/pricing/chat.md; AC8 cache-read kept visible and excluded estimates never touch `_stats/cost.json`). Tests: programbench 31 ✅, leaderboard 62 ✅, harbor_fa 271 ✅ (10 skip), mls_bench 53 ✅; terminal_bench 434 with 1 error that is byte-identical on pristine `origin/main` (pre-existing `test_fa_usage` harbor-import env error, unchanged by this PR).\n\n**Key Issues**:\n- ⚠️ 1 IMPORTANT — `resolve_entry` silently falls back to the direct entry when an alias target is missing from the table (typo'd target ⇒ unlabelled `$0.0000` instead of a loud warning; comment1).\n- 💡 3 SUGGESTIONS — non-dict `aliases` dropped silently (comment2); `SummaryResult` defined after `render` + missing return annotation (comment3); pin the announced K2-series retirement window (2026-10-31 / end-2026) in `bench/pricing.json` metadata (comment4).\n- ℹ️ Out-of-diff note (no thread): `bench/harbor_fa/fa_agent.py:1131` still prices via the silent `fa_usage.load_pricing` — correct path there, but it lacks the new loud resolution; a natural follow-up now that `load_pricing_resolved()` exists.\n\n**Next Steps**:\n1. Add alias-target validation + loud warning (and a pinning test) in `load_pricing_resolved` — the one fix worth doing before merge.\n2. Optional polish: warn on non-dict `aliases`; hoist `SummaryResult` above `render()`; note the K2 retirement window in pricing metadata.\n3. No blocking findings — safe to merge as shipped; `issueCounts.blocking = 0`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:c8d6ee3a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: Re-review of PR #1841 (gh-1838): no commits since round 1, so all 4 round-1 threads remain open and still valid. The ACs hold — programbench 31/31 green locally, no CI failures on record, `_stats` stays real-billing-only, workflow input rides env-only (no shell interpolation, no secrets). 0 blocking; 1 IMPORTANT carried + 1 new suggestion.\n\n**Key Issues**:\n- ⚠️ 1 IMPORTANT — `resolve_entry` silently falls back to the direct entry when an alias target is missing from the table (typo'd target ⇒ unlabelled `$0.0000` instead of a loud warning; comment1, re-posted).\n- 💡 4 SUGGESTIONS — non-dict `aliases` dropped silently (comment2, re-posted); `SummaryResult` defined after `render` + missing return annotation (comment3, re-posted); K2-series retirement window not pinned in `bench/pricing.json` metadata (comment4, re-posted); NEW — shapeless override still flips the `Pricing` source row to \"override active\" while contributing nothing (comment5).\n- ℹ️ Out-of-diff (unchanged from round 1): `bench/harbor_fa/fa_agent.py:1131` and `bench/terminal_bench/summary.py:581` still price via the silent `fa_usage.load_pricing` — natural follow-ups now that `load_pricing_resolved()` exists.\n\n**Next Steps**:\n1. Worth a quick follow-up commit: loud warning for alias → missing target + a pinning test (comment1).\n2. Optional polish: comments 2–5. No blocking findings — safe to merge as shipped; `issueCounts.blocking = 0`."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:f4ebf853",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1838 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 2b97c1dff0d35121737ec8b67eb6d631ae55f2cf — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    }
+  ]
+}
