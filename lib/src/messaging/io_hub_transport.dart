@@ -15,12 +15,18 @@ import 'hub_identity.dart';
 import 'hub_transport.dart';
 
 /// A [HubTransport] over a `dart:io` WebSocket.
-final class IoHubTransport implements HubTransport {
+final class IoHubTransport implements HubTransport, HubBearerTransport {
   const IoHubTransport();
 
   @override
-  Future<HubSocket> connect(Uri url) async {
-    final ws = await WebSocket.connect(url.toString());
+  Future<HubSocket> connect(Uri url) => _connect(url);
+
+  @override
+  Future<HubSocket> connectWithBearer(Uri url, String secret) =>
+      _connect(url, headers: {'Authorization': 'Bearer $secret'});
+
+  Future<HubSocket> _connect(Uri url, {Map<String, String>? headers}) async {
+    final ws = await WebSocket.connect(url.toString(), headers: headers);
     return IoHubSocket(ws);
   }
 }

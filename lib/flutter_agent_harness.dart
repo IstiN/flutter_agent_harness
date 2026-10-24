@@ -322,3 +322,6 @@ export 'src/wire/wire_serve.dart';
 export 'src/web_search/web_search.dart';
 // ── viewport ──
 export 'src/viewport/follow_mode.dart';
+// ── dap ──
+export 'src/hub/dap_invite_import.dart';
+export 'src/hub/dap_join_bundle.dart';

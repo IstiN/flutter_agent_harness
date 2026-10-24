@@ -126,14 +126,28 @@ Future<String> hubDecryptPayload({
   required SimplePublicKey senderDhPubkey,
   required String frameId,
   required String ciphertextB64,
+}) => hubDecryptPayloadWithKeyPair(
+  recipientDhKeyPair: ourIdentity.dhKeyPair,
+  senderDhPubkey: senderDhPubkey,
+  frameId: frameId,
+  aadTarget: ourIdentity.agentId,
+  ciphertextB64: ciphertextB64,
+);
+
+/// Decrypts a DAP payload with an explicit X25519 keypair.
+///
+/// DMs use the recipient identity through [hubDecryptPayload]; channel
+/// mail uses the invited channel keypair and `aadTarget = channel`.
+Future<String> hubDecryptPayloadWithKeyPair({
+  required SimpleKeyPair recipientDhKeyPair,
+  required SimplePublicKey senderDhPubkey,
+  required String frameId,
+  required String aadTarget,
+  required String ciphertextB64,
 }) async {
   final raw = base64Decode(ciphertextB64);
   if (raw.length < 12 + 16) throw ArgumentError('ciphertext too short');
-  final key = await _deriveDmKey(
-    ourIdentity.dhKeyPair,
-    senderDhPubkey,
-    frameId,
-  );
+  final key = await _deriveDmKey(recipientDhKeyPair, senderDhPubkey, frameId);
   final clear = await _aead.decrypt(
     SecretBox(
       raw.sublist(12, raw.length - 16),
@@ -141,7 +155,7 @@ Future<String> hubDecryptPayload({
       mac: Mac(raw.sublist(raw.length - 16)),
     ),
     secretKey: key,
-    aad: utf8.encode('dap1|$frameId|${ourIdentity.agentId}'),
+    aad: utf8.encode('dap1|$frameId|$aadTarget'),
   );
   return utf8.decode(clear);
 }

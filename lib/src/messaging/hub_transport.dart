@@ -30,3 +30,14 @@ abstract interface class HubSocket {
 abstract interface class HubTransport {
   Future<HubSocket> connect(Uri url);
 }
+
+/// Optional authentication capability for a [HubTransport].
+///
+/// Enrollment secrets travel only in the WebSocket authorization header;
+/// they are never folded into the dial URL (and therefore cannot appear in
+/// connection logs). Transports without this capability can still serve
+/// open/token-paired hubs through [HubTransport.connect].
+abstract interface class HubBearerTransport {
+  /// Dials [url] with `Authorization: Bearer <secret>`.
+  Future<HubSocket> connectWithBearer(Uri url, String secret);
+}

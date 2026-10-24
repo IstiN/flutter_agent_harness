@@ -62,6 +62,17 @@ final class HubPeer {
   final bool online;
 }
 
+/// X25519 key material imported from a private-channel invite.
+///
+/// Values are write-only wire inputs: this type deliberately has no custom
+/// [toString], so diagnostics never render the private key accidentally.
+final class HubChannelKeys {
+  const HubChannelKeys({required this.pub, required this.priv});
+
+  final String pub;
+  final String priv;
+}
+
 /// Inbound frame-id dedup window: at-least-once delivery means a hub (or a
 /// reconnect race) can hand us the same frame twice; this ring remembers
 /// the recent ids so a redelivery collapses. Bounded — identities live on
@@ -89,6 +100,7 @@ final class HubMessagingRepository
     HubIdentity? identity,
     this.name,
     this.token,
+    this.clientSecret,
     this.backoff = defaultHubBackoff,
     this.onLog,
   }) : _dialUrl = url,
@@ -109,6 +121,10 @@ final class HubMessagingRepository
 
   /// The pairing token for a protected hub (write-only: never echoed).
   final String? token;
+
+  /// Hub-issued enrollment credential (write-only: never echoed or logged).
+  /// Requires a transport implementing [HubBearerTransport].
+  final String? clientSecret;
 
   /// Reconnect backoff schedule (injectable: tests shrink it).
   final Duration Function(int attempt) backoff;
@@ -170,6 +186,13 @@ final class HubMessagingRepository
   final _pendingWhois = <String, List<Completer<HubPeer>>>{};
   final _pendingPresence = <String, Completer<List<HubPeer>>>{};
 
+  /// Explicit channel memberships, restored after every reconnect. A null
+  /// keypair is a PUBLIC channel: join keyless and use raw payloads (never
+  /// mint a chankey).
+  final _channels = <String, HubChannelKeys?>{};
+  final _pendingJoins = <String, Completer<void>>{};
+  final _joinOrder = <String>[];
+
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
@@ -181,6 +204,46 @@ final class HubMessagingRepository
     _started = true;
     _identity = await _identityFuture;
     _dial();
+  }
+
+  /// Waits for the current dial/reconnect loop to reach its first welcome.
+  Future<void> waitForConnection({
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    if (isConnected) return;
+    if (!_started || _disposed) {
+      throw StateError('hub repository is not started');
+    }
+    await stateChanges
+        .firstWhere((state) => state == HubLinkState.connected)
+        .timeout(timeout);
+  }
+
+  /// Imports and joins [channel]. [keys] null means a keyless PUBLIC
+  /// channel; no channel key is generated. Membership survives reconnects.
+  Future<void> joinChannel(String channel, {HubChannelKeys? keys}) async {
+    if (channel.isEmpty || channel.contains(RegExp(r'\s'))) {
+      throw ArgumentError('invalid channel id');
+    }
+    _channels[channel] = keys;
+    await waitForConnection();
+    final pending = _pendingJoins[channel];
+    if (pending != null) return pending.future;
+    final joined = Completer<void>();
+    _pendingJoins[channel] = joined;
+    _joinOrder
+      ..remove(channel)
+      ..add(channel);
+    try {
+      await _sendJoin(channel);
+      await joined.future.timeout(_replyTimeout);
+    } on Object {
+      if (_pendingJoins[channel] == joined) {
+        _pendingJoins.remove(channel);
+        _joinOrder.remove(channel);
+      }
+      rethrow;
+    }
   }
 
   /// Stops the loop and closes the socket cleanly (the iOS background
@@ -222,9 +285,28 @@ final class HubMessagingRepository
         : _dialUrl.replace(queryParameters: {...query, 'dap_token': token});
     final HubSocket socket;
     try {
-      socket = await _transport.connect(url);
+      final secret = clientSecret;
+      if (secret == null || secret.isEmpty) {
+        socket = await _transport.connect(url);
+      } else {
+        final transport = _transport;
+        if (transport is! HubBearerTransport) {
+          throw StateError('hub transport has no bearer-auth capability');
+        }
+        socket = await (transport as HubBearerTransport).connectWithBearer(
+          url,
+          secret,
+        );
+      }
     } on Object catch (error) {
-      _log('hub connect failed: $error');
+      // An authenticated dial never stringifies the transport error: a
+      // hostile/rejecting server must not be able to echo the credential
+      // into host logs.
+      _log(
+        clientSecret == null
+            ? 'hub connect failed: $error'
+            : 'authenticated hub connect failed',
+      );
       _scheduleReconnect();
       return;
     }
@@ -242,15 +324,23 @@ final class HubMessagingRepository
       await _sendHello();
       await welcomed.future.timeout(_replyTimeout);
     } on Object catch (error) {
-      _log('hub handshake failed: $error');
+      _log(
+        clientSecret == null
+            ? 'hub handshake failed: $error'
+            : 'authenticated hub handshake failed',
+      );
       await _dropSocket();
       _scheduleReconnect();
       return;
     }
-    // Welcomed: live. Reset the backoff and drain the offline mailbox plus
-    // everything queued while the link was down.
+    // Welcomed: live. Restore channel memberships, reset the backoff and
+    // drain the offline mailbox plus everything queued while disconnected.
     _attempt = 0;
     _setState(HubLinkState.connected);
+    // Rejoin BEFORE draining queued channel sends; otherwise a reconnect
+    // could race send(not_joined) ahead of its membership restoration.
+    await _restoreChannels();
+    if (!identical(_socket, socket) || !isConnected) return;
     unawaited(_sendNow({'op': 'flush'}).catchError((Object _) {}));
     await _drainOutbound();
   }
@@ -315,6 +405,11 @@ final class HubMessagingRepository
       if (!waiter.isCompleted) waiter.completeError(StateError(error));
     }
     _pendingPresence.clear();
+    for (final waiter in _pendingJoins.values) {
+      if (!waiter.isCompleted) waiter.completeError(StateError(error));
+    }
+    _pendingJoins.clear();
+    _joinOrder.clear();
     final welcome = _welcome;
     if (welcome != null && !welcome.isCompleted) {
       welcome.completeError(StateError(error));
@@ -349,8 +444,25 @@ final class HubMessagingRepository
         _onPresence(frame);
       case 'flushed':
         break; // queued mail already arrived as msg frames
+      case 'joined':
+        final channel = frame['channel'] as String? ?? '';
+        _joinOrder.remove(channel);
+        final waiter = _pendingJoins.remove(channel);
+        if (waiter != null && !waiter.isCompleted) waiter.complete();
       case 'error':
-        _log('hub error: ${frame['code']} ${frame['msg']}');
+        final code = frame['code'] as String? ?? 'unknown';
+        if (code == 'access_denied' && _joinOrder.isNotEmpty) {
+          final channel = _joinOrder.removeAt(0);
+          final waiter = _pendingJoins.remove(channel);
+          if (waiter != null && !waiter.isCompleted) {
+            waiter.completeError(StateError('hub denied channel join'));
+          }
+        }
+        _log(
+          clientSecret == null
+              ? 'hub error: $code ${frame['msg']}'
+              : 'authenticated hub error: $code',
+        );
       default:
         break;
     }
@@ -363,6 +475,11 @@ final class HubMessagingRepository
     _seenFrameIds.add(id);
     if (_seenFrameIds.length > _seenFrameIdsCap) _seenFrameIds.removeAt(0);
     final from = frame['from'] as String? ?? '';
+    final channel = frame['channel'] as String?;
+    if (channel != null) {
+      await _onChannelMsg(frame, id, channel, from);
+      return;
+    }
     String text;
     try {
       var dhB64 = _dhKeys[from];
@@ -392,6 +509,67 @@ final class HubMessagingRepository
         id: id,
         fromId: from,
         toId: agentId ?? '',
+        text: text,
+        sentAt: DateTime.fromMillisecondsSinceEpoch(
+          frame['ts'] as int? ?? 0,
+        ).toUtc().toIso8601String(),
+      ),
+    );
+  }
+
+  Future<void> _onChannelMsg(
+    Map<String, dynamic> frame,
+    String id,
+    String channel,
+    String from,
+  ) async {
+    // Some hubs fan out to the sender too; own channel echo is not new
+    // steering (the local transcript already has the tool result).
+    if (from == agentId || !_channels.containsKey(channel)) return;
+    final keys = _channels[channel];
+    String text;
+    try {
+      if (keys == null) {
+        text = _decodePublicChannelPayload(
+          frame['ciphertext'] as String? ?? '',
+        );
+      } else {
+        var dhB64 = _dhKeys[from];
+        if (dhB64 == null) {
+          await _whois(from);
+          dhB64 = _dhKeys[from];
+        }
+        if (dhB64 == null) throw StateError('no sender DH key');
+        final channelPub = SimplePublicKey(
+          base64Decode(keys.pub),
+          type: KeyPairType.x25519,
+        );
+        text = await hubDecryptPayloadWithKeyPair(
+          recipientDhKeyPair: SimpleKeyPairData(
+            base64Decode(keys.priv),
+            publicKey: channelPub,
+            type: KeyPairType.x25519,
+          ),
+          senderDhPubkey: SimplePublicKey(
+            base64Decode(dhB64),
+            type: KeyPairType.x25519,
+          ),
+          frameId: id,
+          aadTarget: channel,
+          ciphertextB64: frame['ciphertext'] as String? ?? '',
+        );
+      }
+    } on Object {
+      // Never print the error here: base64 parsers can echo their input,
+      // which is invite key material on this path.
+      _log('dropped undecryptable channel mail from $from');
+      return;
+    }
+    _inbox.add(
+      AgentMessage(
+        id: id,
+        fromId: from,
+        toId: '#$channel',
         text: text,
         sentAt: DateTime.fromMillisecondsSinceEpoch(
           frame['ts'] as int? ?? 0,
@@ -476,9 +654,10 @@ final class HubMessagingRepository
   @override
   Future<String?> resolveTarget(String toId) async {
     if (!isConnected) return null;
-    // Channels are not part of this repository's surface (the CLI's
-    // package-backed repo owns them): report "not mine" honestly.
-    if (toId.startsWith('#')) return null;
+    if (toId.startsWith('#')) {
+      final channel = toId.substring(1);
+      return _channels.containsKey(channel) ? toId : null;
+    }
     final me = agentId;
     if (me != null && toId == me) return null; // our own fabric mailbox
     final roster = await _presenceQuery();
@@ -516,6 +695,10 @@ final class HubMessagingRepository
     final identity = _identity;
     if (identity == null) throw StateError('hub fabric not welcomed yet');
     final to = message.toId;
+    if (to.startsWith('#')) {
+      await _sendChannelLive(identity, message, to.substring(1));
+      return;
+    }
     var dhB64 = _dhKeys[to];
     if (dhB64 == null) {
       // Spec: whois before the first DM.
@@ -539,6 +722,39 @@ final class HubMessagingRepository
     final frame = <String, dynamic>{
       'op': 'send',
       'to': to,
+      'id': id,
+      'ts': DateTime.now().millisecondsSinceEpoch,
+      'ciphertext': ciphertext,
+    };
+    frame['sig'] = await hubSignFrame(frame, identity);
+    await _sendNow(frame);
+  }
+
+  Future<void> _sendChannelLive(
+    HubIdentity identity,
+    AgentMessage message,
+    String channel,
+  ) async {
+    if (!_channels.containsKey(channel)) {
+      throw StateError('not a member of #$channel');
+    }
+    final keys = _channels[channel];
+    final id = message.id.isEmpty ? newHubFrameId() : message.id;
+    final ciphertext = keys == null
+        ? base64Encode(utf8.encode(jsonEncode({'text': message.text})))
+        : await hubEncryptPayload(
+            sender: identity,
+            recipientDhPubkey: SimplePublicKey(
+              base64Decode(keys.pub),
+              type: KeyPairType.x25519,
+            ),
+            frameId: id,
+            aadTarget: channel,
+            plaintext: message.text,
+          );
+    final frame = <String, dynamic>{
+      'op': 'send',
+      'channel': channel,
       'id': id,
       'ts': DateTime.now().millisecondsSinceEpoch,
       'ciphertext': ciphertext,
@@ -641,6 +857,23 @@ final class HubMessagingRepository
   // Wire
   // ---------------------------------------------------------------------------
 
+  Future<void> _restoreChannels() async {
+    for (final channel in _channels.keys.toList()) {
+      if (!isConnected) return;
+      try {
+        await joinChannel(channel, keys: _channels[channel]);
+      } on Object {
+        _log('channel join deferred for #$channel');
+      }
+    }
+  }
+
+  Future<void> _sendJoin(String channel) => _sendNow({
+    'op': 'join',
+    'channel': channel,
+    'chanPubkey': _channels[channel]?.pub ?? '',
+  });
+
   Future<void> _sendNow(Map<String, dynamic> frame) async {
     final socket = _socket;
     if (socket == null || !socket.isOpen) {
@@ -648,4 +881,20 @@ final class HubMessagingRepository
     }
     await socket.send(jsonEncode(frame));
   }
+}
+
+/// PUBLIC showcase payload: base64(JSON text), with raw UTF-8 tolerated
+/// for foreign producers. Invalid bytes throw and are dropped by the
+/// caller; nothing is downgraded for keyed channels.
+String _decodePublicChannelPayload(String payloadB64) {
+  final raw = utf8.decode(base64Decode(payloadB64));
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map && decoded['text'] is String) {
+      return decoded['text'] as String;
+    }
+  } on Object {
+    // Raw UTF-8 from a foreign producer.
+  }
+  return raw;
 }
