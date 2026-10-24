@@ -59,3 +59,4 @@ jobs:
           python -m unittest discover -s bench/harbor_fa -v
           python -m unittest discover -s bench/mls_bench -v
           python -m unittest discover -s bench/leaderboard -v
+          python -m unittest discover -s bench/programbench -v

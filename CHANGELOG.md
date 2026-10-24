@@ -13,6 +13,22 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1820): the arm64 DMG leg's stale size floor is reseeded onto the
+  shipped v1.0.634 shape — run 4004758753 (post-#1815 SPM-lane adoption)
+  passed the min-platform gate and the full build, then failed the
+  `size_manifest.py` +5% budget on `App.framework/App` +5.1%
+  (25,020,112 → 26,284,144, the accumulated Dart AOT of #1793/#1794/
+  #1796/#1805/#1806); the committed `scripts/size_budget/fa-macos-arm64.tsv`
+  was still the pre-#1096-diet floor (TOTAL 210.5 MB vs the artifact's
+  116.4 MB), so the documented intentional-growth remediation applies:
+  the floor is now the exact `--reseed` output for the failing run's
+  artifact manifest (26 rows ≥ 64 KiB + TOTAL 116,386,369, from the run
+  log's printed table — the zip never uploaded past the gate), locking in
+  Fa 23.4→18.6 MB, quickjs_bridge 950→844 KB; new
+  `test/ci_1820_macos_arm64_size_floor_test.dart` gates the shape green
+  through the REAL `size_manifest.py check` and pins the committed floor
+  byte-identical to a `--reseed` round-trip.
+
 - fix(gh-1814): the desktop DMG lane ADOPTS the SwiftPM lane — Flutter
   3.47.7 removed the FLUTTER_SWIFT_PACKAGE_MANAGER disable knob
   (flutter/flutter#193978), so the gh-180 pure-CocoaPods pin became a no-op
