@@ -724,7 +724,11 @@ final _model = Model(
   api: 'openai-completions',
   provider: 'test',
   baseUrl: 'http://localhost',
-  contextWindow: 8192,
+  // gh-1844: the full CLI tool bundle (incl. decide + the multimodal
+  // media tools) projects ~8.2k tokens with the bare 's' system prompt —
+  // this fixture pins wiring/telemetry, not context budgeting, so the
+  // window must stay clear of the tool-schema floor.
+  contextWindow: 65536,
   maxTokens: 1024,
 );
 
