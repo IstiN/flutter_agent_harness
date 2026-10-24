@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-24T04:25:20.194Z",
+  "ticketKey": "pr-1819",
+  "headSha": "54430dd6e305986453651fcf2d6ef5ac832d586d",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:7ed3c3966fe9fddf",
+      "size": 17
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:19317e907329b21c",
+      "size": 7571
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:7421822eacd603bd",
+      "size": 3346
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:a76170def03b69f2",
+      "size": 1223
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:09e172005e35642b",
+      "size": 942
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:4792fb2ac9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:fb3da57994b871c6",
+      "size": 933
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:b1cc44eaea691256",
+      "size": 873
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6v1fOY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/size_budget/fa-macos-arm64.tsv",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: TOTAL row consistency — restored, please pin the invariant**\n\nGood side effect worth calling out: the old baseline's `TOTAL` (210,511,417) no longer matched its own rows (they sum to 116,156,998) — a **94.35 MB phantom gap** introduced when #1227 (`4bb6956fc8`, mac size diet) removed the wasm rows but kept the pre-diet TOTAL. Since the first-party TOTAL check compares TOTALs, that stale value left the TOTAL gate with ~+80% of silent headroom for months; only the per-line +5% rule held the line (which is exactly the rule that caught this PR's App growth).\n\nThis reseed restores the invariant — `TOTAL=116,386,369` vs `sum(rows)=115,764,534`, a 0.53% sub-64KiB slack that matches the healthy sibling baselines (`fa-extension.tsv` 0.50%, `fa-ios.tsv` 0.58%).\n\nSuggestion: pin it so the stale-TOTAL class can't silently return on the next manual diet edit — a cheap assertion over `scripts/size_budget/*.tsv` (e.g. in `scripts/size_guard_selftest.sh` or a unit test):\n\n```python\ngap = total - sum(rows)\nassert 0 <= gap <= 0.02 * total, f\"{path}: TOTAL not consistent with rows (gap={gap})\"\n```"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v1fOx",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/size_budget/fa-macos-arm64.tsv",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: hand-reconstructed baseline — reconcile against the re-dispatch manifest**\n\nThis floor was reconstructed from the run log's printed manifest (the arm64 zip wasn't uploaded), not produced by an actual `--reseed` against the artifact. Everything locally checkable verifies:\n\n- 26 rows ≥ 64 KiB + TOTAL — the exact `write_baseline` output shape; sorted by path, tab-separated, trailing newline, no duplicates, all rows ≥ the 65,536-byte floor\n- `sum(rows)=115,764,534 ≤ TOTAL=116,386,369` with a plausible 0.53% sub-floor slack (a fabricated TOTAL would almost certainly show 0% slack)\n- App delta +5.05% (25,020,112 → 26,284,144) matches the claimed +5.1%; a synthetic same-shape artifact passes `size_manifest.py check` against this baseline while the old baseline reproduces the red leg (`GREW +5.1% App.framework/App`), and a +6% App regrowth still fails post-reseed — the gate keeps its teeth\n- row set matches reality: `flutter_inappwebview_macos`/`OrderedSet`/t-rex.html/web_support.js follow from the vendored `flutter_inappwebview` 6.2.0-beta.3 dependency; the removed `assets/skills/js-apps/SKILL.md` row is correct (js-apps was promoted to a package builtin, retiring the bundled seed — `agent_service_skills.dart:34`)\n\nResidual risk is a single-digit transcription slip in one of 26 hand-copied rows. It fails safe (the re-dispatch leg goes red loudly, not silently), but to close the loop please confirm on the post-merge `build-macos` re-dispatch that the gate's printed manifest shows **no unexpected NEW/removed/GREW lines** vs this file — any slip shows up there verbatim."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:19bf8bcd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: TOTAL row consistency — restored, please pin the invariant**\n\nGood side effect worth calling out: the old baseline's `TOTAL` (210,511,417) no longer matched its own rows (they sum to 116,156,998) — a **94.35 MB phantom gap** introduced when #1227 (`4bb6956fc8`, mac size diet) removed the wasm rows but kept the pre-diet TOTAL. Since the first-party TOTAL check compares TOTALs, that stale value left the TOTAL gate with ~+80% of silent headroom for months; only the per-line +5% rule held the line (which is exactly the rule that caught this PR's App growth).\n\nThis reseed restores the invariant — `TOTAL=116,386,369` vs `sum(rows)=115,764,534`, a 0.53% sub-64KiB slack that matches the healthy sibling baselines (`fa-extension.tsv` 0.50%, `fa-ios.tsv` 0.58%).\n\nSuggestion: pin it so the stale-TOTAL class can't silently return on the next manual diet edit — a cheap assertion over `scripts/size_budget/*.tsv` (e.g. in `scripts/size_guard_selftest.sh` or a unit test):\n\n```python\ngap = total - sum(rows)\nassert 0 <= gap <= 0.02 * total, f\"{path}: TOTAL not consistent with rows (gap={gap})\"\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:4c7a0b27",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: hand-reconstructed baseline — reconcile against the re-dispatch manifest**\n\nThis floor was reconstructed from the run log's printed manifest (the arm64 zip wasn't uploaded), not produced by an actual `--reseed` against the artifact. Everything locally checkable verifies:\n\n- 26 rows ≥ 64 KiB + TOTAL — the exact `write_baseline` output shape; sorted by path, tab-separated, trailing newline, no duplicates, all rows ≥ the 65,536-byte floor\n- `sum(rows)=115,764,534 ≤ TOTAL=116,386,369` with a plausible 0.53% sub-floor slack (a fabricated TOTAL would almost certainly show 0% slack)\n- App delta +5.05% (25,020,112 → 26,284,144) matches the claimed +5.1%; a synthetic same-shape artifact passes `size_manifest.py check` against this baseline while the old baseline reproduces the red leg (`GREW +5.1% App.framework/App`), and a +6% App regrowth still fails post-reseed — the gate keeps its teeth\n- row set matches reality: `flutter_inappwebview_macos`/`OrderedSet`/t-rex.html/web_support.js follow from the vendored `flutter_inappwebview` 6.2.0-beta.3 dependency; the removed `assets/skills/js-apps/SKILL.md` row is correct (js-apps was promoted to a package builtin, retiring the bundled seed — `agent_service_skills.dart:34`)\n\nResidual risk is a single-digit transcription slip in one of 26 hand-copied rows. It fails safe (the re-dispatch leg goes red loudly, not silently), but to close the loop please confirm on the post-merge `build-macos` re-dispatch that the gate's printed manifest shows **no unexpected NEW/removed/GREW lines** vs this file — any slip shows up there verbatim."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:08dc9729",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Data-only reseed of the macOS arm64 size-budget floor from the 1.0.634 build, following the gate's own documented remediation for intentional growth (`size_manifest.py --reseed` + commit). All locally verifiable claims check out (format, sorting, 64 KiB floor, row/TOTAL consistency, gate simulation) — no blocking findings; two suggestions below.\n\n**Key Issues**:\n- 💡 `TOTAL` consistency: this reseed also fixes a latent 94.35 MB phantom gap (stale TOTAL vs rows since #1227's diet commit) — consider a cheap CI assertion pinning `0 ≤ TOTAL − sum(rows) ≤ ~2%` so the stale-TOTAL class can't recur (`outputs/pr_review_comments/comment1.md`)\n- 💡 Baseline provenance: reconstructed from the run log, not a `--reseed` artifact run — reconcile against the post-merge re-dispatch manifest to close out any transcription risk (`outputs/pr_review_comments/comment2.md`)\n\n**Next Steps**:\n1. Merge, then re-dispatch `build-macos` as planned and confirm the arm64 leg prints no unexpected NEW/removed/GREW rows vs the new floor\n2. Optionally add the baseline-consistency assertion to `scripts/size_guard_selftest.sh` / a unit test"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
