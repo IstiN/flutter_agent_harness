@@ -94,16 +94,13 @@ void main() {
       final failure = validateDecisionRequest(
         model: 'm',
         state: 'x',
-        questions: const {
-          ' ': DecisionBoolQuestion(instructions: 'q?'),
-        },
+        questions: const {' ': DecisionBoolQuestion(instructions: 'q?')},
       );
       expect(failure, isNotNull);
       expect(failure!.message, contains('question names must be non-empty'));
     });
 
-    test('a choice question with empty criteria is a validation failure',
-        () {
+    test('a choice question with empty criteria is a validation failure', () {
       final failure = validateDecisionRequest(
         model: 'm',
         state: 'x',
@@ -118,8 +115,7 @@ void main() {
       expect(failure!.message, contains('choice question "severity"'));
     });
 
-    test('a score question with empty criteria is a validation failure',
-        () {
+    test('a score question with empty criteria is a validation failure', () {
       final failure = validateDecisionRequest(
         model: 'm',
         state: 'x',
@@ -305,8 +301,7 @@ void main() {
     // gh-1844 CRAP gate: the remaining parseDecisionResponse arms — a
     // non-JSON body, a non-object 2xx body, a missing answers object,
     // and a malformed answer entry.
-    test('a non-JSON error body degrades to the HTTP status failure',
-        () async {
+    test('a non-JSON error body degrades to the HTTP status failure', () async {
       final adapter = DecisionsAdapter(
         httpClient: MockClient(
           (request) async => http.Response('gateway timeout', 504),
@@ -326,9 +321,7 @@ void main() {
 
     test('a non-object 2xx body is a failure, not a crash', () async {
       final adapter = DecisionsAdapter(
-        httpClient: MockClient(
-          (request) async => http.Response('[1, 2]', 200),
-        ),
+        httpClient: MockClient((request) async => http.Response('[1, 2]', 200)),
       );
       final result = await adapter.decide(
         model: model,
@@ -355,14 +348,10 @@ void main() {
       );
       final failure = result as DecisionFailure;
       expect(failure.statusCode, 200);
-      expect(
-        failure.message,
-        'decisions response carried no answers object',
-      );
+      expect(failure.message, 'decisions response carried no answers object');
     });
 
-    test('a malformed answer entry is a failure naming the question',
-        () async {
+    test('a malformed answer entry is a failure naming the question', () async {
       final adapter = DecisionsAdapter(
         httpClient: MockClient(
           (request) async => http.Response(
@@ -543,75 +532,76 @@ void main() {
               as Map<String, dynamic>;
       expect(payload['error'], isNull);
       final answers = (payload['answers'] as Map).cast<String, dynamic>();
-      expect(
-        answers['team'],
-        containsPair('choice', 'payments'),
-      );
+      expect(answers['team'], containsPair('choice', 'payments'));
       expect(answers['confidence'], containsPair('score', 0.6));
     });
 
-    test('a choice question with non-map criteria is a validation failure',
-        () async {
-      final tool = decideTool(
-        mainBaseUrl: () => 'https://openrouter.ai/api/v1',
-        mainProviderKind: () => 'openrouter',
-        mainApiKey: () => 'or-key',
-      );
+    test(
+      'a choice question with non-map criteria is a validation failure',
+      () async {
+        final tool = decideTool(
+          mainBaseUrl: () => 'https://openrouter.ai/api/v1',
+          mainProviderKind: () => 'openrouter',
+          mainApiKey: () => 'or-key',
+        );
 
-      final result = await tool.execute(
-        {
-          'model': 'inception/mercury-decide:free',
-          'state': 'x',
-          'questions': {
-            'team': {
-              'type': 'choice',
-              'instructions': 'Which team?',
-              'criteria': ['frontend', 'payments'],
+        final result = await tool.execute(
+          {
+            'model': 'inception/mercury-decide:free',
+            'state': 'x',
+            'questions': {
+              'team': {
+                'type': 'choice',
+                'instructions': 'Which team?',
+                'criteria': ['frontend', 'payments'],
+              },
             },
           },
-        },
-        null,
-        null,
-      );
+          null,
+          null,
+        );
 
-      final payload =
-          jsonDecode((result.content.first as TextContent).text)
-              as Map<String, dynamic>;
-      final error = (payload['error'] as Map).cast<String, dynamic>();
-      expect(error['validation'], isTrue);
-      expect(error['message'].toString(), contains('"team"'));
-    });
+        final payload =
+            jsonDecode((result.content.first as TextContent).text)
+                as Map<String, dynamic>;
+        final error = (payload['error'] as Map).cast<String, dynamic>();
+        expect(error['validation'], isTrue);
+        expect(error['message'].toString(), contains('"team"'));
+      },
+    );
 
-    test('a score question with non-list criteria is a validation failure',
-        () async {
-      final tool = decideTool(
-        mainBaseUrl: () => 'https://openrouter.ai/api/v1',
-        mainProviderKind: () => 'openrouter',
-        mainApiKey: () => 'or-key',
-      );
+    test(
+      'a score question with non-list criteria is a validation failure',
+      () async {
+        final tool = decideTool(
+          mainBaseUrl: () => 'https://openrouter.ai/api/v1',
+          mainProviderKind: () => 'openrouter',
+          mainApiKey: () => 'or-key',
+        );
 
-      final result = await tool.execute(
-        {
-          'model': 'inception/mercury-decide:free',
-          'state': 'x',
-          'questions': {
-            'confidence': {
-              'type': 'score',
-              'instructions': 'How confident?',
-              'criteria': {'low': 'a', 'high': 'b'},
+        final result = await tool.execute(
+          {
+            'model': 'inception/mercury-decide:free',
+            'state': 'x',
+            'questions': {
+              'confidence': {
+                'type': 'score',
+                'instructions': 'How confident?',
+                'criteria': {'low': 'a', 'high': 'b'},
+              },
             },
           },
-        },
-        null,
-        null,
-      );
+          null,
+          null,
+        );
 
-      final payload =
-          jsonDecode((result.content.first as TextContent).text)
-              as Map<String, dynamic>;
-      final error = (payload['error'] as Map).cast<String, dynamic>();
-      expect(error['validation'], isTrue);
-      expect(error['message'].toString(), contains('"confidence"'));
-    });
+        final payload =
+            jsonDecode((result.content.first as TextContent).text)
+                as Map<String, dynamic>;
+        final error = (payload['error'] as Map).cast<String, dynamic>();
+        expect(error['validation'], isTrue);
+        expect(error['message'].toString(), contains('"confidence"'));
+      },
+    );
   });
 }

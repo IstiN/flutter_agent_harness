@@ -737,8 +737,7 @@ void main() {
       );
     });
 
-    test('a cancelled job surfaces without requiring an error field',
-        () async {
+    test('a cancelled job surfaces without requiring an error field', () async {
       final env = MemoryExecutionEnv(cwd: '/work');
       final client = MockClient((request) async {
         final path = request.url.path;

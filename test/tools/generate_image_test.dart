@@ -653,7 +653,9 @@ void main() {
             return http.Response(
               jsonEncode({
                 'data': [
-                  {'b64_json': base64Encode([1])},
+                  {
+                    'b64_json': base64Encode([1]),
+                  },
                 ],
               }),
               200,
