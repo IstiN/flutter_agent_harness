@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+
 - fix(gh-1820): the arm64 DMG leg's stale size floor is reseeded onto the
   shipped v1.0.634 shape — run 4004758753 (post-#1815 SPM-lane adoption)
   passed the min-platform gate and the full build, then failed the

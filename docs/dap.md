@@ -633,3 +633,77 @@ Consequences for invite producers and consumers:
 - Public (keyless) channels accept hub joins with an empty `chanPubkey`
   (`{"op":"join","channel":<id>,"chanPubkey":""}`); payloads are raw
   UTF-8 (no fanet1 wrapper) and render as plain text.
+
+## 15. Scoped channel membership + `/network` (issue #1825)
+
+Joining a DAP hub channel from the TUI takes three steps: `/network` →
+paste the invite → pick a scope. No shell, no restart, no file editing.
+
+### 15.1 The `/network` menu
+
+- **Join channel** (default): one paste field accepts every invite form —
+  `wss://hub/ws?channel=<id>`, the same with `#pub=P&priv=K`, a bare
+  `<channel-id>` (uses the configured hub), or the whole copied
+  `fa dap import '…'` command. Then one scope question:
+  **session** (default) / **project** / **global**. The join takes effect
+  IMMEDIATELY on the live connection.
+- **Channels**: joined channels with scope badges, `copy invite`
+  (app-compatible string; keyless form for public channels) and `leave`
+  per scope — leaving one scope keeps the others; leaving the last stops
+  delivery at once.
+- **Status**: hub url, connection state.
+
+Pasting an invite into the normal composer opens the SAME join wizard
+(prefilled) instead of sending it as an agent message (only unambiguous
+forms — full invite urls and `fa dap import …` — ever intercept; prose
+never does).
+
+**Trust model:** a joined channel is a shared trust domain — ANY member
+can steer this agent (the join UI says so). Scope is the blast-radius
+control: session < project < global.
+
+### 15.2 Scopes and stores
+
+| scope | store | reaches |
+|---|---|---|
+| session | `dap_channel_membership` custom record on the session JSONL (leave = tombstone record) | this session, re-joins on resume, follows the branch |
+| project | `<project>/.fah/dap.json` — MAY be committed (encrypted keys only) | every fa agent booted from that folder |
+| global | the legacy `~/.dap/config.json` + `~/.dap/channels.json` | every fa agent on the machine |
+| env | `DAP_CHANNELS_JSON` (no files at all) | the headless/CI boot |
+
+Effective membership = union deduped by `(hubUrl, channelId)` — the same
+channel at two scopes delivers each frame ONCE; the narrowest scope wins
+the key material.
+
+### 15.3 Key encryption (`dapkey1`)
+
+Session/project stores hold the channel private key ONLY as a
+`dapkey1.<base64url(json)>` envelope: PBKDF2-HMAC-SHA256 (iteration count
+in the envelope) → ChaCha20-Poly1305, AAD `dapkey1`. Plaintext keys exist
+in memory, in the runtime overlay (`~/.dap/runtime/channels-<pid>.json`,
+0600), and in the pure-env CI path. Passphrase resolution per channel:
+(1) `DAP_KEY_PASSPHRASE` env; (2) OS Keychain item
+`fa.dap.channel-key.<hubHost>.<channelId>` (macOS `security` CLI);
+(3) ONE interactive prompt, save-to-Keychain by default. Headless with
+neither env nor Keychain: loud one-line warning, the key stays in memory
+for that run, the primary job proceeds — never a prompt, never a block.
+
+### 15.4 Headless / CI provisioning
+
+All optional, all zero-prompt:
+
+- `DAP_HUB_URL` — the hub websocket url.
+- `DAP_CLIENT_SECRET` — the hub-issued per-client secret (enables the
+  plugin via the boot credential mirror; no `DAP_MASTER_SECRET` needed).
+- `DAP_CHANNELS_JSON` —
+  `[{"channel":"<id>","pub":"…","priv":"…"}, …]`, joined AT BOOT before
+  the first turn. Keyless entries are public channels; `priv` may be
+  plaintext from the CI secret store OR a `dapkey1.` envelope (mixed sets
+  join together); an optional per-entry `hubUrl` overrides the default.
+- `DAP_KEY_PASSPHRASE` — decrypts envelope entries.
+
+Identity = session name: `fa --session goal_builder` already sets the hub
+display name to `goal_builder`, stable across resumes, addressable via
+`agent_message to: "goal_builder"`. Hub down or a rejected secret → a
+loud warning and the agent's primary job proceeds; the file-fabric
+fallback is unchanged.

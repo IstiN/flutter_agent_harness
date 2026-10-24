@@ -348,6 +348,7 @@ part 'agent_cli_wire_serve.dart';
 part 'agent_cli_diag_log.dart';
 part 'agent_cli_lifecycle.dart';
 part 'agent_cli_input.dart';
+part 'agent_cli_plugin_records.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
@@ -439,6 +440,8 @@ class AgentCli {
         config: _pluginConfig(plugin.name),
         pickOption: _pickOption,
         askLine: _askLine,
+        appendSessionRecord: _appendPluginSessionRecord,
+        readSessionRecords: _readPluginSessionRecords,
       );
       plugin.register(context);
       pluginTools.addAll(context.tools);

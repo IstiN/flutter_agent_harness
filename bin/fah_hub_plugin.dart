@@ -15,7 +15,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert' show jsonEncode;
-import 'dart:io' show HttpClient, Platform, Process, ProcessStartMode;
+import 'dart:io' show HttpClient, Platform, Process, ProcessStartMode, pid;
 import 'dart:math' show Random;
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
@@ -23,8 +23,10 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
     show defaultHubStateFile, envHubSecret, readHubStateSecret;
 
-import 'fah_dap_command.dart'
-    show DapHubController, resolveDapLocalHubUrl;
+import 'fah_dap_command.dart' show DapHubController, resolveDapLocalHubUrl;
+import 'fah_dap_scoped.dart';
+import 'package:flutter_agent_harness/src/hub/dap_invite_import.dart';
+import 'package:flutter_agent_harness/src/hub/dap_membership.dart';
 
 // The /dap menu lives in lib/ as pure data (issue #129): the untagged
 // structural test pins it without importing this dart:io plugin, which
@@ -67,7 +69,8 @@ final class HubPluginHost implements FahPlugin {
        // `DAP_LOCAL_HUB_URL` wins over the zero-config default so hosts
        // and tests can pin it; the CONNECT config stays independent.
        _localHubUrl =
-           localHubUrl ?? resolveDapLocalHubUrl(environment ?? Platform.environment),
+           localHubUrl ??
+           resolveDapLocalHubUrl(environment ?? Platform.environment),
        _hubHealthProbe = hubHealthProbe ?? _defaultHubHealthProbe,
        _hubSpawner = hubSpawner ?? _defaultHubSpawner;
 
@@ -97,6 +100,24 @@ final class HubPluginHost implements FahPlugin {
   /// builds the production controller; tests inject a fake.
   final Future<int> Function(String url)? hubStopper;
 
+  /// Scoped channel membership (issue #1825), built at register time.
+  DapScopedMemberships? _scoped;
+
+  /// Set whenever the runtime client must (re)join the effective union:
+  /// at boot, after a session replay becomes visible, after join/leave.
+  bool _runtimeSyncPending = true;
+
+  /// The connected hub url for the channel-leave delivery filter.
+  String? _connectedHubUrl;
+
+  /// Agent-facing channel notices (issue #1825): after a join and on the
+  /// first drain with memberships, the AGENT itself must learn which
+  /// channels it is on and how to write — otherwise it has no idea DAP
+  /// channels exist (live user report).
+  final List<AgentMessage> _networkNotices = [];
+  var _networkNoticeSeq = 0;
+  var _bootNoticeSent = false;
+
   @override
   String get name => _pluginName;
 
@@ -110,10 +131,18 @@ final class HubPluginHost implements FahPlugin {
         config: {_pluginName: context.config},
       ),
     );
+    _initScopedMemberships(context);
     unawaited(
       _connect(context).catchError((Object e, StackTrace s) {
         context.io.writeln('[hub] connect failed: $e');
       }),
+    );
+    context.registerSlashCommand(
+      '/network',
+      (args) => _networkSlash(context, args),
+      description:
+          'DAP channels — join by invite (session/project/global scope), '
+          'list, leave, copy invite, status',
     );
     context.registerSlashCommand(
       '/dap',
@@ -130,6 +159,9 @@ final class HubPluginHost implements FahPlugin {
         ExternalInbox(drain: _drainHubMail, hasPending: _hasPendingHubMail),
       );
     }
+    // Channel notices + the live-membership sync ride their OWN inbox so
+    // they work in both delivery modes (fabric composite or plugin).
+    context.registerExternalInbox(ExternalInbox(drain: _drainNetworkNotices));
     // Issue #19 AC1: register the dap_* tools only when a hub is actually
     // configured. On the zero-config default URL every tool call would
     // dead-end ("no hub running"), so an unconfigured install hands the
@@ -156,7 +188,21 @@ final class HubPluginHost implements FahPlugin {
   /// keeps its full error.
   Future<void> _connect(PluginContext context) async {
     try {
+      // Issue #1825: seed the runtime channel-key overlay with the
+      // scoped union BEFORE the vendored client loads its channel
+      // store, so boot joins cover project/global/env scopes (session
+      // records arrive later and sync on the first drain).
+      final scoped = _scoped;
+      final preferred = await scoped?.preferredBootHub();
+      if (preferred != null && preferred.isNotEmpty) {
+        // The invite hub, not the zero-config local default — dial it
+        // directly (process env only, ~/.dap/config.json untouched).
+        _environment['DAP_HUB_URL'] = preferred;
+        _connectedHubUrl = preferred;
+      }
+      await scoped?.seedOverlay();
       await _startHub();
+      _connectedHubUrl ??= scoped?.defaultHubUrl;
     } on Object catch (error) {
       if (_hub.isDefaultUrl) {
         context.io.writeln('[hub] not configured — set DAP_HUB_URL to enable');
@@ -164,6 +210,296 @@ final class HubPluginHost implements FahPlugin {
       }
       context.io.writeln('[hub] connect failed: $error');
     }
+  }
+
+  /// Builds the scoped membership service (issue #1825) and points the
+  /// vendored client at the RUNTIME overlay channel-key file, so the
+  /// client's own key writes never leak scoped keys into the legacy
+  /// global `~/.dap/channels.json`.
+  void _initScopedMemberships(PluginContext context) {
+    final home = _home ?? hub.defaultHome(_environment);
+    final overlay = '$home/.dap/runtime/channels-$pid.json';
+    _scoped = DapScopedMemberships(
+      globalConfigFile: hub.defaultDapConfigFile(_home, _environment),
+      globalChannelsFile:
+          _environment[hub.envChannelsFile] ?? '$home/.dap/channels.json',
+      overlayChannelsFile: overlay,
+      projectFile: '${context.env.cwd}/.fah/dap.json',
+      environment: _environment,
+      appendSessionRecord: context.appendSessionRecord,
+      readSessionRecords: context.readSessionRecords,
+      keychain: const MacOsDapChannelKeychain(),
+      passphrasePrompt: context.askLine == null
+          ? null
+          : (hubUrl, channelId) async {
+              final answer = await context.askLine!(
+                'Passphrase for #$channelId (empty = cancel; saved to '
+                'Keychain by default)',
+                secret: true,
+              );
+              if (answer == null || answer.isEmpty) return null;
+              return (passphrase: answer, save: true);
+            },
+    );
+    _environment[hub.envChannelsFile] = overlay;
+  }
+
+  /// Joins every effective membership on the LIVE client (AC1: no
+  /// restart). Idempotent: re-joins are cheap and reconnect-safe.
+  Future<void> _syncRuntimeMemberships() async {
+    if (!_runtimeSyncPending) return;
+    final scoped = _scoped;
+    final client = _hub.repository?.client;
+    // No live client yet (hub down / still connecting): RETRY on the
+    // next drain instead of consuming the one-shot sync.
+    if (scoped == null || client == null) return;
+    _runtimeSyncPending = false;
+    scoped.invalidateCache();
+    final store = client.channelStore;
+    for (final m in await scoped.runtimeEffective()) {
+      try {
+        final priv = m.priv;
+        if (priv != null && m.pub != null) {
+          await store?.accept(
+            m.channelId,
+            hub.ChannelKeys(pub: m.pub!, priv: priv),
+          );
+        }
+        final pub = m.pub ?? (await store?.keysFor(m.channelId))?.pub;
+        if (pub != null) client.join(m.channelId, pub);
+      } on Object {
+        // A single bad channel must not block the others.
+      }
+    }
+  }
+
+  /// Dials [hubUrl] on the live client without persisting it over the
+  /// configured default hub (E3). Starts the client when it is down.
+  Future<void> _ensureChannelConnection(String hubUrl) async {
+    final normalized = DapScopedMemberships.normalizeHubUrl(hubUrl);
+    final repository = _hub.repository;
+    if (repository == null) {
+      _environment['DAP_HUB_URL'] = normalized;
+      await _startHub();
+    } else if (_connectedHubUrl != normalized) {
+      await repository.connectTo(normalized);
+    }
+    _connectedHubUrl = normalized;
+  }
+
+  void _queueNetworkNotice(String text) {
+    _networkNotices.add(
+      AgentMessage(
+        id: 'network-${_networkNoticeSeq++}',
+        fromId: 'network',
+        toId: '',
+        text: text,
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
+  }
+
+  /// The always-on inbox: live membership sync, the boot channel notice
+  /// (so the agent knows its channels from the first turn), and queued
+  /// join notices — in BOTH delivery modes.
+  Future<List<AgentMessage>> _drainNetworkNotices() async {
+    try {
+      await _syncRuntimeMemberships();
+      if (!_bootNoticeSent) {
+        _bootNoticeSent = true;
+        final scoped = _scoped;
+        if (scoped != null) {
+          final effective = await scoped.runtimeEffective();
+          if (effective.isNotEmpty) {
+            _queueNetworkNotice(
+              'You are a member of DAP channel(s): '
+              '${effective.map((m) => '#${m.channelId} [${m.scope.name}]').join(', ')}. '
+              'Any channel member can steer you; inbound frames arrive '
+              'as provenance-prefixed steering (#channel · sender). '
+              'To write to a channel use agent_message to: "#<channel>". '
+              'The human manages membership via /network.',
+            );
+          }
+        }
+      }
+      final out = List<AgentMessage>.of(_networkNotices);
+      _networkNotices.clear();
+      return out;
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// `/network` — the scoped join wizard + channel management (AC6):
+  /// Join (default) → paste → scope (session default) → live. With
+  /// `join <invite>` args the paste step is prefilled (composer AC7).
+  Future<void> _networkSlash(PluginContext context, List<String> args) async {
+    final scoped = _scoped;
+    if (scoped == null) return;
+    final io = context.io;
+    final positional = args.where((a) => a.isNotEmpty).toList();
+    if (positional.isNotEmpty && positional.first == 'join') {
+      final invite = positional.sublist(1).join(' ').trim();
+      if (invite.isEmpty) {
+        io.writeln('usage: /network join <invite|channel-id>');
+        return;
+      }
+      await _networkJoin(context, scoped, invite);
+      return;
+    }
+    if (positional.isNotEmpty && positional.first != 'join') {
+      io.writeln('usage: /network [join <invite|channel-id>]');
+      return;
+    }
+    final pick = context.pickOption;
+    if (pick == null) {
+      // Headless/line hosts: one-line status, no menus.
+      final effective = await scoped.union().then((u) => u.effective());
+      io.writeln(
+        'network: ${effective.length} channel(s): '
+        '${effective.map((m) => '#${m.channelId}').join(', ')}',
+      );
+      return;
+    }
+    final action = await pick('Network', [
+      ('join', 'Join channel', 'Paste an invite, pick a scope, join live'),
+      ('channels', 'Channels', 'Joined channels: badges, leave, copy invite'),
+      ('status', 'Status', 'Hub url, connection state, reconnect'),
+    ], initialKey: 'join');
+    switch (action) {
+      case 'join':
+        final invite = await context.askLine?.call(
+          'Paste the channel invite (url, url#keys, channel id, or '
+          'fa dap import …)',
+        );
+        if (invite == null || invite.trim().isEmpty) return;
+        await _networkJoin(context, scoped, invite.trim());
+      case 'channels':
+        await _networkChannels(context, scoped);
+      case 'status':
+        await _printStatus(context);
+      case null:
+        return;
+    }
+  }
+
+  Future<void> _networkJoin(
+    PluginContext context,
+    DapScopedMemberships scoped,
+    String rawInvite,
+  ) async {
+    final io = context.io;
+    final DapInviteImport invite;
+    try {
+      invite = parseDapInviteFlexible(
+        rawInvite,
+        defaultHubUrl: scoped.defaultHubUrl,
+      );
+    } on FormatException catch (e) {
+      // E4: inline validation error, nothing stored, no agent message.
+      io.writeln('network: invalid invite — ${e.message}');
+      return;
+    }
+    var scope = DapChannelScope.session;
+    final pick = context.pickOption;
+    if (pick != null) {
+      final chosen = await pick('Scope — members can steer this agent', [
+        ('session', 'Session', 'Only this agent session (resume re-joins)'),
+        ('project', 'Project', 'Every fa agent started in this folder'),
+        ('global', 'Global', 'Every fa agent on this machine'),
+      ], initialKey: 'session');
+      if (chosen == null) return;
+      scope = DapChannelScope.values.firstWhere((s) => s.name == chosen);
+    }
+    final outcome = await scoped.join(invite, scope);
+    // AC1/AC9: dial the INVITE hub live (never persisting it over the
+    // configured default); a down hub leaves the membership stored and
+    // the reconnect path picks it up.
+    try {
+      await _ensureChannelConnection(invite.hubUrl);
+    } on Object catch (e) {
+      io.writeln(
+        'network: hub unreachable ($e) — membership stored, auto-join '
+        'on reconnect',
+      );
+    }
+    _runtimeSyncPending = true;
+    await _syncRuntimeMemberships();
+    _queueNetworkNotice(
+      'You joined DAP channel #${invite.channel} [${scope.name}] @ '
+      '${DapScopedMemberships.normalizeHubUrl(invite.hubUrl)}. '
+      'Any member of this channel can steer you; inbound frames arrive '
+      'as provenance-prefixed steering (#${invite.channel} · sender). '
+      'To write to the channel use agent_message to: '
+      '"#${invite.channel}". The human manages membership via /network.',
+    );
+    for (final warning in outcome.warnings) {
+      io.writeln(warning);
+    }
+    io.writeln(
+      'network: joined #${invite.channel} [${scope.name}] @ '
+      '${invite.hubUrl} — members can steer this agent',
+    );
+  }
+
+  Future<void> _networkChannels(
+    PluginContext context,
+    DapScopedMemberships scoped,
+  ) async {
+    final io = context.io;
+    final union = await scoped.union();
+    final effective = union.effective();
+    if (effective.isEmpty) {
+      io.writeln('network: no channels joined yet — Join channel first');
+      return;
+    }
+    final pick = context.pickOption;
+    if (pick == null) {
+      for (final m in effective) {
+        io.writeln(
+          '#${m.channelId} [${union.scopesOf(m.hubUrl, m.channelId).map((s) => s.name).join('+')}] '
+          '@ ${m.hubUrl}',
+        );
+      }
+      return;
+    }
+    final chosen = await pick('Channels', [
+      for (final m in effective)
+        (
+          m.key,
+          '#${m.channelId} '
+              '[${union.scopesOf(m.hubUrl, m.channelId).map((s) => s.name).join('+')}]',
+          m.hubUrl,
+        ),
+    ]);
+    if (chosen == null) return;
+    final membership = effective.firstWhere((m) => m.key == chosen);
+    final action = await pick('#${membership.channelId}', [
+      ('copy', 'Copy invite', 'Export the app-compatible invite string'),
+      ('leave', 'Leave', 'Stop delivery at one scope'),
+    ]);
+    if (action == 'copy') {
+      io.writeln(await scoped.copyInvite(membership));
+      return;
+    }
+    if (action != 'leave') return;
+    final scopes = union.scopesOf(membership.hubUrl, membership.channelId);
+    final scopeName = scopes.length == 1
+        ? scopes.single.name
+        : await pick('Leave which scope?', [
+            for (final s in scopes) (s.name, s.name, ''),
+          ]);
+    if (scopeName == null) return;
+    await scoped.leave(
+      membership.hubUrl,
+      membership.channelId,
+      DapChannelScope.values.firstWhere((s) => s.name == scopeName),
+    );
+    _runtimeSyncPending = true;
+    io.writeln(
+      'network: left #${membership.channelId} [$scopeName] — '
+      'other scopes keep the channel',
+    );
   }
 
   /// `/dap` — no args: the guided menu when the host is interactive
@@ -517,14 +853,14 @@ final class HubPluginHost implements FahPlugin {
     final stopper =
         hubStopper ??
         () => DapHubController(
-              home: _home,
-              environment: _environment,
-              url: _localHubUrl,
-              secretPrompt: ask == null
-                  ? null
-                  : (question) => ask(question, secret: true),
-              out: context.io.writeln,
-            ).stop();
+          home: _home,
+          environment: _environment,
+          url: _localHubUrl,
+          secretPrompt: ask == null
+              ? null
+              : (question) => ask(question, secret: true),
+          out: context.io.writeln,
+        ).stop();
     final code = await stopper(_localHubUrl);
     if (code != 0) {
       context.io.writeln('[hub] stop did not complete (exit $code)');
@@ -647,16 +983,30 @@ final class HubPluginHost implements FahPlugin {
   /// mapping surprises, keeping the never-throw steering contract.
   Future<List<AgentMessage>> _drainHubMail() async {
     try {
+      // Session-scope replay lands here (the session JSONL is loaded
+      // after plugin registration): the first drain joins everything
+      // the boot overlay could not see yet (AC3).
+      await _syncRuntimeMemberships();
+      final scoped = _scoped;
+      final hubUrl = _connectedHubUrl;
       return [
         for (final message in await _hub.externalSteeringSource())
-          AgentMessage(
-            id: message.id,
-            fromId: message.fromId,
-            toId: message.toId,
-            text: message.text,
-            sentAt: message.sentAt,
-            hops: message.hops,
-          ),
+          // Live LEAVE filter (AC4): a channel left at every scope
+          // stops delivering immediately; one scope left keeps the rest.
+          if (scoped == null ||
+              !message.toId.startsWith('#') ||
+              await scoped.acceptsChannel(
+                hubUrl ?? scoped.defaultHubUrl,
+                message.toId.substring(1),
+              ))
+            AgentMessage(
+              id: message.id,
+              fromId: message.fromId,
+              toId: message.toId,
+              text: message.text,
+              sentAt: message.sentAt,
+              hops: message.hops,
+            ),
       ];
     } on Object {
       return const [];

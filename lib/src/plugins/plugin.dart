@@ -31,6 +31,19 @@ typedef PluginPickOption =
 typedef PluginAskLine =
     Future<String?> Function(String question, {bool secret});
 
+/// Appends one application-defined custom record to the host session
+/// JSONL tree (issue #1825): the record stays out of model context and is
+/// replayed on resume, so a plugin can persist session-scoped state (e.g.
+/// a `dap_channel_membership`) without owning session storage.
+typedef PluginAppendSessionRecord =
+    Future<void> Function(String customType, Map<String, Object?> data);
+
+/// Reads the data payloads of the current branch's custom records of
+/// [customType], oldest first. Session-scoped plugin state follows the
+/// branch it was recorded on.
+typedef PluginReadSessionRecords =
+    Future<List<Map<String, Object?>>> Function(String customType);
+
 /// IO surface exposed to plugins for writing to the terminal.
 abstract interface class PluginIO {
   /// Writes [text] without a trailing newline.
@@ -50,6 +63,8 @@ final class PluginContext {
     this.config = const {},
     this.pickOption,
     this.askLine,
+    this.appendSessionRecord,
+    this.readSessionRecords,
   });
 
   /// The execution environment backing the current CLI session.
@@ -69,6 +84,15 @@ final class PluginContext {
   /// Interactive free-form questions (masked for secrets), or null on
   /// non-interactive hosts.
   final PluginAskLine? askLine;
+
+  /// Optional host session-record seam (issue #1825), null on hosts
+  /// without a writable session. Session-scoped plugin state rides the
+  /// session JSONL tree: replayed on resume, dropped with the branch.
+  final PluginAppendSessionRecord? appendSessionRecord;
+
+  /// The read side of [appendSessionRecord] (current branch, oldest
+  /// first), null on hosts without a session.
+  final PluginReadSessionRecords? readSessionRecords;
 
   final List<AgentTool> _tools = [];
   final Map<String, SlashCommand> _slashCommands = {};
