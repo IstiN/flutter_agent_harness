@@ -110,6 +110,17 @@
 - [pub.dev package](https://pub.dev/packages/flutter_agent_harness)
 - [Issue tracker](https://github.com/IstiN/flutter_agent_harness/issues)
 
+## Benchmarks
+
+- [ProgramBench results](https://fa1.dev/programbench.html): Fa's
+  self-reported results on
+  [facebookresearch/ProgramBench](https://github.com/facebookresearch/ProgramBench)
+  (rebuild a complete codebase from a compiled binary + its docs) —
+  pass@1 score per instance, cost, API calls, plus links to every run
+  and its analysis artifacts (trajectories, eval logs). Smoke-mode rows
+  are pipeline proofs, not leaderboard rows; nothing is auto-submitted
+  to the official registry.
+
 ## Key facts
 
 - Written in Dart; the core library is pure Dart (no dart:io) and compiles to web.
