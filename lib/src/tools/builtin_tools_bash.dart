@@ -258,7 +258,7 @@ String _shellToolDescription(Duration autoBackgroundAfter) =>
     'total) as [bash attempt N]; environment-default timeouts fail once '
     'with the partial output. For long-running commands (builds, servers, '
     'watchers) pass background: true — you get the job id immediately and '
-    'get a completion notice; check progress with bash_job. A '
+    'a notice when it finishes; check progress with bash_job. A '
     'foreground command still running when the user sends a message is '
     'moved to a background job untouched (never killed).'
     '${autoBackgroundAfter > Duration.zero ? ' A command still running after ${autoBackgroundAfter.inSeconds}s is moved to a background job automatically (never restarted); carried timeouts are NOT auto-retried — retry if the completion notice reports a timeout.' : ''}';
