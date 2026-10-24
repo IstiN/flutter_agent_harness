@@ -82,7 +82,8 @@ void main() {
     });
 
     test('build → size gate → attach, in that order', () {
-      final buildAt = steps.indexOf('bash scripts/build_browser_ext.sh --with-app');
+      final buildAt =
+          steps.indexOf('bash scripts/build_browser_ext.sh --with-app');
       final gateAt = steps.indexOf(gateInvocation);
       final uploadAt = steps.indexOf('gh release upload');
       expect(buildAt, isNonNegative, reason: 'must build the real artifact');

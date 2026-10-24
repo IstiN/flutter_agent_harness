@@ -80,5 +80,32 @@ void main() {
             'file + frontmatter id',
       );
     });
+
+    // gh-1847 rework (PR #1853, review thread PRRT_kwDOTXdlLc6v8Epw):
+    // the note was renamed n_1012_96d1 -> n_1012_9c1a (frontmatter id
+    // and filename recomputed), but the in-body `# Note:` heading kept
+    // the old id. `primaryText` strips `# Note:` blocks before hashing,
+    // so the stale heading did not break the hash invariant — but a
+    // reader resolving the note by its heading id looks for a file that
+    // no longer exists. Pin the three id surfaces together.
+    test('body heading id matches frontmatter id and filename', () {
+      final note = findNote();
+      final contents = note.readAsStringSync();
+      final frontmatterId = RegExp(
+        r'^id:\s*"(n_1012_[0-9a-f]{4})"',
+        multiLine: true,
+      ).firstMatch(contents)!.group(1)!;
+      final headingId = RegExp(
+        r'^# Note:\s*(n_1012_[0-9a-f]{4})\s*$',
+        multiLine: true,
+      ).firstMatch(contents)!.group(1)!;
+      expect(headingId, frontmatterId,
+          reason:
+              'review thread PRRT_kwDOTXdlLc6v8Epw: after renaming the '
+              'note, update the in-body `# Note:` heading too — the '
+              'hashing strips it, but readers resolve notes by heading');
+      expect(frontmatterId, note.uri.pathSegments.last.replaceAll('.md', ''),
+          reason: 'frontmatter id must match the filename');
+    });
   });
 }
