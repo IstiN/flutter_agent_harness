@@ -7,7 +7,6 @@
 /// imports it — hosts inject a transport through the [HubTransport] seam.
 library;
 
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -65,41 +64,22 @@ final class IoHubSocket implements HubSocket {
 Future<HubIdentity> loadHubIdentity(String path) async {
   final file = File(path);
   if (await file.exists()) {
-    final fields = <String, String>{};
-    for (final line in await file.readAsString().then((c) => c.split('\n'))) {
-      final idx = line.indexOf(':');
-      if (idx > 0) fields[line.substring(0, idx)] = line.substring(idx + 1);
-    }
-    final edSeed = fields['ed25519'];
-    final xPriv = fields['x25519'];
-    if (edSeed != null && xPriv != null) {
-      try {
-        return await HubIdentity.fromSeeds(
-          ed25519Seed: base64Decode(edSeed),
-          x25519Private: base64Decode(xPriv),
-        );
-      } on Object {
-        // A torn or corrupt file falls through to regeneration: a fresh
-        // address beats an unusable fabric; save overwrites the file.
-      }
+    try {
+      return await hubIdentityFromKeyFile(await file.readAsString());
+    } on Object {
+      // A torn or corrupt file falls through to regeneration: a fresh
+      // address beats an unusable fabric; save overwrites the file.
     }
   }
   final identity = await HubIdentity.fromSeeds(
     ed25519Seed: _randomBytes(32),
     x25519Private: _randomBytes(32),
   );
-  final signingSeed = await identity.signingKeyPair.extractPrivateKeyBytes();
-  final dhPriv = await identity.dhKeyPair.extractPrivateKeyBytes();
   await File(path).parent.create(recursive: true);
   // Atomic create via temp + rename: a crashed direct write could tear the
   // file mid-line and break every later load.
   final tmp = File('$path.tmp');
-  await tmp.writeAsString(
-    'ed25519:${base64Encode(signingSeed)}\n'
-    'x25519:${base64Encode(dhPriv)}\n'
-    'x25519pub:${identity.dhPubkeyB64}\n',
-    flush: true,
-  );
+  await tmp.writeAsString(await hubIdentityToKeyFile(identity), flush: true);
   await tmp.rename(path);
   if (!await _chmod600(path)) {
     stderr.writeln(
@@ -127,13 +107,9 @@ List<int> _randomBytes(int count) =>
 
 /// Saves [identity]'s seeds to [path] (the host's rotation/rebind path).
 Future<void> saveHubIdentity(String path, HubIdentity identity) async {
-  final signingSeed = await identity.signingKeyPair.extractPrivateKeyBytes();
-  final dhPriv = await identity.dhKeyPair.extractPrivateKeyBytes();
   await File(path).parent.create(recursive: true);
-  await File(path).writeAsString(
-    'ed25519:${base64Encode(signingSeed)}\n'
-    'x25519:${base64Encode(dhPriv)}\n',
-    flush: true,
-  );
+  await File(
+    path,
+  ).writeAsString(await hubIdentityToKeyFile(identity), flush: true);
   await _chmod600(path);
 }
