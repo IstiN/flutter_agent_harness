@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-24T12:33:10.936Z",
+  "ticketKey": "gh-1834",
+  "headSha": "e7fd3884af504fa70aac59cbdb366a3b889c84a7",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "merge_conflicts.md": {
+      "hash": "fnv1a64:56b1b9af884fc8fd",
+      "size": 476
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:0684cd50430d63c5",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:505c9ce959c3eaee",
+      "size": 576
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:ca30e08c07895b88",
+      "size": 19
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:86266281fd4dcedd",
+      "size": 2788
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:f73ca41bb4b4bbcd",
+      "size": 376
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:d58470a7c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:738b93d133547e54",
+      "size": 4050
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:26e7e9b0a3bfd7fc",
+      "size": 3958
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:9156948b",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Merge conflict with main — the silent branch update could not merge main (conflict). (head `e7fd3884af504fa70aac59cbdb366a3b889c84a7`) Rework re-queued (linked issue #1834 re-armed): resolve the conflicts and push — validation re-runs automatically. (approval latch kept — no re-review after the fix)"
+    }
+  ]
+}
