@@ -634,6 +634,28 @@ Consequences for invite producers and consumers:
   (`{"op":"join","channel":<id>,"chanPubkey":""}`); payloads are raw
   UTF-8 (no fanet1 wrapper) and render as plain text.
 
+### Enrolled hub credentials (the app's DAP tab)
+
+A bare invite link is enough only on hubs that accept the machine's
+default credential. Production hubs enroll NAME-BOUND agent secrets: a
+secret minted for one hub is rejected by another (HTTP 401), and the
+agent name must match the enrollment (`hello name does not match the
+enrolled secret`). Therefore `/network` accepts the WHOLE DAP block from
+Add an agent → DAP (or the one-line CLI command):
+
+```
+fa dap import 'wss://hub…/ws?channel=<id>' && DAP_HUB_URL=wss://hub…/ws DAP_CLIENT_SECRET='…' DAP_AGENT_NAME=<name> fa
+```
+
+Paste it into the composer or `/network` — the invite, the client secret
+and the agent name are parsed together (the command is never executed).
+The secret is stored `dapkey1.`-encrypted for session/project scopes and
+decrypted only into the live connection; at global scope it stays in
+memory (the legacy files have no per-hub credential field). Boot and
+resume reconnect with the stored credential automatically. After every
+join the wizard prints an explicit LIVE / NOT-live verdict — a stored
+membership is never presented as a working connection.
+
 ## 15. Scoped channel membership + `/network` (issue #1825)
 
 Joining a DAP hub channel from the TUI takes three steps: `/network` →

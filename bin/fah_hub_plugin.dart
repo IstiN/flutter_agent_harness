@@ -25,7 +25,7 @@ import 'package:flutter_agent_harness/io.dart'
 
 import 'fah_dap_command.dart' show DapHubController, resolveDapLocalHubUrl;
 import 'fah_dap_scoped.dart';
-import 'package:flutter_agent_harness/src/hub/dap_invite_import.dart';
+import 'package:flutter_agent_harness/src/hub/dap_join_bundle.dart';
 import 'package:flutter_agent_harness/src/hub/dap_membership.dart';
 
 // The /dap menu lives in lib/ as pure data (issue #129): the untagged
@@ -193,12 +193,21 @@ final class HubPluginHost implements FahPlugin {
       // store, so boot joins cover project/global/env scopes (session
       // records arrive later and sync on the first drain).
       final scoped = _scoped;
-      final preferred = await scoped?.preferredBootHub();
-      if (preferred != null && preferred.isNotEmpty) {
+      final preferred = await scoped?.preferredBootMembership();
+      if (preferred != null) {
         // The invite hub, not the zero-config local default — dial it
-        // directly (process env only, ~/.dap/config.json untouched).
-        _environment['DAP_HUB_URL'] = preferred;
-        _connectedHubUrl = preferred;
+        // directly (process env only, ~/.dap/config.json untouched),
+        // with the enrolled name-bound credential when one is stored.
+        _environment['DAP_HUB_URL'] = preferred.hubUrl;
+        final bootSecret = preferred.hubClientSecret;
+        final bootName = preferred.agentName;
+        if (bootSecret != null && bootSecret.isNotEmpty) {
+          _environment['DAP_CLIENT_SECRET'] = bootSecret;
+        }
+        if (bootName != null && bootName.isNotEmpty) {
+          _environment['DAP_AGENT_NAME'] = bootName;
+        }
+        _connectedHubUrl = preferred.hubUrl;
       }
       await scoped?.seedOverlay();
       await _startHub();
@@ -282,6 +291,15 @@ final class HubPluginHost implements FahPlugin {
       _environment['DAP_HUB_URL'] = normalized;
       await _startHub();
     } else if (_connectedHubUrl != normalized) {
+      if (_environment['DAP_CLIENT_SECRET'] != null) {
+        // A name-bound credential cannot be retrofitted onto the live
+        // client (no public mutator): switching hubs with it needs a
+        // fresh process. The membership is stored; say so honestly.
+        throw StateError(
+          'this hub credential is name-bound — restart fa so the '
+          'stored membership reconnects with it',
+        );
+      }
       await repository.connectTo(normalized);
     }
     _connectedHubUrl = normalized;
@@ -389,9 +407,9 @@ final class HubPluginHost implements FahPlugin {
     String rawInvite,
   ) async {
     final io = context.io;
-    final DapInviteImport invite;
+    final DapJoinBundle bundle;
     try {
-      invite = parseDapInviteFlexible(
+      bundle = parseDapJoinBundle(
         rawInvite,
         defaultHubUrl: scoped.defaultHubUrl,
       );
@@ -400,6 +418,7 @@ final class HubPluginHost implements FahPlugin {
       io.writeln('network: invalid invite — ${e.message}');
       return;
     }
+    final invite = bundle.invite;
     var scope = DapChannelScope.session;
     final pick = context.pickOption;
     if (pick != null) {
@@ -411,7 +430,23 @@ final class HubPluginHost implements FahPlugin {
       if (chosen == null) return;
       scope = DapChannelScope.values.firstWhere((s) => s.name == chosen);
     }
-    final outcome = await scoped.join(invite, scope);
+    final outcome = await scoped.join(
+      invite,
+      scope,
+      agentName: bundle.agentName,
+      hubClientSecret: bundle.clientSecret,
+    );
+    // Process-local enrolled credential: the vendored client resolves
+    // DAP_CLIENT_SECRET / DAP_AGENT_NAME at start, so the (re)start
+    // below authenticates with the name-bound secret. Never printed.
+    final joinSecret = bundle.clientSecret;
+    final joinName = bundle.agentName;
+    if (joinSecret != null && joinSecret.isNotEmpty) {
+      _environment['DAP_CLIENT_SECRET'] = joinSecret;
+    }
+    if (joinName != null && joinName.isNotEmpty) {
+      _environment['DAP_AGENT_NAME'] = joinName;
+    }
     // AC1/AC9: dial the INVITE hub live (never persisting it over the
     // configured default); a down hub leaves the membership stored and
     // the reconnect path picks it up.
@@ -425,6 +460,15 @@ final class HubPluginHost implements FahPlugin {
     }
     _runtimeSyncPending = true;
     await _syncRuntimeMemberships();
+    final live = _hub.repository?.client.connected ?? false;
+    if (!live) {
+      io.writeln(
+        'network: membership stored but NOT live — the hub rejected or '
+        'is unreachable. On hubs with enrolled agents paste the WHOLE '
+        'DAP block (Add an agent → DAP: invite + DAP_CLIENT_SECRET + '
+        'DAP_AGENT_NAME), then restart fa.',
+      );
+    }
     _queueNetworkNotice(
       'You joined DAP channel #${invite.channel} [${scope.name}] @ '
       '${DapScopedMemberships.normalizeHubUrl(invite.hubUrl)}. '

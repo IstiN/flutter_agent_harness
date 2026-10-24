@@ -296,6 +296,67 @@ void main() {
     expect(await s.acceptsChannel(hub, 'team'), isFalse);
   });
 
+  test('join with an enrolled hub credential: session store encrypts the '
+      'secret, runtime decrypts it, boot membership carries it', () async {
+    final s = service(env: {'DAP_KEY_PASSPHRASE': pass});
+    await s.join(
+      invite(),
+      DapChannelScope.session,
+      agentName: 'public-agent',
+      hubClientSecret: 'hub-secret-1',
+    );
+    expect(sessionRecords.last['hubClientSecret'], isNot('hub-secret-1'));
+    expect(sessionRecords.last['hubClientSecret'], startsWith('dapkey1.'));
+    expect(sessionRecords.last['agentName'], 'public-agent');
+
+    final effective = await s.runtimeEffective();
+    expect(effective.single.hubClientSecret, 'hub-secret-1');
+    expect(effective.single.agentName, 'public-agent');
+
+    final boot = await s.preferredBootMembership();
+    expect(boot!.hubUrl, hub);
+    expect(boot.hubClientSecret, 'hub-secret-1');
+    expect(boot.agentName, 'public-agent');
+  });
+
+  test('global scope keeps the hub credential in memory only (legacy '
+      'files have no per-hub credential field), with a warning', () async {
+    final s = service(env: {'DAP_KEY_PASSPHRASE': pass});
+    final outcome = await s.join(
+      invite(),
+      DapChannelScope.global,
+      agentName: 'public-agent',
+      hubClientSecret: 'hub-secret-1',
+    );
+    expect(outcome.warnings.join(' '), contains('memory'));
+    expect(
+      (await File(globalConfig).readAsString()).contains('hub-secret-1'),
+      isFalse,
+    );
+    expect(
+      (await File(globalChannels).readAsString()).contains('hub-secret-1'),
+      isFalse,
+    );
+    final effective = await s.runtimeEffective();
+    expect(effective.single.hubClientSecret, 'hub-secret-1');
+  });
+
+  test('headless without a passphrase: the credential stays in memory, '
+      'never plaintext in the session record', () async {
+    final s = service(env: {});
+    final outcome = await s.join(
+      invite(),
+      DapChannelScope.session,
+      agentName: 'public-agent',
+      hubClientSecret: 'hub-secret-1',
+    );
+    expect(outcome.warnings.join(' '), contains('memory'));
+    expect(sessionRecords.last.containsKey('hubClientSecret'), isFalse);
+    expect(sessionRecords.last['agentName'], 'public-agent');
+    final effective = await s.runtimeEffective();
+    expect(effective.single.hubClientSecret, 'hub-secret-1');
+  });
+
   test('preferredBootHub: a remote membership wins over the zero-config '
       'local default, but never over an explicitly configured hub', () async {
     final env = {'DAP_KEY_PASSPHRASE': pass};

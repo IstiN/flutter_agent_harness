@@ -183,6 +183,22 @@ void main() {
     expect(notices.map((m) => m.text).join('\n'), contains('#team'));
   });
 
+  test(
+    'the full app DAP one-liner joins with the enrolled credential '
+    '(name-bound secret stored encrypted, honest NOT-live verdict)',
+    () async {
+      final context = buildContext();
+      final command =
+          "fa dap import '$invite' && DAP_HUB_URL=wss://hub.fa1.dev/ws "
+          "DAP_CLIENT_SECRET='hub-secret-1' DAP_AGENT_NAME=public-agent fa";
+      await context.slashCommands['/network']!(['join', command]);
+      final record = sessionRecords.last;
+      expect(record['agentName'], 'public-agent');
+      expect(record['hubClientSecret'], startsWith('dapkey1.'));
+      expect(io.text, contains('NOT live'));
+    },
+  );
+
   test('headless /network prints a one-line status, no menus (AC10)', () async {
     final context = buildContext();
     await context.slashCommands['/network']!(['join', invite]);

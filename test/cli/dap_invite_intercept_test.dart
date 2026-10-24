@@ -78,6 +78,28 @@ void main() {
     ]);
   });
 
+  test('AC7: a full DAP enrollment block (with the client secret) is '
+      'intercepted, never sent to the model', () async {
+    final pasted =
+        "fa dap import '\$invite' && DAP_HUB_URL=wss://hub.fa1.dev/ws "
+        "DAP_CLIENT_SECRET='hub-secret-1' DAP_AGENT_NAME=public-agent fa";
+    await cli.handleLineForTest(pasted);
+    expect(plugin.calls, [
+      ['join', pasted],
+    ]);
+    expect(
+      cli.agent.state.messages.where(
+        (m) => m.toString().contains('hub-secret-1'),
+      ),
+      isEmpty,
+    );
+  });
+
+  test('a prose QUESTION about DAP_CLIENT_SECRET is not hijacked', () async {
+    await cli.handleLineForTest('what does DAP_CLIENT_SECRET= do?');
+    expect(plugin.calls, isEmpty);
+  });
+
   test('ordinary prose and non-invite urls are NOT intercepted', () async {
     await cli.handleLineForTest('team standup notes');
     await cli.handleLineForTest('wss://hub.fa1.dev/ws (no channel param)');

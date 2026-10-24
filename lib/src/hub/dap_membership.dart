@@ -33,6 +33,8 @@ final class DapChannelMembership {
     required this.joinedAt,
     this.pub,
     this.priv,
+    this.agentName,
+    this.hubClientSecret,
   });
 
   /// The hub this channel lives on — per-channel, so an invite for a
@@ -55,6 +57,16 @@ final class DapChannelMembership {
   /// envelope at rest).
   final String? priv;
 
+  /// The enrolled agent display name the hub credential is bound to
+  /// (the app's DAP enrollment mints name-bound secrets).
+  final String? agentName;
+
+  /// The hub-issued client secret for [hubUrl] — REQUIRED on hubs that
+  /// reject the machine's default credential (a secret enrolled on one
+  /// hub is not valid on another). At rest a `dapkey1.` envelope, like
+  /// [priv]; never serialized in plaintext for session/project scopes.
+  final String? hubClientSecret;
+
   /// The dedup identity: same hub + same channel = same membership,
   /// regardless of scope.
   String get key => '$hubUrl\n$channelId';
@@ -67,6 +79,8 @@ final class DapChannelMembership {
         joinedAt: joinedAt,
         pub: pub,
         priv: priv,
+        agentName: agentName,
+        hubClientSecret: hubClientSecret,
       );
 
   /// Serializes for the session record / project store. Secrets handling
@@ -78,6 +92,8 @@ final class DapChannelMembership {
     'joinedAt': joinedAt.toUtc().toIso8601String(),
     if (pub != null) 'pub': pub,
     if (priv != null) 'priv': priv,
+    if (agentName != null) 'agentName': agentName,
+    if (hubClientSecret != null) 'hubClientSecret': hubClientSecret,
   };
 
   /// Tolerant reader: unknown scope values fall back to null (caller
@@ -108,6 +124,8 @@ final class DapChannelMembership {
       joinedAt: joinedAt ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       pub: json['pub'] as String?,
       priv: json['priv'] as String?,
+      agentName: json['agentName'] as String?,
+      hubClientSecret: json['hubClientSecret'] as String?,
     );
   }
 }
