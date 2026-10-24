@@ -480,12 +480,12 @@ AgentTool _replyTool(
         'reply. If you never call it, the parent still sees your final '
         'message as a completion notice, but an explicit reply is the '
         'reliable channel.\n\n'
-        '${deliverableChunkContract(manager.maxReplyChars)}\n\n'
-        'When you used the agent_message chunk protocol, the final reply is '
-        'the manifest: set report_id to the chunk report id and report_parts '
-        'to the total part count. The harness validates the manifest against '
-        'the parts it actually observed — a "complete" label without the '
-        'parts does not make the report complete.',
+        'REPORT SIZE: per-message budget ${manager.maxReplyChars} chars — '
+        'split longer reports into ordered agent_message parts '
+        '(report_id, 0-based part_index, more=false on the last), then a '
+        'short final manifest reply (report_id + report_parts); the '
+        'harness validates it. See REPORT SIZE CONTRACT in your system '
+        'prompt. Never probe the output limit.',
     parameters: {
       'type': 'object',
       'properties': {
@@ -594,7 +594,9 @@ AgentTool _agentMessageTool(
         'live mailbox. The recipient sees the message in its inbox on its '
         'next turn; completed siblings are resumed. Unknown ids and full '
         'queues are rejected.\n\n'
-        '${deliverableChunkContract(manager.maxReplyChars)}',
+        'REPORT SIZE: budget ${manager.maxReplyChars} chars — split long '
+        'report bodies into ordered parts (report_id + 0-based '
+        'part_index). See REPORT SIZE CONTRACT in your system prompt.',
     parameters: {
       'type': 'object',
       'properties': {

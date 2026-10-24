@@ -5,7 +5,6 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/types.dart' show ToolCall;
 import 'package:test/test.dart';
 
 const _secret = 'sk-live-canary-0123456789';

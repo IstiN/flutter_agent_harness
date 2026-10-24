@@ -79,25 +79,25 @@ void main() {
     test(
       'reply description exposes the budget, protocol, and manifest rule',
       () {
-        final (manager, store, tools) = _rig(cap: 4321);
+        final (manager, _, tools) = _rig(cap: 4321);
         final description = tools['reply']!.description;
-        expect(description, contains('4321 characters'));
-        expect(description, contains('REPORT SIZE CONTRACT'));
+        expect(description, contains('4321 chars'));
+        expect(description, contains('REPORT SIZE'));
         expect(description, contains('report_id'));
         expect(description, contains('part_index'));
         expect(description, contains('more=false'));
         expect(description, contains('manifest'));
-        expect(description, contains('near-the-output-limit'));
+        expect(description, contains('Never probe the output limit'));
         // Plain text is never forced through a schema (F4/I7).
         expect(description.toLowerCase().contains('outputschema'), isFalse);
       },
     );
 
     test('agent_message description exposes the budget and ordered parts', () {
-      final (manager, store, tools) = _rig(cap: 777);
+      final (manager, _, tools) = _rig(cap: 777);
       final description = tools['agent_message']!.description;
-      expect(description, contains('777 characters'));
-      expect(description, contains('REPORT SIZE CONTRACT'));
+      expect(description, contains('777 chars'));
+      expect(description, contains('REPORT SIZE'));
       expect(description, contains('part_index'));
     });
 
