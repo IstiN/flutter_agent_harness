@@ -13,6 +13,23 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1844): media slots never fall back to the main connection
+  implicitly — SDK/CLI, app store, and the JS bridge resolve a slot
+  without an override as UNCONFIGURED with an actionable
+  "configure the slot" error; the main connection serves a slot only via
+  the explicit per-slot `useMainConnection: true` opt-in (YAML
+  `models.slots.<slot>.useMainConnection` / app's "Same as main
+  connection" pick, preserved through `media_models.json`). Image and
+  video generation accept multimodal input (text + reference images:
+  sandbox paths, http(s) URLs, base64) on capability-declaring
+  OpenRouter endpoints (`input_references` + declared/probed
+  `input_modalities` gate; unsupported endpoints fail before any network
+  call); the OpenRouter video job API is a first-class video dialect
+  (submit → poll → mp4). New `decide` tool: structured decisions via
+  OpenRouter's Decisions API (`/v1/systemone`) — bool/choice/score
+  questions with calibrated probabilities, structured error results, no
+  streaming.
+
 - feat(gh-1834): the FinalizeGate contract counts a parity/conformance
   claim as verified only with negative + combination self-checks — new
   numbered step 2.6 in `prompts/cli/finalize_gate.md` (refused

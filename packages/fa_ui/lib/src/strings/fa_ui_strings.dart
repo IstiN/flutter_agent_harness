@@ -241,6 +241,10 @@ abstract class FaUiStrings {
   /// The row summary of a slot without an override.
   String get mediaModelsFallbackSummary;
 
+  /// The media-slot row summary when no override exists — the slot is
+  /// UNCONFIGURED (gh-1844; the main connection is never implicit).
+  String get mediaModelsUnconfiguredSummary;
+
   /// Title of the provider-delete confirmation dialog (`Delete {name}?`).
   String settingsDeleteProviderTitle(String name);
 
@@ -494,10 +498,13 @@ class FaUiStringsEn extends FaUiStrings {
   String get mediaModelsSectionTitle => 'Media models';
   @override
   String get mediaModelsSectionNote =>
-      'Image, audio, video and transcription calls use the main connection '
-      'unless a slot overrides it.';
+      'Media calls fail until a slot is configured — pick "Same as main '
+      'connection" to serve a slot from the main connection explicitly.';
   @override
   String get mediaModelsFallbackSummary => 'Same as main connection';
+
+  @override
+  String get mediaModelsUnconfiguredSummary => 'Not configured';
 
   @override
   String settingsDeleteProviderTitle(String name) => 'Delete $name?';
@@ -735,10 +742,13 @@ class FaUiStringsRu extends FaUiStrings {
   String get mediaModelsSectionTitle => 'Медиамодели';
   @override
   String get mediaModelsSectionNote =>
-      'Запросы изображений, аудио, видео и транскрипции используют основное '
-      'подключение, если слот не переопределён.';
+      'Медиа-запросы не выполняются, пока слот не настроен — пункт «Как '
+      'основное подключение» явно включает слот через основное подключение.';
   @override
   String get mediaModelsFallbackSummary => 'Как основное подключение';
+
+  @override
+  String get mediaModelsUnconfiguredSummary => 'Не настроено';
 
   @override
   String settingsDeleteProviderTitle(String name) => 'Удалить $name?';

@@ -13,10 +13,11 @@ import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
 
 /// The settings "Media models" section: one row per [MediaSlot] showing the
-/// effective endpoint — the slot's override (`model · provider`) or the main
-/// connection fallback. Tapping a row pushes the two-step flow
-/// ([MediaSlotProviderPickerPage] → [MediaSlotModelPage]); picking "Same as
-/// main connection" removes the override, restoring the fallback.
+/// slot's override (`model · provider`), the explicit "Same as main
+/// connection" opt-in (gh-1844), or "Not configured" — the main connection
+/// is never shown as an inherited default. Tapping a row pushes the
+/// two-step flow ([MediaSlotProviderPickerPage] → [MediaSlotModelPage]);
+/// picking "Same as main connection" saves the opt-in override.
 ///
 /// The store comes from [store] or the nearest [MediaModelsScope]; the whole
 /// section hides when no store is available (tests pumping the bare form).
@@ -122,6 +123,10 @@ class MediaModelsSection extends StatelessWidget {
         ? null
         : providerForBaseUrl(override.baseUrl, registry);
     final summary = override == null
+        // gh-1844: no override = UNCONFIGURED — never an inherited main
+        // endpoint.
+        ? strings.mediaModelsUnconfiguredSummary
+        : override.useMainConnection
         ? strings.mediaModelsFallbackSummary
         : strings.mediaModelsOverrideSummary(
             provider != null
