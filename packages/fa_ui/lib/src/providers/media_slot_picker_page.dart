@@ -136,19 +136,32 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                     subtitle: mainBaseUrl.isEmpty
                         ? null
                         : providerHostOf(mainBaseUrl),
-                    checked: initial?.useMainConnection ?? false,
+                    // gh-1844: for an actual media slot the row is the
+                    // explicit per-slot opt-in (checked when the saved
+                    // override carries useMainConnection); the generic
+                    // role flow (slot == null) has no opt-in — the row
+                    // means "follow the main connection", i.e. no
+                    // override, so it is checked only without one.
+                    checked: slot == null
+                        ? initial == null
+                        : (initial?.useMainConnection ?? false),
                     onTap: () => Navigator.of(context).pop(
-                      // gh-1844: "Same as main connection" is the EXPLICIT
-                      // per-slot opt-in — saved as an override, never an
-                      // implicit fallback.
-                      const MediaSlotEditorResult.save(
-                        MediaSlotOverride(
-                          providerKind: '',
-                          baseUrl: '',
-                          modelId: '',
-                          useMainConnection: true,
-                        ),
-                      ),
+                      slot == null
+                          ? const MediaSlotEditorResult.clear()
+                          // gh-1844: "Same as main connection" is the
+                          // EXPLICIT per-slot opt-in — saved as an
+                          // override, never an implicit fallback. The
+                          // slot == null consumers (task model roles)
+                          // read a save result as a real override, so
+                          // they get a clear instead.
+                          : const MediaSlotEditorResult.save(
+                              MediaSlotOverride(
+                                providerKind: '',
+                                baseUrl: '',
+                                modelId: '',
+                                useMainConnection: true,
+                              ),
+                            ),
                     ),
                   ),
                 // Dedupe: a saved custom provider on a hosted preset's
