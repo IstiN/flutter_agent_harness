@@ -114,11 +114,11 @@ a:hover { text-decoration: underline; }
   display: flex;
   align-items: center;
   /* gh-182 re-measure: the 12-item desktop row (brand + badge + 10
-     section links + 2 project links) measures 1136px natural against
+     section links + 2 project links) measures 1112px natural against
      1072px of content inside the 1120px container — at the old 28px
      (inner) / 20px (links) gaps the row flex-shrunk and the link labels
      wrapped to two lines (Site mobile E2 red: navH 76 > 70). 20/14
-     brings the row to 1058px: one row with 14px headroom at every
+     brings the row to 1034px: one row with 38px headroom at every
      viewport above the collapse breakpoint. */
   gap: 20px;
 }
