@@ -116,6 +116,10 @@ on:
         description: 'Per-instance wall cap seconds (default 21600 = the official baseline budget; timeout kills are packed and evaluated as low scores, never silent)'
         required: false
         default: '21600'
+      pricing-override:
+        description: 'ONLY for cost accounting — FA_BENCH_PRICING value: inline JSON or a path to a pricing JSON (usd_per_mtok shape, USD/MTok), merged over bench/pricing.json per model key (gh-1838 AC6). Never a secret; unknown models still render n/a'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -659,6 +663,7 @@ jobs:
           BENCH_RUN_LABEL: ${{ needs.setup.outputs.run_label }}
           FA_REF: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FA_BENCH_PRICING: ${{ inputs.pricing-override }}
         run: |
           set -euo pipefail
           python bench/programbench/summary.py "pbench-run/$RUN_ID" \
