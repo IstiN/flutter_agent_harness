@@ -676,10 +676,10 @@ void main() {
       );
     });
 
-    test('OpenRouter endpoint without declared modalities rejects images', () {
+    test('OpenRouter endpoint with text-only declared modalities rejects', () {
       final tool = generateImageTool(
         env: env,
-        modelsConfig: openRouterSlot(const []),
+        modelsConfig: openRouterSlot(const ['text']),
         mainBaseUrl: () => 'https://main.example/v1',
         mainModelId: () => 'main-model',
         mainApiKey: () => 'main-key',
@@ -697,11 +697,53 @@ void main() {
           isA<MediaException>().having(
             (e) => e.toString(),
             'message',
-            contains('does not declare support for image input'),
+            allOf(
+              contains('does not accept image input'),
+              contains('declared input modalities: text'),
+            ),
           ),
         ),
       );
     });
+
+    test(
+      'probe-discovered text-only modalities reject reference images',
+      () async {
+        final tool = generateImageTool(
+          env: env,
+          modelsConfig: openRouterSlot(const []),
+          mainBaseUrl: () => 'https://main.example/v1',
+          mainModelId: () => 'main-model',
+          mainApiKey: () => 'main-key',
+          resolveKey: (name) async => 'or-key',
+          httpClient: _captureClient(
+            (request, body) {},
+            payload: {
+              'data': [
+                {
+                  'id': 'google/gemini-3-pro-image-preview',
+                  'architecture': {'input_modalities': ['text']},
+                },
+              ],
+            },
+          ),
+        );
+
+        expect(
+          tool.execute({
+            'prompt': 'same scene',
+            'images': ['b64:${base64Encode([1])}'],
+          }, null, null),
+          throwsA(
+            isA<MediaException>().having(
+              (e) => e.toString(),
+              'message',
+              contains('does not accept image input'),
+            ),
+          ),
+        );
+      },
+    );
 
     test(
       'OpenRouter endpoint carries reference images as input_references',

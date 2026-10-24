@@ -27,6 +27,7 @@ import '../cancel_token.dart';
 import '../env/execution_env.dart';
 import '../model_roles/models_config.dart';
 import '../types.dart';
+import 'generate_image.dart' show MediaException;
 import 'media_reference_images.dart';
 
 final Random _videoNameRandom = Random.secure();
@@ -806,23 +807,20 @@ Future<({String path, Uint8List bytes, String detail})> generateVideoBytes({
           'endpoint (or drop the images argument)',
         );
       }
-      ensureImageInputSupported(
-        slot: 'videoGeneration',
-        modelId: endpoint.modelId,
-        inputModalities: await resolveInputModalities(
-          baseUrl: endpoint.baseUrl,
-          apiKey: endpoint.apiKey,
+      try {
+        ensureImageInputSupported(
+          slot: 'videoGeneration',
           modelId: endpoint.modelId,
-          declared: declaredInputModalities,
-          client: client,
-        ),
-      );
-      if (!dialect.supportsReferenceImages) {
-        throw VideoException(
-          'reference images are only supported by the OpenRouter video '
-          'dialect — point the videoGeneration slot at an OpenRouter '
-          'endpoint (or drop the images argument)',
+          inputModalities: await resolveInputModalities(
+            baseUrl: endpoint.baseUrl,
+            apiKey: endpoint.apiKey,
+            modelId: endpoint.modelId,
+            declared: declaredInputModalities,
+            client: client,
+          ),
         );
+      } on MediaException catch (e) {
+        throw VideoException(e.toString());
       }
     }
     return await dialect.generate(
