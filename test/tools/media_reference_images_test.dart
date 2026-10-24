@@ -93,6 +93,22 @@ void main() {
       expect(() => parseMediaImageInput('   '), throwsA(isA<MediaException>()));
     });
 
+    // gh-1844 CRAP gate: the two remaining parseMediaImageInput throw
+    // arms — an empty `b64:` payload and a data URL with no comma.
+    test('rejects a b64: entry with an empty payload', () {
+      expect(
+        () => parseMediaImageInput('b64:'),
+        throwsA(isA<MediaException>()),
+      );
+    });
+
+    test('rejects a data URL without a comma', () {
+      expect(
+        () => parseMediaImageInput('data:image/png;base64'),
+        throwsA(isA<MediaException>()),
+      );
+    });
+
     test('rejects a data URL without payload', () {
       expect(
         () => parseMediaImageInput('data:image/png;base64,'),

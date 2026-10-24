@@ -700,6 +700,133 @@ void main() {
       );
       expect(polls, 4);
     });
+
+    // gh-1844 CRAP gate: the terminal-status and poll-error arms of the
+    // OpenRouter poll loop.
+    test('a failed job surfaces the provider error', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final client = MockClient((request) async {
+        final path = request.url.path;
+        if (request.method == 'POST' && path == '/api/v1/videos') {
+          return http.Response('{"id": "job-f", "status": "queued"}', 202);
+        }
+        if (request.method == 'GET' && path == '/api/v1/videos/job-f') {
+          return http.Response(
+            '{"id": "job-f", "status": "failed", '
+            '"error": "content policy"}',
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      });
+
+      await expectLater(
+        dialect.generate(
+          env: env,
+          endpoint: endpoint,
+          prompt: 'a cat',
+          client: client,
+        ),
+        throwsA(
+          isA<VideoException>().having(
+            (e) => e.toString(),
+            'message',
+            allOf(contains('failed'), contains('content policy')),
+          ),
+        ),
+      );
+    });
+
+    test('a cancelled job surfaces without requiring an error field',
+        () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final client = MockClient((request) async {
+        final path = request.url.path;
+        if (request.method == 'POST' && path == '/api/v1/videos') {
+          return http.Response('{"id": "job-c", "status": "queued"}', 202);
+        }
+        if (request.method == 'GET' && path == '/api/v1/videos/job-c') {
+          return http.Response('{"id": "job-c", "status": "cancelled"}', 200);
+        }
+        return http.Response('not found', 404);
+      });
+
+      await expectLater(
+        dialect.generate(
+          env: env,
+          endpoint: endpoint,
+          prompt: 'a cat',
+          client: client,
+        ),
+        throwsA(
+          isA<VideoException>().having(
+            (e) => e.toString(),
+            'message',
+            contains('cancelled'),
+          ),
+        ),
+      );
+    });
+
+    test('a non-200 status poll throws with the HTTP status', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final client = MockClient((request) async {
+        final path = request.url.path;
+        if (request.method == 'POST' && path == '/api/v1/videos') {
+          return http.Response('{"id": "job-e", "status": "queued"}', 202);
+        }
+        if (request.method == 'GET' && path == '/api/v1/videos/job-e') {
+          return http.Response('boom', 500);
+        }
+        return http.Response('not found', 404);
+      });
+
+      await expectLater(
+        dialect.generate(
+          env: env,
+          endpoint: endpoint,
+          prompt: 'a cat',
+          client: client,
+        ),
+        throwsA(
+          isA<VideoException>().having(
+            (e) => e.toString(),
+            'message',
+            allOf(contains('status poll failed'), contains('500')),
+          ),
+        ),
+      );
+    });
+
+    test('a non-map status poll response throws', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final client = MockClient((request) async {
+        final path = request.url.path;
+        if (request.method == 'POST' && path == '/api/v1/videos') {
+          return http.Response('{"id": "job-m", "status": "queued"}', 202);
+        }
+        if (request.method == 'GET' && path == '/api/v1/videos/job-m') {
+          return http.Response('[1, 2]', 200);
+        }
+        return http.Response('not found', 404);
+      });
+
+      await expectLater(
+        dialect.generate(
+          env: env,
+          endpoint: endpoint,
+          prompt: 'a cat',
+          client: client,
+        ),
+        throwsA(
+          isA<VideoException>().having(
+            (e) => e.toString(),
+            'message',
+            contains('unexpected OpenRouter response'),
+          ),
+        ),
+      );
+    });
     test('declares reference-image support', () {
       expect(dialect.supportsReferenceImages, isTrue);
     });

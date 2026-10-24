@@ -628,6 +628,141 @@ void main() {
         expect(await savedExtensionFor(null), 'png');
       });
     });
+
+    // gh-1844 CRAP gate: every remaining arm of the OpenRouter generate
+    // flow — optional size/quality, the HTTP error, the empty data list,
+    // the url download, and the no-image throw.
+    group('generate response shapes (CRAP coverage)', () {
+      const endpoint = MediaEndpoint(
+        baseUrl: 'https://openrouter.ai/api/v1',
+        modelId: 'recraft/recraft-3',
+        apiKey: '[REDACTED:Sensitive Value]',
+      );
+
+      test('forwards size and quality when given', () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        String? seenBody;
+        final result = await dialect.generate(
+          env: env,
+          endpoint: endpoint,
+          prompt: 'a logo',
+          size: '1024x1024',
+          quality: 'high',
+          client: http_testing.MockClient((request) async {
+            seenBody = request.body;
+            return http.Response(
+              jsonEncode({
+                'data': [
+                  {'b64_json': base64Encode([1])},
+                ],
+              }),
+              200,
+            );
+          }),
+        );
+        expect(result.bytes, Uint8List.fromList([1]));
+        final body = jsonDecode(seenBody!) as Map<String, dynamic>;
+        expect(body['size'], '1024x1024');
+        expect(body['quality'], 'high');
+      });
+
+      test('a non-200 response throws with the provider body', () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        await expectLater(
+          dialect.generate(
+            env: env,
+            endpoint: endpoint,
+            prompt: 'a logo',
+            client: http_testing.MockClient(
+              (request) async => http.Response('quota exceeded', 429),
+            ),
+          ),
+          throwsA(
+            isA<MediaException>().having(
+              (e) => e.toString(),
+              'message',
+              allOf(contains('429'), contains('quota exceeded')),
+            ),
+          ),
+        );
+      });
+
+      test('an empty data list throws', () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        await expectLater(
+          dialect.generate(
+            env: env,
+            endpoint: endpoint,
+            prompt: 'a logo',
+            client: http_testing.MockClient(
+              (request) async => http.Response('{"data": []}', 200),
+            ),
+          ),
+          throwsA(
+            isA<MediaException>().having(
+              (e) => e.toString(),
+              'message',
+              contains('no image in OpenRouter response'),
+            ),
+          ),
+        );
+      });
+
+      test('downloads the image from a url response entry', () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final bytes = Uint8List.fromList([8, 9, 10]);
+        final urlsHit = <String>[];
+        final result = await dialect.generate(
+          env: env,
+          endpoint: endpoint,
+          prompt: 'a logo',
+          client: http_testing.MockClient((request) async {
+            if (request.url.host == 'cdn.example.com') {
+              urlsHit.add(request.url.path);
+              return http.Response.bytes(bytes, 200);
+            }
+            return http.Response(
+              jsonEncode({
+                'data': [
+                  {'url': 'https://cdn.example.com/img/abc.png'},
+                ],
+              }),
+              200,
+            );
+          }),
+        );
+        expect(result.bytes, bytes);
+        expect(urlsHit, ['/img/abc.png']);
+      });
+
+      test('an entry with neither b64_json nor url throws', () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        await expectLater(
+          dialect.generate(
+            env: env,
+            endpoint: endpoint,
+            prompt: 'a logo',
+            client: http_testing.MockClient(
+              (request) async => http.Response(
+                jsonEncode({
+                  'data': [
+                    {'media_type': 'image/png'},
+                  ],
+                }),
+                200,
+              ),
+            ),
+          ),
+          throwsA(
+            isA<MediaException>().having(
+              (e) => e.toString(),
+              'message',
+              contains('no image in OpenRouter response'),
+            ),
+          ),
+        );
+      });
+    });
   });
 
   group('generateImageTool reference images (gh-1844)', () {

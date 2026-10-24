@@ -451,22 +451,7 @@ final class DecisionsAdapter {
       decoded = null;
     }
     if (statusCode < 200 || statusCode >= 300) {
-      var code = statusCode;
-      var message = 'HTTP $statusCode';
-      if (decoded is Map && decoded['error'] is Map) {
-        final error = decoded['error'] as Map;
-        final parsedCode = error['code'];
-        if (parsedCode is int) code = parsedCode;
-        final parsedMessage = error['message'];
-        if (parsedMessage is String && parsedMessage.isNotEmpty) {
-          message = parsedMessage;
-        }
-      }
-      return DecisionFailure(
-        statusCode: statusCode,
-        code: code,
-        message: message,
-      );
+      return _parseFailure(statusCode, decoded);
     }
     if (decoded is! Map<String, dynamic>) {
       return DecisionFailure(
@@ -500,6 +485,29 @@ final class DecisionsAdapter {
       provider: decoded['provider']?.toString(),
       answers: answers,
       usage: _parseUsage(decoded['usage']),
+    );
+  }
+
+  /// The `{error: {code, message}}` failure shape for a non-2xx status;
+  /// degrades to the bare HTTP status when the body carries no usable
+  /// error object. Extracted from [parseDecisionResponse] to keep its
+  /// complexity in the CRAP budget (gh-1844).
+  DecisionFailure _parseFailure(int statusCode, Object? decoded) {
+    var code = statusCode;
+    var message = 'HTTP $statusCode';
+    if (decoded is Map && decoded['error'] is Map) {
+      final error = decoded['error'] as Map;
+      final parsedCode = error['code'];
+      if (parsedCode is int) code = parsedCode;
+      final parsedMessage = error['message'];
+      if (parsedMessage is String && parsedMessage.isNotEmpty) {
+        message = parsedMessage;
+      }
+    }
+    return DecisionFailure(
+      statusCode: statusCode,
+      code: code,
+      message: message,
     );
   }
 

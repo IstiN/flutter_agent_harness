@@ -234,6 +234,19 @@ final class OpenRouterImageDialect extends ImageDialect {
       );
     }
     final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final decoded = await _decodeImageResult(data, client);
+    final path = await _save(env, 'images', decoded.ext, decoded.bytes);
+    return (path: path, bytes: decoded.bytes, detail: 'saved to $path');
+  }
+
+  /// The decoded image bytes + saved file extension from an OpenRouter
+  /// `{data: [...]}` response body: `b64_json` inline bytes, or a `url`
+  /// download (extracted from [generate] to keep its complexity in the
+  /// CRAP budget — gh-1844).
+  Future<({String ext, Uint8List bytes})> _decodeImageResult(
+    Map<String, dynamic> data,
+    http.Client client,
+  ) async {
     final first = data['data'] is List && (data['data'] as List).isNotEmpty
         ? (data['data'] as List).first
         : null;
@@ -243,15 +256,11 @@ final class OpenRouterImageDialect extends ImageDialect {
     final ext = _extensionForMediaType(first['media_type']?.toString());
     final b64 = first['b64_json'];
     if (b64 is String && b64.isNotEmpty) {
-      final bytes = base64Decode(b64);
-      final path = await _save(env, 'images', ext, bytes);
-      return (path: path, bytes: bytes, detail: 'saved to $path');
+      return (ext: ext, bytes: base64Decode(b64));
     }
     final url = first['url'];
     if (url is String && url.isNotEmpty) {
-      final bytes = await _download(url, client);
-      final path = await _save(env, 'images', ext, bytes);
-      return (path: path, bytes: bytes, detail: 'saved to $path');
+      return (ext: ext, bytes: await _download(url, client));
     }
     throw MediaException('image generation: no image in OpenRouter response');
   }
