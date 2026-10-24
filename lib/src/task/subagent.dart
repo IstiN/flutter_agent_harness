@@ -4,6 +4,7 @@
 library;
 
 import '../cli/tui_theme.dart';
+import 'deliverables.dart';
 
 /// The lifecycle state of a retained subagent.
 enum SubagentStatus { queued, running, idle, completed, failed, aborted }
@@ -192,6 +193,22 @@ final class SubagentHandle {
   /// Inter-agent messages addressed to this child and not yet consumed
   /// (Phase 3b pending queue). Bounded by the manager's size guard.
   final List<SubagentMessage> pendingMessages = [];
+
+  /// Deliverable artifacts this child produced (issue #1829): over-cap
+  /// reports, salvaged partial text, and chunk-manifest verdicts, in
+  /// capture order. Deliberately IN-MEMORY ONLY — not serialized by
+  /// [toJson]: the artifacts live in the session output store, which is
+  /// in-memory with the same live-session lifetime; a restarted process
+  /// could not resolve the pointers anyway (the store is gone), so a
+  /// persisted list would advertise dead pointers.
+  final List<DeliverableRecord> deliverables = [];
+
+  /// Whether an output-truncated `reply`/`agent_message` call was recorded
+  /// for this child (issue #1829), even when salvage produced no usable
+  /// text. Set by the deliverable capture; cleared never — a later
+  /// successful reply does not unrecord the failure. In-memory like
+  /// [deliverables].
+  bool hadTruncatedDeliverable = false;
 
   /// True when the child is waiting for input (e.g. an ask tool answer).
   bool get isWaitingForInput => status == SubagentStatus.idle;

@@ -385,6 +385,13 @@ class Agent {
   /// Only fires when [messageCapPolicy] classified the refusal.
   MessageCapRelief? messageCapRelief;
 
+  /// Observer for output-truncated tool calls (issue #1829, Core flow B),
+  /// threaded into every [AgentLoopConfig]. The task executor wires the
+  /// deliverable capture here so a truncated `reply`/`agent_message` body
+  /// survives as a partial artifact; the calls themselves stay failed
+  /// unexecuted. Mutable like the other late-wirable knobs.
+  void Function(ToolCall call)? onTruncatedToolCall;
+
   /// Stuck-call supervision (gh-1054), threaded into every
   /// [AgentLoopConfig]: liveness heartbeats for long-running tool calls
   /// plus the autonomous cancel/retry/convert follow-up. `null` =
@@ -719,6 +726,7 @@ class Agent {
             },
       messageCapPolicy: messageCapPolicy,
       messageCapRelief: messageCapRelief,
+      onTruncatedToolCall: onTruncatedToolCall,
       stuckTool: stuckTool,
       foregroundCallBudget: foregroundCall,
       foregroundBudgetControls: foregroundBudgetControls,
