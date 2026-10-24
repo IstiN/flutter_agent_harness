@@ -5,6 +5,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show MemoryExecutionEnv;
 import 'package:flutter_agent_harness/src/model_roles/media_model_slots.dart';
 import 'package:flutter_agent_harness/src/model_roles/models_config.dart';
+import 'package:flutter_agent_harness/src/tools/generate_image.dart'
+    show MediaException;
 import 'package:flutter_agent_harness/src/tools/generate_video.dart';
 import 'package:flutter_agent_harness/src/tools/media_reference_images.dart';
 import 'package:http/http.dart' as http;
@@ -480,7 +482,8 @@ void main() {
       expect(await resolveVideoGenerationEndpoint(config), isNull);
     });
 
-    test('slot override without a key name resolves with an empty key', () async {
+    test('slot override without a key name reuses the main key same-host',
+        () async {
       final config = ModelsConfig(
         slots: {
           'videoGeneration': MediaSlotModelConfig(
@@ -490,14 +493,50 @@ void main() {
           ),
         },
       );
-      final endpoint = await resolveVideoGenerationEndpoint(config);
+      // gh-1844 review: aligned with the image resolver — same-host
+      // reuse of the main connection's key.
+      final endpoint = await resolveVideoGenerationEndpoint(
+        config,
+        mainBaseUrl: 'https://api.minimax.io/v1',
+        mainApiKey: '[REDACTED:Sensitive Value]',
+      );
       expect(endpoint, isNotNull);
       expect(endpoint!.baseUrl, 'https://api.minimax.io/v1');
       expect(endpoint.modelId, 'MiniMax-H3');
-      expect(endpoint.apiKey, isEmpty);
+      expect(endpoint.apiKey, 'main-key');
     });
 
-    test('slot override with apiKeyName resolves the key via the seam', () async {
+    test('slot override without a key name on another host throws an '
+        'actionable error', () async {
+      final config = ModelsConfig(
+        slots: {
+          'videoGeneration': MediaSlotModelConfig(
+            providerKind: 'openai-completions',
+            baseUrl: 'https://api.minimax.io/v1',
+            modelId: 'MiniMax-H3',
+          ),
+        },
+      );
+      // gh-1844 review: no silent empty-Authorization call — the resolver
+      // fails named and actionable, like the imageGeneration slot.
+      expect(
+        resolveVideoGenerationEndpoint(
+          config,
+          mainBaseUrl: 'https://api.other.example/v1',
+          mainApiKey: '[REDACTED:Sensitive Value]',
+        ),
+        throwsA(
+          isA<MediaException>().having(
+            (e) => e.toString(),
+            'message',
+            contains('videoGeneration slot has no resolvable API key'),
+          ),
+        ),
+      );
+    });
+
+    test('slot override with apiKeyName resolves the key via the seam',
+        () async {
       final config = ModelsConfig(
         slots: {
           'videoGeneration': MediaSlotModelConfig(
@@ -515,7 +554,8 @@ void main() {
       expect(endpoint!.apiKey, 'sk-test');
     });
 
-    test('missing key resolution falls back to an empty key', () async {
+    test('missing key resolution falls back to same-host reuse, else '
+        'throws', () async {
       final config = ModelsConfig(
         slots: {
           'videoGeneration': MediaSlotModelConfig(
@@ -526,11 +566,33 @@ void main() {
           ),
         },
       );
+      // The named key does not resolve, but the main connection shares
+      // the host — its key is reused (image-resolver parity).
       final endpoint = await resolveVideoGenerationEndpoint(
         config,
+        mainBaseUrl: 'https://api.minimax.io/v1',
+        mainApiKey: '[REDACTED:Sensitive Value]',
         resolveKey: (name) async => null,
       );
-      expect(endpoint!.apiKey, isEmpty);
+      expect(endpoint!.apiKey, 'main-key');
+
+      // Cross-host with an unresolvable named key: named, actionable
+      // error instead of a silent empty Authorization header.
+      expect(
+        resolveVideoGenerationEndpoint(
+          config,
+          mainBaseUrl: 'https://api.other.example/v1',
+          mainApiKey: '[REDACTED:Sensitive Value]',
+          resolveKey: (name) async => null,
+        ),
+        throwsA(
+          isA<MediaException>().having(
+            (e) => e.toString(),
+            'message',
+            contains('(named "MINIMAX_API_KEY")'),
+          ),
+        ),
+      );
     });
   });
 

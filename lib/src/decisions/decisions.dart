@@ -27,8 +27,10 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 /// One typed question about the [state]. The wire discriminator is
-/// [type]: `bool` (yes/no probability), `choice` (pick from a keyed
-/// criteria map), `score` (position on an ordered criteria list).
+/// [type]: `noul` (yes/no probability — the Decisions API's official
+/// discriminator per the OpenAPI spec; gh-1844 review), `choice` (pick
+/// from a keyed criteria map), `score` (position on an ordered criteria
+/// list).
 sealed class DecisionQuestion {
   const DecisionQuestion();
 
@@ -59,8 +61,11 @@ final class DecisionBoolQuestion extends DecisionQuestion {
     this.criteriaFalse,
   });
 
+  /// The wire discriminator: `noul` per the Decisions API OpenAPI spec
+  /// (`mapping: {box, choice, noul, score}`) — NOT `bool` (review,
+  /// gh-1844: the API 400s every `bool`-discriminated question).
   @override
-  String get type => 'bool';
+  String get type => 'noul';
 
   @override
   final Object? instructions;
@@ -138,11 +143,12 @@ final class DecisionBoolAnswer extends DecisionAnswer {
   /// The calibrated probability of `true` (0..1).
   final double probability;
 
+  /// The wire discriminator mirrors the question's `noul`.
   @override
-  String get type => 'bool';
+  String get type => 'noul';
 
   @override
-  Map<String, dynamic> toJson() => {'type': type, 'bool': probability};
+  Map<String, dynamic> toJson() => {'type': type, 'noul': probability};
 }
 
 /// The answer to a [DecisionChoiceQuestion]: the picked option plus the
@@ -501,8 +507,13 @@ final class DecisionsAdapter {
     if (value is! Map) return null;
     final type = value['type'];
     switch (type) {
+      // gh-1844 review: the official discriminator is `noul`; `bool` is
+      // kept as a tolerated alias for pre-noul payloads. The probability
+      // key accepts either spelling under either discriminator.
+      case 'noul':
       case 'bool':
-        final probability = _asDouble(value['bool']);
+        final probability =
+            _asDouble(value['noul']) ?? _asDouble(value['bool']);
         return probability == null
             ? null
             : DecisionBoolAnswer(probability: probability);

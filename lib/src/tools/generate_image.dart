@@ -98,7 +98,7 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
       apiKey: mainApiKey,
     );
   }
-  final key = await _resolveSlotKey(
+  final key = await resolveMediaSlotKey(
     override,
     mainBaseUrl: mainBaseUrl,
     mainApiKey: mainApiKey,
@@ -123,13 +123,13 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
   );
 }
 
-bool _isSameHost(String a, String b) {
-  final hostA = Uri.tryParse(a)?.host.toLowerCase();
-  final hostB = Uri.tryParse(b)?.host.toLowerCase();
-  return hostA != null && hostA.isNotEmpty && hostA == hostB;
-}
-
-Future<String> _resolveSlotKey(
+/// Resolves a slot override's API key: the named key ([resolveKey]) wins;
+/// otherwise the MAIN connection's key is reused when the override's
+/// endpoint is on the SAME HOST only (gh-1844 review: shared by the
+/// image and video resolvers — one rule, both CLI tools). Returns ''
+/// when nothing resolves (the callers throw the actionable
+/// "no resolvable API key" error).
+Future<String> resolveMediaSlotKey(
   MediaSlotModelConfig override, {
   required String mainBaseUrl,
   required String mainApiKey,
@@ -143,6 +143,12 @@ Future<String> _resolveSlotKey(
     return mainApiKey;
   }
   return '';
+}
+
+bool _isSameHost(String a, String b) {
+  final hostA = Uri.tryParse(a)?.host.toLowerCase();
+  final hostB = Uri.tryParse(b)?.host.toLowerCase();
+  return hostA != null && hostA.isNotEmpty && hostA == hostB;
 }
 
 /// One image-generation dialect (its own URL shape, body schema, and

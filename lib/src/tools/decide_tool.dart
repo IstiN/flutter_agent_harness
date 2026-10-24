@@ -51,7 +51,8 @@ AgentTool decideTool({
         'Requires the main connection to be an OpenRouter provider. '
         'Arguments: model (required), state (required — text or JSON), '
         'questions (required — object keyed by question name; each entry '
-        'is {type: bool|choice|score, instructions, criteria}).',
+        'is {type: bool|choice|score, instructions, criteria} — bool '
+        'questions ride the Decisions API\'s `noul` wire type)',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -163,6 +164,10 @@ DecisionQuestion? _parseQuestion(Object? value) {
   final type = value['type'];
   final instructions = value['instructions'];
   switch (type) {
+    // gh-1844 review: the Decisions API discriminates yes/no questions on
+    // `noul`; `bool` stays the user-facing alias in tool arguments and is
+    // accepted here too (same public name, wire form is `noul`).
+    case 'noul':
     case 'bool':
       final criteria = value['criteria'];
       final map = criteria is Map ? criteria : const <Object?, Object?>{};

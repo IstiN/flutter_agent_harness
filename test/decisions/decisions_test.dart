@@ -19,11 +19,11 @@ void main() {
         criteriaTrue: 'visibly broken',
         criteriaFalse: 'works as designed',
       );
-      expect(question.type, 'bool');
+      expect(question.type, 'noul');
       expect(
         question.toJson(),
         {
-          'type': 'bool',
+          'type': 'noul',
           'instructions': 'Is this a defect?',
           'criteria': {
             'true': 'visibly broken',
@@ -71,7 +71,7 @@ void main() {
       String? seenBody;
       final adapter = DecisionsAdapter(
         httpClient: MockClient((request) async {
-          seenRequest = request as http.Request;
+          seenRequest = request;
           seenBody = request.body;
           return http.Response(
             jsonEncode({
@@ -79,7 +79,10 @@ void main() {
               'model': model,
               'provider': 'openrouter',
               'answers': {
-                'isDefect': {'type': 'bool', 'bool': 0.9},
+                // gh-1844 review: the Decisions API discriminates yes/no
+                // questions on `noul` (per the official OpenAPI spec), not
+                // `bool`.
+                'isDefect': {'type': 'noul', 'noul': 0.9},
                 'severity': {
                   'type': 'choice',
                   'choice': 'high',
@@ -138,6 +141,34 @@ void main() {
       final wireQuestions =
           (body['questions'] as Map<String, dynamic>).keys.toSet();
       expect(wireQuestions, {'isDefect', 'severity', 'quality'});
+    });
+
+    test('a legacy bool-discriminated answer still parses (alias)', () async {
+      final adapter = DecisionsAdapter(
+        httpClient: MockClient(
+          (request) async => http.Response(
+            jsonEncode({
+              'answers': {
+                // Tolerance for pre-noul payloads: the answer key is
+                // accepted under the legacy `bool` discriminator too.
+                'isDefect': {'type': 'bool', 'bool': 0.6},
+              },
+            }),
+            200,
+          ),
+        ),
+      );
+      final result = await adapter.decide(
+        model: model,
+        state: 'x',
+        questions: const {'q': DecisionBoolQuestion(instructions: 'q?')},
+        apiKey: '[REDACTED:Sensitive Value]',
+      );
+      final success = result as DecisionSuccess;
+      expect(
+        (success.answers['isDefect']! as DecisionBoolAnswer).probability,
+        0.6,
+      );
     });
 
     test('local validation fails before any network call', () async {
@@ -200,7 +231,7 @@ void main() {
           (request) async => http.Response(
             jsonEncode({
               'answers': {
-                'isDefect': {'type': 'bool', 'bool': 0.75},
+                'isDefect': {'type': 'noul', 'noul': 0.75},
               },
               'usage': {'input_tokens': 3},
             }),
@@ -216,10 +247,11 @@ void main() {
       }, null, null);
 
       final payload =
-          jsonDecode((result.content.first as TextContent).text!) as Map<String, dynamic>;
+          jsonDecode((result.content.first as TextContent).text) as
+              Map<String, dynamic>;
       expect(payload['error'], isNull);
       final answers = (payload['answers'] as Map).cast<String, dynamic>();
-      expect(answers['isDefect'], {'type': 'bool', 'bool': 0.75});
+      expect(answers['isDefect'], {'type': 'noul', 'noul': 0.75});
     });
 
     test('a non-OpenRouter main connection fails before any call', () async {
@@ -239,7 +271,8 @@ void main() {
       }, null, null);
 
       final payload =
-          jsonDecode((result.content.first as TextContent).text!) as Map<String, dynamic>;
+          jsonDecode((result.content.first as TextContent).text) as
+              Map<String, dynamic>;
       final error = (payload['error'] as Map).cast<String, dynamic>();
       expect(error['validation'], isTrue);
       expect(
@@ -264,7 +297,8 @@ void main() {
       }, null, null);
 
       final payload =
-          jsonDecode((result.content.first as TextContent).text!) as Map<String, dynamic>;
+          jsonDecode((result.content.first as TextContent).text) as
+              Map<String, dynamic>;
       final error = (payload['error'] as Map).cast<String, dynamic>();
       expect(error['validation'], isTrue);
       expect(error['message'].toString(), contains('"bad"'));
