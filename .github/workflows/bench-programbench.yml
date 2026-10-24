@@ -386,6 +386,17 @@ jobs:
           name: fa-bundle
           path: fa-bundle.tar.gz
 
+      # gh-1816: the bench script quality gate (the bench-mls.yml pattern) —
+      # a rotted run_shard.py must fail the dispatch HERE, at setup, not
+      # after hours of solving. Stdlib unittest only; mirrors
+      # bench-tests.yml's discovery root for this workflow's scripts.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Unit-test bench scripts
+        run: python -m unittest discover -s bench/programbench -v
+
       # The official task set at the pinned ref — the inventory comes from
       # THIS checkout (dir names under src/programbench/data/tasks), never
       # from a PyPI package whose data could drift from the pin.
