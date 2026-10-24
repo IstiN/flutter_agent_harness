@@ -52,8 +52,11 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fa_usage  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parent
-DEFAULT_PRICING_PATH = REPO_ROOT / "bench" / "pricing.json"
+BENCH_ROOT = Path(__file__).resolve().parent.parent  # bench/ (this file: bench/programbench/)
+# gh-1838 root cause of the run's n/a: the old code named this REPO_ROOT
+# and appended "bench/" again — bench/bench/pricing.json never existed,
+# load_pricing swallowed the miss and every model silently rendered n/a.
+DEFAULT_PRICING_PATH = BENCH_ROOT / "pricing.json"
 
 
 def solved_fraction(score_map: dict) -> tuple[int, int, bool]:
@@ -138,6 +141,8 @@ def render(
     calls: dict = {}
     estimates: dict = {}  # iid -> (estimated cost, alias target model)
     split = {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0}
+    est_split = {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0}
+    est_n = 0
     priced_n = 0
     unpriced = False
     for iid in iids:
@@ -151,6 +156,9 @@ def render(
                 split[key] += u["components"][key]
         elif u["cost"] is not None and u["alias"] is not None:
             estimates[iid] = (u["cost"], u["alias"])
+            est_n += 1
+            for key in est_split:
+                est_split[key] += u["components"][key]
         elif u["calls"] is not None:
             unpriced = True
 
@@ -209,6 +217,16 @@ def render(
                 f"+ cache-read ${split['cache_read']:.4f} + cache-write ${split['cache_write']:.4f} "
                 f"= ${total_cost:.4f} — cached reads dominate API-style cost; keep them in view."
             )
+    targets = sorted({target for _, target in estimates.values()})
+    est_total = sum(est_split.values())
+    if est_n and est_total > 0:
+        lines.append("")
+        lines.append(
+            f"Estimate split over {est_n} aliased instance(s) @ {'/'.join(targets)} rates: "
+            f"input ${est_split['input']:.4f} + output ${est_split['output']:.4f} "
+            f"+ cache-read ${est_split['cache_read']:.4f} + cache-write ${est_split['cache_write']:.4f} "
+            f"= ${est_total:.4f} — cached reads dominate API-style cost; keep them in view."
+        )
     for iid in sorted(estimates):
         est, target = estimates[iid]
         lines.append("")

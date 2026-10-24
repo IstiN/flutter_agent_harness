@@ -367,6 +367,8 @@ class AliasEstimateTest(SummaryTestBase):
         self.assertNotIn("a", result.costs, "estimate must not enter the wire")
         self.assertIn("estimate @ kimi-k3 rates", result.text)
         self.assertIn("4.5000*", result.text, "cell shows the labelled estimate")
+        self.assertIn("Estimate split over 1 aliased instance(s)", result.text)
+        self.assertIn("cache-read $", result.text, "AC8: split stays visible for estimates")
 
     def test_main_excludes_alias_estimate_from_cost_json(self):
         pricing = self.write_pricing("alias.json", self.PRICING)
