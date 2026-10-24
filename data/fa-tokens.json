@@ -197,14 +197,6 @@
   "pr-1517": [
     {
       "leg": "rework",
-      "at": "2026-10-10T22:34:48Z",
-      "prompt": 95043,
-      "completion": 32749,
-      "total": 127792,
-      "model": ""
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-10T23:28:43Z",
       "prompt": 98302,
       "completion": 2950,
@@ -4716,6 +4708,15 @@
       "completion": 167077,
       "total": 612977,
       "cacheRead": 51455744,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-24T22:37:01Z",
+      "prompt": 372059,
+      "completion": 106229,
+      "total": 478288,
+      "cacheRead": 40517376,
       "model": "kimi-for-coding"
     }
   ],
