@@ -139,10 +139,25 @@ String _codepointSafeSlice(String text, int start, int end) {
 /// background shell job exits. The command rides the bounded
 /// [shellJobCommandLabel], never the full body (gh-1604: a multi-KB
 /// command must not enter the transcript through every settle).
+///
+/// gh-1835 review (threads 2/7 related note): a job killed by its timeout
+/// cap exits with the SIGKILL code (-9) — without naming the stop reason
+/// the model misreads its own carried cap firing as a crash. The timeout
+/// line rides the notice exactly when the job's `stopReason` is
+/// `'timeout'`, with the same retry guidance the bash tool description
+/// gives for converted calls.
 String shellJobSettleNoticeText(ShellJobEntry job) {
+  final capSeconds = job.timeout?.inSeconds;
+  final timeoutLine = job.stopReason == 'timeout'
+      ? 'Stop reason: timeout — the job\'s timeout cap '
+            '${capSeconds == null ? '' : 'of ${capSeconds}s '}fired; this '
+            'is the cap the command was started with, not a crash. Retry '
+            'the command yourself if you still need the result.\n'
+      : '';
   return '<system-notice>\n'
       'Background shell job ${job.id} finished with exit code '
       '${job.exitCode}.\n'
+      '$timeoutLine'
       // Issue #599: the preview, never the multi-line body — this
       // notice is echoed into the transcript verbatim, and the full
       // command lives in the job log (right below).

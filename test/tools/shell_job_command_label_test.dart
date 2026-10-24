@@ -42,8 +42,7 @@ final class _FakeShellJob implements ShellJob {
   bool writeStdin(String data) => true;
   @override
   Future<void> stop() async {
-    _stopReason = 'stopped';
-    complete(143);
+    complete(143, reason: 'stopped');
   }
 
   void complete(int code, {String? reason}) {

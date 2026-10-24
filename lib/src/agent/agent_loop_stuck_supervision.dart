@@ -90,10 +90,10 @@ final _interceptorNoticeLine = RegExp(
 
 bool _isBackgroundHandback(ToolExecutionResult result) {
   if (_resultOutputSize(result) <= 0) return false;
-  final text = _resultPartialText(result, max: 1 << 20).replaceFirst(
-    _interceptorNoticeLine,
-    '',
-  );
+  final text = _resultPartialText(
+    result,
+    max: 1 << 20,
+  ).replaceFirst(_interceptorNoticeLine, '');
   return text.startsWith(stuckBackgroundHandbackSentence);
 }
 

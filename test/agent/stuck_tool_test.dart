@@ -831,11 +831,7 @@ void main() {
               '[bash interceptor rewrote 1 secret-shaped value in the '
               'command (GitHub Token) — the executed command carries the '
               '[REDACTED:GitHub Token] marker.]\n'
-              '${stuckBackgroundHandbackText(
-                jobId: 'sh-rw2',
-                logPath: '/tmp/sh-rw2.log',
-                supervisorMoved: false,
-              )}',
+              '${stuckBackgroundHandbackText(jobId: 'sh-rw2', logPath: '/tmp/sh-rw2.log', supervisorMoved: false)}',
             );
           },
         );
@@ -868,11 +864,7 @@ void main() {
             await Future<void>.delayed(const Duration(milliseconds: 340));
             return ToolExecutionResult.text(
               'preamble output\n'
-              '${stuckBackgroundHandbackText(
-                jobId: 'sh-q2',
-                logPath: '/tmp/sh-q2.log',
-                supervisorMoved: false,
-              )}',
+              '${stuckBackgroundHandbackText(jobId: 'sh-q2', logPath: '/tmp/sh-q2.log', supervisorMoved: false)}',
             );
           },
         );

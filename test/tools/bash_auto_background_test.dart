@@ -87,8 +87,7 @@ final class _FakeShellJob implements ShellJob {
 
   @override
   Future<void> stop() async {
-    _stopReason = 'stopped';
-    complete(143);
+    complete(143, reason: 'stopped');
   }
 }
 
@@ -395,9 +394,11 @@ void main() {
         autoBackgroundAfter: _conversionThreshold,
         redactionConfig: const RedactionConfig(),
       );
-      final resultFuture = rewriteTool.execute({
-        'command': 'export GH_TOKEN=ghp_${'A' * 36}',
-      }, null, null);
+      final resultFuture = rewriteTool.execute(
+        {'command': 'export GH_TOKEN=ghp_${'A' * 36}'},
+        null,
+        null,
+      );
       final job = await _waitForJob(env);
       final text = _text(await resultFuture);
       // The rewrite notice leads, the conversion facts follow.

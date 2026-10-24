@@ -79,6 +79,16 @@ final class WaitingConfig {
   /// `0` is the kill switch (legacy foreground behavior: the call waits
   /// for its result or its timeout). Hosts without the `BackgroundShell`
   /// capability keep the legacy behavior regardless.
+  ///
+  /// Ordering vs `toolLivenessSeconds` (gh-1835 review): an
+  /// `autoBackgroundSeconds` at or BELOW a configured
+  /// `toolLivenessSeconds` converts every long foreground bash call
+  /// before the first liveness reminder can fire — on a job-capable host
+  /// the reminders become a dead knob for bash. This shadowing is
+  /// accepted, not rejected at boot (unlike the
+  /// `toolEscalateSeconds`/`toolLivenessSeconds` ordering below): the
+  /// conversion supersedes the reminder and carries strictly more
+  /// information, and a boot error would outlaw a working configuration.
   final int autoBackgroundSeconds;
 
   factory WaitingConfig.fromYaml(Object? node) {
