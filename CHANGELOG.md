@@ -13,6 +13,18 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1834): the FinalizeGate contract counts a parity/conformance
+  claim as verified only with negative + combination self-checks — new
+  numbered step 2.6 in `prompts/cli/finalize_gate.md` (refused
+  incompatible/mutually exclusive options, empty/corrupt inputs, boundary
+  values, must-NOT-work cases, alongside happy paths; a blanket
+  "everything matches" is not verified). Universality: abstract example
+  only, no benchmark/task/flag names in the prompt; the step is
+  conditional, so tasks with no conformance claim see no gate change.
+  Ledger/verdict wire formats unchanged; validated end-to-end by the
+  scripted IT-4 replay (real CLI + real bash) whose persisted
+  `task_ledger` carries the rejection rows.
+
 - fix(gh-1820): the arm64 DMG leg's stale size floor is reseeded onto the
   shipped v1.0.634 shape — run 4004758753 (post-#1815 SPM-lane adoption)
   passed the min-platform gate and the full build, then failed the
