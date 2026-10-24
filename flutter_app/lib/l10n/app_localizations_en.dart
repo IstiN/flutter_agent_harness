@@ -2477,6 +2477,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkAddAgentFormatDap => 'DAP';
 
   @override
+  String get networkAddAgentDapHint =>
+      'Copy this block and paste it into the fa chat (CLI, macOS, iOS or web) — the agent joins the channel automatically.';
+
+  @override
   String get networkAddAgentEnroll => 'Enroll agent';
 
   @override

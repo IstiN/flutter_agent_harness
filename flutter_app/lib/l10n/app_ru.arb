@@ -1001,6 +1001,7 @@
   "networkAddAgentFormatCli": "CLI-команда",
   "networkAddAgentFormatEnv": "Env (CI)",
   "networkAddAgentFormatDap": "DAP",
+  "networkAddAgentDapHint": "Скопируйте этот блок и вставьте его в чат fa (CLI, macOS, iOS или веб) — агент автоматически присоединится к каналу.",
   "networkAddAgentEnroll": "Заэнроллить агента",
   "networkAddAgentEnrollHint": "Выдача создаёт уникальный отзываемый секрет — он показывается ОДИН раз: скопируйте его сейчас. Повторная выдача с тем же именем меняет секрет.",
   "networkAddAgentEnrollNeedSignIn": "Войдите в сеть, чтобы выдавать доступ агентам",

@@ -76,7 +76,7 @@ class AddAgentDialog extends StatefulWidget {
 
 class _AddAgentDialogState extends State<AddAgentDialog> {
   late AgentInviteScope _scope;
-  AgentInviteFormat _format = AgentInviteFormat.link;
+  AgentInviteFormat _format = AgentInviteFormat.dap;
 
   /// The DAP tab's editable agent name (prefilled with the [_agentName]
   /// suggestion); enrollment mints a name-bound credential for it.
@@ -386,6 +386,11 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
               key: const ValueKey('inviteFormat'),
               segments: [
                 ButtonSegment(
+                  value: AgentInviteFormat.dap,
+                  icon: const Icon(Icons.dns, size: 16),
+                  label: Text(l10n.networkAddAgentFormatDap),
+                ),
+                ButtonSegment(
                   value: AgentInviteFormat.link,
                   icon: const Icon(Icons.link, size: 16),
                   label: Text(l10n.networkAddAgentFormatLink),
@@ -399,11 +404,6 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
                   value: AgentInviteFormat.env,
                   icon: const Icon(Icons.settings_ethernet, size: 16),
                   label: Text(l10n.networkAddAgentFormatEnv),
-                ),
-                ButtonSegment(
-                  value: AgentInviteFormat.dap,
-                  icon: const Icon(Icons.dns, size: 16),
-                  label: Text(l10n.networkAddAgentFormatDap),
                 ),
               ],
               selected: {_format},
@@ -479,8 +479,14 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
             if (_format == AgentInviteFormat.dap) ...[
               const SizedBox(height: 8),
               Text(
-                l10n.networkAddAgentEnrollHint,
+                l10n.networkAddAgentDapHint,
                 key: const ValueKey('inviteDapHint'),
+                style: TextStyle(color: colors.dim, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                l10n.networkAddAgentEnrollHint,
+                key: const ValueKey('inviteEnrollHint'),
                 style: TextStyle(color: colors.dim, fontSize: 12),
               ),
               const SizedBox(height: 8),

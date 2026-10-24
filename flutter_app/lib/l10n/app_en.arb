@@ -1308,6 +1308,10 @@
   "@networkAddAgentFormatDap": {
     "description": "Agent invite format segment: pure-DAP client env (self-hosted DAP hub)"
   },
+  "networkAddAgentDapHint": "Copy this block and paste it into the fa chat (CLI, macOS, iOS or web) — the agent joins the channel automatically.",
+  "@networkAddAgentDapHint": {
+    "description": "Agent invite helper under the DAP format explaining how to paste the enrollment block into fa chat"
+  },
   "networkAddAgentEnroll": "Enroll agent",
   "@networkAddAgentEnroll": {
     "description": "Agent invite: button that enrolls the typed agent name against the fa_network backend (DAP format)"

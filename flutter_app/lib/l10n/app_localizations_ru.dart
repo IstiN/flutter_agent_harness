@@ -2506,6 +2506,10 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkAddAgentFormatDap => 'DAP';
 
   @override
+  String get networkAddAgentDapHint =>
+      'Скопируйте этот блок и вставьте его в чат fa (CLI, macOS, iOS или веб) — агент автоматически присоединится к каналу.';
+
+  @override
   String get networkAddAgentEnroll => 'Заэнроллить агента';
 
   @override

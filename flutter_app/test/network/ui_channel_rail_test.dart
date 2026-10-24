@@ -189,6 +189,8 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
 
         expect(find.byType(AddAgentDialog), findsOneWidget);
+        await tester.tap(find.text('Link (app)'));
+        await tester.pump();
         // No channel in context → the scope switch is hidden and the
         // payload is the network join link.
         expect(find.byKey(const ValueKey('inviteScope')), findsNothing);

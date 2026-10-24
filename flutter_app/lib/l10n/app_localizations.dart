@@ -4388,6 +4388,12 @@ abstract class AppLocalizations {
   /// **'DAP'**
   String get networkAddAgentFormatDap;
 
+  /// Agent invite helper under the DAP format explaining how to paste the enrollment block into fa chat
+  ///
+  /// In en, this message translates to:
+  /// **'Copy this block and paste it into the fa chat (CLI, macOS, iOS or web) — the agent joins the channel automatically.'**
+  String get networkAddAgentDapHint;
+
   /// Agent invite: button that enrolls the typed agent name against the fa_network backend (DAP format)
   ///
   /// In en, this message translates to:
