@@ -210,7 +210,8 @@ AgentTool shellTool(
         'id immediately and are notified when it finishes; check progress '
         'with bash_job. A foreground command that is still running when the '
         'user sends a message is moved to a background job untouched (never '
-        'killed) so the user gets an answer right away.',
+        'killed) so the user gets an answer right away.'
+        '${autoBackgroundAfter > Duration.zero ? ' A foreground command still running after ${autoBackgroundAfter.inSeconds}s is also moved to a background job automatically (never restarted): the call returns the job id and you decide — wait for the completion notice, poll bash_job output, or stop the job and retry differently.' : ''}',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -551,6 +552,7 @@ Future<ToolExecutionResult> _shellViaJob(
       cancelToken: cancelToken,
       timeoutArg: timeoutArg,
       rewriteNotice: rewriteNotice,
+      autoBackgroundAfter: autoBackgroundAfter,
     );
   } finally {
     await outputSub?.cancel();
@@ -558,50 +560,107 @@ Future<ToolExecutionResult> _shellViaJob(
   }
 }
 
+/// The three ways [_awaitJobOutcome]'s race can resolve.
+enum _JobOutcome {
+  /// The job settled: classic inline result (the settle notice is
+  /// suppressed — the result is already here).
+  settled,
+
+  /// The yield/cancel token fired: the existing hand-back (steering, run
+  /// abort, or supervisor follow-up classification).
+  unwound,
+
+  /// The gh-1835 liveness threshold fired: the conversion — the job keeps
+  /// running in the background and the tool call answers with the
+  /// backgrounded result (settle notice stays armed).
+  converted,
+}
+
 Future<ToolExecutionResult> _awaitJobOutcome(
   ExecutionEnv env,
   ShellJobRegistry jobs,
   ShellJobEntry entry,
-  CancelToken yieldToken, {
+  CancelToken? yieldToken, {
   CancelToken? cancelToken,
   required num? timeoutArg,
   String? rewriteNotice,
+  Duration? autoBackgroundAfter,
 }) async {
-  final finished = await Future.any<bool>([
-    entry.settled.then((_) => true),
-    yieldToken.onCancel.then((_) => false),
-    // gh-1455: the RUN aborting (Agent.abort, the idle watchdog) must not
-    // kill the job either — it unwinds this call exactly like a yield,
-    // handing the still-running process to the background.
-    if (cancelToken != null) cancelToken.onCancel.then((_) => false),
-  ]);
-
-  if (!finished) {
-    return _backgroundHandbackResult(
-      env,
-      jobs,
-      entry,
-      yieldToken,
-      cancelToken: cancelToken,
-      rewriteNotice: rewriteNotice,
-    );
+  // The gh-1835 conversion timer: fires once at the liveness threshold.
+  // Cancelled the moment the race resolves, so a settled/unwound call can
+  // never be converted afterwards (exactly-once resolution).
+  final conversion = Completer<void>();
+  final conversionTimer = autoBackgroundAfter == null
+      ? null
+      : Timer(autoBackgroundAfter, conversion.complete);
+  _JobOutcome outcome;
+  try {
+    outcome = await Future.any<_JobOutcome>([
+      entry.settled.then((_) => _JobOutcome.settled),
+      // gh-1455: the RUN aborting (Agent.abort, the idle watchdog) must not
+      // kill the job either — it unwinds this call exactly like a yield,
+      // handing the still-running process to the background.
+      if (yieldToken != null) yieldToken.onCancel.then((_) => _JobOutcome.unwound),
+      if (cancelToken != null)
+        cancelToken.onCancel.then((_) => _JobOutcome.unwound),
+      if (conversionTimer != null)
+        conversion.future.then((_) => _JobOutcome.converted),
+    ]);
+  } finally {
+    conversionTimer?.cancel();
   }
-  return _settledInlineResult(
-    env,
-    entry,
-    timeoutArg: timeoutArg,
-    rewriteNotice: rewriteNotice,
+
+  switch (outcome) {
+    case _JobOutcome.converted:
+      return _autoBackgroundResult(entry, rewriteNotice: rewriteNotice);
+    case _JobOutcome.unwound:
+      return _backgroundHandbackResult(
+        env,
+        jobs,
+        entry,
+        yieldToken,
+        cancelToken: cancelToken,
+        rewriteNotice: rewriteNotice,
+      );
+    case _JobOutcome.settled:
+      return _settledInlineResult(
+        env,
+        entry,
+        timeoutArg: timeoutArg,
+        rewriteNotice: rewriteNotice,
+      );
+  }
+}
+
+/// The gh-1835 conversion branch: the pending tool call resolves with the
+/// backgrounded result (job id, elapsed, log path, inline guidance). The
+/// settle notification is deliberately NOT suppressed — the model chose (or
+/// defaulted to) waiting on the settle, and the headless drain still sees
+/// the job.
+Future<ToolExecutionResult> _autoBackgroundResult(
+  ShellJobEntry entry, {
+  String? rewriteNotice,
+}) async {
+  final elapsed = DateTime.now().difference(entry.startedAt);
+  final text = autoBackgroundHandbackText(
+    jobId: entry.id,
+    logPath: entry.logPath,
+    elapsed: elapsed,
+    carriedTimeout: entry.timeout,
+  );
+  return ToolExecutionResult.text(
+    rewriteNotice == null ? text : '$rewriteNotice\n$text',
   );
 }
 
 /// gh-1455: the supervisor's cancel_retry cancel (StuckCallFollowUp on the
 /// CALL token) is a cancel-and-RETRY, not a background conversion — this
 /// predicate tells that case apart from a run abort / steering yield.
-bool _isSupervisorAbort(CancelToken? cancelToken, CancelToken yieldToken) =>
+bool _isSupervisorAbort(CancelToken? cancelToken, CancelToken? yieldToken) =>
     cancelToken != null &&
     cancelToken.isCancelled &&
     cancelToken.cancelReason is StuckCallFollowUp &&
-    !yieldToken.isCancelled;
+    !(yieldToken?.isCancelled ?? false);
 
 /// The unwound-call branch of [_awaitJobOutcome]: the supervisor's
 /// cancel-retry fails the call exactly like the pre-gh-1455 token-kill did
@@ -613,7 +672,7 @@ Future<ToolExecutionResult> _backgroundHandbackResult(
   ExecutionEnv env,
   ShellJobRegistry jobs,
   ShellJobEntry entry,
-  CancelToken yieldToken, {
+  CancelToken? yieldToken, {
   CancelToken? cancelToken,
   String? rewriteNotice,
 }) async {
@@ -629,7 +688,7 @@ Future<ToolExecutionResult> _backgroundHandbackResult(
   // while steering cancels the phase yield — a cancel from either means
   // the handback must name its real cause, so check both reasons.
   final supervisorMoved =
-      yieldToken.cancelReason is StuckCallFollowUp ||
+      yieldToken?.cancelReason is StuckCallFollowUp ||
       (cancelToken?.cancelReason is StuckCallFollowUp);
   final tail = await jobs.tail(entry.id, maxLines: 20);
   final handback = stuckBackgroundHandbackText(

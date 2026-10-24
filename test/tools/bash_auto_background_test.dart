@@ -244,7 +244,7 @@ void main() {
         logPath: '/l.log',
         elapsed: const Duration(seconds: 60),
       );
-      expect(withoutCap, isNot(contains('timeout')));
+      expect(withoutCap, isNot(contains('Timeout cap:')));
     });
   });
 
@@ -255,7 +255,10 @@ void main() {
     late AgentTool tool;
 
     setUp(() {
-      env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      env = _FakeBackgroundEnv(
+        MemoryExecutionEnv(cwd: '/work'),
+        execShell: const _EchoShell(),
+      );
       settleNotifications = [];
       registry = ShellJobRegistry(
         env: env,

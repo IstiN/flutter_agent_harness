@@ -276,6 +276,7 @@ export 'src/tools/availability_gate.dart';
 export 'src/tools/discover_tools_tool.dart';
 export 'src/tools/load_modes.dart';
 export 'src/tools/archive_reader.dart';
+export 'src/tools/bash_auto_background.dart';
 export 'src/tools/builtin_tools.dart';
 export 'src/tools/checkpoint_tool.dart';
 export 'src/tools/dynamic_message_tool.dart';
