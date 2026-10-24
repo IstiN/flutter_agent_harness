@@ -22,7 +22,7 @@ import 'package:http/http.dart' as http;
 
 import '../cli/paste_image.dart' show maxPasteImageBytes, sniffImageMime;
 import '../env/execution_env.dart';
-import 'generate_image.dart' show MediaEndpoint, MediaException;
+import 'generate_image.dart' show MediaException;
 
 /// The maximum number of reference images one media call accepts
 /// (OpenRouter allows up to 10 for image generation; the count cap keeps
@@ -276,9 +276,7 @@ Future<List<String>?> resolveInputModalities({
   try {
     final response = await client.get(
       openRouterModelsUri(baseUrl),
-      headers: {
-        if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
-      },
+      headers: {if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey'},
     );
     if (response.statusCode != 200) return null;
     final decoded = jsonDecode(response.body);

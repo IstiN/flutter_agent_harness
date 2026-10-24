@@ -99,6 +99,7 @@ import '../tools/request_secret_tool.dart';
 import '../tools/shell_jobs.dart';
 import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
+import '../tools/decide_tool.dart';
 import '../web_search/web_search_tool.dart';
 import 'host_capability_profile.dart';
 import 'host_extension_api.dart';
@@ -786,6 +787,15 @@ List<AgentTool> _buildCoreTools({
               mainModelId: () => currentAgent()!.state.model.id,
               mainApiKey: media.mainApiKey,
               resolveKey: media.resolveKey,
+            ),
+            // gh-1844: structured decisions via OpenRouter's Decisions
+            // API — rides the main connection when (and only when) the
+            // main provider is OpenRouter (the tool gates with an
+            // actionable error otherwise, before any network call).
+            decideTool(
+              mainBaseUrl: () => currentAgent()!.state.model.baseUrl,
+              mainProviderKind: () => currentAgent()!.state.model.provider,
+              mainApiKey: media.mainApiKey,
             ),
           ],
     ...?browser,
