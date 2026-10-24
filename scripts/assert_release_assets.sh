@@ -58,10 +58,14 @@ done < "$required_file"
 probe_url() {
   local url="$1" code
   code=$(curl -sS -L --range 0-0 -o /dev/null -w '%{http_code}' \
-    --connect-timeout 15 --max-time 60 "$url" 2>/dev/null || echo 000)
+    --connect-timeout 15 --max-time 60 "$url" 2>/dev/null) || true
+  [ -n "$code" ] || code=000
+  # Always emit the code (the caller's success line shows it); the
+  # function's exit status carries the verdict.
+  echo "$code"
   case "$code" in
     200|206) return 0 ;;
-    *) echo "$code"; return 1 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -98,8 +102,12 @@ case "$mode" in
     }
     # URL stops at whitespace, quotes, angle/close parens, plus, comma —
     # the landing page embeds these links in hrefs and JSON FAQ text with
-    # trailing punctuation.
-    urls=$(grep -oE "https?://[^\"' <>()+,\t]+" "$page" \
+    # trailing punctuation. NOTE: grep -E cannot portably put a tab in a
+    # bracket expression ('\t' there means backslash and letter t, which
+    # would truncate every URL at its first 't') — build the class with a
+    # real tab via printf.
+    url_class="[^\"' <>()+,$(printf '\t')]"
+    urls=$(grep -oE "https?://${url_class}+" "$page" \
       | grep -E '/releases/(latest/)?download/' | sort -u || true)
     [ -n "$urls" ] || {
       echo "::error::no /releases/ download links found in $page — the page shape changed; revisit the link-check contract (gh-1832)" >&2
