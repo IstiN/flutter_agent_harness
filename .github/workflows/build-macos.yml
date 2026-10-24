@@ -102,6 +102,17 @@ jobs:
     timeout-minutes: 150
     strategy:
       fail-fast: false
+      # gh-1852: serialize the matrix. Both legs sign with a per-arch
+      # keychain but mutate the PER-USER GLOBAL keychain search list
+      # (`security default-keychain -s` / `list-keychains -d user -s`) —
+      # and the fa-m5 pool is ONE host under ONE user account, so two
+      # concurrent legs evict each other's keychain from the search list
+      # and the loser's codesign dies with "No certificate for team
+      # YP9HC3USZ3 matching ... found" (6/7 red runs over 48h; autopsy:
+      # run 40117288269, x86_64 evicted arm64's keychain 67s after
+      # import). Pinned by
+      # test/ci_macos_keychain_serialization_guard_test.dart.
+      max-parallel: 1
       matrix:
         arch: [arm64, x86_64]
     permissions:
