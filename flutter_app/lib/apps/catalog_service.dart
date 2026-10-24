@@ -490,8 +490,10 @@ class CatalogService {
   ///
   /// Mirrors `WidgetManifest`'s inliner: the same import/include regexes,
   /// the same lexical `./`/`../` resolution against the importing file's
-  /// directory (`..` at the widget root clamps in-root, exactly like
-  /// `WidgetManifest._resolvePath`), imports-then-includes in source
+  /// directory in widget-root-relative space (one documented divergence:
+  /// a `..` past the widget root is refused — the runtime would read it
+  /// from the app namespace, which the preview cannot serve), imports-
+  /// then-includes in source
   /// order with import-once (`visited`) semantics, and the runtime's OWN
   /// per-chain depth budget ([_maxChainDepth]) — a chain the assembler
   /// would give up on is refused here, because booting it leaves the
@@ -517,14 +519,16 @@ class CatalogService {
     if (rawFiles is List && rawFiles.isNotEmpty) {
       roots
         ..clear()
-        ..addAll(rawFiles.map((file) {
-          if (file is! String) {
-            throw CatalogError(
-              '${entry.id}: manifest files: entry is not a string: $file',
-            );
-          }
-          return file;
-        }));
+        ..addAll(
+          rawFiles.map((file) {
+            if (file is! String) {
+              throw CatalogError(
+                '${entry.id}: manifest files: entry is not a string: $file',
+              );
+            }
+            return file;
+          }),
+        );
     }
     final claimed = <String>{};
     for (final root in roots) {
@@ -532,8 +536,7 @@ class CatalogService {
       // assembler's `'$base/$filename'` reads.
       final rel = _requireClosurePath(entry, root, '');
       await _ensureClosureFile(entry, files, rel, entryDir: entryDir);
-      await _walkClosureFile(entry, files, claimed, rel, 0,
-          entryDir: entryDir);
+      await _walkClosureFile(entry, files, claimed, rel, 0, entryDir: entryDir);
     }
   }
 
@@ -574,14 +577,26 @@ class CatalogService {
       final target = _requireClosurePath(entry, match.group(1)!, sourceDir);
       if (!claimed.add(target)) continue; // already inlined — skip subtree
       await _ensureClosureFile(entry, files, target, entryDir: entryDir);
-      await _walkClosureFile(entry, files, claimed, target, depth + 1,
-          entryDir: entryDir);
+      await _walkClosureFile(
+        entry,
+        files,
+        claimed,
+        target,
+        depth + 1,
+        entryDir: entryDir,
+      );
     }
     for (final match in _includeRegex.allMatches(text)) {
       final target = _requireClosurePath(entry, match.group(1)!, sourceDir);
       await _ensureClosureFile(entry, files, target, entryDir: entryDir);
-      await _walkClosureFile(entry, files, claimed, target, depth + 1,
-          entryDir: entryDir);
+      await _walkClosureFile(
+        entry,
+        files,
+        claimed,
+        target,
+        depth + 1,
+        entryDir: entryDir,
+      );
     }
   }
 
@@ -630,8 +645,10 @@ class CatalogService {
       throw CatalogError('$id: $rel fetch failed: $error');
     }
     if (response.statusCode != 200) {
-      throw CatalogError('$id: missing source $rel (HTTP '
-          '${response.statusCode}) — the entry imports it at boot');
+      throw CatalogError(
+        '$id: missing source $rel (HTTP '
+        '${response.statusCode}) — the entry imports it at boot',
+      );
     }
     files[rel] = response.bodyBytes;
   }

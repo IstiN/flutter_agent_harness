@@ -36,7 +36,8 @@ void main() {
 
   const manifestJson = '{"id":"fa-craft","name":"Fa Craft","version":"0.2.30"}';
   const entryJs = "// stub entry\nimport './game/main.js';\n";
-  const mainJs = "import './blocks.js';\n"
+  const mainJs =
+      "import './blocks.js';\n"
       "import { hud } from './ui/hud.js';\n"
       "jsr.include('./fx.js');\n"
       'var Facraft = { started: true };\n';
@@ -87,11 +88,7 @@ void main() {
     'permissions': {'network': false, 'allowedCommands': <String>[]},
     'minRuntime': '0.4.161',
     'icon': 'icon.svg',
-    'zip': {
-      'file': 'fa-craft-0.2.30.zip',
-      'sha256': '',
-      'sizeBytes': 100,
-    },
+    'zip': {'file': 'fa-craft-0.2.30.zip', 'sha256': '', 'sizeBytes': 100},
     'preview': {
       'manifest': '$repoBase/manifest.json',
       'js': '$repoBase/widget.js',
@@ -152,24 +149,26 @@ void main() {
     );
   });
 
-  test('a web-installed multi-file widget boots through the real assembler',
-      () async {
-    final requested = <String>[];
-    final service = CatalogService(
-      MemoryExecutionEnv(),
-      isWeb: true,
-      rawBaseUrl: Uri.parse(rawBase),
-      httpClient: server(requested),
-    );
-    final files = await service.downloadWidget(craftEntry());
-    final assembled = await bootAssemble(MemoryExecutionEnv(), files);
-    // The oracle: no "file not found" marker survives, and the imported
-    // game code is actually IN the assembled source.
-    expect(assembled, isNot(contains('file not found')));
-    expect(assembled, contains('var Facraft = { started: true };'));
-    expect(assembled, contains('var blocks = 1;'));
-    expect(assembled, contains('var fx = 3;'));
-  });
+  test(
+    'a web-installed multi-file widget boots through the real assembler',
+    () async {
+      final requested = <String>[];
+      final service = CatalogService(
+        MemoryExecutionEnv(),
+        isWeb: true,
+        rawBaseUrl: Uri.parse(rawBase),
+        httpClient: server(requested),
+      );
+      final files = await service.downloadWidget(craftEntry());
+      final assembled = await bootAssemble(MemoryExecutionEnv(), files);
+      // The oracle: no "file not found" marker survives, and the imported
+      // game code is actually IN the assembled source.
+      expect(assembled, isNot(contains('file not found')));
+      expect(assembled, contains('var Facraft = { started: true };'));
+      expect(assembled, contains('var blocks = 1;'));
+      expect(assembled, contains('var fx = 3;'));
+    },
+  );
 
   test('a missing referenced source fails the install loudly', () async {
     final requested = <String>[];
@@ -215,48 +214,20 @@ void main() {
     expect(files.containsKey('game/main.js'), isTrue);
   });
 
-  test('a root-level `../` import clamps in-root like the runtime', () async {
-    // `WidgetManifest._resolvePath` never fails: `..` at the widget root
-    // is a no-op, so `import './../shared.js';` from the entry resolves
-    // to `shared.js` (in-root) and boots fine once the file is installed.
-    // The install must mirror that (fetch the clamped path), not refuse a
-    // widget the runtime would actually boot.
-    final requested = <String>[];
-    final clampServer = MockClient((request) async {
-      final rel = relOf(request.url.path);
-      requested.add(rel);
-      final body = switch (rel) {
-        'widget.js' => "import './../shared.js';\n",
-        'manifest.json' => manifestJson,
-        'shared.js' => 'var shared = 1;\n',
-        'widgets/fa-craft/icon.svg' => '<svg/>',
-        _ => 'nf',
-      };
-      if (body == 'nf') return http.Response('not found', 404);
-      return http.Response(body, 200);
-    });
-    final service = CatalogService(
-      MemoryExecutionEnv(),
-      isWeb: true,
-      rawBaseUrl: Uri.parse(rawBase),
-      httpClient: clampServer,
-    );
-    final files = await service.downloadWidget(craftEntry());
-    expect(files.containsKey('shared.js'), isTrue);
-    expect(requested.where((p) => p == 'shared.js'), hasLength(1));
-    final assembled = await bootAssemble(MemoryExecutionEnv(), files);
-    expect(assembled, isNot(contains('file not found')));
-    expect(assembled, contains('var shared = 1;'));
-  });
-
-  test('deep `../` traversal still lands in-root and 404s loudly', () async {
-    // Same clamp, hostile shape: ../../../../etc/passwd.js from the root
-    // clamps to etc/passwd.js (the runtime reads exactly that in-root
-    // path); the fetch then misses and the install fails naming it.
+  test('a root-level `../` import is refused — the runtime reads it outside '
+      'the widget', () async {
+    // PRIMARY-SOURCE divergence, verified against the real assembler
+    // (js_widget_runtime 0.4.180): `WidgetManifest._resolvePath` resolves
+    // against the FULL app dir (`appDir` = `apps/<id>`), so `..` past the
+    // widget root does NOT clamp in-root — `import './../shared.js';`
+    // resolves to `apps/shared.js`, a location the pinned preview cannot
+    // serve and a cross-widget read the install must not perform. The
+    // evidence pin below shows such an entry assembles to a file-not-found
+    // marker (broken boot), so refusing the install is the honest path.
     final escapeServer = MockClient((request) async {
       final rel = relOf(request.url.path);
       final body = switch (rel) {
-        'widget.js' => "import '../../../../etc/passwd.js';\n",
+        'widget.js' => "import './../shared.js';\n",
         'manifest.json' => manifestJson,
         'widgets/fa-craft/icon.svg' => '<svg/>',
         _ => 'nf',
@@ -276,89 +247,145 @@ void main() {
         isA<CatalogError>().having(
           (e) => '$e',
           'text',
-          contains('etc/passwd.js'),
+          allOf(
+            contains('fa-craft'),
+            contains('above the widget directory'),
+            contains('app namespace'),
+          ),
         ),
       ),
     );
+    // Runtime evidence: the same widget, installed, assembles with the
+    // marker — it could never have opened.
+    final files = <String, Uint8List>{
+      for (final e in const {
+        'manifest.json': manifestJson,
+        'widget.js': "import './../shared.js';\n",
+        'shared.js': 'var shared = 1;\n',
+      }.entries)
+        e.key: Uint8List.fromList(utf8.encode(e.value)),
+    };
+    final assembled = await bootAssemble(MemoryExecutionEnv(), files);
+    expect(assembled, contains('/* import: file not found: ./../shared.js */'));
   });
 
-  test('an import that resolves to nothing in-root fails the install',
-      () async {
-    final emptyServer = MockClient((request) async {
-      final rel = relOf(request.url.path);
-      final body = switch (rel) {
-        'widget.js' => "import './';\n",
-        'manifest.json' => manifestJson,
-        'widgets/fa-craft/icon.svg' => '<svg/>',
-        _ => 'nf',
-      };
-      if (body == 'nf') return http.Response('not found', 404);
-      return http.Response(body, 200);
-    });
-    final service = CatalogService(
-      MemoryExecutionEnv(),
-      isWeb: true,
-      rawBaseUrl: Uri.parse(rawBase),
-      httpClient: emptyServer,
-    );
-    await expectLater(
-      service.downloadWidget(craftEntry()),
-      throwsA(
-        isA<CatalogError>().having(
-          (e) => '$e',
-          'text',
-          contains('does not resolve'),
+  test(
+    'deep `../` traversal above the widget root is refused loudly',
+    () async {
+      // Same root-escape corner, hostile shape: every `..` from the entry
+      // root would step into the app namespace (the runtime resolves them
+      // against `apps/<id>`); the install refuses naming the reference.
+      final escapeServer = MockClient((request) async {
+        final rel = relOf(request.url.path);
+        final body = switch (rel) {
+          'widget.js' => "import '../../../../etc/passwd.js';\n",
+          'manifest.json' => manifestJson,
+          'widgets/fa-craft/icon.svg' => '<svg/>',
+          _ => 'nf',
+        };
+        if (body == 'nf') return http.Response('not found', 404);
+        return http.Response(body, 200);
+      });
+      final service = CatalogService(
+        MemoryExecutionEnv(),
+        isWeb: true,
+        rawBaseUrl: Uri.parse(rawBase),
+        httpClient: escapeServer,
+      );
+      await expectLater(
+        service.downloadWidget(craftEntry()),
+        throwsA(
+          isA<CatalogError>().having(
+            (e) => '$e',
+            'text',
+            contains('etc/passwd.js'),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
-  test('a source chain deeper than the runtime budget fails the install',
-      () async {
-    // The boot assembler inlines at most 5 levels per chain
-    // (js_widget_runtime `WidgetManifest._maxIncludeDepth`); deeper
-    // sources come back UNTOUCHED and their imports boot as literal
-    // statements. Every file below is SERVED — availability is not the
-    // issue; the widget could never open, so the install must refuse it.
-    final requested = <String>[];
-    final chainServer = MockClient((request) async {
-      final rel = relOf(request.url.path);
-      requested.add(rel);
-      final body = switch (rel) {
-        'widget.js' => "import './c1.js';\n",
-        'c1.js' => "import './c2.js';\n",
-        'c2.js' => "import './c3.js';\n",
-        'c3.js' => "import './c4.js';\n",
-        'c4.js' => "import './c5.js';\n",
-        'c5.js' => "import './c6.js';\n",
-        'c6.js' => 'var deep6 = 6;\n',
-        'manifest.json' => manifestJson,
-        'widgets/fa-craft/icon.svg' => '<svg/>',
-        _ => 'nf',
-      };
-      if (body == 'nf') return http.Response('not found', 404);
-      return http.Response(body, 200);
-    });
-    final service = CatalogService(
-      MemoryExecutionEnv(),
-      isWeb: true,
-      rawBaseUrl: Uri.parse(rawBase),
-      httpClient: chainServer,
-    );
-    await expectLater(
-      service.downloadWidget(craftEntry()),
-      throwsA(
-        isA<CatalogError>().having(
-          (e) => '$e',
-          'text',
-          allOf(contains('fa-craft'), contains('deeper than 5')),
+  test(
+    'an import that resolves to nothing in-root fails the install',
+    () async {
+      final emptyServer = MockClient((request) async {
+        final rel = relOf(request.url.path);
+        final body = switch (rel) {
+          'widget.js' => "import './';\n",
+          'manifest.json' => manifestJson,
+          'widgets/fa-craft/icon.svg' => '<svg/>',
+          _ => 'nf',
+        };
+        if (body == 'nf') return http.Response('not found', 404);
+        return http.Response(body, 200);
+      });
+      final service = CatalogService(
+        MemoryExecutionEnv(),
+        isWeb: true,
+        rawBaseUrl: Uri.parse(rawBase),
+        httpClient: emptyServer,
+      );
+      await expectLater(
+        service.downloadWidget(craftEntry()),
+        throwsA(
+          isA<CatalogError>().having(
+            (e) => '$e',
+            'text',
+            contains('above the widget directory'),
+          ),
         ),
-      ),
-    );
-    // The walk stops at the assembler's budget: the depth-6 file is never
-    // even requested.
-    expect(requested.where((p) => p == 'c6.js'), isEmpty);
-  });
+      );
+    },
+  );
+
+  test(
+    'a source chain deeper than the runtime budget fails the install',
+    () async {
+      // The boot assembler inlines at most 5 levels per chain
+      // (js_widget_runtime `WidgetManifest._maxIncludeDepth`); deeper
+      // sources come back UNTOUCHED and their imports boot as literal
+      // statements. Every file below is SERVED — availability is not the
+      // issue; the widget could never open, so the install must refuse it.
+      final requested = <String>[];
+      final chainServer = MockClient((request) async {
+        final rel = relOf(request.url.path);
+        requested.add(rel);
+        final body = switch (rel) {
+          'widget.js' => "import './c1.js';\n",
+          'c1.js' => "import './c2.js';\n",
+          'c2.js' => "import './c3.js';\n",
+          'c3.js' => "import './c4.js';\n",
+          'c4.js' => "import './c5.js';\n",
+          'c5.js' => "import './c6.js';\n",
+          'c6.js' => 'var deep6 = 6;\n',
+          'manifest.json' => manifestJson,
+          'widgets/fa-craft/icon.svg' => '<svg/>',
+          _ => 'nf',
+        };
+        if (body == 'nf') return http.Response('not found', 404);
+        return http.Response(body, 200);
+      });
+      final service = CatalogService(
+        MemoryExecutionEnv(),
+        isWeb: true,
+        rawBaseUrl: Uri.parse(rawBase),
+        httpClient: chainServer,
+      );
+      await expectLater(
+        service.downloadWidget(craftEntry()),
+        throwsA(
+          isA<CatalogError>().having(
+            (e) => '$e',
+            'text',
+            allOf(contains('fa-craft'), contains('deeper than 5')),
+          ),
+        ),
+      );
+      // The walk stops at the assembler's budget: the depth-6 file is never
+      // even requested.
+      expect(requested.where((p) => p == 'c6.js'), isEmpty);
+    },
+  );
 
   test('a chain exactly at the runtime budget installs and boots', () async {
     // Boundary lock: 5 chained sources are fully inlined by the runtime
@@ -418,39 +445,41 @@ void main() {
     expect(assembled, contains("import './c6.js';"));
   });
 
-  test('a non-UTF-8 referenced file fails with a readable CatalogError',
-      () async {
-    final binaryServer = MockClient((request) async {
-      final rel = relOf(request.url.path);
-      if (rel == 'widget.js') {
-        return http.Response("import './bin.dat';\n", 200);
-      }
-      if (rel == 'bin.dat') {
-        return http.Response.bytes(<int>[0xff, 0xfe, 0x00, 0x01], 200);
-      }
-      if (rel == 'manifest.json') return http.Response(manifestJson, 200);
-      if (rel == 'widgets/fa-craft/icon.svg') {
-        return http.Response('<svg/>', 200);
-      }
-      return http.Response('not found', 404);
-    });
-    final service = CatalogService(
-      MemoryExecutionEnv(),
-      isWeb: true,
-      rawBaseUrl: Uri.parse(rawBase),
-      httpClient: binaryServer,
-    );
-    await expectLater(
-      service.downloadWidget(craftEntry()),
-      throwsA(
-        isA<CatalogError>().having(
-          (e) => '$e',
-          'text',
-          allOf(contains('fa-craft'), contains('bin.dat')),
+  test(
+    'a non-UTF-8 referenced file fails with a readable CatalogError',
+    () async {
+      final binaryServer = MockClient((request) async {
+        final rel = relOf(request.url.path);
+        if (rel == 'widget.js') {
+          return http.Response("import './bin.dat';\n", 200);
+        }
+        if (rel == 'bin.dat') {
+          return http.Response.bytes(<int>[0xff, 0xfe, 0x00, 0x01], 200);
+        }
+        if (rel == 'manifest.json') return http.Response(manifestJson, 200);
+        if (rel == 'widgets/fa-craft/icon.svg') {
+          return http.Response('<svg/>', 200);
+        }
+        return http.Response('not found', 404);
+      });
+      final service = CatalogService(
+        MemoryExecutionEnv(),
+        isWeb: true,
+        rawBaseUrl: Uri.parse(rawBase),
+        httpClient: binaryServer,
+      );
+      await expectLater(
+        service.downloadWidget(craftEntry()),
+        throwsA(
+          isA<CatalogError>().having(
+            (e) => '$e',
+            'text',
+            allOf(contains('fa-craft'), contains('bin.dat')),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
   test('an unsafe storage path fails before the request is spent', () async {
     // `has space.js` passes the import regex (it only stops at quotes)
