@@ -4828,6 +4828,15 @@
       "total": 181800,
       "cacheRead": 10452224,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-24T11:55:20Z",
+      "prompt": 79388,
+      "completion": 24754,
+      "total": 104142,
+      "cacheRead": 2178048,
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-1831": [
