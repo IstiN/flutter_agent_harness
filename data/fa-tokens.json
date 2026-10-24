@@ -12,14 +12,6 @@
   "issue-1459": [
     {
       "leg": "rework",
-      "at": "2026-10-10T10:38:29Z",
-      "prompt": 145973,
-      "completion": 14396,
-      "total": 160369,
-      "model": ""
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-10T11:21:10Z",
       "prompt": 148611,
       "completion": 2481,
@@ -40,16 +32,6 @@
       "prompt": 57452,
       "completion": 14275,
       "total": 71727,
-      "model": ""
-    }
-  ],
-  "pr-1458": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T10:55:16Z",
-      "prompt": 143054,
-      "completion": 14199,
-      "total": 157253,
       "model": ""
     }
   ],
@@ -81,35 +63,7 @@
       "model": "kimi-for-coding"
     }
   ],
-  "pr-1479": [
-    {
-      "leg": "rework",
-      "at": "2026-10-10T10:42:59Z",
-      "prompt": 26760,
-      "completion": 13836,
-      "total": 40596,
-      "model": ""
-    }
-  ],
-  "issue-1477": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T10:35:09Z",
-      "prompt": 44467,
-      "completion": 7155,
-      "total": 51622,
-      "model": ""
-    }
-  ],
   "pr-1483": [
-    {
-      "leg": "review",
-      "at": "2026-10-10T10:57:25Z",
-      "prompt": 42923,
-      "completion": 13443,
-      "total": 56366,
-      "model": ""
-    },
     {
       "leg": "review",
       "at": "2026-10-10T11:06:51Z",
@@ -4887,6 +4841,17 @@
       "completion": 39617,
       "total": 190348,
       "cacheRead": 12727680,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-1832": [
+    {
+      "leg": "dev",
+      "at": "2026-10-24T10:59:30Z",
+      "prompt": 122983,
+      "completion": 58817,
+      "total": 181800,
+      "cacheRead": 10452224,
       "model": "glm-5.3-flash"
     }
   ]
