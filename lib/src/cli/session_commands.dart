@@ -81,6 +81,7 @@ extension on AgentCli {
     _checkpoints.clear();
     _ttsr?.reset();
     _session = await _createSession(name: trimmed);
+    _notifyPluginSessionReady();
     _syncMailboxPrefix();
     // herdr pane state (issue #1481): in-process session switch — re-report
     // the new session, never a release.
@@ -154,6 +155,7 @@ extension on AgentCli {
     // tree for the SAME project re-pays the boot for nothing.
     if (cwdChanged) await _loadAgentContext();
     _session = await _loadSession(metadata);
+    _notifyPluginSessionReady();
     _syncMailboxPrefix();
     // herdr pane state (issue #1481): in-process session switch — re-report
     // the new session, never a release.
@@ -311,6 +313,7 @@ extension on AgentCli {
     _checkpoints.clear();
     _ttsr?.reset();
     _session = await _createSession(name: trimmed);
+    _notifyPluginSessionReady();
     _syncMailboxPrefix();
     // herdr pane state (issue #1481): in-process session switch — re-report
     // the new session, never a release.

@@ -4,6 +4,15 @@ part of 'agent_cli.dart';
 // DAP-invite shortcut (AC7). Split out of `agent_cli.dart` to keep it
 // under the repo's line gate; the extension sees private members.
 extension AgentCliPluginRecords on AgentCli {
+  /// Publishes session readiness after boot/resume or an in-process reset.
+  /// Listeners are synchronous invalidation hooks; async work stays in the
+  /// plugin's inbox/probe paths so it cannot delay session startup.
+  void _notifyPluginSessionReady() {
+    for (final listener in _pluginSessionReadyListeners) {
+      listener();
+    }
+  }
+
   /// Backs [PluginContext.appendSessionRecord]: persists a plugin's
   /// session-scoped state as a custom record on the session JSONL tree.
   /// Lazy [_session] lookup — plugins register in the constructor, the

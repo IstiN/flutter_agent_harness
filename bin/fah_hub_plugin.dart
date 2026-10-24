@@ -25,7 +25,6 @@ import 'package:flutter_agent_harness/io.dart'
 
 import 'fah_dap_command.dart' show DapHubController, resolveDapLocalHubUrl;
 import 'fah_dap_scoped.dart';
-import 'package:flutter_agent_harness/src/hub/dap_join_bundle.dart';
 import 'package:flutter_agent_harness/src/hub/dap_membership.dart';
 
 // The /dap menu lives in lib/ as pure data (issue #129): the untagged
@@ -152,6 +151,9 @@ final class HubPluginHost implements FahPlugin {
     final scoped = host?._scoped;
     if (host == null || scoped == null) return const [];
     try {
+      // Idle probes use this list too: finish a deferred resume join here,
+      // before checking (or draining) the channel inboxes.
+      await host._syncRuntimeMemberships();
       final hubUrl = host._connectedHubUrl;
       return [
         for (final m in await scoped.runtimeEffective())
@@ -204,6 +206,12 @@ final class HubPluginHost implements FahPlugin {
       ),
     );
     _initScopedMemberships(context);
+    context.registerSessionReadyListener(() {
+      // Registration happens before the resumed JSONL is loaded. Its
+      // session-scoped records become visible now, so the next inbox drain
+      // or idle probe must rebuild and join the effective membership set.
+      _runtimeSyncPending = true;
+    });
     unawaited(
       _connect(context).catchError((Object e, StackTrace s) {
         context.io.writeln('[hub] connect failed: $e');

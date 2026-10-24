@@ -82,6 +82,7 @@ extension WireServeBoot on AgentCli {
     await _cubeBootRestore();
     await _waiting.captureLostJobs();
     _session = await _initializeSession();
+    _notifyPluginSessionReady();
     final leaseBlocked = await _claimSessionLeaseHeadless();
     if (leaseBlocked != null) {
       io.writeln(viewerBannerText(leaseBlocked, stale: false));

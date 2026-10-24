@@ -98,6 +98,17 @@ final class PluginContext {
   final Map<String, SlashCommand> _slashCommands = {};
   final Map<String, String> _slashCommandDescriptions = {};
   final List<ExternalInbox> _externalInboxes = [];
+  final List<void Function()> _sessionReadyListeners = [];
+
+  /// Registers a lightweight listener run after the host loads or replaces
+  /// its session. Session-derived plugin state should invalidate itself
+  /// here; remote joins and other async work belong in an inbox/probe path.
+  void registerSessionReadyListener(void Function() listener) =>
+      _sessionReadyListeners.add(listener);
+
+  /// Session-ready listeners collected from this plugin.
+  List<void Function()> get sessionReadyListeners =>
+      List.unmodifiable(_sessionReadyListeners);
 
   /// Registers an [AgentTool] that will be available to the agent.
   void registerTool(AgentTool tool) => _tools.add(tool);
