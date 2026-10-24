@@ -24,9 +24,23 @@ const helperJs = 'flutter_app/web/fs_store.js';
 const indexHtml = 'flutter_app/web/index.html';
 
 void main() {
+  /// Masks `//`/`///` comments and `/* */` blocks so the guard asserts
+  /// over CODE: the historical note in `_helperDefined`'s doc comment is
+  /// allowed to name the dead global, the probe itself is not.
+  String code(String source) {
+    final withoutBlocks = source.replaceAll(
+      RegExp(r'/\*.*?\*/', dotAll: true),
+      '',
+    );
+    return withoutBlocks
+        .split('\n')
+        .map((line) => line.replaceFirst(RegExp(r'(?<!:)//.*$'), ''))
+        .join('\n');
+  }
+
   test('the loader no longer probes the never-defined _fahFsGetAllDefined',
       () {
-    final source = File(dartGate).readAsStringSync();
+    final source = code(File(dartGate).readAsStringSync());
     expect(
       source,
       isNot(contains('_fahFsGetAllDefined')),
@@ -40,9 +54,9 @@ void main() {
 
   test('the Dart gate probes exactly the helper surface fs_store.js defines',
       () {
-    final source = File(dartGate).readAsStringSync();
+    final source = code(File(dartGate).readAsStringSync());
     final probed = RegExp(
-      r"hasProperty\('(__fahFs\w+)'\)",
+      r"hasProperty\('(__fahFs\w+)'\.toJS\)",
     ).allMatches(source).map((m) => m.group(1)!).toSet();
 
     expect(
