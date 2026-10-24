@@ -242,6 +242,28 @@ class CatalogService {
   /// `utf8.decode(response.bodyBytes)`.
   static const String cacheFile = 'apps/.catalog_cache_v2.json';
 
+  /// Statement-level relative import the boot assembler inlines — byte
+  /// for byte `WidgetManifest._importRegex` (js_widget_runtime), mirrored
+  /// here so the install fetches exactly the files boot will inline. A
+  /// drift is caught end-to-end by the closure tests, which run the
+  /// runtime assembler over the installed files.
+  static final RegExp _importRegex = RegExp(
+    r'''^[ \t]*import\s+(?:[\w${},* ]+\s+from\s+)?['"](\.[^'"]+)['"]\s*;?[ \t]*$''',
+    multiLine: true,
+  );
+
+  /// `jsr.include('path')` calls — byte for byte
+  /// `WidgetManifest._includeRegex`.
+  static final RegExp _includeRegex = RegExp(
+    r'''jsr\.include\(\s*['"]([^'"]+)['"]\s*\)''',
+  );
+
+  /// Safety bound for the closure walk. The runtime assembler stops
+  /// inlining at depth 5 per chain and the fetch-once worklist already
+  /// bounds the walk by the file count, so this only fires on a
+  /// pathological (machine-generated) graph.
+  static const int _maxClosureDepth = 32;
+
   final ExecutionEnv _env;
   final http.Client _client;
   final bool _isWeb;
@@ -372,6 +394,19 @@ class CatalogService {
   /// one tree. To compensate, malformed content fails LOUDLY (never
   /// installs): every file must be served with HTTP 200, the manifest must
   /// decode to a JSON object, and widget.js must be non-empty.
+  ///
+  /// Multi-file widgets install WHOLE (gh-1831): the entry is inlined at
+  /// boot by relative `import './x.js'` / `jsr.include('…')` statements
+  /// (js_widget_runtime `WidgetManifest.readJs`), so any referenced sibling
+  /// that never lands makes the widget evaluate to an empty script —
+  /// fa-craft's `import './game/main.js';` fetched 200, installed, and
+  /// still never opened. After the entry download, the transitive source
+  /// closure is resolved with the SAME import/include grammar the runtime
+  /// assembler applies, every referenced file is fetched from the pinned
+  /// preview directory, and a missing referenced file fails the install
+  /// (same never-installs-a-broken-widget contract). The closure mirrors
+  /// `WidgetManifest`'s resolution rules — `test/` pins the pair through
+  /// the assembler itself.
   Future<Map<String, Uint8List>> _downloadWidgetFromSource(
     CatalogEntry entry,
   ) async {
@@ -434,7 +469,117 @@ class CatalogService {
     if (files['widget.js']!.isEmpty) {
       throw CatalogError('$id: widget.js is empty');
     }
+    await _downloadSourceClosure(entry, files);
     return files;
+  }
+
+  /// Resolves and fetches the transitive relative-import / `jsr.include`
+  /// closure of the already-fetched entry (gh-1831). [files] gains every
+  /// referenced sibling under its app-relative path; the FIRST missing
+  /// referenced file throws [CatalogError].
+  ///
+  /// Mirrors `WidgetManifest`'s inliner exactly: the same import/include
+  /// regexes, the same lexical `./`/`../` resolution against the importing
+  /// file's directory, the same depth cap ([_maxClosureDepth]) — and its
+  /// once-per-assembly `visited` semantics as a fetch-once worklist. Unlike
+  /// the assembler (which comments a missing file out), a missing file here
+  /// fails the install: booting without it is precisely the gh-1831
+  /// failure.
+  Future<void> _downloadSourceClosure(
+    CatalogEntry entry,
+    Map<String, Uint8List> files,
+  ) async {
+    final entryUrl = entry.previewJsUrl;
+    final baseUri = entryUrl == null ? null : Uri.tryParse(entryUrl);
+    if (baseUri == null) return; // preview URL already validated above
+    final entryDir = baseUri.resolve('.');
+    final pending = <(String, String)>[('widget.js', '')];
+    final fetched = <String>{'widget.js'};
+    var depth = 0;
+    while (pending.isNotEmpty) {
+      if (depth++ > _maxClosureDepth) {
+        throw CatalogError(
+          '${entry.id}: source closure deeper than $_maxClosureDepth '
+          'levels — refusing to install a possibly-cyclic widget',
+        );
+      }
+      final nextLevel = List.of(pending);
+      pending.clear();
+      for (final (sourceRel, sourceDir) in nextLevel) {
+        final text = utf8.decode(files[sourceRel]!);
+        for (final match in _importRegex.allMatches(text)) {
+          await _fetchClosureFile(
+            entry, files, fetched, pending, match.group(1)!, sourceDir,
+            entryDir: entryDir,
+          );
+        }
+        for (final match in _includeRegex.allMatches(text)) {
+          await _fetchClosureFile(
+            entry, files, fetched, pending, match.group(1)!, sourceDir,
+            entryDir: entryDir,
+          );
+        }
+      }
+    }
+  }
+
+  /// One closure edge: resolves [ref] against [sourceDir] (lexically, like
+  /// the runtime assembler), fetches the file from the pinned preview
+  /// directory when not already in [files], and queues it for its own
+  /// imports. A path escaping the widget root (or a failed fetch) throws.
+  Future<void> _fetchClosureFile(
+    CatalogEntry entry,
+    Map<String, Uint8List> files,
+    Set<String> fetched,
+    List<(String, String)> pending,
+    String ref,
+    String sourceDir, {
+    required Uri entryDir,
+  }) async {
+    final id = entry.id;
+    final rel = _resolveClosurePath(sourceDir, ref);
+    if (rel == null || rel.isEmpty) {
+      throw CatalogError('$id: import "$ref" escapes the widget directory');
+    }
+    if (files.containsKey(rel)) return;
+    if (!fetched.add(rel)) return; // queued already — fetch-once
+    final http.Response response;
+    try {
+      response = await _client.get(entryDir.resolve(rel));
+    } on Object catch (error) {
+      throw CatalogError('$id: $rel fetch failed: $error');
+    }
+    if (response.statusCode != 200) {
+      throw CatalogError('$id: missing source $rel (HTTP '
+          '${response.statusCode}) — the entry imports it at boot');
+    }
+    files[rel] = response.bodyBytes;
+    pending.add((rel, _parentOf(rel)));
+  }
+
+  /// Lexical `./`/`../` resolution of an import reference against the
+  /// importing file's directory — the runtime assembler's
+  /// `WidgetManifest._resolvePath`, minus the out-of-root escape: returns
+  /// null when the resolved path would leave the widget root.
+  static String? _resolveClosurePath(String sourceDir, String ref) {
+    final segments = '$sourceDir/$ref'.split('/');
+    final out = <String>[];
+    for (final segment in segments) {
+      if (segment == '.' || segment.isEmpty) continue;
+      if (segment == '..') {
+        if (out.isEmpty) return null; // escapes above the widget root
+        out.removeLast();
+        continue;
+      }
+      out.add(segment);
+    }
+    if (out.isEmpty) return null;
+    return out.join('/');
+  }
+
+  static String _parentOf(String path) {
+    final idx = path.lastIndexOf('/');
+    return idx <= 0 ? '' : path.substring(0, idx);
   }
 
   /// [downloadWidget] with one self-heal: the rolling `catalog` release is
