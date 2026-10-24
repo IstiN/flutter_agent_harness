@@ -904,95 +904,17 @@ final class TaskExecutor {
       await child.prompt(await _buildUserPrompt(item, id));
       unawaited(_flushChildTranscript(id, child));
       cancelToken?.throwIfCancelled();
-
-      final finalText = _finalAssistantText(child);
-      final (storedContent, structured) = await _applyOutputSchema(
+      return await _completeChildRun(
         child,
-        item,
-        finalText,
-        cancelToken,
-      );
-
-      final capped = _capOutput(storedContent);
-      // Issue #862 review: a duplicate registration in the child surface
-      // (the luna wiring bug) degraded into a note — surface it loudly on
-      // the spawn result instead of letting it sit in the registry. The
-      // warning text is single-sourced in the shared helper so both child
-      // -result paths can't drift.
-      store.put(id, capped.$1);
-      _surfaceDuplicateRegistrationNotes(
-        childRegistry.duplicateNotes,
-        id,
-        existingOutput: capped.$1,
-      );
-      // The stored artifact IS the source of truth for the result output:
-      // base content, or base + the single-sourced warning.
-      final output = store.get(id)!;
-      final usage = _usageStats(child);
-
-      final failed = structured?.status == StructuredValidationStatus.invalid;
-      onProgress?.call(
-        index,
-        id,
-        failed ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
-      );
-
-      // Phase 3b: the child's explicit reply (if any) rides the result; a
-      // missing reply is surfaced via completedWithoutReply.
-      final handle = subagentManager?[id];
-      final reply = handle?.lastReply;
-
-      // Issue #1829: deliverable pointers ride the completion OUT OF BAND,
-      // independent of any later model-written recovery stub (I4): a stub
-      // overwrites lastReply, never the recorded artifacts. When a
-      // deliverable call was recorded truncated and the child still
-      // finished without any reply, the tier-2 fallback surfaces the
-      // transcript pointer honestly (AC11).
-      final deliverables = List<DeliverableRecord>.of(
-        handle?.deliverables ?? const [],
-      );
-      String? stubFallback;
-      if (handle != null &&
-          handle.hadTruncatedDeliverable &&
-          !failed &&
-          (reply == null || reply.trim().isEmpty)) {
-        stubFallback =
-            'the child attempted a report that was cut off by the output '
-            'token limit and finished without a usable reply; its '
-            'transcript is at ${handle.sessionId}'
-            '${deliverables.isEmpty ? ' — no salvageable report text was captured' : ''}';
-      }
-
-      // Update the retained-subagent handle with the final status. Usage
-      // was billed incrementally at turn boundaries (plus the final delta
-      // here) — never in one completion lump.
-      if (subagentManager != null) {
-        _billChildUsage(id, child);
-        await subagentManager!.update(
-          id,
-          status: failed ? SubagentStatus.failed : SubagentStatus.completed,
-          modelId: wiring.model.id,
-          error: failed ? 'schema_violation: ${structured!.error}' : null,
-        );
-      }
-
-      return TaskSingleResult(
+        item: item,
         index: index,
         id: id,
-        agent: agentName,
-        task: item.task,
-        status: failed ? TaskSpawnStatus.failed : TaskSpawnStatus.completed,
-        output: output,
-        truncated: capped.$2,
-        duration: stopwatch.elapsed,
-        tokens: usage.tokens,
-        requests: usage.requests,
-        model: wiring.model.id,
-        error: failed ? 'schema_violation: ${structured!.error}' : null,
-        structuredOutput: structured,
-        reply: reply,
-        deliverables: deliverables,
-        stubFallback: stubFallback,
+        agentName: agentName,
+        wiring: wiring,
+        childRegistry: childRegistry,
+        stopwatch: stopwatch,
+        onProgress: onProgress,
+        cancelToken: cancelToken,
       );
     } finally {
       // Last-chance usage bill (idempotent — the cursor makes a second
@@ -1007,6 +929,127 @@ final class TaskExecutor {
       _usageCursors.remove(id);
       unawaited(_flushChildTranscript(id, child));
     }
+  }
+
+  /// The completion half of [_run], extracted to keep both halves inside
+  /// the CRAP budget: schema application, output capping, deliverable
+  /// out-of-band pointers (issue #1829), the tier-2 stub fallback, and the
+  /// final registry status write.
+  Future<TaskSingleResult> _completeChildRun(
+    Agent child, {
+    required TaskItem item,
+    required int index,
+    required String id,
+    required String agentName,
+    required ({Model model, StreamFunction stream}) wiring,
+    required ToolRegistry childRegistry,
+    required Stopwatch stopwatch,
+    required TaskSpawnProgressCallback? onProgress,
+    required CancelToken? cancelToken,
+  }) async {
+    final finalText = _finalAssistantText(child);
+    final (storedContent, structured) = await _applyOutputSchema(
+      child,
+      item,
+      finalText,
+      cancelToken,
+    );
+
+    final capped = _capOutput(storedContent);
+    // Issue #862 review: a duplicate registration in the child surface
+    // (the luna wiring bug) degraded into a note - surface it loudly on
+    // the spawn result instead of letting it sit in the registry. The
+    // warning text is single-sourced in the shared helper so both child
+    // -result paths can't drift.
+    store.put(id, capped.$1);
+    _surfaceDuplicateRegistrationNotes(
+      childRegistry.duplicateNotes,
+      id,
+      existingOutput: capped.$1,
+    );
+    // The stored artifact IS the source of truth for the result output:
+    // base content, or base + the single-sourced warning.
+    final output = store.get(id)!;
+    final usage = _usageStats(child);
+
+    final failed = structured?.status == StructuredValidationStatus.invalid;
+    onProgress?.call(
+      index,
+      id,
+      failed ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
+    );
+
+    // Phase 3b: the child's explicit reply (if any) rides the result; a
+    // missing reply is surfaced via completedWithoutReply.
+    final handle = subagentManager?[id];
+    final reply = handle?.lastReply;
+
+    // Issue #1829: deliverable pointers ride the completion OUT OF BAND,
+    // independent of any later model-written recovery stub (I4): a stub
+    // overwrites lastReply, never the recorded artifacts.
+    final deliverables = List<DeliverableRecord>.of(
+      handle?.deliverables ?? const [],
+    );
+    final stubFallback = _stubFallbackNote(
+      handle,
+      failed: failed,
+      reply: reply,
+      deliverables: deliverables,
+    );
+
+    // Update the retained-subagent handle with the final status. Usage
+    // was billed incrementally at turn boundaries (plus the final delta
+    // here) - never in one completion lump.
+    if (subagentManager != null) {
+      _billChildUsage(id, child);
+      await subagentManager!.update(
+        id,
+        status: failed ? SubagentStatus.failed : SubagentStatus.completed,
+        modelId: wiring.model.id,
+        error: failed ? 'schema_violation: ${structured!.error}' : null,
+      );
+    }
+
+    return TaskSingleResult(
+      index: index,
+      id: id,
+      agent: agentName,
+      task: item.task,
+      status: failed ? TaskSpawnStatus.failed : TaskSpawnStatus.completed,
+      output: output,
+      truncated: capped.$2,
+      duration: stopwatch.elapsed,
+      tokens: usage.tokens,
+      requests: usage.requests,
+      model: wiring.model.id,
+      error: failed ? 'schema_violation: ${structured!.error}' : null,
+      structuredOutput: structured,
+      reply: reply,
+      deliverables: deliverables,
+      stubFallback: stubFallback,
+    );
+  }
+
+  /// Tier-2 fallback note (issue #1829, AC11): when a deliverable call was
+  /// recorded truncated and the child still finished without a usable
+  /// reply, the result names the transcript pointer honestly instead of a
+  /// silent stub. Null when the child replied or nothing was truncated.
+  String? _stubFallbackNote(
+    SubagentHandle? handle, {
+    required bool failed,
+    required String? reply,
+    required List<DeliverableRecord> deliverables,
+  }) {
+    if (handle == null ||
+        !handle.hadTruncatedDeliverable ||
+        failed ||
+        (reply != null && reply.trim().isNotEmpty)) {
+      return null;
+    }
+    return 'the child attempted a report that was cut off by the output '
+        'token limit and finished without a usable reply; its '
+        'transcript is at ${handle.sessionId}'
+        '${deliverables.isEmpty ? ' — no salvageable report text was captured' : ''}';
   }
 
   /// Builds the child agent and attaches its manager wiring: the inbox
