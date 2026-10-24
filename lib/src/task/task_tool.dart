@@ -127,12 +127,27 @@ String taskAsyncResultNotice(TaskJob job) {
             : output,
       );
   }
+  _renderDeliverables(buffer, result);
   final error = result?.error;
   if (error != null) buffer.write('\nerror: $error');
   buffer
     ..write('\n</task-result>')
     ..write('\n</system-notice>');
   return buffer.toString();
+}
+
+/// The deliverable pointer block shared by the blocking and background
+/// result renderers (issue #1829): every recorded deliverable with its
+/// harness verdict, plus the tier-2 stub fallback notice when present.
+void _renderDeliverables(StringBuffer buffer, TaskSingleResult? result) {
+  if (result == null) return;
+  for (final record in result.deliverables) {
+    buffer.write('\n[${record.render()}]');
+  }
+  final fallback = result.stubFallback;
+  if (fallback != null) {
+    buffer.write('\n[deliverable fallback: $fallback]');
+  }
 }
 
 /// Session-scoped registry of background `task` jobs (reduced port of omp's
@@ -217,6 +232,7 @@ final class TaskToolConfig {
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
+    this.deliverableRedactor,
   }) : semaphore = Semaphore(normalizeConcurrencyLimit(maxConcurrent)),
        outputs = outputs ?? AgentOutputStore(),
        jobManager = jobManager ?? TaskJobManager();
@@ -303,6 +319,11 @@ final class TaskToolConfig {
   /// every spawned child agent gets a breaker wired into its loop.
   final bool misuseBreaker;
 
+  /// Pre-persistence redaction gate for deliverable artifacts (issue
+  /// #1829, I3) — the host's redaction pipeline applied to report text
+  /// before it lands in the output store. Null = no pipeline wired.
+  final String Function(String text)? deliverableRedactor;
+
   /// The session-shared executor (issue #222): the `task` tool runs
   /// through it, and hosts pass [TaskExecutor.resumeChild] to
   /// `subagentMonitoringTools` so `task_resume`/`task_send` continue
@@ -324,6 +345,7 @@ final class TaskToolConfig {
     contextWindowRegistry: contextWindowRegistry,
     contextWindowCap: contextWindowCap,
     misuseBreaker: misuseBreaker,
+    deliverableRedactor: deliverableRedactor,
   );
 }
 
@@ -753,6 +775,7 @@ void _renderResult(StringBuffer buffer, TaskSingleResult result) {
     '\n[${result.truncated ? 'Truncated output' : 'Full output'}: '
     'agent://${result.id}]',
   );
+  _renderDeliverables(buffer, result);
 }
 
 String _spawnStatusLabel(TaskSpawnStatus status) {

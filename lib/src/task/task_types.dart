@@ -8,6 +8,8 @@
 /// (v1 has no `yield` tool — the child's final assistant text is the output).
 library;
 
+import 'deliverables.dart';
+
 /// The `task` tool name.
 const taskToolName = 'task';
 
@@ -135,6 +137,8 @@ final class TaskSingleResult {
     this.error,
     this.structuredOutput,
     this.reply,
+    this.deliverables = const [],
+    this.stubFallback,
   });
 
   /// Position of this item in the batch call.
@@ -184,6 +188,19 @@ final class TaskSingleResult {
   /// completed without calling the reply tool — consumers render the
   /// `completed_without_reply` notice with the output preview instead.
   final String? reply;
+
+  /// Deliverable records this child produced (issue #1829): over-cap
+  /// artifacts, salvaged partial text, observed chunks, and manifest
+  /// verdicts. The pointers ride the completion independently of
+  /// [reply], so a later recovery stub can never erase them (I4).
+  final List<DeliverableRecord> deliverables;
+
+  /// Tier-2 fallback (AC11): set when a recorded truncated deliverable
+  /// call was followed by a completion with no usable reply — points at
+  /// the child transcript instead of inventing content. Null otherwise;
+  /// a short successful reply without a preceding deliverable failure
+  /// never sets it (E9).
+  final String? stubFallback;
 
   /// True when the child completed but never sent an explicit reply
   /// (prime-agent's `completed_without_reply` terminal notice).
