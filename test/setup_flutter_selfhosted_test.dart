@@ -511,6 +511,39 @@ void main() {
       },
     );
 
+    test('self-hosted legs pin an EXACT Flutter patch, never a wildcard '
+        '(gh-1826)', () {
+      const pinnedVersion = '3.47.7';
+      for (final entry in const {
+        '.github/workflows/build-mobile.yml': 'build-ios',
+        '.github/workflows/build-macos.yml': 'build-macos',
+      }.entries) {
+        final steps = ((loadYaml(
+          File(entry.key).readAsStringSync(),
+        )['jobs'] as YamlMap)[entry.value] as YamlMap)['steps'] as YamlList;
+        final setup = steps.whereType<YamlMap>().firstWhere(
+          (s) => (s['uses']?.toString() ?? '')
+              .contains('setup-flutter-selfhosted'),
+        );
+        final version =
+            ((setup['with'] as YamlMap?)?['flutter-version'] ?? '')
+                .toString();
+        expect(
+          version,
+          pinnedVersion,
+          reason:
+              '${entry.key} ${entry.value}: a wildcard spec (3.47.x) '
+              're-resolves a freshly released patch the fa-m5 runners '
+              'have not cached — run 40066130883 (2026-10-24) resolved '
+              '3.47.x to 3.47.8 and the TestFlight leg died downloading '
+              'the 2.27 GB SDK inside the bounded curl budget '
+              '(600s/attempt, 900s total) with 1.48 GB received. '
+              'Exact-patch discipline (#1431): the pin moves consciously, '
+              'in a PR, matching the desktop lane.',
+        );
+      }
+    });
+
     test('action contract: bounded download, no cache POST, no slot swap', () {
       final action = File(actionYml).readAsStringSync();
       // Slice out the actual curl invocation — asserting on the whole
