@@ -437,7 +437,8 @@ void main() {
     // "no floor declared" and slip through the audit.
     addSpmState(
       tree,
-      rawGeneratedManifest: 'let package = Package(\n'
+      rawGeneratedManifest:
+          'let package = Package(\n'
           '  platforms: [.macOS(14.0)],\n'
           ')\n',
     );
@@ -471,7 +472,10 @@ void main() {
     addSpmState(tree, generatedFloor: '14.0', markerInPbxproj: false);
     final r = runGate(tree);
     expect(r.exitCode, 1);
-    expect('${r.stdout}${r.stderr}', contains('FlutterGeneratedPluginSwiftPackage'));
+    expect(
+      '${r.stdout}${r.stderr}',
+      contains('FlutterGeneratedPluginSwiftPackage'),
+    );
   });
 
   test('AC7a — MACOSX_DEPLOYMENT_TARGET drift below the app floor fails', () {

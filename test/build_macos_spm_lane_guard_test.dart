@@ -74,29 +74,26 @@ YamlMap jobsOf(String workflowPath) =>
     loadYaml(read(workflowPath))['jobs'] as YamlMap;
 
 void main() {
-  test(
-    'AC1 — the build-macos job carries NO SwiftPM disable pin '
-    '(knob removed upstream in 3.47.7, flutter/flutter#193978)',
-    () {
-      final job = jobsOf(workflowPath)[jobName] as YamlMap;
-      final env = job['env'] as YamlMap?;
-      final pin = env?[deadSwiftPmKnob]?.toString();
-      expect(
-        pin,
-        isNull,
-        reason:
-            'Flutter 3.47.7 removed the FLUTTER_SWIFT_PACKAGE_MANAGER '
-            'disable knob (flutter/flutter#193978): setting it to "0" no '
-            'longer suppresses the SwiftPM migration, so the pin is a '
-            'silent no-op that advertises the retired pure-CocoaPods lane '
-            'decision. gh-1814 adopts the SPM lane (every floor ≥ 14.0, '
-            'asserted post-config by scripts/assert_macos_min_platform.sh) '
-            '— the job env must not carry the dead knob. Observed no-op '
-            'evidence: runs 39991663029 / 40022900373 added SwiftPM '
-            'integration WITH the pin set.',
-      );
-    },
-  );
+  test('AC1 — the build-macos job carries NO SwiftPM disable pin '
+      '(knob removed upstream in 3.47.7, flutter/flutter#193978)', () {
+    final job = jobsOf(workflowPath)[jobName] as YamlMap;
+    final env = job['env'] as YamlMap?;
+    final pin = env?[deadSwiftPmKnob]?.toString();
+    expect(
+      pin,
+      isNull,
+      reason:
+          'Flutter 3.47.7 removed the FLUTTER_SWIFT_PACKAGE_MANAGER '
+          'disable knob (flutter/flutter#193978): setting it to "0" no '
+          'longer suppresses the SwiftPM migration, so the pin is a '
+          'silent no-op that advertises the retired pure-CocoaPods lane '
+          'decision. gh-1814 adopts the SPM lane (every floor ≥ 14.0, '
+          'asserted post-config by scripts/assert_macos_min_platform.sh) '
+          '— the job env must not carry the dead knob. Observed no-op '
+          'evidence: runs 39991663029 / 40022900373 added SwiftPM '
+          'integration WITH the pin set.',
+    );
+  });
 
   test(
     'AC1b — Setup Flutter pins 3.47.7 (the #1813 3.47.4 revert, gh-1814)',

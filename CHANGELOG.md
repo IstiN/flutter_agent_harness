@@ -28,7 +28,12 @@ block a release again.
   `:osx, '14.0'`, generated floor 14.0 on 3.47.7, vendored podspec 14.0
   (its Package.swift stays deleted — the plugin rides the CocoaPods half of
   the hybrid lane via Podfile.lock). The dead env pin left the build-macos
-  job env; the SDK pin reverts #1813 back to 3.47.7.
+  job env; the SDK pin reverts #1813 back to 3.47.7. The ci.yml macOS debug
+  leg gets the same treatment (gh-1814 review): its
+  FLUTTER_SWIFT_PACKAGE_MANAGER=0 pin — a silent no-op on the floating
+  3.47.x stable it resolves past the knob's removal — is removed and the
+  lane comment corrected; the leg rides SPM enabled as it already has been
+  (run 399572012 green).
 - fix(gh-1805): modifier chords no longer type their base letter into the
   composer while the slash menu is open — the vendored dart_tui decoder
   puts the base letter into the keystroke's `text` for control bytes

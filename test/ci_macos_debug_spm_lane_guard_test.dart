@@ -52,54 +52,48 @@ YamlMap jobsOf(String workflowPath) =>
     loadYaml(read(workflowPath))['jobs'] as YamlMap;
 
 void main() {
-  test(
-    'AC1 — the ci.yml build-macos (debug) job carries NO SwiftPM disable '
-    'pin (knob removed upstream in 3.47.7, flutter/flutter#193978 — '
-    'gh-1814)',
-    () {
-      final job = jobsOf(workflowPath)[jobName] as YamlMap;
-      final env = job['env'] as YamlMap?;
-      final pin = env?[deadSwiftPmKnob]?.toString();
+  test('AC1 — the ci.yml build-macos (debug) job carries NO SwiftPM disable '
+      'pin (knob removed upstream in 3.47.7, flutter/flutter#193978 — '
+      'gh-1814)', () {
+    final job = jobsOf(workflowPath)[jobName] as YamlMap;
+    final env = job['env'] as YamlMap?;
+    final pin = env?[deadSwiftPmKnob]?.toString();
+    expect(
+      pin,
+      isNull,
+      reason:
+          'Flutter 3.47.7 removed the FLUTTER_SWIFT_PACKAGE_MANAGER '
+          'disable knob (flutter/flutter#193978) and this job pins the '
+          'floating \'3.47.x\' stable — it resolves past the removal, so '
+          'the "0" pin is a silent no-op that advertises the retired '
+          'pure-CocoaPods lane decision. The debug leg rides the SwiftPM '
+          'lane and is green that way (run 399572012, SPM pass 77.2s — '
+          'the same lane gh-1814 adopted on the release DMG legs). '
+          'Keeping or re-adding the pin would mean one lane documents '
+          'the knob as dead while the other still praises it — the '
+          'asymmetry the gh-1814 review flagged.',
+    );
+  });
+
+  test('AC2 — no build-macos step sets the SwiftPM knob at all (gh-1814)', () {
+    final steps =
+        (jobsOf(workflowPath)[jobName] as YamlMap)['steps'] as YamlList;
+    for (final step in steps.whereType<YamlMap>()) {
+      final stepEnv = step['env'] as YamlMap?;
+      final override = stepEnv?[deadSwiftPmKnob]?.toString();
       expect(
-        pin,
+        override,
         isNull,
         reason:
-            'Flutter 3.47.7 removed the FLUTTER_SWIFT_PACKAGE_MANAGER '
-            'disable knob (flutter/flutter#193978) and this job pins the '
-            'floating \'3.47.x\' stable — it resolves past the removal, so '
-            'the "0" pin is a silent no-op that advertises the retired '
-            'pure-CocoaPods lane decision. The debug leg rides the SwiftPM '
-            'lane and is green that way (run 399572012, SPM pass 77.2s — '
-            'the same lane gh-1814 adopted on the release DMG legs). '
-            'Keeping or re-adding the pin would mean one lane documents '
-            'the knob as dead while the other still praises it — the '
-            'asymmetry the gh-1814 review flagged.',
+            'step "${step['name']}" sets FLUTTER_SWIFT_PACKAGE_MANAGER — '
+            'the env name was removed from flutter_tools in 3.47.7 '
+            '(flutter/flutter#193978), so any value is dead configuration '
+            'either way: "0" no longer suppresses the SwiftPM migration '
+            'and "1" no longer enables anything. The lane decision lives '
+            'in the tool version + the floor gate '
+            '(scripts/assert_macos_min_platform.sh), not in a knob the '
+            'tool stopped reading',
       );
-    },
-  );
-
-  test(
-    'AC2 — no build-macos step sets the SwiftPM knob at all (gh-1814)',
-    () {
-      final steps =
-          (jobsOf(workflowPath)[jobName] as YamlMap)['steps'] as YamlList;
-      for (final step in steps.whereType<YamlMap>()) {
-        final stepEnv = step['env'] as YamlMap?;
-        final override = stepEnv?[deadSwiftPmKnob]?.toString();
-        expect(
-          override,
-          isNull,
-          reason:
-              'step "${step['name']}" sets FLUTTER_SWIFT_PACKAGE_MANAGER — '
-              'the env name was removed from flutter_tools in 3.47.7 '
-              '(flutter/flutter#193978), so any value is dead configuration '
-              'either way: "0" no longer suppresses the SwiftPM migration '
-              'and "1" no longer enables anything. The lane decision lives '
-              'in the tool version + the floor gate '
-              '(scripts/assert_macos_min_platform.sh), not in a knob the '
-              'tool stopped reading',
-        );
-      }
-    },
-  );
+    }
+  });
 }
