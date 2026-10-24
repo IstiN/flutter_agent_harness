@@ -143,7 +143,11 @@ void main() {
     test('exists, needs release-provenance, and is tag-train-only', () {
       expect(smoke, isNotNull,
           reason: 'ci.yml must carry a release-asset-smoke job (gh-1832)');
-      expect((smoke!['needs'] as YamlList).toList(), contains('release-provenance'));
+      // `needs:` may parse as a scalar (single dependency) or a list.
+      final needs = smoke!['needs'];
+      final needsList =
+          needs is YamlList ? needs.toList() : <String>[needs.toString()];
+      expect(needsList, contains('release-provenance'));
       final cond = smoke['if'].toString();
       expect(cond, contains("startsWith(github.ref, 'refs/tags/v')"),
           reason: 'the smoke rides the tag train — PR runs must not probe '
