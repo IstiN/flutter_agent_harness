@@ -23,9 +23,7 @@ extension AgentCliMessagingFlow on AgentCli {
     // wrapped in the standard <system-notice> envelope. Unarmed = nothing.
     final messages = <Message>[
       for (final notice in _deadline.pollNotices())
-        UserMessage.text(
-          '<system-notice>\n${notice.text}\n</system-notice>',
-        ),
+        UserMessage.text('<system-notice>\n${notice.text}\n</system-notice>'),
     ];
     final queued = await _subagentManager.drainMessages(
       _subagentManager.selfId,
