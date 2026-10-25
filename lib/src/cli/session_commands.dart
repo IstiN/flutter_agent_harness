@@ -730,6 +730,58 @@ extension on AgentCli {
     }
   }
 
+  /// The opt-in keep-latest vacuum at session open (issue #1882 AC2):
+  /// with `sessions.vacuumLedgers: true`, drop the resumed session's
+  /// superseded `shell_job_registry` / `subagent_registry` /
+  /// `obligations_ledger` snapshots through the SAME
+  /// [repairSessionLedgers] surgery `fa session repair` performs (keep
+  /// the newest snapshot per ledger, everything else byte-verbatim,
+  /// pre-vacuum bytes preserved at `<path>.bak`, atomic swap). Never a
+  /// silent default: the config flag is the explicit opt-in, the report
+  /// lands as a dim line plus a `[vacuum]` fa.log entry. Guards: a live
+  /// presence row means another instance holds the session — skip (this
+  /// process registers its own row only after the load); a filesystem
+  /// without the ranged-read/atomic-rename surface, or any failure,
+  /// logs and leaves the file untouched. Runs before the warm-switch
+  /// fingerprint so the cache keys the post-vacuum bytes.
+  Future<void> _vacuumLedgersAtOpen(SessionMetadata metadata) async {
+    final sessions = config.sessionsRetention;
+    if (sessions == null || !sessions.vacuumLedgers) return;
+    final presenceRows = await config.presenceStore?.list() ?? const {};
+    if (presenceRows.containsKey(metadata.id)) {
+      _logDiagnostic(
+        '[vacuum] skipped ${metadata.id}: another instance holds the '
+        'session (live presence row)',
+      );
+      return;
+    }
+    SessionRepairReport report;
+    try {
+      report = await repairSessionLedgers(_env, metadata.path);
+    } on Object catch (error) {
+      _logDiagnostic('[vacuum] failed for ${metadata.id}: $error');
+      return;
+    }
+    final droppedTotal = report.droppedByType.values.fold<int>(
+      0,
+      (a, b) => a + b,
+    );
+    if (droppedTotal == 0) return;
+    final reclaimed = report.bytesBefore - report.bytesAfter;
+    final ledgerParts = [
+      for (final MapEntry(key: type, value: count)
+          in report.droppedByType.entries)
+        '$type ×$count',
+    ].join(', ');
+    final line =
+        'vacuum: dropped $droppedTotal superseded ledger snapshots '
+        '($ledgerParts), reclaimed $reclaimed bytes '
+        '(${report.bytesBefore} → ${report.bytesAfter}); '
+        'original at ${report.backupPath}';
+    io.writeln(_style.dim(line));
+    _logDiagnostic('[vacuum] $line');
+  }
+
   /// Stores a freshly built context for the warm-switch cache only when
   /// the file did not change during the open: the fingerprint must
   /// describe exactly the bytes the context was built from, or a later
@@ -775,6 +827,11 @@ extension on AgentCli {
     // compaction degenerate to the full load, so behavior is unchanged
     // for them. Context stays byte-identical: the compaction transform
     // drops everything before the boundary anyway.
+    // Issue #1882 AC2: the opt-in (`sessions.vacuumLedgers`) keep-latest
+    // vacuum runs BEFORE the open — and before the fingerprint, so the
+    // warm-switch cache keys the post-vacuum bytes. Best-effort: a failed
+    // vacuum logs and the resume proceeds on the untouched file.
+    await _vacuumLedgersAtOpen(metadata);
     final fpBefore = await _sessionFileFingerprint(metadata);
     // The resume budget bounds how much history the walk keeps resident —
     // two different budgets legitimately build different context slices,

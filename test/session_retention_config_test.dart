@@ -137,6 +137,39 @@ void main() {
       expect(reparsed.retention.maxTotalBytes, 4096);
       expect(reparsed.retention.minAgeDays, 14);
     });
+
+    test('vacuumLedgers parses, defaults false, round-trips '
+        '(issue #1882 AC2)', () {
+      // Default: off — the vacuum is never silent.
+      expect(SessionsConfig.fromYaml(null).vacuumLedgers, isFalse);
+      expect(const SessionsConfig().vacuumLedgers, isFalse);
+      expect(const SessionsConfig().isEmpty, isTrue);
+
+      final on = SessionsConfig.fromYaml(loadYaml('vacuumLedgers: true'));
+      expect(on.vacuumLedgers, isTrue);
+      expect(on.isEmpty, isFalse);
+      final rendered = on.toYaml();
+      expect(rendered, 'sessions:\n  vacuumLedgers: true');
+      final reparsed = SessionsConfig.fromYaml(
+        (loadYaml(rendered) as YamlMap)['sessions'],
+      );
+      expect(reparsed.vacuumLedgers, isTrue);
+
+      // A mistyped value degrades to a note, never a throw.
+      final mistyped = SessionsConfig.fromYaml(loadYaml('vacuumLedgers: 3'));
+      expect(mistyped.vacuumLedgers, isFalse);
+      expect(mistyped.notes.single, contains('not a bool'));
+
+      // The vacuum-only config renders without a retention block; a
+      // combined config renders both.
+      const combined = SessionsConfig(
+        retention: SessionRetentionConfig(maxTotalBytes: 4096),
+        vacuumLedgers: true,
+      );
+      final both = combined.toYaml();
+      expect(both, contains('vacuumLedgers: true'));
+      expect(both, contains('maxTotalBytes: 4096'));
+    });
   });
 
   group('CliConfig sessions plumbing (gh-1746)', () {
