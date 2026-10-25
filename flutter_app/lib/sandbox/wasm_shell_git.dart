@@ -10,6 +10,7 @@ import 'package:dart_git/dart_git.dart' as dart_git;
 import 'package:dart_git/exceptions.dart';
 import 'package:dart_git/plumbing/commit_iterator.dart';
 import 'package:dart_git/plumbing/git_hash.dart';
+import 'package:dart_git/plumbing/index.dart';
 import 'package:dart_git/plumbing/objects/blob.dart';
 import 'package:dart_git/plumbing/objects/object.dart';
 import 'package:dart_git/plumbing/reference.dart';
@@ -418,7 +419,6 @@ final class GitSandboxCommands {
     );
   }
 
-
   /// PEM body of the SSH key the git SSH transport should present:
   /// `GIT_SSH_KEY` (inline) or `GIT_SSH_KEY_PATH` from [env] then the
   /// process environment, then the sandbox defaults `/.ssh/id_ed25519` and
@@ -431,8 +431,7 @@ final class GitSandboxCommands {
   }) {
     final inline = env?['GIT_SSH_KEY'] ?? platformEnv['GIT_SSH_KEY'];
     if (inline != null && inline.contains('PRIVATE KEY')) return inline;
-    final keyPath =
-        env?['GIT_SSH_KEY_PATH'] ?? platformEnv['GIT_SSH_KEY_PATH'];
+    final keyPath = env?['GIT_SSH_KEY_PATH'] ?? platformEnv['GIT_SSH_KEY_PATH'];
     final candidates = <String>[?keyPath, '/.ssh/id_ed25519', '/.ssh/id_rsa'];
     for (final candidate in candidates) {
       final pem = _pemAt(hostPathOf(candidate));
@@ -502,10 +501,48 @@ final class GitSandboxCommands {
       for (final arg in args.where((a) => !a.startsWith('-'))) {
         repo.add(_resolveGitPath(arg, hostCwd));
       }
+      _canonIndexModes(repo);
       return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
     } catch (e) {
       return _gitError('fatal: $e');
     }
+  }
+
+  /// Rewrites every index entry's mode to git's canonical form (`canon_mode`):
+  /// regular files become 100644 (100755 when any execute bit is set). The
+  /// raw FS mode dart_git records at add time is umask-dependent (e.g. 100666
+  /// under `umask 000`) and must never reach the index or the tree objects.
+  void _canonIndexModes(dart_git.GitRepository repo) {
+    final execAny = int.parse('111', radix: 8);
+    final index = repo.indexStorage.readIndex();
+    index.entries = index.entries.map((e) {
+      final m = e.mode.val;
+      if ((m & 0xF000) != 0x8000) {
+        return e; // symlink / gitlink / dir: already canonical
+      }
+      final canon = (m & execAny) != 0
+          ? GitFileMode.Executable
+          : GitFileMode.Regular;
+      if (e.mode == canon) {
+        return e;
+      }
+      return GitIndexEntry(
+        cTime: e.cTime,
+        mTime: e.mTime,
+        dev: e.dev,
+        ino: e.ino,
+        mode: canon,
+        uid: e.uid,
+        gid: e.gid,
+        fileSize: e.fileSize,
+        hash: e.hash,
+        stage: e.stage,
+        path: e.path,
+        skipWorkTree: e.skipWorkTree,
+        intentToAdd: e.intentToAdd,
+      );
+    }).toList();
+    repo.indexStorage.writeIndex(index);
   }
 
   Result<StageResult, ExecutionError> _gitRm(
@@ -821,7 +858,8 @@ final class GitSandboxCommands {
   static String? resolvePushToken(
     Map<String, String>? env,
     Map<String, String> platformEnv,
-  ) => _firstDefined(env, _pushTokenVars) ??
+  ) =>
+      _firstDefined(env, _pushTokenVars) ??
       _firstDefined(platformEnv, _pushTokenVars);
 
   static String? _firstDefined(Map<String, String>? env, List<String> names) {
@@ -1161,7 +1199,13 @@ final class GitSandboxCommands {
         'fatal: no URL configured for remote ${targets.remoteName}',
       );
     }
-    return _pushToRemote(repo, targets.remoteName, remote.url, targets.branch!, env);
+    return _pushToRemote(
+      repo,
+      targets.remoteName,
+      remote.url,
+      targets.branch!,
+      env,
+    );
   }
 
   /// Pushes [branch] to the guarded remote URL and updates the local
