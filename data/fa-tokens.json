@@ -204,14 +204,6 @@
   ],
   "issue-1537": [
     {
-      "leg": "dev",
-      "at": "2026-10-11T07:43:06Z",
-      "prompt": 141076,
-      "completion": 53731,
-      "total": 194807,
-      "model": ""
-    },
-    {
       "leg": "rework",
       "at": "2026-10-11T08:21:18Z",
       "prompt": 66335,
@@ -4545,6 +4537,15 @@
       "completion": 15401,
       "total": 54905,
       "cacheRead": 888832,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-25T07:44:56Z",
+      "prompt": 67240,
+      "completion": 28875,
+      "total": 96115,
+      "cacheRead": 3809024,
       "model": "kimi-for-coding"
     }
   ],
