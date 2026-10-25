@@ -1576,9 +1576,10 @@ const String _sessionUsage =
     'usage: fa session list [--json] [--flat]\n'
     '       fa session repair <sessionId|path> [--dry-run]'
     '\n'
+    '       fa session info [<sessionId>] [--json]\n'
     '       fa session clean [--dry-run]';
 
-const Set<String> sessionVerbs = {'list', 'repair', 'clean'};
+const Set<String> sessionVerbs = {'list', 'repair', 'clean', 'info'};
 
 CliArgsResult _parseSessionArgs(List<String> args) {
   if (args.contains('--help') || args.contains('-h')) {
@@ -1614,16 +1615,20 @@ CliArgsResult _parseSessionArgs(List<String> args) {
   );
 }
 
-/// Whether [arg] is the positional repair target of `fa session repair`:
-/// the first non-flag operand (a later one stays a usage error). Split out
-/// of [_parseSessionVerbArgs] to keep it under the CRAP ratchet.
+/// Whether [arg] is the positional target of `fa session repair` or
+/// `fa session info` (the optional session id): the first non-flag
+/// operand (a later one stays a usage error). Split out of
+/// [_parseSessionVerbArgs] to keep it under the CRAP ratchet.
 bool _isSessionRepairTarget(String verb, String arg, String? current) =>
-    verb == 'repair' && current == null && !arg.startsWith('-');
+    (verb == 'repair' || verb == 'info') &&
+    current == null &&
+    !arg.startsWith('-');
 
 /// The flags and operands after `fa session <verb>`: `--json`/`--flat`
-/// for `list`, `--dry-run` and the single repair target for `repair`.
-/// Anything else is a usage error. Split out of [_parseSessionArgs] so
-/// each piece stays under the CRAP ratchet.
+/// for `list`, `--json` and the optional session id for `info`,
+/// `--dry-run` and the single repair target for `repair`. Anything else
+/// is a usage error. Split out of [_parseSessionArgs] so each piece
+/// stays under the CRAP ratchet.
 ({bool json, bool flat, bool dryRun, String? repairTarget})
 _parseSessionVerbArgs(String verb, List<String> args) {
   var json = false;
@@ -1632,7 +1637,7 @@ _parseSessionVerbArgs(String verb, List<String> args) {
   String? repairTarget;
   for (var i = 1; i < args.length; i++) {
     switch (args[i]) {
-      case '--json' when verb == 'list':
+      case '--json' when verb == 'list' || verb == 'info':
         json = true;
       case '--flat' when verb == 'list':
         flat = true;

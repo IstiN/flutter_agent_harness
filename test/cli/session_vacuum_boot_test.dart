@@ -189,5 +189,50 @@ void main() {
         reason: 'no backup — no rewrite',
       );
     });
+
+    test('the resume vacuum never drops request summaries (review '
+        'coherence: snapshots only, deep clean stays explicit)', () async {
+      final target = await seedBloatedSession();
+      // Request summaries plus a trajectory blob ride the session too —
+      // `fa session repair` drops them, the resume vacuum must not.
+      final listed = await repo.list();
+      final session = await repo.open(
+        listed.firstWhere((m) => m.id == target.id),
+      );
+      await session.appendCustomEntry(
+        customType: 'model_request_summary',
+        data: {'messageCount': 1, 'systemPromptChars': 10},
+      );
+      await session.appendCustomEntry(
+        customType: 'trajectory_prompt_blob',
+        data: {'text': 'p' * 256},
+      );
+
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = bootCli(fake.call, sessionName: target.id, vacuum: true);
+      final run = cli.run();
+      await waitForIt(
+        () => !cli.isBusy && bootIo.out.toString().contains('ok'),
+        reason: 'the scripted first turn completes',
+      );
+      bootIo.sendLine('/exit');
+      await run;
+
+      final after = await fileLines(target.path);
+      // The registries still collapse to their newest snapshot…
+      expect(
+        after.where((line) => line.contains('"shell_job_registry"')),
+        hasLength(1),
+      );
+      // …but the request-side records survive untouched.
+      expect(
+        after.where((line) => line.contains('"model_request_summary"')),
+        hasLength(1),
+      );
+      expect(
+        after.where((line) => line.contains('"trajectory_prompt_blob"')),
+        hasLength(1),
+      );
+    });
   });
 }

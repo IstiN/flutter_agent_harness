@@ -212,6 +212,19 @@ Future<void> _runApp(List<String> args) async {
         ),
       );
     }
+    if (sessionList.verb == 'info') {
+      // issue #1882 AC5: the size/records breakdown over one streaming
+      // pass. Progress rides stderr; SIGINT cancels into a partial
+      // report (exit 130) instead of a silent hang.
+      exit(
+        await _runSessionInfoVerb(
+          io: io,
+          env: listEnv,
+          sessionRoot: sessionRoot,
+          command: sessionList,
+        ),
+      );
+    }
     if (sessionList.verb == 'clean') {
       // gh-1746 AC6: `fa session clean [--dry-run]` — one retention sweep
       // pass, intercepted like repair: no agent boot. The policy comes
