@@ -140,6 +140,8 @@ void main() {
 
     test('comparisons yield 1 or 0', () async {
       expect((await run("expr 3 '<' 9")).stdout, '1\n');
+      expect((await run("expr 9 '>' 3")).stdout, '1\n');
+      expect((await run("expr 3 '>=' 3")).stdout, '1\n');
       expect((await run("expr 3 '=' 4")).stdout, '0\n');
       expect((await run('expr 1 + 2 = 3')).stdout, '1\n');
     });
