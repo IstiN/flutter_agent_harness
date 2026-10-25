@@ -4,7 +4,8 @@
 
 import 'package:flutter/material.dart';
 
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show ImageDropNoticeView;
 
 /// The chat chip for the aggregated image-cap drop notice (issue #1889
 /// R5): ONE docked banner per meaningful drop-situation change — the

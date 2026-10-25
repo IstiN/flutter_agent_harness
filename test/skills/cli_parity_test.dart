@@ -119,6 +119,9 @@ const _nonSettingsCommands = <String, String>{
   '/timer':
       'session deadline countdown (gh-1556), in-memory clock only — never '
       'persisted anywhere',
+  '/images':
+      'read-only image registry/cap/drop projection (issue #1889), '
+      'changes no persisted setting',
 };
 
 /// The commands the skill's parity marker documents.
