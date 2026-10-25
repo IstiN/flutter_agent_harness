@@ -28,6 +28,8 @@ const _twoChannelsBody =
     '[{"id":"c1","networkId":"net1","name":"general","public":false},'
     '{"id":"c2","networkId":"net1","name":"launch","public":true}]';
 
+/// A 5xx join whose body the client maps into the FaNetworkException's
+/// message — the text the silent-resume snack renders (gh-1848).
 /// Pumps the wide [faHomeScreen] (1280×800) wired for network mode.
 Future<void> _pumpWideHome(
   WidgetTester tester, {
@@ -206,6 +208,121 @@ void main() {
       // Close inside the body: the session's WS heartbeat timer must not
       // outlive the test (fake-async invariant).
       await manager.disconnectAll();
+    });
+
+    // ── _ensureSession failure arms (gh-1848): NetworkSessionManager is a
+    // final class, so the arms run over the REAL manager and its seams —
+    // the dry FakeHttpClient queue throws StateError from `send`, a
+    // scripted 5xx maps to FaNetworkException (error.message), and
+    // ExplodingHttpClient feeds the catch-all arm. The success arm is the
+    // "restored selection" test above.
+    testWidgets('a failed silent resume surfaces the snack, pane stays '
+        'alive', (tester) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(
+        networkId: 'net1',
+        name: 'fa-team',
+        password: 'pw1',
+      );
+      final controller = NetworkModeController.inMemory(
+        mode: AppMode.network,
+        networkId: 'net1',
+      );
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: wallet,
+        httpClient: FakeHttpClient(), // dry queue -> StateError from send
+        wsConnector: FakeWsConnector(),
+      );
+      addTearDown(manager.disconnectAll);
+
+      await _pumpWideHome(tester, controller: controller, manager: manager);
+      await tester.pump(); // post-frame ensure -> StateError -> snack
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+
+      expect(find.textContaining('unexpected request'), findsOneWidget);
+      // The pane is still alive and waiting (no crash, no takeover) and
+      // the sidebar picker stays reachable beside it.
+      expect(find.byType(NetworkCenterPane), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(NetworksSidebar), findsOneWidget);
+    });
+
+    testWidgets('a controller change re-runs the silent resume', (
+      tester,
+    ) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(
+        networkId: 'net1',
+        name: 'fa-team',
+        password: 'pw1',
+      );
+      final controller = NetworkModeController.inMemory(
+        mode: AppMode.network,
+        networkId: 'net1',
+      );
+      final httpClient = FakeHttpClient()
+        ..respond(500, body: resumeRejectedBody); // every join fails 5xx
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: wallet,
+        httpClient: httpClient,
+        wsConnector: FakeWsConnector(),
+      );
+      addTearDown(manager.disconnectAll);
+
+      await _pumpWideHome(tester, controller: controller, manager: manager);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+
+      expect(
+        httpClient.requests.where((r) => r.method == 'POST').length,
+        1, // the post-frame initial call
+      );
+      expect(find.text('resume rejected'), findsOneWidget); // e.message
+
+      controller.notifyListeners();
+      await tester.pump();
+
+      expect(
+        httpClient.requests.where((r) => r.method == 'POST').length,
+        2, // the listener-triggered re-run
+      );
+    });
+
+    testWidgets('a non-network resume error still lands in the snack', (
+      tester,
+    ) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(
+        networkId: 'net1',
+        name: 'fa-team',
+        password: 'pw1',
+      );
+      final controller = NetworkModeController.inMemory(
+        mode: AppMode.network,
+        networkId: 'net1',
+      );
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: wallet,
+        httpClient: ExplodingHttpClient(),
+        wsConnector: FakeWsConnector(),
+      );
+      addTearDown(manager.disconnectAll);
+
+      await _pumpWideHome(tester, controller: controller, manager: manager);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+
+      expect(find.textContaining('disk on fire'), findsOneWidget);
+      expect(find.byType(NetworkCenterPane), findsOneWidget);
     });
   });
 }

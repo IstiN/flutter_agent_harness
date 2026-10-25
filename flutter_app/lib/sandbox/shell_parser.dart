@@ -959,75 +959,9 @@ final class _ScriptParser {
         expandable.add(token.expandable);
         quoted.add(token.quoted);
       } else if (token is _Redirect) {
-        if (token.kind == RedirectKind.background) {
-          throw const ShellParseException(
-            'background jobs (&) are not supported in the sandbox shell',
-          );
-        }
-        if (_atEnd) throw const ShellParseException('missing redirect target');
-        final next = _advance();
-        if (next is _Redirect && next.kind == RedirectKind.background) {
-          // `2>&1` tokenizes as redirect + background `&` + digit word.
-          if (_atEnd) {
-            throw const ShellParseException('missing redirect target');
-          }
-          final target = _advance();
-          if (target is! _Word ||
-              (target.value != '1' && target.value != '2')) {
-            throw const ShellParseException(
-              'fd duplication (2>&1) is not supported in the sandbox shell',
-            );
-          }
-          if (!allowFdDuplication) {
-            throw const ShellParseException(
-              'fd duplication (2>&1) is not supported in the sandbox shell',
-            );
-          }
-          redirects.add(
-            Redirect(
-              kind: RedirectKind.dup,
-              fd: token.fd,
-              target: target.value,
-            ),
-          );
-          continue;
-        }
-        if (next is! _Word) {
-          throw const ShellParseException('redirect target must be a word');
-        }
-        if (next.value.startsWith('&')) {
-          throw const ShellParseException(
-            'fd duplication (2>&1) is not supported in the sandbox shell',
-          );
-        }
-        redirects.add(
-          Redirect(
-            kind: token.kind,
-            fd: token.fd,
-            target: next.value,
-            expandable: next.expandable,
-          ),
-        );
+        redirects.add(_parseRedirect(token));
       } else if (token is _Heredoc) {
-        // The delimiter word follows the operator on the command line; the
-        // body was captured by the tokenizer. Any quoting of the delimiter
-        // (single or double) disables body expansion (POSIX).
-        if (_atEnd) {
-          throw const ShellParseException('missing here-document delimiter');
-        }
-        final next = _advance();
-        if (next is! _Word) {
-          throw const ShellParseException('missing here-document delimiter');
-        }
-        redirects.add(
-          Redirect(
-            kind: RedirectKind.heredoc,
-            fd: token.fd,
-            target: next.value,
-            expandable: next.expandable && !next.quoted,
-            body: token.body,
-          ),
-        );
+        redirects.add(_parseHeredoc(token));
       } else {
         throw ShellParseException('unexpected operator: ${_opValue(token)}');
       }
@@ -1037,8 +971,92 @@ final class _ScriptParser {
       throw const ShellParseException('missing command');
     }
     _validateStageWords(args, quoted);
-    // `X=1 <<EOF` — a bare assignment carries no stdin consumer; the body
-    // would be captured and silently dropped (gh-1086 review).
+    _validateBareAssignmentRedirects(redirects, args);
+
+    return Stage(
+      command: args.first,
+      args: args.sublist(1),
+      redirects: redirects,
+      argExpandable: expandable,
+      argQuoted: quoted,
+    );
+  }
+
+  /// Parses one redirection operator into a [Redirect] (gh-1848 CRAP
+  /// descent — the arms moved out of [_stage], error text unchanged).
+  Redirect _parseRedirect(_Redirect token) {
+    if (token.kind == RedirectKind.background) {
+      throw const ShellParseException(
+        'background jobs (&) are not supported in the sandbox shell',
+      );
+    }
+    if (_atEnd) throw const ShellParseException('missing redirect target');
+    final next = _advance();
+    if (next is _Redirect && next.kind == RedirectKind.background) {
+      // `2>&1` tokenizes as redirect + background `&` + digit word.
+      return _parseFdDuplication(token);
+    }
+    if (next is! _Word) {
+      throw const ShellParseException('redirect target must be a word');
+    }
+    if (next.value.startsWith('&')) {
+      throw const ShellParseException(
+        'fd duplication (2>&1) is not supported in the sandbox shell',
+      );
+    }
+    return Redirect(
+      kind: token.kind,
+      fd: token.fd,
+      target: next.value,
+      expandable: next.expandable,
+    );
+  }
+
+  /// The `2>&1` form: the background `&` has been consumed; the target
+  /// digit word follows.
+  Redirect _parseFdDuplication(_Redirect token) {
+    if (_atEnd) throw const ShellParseException('missing redirect target');
+    final target = _advance();
+    if (target is! _Word || (target.value != '1' && target.value != '2')) {
+      throw const ShellParseException(
+        'fd duplication (2>&1) is not supported in the sandbox shell',
+      );
+    }
+    if (!allowFdDuplication) {
+      throw const ShellParseException(
+        'fd duplication (2>&1) is not supported in the sandbox shell',
+      );
+    }
+    return Redirect(kind: RedirectKind.dup, fd: token.fd, target: target.value);
+  }
+
+  /// The here-document arm: the delimiter word follows the operator on
+  /// the command line; the body was captured by the tokenizer. Any
+  /// quoting of the delimiter (single or double) disables body
+  /// expansion (POSIX).
+  Redirect _parseHeredoc(_Heredoc token) {
+    if (_atEnd) {
+      throw const ShellParseException('missing here-document delimiter');
+    }
+    final next = _advance();
+    if (next is! _Word) {
+      throw const ShellParseException('missing here-document delimiter');
+    }
+    return Redirect(
+      kind: RedirectKind.heredoc,
+      fd: token.fd,
+      target: next.value,
+      expandable: next.expandable && !next.quoted,
+      body: token.body,
+    );
+  }
+
+  /// `X=1 <<EOF` — a bare assignment carries no stdin consumer; the body
+  /// would be captured and silently dropped (gh-1086 review).
+  void _validateBareAssignmentRedirects(
+    List<Redirect> redirects,
+    List<String> args,
+  ) {
     if (redirects.any(
           (r) =>
               r.kind == RedirectKind.heredoc ||
@@ -1050,14 +1068,6 @@ final class _ScriptParser {
         'in the sandbox shell',
       );
     }
-
-    return Stage(
-      command: args.first,
-      args: args.sublist(1),
-      redirects: redirects,
-      argExpandable: expandable,
-      argQuoted: quoted,
-    );
   }
 
   /// AC5 (gh-1086) fail-fast word checks. Only UNQUOTED words are checked

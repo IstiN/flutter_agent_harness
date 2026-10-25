@@ -433,4 +433,10 @@ final class GemmaService implements GemmaEngineApi {
       _ => Message.text(text: message.content, isUser: true),
     };
   }
+
+  /// gh-1848: test seam — `_toPluginMessage` is otherwise reachable only
+  /// through a loaded model's chat session (real plugin method channels).
+  @visibleForTesting
+  static Message toPluginMessageForTest(GemmaChatMessage message) =>
+      _toPluginMessage(message);
 }
