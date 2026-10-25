@@ -181,6 +181,23 @@ class FakeWsConnector implements WsConnector {
   }
 }
 
+/// A client whose every send throws a plain [Exception] (gh-1848): the
+/// widgets' silent-resume catch-all arm needs an error that is neither a
+/// [StateError] (the dry [FakeHttpClient] queue) nor an
+/// [FaNetworkException] (a scripted 5xx). `FaNetworkClient._request` does
+/// not wrap send failures, so the raw error surfaces through
+/// `NetworkSessionManager.resume`.
+class ExplodingHttpClient extends http.BaseClient {
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async =>
+      throw Exception('disk on fire');
+}
+
+/// The scripted 5xx join body the silent-resume failure tests assert on
+/// (gh-1848): the widget surfaces the body's `error.message` in the snack.
+const resumeRejectedBody =
+    '{"error":{"code":"http_5xx","message":"resume rejected"}}';
+
 /// The shared codec (key generation, encrypt-as-a-sender).
 const testCodec = EnvelopeCodec();
 

@@ -219,10 +219,7 @@ class _AppTileHostState extends State<AppTileHost> {
     // engine boots with the real theme instead of an empty map.
     await Future<void>.value();
     if (!mounted) return;
-    final themeJson = _themeJson;
-    final initialTheme = themeJson == null
-        ? jsThemeMap(context)
-        : jsonDecode(themeJson) as Map<String, dynamic>;
+    final initialTheme = _initialTheme();
     final old = _engine;
     setState(() {
       _engine = null;
@@ -230,69 +227,100 @@ class _AppTileHostState extends State<AppTileHost> {
     });
     _refreshTimer?.cancel();
     _refreshTimer = null;
-    // Disposed immediately — the process-wide lifecycle lock (JsAppEngine)
-    // orders this native release before any new engine's native context is
-    // created; a delayed release is exactly what used to free a REUSED
-    // context address out from under the next engine.
-    if (old != null) await old.dispose();
-    // No real JS engines under `flutter test` without an explicit factory —
-    // show the icon fallback instead (see [_kFlutterTest]); integration
-    // tests opt into real engines via [allowEnginesInTests].
-    if (_kFlutterTest &&
-        !AppTileHost.allowEnginesInTests &&
-        widget.engineFactory == null) {
+    await _disposeEngine(old);
+    if (_blockedUnderFlutterTest()) {
       if (mounted) {
         setState(() => _startError = StateError('flutter test'));
       }
       return;
     }
     try {
-      final store =
-          widget.permissionsStore ?? await AppPermissionsStore.load(widget.env);
-      if (!mounted) return;
-      final effective = store.forApp(widget.app).effective();
-      final engine =
-          widget.engineFactory?.call(
-            app: widget.app,
-            env: widget.env,
-            permissions: effective,
-            initialTheme: initialTheme,
-          ) ??
-          JsAppEngine(
-            app: widget.app,
-            env: widget.env,
-            permissions: effective,
-            entryFile:
-                widget.app.tileWidget?.entry ?? JsTileWidgetInfo.defaultEntry,
-            themeBridge: _themeBridge(),
-            hostLocale: Localizations.localeOf(context).languageCode,
-            initialTheme: initialTheme,
-          );
-      try {
-        await engine.start();
-      } on Object {
-        // A half-started engine leaks its native-bridge timers — always
-        // dispose it before surfacing the failure as the icon fallback.
-        await engine.dispose();
-        rethrow;
-      }
-      if (!mounted) {
-        await engine.dispose();
-        return;
-      }
-      setState(() => _engine = engine);
-      // Restart tiles ONLY when their own app changed afterwards (see
-      // [_restartIfAppChanged]) — record the signature the new engine
-      // booted from.
-      _appSignature = await _readAppSignature();
-      final refreshSeconds = widget.app.tileWidget?.refreshSeconds;
-      if (refreshSeconds != null) {
-        _refreshTimer = Timer.periodic(Duration(seconds: refreshSeconds), (_) {
-          _fireTileRefresh(engine);
-        });
-      }
+      await _startEngine(initialTheme);
     } on Object catch (error) {
       if (mounted) setState(() => _startError = error);
+    }
+  }
+
+  /// The theme the engine boots with: the recorded JSON of the theme at
+  /// restart time, else the live context map on the first boot
+  /// (gh-1848 split).
+  Map<String, dynamic> _initialTheme() {
+    final themeJson = _themeJson;
+    return themeJson == null
+        ? jsThemeMap(context)
+        : jsonDecode(themeJson) as Map<String, dynamic>;
+  }
+
+  /// Disposed immediately — the process-wide lifecycle lock (JsAppEngine)
+  /// orders this native release before any new engine's native context is
+  /// created; a delayed release is exactly what used to free a REUSED
+  /// context address out from under the next engine (gh-1848 split).
+  Future<void> _disposeEngine(JsAppEngine? old) async {
+    if (old != null) await old.dispose();
+  }
+
+  /// No real JS engines under `flutter test` without an explicit factory —
+  /// show the icon fallback instead (see [_kFlutterTest]); integration
+  /// tests opt into real engines via [AppTileHost.allowEnginesInTests]
+  /// (gh-1848 split).
+  bool _blockedUnderFlutterTest() =>
+      _kFlutterTest &&
+      !AppTileHost.allowEnginesInTests &&
+      widget.engineFactory == null;
+
+  /// Loads the permissions, builds and starts the engine, adopts it as
+  /// the tile's engine and arms the refresh timer (gh-1848 split). A
+  /// half-started engine is disposed before the failure rethrows to the
+  /// caller's [_startError] handler.
+  Future<void> _startEngine(Map<String, dynamic> initialTheme) async {
+    final store =
+        widget.permissionsStore ?? await AppPermissionsStore.load(widget.env);
+    if (!mounted) return;
+    final effective = store.forApp(widget.app).effective();
+    final engine =
+        widget.engineFactory?.call(
+          app: widget.app,
+          env: widget.env,
+          permissions: effective,
+          initialTheme: initialTheme,
+        ) ??
+        JsAppEngine(
+          app: widget.app,
+          env: widget.env,
+          permissions: effective,
+          entryFile:
+              widget.app.tileWidget?.entry ?? JsTileWidgetInfo.defaultEntry,
+          themeBridge: _themeBridge(),
+          hostLocale: Localizations.localeOf(context).languageCode,
+          initialTheme: initialTheme,
+        );
+    try {
+      await engine.start();
+    } on Object {
+      // A half-started engine leaks its native-bridge timers — always
+      // dispose it before surfacing the failure as the icon fallback.
+      await engine.dispose();
+      rethrow;
+    }
+    if (!mounted) {
+      await engine.dispose();
+      return;
+    }
+    setState(() => _engine = engine);
+    // Restart tiles ONLY when their own app changed afterwards (see
+    // [_restartIfAppChanged]) — record the signature the new engine
+    // booted from.
+    _appSignature = await _readAppSignature();
+    _armRefreshTimer(engine);
+  }
+
+  /// Periodic `tile.refresh` for live-tile apps (gh-1848 split).
+  void _armRefreshTimer(JsAppEngine engine) {
+    final refreshSeconds = widget.app.tileWidget?.refreshSeconds;
+    if (refreshSeconds != null) {
+      _refreshTimer = Timer.periodic(Duration(seconds: refreshSeconds), (_) {
+        _fireTileRefresh(engine);
+      });
     }
   }
 
@@ -305,15 +333,15 @@ class _AppTileHostState extends State<AppTileHost> {
     return FaThemeBridgeHost(
       store: store,
       controller: controller,
-      prompt: (pack) async {
-        if (!mounted) return false;
-        return showThemePackConsent(
-          context,
-          appName: widget.app.name,
-          pack: pack,
-        );
-      },
+      prompt: _promptThemePack,
     );
+  }
+
+  /// The bridge's apply prompt: the host must still exist when the user
+  /// gets asked — an unmounted tile never consents (gh-1848 split).
+  Future<bool> _promptThemePack(InstalledThemePack pack) async {
+    if (!mounted) return false;
+    return showThemePackConsent(context, appName: widget.app.name, pack: pack);
   }
 
   @override

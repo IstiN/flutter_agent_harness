@@ -273,9 +273,13 @@ class _JsAppViewState extends State<JsAppView> {
     _lastFsRevision = revision;
     // Debounce: agent edits often write manifest + widget.js back to back.
     _reloadDebounce?.cancel();
-    _reloadDebounce = Timer(const Duration(milliseconds: 600), () {
-      if (mounted && !_faSheetOpen) unawaited(_restartIfAppChanged());
-    });
+    _reloadDebounce = Timer(const Duration(milliseconds: 600), _reloadWhenIdle);
+  }
+
+  /// The debounced restart body (gh-1848 split): only a live view with no
+  /// reply sheet open restarts.
+  void _reloadWhenIdle() {
+    if (mounted && !_faSheetOpen) unawaited(_restartIfAppChanged());
   }
 
   /// The content signature of this app's code files (manifest + entry) at
@@ -314,53 +318,78 @@ class _JsAppViewState extends State<JsAppView> {
     // boots with the real theme instead of an empty map. A microtask (not
     // Future(...)/Timer) keeps widget tests' fake-async zone clean.
     await Future<void>.value();
-    if (!mounted || gen != _restartGen) return;
-    final themeJson = _themeJson;
-    final initialTheme = themeJson == null
-        ? jsThemeMap(context)
-        : jsonDecode(themeJson) as Map<String, dynamic>;
+    if (_supersededRestart(gen)) return;
+    final initialTheme = _initialRestartTheme();
     final old = _engine;
     setState(() {
       _engine = null;
       _startError = null;
     });
     if (old != null) await old.dispose();
-    if (!mounted || gen != _restartGen) return;
+    if (_supersededRestart(gen)) return;
+    await _bootEngine(initialTheme, gen);
+  }
+
+  /// A newer [_restart] call (or an unmounted State) makes this run's
+  /// results unwanted — it bails out and disposes whatever it built.
+  bool _supersededRestart(int gen) => !mounted || gen != _restartGen;
+
+  Map<String, dynamic> _initialRestartTheme() {
+    final themeJson = _themeJson;
+    return themeJson == null
+        ? jsThemeMap(context)
+        : jsonDecode(themeJson) as Map<String, dynamic>;
+  }
+
+  Future<void> _bootEngine(Map<String, dynamic> initialTheme, int gen) async {
     try {
-      final effective = widget.permissionsStore.forApp(widget.app).effective();
-      final engine = JsAppEngine(
-        app: widget.app,
-        env: widget.env,
-        permissions: effective,
-        llmHandler: widget.llmHandler,
-        platformHandler: widget.platformHandler,
-        asrTranscriber:
-            widget.asrTranscriber ??
-            await widget.agentService?.resolveAsrTranscriber(),
-        mediaGateway: widget.mediaGateway ?? widget.agentService?.mediaGateway,
-        videoReader: widget.videoReader ?? widget.agentService?.videoReader,
-        keysSource: widget.agentService?.hostSecrets,
-        keyRequestHandler: _requestHostSecret,
-        themeBridge: _themeBridge(),
-        webViewHost: widget.webViewHost,
-        // ignore: use_build_context_synchronously
-        hostLocale: Localizations.localeOf(context).languageCode,
-        initialTheme: initialTheme,
-      );
+      final engine = await _buildEngine(initialTheme);
       engine.onCloseRequested = _closeFromJs;
       await engine.start();
-      if (!mounted || gen != _restartGen) {
-        await engine.dispose();
-        return;
-      }
-      setState(() => _engine = engine);
-      // Restart ONLY when this app's files change afterwards (see
-      // [_restartIfAppChanged]) — record the signature we booted from.
-      _appSignature = await _readAppSignature();
+      await _adoptBootedEngine(engine, gen);
     } on Object catch (error) {
-      AppLog.i('apps', 'app start failed: ${widget.app.id} — $error');
-      if (mounted && gen == _restartGen) setState(() => _startError = error);
+      _reportBootFailure(error, gen);
     }
+  }
+
+  Future<JsAppEngine> _buildEngine(Map<String, dynamic> initialTheme) async {
+    final effective = widget.permissionsStore.forApp(widget.app).effective();
+    return JsAppEngine(
+      app: widget.app,
+      env: widget.env,
+      permissions: effective,
+      llmHandler: widget.llmHandler,
+      platformHandler: widget.platformHandler,
+      asrTranscriber:
+          widget.asrTranscriber ??
+          await widget.agentService?.resolveAsrTranscriber(),
+      mediaGateway: widget.mediaGateway ?? widget.agentService?.mediaGateway,
+      videoReader: widget.videoReader ?? widget.agentService?.videoReader,
+      keysSource: widget.agentService?.hostSecrets,
+      keyRequestHandler: _requestHostSecret,
+      themeBridge: _themeBridge(),
+      webViewHost: widget.webViewHost,
+      // ignore: use_build_context_synchronously
+      hostLocale: Localizations.localeOf(context).languageCode,
+      initialTheme: initialTheme,
+    );
+  }
+
+  /// A still-current boot owns the surface; a superseded one is disposed.
+  Future<void> _adoptBootedEngine(JsAppEngine engine, int gen) async {
+    if (_supersededRestart(gen)) {
+      await engine.dispose();
+      return;
+    }
+    setState(() => _engine = engine);
+    // Restart ONLY when this app's files change afterwards (see
+    // [_restartIfAppChanged]) — record the signature we booted from.
+    _appSignature = await _readAppSignature();
+  }
+
+  void _reportBootFailure(Object error, int gen) {
+    AppLog.i('apps', 'app start failed: ${widget.app.id} — $error');
+    if (mounted && gen == _restartGen) setState(() => _startError = error);
   }
 
   Future<Uint8List?> _captureScreenshot() async {
@@ -404,11 +433,20 @@ class _JsAppViewState extends State<JsAppView> {
     String name,
     String reason,
   ) async {
-    final service = widget.agentService;
-    if (service == null || !mounted) return null;
+    final service = _mountedAgentService();
+    if (service == null) return null;
     final result = await showSecretRequestSheet(context, name, reason);
     if (result == null) return null;
     return service.acceptSecretGrant(result);
+  }
+
+  /// The session + mounted guard of the secret-request sheet (gh-1848
+  /// split): no sheet can render without an agent session, and the view
+  /// must still be on screen.
+  AgentService? _mountedAgentService() {
+    final service = widget.agentService;
+    if (service == null || !mounted) return null;
+    return service;
   }
 
   /// The theme bridge for this app's engine: the installed packs + active

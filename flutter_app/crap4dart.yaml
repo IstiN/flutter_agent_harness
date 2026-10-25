@@ -101,7 +101,30 @@ crap:
   # Existing suites stay green (473 tests across the touched shell/guard
   # suites locally). The threshold follows back down 74.13 → 30.0. Only
   # down; re-measure on the CI pipeline (local lcov stays impossible).
-  threshold: 30.0
+  # Descent #13 (issue #1848 tier 1, the app ladder 30→24): the card's
+  # 13-method hit list went down — the five 0%-cov CC-5 methods covered
+  # by branch tests (_faPrefixGranted, _toPluginMessage, appLauncher,
+  # setSkillsAccess, _sendTestReport), grepText/_stage/expandGlobPattern
+  # decomposed by concern (slim loop/expression dispatcher + per-arm
+  # private helpers, error text byte-identical — the established #558
+  # pattern), and the 29-42%-cov quartet covered (_sweepStalePipeDirs,
+  # _filteredApps, the _ensureSession pair, _acquireCredentials).
+  # flutter test is unavailable on the fleet lane (host guard SIGKills
+  # dart; flutter cache EPERM), so the per-method AFTER scores are
+  # projections from the measured CRAP anchors (0% cov → CC²+CC, 100%
+  # cov → CC; CC9@100% = 9.00 and CC5@0% = 30.00 measured on the same
+  # pipeline in gh-1848 tier 0/fa_llm) — the measured before/after table
+  # belongs to the app-crap-gate run on this PR. The ≈23 cluster
+  # (collectStageRedirects, parsePipArgs, CC 23 @ 100% cov) came down with
+  # tier 3: every method above 18 on the gate's own merged lcov either
+  # decomposed (the >24 CC beasts and the ≈18-23 CC11-23 band into
+  # ≤CC7 pieces; the CI-0% CC4 family into ≤CC3 pieces so CRAP ≤ 12 at
+  # 0% cov — the engine suite skips on ubuntu, so coverage can never land
+  # there) or, for the four remaining >18 outliers, the same split. The
+  # threshold follows the tier line 24.0 → 18.0 → 12.0 (tier 4 swept the
+  # whole 12-18 band: 105 methods, pieces ≤CC5 at ≥85% cov, ≤CC4 at
+  # 50-84%, ≤CC3 below). Only down.
+  threshold: 12.0
 
 coverage:
   # The CI app-crap-gate job merges the two flutter-tests shard reports

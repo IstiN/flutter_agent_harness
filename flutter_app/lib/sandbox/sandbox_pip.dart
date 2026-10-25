@@ -99,7 +99,41 @@ PipPackageSpec? parsePipSpec(String raw) {
 
 /// Parses [args] (everything after `pip`) into a [PipArgs], validating the
 /// operand count and package specs for each subcommand.
+///
+/// gh-1848 tier 3 split: the empty/help/version prelude
+/// ([_pipInitialCommand]), the subcommand keyword lookup
+/// ([_pipSubcommandFor]), operand collection ([_pipOperands]) with the
+/// no-options rule ([_pipOptionError]), the `list` terminal
+/// ([_pipListResult]), the per-subcommand arity rule ([_pipArityError]),
+/// and requirement-spec parsing ([_pipSpecs]).
 PipArgs parsePipArgs(List<String> args) {
+  final initial = _pipInitialCommand(args);
+  if (initial != null) return initial;
+
+  final first = args.first;
+  final subcommand = _pipSubcommandFor(first);
+  if (subcommand == null) {
+    return PipArgs(
+      subcommand: PipSubcommand.help,
+      usageError: 'pip: unknown command "$first"',
+    );
+  }
+  final operands = _pipOperands(args);
+  final optionError = _pipOptionError(subcommand, operands);
+  if (optionError != null) return optionError;
+  if (subcommand == PipSubcommand.list) {
+    return _pipListResult(operands);
+  }
+  final arityError = _pipArityError(first, subcommand, operands);
+  if (arityError != null) return arityError;
+  return _pipSpecs(subcommand, operands);
+}
+
+/// The subcommands that terminate without operands: bare `pip` / help
+/// flags map to help, `--version`/`-V` to version. Returns null when the
+/// first token is a subcommand keyword (or garbage for the caller to
+/// reject).
+PipArgs? _pipInitialCommand(List<String> args) {
   if (args.isEmpty) {
     return const PipArgs(subcommand: PipSubcommand.help);
   }
@@ -110,23 +144,28 @@ PipArgs parsePipArgs(List<String> args) {
   if (first == '--help' || first == '-h' || first == 'help') {
     return const PipArgs(subcommand: PipSubcommand.help);
   }
-  final subcommand = switch (first) {
+  return null;
+}
+
+/// The subcommand keyword table; null for an unknown command.
+PipSubcommand? _pipSubcommandFor(String first) {
+  return switch (first) {
     'install' => PipSubcommand.install,
     'uninstall' => PipSubcommand.uninstall,
     'list' => PipSubcommand.list,
     'show' => PipSubcommand.show,
     _ => null,
   };
-  if (subcommand == null) {
-    return PipArgs(
-      subcommand: PipSubcommand.help,
-      usageError: 'pip: unknown command "$first"',
-    );
-  }
-  final operands = args
-      .sublist(1)
-      .where((a) => a != '-y' && a != '--yes')
-      .toList();
+}
+
+/// Everything after the subcommand keyword, minus the consent flags pip
+/// shares with uninstall (`-y`/`--yes` are consumed silently).
+List<String> _pipOperands(List<String> args) {
+  return args.sublist(1).where((a) => a != '-y' && a != '--yes').toList();
+}
+
+/// No subcommand takes options: the first dash-operand is a usage error.
+PipArgs? _pipOptionError(PipSubcommand subcommand, List<String> operands) {
   for (final operand in operands) {
     if (operand.startsWith('-')) {
       return PipArgs(
@@ -135,15 +174,27 @@ PipArgs parsePipArgs(List<String> args) {
       );
     }
   }
-  if (subcommand == PipSubcommand.list) {
-    if (operands.isNotEmpty) {
-      return const PipArgs(
-        subcommand: PipSubcommand.list,
-        usageError: 'pip: list takes no arguments',
-      );
-    }
-    return const PipArgs(subcommand: PipSubcommand.list);
+  return null;
+}
+
+/// `pip list` takes no arguments; anything else is a usage error.
+PipArgs _pipListResult(List<String> operands) {
+  if (operands.isNotEmpty) {
+    return const PipArgs(
+      subcommand: PipSubcommand.list,
+      usageError: 'pip: list takes no arguments',
+    );
   }
+  return const PipArgs(subcommand: PipSubcommand.list);
+}
+
+/// Every other subcommand needs at least one package, and `show` exactly
+/// one.
+PipArgs? _pipArityError(
+  String first,
+  PipSubcommand subcommand,
+  List<String> operands,
+) {
   if (operands.isEmpty) {
     return PipArgs(
       subcommand: subcommand,
@@ -156,6 +207,12 @@ PipArgs parsePipArgs(List<String> args) {
       usageError: 'pip: show takes exactly one package name',
     );
   }
+  return null;
+}
+
+/// Parses each operand into a [PipPackageSpec]; the first unparseable one
+/// is a usage error.
+PipArgs _pipSpecs(PipSubcommand subcommand, List<String> operands) {
   final specs = <PipPackageSpec>[];
   for (final operand in operands) {
     final spec = parsePipSpec(operand);
@@ -759,88 +816,122 @@ PipRunResult _formatMicropipResult(
 ) {
   final error = result.error;
   if (error != null) {
-    if (error.contains(_kNotFound)) {
-      return (
-        stdout: '',
-        stderr: 'WARNING: Package(s) not found: ${parsed.specs.single.name}\n',
-        exitCode: 0,
-      );
-    }
-    var text = error.trim();
-    if (text.contains('wheel') || text.contains('micropip')) {
-      text +=
-          '\n(hint: the sandbox python only supports pure-Python wheels; '
-          'native extensions cannot be loaded)';
-    }
-    return (stdout: '', stderr: '$text\n', exitCode: 1);
+    return _micropipErrorResult(parsed, error);
   }
 
   final names = [for (final s in parsed.specs) s.name];
   for (final line in result.stdout.split('\n')) {
-    if (line.startsWith(_kMissing)) {
-      final missing = line.substring(_kMissing.length).split(',');
-      return (
-        stdout: [
-          for (final name in missing)
-            'WARNING: Skipping $name as it is not installed.\n',
-        ].join(),
-        stderr: '',
-        exitCode: 0,
-      );
-    }
-    if (line.startsWith(_kUninstalled)) {
-      final versions =
-          (jsonDecode(line.substring(_kUninstalled.length))
-                  as Map<String, dynamic>)
-              .cast<String, String>();
-      return (
-        stdout: [
-          for (final name in names)
-            'Successfully uninstalled $name-${versions[name]}\n',
-        ].join(),
-        stderr: '',
-        exitCode: 0,
-      );
-    }
-    if (line.startsWith(_kVer)) {
-      final versions =
-          (jsonDecode(line.substring(_kVer.length)) as Map<String, dynamic>)
-              .cast<String, String>();
-      return (
-        stdout:
-            'Successfully installed '
-            '${names.map((n) => '$n-${versions[n]}').join(' ')}\n',
-        stderr: '',
-        exitCode: 0,
-      );
-    }
-    if (line.startsWith(_kList)) {
-      final packages =
-          (jsonDecode(line.substring(_kList.length)) as Map<String, dynamic>)
-              .cast<String, String>();
-      return (stdout: _formatListTable(packages), stderr: '', exitCode: 0);
-    }
-    if (line.startsWith(_kShow)) {
-      final fields =
-          (jsonDecode(line.substring(_kShow.length)) as Map<String, dynamic>)
-              .cast<String, String>();
-      final buffer = StringBuffer();
-      for (final key in [
-        'Name',
-        'Version',
-        'Summary',
-        'Home-page',
-        'Author',
-        'License',
-      ]) {
-        final value = fields[key];
-        if (value != null && value.isNotEmpty) buffer.write('$key: $value\n');
-      }
-      return (stdout: buffer.toString(), stderr: '', exitCode: 0);
-    }
+    final marker = _micropipMarkerResult(line, names);
+    if (marker != null) return marker;
   }
   // No marker: surface whatever python printed (e.g. micropip's own log).
   return (stdout: result.stdout, stderr: result.stderr, exitCode: 0);
+}
+
+/// Renders the runner-error branch: package-not-found becomes pip's
+/// WARNING, other failures get the pure-Python-wheel hint when applicable.
+PipRunResult _micropipErrorResult(PipArgs parsed, String error) {
+  if (error.contains(_kNotFound)) {
+    return (
+      stdout: '',
+      stderr: 'WARNING: Package(s) not found: ${parsed.specs.single.name}\n',
+      exitCode: 0,
+    );
+  }
+  var text = error.trim();
+  if (text.contains('wheel') || text.contains('micropip')) {
+    text +=
+        '\n(hint: the sandbox python only supports pure-Python wheels; '
+        'native extensions cannot be loaded)';
+  }
+  return (stdout: '', stderr: '$text\n', exitCode: 1);
+}
+
+/// Renders one runner stdout marker line into its pip output, or null
+/// when [line] is not a marker.
+PipRunResult? _micropipMarkerResult(String line, List<String> names) {
+  return _micropipRemoveMarker(line, names) ??
+      _micropipInstallMarker(line, names) ??
+      _micropipListMarker(line);
+}
+
+/// The `_kMissing`/`_kUninstalled` marker outputs, or null.
+PipRunResult? _micropipRemoveMarker(String line, List<String> names) {
+  if (line.startsWith(_kMissing)) {
+    final missing = line.substring(_kMissing.length).split(',');
+    return (
+      stdout: [
+        for (final name in missing)
+          'WARNING: Skipping $name as it is not installed.\n',
+      ].join(),
+      stderr: '',
+      exitCode: 0,
+    );
+  }
+  if (line.startsWith(_kUninstalled)) {
+    final versions =
+        (jsonDecode(line.substring(_kUninstalled.length))
+                as Map<String, dynamic>)
+            .cast<String, String>();
+    return (
+      stdout: [
+        for (final name in names)
+          'Successfully uninstalled $name-${versions[name]}\n',
+      ].join(),
+      stderr: '',
+      exitCode: 0,
+    );
+  }
+  return null;
+}
+
+/// The `_kVer` (Successfully installed) marker output, or null.
+PipRunResult? _micropipInstallMarker(String line, List<String> names) {
+  if (!line.startsWith(_kVer)) return null;
+  final versions =
+      (jsonDecode(line.substring(_kVer.length)) as Map<String, dynamic>)
+          .cast<String, String>();
+  return (
+    stdout:
+        'Successfully installed '
+        '${names.map((n) => '$n-${versions[n]}').join(' ')}\n',
+    stderr: '',
+    exitCode: 0,
+  );
+}
+
+/// The `_kList`/`_kShow` marker outputs, or null.
+PipRunResult? _micropipListMarker(String line) {
+  if (line.startsWith(_kList)) {
+    final packages =
+        (jsonDecode(line.substring(_kList.length)) as Map<String, dynamic>)
+            .cast<String, String>();
+    return (stdout: _formatListTable(packages), stderr: '', exitCode: 0);
+  }
+  if (line.startsWith(_kShow)) {
+    final fields =
+        (jsonDecode(line.substring(_kShow.length)) as Map<String, dynamic>)
+            .cast<String, String>();
+    return (stdout: _formatMicropipShowFields(fields), stderr: '', exitCode: 0);
+  }
+  return null;
+}
+
+/// Renders `pip show`-style fields in the fixed key order.
+String _formatMicropipShowFields(Map<String, String> fields) {
+  final buffer = StringBuffer();
+  for (final key in [
+    'Name',
+    'Version',
+    'Summary',
+    'Home-page',
+    'Author',
+    'License',
+  ]) {
+    final value = fields[key];
+    if (value != null && value.isNotEmpty) buffer.write('$key: $value\n');
+  }
+  return buffer.toString();
 }
 
 /// Renders the `pip list` table from a name → version map.

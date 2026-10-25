@@ -112,12 +112,24 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
     try {
       await widget.manager.resume(networkId);
     } on StateError catch (e) {
-      if (mounted) showFahErrorSnack(context, e.message);
-    } on FaNetworkException catch (e) {
-      if (mounted) showFahErrorSnack(context, e.message);
+      _reportResumeFailure(e.message);
     } on Object catch (e) {
-      if (mounted) showFahErrorSnack(context, '$e');
+      _reportResumeFailure(_resumeFailureMessage(e));
     }
+  }
+
+  /// enterNetwork already navigated optimistically — a failed resume is
+  /// reported as a snack while the sidebar lives, never thrown into the
+  /// UI (gh-1848 split).
+  void _reportResumeFailure(String message) {
+    if (mounted) showFahErrorSnack(context, message);
+  }
+
+  /// The catch-all arm of the resume guard (gh-1848 split): a typed
+  /// FaNetworkException prints its human message, anything else as-is.
+  String _resumeFailureMessage(Object error) {
+    if (error is FaNetworkException) return error.message;
+    return '$error';
   }
 
   Future<void> _openJoinSheet({String? networkId}) => showJoinSheet(

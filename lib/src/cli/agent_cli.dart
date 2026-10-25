@@ -196,6 +196,7 @@ import '../session/session_record.dart';
 import '../env/session_parse_executor.dart';
 import '../session/session_repo.dart';
 import '../session_io_retry.dart';
+import '../session_repair.dart' show SessionRepairReport, repairSessionLedgers;
 import '../session/attach/file_presence_store.dart';
 import '../session_retention.dart';
 import '../session/attach/session_presence.dart';
@@ -533,6 +534,12 @@ class AgentCli {
             const RedactionConfig(enabled: false),
         approvedSecretLiterals: () =>
             config.redactionPipeline?.registeredSecrets.toSet() ?? const {},
+        // gh-1835: the auto-background liveness threshold — the config key
+        // (0 = kill switch) rides `waiting:` next to the other liveness
+        // knobs; the bash tool converts (never restarts) at it.
+        shellAutoBackgroundAfter: Duration(
+          seconds: config.waiting.autoBackgroundSeconds,
+        ),
         configServiceFactory: (coreEnv) =>
             ConfigService(env: coreEnv, homeDir: config.homeDir),
         memory: _memory,
@@ -552,6 +559,10 @@ class AgentCli {
           mainApiKey: () => _apiKey,
           resolveKey: _resolveMediaKey,
         ),
+        // gh-1844 (review): `decide` rides its own facility bundle — it
+        // only needs the live main-connection accessors, not the media
+        // config.
+        decisions: DecisionsServices(mainApiKey: () => _apiKey),
         browserController: config.browserController,
         // Builder hands the decorated env (review #1230) — screenshot
         // saves clamp like every other fs-touching tool.
@@ -586,6 +597,12 @@ class AgentCli {
           // CLI publishes on detection/pin (invariant 2), under the
           // same owner cap.
           contextWindowRegistry: contextWindowRegistry,
+          // Issue #1829: deliverable artifacts redact through the same
+          // assembled pipeline tool results pass (I3) — no new secrets
+          // surface.
+          deliverableRedactor: config.redactionPipeline == null
+              ? null
+              : (String text) => config.redactionPipeline!.redact(text),
           homeDir: config.homeDir,
           machineName: config.machineName,
           a2a: config.a2aConfig,

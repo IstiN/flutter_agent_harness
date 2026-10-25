@@ -3,7 +3,7 @@
 [![CI](https://github.com/IstiN/flutter_agent_harness/actions/workflows/ci.yml/badge.svg)](https://github.com/IstiN/flutter_agent_harness/actions/workflows/ci.yml)
 [![pub package](https://img.shields.io/pub/v/flutter_agent_harness.svg)](https://pub.dev/packages/flutter_agent_harness)
 [![CRAP max 12.0 — measured whole-tree](https://img.shields.io/badge/CRAP%20max-12.0-brightgreen)](https://github.com/IstiN/crap4dart)
-[![CRAP app max 30.0](https://img.shields.io/badge/CRAP%20app-30.0-yellow)](https://github.com/IstiN/crap4dart)
+[![CRAP app max 12.0](https://img.shields.io/badge/CRAP%20app-12.0-brightgreen)](https://github.com/IstiN/crap4dart)
 [![coverage ≥ 80%](https://img.shields.io/badge/coverage-%E2%89%A5%2093%25-brightgreen)](https://github.com/IstiN/flutter_agent_harness)
 
 Cross-platform AI agent harness for Dart and Flutter — streaming provider
@@ -98,6 +98,16 @@ fa's own Terminal-Bench results next to the official field. Official rows are re
 
 <sub>⭐ Self-reported: measured by our own `bench-harbor` runs on Terminal-Bench 2.1, **not** an official leaderboard submission (community submissions are closed — #1681). Every row links its GitHub Actions run(s); fa rows never blend into the official table above. Source: `bench/leaderboard/fa_results.json`.</sub>
 <!-- leaderboard:end (gh-1682) -->
+
+<!-- pbench-leaderboard:begin (gh-182) -->
+## Leaderboard: ProgramBench (fa, self-reported ⭐)
+
+fa's results on [facebookresearch/ProgramBench](https://github.com/facebookresearch/ProgramBench) — rebuild a complete codebase from a compiled binary + its docs. Pass@1: one attempt per instance — the **Solved** column (solved/attempted) is the pass@1 fraction the official board ranks by; **Test-pass %** is the mean share of scored tests that passed per instance (a 100% test-pass row can still fail an instance). Measured by our own `bench-programbench` runs. Rows marked ⭐ are **self-reported** and never auto-submitted to the official ProgramBench registry (that stays a manual owner decision). Smoke rows are pipeline proofs, not leaderboard rows. Every row links its run; the per-instance detail carries the analysis artifacts (trajectories, eval logs).
+
+*No ProgramBench results recorded yet — the ledger (`bench/leaderboard/pbench_results.json`) fills on the first green `bench-programbench` run.*
+
+<sub>Source: `bench/leaderboard/pbench_results.json`, rendered by `bench/leaderboard/pbench_render.py` (gh-182).</sub>
+<!-- pbench-leaderboard:end (gh-182) -->
 
 ## What's inside
 

@@ -59,8 +59,7 @@ final class _FakeShellJob implements ShellJob {
   @override
   Future<void> stop() async {
     stopCalls++;
-    _stopReason = 'stopped';
-    complete(143);
+    complete(143, reason: 'stopped');
   }
 }
 

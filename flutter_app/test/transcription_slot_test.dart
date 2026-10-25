@@ -68,11 +68,35 @@ String _textOf(ToolExecutionResult result) =>
 void main() {
   group('whisperTranscriberForGateway (transcription slot resolution)', () {
     test(
-      'no override falls back to the active provider with whisper-1',
+      'no override is UNCONFIGURED — the main connection is never an '
+      'implicit fallback (gh-1844)',
       () async {
         final env = MemoryExecutionEnv();
         final transcriber = await whisperTranscriberForGateway(
           _gateway(env, MediaModelsStore.inMemory()),
+        );
+
+        expect(transcriber, isNull);
+      },
+    );
+
+    test(
+      'useMainConnection: true opts the slot into the main connection '
+      'with its default model id',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = MediaModelsStore.inMemory();
+        await store.setOverride(
+          MediaSlot.transcription,
+          const MediaSlotOverride(
+            providerKind: '',
+            baseUrl: '',
+            modelId: '',
+            useMainConnection: true,
+          ),
+        );
+        final transcriber = await whisperTranscriberForGateway(
+          _gateway(env, store),
         );
 
         expect(transcriber, isA<WhisperTranscriber>());

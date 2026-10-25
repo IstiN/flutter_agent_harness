@@ -186,10 +186,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Same pinned SDK as the PR build legs and the release path (#281).
+      # EXACT patch (the PR build legs use the floating '3.47.x'): the
+      # golden baselines (issue #1856 leg below) are pixel-sensitive to
+      # the engine's text stack, so the nightly renders them on the same
+      # SDK they were captured with. Bump this together with a
+      # `flutter test test/golden --update-goldens` regen (eyes on every
+      # changed PNG).
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.x'
+          flutter-version: '3.47.4'
           channel: stable
           cache: true
 
@@ -330,10 +335,163 @@ jobs:
         shell: bash
         run: bash "$GITHUB_WORKSPACE/scripts/check_lockfiles.sh" pod-sync
 
+      # Issue #1851 AC4: wasm_sandbox_toolchain_test had NO gate at any
+      # commit — it is integration-tagged inside flutter_app/test (so the
+      # flutter-tests PR shards exclude it) and needs the native
+      # libwasm_run_dart.dylib, which cannot be downloaded from inside a
+      # running test (flutter_tester mocks sockets after binding init).
+      # The nightly macOS row owns it: seed the dylib from the pinned
+      # upstream wasm_run-v0.1.0 release, then run the suite. A red here
+      # feeds the deduped nightly-red issue — silent absence is over.
+      - name: Seed libwasm_run_dart.dylib (issue #1851 AC4)
+        if: matrix.target == 'macos'
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .dart_tool/wasm_run temp
+          curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+            -o temp/macos.tar.gz \
+            https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/macos.tar.gz
+          tar xzf temp/macos.tar.gz -C temp
+          cp temp/macos-arm64/libwasm_run_dart.dylib .dart_tool/wasm_run/
+
+      - name: flutter test wasm_sandbox_toolchain (issue #1851 AC4)
+        if: matrix.target == 'macos'
+        working-directory: flutter_app
+        shell: bash
+        env:
+          WASM_RUN_DART_DYNAMIC_LIBRARY: ${{ github.workspace }}/flutter_app/.dart_tool/wasm_run/libwasm_run_dart.dylib
+        run: flutter test test/wasm_sandbox_toolchain_test.dart --tags integration
+
+      # Issue #1856 (from #177 E5): the golden suite's guarding leg — the
+      # first one since gh-1538 retired the nightly full matrix. The
+      # pinned-font golden env (flutter_app/test/golden/
+      # golden_test_helper.dart) renders every glyph from bundled faces —
+      # Inter/JetBrainsMono assets + Noto Sans Symbols 2 / Noto Emoji
+      # coverage + the aliased mono stack — so a golden diff is a real
+      # rendering regression, not a host font/SDK substitution. Runs on
+      # the same pinned SDK the baselines are captured with, before the
+      # (much longer) release build; a red feeds the deduped nightly-red
+      # issue via the auto-issue job below.
+      - name: flutter test goldens (issue #1856)
+        if: matrix.target == 'macos'
+        working-directory: flutter_app
+        shell: bash
+        run: flutter test test/golden
+
       - name: ${{ matrix.cmd }}
         working-directory: flutter_app
         shell: bash
         run: ${{ matrix.cmd }}
+
+  # Issue #1850 AC5: the allocation-churn report, nightly-only because a
+  # full pass is slow (the card's verification discipline: per-PR checks
+  # stay on the targeted files; the suite-wide churn number lives here).
+  # Two legs, one job:
+  #   core  — dart engine, churnNewMb (exact reclaimed-new-gen volume),
+  #           whole test/ suite; budget = AC4's ≤35,000 MB.
+  #   app   — flutter engine via the VM allocation profile (allocatedMb;
+  #           churnNewMb is intentionally null there, crap4dart ≥0.19.0),
+  #           subset = the #1850-named suites (the whole app suite would
+  #           blow the 6 h hosted-job cap: every test is a fresh
+  #           flutter_tester). Budget starts at 3,000 MB allocated for
+  #           the subset and is re-baselined from the recorded runs —
+  #           ratchet down, never up (docs/memory-churn.md).
+  # Both JSONs + badges upload as artifacts; the before/after workflow
+  # that consumes them is docs/memory-churn.md. A red leg feeds the
+  # deduped nightly-red issue via auto-issue (needs: below).
+  memory-churn:
+    name: Memory churn report (issue #1850 AC5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+      - name: Activate crap4dart (>=0.19.0 — VM-service allocation profile on flutter, churnNewMb null by design)
+        run: dart pub global activate crap4dart ">=0.19.0 <0.20.0"
+      - name: Core suite churn (dart engine)
+        run: |
+          dart pub get
+          mkdir -p memory-results
+          # AC4 budget: total core churn ≤35,000 MB (56,393 MB baseline −
+          # the #1872 crypto fix and #1873 trajectory fix).
+          dart pub global run crap4dart memory --format json --top 40 \
+            --badge memory-results/core-churn-badge.svg \
+            --badge-threshold 35000 \
+            test > memory-results/memory-core.json
+      - name: App subset allocated (flutter engine)
+        # Pinned SDK: the app baseline is engine-sensitive (same pin the
+        # golden baselines use). Placeholder .env/firebase seed the same
+        # way the build legs do — the named suites are engine-accurate
+        # without secrets.
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+      - name: Create placeholder firebase_options.dart
+        shell: bash
+        run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+      - name: Install Flutter dependencies
+        uses: ./.github/actions/flutter-pub-get
+      - name: crap4dart memory on the #1850 app subset
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          mkdir -p ../memory-results
+          # Initial budget: the card's six named suites + the heaviest
+          # pure file, allocated-volume basis. Re-baseline from the
+          # recorded runs; ratchet down, never up.
+          dart pub global run crap4dart memory --engine flutter \
+            --format json --top 40 \
+            --badge ../memory-results/app-allocated-badge.svg \
+            --badge-threshold 3000 \
+            test/session_chat_sheet_persisted_test.dart \
+            test/settings_limits_test.dart \
+            test/settings_providers_queue_test.dart \
+            test/settings_screen_sections_test.dart \
+            test/file_browser_test.dart \
+            test/session_oversized_windowed_test.dart \
+            test/bridge_loud_failures_test.dart \
+            > ../memory-results/memory-app.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: memory-churn-report
+          path: memory-results/
+          retention-days: 90
+      - name: Record totals in the step summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Memory churn (issue #1850 AC5)"
+            for f in memory-results/memory-core.json memory-results/memory-app.json; do
+              if [ -f "$f" ]; then
+                echo "### $f"
+                jq -r '"totalAllocatedMb: \(.totalAllocatedMb // .totalChurnMb // "?") · tests: \(.testCount // "?")"' "$f" || head -c 400 "$f"
+                echo
+              else
+                echo "### $f — missing (leg red)"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Files ONE deduped issue when the scheduled nightly run goes red: the
   # open `nightly-red` issue is searched first and only commented on, so a
@@ -354,7 +512,7 @@ jobs:
   # schedule-event runs preceding this one — dispatch runs never count).
   auto-issue:
     name: File nightly-red issue
-    needs: [pty-integration, build-release]
+    needs: [pty-integration, build-release, memory-churn]
     if: >-
       always() && !cancelled() &&
       (github.event_name == 'schedule' ||

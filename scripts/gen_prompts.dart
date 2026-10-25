@@ -200,6 +200,11 @@ const rootSpecs = <PromptSpec>[
     constName: 'taskAgentTaskPrompt',
   ),
   PromptSpec(
+    source: 'prompts/task/report_size_contract.md',
+    constName: 'taskReportSizeContractPrompt',
+    requiredToken: '{{budget}}',
+  ),
+  PromptSpec(
     source: 'prompts/task/agent_explore.md',
     constName: 'taskAgentExplorePrompt',
   ),

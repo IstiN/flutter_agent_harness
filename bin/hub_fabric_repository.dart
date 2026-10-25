@@ -86,10 +86,15 @@ final class HubFabricRepository
     if (toId.startsWith('#')) return toId;
     final me = _agentId;
     if (me != null && toId == me) return null; // our own fabric mailbox
-    // A hub drop mid-query fails the waiter ('connection closed') — fall
-    // back to the file fabric instead of letting it escape (issue #988).
-    final roster = await _presenceRoster();
-    if (roster == null) return null;
+    // A FAILED roster query (drop/timeout mid-query) RETHROWS — the
+    // composition's flush distinguishes "query failed, retry later" from
+    // a confirmed roster miss (a null answer here), and its send-routing
+    // `_safeResolve` still collapses the throw to the file fallback
+    // (issue #988's never-escape guarantee lives at that boundary). The
+    // bin adapter used to collapse the failure to null itself, which
+    // read as a confirmed miss and untracked queued hub mail forever
+    // (gh-1838 hostile-env strand).
+    final roster = await _repo!.client.presenceQuery();
     for (final agent in roster) {
       if (agent.agentId == toId) return toId; // exact id wins
     }

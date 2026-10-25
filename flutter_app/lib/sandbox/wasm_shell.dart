@@ -35,6 +35,7 @@ import 'package:fa/sandbox/wasm_shell_ssh.dart';
 part 'wasm_shell_cat.dart';
 part 'wasm_shell_grep.dart';
 part 'wasm_shell_stages.dart';
+part 'wasm_shell_tier4.dart';
 
 /// Normalized builtin handler of `_builtinRoutes` (#1713 route table).
 typedef _BuiltinRoute =
@@ -372,22 +373,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (_coreutilsApplets.contains(command)) {
       return (module: coreutils, argv: [command]);
     }
-    return switch (command) {
-      'rg' => (module: rg, argv: const ['rg']),
-      'find' => (module: find, argv: const ['find']),
-      'sed' => (module: sed, argv: const ['sed']),
-      'awk' => (module: awk, argv: const ['awk']),
-      'tar' => (module: tar, argv: const ['tar']),
-      'gzip' => (module: gzip, argv: const ['gzip']),
-      'zip' => (module: zip, argv: const ['zip']),
-      'unzip' => (module: zip, argv: const ['zip_util']),
-      // Heavy interpreters compile lazily on first use (issue #640).
-      'python' || 'python3' => (module: python, argv: const ['python']),
-      'qjs' || 'js' => (module: qjs, argv: const ['qjs']),
-      'sqlite3' => (module: sqlite3, argv: const ['sqlite3']),
-      'lua' => (module: lua, argv: const ['lua']),
-      _ => (module: coreutils, argv: [command]),
-    };
+    return _resolveRegistered(command) ?? (module: coreutils, argv: [command]);
   }
 
   /// Whether [command] runs the CPython stage (stdlib extraction and the
@@ -602,40 +588,19 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   }) async {
     final token = options?.cancelToken;
-    if (token != null && token.isCancelled) {
-      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
+    final cancelled = _cancelledJobError(token);
+    if (cancelled != null) {
+      return Err(cancelled);
     }
-    // Issue #919 (review round 3): build the ceiling BEFORE the eager log
-    // open — a bad ceiling used to throw out of _wireJob after the open
-    // succeeded, leaking the RAF fd (no job existed to run closeLog).
-    // Here it degrades to a plain Err.
-    final warn = options?.onJobLogWarning;
-    final JobLogCeiling ceiling;
-    try {
-      ceiling = JobLogCeiling(
-        maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
-        probe: () => diskFreeBytes(io.File(logPath).parent.path),
-        onWarn: warn == null
-            ? null
-            : (message) => warn('background job $id: $message'),
-      );
-    } on ArgumentError catch (error) {
-      return Err(
-        ExecutionError(
-          ExecutionErrorCode.spawnError,
-          'invalid jobLogMaxBytes: ${error.message}',
-          cause: error,
-        ),
-      );
-    }
-    final logOpen = await _openJobLog(logPath);
-    if (logOpen.isErr) return Err(logOpen.errorOrNull!);
+    final prep = await _buildJobLog(id, logPath, options);
+    if (prep.isErr) return Err(prep.errorOrNull!);
+    final (:ceiling, :logFile) = prep.valueOrNull!;
     return Ok(
       _wireJob(
         command,
         id: id,
         logPath: logPath,
-        logFile: logOpen.valueOrNull!,
+        logFile: logFile,
         ceiling: ceiling,
         options: options,
         token: token,
@@ -852,45 +817,21 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     // are visible, then pathname-expand unquoted glob words against the
     // sandbox fs (gh-1393 WS-1: bash-identical globbing — no match keeps
     // the literal word).
-    final stageEnv = _effectiveEnv(options);
-    final cwd = _effectiveCwd(options);
-    final expansion = await expandShellStage(
-      stage,
-      stageEnv,
-      (source) => _scriptRunner.substitute(source, options, depth),
-      expandGlobs: (word) => expandGlobPattern(word, cwd, _globListDir),
-    );
+    final expansion = await _expandStage(stage, options, depth);
     if (expansion.isErr) {
       return Err(expansion.errorOrNull!);
     }
     final expandedStage = expansion.valueOrNull!;
 
     final redirects = collectStageRedirects(expandedStage.redirects);
-    // Resolve input source for this stage. A heredoc/here-string body
-    // (gh-1086) lands in a temp file — stdin flows by sandbox path here —
-    // and outranks a `< file` redirect / pipe input by POSIX last-wins
-    // (the collector already cleared [StageRedirects.stdinFile]).
-    // `< /dev/null` (gh-1393 WS-1) is an empty stream, not a file: since
-    // the null sink no longer materializes `/dev/null`, an empty pipe file
-    // stands in (EOF, never ENOENT, never inherited pipe input).
-    String? input = inputSource;
-    if (redirects.stdinBody != null) {
-      await _writePipeFile(
-        utf8.encode(redirects.stdinBody!),
-        'heredoc_$index',
-        tempFiles,
-        pipeDir,
-      );
-      input = '$pipeDir/pipe_heredoc_$index';
-    } else if (redirects.stdinFile != null &&
-        isNullDevicePath(
-          _resolveSandboxPath(redirects.stdinFile!, _effectiveCwd(options)),
-        )) {
-      await _writePipeFile(const [], 'devnull_$index', tempFiles, pipeDir);
-      input = '$pipeDir/pipe_devnull_$index';
-    } else if (redirects.stdinFile != null) {
-      input = _resolveSandboxPath(redirects.stdinFile!, _effectiveCwd(options));
-    }
+    final input = await _stageInputSource(
+      redirects,
+      inputSource,
+      index,
+      options,
+      tempFiles,
+      pipeDir,
+    );
 
     final result = await _runCommand(
       command: expandedStage.command,
@@ -906,63 +847,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final data = result.valueOrNull!;
     _lastStageExitCode = data.exitCode;
 
-    // fd duplication (issue #1156 AC2/AC2b): `2>&1` folds stderr into
-    // stdout's destination, `>&2`/`1>&2` the reverse. When the destination
-    // is the pipe/capture the bytes merge here; a file destination is
-    // handled by the writers below (POSIX append — one shared open file
-    // description).
-    var outBytes = data.stdout;
-    var errBytes = stripSigpipeNoise(data.stderr);
-    if (redirects.dupStderrIntoStdout && redirects.stdoutFile == null) {
-      outBytes = [...outBytes, ...errBytes];
-      errBytes = const <int>[];
-    } else if (redirects.dupStdoutIntoStderr && redirects.stderrFile == null) {
-      errBytes = [...errBytes, ...outBytes];
-      outBytes = const <int>[];
-    }
-
-    try {
-      await _writeStageStdout(
-        outBytes,
-        errBytes,
-        redirects,
-        index: index,
-        isLast: isLast,
-        options: options,
-        tempFiles: tempFiles,
-        pipeDir: pipeDir,
-      );
-      // WASI guests surface SIGPIPE as stderr noise (issue #337 AC5); it
-      // carries no information the caller can act on, so translate it out.
-      // Only the bare `<tool>: stdout: Broken pipe` shape is stripped - a
-      // python `BrokenPipeError: [Errno 32] Broken pipe` traceback stays.
-      await _storeStageStderr(
-        errBytes,
-        outBytes,
-        redirects,
-        isLast: isLast,
-        options: options,
-      );
-      return Ok(
-        StageResult(
-          stdout: outBytes,
-          stderr: errBytes,
-          exitCode: data.exitCode,
-        ),
-      );
-    } on _RedirectWriteError catch (error) {
-      // Issue #1156 E2: an unwritable redirect target is a normal failed
-      // command (clean sandbox-path stderr + exit 1), never a raw throw.
-      _lastStageExitCode = 1;
-      _lastStderr = (_lastStderr ?? '') + error.message;
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode(error.message),
-          exitCode: 1,
-        ),
-      );
-    }
+    return _finishStage(
+      data: data,
+      redirects: redirects,
+      index: index,
+      isLast: isLast,
+      options: options,
+      tempFiles: tempFiles,
+      pipeDir: pipeDir,
+    );
   }
 
   /// Writes a stage's stdout to its `>`/`>>` redirect target, the output
@@ -1855,23 +1748,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     Stage stage,
   ) async {
     if (stage.args.length >= 2 && stage.args[0] == '-v') {
-      final name = stage.args[1];
-      if (_isCommandAvailable(name)) {
-        return Ok(
-          StageResult(
-            stdout: utf8.encode('/bin/$name\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('command: $name: not found\n'),
-          exitCode: 1,
-        ),
-      );
+      return Ok(await _commandNameResult(stage.args[1]));
     }
     return Ok(
       StageResult(
@@ -1879,6 +1756,23 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         stderr: utf8.encode('command: unsupported usage\n'),
         exitCode: 1,
       ),
+    );
+  }
+
+  /// The `command -v <name>` arm (gh-1848 split): `/bin/<name>` when the
+  /// command is available, a `not found` line with exit 1 otherwise.
+  Future<StageResult> _commandNameResult(String name) async {
+    if (_isCommandAvailable(name)) {
+      return StageResult(
+        stdout: utf8.encode('/bin/$name\n'),
+        stderr: const [],
+        exitCode: 0,
+      );
+    }
+    return StageResult(
+      stdout: const [],
+      stderr: utf8.encode('command: $name: not found\n'),
+      exitCode: 1,
     );
   }
 
@@ -2482,107 +2376,6 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       // Skip unreadable directories.
     }
     return total;
-  }
-
-  Future<Result<StageResult, ExecutionError>> _statBuiltin(
-    Stage stage,
-    ShellExecOptions? options,
-  ) async {
-    String? format;
-    final files = <String>[];
-    for (var i = 0; i < stage.args.length; i++) {
-      final arg = stage.args[i];
-      if (arg == '-c' || arg == '--format') {
-        if (i + 1 >= stage.args.length) {
-          return Ok(
-            StageResult(
-              stdout: const [],
-              stderr: utf8.encode('stat: option requires an argument -- c\n'),
-              exitCode: 1,
-            ),
-          );
-        }
-        format = stage.args[++i];
-      } else if (arg.startsWith('--format=')) {
-        format = arg.substring('--format='.length);
-      } else if (!arg.startsWith('-')) {
-        files.add(arg);
-      }
-    }
-    if (files.isEmpty) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('stat: missing operand\n'),
-          exitCode: 1,
-        ),
-      );
-    }
-
-    final cwd = _effectiveCwd(options);
-    final out = StringBuffer();
-    for (final file in files) {
-      final resolved = _resolveSandboxPath(file, cwd);
-      io.FileStat stat;
-      try {
-        stat = await io.FileStat.stat(_hostPath(resolved));
-      } on Object {
-        return Ok(
-          StageResult(
-            stdout: const [],
-            stderr: utf8.encode(
-              'stat: cannot stat \'$file\': No such file or directory\n',
-            ),
-            exitCode: 1,
-          ),
-        );
-      }
-      if (stat.type == io.FileSystemEntityType.notFound) {
-        return Ok(
-          StageResult(
-            stdout: const [],
-            stderr: utf8.encode(
-              'stat: cannot stat \'$file\': No such file or directory\n',
-            ),
-            exitCode: 1,
-          ),
-        );
-      }
-
-      if (format != null) {
-        final rendered = format
-            .replaceAll('%s', '${stat.size}')
-            .replaceAll('%n', resolved)
-            .replaceAll('%F', _statTypeName(stat.type))
-            .replaceAll('%Y', '${stat.modified.millisecondsSinceEpoch ~/ 1000}')
-            .replaceAll('%y', stat.modified.toIso8601String());
-        out.write('$rendered\n');
-        continue;
-      }
-
-      out
-        ..write('  File: $resolved\n')
-        ..write('  Size: ${stat.size}\n')
-        ..write('  Type: ${_statTypeName(stat.type)}\n')
-        ..write('Modify: ${stat.modified.toIso8601String()}\n')
-        ..write('Change: ${stat.changed.toIso8601String()}\n');
-    }
-    return Ok(
-      StageResult(
-        stdout: utf8.encode(out.toString()),
-        stderr: const [],
-        exitCode: 0,
-      ),
-    );
-  }
-
-  String _statTypeName(io.FileSystemEntityType type) {
-    return switch (type) {
-      io.FileSystemEntityType.file => 'regular file',
-      io.FileSystemEntityType.directory => 'directory',
-      io.FileSystemEntityType.link => 'symbolic link',
-      _ => 'unknown',
-    };
   }
 
   Future<Result<StageResult, ExecutionError>> _tacBuiltin(

@@ -152,69 +152,88 @@ class _DownloadedModelsQuickStartState
 
   Future<void> _scan() async {
     final entries = <_QuickStartEntry>[];
-    if (_webLlm.isAvailable) {
-      for (final preset in webLlmModelPresets) {
-        final info = await _queryCache(() => _webLlm.modelCacheInfo(preset.id));
-        if (info != null && info.cached) {
-          entries.add(
-            _QuickStartEntry(
-              kind: _QuickStartKind.webllm,
-              preset: preset,
-              title: preset.displayName,
-              sizeLabel: preset.sizeLabel,
-              bytes: info.bytes,
-            ),
-          );
-        }
-      }
-    }
-    if (_transformersJs.isAvailable) {
-      for (final preset in transformersJsModelPresets) {
-        final info = await _queryCache(
-          () => _transformersJs.modelCacheInfo(preset.id),
-        );
-        if (info != null && info.cached) {
-          entries.add(
-            _QuickStartEntry(
-              kind: _QuickStartKind.transformersJs,
-              preset: preset,
-              title: preset.displayName,
-              sizeLabel: preset.sizeLabel,
-              bytes: info.bytes,
-            ),
-          );
-        }
-      }
-    }
-    if (_gemma.isAvailable) {
-      try {
-        final installed = await _installedModelsBounded(_gemma);
-        for (final preset in gemmaModelPresets) {
-          final filename = preset.filenameFor(isWeb: _isWeb);
-          GemmaInstalledModel? match;
-          for (final model in installed) {
-            if (model.filename == filename) match = model;
-          }
-          if (match != null) {
-            entries.add(
-              _QuickStartEntry(
-                kind: _QuickStartKind.gemma,
-                preset: preset,
-                title: preset.displayName,
-                sizeLabel: preset.sizeLabelFor(isWeb: _isWeb),
-                bytes: match.sizeBytes,
-              ),
-            );
-          }
-        }
-      } on Object {
-        // A failed repository scan yields no Gemma rows, not an error — the
-        // full connection form below still offers every provider.
-      } finally {
-        _gemmaScanTimer?.cancel();
-      }
-    }
+    await _scanWebLlmEntries(entries);
+    await _scanTransformersJsEntries(entries);
+    await _scanGemmaEntries(entries);
     if (mounted) setState(() => _entries = entries);
+  }
+
+  Future<void> _scanWebLlmEntries(List<_QuickStartEntry> entries) async {
+    if (!_webLlm.isAvailable) return;
+    for (final preset in webLlmModelPresets) {
+      final info = await _queryCache(() => _webLlm.modelCacheInfo(preset.id));
+      if (info != null && info.cached) {
+        entries.add(
+          _QuickStartEntry(
+            kind: _QuickStartKind.webllm,
+            preset: preset,
+            title: preset.displayName,
+            sizeLabel: preset.sizeLabel,
+            bytes: info.bytes,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _scanTransformersJsEntries(
+    List<_QuickStartEntry> entries,
+  ) async {
+    if (!_transformersJs.isAvailable) return;
+    for (final preset in transformersJsModelPresets) {
+      final info = await _queryCache(
+        () => _transformersJs.modelCacheInfo(preset.id),
+      );
+      if (info != null && info.cached) {
+        entries.add(
+          _QuickStartEntry(
+            kind: _QuickStartKind.transformersJs,
+            preset: preset,
+            title: preset.displayName,
+            sizeLabel: preset.sizeLabel,
+            bytes: info.bytes,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _scanGemmaEntries(List<_QuickStartEntry> entries) async {
+    if (!_gemma.isAvailable) return;
+    try {
+      final installed = await _installedModelsBounded(_gemma);
+      for (final preset in gemmaModelPresets) {
+        _scanGemmaPreset(entries, preset, installed);
+      }
+    } on Object {
+      // A failed repository scan yields no Gemma rows, not an error — the
+      // full connection form below still offers every provider.
+    } finally {
+      _gemmaScanTimer?.cancel();
+    }
+  }
+
+  void _scanGemmaPreset(
+    List<_QuickStartEntry> entries,
+    GemmaModelPreset preset,
+    List<GemmaInstalledModel> installed,
+  ) {
+    final filename = preset.filenameFor(isWeb: _isWeb);
+    GemmaInstalledModel? match;
+    for (final model in installed) {
+      if (model.filename == filename) match = model;
+    }
+    if (match != null) {
+      entries.add(
+        _QuickStartEntry(
+          kind: _QuickStartKind.gemma,
+          preset: preset,
+          title: preset.displayName,
+          sizeLabel: preset.sizeLabelFor(isWeb: _isWeb),
+          bytes: match.sizeBytes,
+        ),
+      );
+    }
   }
 
   /// Cache queries are best effort: a blocked storage API hides the row

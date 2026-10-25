@@ -353,47 +353,18 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     // details.offset is the drag feedback's top-left corner; the grab
     // offset captured at drag start recovers the pointer position.
     final fx = _fractionOnTile(targetKey, details.offset + _grabOffset);
-    final bothApps =
-        draggedKey.startsWith('app:') && targetKey.startsWith('app:');
     final center = (fx - 0.5).abs();
     if (LauncherLayoutStore.isFolderKey(targetKey)) {
       // Dropping ON a folder is unambiguous — immediate intent.
-      if (_folderHoverKey != targetKey || _previewOrder != null) {
-        setState(() {
-          _folderHoverKey = targetKey;
-          _previewOrder = null;
-        });
-      }
+      _armFolderIntent(targetKey);
       return;
     }
-    if (bothApps) {
-      if (_folderHoverKey == targetKey) {
-        // Armed: hold until the pointer leaves the wider band (no flicker
-        // at the boundary).
-        if (center <= 0.3) return;
-        setState(() => _folderHoverKey = null);
-      } else if (center <= 0.2) {
-        // Center band: arm folder intent only after a dwell — see dartdoc.
-        if (_folderDwellKey != targetKey) {
-          _cancelFolderDwell();
-          _folderDwellKey = targetKey;
-          _folderDwell = Timer(const Duration(milliseconds: 450), () {
-            if (mounted && _folderDwellKey == targetKey) {
-              setState(() {
-                _folderHoverKey = targetKey;
-                _previewOrder = null;
-              });
-            }
-          });
-        }
-        return;
-      }
-    }
+    if (_hoverFolderIntent(draggedKey, targetKey, center)) return;
     _cancelFolderDwell();
     // Reorder dead zone: once a preview exists, the before/after decision
     // only flips outside fx 0.35..0.65 — dragging a big tile across a slot
     // boundary no longer oscillates the whole grid.
-    if (_previewOrder != null && fx > 0.35 && fx < 0.65) {
+    if (_inReorderDeadZone(fx)) {
       if (_folderHoverKey != null) {
         setState(() => _folderHoverKey = null);
       }
@@ -401,6 +372,64 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     }
     _previewInsert(draggedKey, targetKey, fx);
   }
+
+  /// Arms folder intent for [targetKey] immediately (a drop ON a folder
+  /// tile is unambiguous) and clears any live reorder preview — only
+  /// when the state actually changes, so hover spam doesn't rebuild.
+  void _armFolderIntent(String targetKey) {
+    if (_folderHoverKey != targetKey || _previewOrder != null) {
+      setState(() {
+        _folderHoverKey = targetKey;
+        _previewOrder = null;
+      });
+    }
+  }
+
+  /// The APP-tile half of a hover (both keys are apps): an armed folder
+  /// intent holds until the pointer leaves the wider band, a CENTER-band
+  /// hit arms folder intent after a dwell. Returns true when the hover
+  /// was fully handled — the caller stops without touching the reorder
+  /// preview (gh-1848 split).
+  bool _hoverFolderIntent(String draggedKey, String targetKey, double center) {
+    final bothApps =
+        draggedKey.startsWith('app:') && targetKey.startsWith('app:');
+    if (!bothApps) return false;
+    if (_folderHoverKey == targetKey) {
+      // Armed: hold until the pointer leaves the wider band (no flicker
+      // at the boundary).
+      if (center <= 0.3) return true;
+      setState(() => _folderHoverKey = null);
+      return false;
+    } else if (center <= 0.2) {
+      // Center band: arm folder intent only after a dwell — see dartdoc
+      // on [_onDragHover].
+      if (_folderDwellKey != targetKey) _startFolderDwell(targetKey);
+      return true;
+    }
+    return false;
+  }
+
+  /// Starts the folder-intent dwell timer: 450 ms in the CENTER band
+  /// arms folder intent (iOS semantics — a fast pass or an edge hover
+  /// means REORDER).
+  void _startFolderDwell(String targetKey) {
+    _cancelFolderDwell();
+    _folderDwellKey = targetKey;
+    _folderDwell = Timer(const Duration(milliseconds: 450), () {
+      if (mounted && _folderDwellKey == targetKey) {
+        setState(() {
+          _folderHoverKey = targetKey;
+          _previewOrder = null;
+        });
+      }
+    });
+  }
+
+  /// True while a live preview exists and the pointer sits in the
+  /// before/after dead zone (fx 0.35..0.65): the preview holds instead
+  /// of oscillating the whole grid.
+  bool _inReorderDeadZone(double fx) =>
+      _previewOrder != null && fx > 0.35 && fx < 0.65;
 
   /// Folder-intent dwell timer (see [_onDragHover]).
   Timer? _folderDwell;
@@ -455,10 +484,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     List<String> keys,
     List<TileRect> rects,
   ) {
-    final layout = _layout;
+    if (!_hasBackgroundTarget(keys)) return;
     final box = _gridBox;
-    if (layout == null || box == null || keys.isEmpty) return;
-    final pointer = box.globalToLocal(details.offset + _grabOffset);
+    final pointer = box!.globalToLocal(details.offset + _grabOffset);
     final (targetKey, fx) = launcherGridHoverTarget(
       pointer: pointer,
       keys: keys,
@@ -466,6 +494,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
     _backgroundTarget = (targetKey, fx);
     _previewInsert(details.data, targetKey, fx);
+  }
+
+  /// The background hover needs the layout, a measurable grid box and at
+  /// least one tile rect — before the first layout pass none exist
+  /// (gh-1848 split).
+  bool _hasBackgroundTarget(List<String> keys) {
+    if (_layout == null) return false;
+    if (_gridBox == null) return false;
+    return keys.isNotEmpty;
   }
 
   /// One drop onto the slot of [targetKey]: folder-add on folder tiles,
@@ -480,29 +517,63 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       _clearDragPreview();
       return;
     }
-    if (draggedKey != targetKey && LauncherLayoutStore.isFolderKey(targetKey)) {
-      layout.addToFolder(LauncherLayoutStore.folderIdOf(targetKey), draggedKey);
-      _clearDragPreview();
-      return;
+    if (_dropIntoFolder(layout, draggedKey, targetKey)) return;
+    if (_createFolderFromDrop(layout, draggedKey, targetKey)) return;
+    _applyDropOrder(layout, draggedKey, targetKey, avatarTopLeft);
+  }
+
+  /// A drop ON a folder tile (not the dragged one) adds the dragged app
+  /// to that folder. Returns true when handled (gh-1848 split).
+  bool _dropIntoFolder(
+    LauncherLayoutStore layout,
+    String draggedKey,
+    String targetKey,
+  ) {
+    if (draggedKey == targetKey ||
+        !LauncherLayoutStore.isFolderKey(targetKey)) {
+      return false;
     }
+    layout.addToFolder(LauncherLayoutStore.folderIdOf(targetKey), draggedKey);
+    _clearDragPreview();
+    return true;
+  }
+
+  /// A drop of one app tile onto ANOTHER app tile while the center-band
+  /// hover armed folder intent: creates a folder named after both apps.
+  /// Returns true when handled (gh-1848 split).
+  bool _createFolderFromDrop(
+    LauncherLayoutStore layout,
+    String draggedKey,
+    String targetKey,
+  ) {
     final bothApps =
         draggedKey.startsWith('app:') && targetKey.startsWith('app:');
-    if (draggedKey != targetKey && bothApps && _folderHoverKey == targetKey) {
-      final apps = _appsById;
-      final nameA = apps[draggedKey.substring(4)]?.name;
-      final nameB = apps[targetKey.substring(4)]?.name;
-      final autoName = nameA != null && nameB != null
-          ? '$nameA & $nameB'
-          : context.l10n.launcherFolderDefaultName;
-      AppAnalytics.instance.launcherFolder('created');
-      layout.createFolder(draggedKey, targetKey, name: autoName);
-      _clearDragPreview();
-      return;
+    if (draggedKey == targetKey || !bothApps || _folderHoverKey != targetKey) {
+      return false;
     }
-    // The live preview IS the arrangement the user saw — apply it as-is,
-    // even when the pointer ended over the dragged tile itself (its own
-    // slot rejects drops, which is exactly where a big tile's pointer
-    // usually is). Only without a preview fall back to the slot math.
+    final apps = _appsById;
+    final nameA = apps[draggedKey.substring(4)]?.name;
+    final nameB = apps[targetKey.substring(4)]?.name;
+    final autoName = nameA != null && nameB != null
+        ? '$nameA & $nameB'
+        : context.l10n.launcherFolderDefaultName;
+    AppAnalytics.instance.launcherFolder('created');
+    layout.createFolder(draggedKey, targetKey, name: autoName);
+    _clearDragPreview();
+    return true;
+  }
+
+  /// The reorder tail of a drop (gh-1848 split): the live preview IS the
+  /// arrangement the user saw — apply it as-is, even when the pointer
+  /// ended over the dragged tile itself (its own slot rejects drops,
+  /// which is exactly where a big tile's pointer usually is). Only
+  /// without a preview fall back to the slot math.
+  void _applyDropOrder(
+    LauncherLayoutStore layout,
+    String draggedKey,
+    String targetKey,
+    Offset avatarTopLeft,
+  ) {
     final preview = _previewOrder;
     if (preview != null) {
       _clearDragPreview();
@@ -592,24 +663,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     final overlay = Overlay.of(context).context.findRenderObject();
     if (overlay is! RenderBox) return;
     if (app == null) {
-      // Dead placeholder of a demo app (broken/removed files): the only
-      // sensible action is restoring the reference version.
-      final demoId = key.substring(4);
-      if (!AppsStore.demoAppIds.contains(demoId)) return;
-      final selected = await showMenu<Object?>(
-        context: context,
-        position: RelativeRect.fromRect(
-          globalPosition & const Size(1, 1),
-          Offset.zero & overlay.size,
-        ),
-        items: [
-          PopupMenuItem<Object?>(
-            value: 'restore',
-            child: Text(context.l10n.launcherRestoreDemoApp),
-          ),
-        ],
-      );
-      if (selected == 'restore') unawaited(_restoreDemoApp(demoId));
+      await _restoreDeadDemoMenu(key.substring(4), globalPosition, overlay);
       return;
     }
     final appId = app.id;
@@ -706,6 +760,43 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           ),
       ],
     );
+    _handleTileMenuSelection(key, layout, app, selected);
+  }
+
+  /// The menu of a DEAD placeholder (demo app with broken/removed
+  /// files): the only sensible action is restoring the reference
+  /// version (gh-1848 split).
+  Future<void> _restoreDeadDemoMenu(
+    String demoId,
+    Offset globalPosition,
+    RenderBox overlay,
+  ) async {
+    if (!AppsStore.demoAppIds.contains(demoId)) return;
+    final selected = await showMenu<Object?>(
+      context: context,
+      position: RelativeRect.fromRect(
+        globalPosition & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem<Object?>(
+          value: 'restore',
+          child: Text(context.l10n.launcherRestoreDemoApp),
+        ),
+      ],
+    );
+    if (selected == 'restore') unawaited(_restoreDemoApp(demoId));
+  }
+
+  /// Dispatches the tile menu's pick (gh-1848 split): open the app,
+  /// publish it, reset or apply a tile size, restore a demo, remove.
+  void _handleTileMenuSelection(
+    String key,
+    LauncherLayoutStore layout,
+    JsAppInfo app,
+    Object? selected,
+  ) {
+    final appId = app.id;
     if (selected == 'open') {
       _onTileTap(key);
     } else if (selected == 'publish') {
@@ -777,10 +868,16 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     AppAnalytics.instance.widgetEvent('remove', params: {'id': app.id});
     final removed = await _appsStore.removeWidget(app.id, force: true);
     if (!mounted) return;
+    await _finishRemove(removed, l10n.launcherRestoreDemoAppFailed);
+  }
+
+  /// The removal tail (gh-1848 split): refresh the grid on success; the
+  /// failure snack covers the rare storage error without dying silently.
+  Future<void> _finishRemove(bool removed, String failureMessage) async {
     if (removed) {
       await _reloadApps();
     } else {
-      showFahErrorSnack(context, l10n.launcherRestoreDemoAppFailed);
+      showFahErrorSnack(context, failureMessage);
     }
   }
 
@@ -790,9 +887,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     final restored = await _appsStore.resetDemoApp(appId);
     _logRestore(appId, restored);
     if (!mounted) return;
-    if (restored) await _reloadApps();
+    await _reloadIfRestored(restored);
     if (!mounted) return;
     _showRestoreResult(restored);
+  }
+
+  /// Refreshes the grid after a successful restore; a failed restore
+  /// leaves the grid as-is (gh-1848 split).
+  Future<void> _reloadIfRestored(bool restored) async {
+    if (restored) await _reloadApps();
   }
 
   void _logRestore(String appId, bool restored) {
@@ -828,11 +931,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         source: 'launcher',
       );
     } on Object catch (error) {
-      // Never a silent dead tile: log + show why the app did not open.
-      AppLog.i('apps', 'open app FAILED: ${app.id} — $error');
-      if (!mounted) return;
-      showFahErrorSnack(context, context.l10n.launcherOpenAppError('$error'));
+      _reportLaunchFailure(app, error);
     }
+  }
+
+  /// Never a silent dead tile: log + show why the app did not open.
+  void _reportLaunchFailure(JsAppInfo app, Object error) {
+    AppLog.i('apps', 'open app FAILED: ${app.id} — $error');
+    if (!mounted) return;
+    showFahErrorSnack(context, context.l10n.launcherOpenAppError('$error'));
   }
 
   Future<void> _openSettings() async {

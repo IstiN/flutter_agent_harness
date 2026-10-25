@@ -195,6 +195,14 @@ factual: paths, commands, invariants — no essays.
   estimating the duration against the time-left notices and switching to
   a cheaper satisfying strategy — or, when none fits, the next-best
   partial — rather than gambling the window on a known-infeasible path.
+  Conformance claims are the self-certification blind spot (gh-1834):
+  when the final claim includes parity/conformance to a reference or
+  specification (any domain), a "verified" item counts only with
+  negative and combination checks — refused incompatible options,
+  empty/corrupt inputs, boundary values, must-NOT-work cases — alongside
+  happy paths; a blanket "everything matches" is not verified (prompt
+  step 2.6, conditional: tasks with no conformance claim are
+  unchanged).
   The loop parses
   the final answer's `task-ledger` fenced block (`parseTaskLedger`,
   last block wins) and emits `TaskLedgerEvent`; hosts persist the hidden
@@ -265,7 +273,17 @@ factual: paths, commands, invariants — no essays.
   count, waiting row) hangs off it (issue #562). The model-facing notice
   (steered mid-run or a fresh idle turn; app `sendText` system-notice)
   is skipped when a foreground call consumed the result inline
-  (`suppressSettleNotification`). Headless `fa -p` DRAINS live shell
+  (`suppressSettleNotification`). gh-1835: a foreground bash call still
+  running after `waiting.autoBackgroundSeconds` (default 60; 0 = kill
+  switch) is auto-backgrounded — CONVERTED, never restarted (it already
+  runs as a registry job under the soft-yield path): the pending tool call
+  resolves exactly once with the backgrounded result (`bash_auto_background
+  .dart` text, anchored on the hand-back sentence so the loop's stuck
+  supervisor and budget ladder classify it as a real conversion), the
+  settle notification stays armed, an explicit `timeout` at/below the
+  threshold keeps the classic path while one above carries over as the
+  job's cap, and hosts without `BackgroundShell` keep legacy behavior.
+  Headless `fa -p` DRAINS live shell
   jobs after the final answer like in-flight subagents — the settles
   steer fresh reaction turns, loop (10 rounds) under ONE shared
   wall-clock ceiling `headless.shellJobDrainMs` (default 30 min; 0 =

@@ -1,0 +1,39 @@
+# gh-1832: the REQUIRED release-asset set — the single source of truth.
+#
+# Consumers (all read this one file, never a private copy):
+#   - ci.yml release-provenance "Assert required release assets" step —
+#     the publish-blocking gate: runs scripts/assert_release_assets.sh
+#     <tag> BEFORE the signed-checksums upload and the --draft=false
+#     --latest flip. A missing asset leaves the release a DRAFT (the
+#     previous release stays latest) and fails the release run loudly.
+#   - ci.yml release-asset-smoke job — post-publish: --smoke ranged-GETs
+#     every asset here (red on non-200/206) and --landing probes every
+#     releases/(latest/)?download/ URL the fa1.dev landing page exposes.
+#
+# Scope: exactly the fa-* set a usable release must serve (v1.0.634 is the
+# reference shape — v1.0.635 shipped without fa-extension.zip, gh-1832):
+# `fa update` channels (linux/macos/windows archives), the web SPA and the
+# Chrome extension the landing page links directly.
+#
+# Producers (gh-1847): fa-extension.zip is built by the TAG TRAIN itself
+# (ci.yml build-extension, additive leg) since the once-daily build-macos
+# producer kept stranding tag trains that landed after the daily leg
+# (v1.0.637/v1.0.638, 2026-10-24); the daily build-macos leg survives as
+# the next-tag-draft pre-stager and the n_1012 emergency producer.
+#
+# Deliberately NOT here: SHA256SUMS(.sig) — release-provenance itself
+# produces them after this gate runs; DMGs/zips/latest-mac.yml and the
+# store artifacts (apk/aab/ipa) — they come from the separately-dispatched
+# daily mobile/macOS legs (a flaky self-hosted runner must never hold the
+# CLI/web/extension train hostage) and are clobber-refresher assets, not
+# publish blockers.
+#
+# One literal asset name per line; '#' starts a comment. The gate matches
+# exact names — no globs.
+fa-extension.zip
+fa-linux-arm64.tar.gz
+fa-linux-x64.tar.gz
+fa-macos-arm64.tar.gz
+fa-macos-x64.tar.gz
+fa-web-spa.zip
+fa-windows-x64.zip

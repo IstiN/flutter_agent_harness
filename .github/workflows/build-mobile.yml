@@ -784,13 +784,21 @@ jobs:
       # action keeps the SDK at ~/actions-runner-yoloit/flutter-sdk with a
       # .fah-version marker: subsecond reuse when the pin is unchanged,
       # exactly one download per pin bump, no cache POST step at all.
-      # Still a pinned 3.47.x install — the runner's hardcoded
-      # $HOME/.local/flutter is a stale 3.44.4, below the repo floor
-      # >=3.47.0 (daily-publish #260).
+      # EXACT patch pin (gh-1826; #1431 discipline — the same 3.47.7 the
+      # desktop lane pins): a wildcard spec (3.47.x) re-resolves a freshly
+      # released patch the fa-m5 runners have not cached — run 40066130883
+      # (2026-10-24) resolved 3.47.x to 3.47.8 and the TestFlight leg died
+      # downloading the 2.27 GB SDK inside the bounded curl budget
+      # (600s/attempt, 900s total) with 1.48 GB received. 3.47.7 already
+      # sits in the persistent slot on every fa-m5 runner (zero download).
+      # The runner's hardcoded $HOME/.local/flutter is a stale 3.44.4,
+      # below the repo floor >=3.47.0 (daily-publish #260). Bump the pin
+      # consciously, matching the desktop lane, in the same PR as any
+      # floor reseed.
       - name: Setup Flutter (self-hosted)
         uses: ./.github/actions/setup-flutter-selfhosted
         with:
-          flutter-version: '3.47.x'
+          flutter-version: '3.47.7'
 
       - name: Setup environment (self-hosted)
         run: |
@@ -957,7 +965,16 @@ jobs:
           security default-keychain -s build.keychain
           security unlock-keychain -p "" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
-          security list-keychains -d user -s build.keychain ~/Library/Keychains/login.keychain-db
+          # gh-1866: publish the search list ADDITIVELY, never with a fixed
+          # list — this job runs CONCURRENTLY with the daily cli leg's
+          # build-macos legs on the same host/user (fa-m5 registrations
+          # share one account), and this exact fixed-list write evicted
+          # build-arm64.keychain 75 s after its import on 2026-10-25
+          # (runs 40165497544 → 40165498619, "No certificate for team
+          # YP9HC3USZ3 matching ... found"). The helper unions the current
+          # list and verifies this keychain survived the write.
+          bash scripts/keychain_searchlist_add.sh \
+            "$HOME/Library/Keychains/build.keychain-db"
 
           echo "$IOS_P12_BASE64" | base64 --decode > certificate.p12
           security import certificate.p12 -k build.keychain -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign

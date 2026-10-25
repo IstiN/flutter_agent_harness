@@ -359,6 +359,34 @@ void main() {
     });
   });
 
+  group('decisions facility (gh-1844 review)', () {
+    test('decide registers without any media facility when the bundle is '
+        'provided', () {
+      final services = AgentCoreServices(
+        baseEnv: MemoryExecutionEnv(cwd: '/w'),
+        sandbox: const SandboxServices(),
+        sessionRoot: '/tmp/fah-test',
+        decisions: DecisionsServices(mainApiKey: () => 'k'),
+      );
+      final wired = wireAgentCore(profile: cliProfile, services: services);
+      final names = wired.tools.map((t) => t.name).toSet();
+      // The tool's availability must not depend on the media facility.
+      expect(names, isNot(contains('generate_image')));
+      expect(names, contains('decide'));
+    });
+
+    test('no DecisionsServices surfaces no decide tool', () {
+      final services = AgentCoreServices(
+        baseEnv: MemoryExecutionEnv(cwd: '/w'),
+        sandbox: const SandboxServices(),
+        sessionRoot: '/tmp/fah-test',
+      );
+      final wired = wireAgentCore(profile: cliProfile, services: services);
+      final names = wired.tools.map((t) => t.name).toSet();
+      expect(names, isNot(contains('decide')));
+    });
+  });
+
   group('issue #1322 host seams (telemetry + key resolution)', () {
     test('services.telemetry wires the sink in one field', () async {
       final sink = InMemoryTelemetrySink();
@@ -724,7 +752,11 @@ final _model = Model(
   api: 'openai-completions',
   provider: 'test',
   baseUrl: 'http://localhost',
-  contextWindow: 8192,
+  // gh-1844: the full CLI tool bundle (incl. decide + the multimodal
+  // media tools) projects ~8.2k tokens with the bare 's' system prompt —
+  // this fixture pins wiring/telemetry, not context budgeting, so the
+  // window must stay clear of the tool-schema floor.
+  contextWindow: 65536,
   maxTokens: 1024,
 );
 

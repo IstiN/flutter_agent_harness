@@ -136,7 +136,11 @@ void main() {
       expect(
         job,
         isNotNull,
-        reason: 'the release leg is the only release-time builder left',
+        reason:
+            'the daily leg still pre-stages the next-tag draft and stays '
+            'the n_1012 emergency producer (gh-1847: the tag train gained '
+            'its own ci.yml build-extension leg, this one was NOT '
+            'removed)',
       );
       final steps = ((job!['steps'] as YamlList).map(
         (s) => s.toString(),
@@ -352,10 +356,12 @@ void main() {
       expect(macosBody.split(gateInvocation).length - 1, 1);
       expect(
         ciBody.split(gateInvocation).length - 1,
-        1,
+        2,
         reason:
-            'single invocation per file — drift would resurrect '
-            'the two-legs-green-one-leg-red class',
+            'two call sites in ci.yml, ONE of them enforced per event — '
+            'the PR-time extension-size-gate leg and the gh-1847 tag-train '
+            'release leg; both carry the byte-identical invocation, so '
+            'drift would resurrect the two-legs-green-one-leg-red class',
       );
     });
 

@@ -241,54 +241,70 @@ MockResponse _parseResponse(Object? node, String path) {
   final value = node.values.first;
   switch (key) {
     case 'text':
-      if (value is! String) {
-        throw MockLlmConfigException('${_at(path)}text must be a string');
-      }
-      return MockText(value);
+      return _parseTextResponse(value, path);
     case 'toolCall':
-      if (value is! YamlMap) {
-        throw MockLlmConfigException(
-          '${_at(path)}toolCall must be a mapping with name/arguments',
-        );
-      }
-      final name = _reqString(value, 'name', '$path.toolCall');
-      final arguments = value['arguments'];
-      // A string rides verbatim (the wire format); any other value is
-      // JSON-encoded so fixture authors can write structured arguments.
-      final argumentsJson = arguments is String
-          ? arguments
-          : jsonEncode(arguments ?? {});
-      return MockToolCall(name, argumentsJson);
+      return _parseToolCallResponse(value, path);
     case 'toolResultEcho':
-      if (value is! bool) {
-        throw MockLlmConfigException(
-          '${_at(path)}toolResultEcho must be a boolean',
-        );
-      }
-      return const MockToolResultEcho();
+      return _parseToolResultEchoResponse(value, path);
     case 'error':
-      if (value is! YamlMap) {
-        throw MockLlmConfigException(
-          '${_at(path)}error must be a mapping with status/message',
-        );
-      }
-      final status = _optInt(value, 'status', '$path.error') ?? 500;
-      final message =
-          _optString(value, 'message', '$path.error') ?? 'mock llm error';
-      for (final errorKey in value.keys) {
-        if (errorKey != 'status' && errorKey != 'message') {
-          throw MockLlmConfigException(
-            '${_at('$path.error.$errorKey')}unknown key',
-          );
-        }
-      }
-      return MockError(status: status, message: message);
+      return _parseErrorResponse(value, path);
     default:
       throw MockLlmConfigException(
         '${_at(path)}unknown response kind "$key" (expected text/toolCall/'
         'toolResultEcho/error)',
       );
   }
+}
+
+MockText _parseTextResponse(Object? value, String path) {
+  if (value is! String) {
+    throw MockLlmConfigException('${_at(path)}text must be a string');
+  }
+  return MockText(value);
+}
+
+MockToolCall _parseToolCallResponse(Object? value, String path) {
+  if (value is! YamlMap) {
+    throw MockLlmConfigException(
+      '${_at(path)}toolCall must be a mapping with name/arguments',
+    );
+  }
+  final name = _reqString(value, 'name', '$path.toolCall');
+  final arguments = value['arguments'];
+  // A string rides verbatim (the wire format); any other value is
+  // JSON-encoded so fixture authors can write structured arguments.
+  final argumentsJson = arguments is String
+      ? arguments
+      : jsonEncode(arguments ?? {});
+  return MockToolCall(name, argumentsJson);
+}
+
+MockToolResultEcho _parseToolResultEchoResponse(Object? value, String path) {
+  if (value is! bool) {
+    throw MockLlmConfigException(
+      '${_at(path)}toolResultEcho must be a boolean',
+    );
+  }
+  return const MockToolResultEcho();
+}
+
+MockError _parseErrorResponse(Object? value, String path) {
+  if (value is! YamlMap) {
+    throw MockLlmConfigException(
+      '${_at(path)}error must be a mapping with status/message',
+    );
+  }
+  final status = _optInt(value, 'status', '$path.error') ?? 500;
+  final message =
+      _optString(value, 'message', '$path.error') ?? 'mock llm error';
+  for (final errorKey in value.keys) {
+    if (errorKey != 'status' && errorKey != 'message') {
+      throw MockLlmConfigException(
+        '${_at('$path.error.$errorKey')}unknown key',
+      );
+    }
+  }
+  return MockError(status: status, message: message);
 }
 
 String? _optString(YamlMap map, String key, String path) {

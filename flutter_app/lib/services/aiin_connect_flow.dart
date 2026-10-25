@@ -586,9 +586,8 @@ Future<bool> runAiinMobileConnect({
   final intercepted = authSession ? Completer<String?>() : null;
   // gh-1044 AC2/AC4: the diagnostic bundle behind the visible failure.
   final trace = _AiinFlowTrace();
-  AiinConnectResult? result;
-  try {
-    result = aiinConnectFn != null
+  final result = await _runAiinMobileCliFlow(
+    () async => aiinConnectFn != null
         ? await aiinConnectFn()
         : await runAiinConnectCliFlow(
             onStatus: (message) {
@@ -600,48 +599,14 @@ Future<bool> runAiinMobileConnect({
             // always open the surface — the CLI's headless auto-detect
             // must not gate the flow here (gh-1450).
             shouldOpenBrowserFn: () => true,
-            // The redirect advertises the literal loopback address on
-            // every surface: interception is scheme-based (host plays no
-            // role) and the fallback leg needs an address that reaches
-            // the server's IPv4 loopback bind without resolver ambiguity
-            // (`localhost` may answer `::1`).
-            openBrowserFn: authSession
-                ? (url) async {
-                    final callbackUrl = await _openAiinAuthSession(url);
-                    if (intercepted != null && !intercepted.isCompleted) {
-                      intercepted.complete(callbackUrl);
-                    }
-                    return true;
-                  }
-                : (url) => url_launcher.launchUrl(
-                    Uri.parse(url),
-                    mode: url_launcher.LaunchMode.externalApplication,
-                  ),
-            interceptedCallback: intercepted == null
-                ? null
-                : () => intercepted.future,
-            onCallback: authSession ? _dismissAiinAuthSession : null,
-            // The iOS sheet resolving without a callback is a user
-            // cancel — surface the failure immediately instead of
-            // waiting out the callback timeout; the timeout there only
-            // guards a stalled network, so it stays at the desktop
-            // default. The external Android browser gives no cancel
-            // signal — its 3 minute bound is the abandonment protection.
+            openBrowserFn: _aiinOpenBrowserFn(authSession, intercepted),
+            interceptedCallback: _aiinInterceptedFn(intercepted),
+            onCallback: _aiinOnCallbackFn(authSession),
             cancelWhenOpenSettles: authSession,
-            timeout: Duration(minutes: authSession ? 5 : 3),
-          );
-  } on AiinSurfaceClosedException {
-    // The sheet closed without a callback — user cancel.
-    result = null;
-  } on PlatformException catch (error) {
-    // The auth session could not start (no presentation context).
-    result = null;
-    trace.add('the system sign-in sheet could not start (${error.code})');
-  } on MissingPluginException {
-    // The native channel is missing (stale host).
-    result = null;
-    trace.add('the system sign-in sheet is unavailable on this host');
-  }
+            timeout: _aiinFlowTimeout(authSession),
+          ),
+    trace: trace,
+  );
   if (!context.mounted) return false;
   return _completeAiinConnect(
     context,
@@ -656,6 +621,76 @@ Future<bool> runAiinMobileConnect({
     trace: trace,
   );
 }
+
+/// Runs the CLI loopback flow for mobile, normalizing the cancel and
+/// channel-failure surfaces into a null result: a sheet closed without
+/// a callback is a user cancel; a dead auth session (no presentation
+/// context) and a stale host (missing channel) cancel too, but land in
+/// [trace] so the failure card can say why.
+Future<AiinConnectResult?> _runAiinMobileCliFlow(
+  Future<AiinConnectResult?> Function() flow, {
+  required _AiinFlowTrace trace,
+}) async {
+  try {
+    return await flow();
+  } on AiinSurfaceClosedException {
+    // The sheet closed without a callback — user cancel.
+    return null;
+  } on PlatformException catch (error) {
+    // The auth session could not start (no presentation context).
+    trace.add('the system sign-in sheet could not start (${error.code})');
+    return null;
+  } on MissingPluginException {
+    // The native channel is missing (stale host).
+    trace.add('the system sign-in sheet is unavailable on this host');
+    return null;
+  }
+}
+
+/// The browser-opening leg of the CLI flow: on iOS the system
+/// auth-session sheet, whose completion value feeds the intercepted
+/// completer; elsewhere the external browser, whose redirect reaches
+/// the on-device loopback server directly.
+Future<bool> Function(String url) _aiinOpenBrowserFn(
+  bool authSession,
+  Completer<String?>? intercepted,
+) => authSession
+    ? (url) async {
+        final callbackUrl = await _openAiinAuthSession(url);
+        if (intercepted != null && !intercepted.isCompleted) {
+          intercepted.complete(callbackUrl);
+        }
+        return true;
+      }
+    : (url) => url_launcher.launchUrl(
+        Uri.parse(url),
+        mode: url_launcher.LaunchMode.externalApplication,
+      );
+
+/// The intercepted-callback leg: the sheet's completion value rides the
+/// same completer (see [runAiinMobileConnect]).
+Future<String?> Function()? _aiinInterceptedFn(
+  Completer<String?>? intercepted,
+) {
+  if (intercepted == null) return null;
+  final completer = intercepted;
+  return () => completer.future;
+}
+
+/// The callback leg: dismiss the (already-resolved) sheet when the
+/// callback landed on the flow's loopback server; best-effort by
+/// contract ([_dismissAiinAuthSession]). The external Android browser
+/// navigates the redirect for real and needs no dismissal.
+Future<void> Function()? _aiinOnCallbackFn(bool authSession) =>
+    authSession ? _dismissAiinAuthSession : null;
+
+/// The iOS sheet resolving without a callback is a user cancel —
+/// surface the failure immediately instead of waiting out the callback
+/// timeout; the timeout there only guards a stalled network, so it
+/// stays at the desktop default. The external Android browser gives no
+/// cancel signal — its 3 minute bound is the abandonment protection.
+Duration _aiinFlowTimeout(bool authSession) =>
+    Duration(minutes: authSession ? 5 : 3);
 
 /// The shared post-connect continuation: model pick from the public
 /// `/v1/models`, a named registry entry (the account email), entry-scoped
@@ -682,53 +717,156 @@ Future<bool> _finishAiinConnect(
   // name/model), persist like the connect flow does, and reconnect on the
   // saved model — no model pick, no new entry.
   if (reauthenticateFor case final existing?) {
-    registry.rememberKey(existing.id, key);
-    final keyName = CustomProviderRegistry.keyNameFor(
-      existing.baseUrl,
-      providerName: existing.name,
-    );
-    var persisted = false;
-    final keychain = keychainStore ?? const KeychainStore();
-    if (await keychain.isAvailable()) {
-      persisted = await keychain.set(keyName, key);
-    }
-    if (!persisted) {
-      await sessionKeysStore?.set(keyName, key);
-    }
-    final config = AgentConfig(
-      providerKind: 'aiin',
-      modelId: existing.modelId,
-      baseUrl: existing.baseUrl,
+    return _reauthenticateAiin(
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore,
+      keychainStore: keychainStore,
       apiKey: key,
+      existing: existing,
     );
-    if (service != null) {
-      await service.reconfigure(config, fromProviderAddFlow: true);
-    }
-    await lastConnectionStore.saveFromConfig(config);
-    return true;
   }
-  // ── Pick a model (public /v1/models on api.aiin.by) ─────────────────
+  final modelId = await _pickAiinModel(
+    context,
+    apiKey: key,
+    aiinModelsFetcher: aiinModelsFetcher,
+  );
+  if (modelId == null) return false;
+  await _registerAiinProvider(
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    sessionKeysStore: sessionKeysStore,
+    keychainStore: keychainStore,
+    apiKey: key,
+    accountLabel: accountLabel ?? 'AIIN',
+    modelId: modelId,
+  );
+  return true;
+}
+
+/// Re-auth mode: refreshes the stored key on the existing entry (keeps its
+/// name/model), persists like the connect flow does, and reconnects on the
+/// saved model.
+Future<bool> _reauthenticateAiin({
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required SessionKeysStore? sessionKeysStore,
+  required KeychainStore? keychainStore,
+  required String apiKey,
+  required CustomProvider existing,
+}) async {
+  registry.rememberKey(existing.id, apiKey);
+  final keyName = CustomProviderRegistry.keyNameFor(
+    existing.baseUrl,
+    providerName: existing.name,
+  );
+  await _persistAiinKey(keyName, apiKey, sessionKeysStore, keychainStore);
+  final config = AgentConfig(
+    providerKind: 'aiin',
+    modelId: existing.modelId,
+    baseUrl: existing.baseUrl,
+    apiKey: apiKey,
+  );
+  if (service != null) {
+    await service.reconfigure(config, fromProviderAddFlow: true);
+  }
+  await lastConnectionStore.saveFromConfig(config);
+  return true;
+}
+
+/// The model pick: fetches the public `/v1/models` listing (network
+/// errors leave the picker empty for a manual id), pushes the picker
+/// page, and returns the chosen id — null when the user backed out or the
+/// context unmounted.
+Future<String?> _pickAiinModel(
+  BuildContext context, {
+  required String apiKey,
+  required Future<List<String>> Function(
+    String baseUrl, {
+    required String apiKey,
+  })?
+  aiinModelsFetcher,
+}) async {
   const baseUrl = aiinDefaultChatBaseUrl;
-  List<String> models = const [];
-  try {
-    models = aiinModelsFetcher != null
-        ? await aiinModelsFetcher(baseUrl, apiKey: key)
-        : (await fetchModelsForEndpoint(baseUrl, apiKey: key)).$1;
-  } on Object {
-    // Network error — the picker opens empty and takes a manual id.
-  }
-  if (!context.mounted) return false;
+  final models = await _fetchAiinModels(baseUrl, apiKey, aiinModelsFetcher);
+  if (!context.mounted) return null;
   final modelId = await pushFaPage<String>(
     context,
     _AiinModelPickerPage(models: models),
   );
-  if (modelId == null || modelId.isEmpty) return false;
-  if (!context.mounted) return false;
+  if (modelId == null || modelId.isEmpty) return null;
+  if (!context.mounted) return null;
+  return modelId;
+}
 
-  // ── Save provider + key ─────────────────────────────────────────────
-  // The entry name IS the signed-in account's email (fall back to 'AIIN');
-  // de-duplicated so a second AIIN account gets its own entry.
-  final identity = accountLabel ?? 'AIIN';
+Future<List<String>> _fetchAiinModels(
+  String baseUrl,
+  String apiKey,
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
+) async {
+  try {
+    return aiinModelsFetcher != null
+        ? await aiinModelsFetcher(baseUrl, apiKey: apiKey)
+        : (await fetchModelsForEndpoint(baseUrl, apiKey: apiKey)).$1;
+  } on Object {
+    // Network error — the picker opens empty and takes a manual id.
+    return const [];
+  }
+}
+
+/// Saves the provider + key: a named registry entry (the account email,
+/// de-duplicated so a second AIIN account gets its own entry),
+/// entry-scoped key persistence, and the service reconnect.
+Future<void> _registerAiinProvider({
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required SessionKeysStore? sessionKeysStore,
+  required KeychainStore? keychainStore,
+  required String apiKey,
+  required String accountLabel,
+  required String modelId,
+}) async {
+  const baseUrl = aiinDefaultChatBaseUrl;
+  final name = _uniqueAiinProviderName(registry, accountLabel, baseUrl);
+  final provider = await registry.add(
+    name: name,
+    baseUrl: baseUrl,
+    modelId: modelId,
+  );
+  registry.rememberKey(provider.id, apiKey);
+  // Entry-scoped secure persistence (the CLI contract): Keychain first,
+  // saved-keys store as the portable fallback.
+  final keyName = CustomProviderRegistry.keyNameFor(
+    baseUrl,
+    providerName: name,
+  );
+  await _persistAiinKey(keyName, apiKey, sessionKeysStore, keychainStore);
+
+  // ── Connect ─────────────────────────────────────────────────────────
+  final config = AgentConfig(
+    providerKind: 'aiin',
+    modelId: modelId,
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+  );
+  if (service != null) {
+    await service.reconfigure(config, fromProviderAddFlow: true);
+  }
+  await lastConnectionStore.saveFromConfig(config);
+}
+
+/// The first `identity`, `identity-2`, `identity-3`, … not yet taken by a
+/// provider on the same base URL.
+String _uniqueAiinProviderName(
+  ProviderRegistry registry,
+  String identity,
+  String baseUrl,
+) {
   var name = identity;
   var suffix = 2;
   while (registry.providers.any(
@@ -736,18 +874,17 @@ Future<bool> _finishAiinConnect(
   )) {
     name = '$identity-${suffix++}';
   }
-  final provider = await registry.add(
-    name: name,
-    baseUrl: baseUrl,
-    modelId: modelId,
-  );
-  registry.rememberKey(provider.id, key);
-  // Entry-scoped secure persistence (the CLI contract): Keychain first,
-  // saved-keys store as the portable fallback.
-  final keyName = CustomProviderRegistry.keyNameFor(
-    baseUrl,
-    providerName: name,
-  );
+  return name;
+}
+
+/// Entry-scoped secure persistence (the CLI contract): Keychain first,
+/// saved-keys store as the portable fallback.
+Future<void> _persistAiinKey(
+  String keyName,
+  String key,
+  SessionKeysStore? sessionKeysStore,
+  KeychainStore? keychainStore,
+) async {
   var persisted = false;
   final keychain = keychainStore ?? const KeychainStore();
   if (await keychain.isAvailable()) {
@@ -756,20 +893,6 @@ Future<bool> _finishAiinConnect(
   if (!persisted) {
     await sessionKeysStore?.set(keyName, key);
   }
-
-  // ── Connect ─────────────────────────────────────────────────────────
-  final config = AgentConfig(
-    providerKind: 'aiin',
-    modelId: modelId,
-    baseUrl: baseUrl,
-    apiKey: key,
-  );
-  if (service != null) {
-    await service.reconfigure(config, fromProviderAddFlow: true);
-  }
-  await lastConnectionStore.saveFromConfig(config);
-
-  return true;
 }
 
 /// The app-side default chat endpoint of the AIIN provider (the catalog

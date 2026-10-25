@@ -10,6 +10,7 @@ import 'package:dart_git/dart_git.dart' as dart_git;
 import 'package:dart_git/exceptions.dart';
 import 'package:dart_git/plumbing/commit_iterator.dart';
 import 'package:dart_git/plumbing/git_hash.dart';
+import 'package:dart_git/plumbing/index.dart';
 import 'package:dart_git/plumbing/objects/blob.dart';
 import 'package:dart_git/plumbing/objects/object.dart';
 import 'package:dart_git/plumbing/reference.dart';
@@ -418,7 +419,6 @@ final class GitSandboxCommands {
     );
   }
 
-
   /// PEM body of the SSH key the git SSH transport should present:
   /// `GIT_SSH_KEY` (inline) or `GIT_SSH_KEY_PATH` from [env] then the
   /// process environment, then the sandbox defaults `/.ssh/id_ed25519` and
@@ -431,8 +431,7 @@ final class GitSandboxCommands {
   }) {
     final inline = env?['GIT_SSH_KEY'] ?? platformEnv['GIT_SSH_KEY'];
     if (inline != null && inline.contains('PRIVATE KEY')) return inline;
-    final keyPath =
-        env?['GIT_SSH_KEY_PATH'] ?? platformEnv['GIT_SSH_KEY_PATH'];
+    final keyPath = env?['GIT_SSH_KEY_PATH'] ?? platformEnv['GIT_SSH_KEY_PATH'];
     final candidates = <String>[?keyPath, '/.ssh/id_ed25519', '/.ssh/id_rsa'];
     for (final candidate in candidates) {
       final pem = _pemAt(hostPathOf(candidate));
@@ -502,10 +501,48 @@ final class GitSandboxCommands {
       for (final arg in args.where((a) => !a.startsWith('-'))) {
         repo.add(_resolveGitPath(arg, hostCwd));
       }
+      _canonIndexModes(repo);
       return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
     } catch (e) {
       return _gitError('fatal: $e');
     }
+  }
+
+  /// Rewrites every index entry's mode to git's canonical form (`canon_mode`):
+  /// regular files become 100644 (100755 when any execute bit is set). The
+  /// raw FS mode dart_git records at add time is umask-dependent (e.g. 100666
+  /// under `umask 000`) and must never reach the index or the tree objects.
+  void _canonIndexModes(dart_git.GitRepository repo) {
+    final execAny = int.parse('111', radix: 8);
+    final index = repo.indexStorage.readIndex();
+    index.entries = index.entries.map((e) {
+      final m = e.mode.val;
+      if ((m & 0xF000) != 0x8000) {
+        return e; // symlink / gitlink / dir: already canonical
+      }
+      final canon = (m & execAny) != 0
+          ? GitFileMode.Executable
+          : GitFileMode.Regular;
+      if (e.mode == canon) {
+        return e;
+      }
+      return GitIndexEntry(
+        cTime: e.cTime,
+        mTime: e.mTime,
+        dev: e.dev,
+        ino: e.ino,
+        mode: canon,
+        uid: e.uid,
+        gid: e.gid,
+        fileSize: e.fileSize,
+        hash: e.hash,
+        stage: e.stage,
+        path: e.path,
+        skipWorkTree: e.skipWorkTree,
+        intentToAdd: e.intentToAdd,
+      );
+    }).toList();
+    repo.indexStorage.writeIndex(index);
   }
 
   Result<StageResult, ExecutionError> _gitRm(
@@ -821,7 +858,8 @@ final class GitSandboxCommands {
   static String? resolvePushToken(
     Map<String, String>? env,
     Map<String, String> platformEnv,
-  ) => _firstDefined(env, _pushTokenVars) ??
+  ) =>
+      _firstDefined(env, _pushTokenVars) ??
       _firstDefined(platformEnv, _pushTokenVars);
 
   static String? _firstDefined(Map<String, String>? env, List<String> names) {
@@ -1096,23 +1134,52 @@ final class GitSandboxCommands {
     );
   }
 
+  /// `git fetch [<remote>]`: resolve the remote, run the smart-HTTP fetch
+  /// and render the ref-update report.
+  ///
+  /// gh-1848 tier 3 split: remote resolution ([_gitFetchTarget]), the
+  /// transport exchange ([_gitFetchFrom]) and the stdout report
+  /// ([_gitFetchReport]).
   Future<Result<StageResult, ExecutionError>> _gitFetch(
     dart_git.GitRepository repo,
     List<String> args,
     Map<String, String>? env,
   ) async {
-    final remoteName = args.isEmpty ? 'origin' : args.first;
-    final remote = repo.config.remote(remoteName);
-    if (remote == null) {
-      return _gitError(
-        "fatal: '$remoteName' does not appear to be a git repository",
-      );
-    }
-    final url = remote.url;
+    final (:error, :remoteName, :url) = _gitFetchTarget(repo, args);
+    if (error != null) return _gitError(error);
     if (url.isEmpty) {
       return _gitError('fatal: no URL configured for remote $remoteName');
     }
+    return _gitFetchFrom(repo, url, remoteName, env);
+  }
 
+  /// Resolves the fetch target: the remote name (`origin` when bare) and
+  /// its configured URL. An unknown remote is the fatal error; an empty
+  /// URL (reported separately by the caller) means no URL is configured.
+  ({String? error, String remoteName, String url}) _gitFetchTarget(
+    dart_git.GitRepository repo,
+    List<String> args,
+  ) {
+    final remoteName = args.isEmpty ? 'origin' : args.first;
+    final remote = repo.config.remote(remoteName);
+    if (remote == null) {
+      return (
+        error: "fatal: '$remoteName' does not appear to be a git repository",
+        remoteName: remoteName,
+        url: '',
+      );
+    }
+    return (error: null, remoteName: remoteName, url: remote.url);
+  }
+
+  /// Runs the smart-HTTP fetch of [url] into [remoteName] and renders the
+  /// report. Transport failures surface as `fatal: unable to fetch: …`.
+  Future<Result<StageResult, ExecutionError>> _gitFetchFrom(
+    dart_git.GitRepository repo,
+    String url,
+    String remoteName,
+    Map<String, String>? env,
+  ) async {
     try {
       final moved =
           await GitSmartHttp(
@@ -1120,25 +1187,32 @@ final class GitSandboxCommands {
             transport: _sshTransportFor(url, env),
           ).fetchInto(
             url: url,
-            hostDir: repo.workTree.endsWith('/')
-                ? repo.workTree.substring(0, repo.workTree.length - 1)
-                : repo.workTree,
+            hostDir: stripTrailingSlash(repo.workTree),
             remoteName: remoteName,
           );
-      final lines = <String>['From $url'];
-      for (final branch in moved) {
-        lines.add(' * [new branch] $branch -> $remoteName/$branch');
-      }
-      return Ok(
-        StageResult(
-          stdout: utf8.encode('${lines.join('\n')}\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
+      return Ok(_gitFetchReport(url, remoteName, moved));
     } catch (e) {
       return _gitError('fatal: unable to fetch: $e');
     }
+  }
+
+  /// Renders the `git fetch` stdout report: the `From <url>` banner plus
+  /// one ` * [new branch] <branch> -> <remote>/<branch>` line per moved
+  /// remote ref.
+  StageResult _gitFetchReport(
+    String url,
+    String remoteName,
+    List<String> moved,
+  ) {
+    final lines = <String>['From $url'];
+    for (final branch in moved) {
+      lines.add(' * [new branch] $branch -> $remoteName/$branch');
+    }
+    return StageResult(
+      stdout: utf8.encode('${lines.join('\n')}\n'),
+      stderr: const [],
+      exitCode: 0,
+    );
   }
 
   Future<Result<StageResult, ExecutionError>> _gitPush(
@@ -1161,7 +1235,13 @@ final class GitSandboxCommands {
         'fatal: no URL configured for remote ${targets.remoteName}',
       );
     }
-    return _pushToRemote(repo, targets.remoteName, remote.url, targets.branch!, env);
+    return _pushToRemote(
+      repo,
+      targets.remoteName,
+      remote.url,
+      targets.branch!,
+      env,
+    );
   }
 
   /// Pushes [branch] to the guarded remote URL and updates the local
@@ -1268,60 +1348,84 @@ final class GitSandboxCommands {
     if (args.length < 2) {
       return _gitError('usage: git cat-file (-p|-t) <object>');
     }
-    final flag = args[0];
-    final spec = args[1];
-    try {
-      GitObject? obj;
-      final colonIdx = spec.indexOf(':');
-      if (colonIdx != -1) {
-        final commitish = spec.substring(0, colonIdx);
-        final pathSpec = spec.substring(colonIdx + 1);
-        final commit = _gitResolveCommit(repo, commitish);
-        final tree = repo.objStorage.readTree(commit.treeHash);
-        final entry = repo.objStorage.refSpec(tree, pathSpec);
-        obj = repo.objStorage.read(entry.hash);
-      } else {
-        GitHash hash;
-        if (spec == 'HEAD') {
-          hash = repo.headHash();
-        } else if (repo.branches().contains(spec)) {
-          hash = repo.resolveReferenceName(ReferenceName.branch(spec))!.hash;
-        } else {
-          hash = GitHash(spec);
-        }
-        obj = repo.objStorage.read(hash);
-      }
-      if (obj == null) throw Exception('object not found');
+    return _gitCatFileGuarded(repo, args[0], args[1]);
+  }
 
-      if (flag == '-t') {
-        return Ok(
-          StageResult(
-            stdout: utf8.encode('${obj.formatStr()}\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      if (flag == '-p') {
-        if (obj is GitBlob) {
-          return Ok(
-            StageResult(stdout: obj.blobData, stderr: const [], exitCode: 0),
-          );
-        }
-        return Ok(
-          StageResult(
-            stdout: utf8.encode(
-              '${utf8.decode(obj.serializeData(), allowMalformed: true)}\n',
-            ),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      return _gitError('git cat-file: unsupported flag $flag');
+  /// Runs `git cat-file` over a resolved invocation, mapping any object
+  /// failure to `fatal:`.
+  Result<StageResult, ExecutionError> _gitCatFileGuarded(
+    dart_git.GitRepository repo,
+    String flag,
+    String spec,
+  ) {
+    try {
+      final obj = _gitCatFileObject(repo, spec);
+      if (obj == null) throw Exception('object not found');
+      return _gitCatFileRender(obj, flag);
     } catch (e) {
       return _gitError('fatal: $e');
     }
+  }
+
+  /// Reads the object `git cat-file` targets: a `<commitish>:<path>` spec
+  /// resolves through the commit tree, anything else through the object
+  /// store.
+  GitObject? _gitCatFileObject(dart_git.GitRepository repo, String spec) {
+    final colonIdx = spec.indexOf(':');
+    if (colonIdx != -1) {
+      final commitish = spec.substring(0, colonIdx);
+      final pathSpec = spec.substring(colonIdx + 1);
+      final commit = _gitResolveCommit(repo, commitish);
+      final tree = repo.objStorage.readTree(commit.treeHash);
+      final entry = repo.objStorage.refSpec(tree, pathSpec);
+      return repo.objStorage.read(entry.hash);
+    }
+    return repo.objStorage.read(_gitCatFileHash(repo, spec));
+  }
+
+  /// The hash `git cat-file` resolves [spec] to: HEAD, a branch name, or
+  /// a full object hash.
+  GitHash _gitCatFileHash(dart_git.GitRepository repo, String spec) {
+    if (spec == 'HEAD') {
+      return repo.headHash();
+    } else if (repo.branches().contains(spec)) {
+      return repo.resolveReferenceName(ReferenceName.branch(spec))!.hash;
+    }
+    return GitHash(spec);
+  }
+
+  /// The `-t`/`-p` payload for [obj]: `-t` prints the type name, `-p`
+  /// prints blobs verbatim and other objects as text.
+  Result<StageResult, ExecutionError> _gitCatFileRender(
+    GitObject obj,
+    String flag,
+  ) {
+    if (flag == '-t') {
+      return Ok(
+        StageResult(
+          stdout: utf8.encode('${obj.formatStr()}\n'),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
+    if (flag == '-p') {
+      if (obj is GitBlob) {
+        return Ok(
+          StageResult(stdout: obj.blobData, stderr: const [], exitCode: 0),
+        );
+      }
+      return Ok(
+        StageResult(
+          stdout: utf8.encode(
+            '${utf8.decode(obj.serializeData(), allowMalformed: true)}\n',
+          ),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
+    return _gitError('git cat-file: unsupported flag $flag');
   }
 
   Result<StageResult, ExecutionError> _gitHashObject(

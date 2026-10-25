@@ -189,23 +189,87 @@ final class WebGitCommands {
     }
     final repo = _repo(root);
 
+    final tracked = await _runTrackedCommand(subcommand, repo, args, cwd, env);
+    if (tracked != null) return tracked;
+    return _error("git: '$subcommand' is not a git command.");
+  }
+
+  /// Dispatches a tracked-repo subcommand to its handler, or null when the
+  /// subcommand is unknown.
+  ///
+  /// gh-1848 tier 3 split: the original 15-way command switch, thirded in
+  /// the original case order — index ops, tree/commit ops, then ref/remote
+  /// ops; the case labels are disjoint so the `??` fallback chain cannot
+  /// change a lookup.
+  Future<({String stdout, String stderr, int exitCode})?> _runTrackedCommand(
+    String subcommand,
+    GitRepository repo,
+    List<String> args,
+    String cwd,
+    Map<String, String>? env,
+  ) async {
+    return await _runIndexCommand(subcommand, repo, args, cwd, env) ??
+        await _runTreeCommand(subcommand, repo, args, cwd, env) ??
+        await _runRefCommand(subcommand, repo, args, cwd, env);
+  }
+
+  /// Index-surface subcommands: add/rm stage paths, commit writes the
+  /// index, log/status read it.
+  Future<({String stdout, String stderr, int exitCode})?> _runIndexCommand(
+    String subcommand,
+    GitRepository repo,
+    List<String> args,
+    String cwd,
+    Map<String, String>? env,
+  ) async {
     return switch (subcommand) {
       'add' => _add(repo, args, cwd),
       'rm' => _rm(repo, args, cwd),
       'commit' => _commit(repo, args, env),
       'log' => _log(repo, args),
       'status' => _status(repo),
+      _ => null,
+    };
+  }
+
+  /// Tree-surface subcommands: branch/checkout move refs, show/cat-file
+  /// read objects, hash-object writes one, ls-tree reads the tree.
+  /// (`_checkout` is async; the await mirrors the original async `_run`
+  /// return that auto-awaited it.)
+  Future<({String stdout, String stderr, int exitCode})?> _runTreeCommand(
+    String subcommand,
+    GitRepository repo,
+    List<String> args,
+    String cwd,
+    Map<String, String>? env,
+  ) async {
+    return await switch (subcommand) {
       'branch' => _branch(repo, args),
       'checkout' => _checkout(repo, args, cwd),
       'show' => _show(repo, args),
       'cat-file' => _catFile(repo, args),
       'hash-object' => _hashObject(repo, args, cwd),
+      _ => null,
+    };
+  }
+
+  /// Ref/remote plumbing: ls-tree/write-tree/merge-base/reset plus the
+  /// `remote` family. (`_reset` is async; the await mirrors the original
+  /// async `_run` return that auto-awaited it.)
+  Future<({String stdout, String stderr, int exitCode})?> _runRefCommand(
+    String subcommand,
+    GitRepository repo,
+    List<String> args,
+    String cwd,
+    Map<String, String>? env,
+  ) async {
+    return await switch (subcommand) {
       'ls-tree' => _lsTree(repo, args),
       'write-tree' => _writeTree(repo),
       'merge-base' => _mergeBase(repo, args),
       'reset' => _reset(repo, args),
       'remote' => _remote(repo, args),
-      _ => _error("git: '$subcommand' is not a git command."),
+      _ => null,
     };
   }
 
@@ -326,12 +390,20 @@ final class WebGitCommands {
   ) {
     if (args.isEmpty) return _error('usage: git rm <pathspec>...');
     try {
-      for (final arg in args.where((a) => !a.startsWith('-'))) {
-        repo.rm(_resolvePath(arg, cwd));
-      }
+      _rmPaths(repo, args, cwd);
       return _ok('');
     } catch (e) {
       return _error('fatal: $e');
+    }
+  }
+
+  /// Removes every non-flag pathspec from the index; paths resolve
+  /// against [cwd] like `git add`.
+  ///
+  /// gh-1848 tier 3 split from [_rm] (0%-covered method held to CC3).
+  void _rmPaths(GitRepository repo, List<String> args, String cwd) {
+    for (final arg in args.where((a) => !a.startsWith('-'))) {
+      repo.rm(_resolvePath(arg, cwd));
     }
   }
 
@@ -533,48 +605,82 @@ final class WebGitCommands {
       final modified = <String>[];
       final deleted = <String>[];
 
-      final workTreeFiles = <String>{};
-      final rootDir = _gitFs.directory(repo.workTree);
-      if (rootDir.existsSync()) {
-        for (final entity in rootDir.listSync(recursive: true)) {
-          if (entity.path.startsWith('${repo.workTree}.git')) continue;
-          if (entity is! pf.File) continue;
-          workTreeFiles.add(entity.path.substring(repo.workTree.length));
-        }
-      }
-
-      for (final path in workTreeFiles) {
-        final indexHash = indexPaths[path];
-        if (indexHash == null) {
-          untracked.add(path);
-          continue;
-        }
-        final bytes = _gitFs.file('${repo.workTree}$path').readAsBytesSync();
-        final blob = GitBlob(bytes, null);
-        if (blob.hash != indexHash) modified.add(path);
-      }
+      final workTreeFiles = _scanWorkTreeFiles(repo);
+      _diffWorkTreeAgainstIndex(
+        repo,
+        indexPaths,
+        workTreeFiles,
+        untracked,
+        modified,
+      );
       for (final path in indexPaths.keys) {
         if (!workTreeFiles.contains(path)) deleted.add(path);
       }
 
-      final lines = <String>[];
-      if (untracked.isNotEmpty) {
-        lines.add('Untracked:');
-        lines.addAll(untracked.map((f) => '  $f'));
-      }
-      if (modified.isNotEmpty) {
-        lines.add('Modified:');
-        lines.addAll(modified.map((f) => '  $f'));
-      }
-      if (deleted.isNotEmpty) {
-        lines.add('Deleted:');
-        lines.addAll(deleted.map((f) => '  $f'));
-      }
-      if (lines.isEmpty) lines.add('nothing to commit, working tree clean');
-      return _ok('${lines.join('\n')}\n');
+      return _ok(_renderStatusLines(untracked, modified, deleted));
     } catch (e) {
       return _error('fatal: $e');
     }
+  }
+
+  /// Every file under the worktree, minus the `.git` directory, as
+  /// repo-relative paths (gh-1848 tier-4 split).
+  Set<String> _scanWorkTreeFiles(GitRepository repo) {
+    final workTreeFiles = <String>{};
+    final rootDir = _gitFs.directory(repo.workTree);
+    if (rootDir.existsSync()) {
+      for (final entity in rootDir.listSync(recursive: true)) {
+        if (entity.path.startsWith('${repo.workTree}.git')) continue;
+        if (entity is! pf.File) continue;
+        workTreeFiles.add(entity.path.substring(repo.workTree.length));
+      }
+    }
+    return workTreeFiles;
+  }
+
+  /// Untracked (no index entry) and modified (blob hash differs) fills
+  /// (gh-1848 tier-4 split).
+  void _diffWorkTreeAgainstIndex(
+    GitRepository repo,
+    Map<String, GitHash> indexPaths,
+    Set<String> workTreeFiles,
+    List<String> untracked,
+    List<String> modified,
+  ) {
+    for (final path in workTreeFiles) {
+      final indexHash = indexPaths[path];
+      if (indexHash == null) {
+        untracked.add(path);
+        continue;
+      }
+      final bytes = _gitFs.file('${repo.workTree}$path').readAsBytesSync();
+      final blob = GitBlob(bytes, null);
+      if (blob.hash != indexHash) modified.add(path);
+    }
+  }
+
+  /// The git-status-shaped section lines; the clean-tree line when
+  /// nothing differs (gh-1848 tier-4 split).
+  String _renderStatusLines(
+    List<String> untracked,
+    List<String> modified,
+    List<String> deleted,
+  ) {
+    final lines = <String>[];
+    if (untracked.isNotEmpty) {
+      lines.add('Untracked:');
+      lines.addAll(untracked.map((f) => '  $f'));
+    }
+    if (modified.isNotEmpty) {
+      lines.add('Modified:');
+      lines.addAll(modified.map((f) => '  $f'));
+    }
+    if (deleted.isNotEmpty) {
+      lines.add('Deleted:');
+      lines.addAll(deleted.map((f) => '  $f'));
+    }
+    if (lines.isEmpty) lines.add('nothing to commit, working tree clean');
+    return '${lines.join('\n')}\n';
   }
 
   // ---------------------------------------------------------------------------
@@ -648,6 +754,24 @@ final class WebGitCommands {
     List<String> args,
     String cwd,
   ) async {
+    final (create, positional) = _parseCheckoutArgs(args);
+    if (positional.isEmpty) {
+      return _error('usage: git checkout [-b] <branch>|<path>');
+    }
+    final target = positional.first;
+
+    try {
+      if (create) {
+        return _checkoutCreateBranch(repo, target, positional);
+      }
+      return await _checkoutExisting(repo, target);
+    } catch (e) {
+      return _error('fatal: $e');
+    }
+  }
+
+  /// `-b` and the positionals (gh-1848 tier-4 split).
+  (bool, List<String>) _parseCheckoutArgs(List<String> args) {
     var create = false;
     final positional = <String>[];
     for (final arg in args) {
@@ -657,53 +781,61 @@ final class WebGitCommands {
         positional.add(arg);
       }
     }
-    if (positional.isEmpty) {
-      return _error('usage: git checkout [-b] <branch>|<path>');
+    return (create, positional);
+  }
+
+  /// `git checkout -b <branch> [startPoint]`: create from the start point
+  /// (HEAD default), check its tree out and move HEAD to the branch
+  /// (gh-1848 tier-4 split).
+  Future<({String stdout, String stderr, int exitCode})> _checkoutCreateBranch(
+    GitRepository repo,
+    String target,
+    List<String> positional,
+  ) async {
+    final startPoint = positional.length > 1 ? positional[1] : 'HEAD';
+    final hash = _resolveHash(repo, startPoint);
+    if (hash == null) {
+      return _error(
+        "fatal: '$startPoint' is not a commit and a branch "
+        "'$target' cannot be created from it",
+      );
     }
-    final target = positional.first;
+    repo.createBranch(target, hash: hash);
+    await _checkoutTree(repo, hash);
+    repo.refStorage.saveRef(
+      SymbolicReference(ReferenceName.HEAD(), ReferenceName.branch(target)),
+    );
+    return _ok('Switched to a new branch \'$target\'\n');
+  }
 
-    try {
-      if (create) {
-        final startPoint = positional.length > 1 ? positional[1] : 'HEAD';
-        final hash = _resolveHash(repo, startPoint);
-        if (hash == null) {
-          return _error(
-            "fatal: '$startPoint' is not a commit and a branch "
-            "'$target' cannot be created from it",
-          );
-        }
-        repo.createBranch(target, hash: hash);
-        await _checkoutTree(repo, hash);
-        repo.refStorage.saveRef(
-          SymbolicReference(ReferenceName.HEAD(), ReferenceName.branch(target)),
-        );
-        return _ok('Switched to a new branch \'$target\'\n');
-      }
-
-      if (repo.branches().contains(target)) {
-        final commit = repo.branchCommit(target)!;
-        await _checkoutTree(repo, commit.hash);
-        repo.refStorage.saveRef(
-          SymbolicReference(ReferenceName.HEAD(), ReferenceName.branch(target)),
-        );
-        return _ok('Switched to branch \'$target\'\n');
-      }
-
-      final hash = _resolveHash(repo, target);
-      if (hash != null) {
-        await _checkoutTree(repo, hash);
-        repo.refStorage.saveRef(HashReference(ReferenceName.HEAD(), hash));
-        return _ok(
-          'Note: switching to \'$target\'.\n'
-          'You are in \'detached HEAD\' state.\n'
-          'HEAD is now at ${hash.toOid()}\n',
-        );
-      }
-
-      return _error("error: pathspec '$target' did not match any");
-    } catch (e) {
-      return _error('fatal: $e');
+  /// `git checkout <branch>|<path>` without `-b`: an existing branch
+  /// moves HEAD to it; anything else resolving to a commit detaches
+  /// (gh-1848 tier-4 split).
+  Future<({String stdout, String stderr, int exitCode})> _checkoutExisting(
+    GitRepository repo,
+    String target,
+  ) async {
+    if (repo.branches().contains(target)) {
+      final commit = repo.branchCommit(target)!;
+      await _checkoutTree(repo, commit.hash);
+      repo.refStorage.saveRef(
+        SymbolicReference(ReferenceName.HEAD(), ReferenceName.branch(target)),
+      );
+      return _ok('Switched to branch \'$target\'\n');
     }
+
+    final hash = _resolveHash(repo, target);
+    if (hash != null) {
+      await _checkoutTree(repo, hash);
+      repo.refStorage.saveRef(HashReference(ReferenceName.HEAD(), hash));
+      return _ok(
+        'Note: switching to \'$target\'.\n'
+        'You are in \'detached HEAD\' state.\n'
+        'HEAD is now at ${hash.toOid()}\n',
+      );
+    }
+
+    return _error("error: pathspec '$target' did not match any");
   }
 
   /// Writes [commit]'s tree into the worktree and rebuilds the index.

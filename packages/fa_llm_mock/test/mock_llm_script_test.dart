@@ -151,6 +151,18 @@ scenarios:
       expectConfigError('responses:\n  - text: 42', 'must be a string');
     });
 
+    test('response entry that is not a mapping', () {
+      expectConfigError('responses:\n  - just text', 'expected a mapping');
+    });
+
+    test('toolCall must be a mapping', () {
+      expectConfigError('responses:\n  - toolCall: 42', 'must be a mapping');
+    });
+
+    test('error must be a mapping', () {
+      expectConfigError('responses:\n  - error: oops', 'must be a mapping');
+    });
+
     test('scenario without match', () {
       expectConfigError(
         'scenarios:\n  - responses:\n      - text: hi',

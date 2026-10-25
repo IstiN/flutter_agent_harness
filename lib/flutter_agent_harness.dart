@@ -66,7 +66,13 @@ export 'src/cli/cli_config.dart'
 export 'src/config/app_config_sections.dart';
 export 'src/cli/pi_mode.dart';
 export 'src/cli/links_config.dart'
-    show LinksConfig, defaultAppStoreUrl, defaultSiteUrl, defaultTestFlightUrl;
+    show
+        LinksConfig,
+        defaultApkGodUrl,
+        defaultApkStandardUrl,
+        defaultAppStoreUrl,
+        defaultSiteUrl,
+        defaultTestFlightUrl;
 export 'src/cli/tui_status_line.dart'
     show
         LaidSegment,
@@ -276,6 +282,7 @@ export 'src/tools/availability_gate.dart';
 export 'src/tools/discover_tools_tool.dart';
 export 'src/tools/load_modes.dart';
 export 'src/tools/archive_reader.dart';
+export 'src/tools/bash_auto_background.dart';
 export 'src/tools/builtin_tools.dart';
 export 'src/tools/checkpoint_tool.dart';
 export 'src/tools/dynamic_message_tool.dart';
@@ -322,6 +329,8 @@ export 'src/wire/wire_serve.dart';
 export 'src/web_search/web_search.dart';
 // ── viewport ──
 export 'src/viewport/follow_mode.dart';
+// ── decisions ──
+export 'src/decisions/decisions.dart';
 // ── dap ──
 export 'src/hub/dap_invite_import.dart';
 export 'src/hub/dap_join_bundle.dart';

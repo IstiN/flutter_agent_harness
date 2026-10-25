@@ -102,6 +102,17 @@ jobs:
     timeout-minutes: 150
     strategy:
       fail-fast: false
+      # gh-1852: serialize the matrix. Both legs sign with a per-arch
+      # keychain but mutate the PER-USER GLOBAL keychain search list
+      # (`security default-keychain -s` / `list-keychains -d user -s`) —
+      # and the fa-m5 pool is ONE host under ONE user account, so two
+      # concurrent legs evict each other's keychain from the search list
+      # and the loser's codesign dies with "No certificate for team
+      # YP9HC3USZ3 matching ... found" (6/7 red runs over 48h; autopsy:
+      # run 40117288269, x86_64 evicted arm64's keychain 67s after
+      # import). Pinned by
+      # test/ci_macos_keychain_serialization_guard_test.dart.
+      max-parallel: 1
       matrix:
         arch: [arm64, x86_64]
     permissions:
@@ -569,7 +580,17 @@ jobs:
             # 150-min job ceiling with slack. Pinned by
             # test/ci_macos_signing_window_guard_test.dart.
             security set-keychain-settings -t 14400 -u build-${{ matrix.arch }}.keychain
-            security list-keychains -d user -s build-${{ matrix.arch }}.keychain ~/Library/Keychains/login.keychain-db
+            # gh-1866: publish the search list ADDITIVELY, never with a fixed
+            # list — the daily TestFlight leg's build-mobile iOS job runs
+            # CONCURRENTLY on this host/user (the fa-m5 registrations share
+            # one account) and its fixed-list write evicted this keychain
+            # 75 s after import, killing the release build's first codesign
+            # ("No certificate for team YP9HC3USZ3 matching ... found", run
+            # 40165498619). The helper unions the current list and verifies
+            # this keychain survived the write. gh-1852's max-parallel: 1
+            # above serializes only THIS workflow's own matrix.
+            bash scripts/keychain_searchlist_add.sh \
+              "$HOME/Library/Keychains/build-${{ matrix.arch }}.keychain-db"
 
             echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > certificate.p12
             security import certificate.p12 -k build-${{ matrix.arch }}.keychain \
@@ -914,7 +935,11 @@ jobs:
             security create-keychain -p "$KEYCHAIN_PASS" build-${{ matrix.arch }}.keychain || true
             security default-keychain -s build-${{ matrix.arch }}.keychain
             security unlock-keychain -p "$KEYCHAIN_PASS" build-${{ matrix.arch }}.keychain
-            security list-keychains -d user -s build-${{ matrix.arch }}.keychain ~/Library/Keychains/login.keychain-db
+            # gh-1866: additive re-assert (same rationale as the signing
+            # step) — a fixed-list write here would evict a concurrent
+            # signing job's keychain from the shared user search list.
+            bash scripts/keychain_searchlist_add.sh \
+              "$HOME/Library/Keychains/build-${{ matrix.arch }}.keychain-db"
           fi
           echo "$MACOS_INSTALLER_P12_BASE64" | base64 --decode > installer.p12
           security import installer.p12 -k build-${{ matrix.arch }}.keychain \

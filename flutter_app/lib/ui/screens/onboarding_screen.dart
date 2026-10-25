@@ -709,12 +709,29 @@ Widget _card(
   );
 }
 
-/// Wide-viewport wrapper: centers the page content vertically (and caps its
-/// width) so large screens don't leave the content glued to the top.
-class _WideFit extends StatelessWidget {
-  const _WideFit({required this.child});
+/// Page-viewport wrapper: renders the page body at its natural size inside
+/// a vertically scrollable viewport, capped at [maxWidth] and centered.
+/// Replaces two wrappers: the desktop one (centered, scrollable) and the
+/// phone one, which scaled the whole page down uniformly — squashing the
+/// mockups relative to the chrome around them and shrinking interactive
+/// controls (the Allow/Later pills) to near-unusable sizes on phones
+/// (issue #1824). Tall pages now scroll instead of shrinking.
+class _Fit extends StatelessWidget {
+  const _Fit({
+    required this.child,
+    required this.maxWidth,
+    this.centerVertically = false,
+  });
 
   final Widget child;
+
+  /// Content width cap: 1060 for the desktop layout, the 460px reference
+  /// prototype width for phones.
+  final double maxWidth;
+
+  /// Center short pages vertically in the viewport (desktop); phones keep
+  /// pages top-aligned so page transitions never shift content.
+  final bool centerVertically;
 
   @override
   Widget build(BuildContext context) {
@@ -722,47 +739,16 @@ class _WideFit extends StatelessWidget {
       builder: (context, constraints) {
         return SingleChildScrollView(
           child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            constraints: BoxConstraints(
+              minHeight: centerVertically ? constraints.maxHeight : 0,
+            ),
             child: Center(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1060),
+                  constraints: BoxConstraints(maxWidth: maxWidth),
                   child: child,
                 ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// Narrow-viewport wrapper: scales the whole page content down uniformly so
-/// the full page fits the viewport without scrolling, matching the reference
-/// prototype proportions on phones.
-class _NarrowFit extends StatelessWidget {
-  const _NarrowFit({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final w = constraints.maxWidth > 460 ? 460.0 : constraints.maxWidth;
-        return SizedBox(
-          width: constraints.maxWidth,
-          height: constraints.maxHeight,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.topCenter,
-            child: SizedBox(
-              width: w,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: child,
               ),
             ),
           ),
@@ -798,8 +784,11 @@ class _P1 extends StatelessWidget {
         SizedBox(height: wide ? 28 : 20),
       ],
     );
-    if (!wide) return _NarrowFit(child: body);
-    return _WideFit(child: body);
+    return _Fit(
+      maxWidth: wide ? 1060 : 460,
+      centerVertically: wide,
+      child: body,
+    );
   }
 
   Widget _wideBody(BuildContext context) {
@@ -1397,20 +1386,11 @@ class _P2State extends State<_P2> {
         SizedBox(height: widget.wide ? 28 : 20),
       ],
     );
-    // The full provider list is taller than a phone viewport: scroll it
-    // instead of the scale-to-fit used by the other pages.
-    if (!widget.wide) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: body,
-          ),
-        ),
-      );
-    }
-    return _WideFit(child: body);
+    return _Fit(
+      maxWidth: widget.wide ? 1060 : 460,
+      centerVertically: widget.wide,
+      child: body,
+    );
   }
 
   Widget _cards() {
@@ -1505,9 +1485,17 @@ class _P2State extends State<_P2> {
   }
 
   Future<bool> _connectSso(String presetKey, faui.ProviderRegistry registry) {
+    if (presetKey == 'codemie') return _connectCodemie(registry);
+    return _connectChatGptOrAiin(presetKey, registry);
+  }
+
+  /// The remaining SSO presets (gh-1848 split): ChatGPT → its OAuth
+  /// browser flow, everything else (AIIN) → its connect flow.
+  Future<bool> _connectChatGptOrAiin(
+    String presetKey,
+    faui.ProviderRegistry registry,
+  ) {
     switch (presetKey) {
-      case 'codemie':
-        return _connectCodemie(registry);
       case 'chatgpt':
         return _connectChatGpt(registry);
       default:
@@ -2017,8 +2005,11 @@ class _P3 extends StatelessWidget {
         SizedBox(height: wide ? 28 : 20),
       ],
     );
-    if (!wide) return _NarrowFit(child: body);
-    return _WideFit(child: body);
+    return _Fit(
+      maxWidth: wide ? 1060 : 460,
+      centerVertically: wide,
+      child: body,
+    );
   }
 }
 
@@ -2066,7 +2057,10 @@ class _P4 extends StatelessWidget {
         SizedBox(height: wide ? 28 : 20),
       ],
     );
-    if (!wide) return _NarrowFit(child: body);
-    return _WideFit(child: body);
+    return _Fit(
+      maxWidth: wide ? 1060 : 460,
+      centerVertically: wide,
+      child: body,
+    );
   }
 }

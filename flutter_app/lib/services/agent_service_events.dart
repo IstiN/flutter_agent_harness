@@ -21,67 +21,79 @@ part of 'agent_service.dart';
 /// Never passed to `appendCustomEntry`.
 const String _pendingModelChangeMarker = '_pending_model_change';
 
+/// Per-kind handlers for [AgentServiceEvents._onAgentEvent] (issue
+/// #486). Unmapped kinds — the family's transport-only events — stay
+/// the historic no-op. Top-level because extensions cannot carry
+/// instance fields, and so the one-line adapters never count against
+/// any method's complexity.
+final Map<Type, Future<void> Function(AgentService, AgentEvent, CancelToken)>
+_agentEventHandlers = {
+  AgentStartEvent: (service, _, _) async => service._onAgentStart(),
+  TurnStartEvent: (service, _, _) async => service._onTurnStart(),
+  MessageUpdateEvent: (service, event, _) async => service._onMessageUpdate(
+    (event as MessageUpdateEvent).assistantMessageEvent,
+  ),
+  MessageEndEvent: (service, event, _) async =>
+      service._onMessageEnd((event as MessageEndEvent).message),
+  ToolExecutionStartEvent: (service, event, _) async {
+    final start = event as ToolExecutionStartEvent;
+    return service._onToolExecutionStart(start.toolName, start.args);
+  },
+  ToolExecutionEndEvent: (service, event, _) async {
+    final end = event as ToolExecutionEndEvent;
+    return service._onToolExecutionEnd(
+      toolName: end.toolName,
+      result: end.result,
+      isError: end.isError,
+    );
+  },
+  ModelRequestEvent: (service, event, _) =>
+      service._persistModelRequest(event as ModelRequestEvent),
+  ToolPairingRepairEvent: (service, event, _) async =>
+      service._onToolPairingRepair(event as ToolPairingRepairEvent),
+  AgentEndEvent: (service, _, _) => service._onAgentEnd(),
+};
+
 extension AgentServiceEvents on AgentService {
   Future<void> _onAgentEvent(AgentEvent event, CancelToken cancelToken) async {
     // Any event proves the run is alive — rearm the idle watchdog.
     if (event is! AgentEndEvent) _armIdleWatchdog();
     _trajectory.applyEvent(event);
     // Event-kind dispatch (issue #486): one handler per kind; the sealed
-    // AgentEvent family keeps the cases exact, unknown kinds stay no-ops.
-    switch (event) {
-      case AgentStartEvent():
-        _onAgentStart();
-      case TurnStartEvent():
-        _onTurnStart();
-      case MessageUpdateEvent(:final assistantMessageEvent):
-        _onMessageUpdate(assistantMessageEvent);
-      case MessageEndEvent(:final message):
-        _onMessageEnd(message);
-      case ToolExecutionStartEvent(:final toolName, :final args):
-        _onToolExecutionStart(toolName, args);
-      case ToolExecutionEndEvent(
-        :final toolName,
-        :final result,
-        :final isError,
-      ):
-        _onToolExecutionEnd(
-          toolName: toolName,
-          result: result,
-          isError: isError,
-        );
-      case ModelRequestEvent():
-        await _persistModelRequest(event);
-      case ToolPairingRepairEvent(:final report):
-        // gh-1449 AC6: persist a batch of FIRST-TIME orphan notes as the
-        // hidden `orphan_report` record — the resume seed (see loadSession).
-        // Re-drops of already-reported orphans write nothing.
-        // Redaction note: the keys are canonical tool-call ids/timestamps
-        // (no user content), so unlike the CLI path this write skips the
-        // redaction pipeline on purpose.
-        final session = _session;
-        if (report.notedOrphanKeys.isNotEmpty && session != null) {
-          unawaited(
-            session
-                .appendCustomEntry(
-                  customType: orphanReportRecordType,
-                  data: orphanReportRecordData(report.notedOrphanKeys.toSet()),
-                )
-                // A failed append must stay diagnosable: the batch is never
-                // persisted, and the next open would re-report the orphans
-                // it "already reported" with nothing pointing at the cause.
-                .then(
-                  (_) {},
-                  onError: (Object e) {
-                    AppLog.i('persist', 'orphan_report append failed: $e');
-                  },
-                ),
-          );
-        }
-      case AgentEndEvent():
-        await _onAgentEnd();
-      default:
-        break;
-    }
+    // AgentEvent family keeps the table exact (no subclasses), unknown
+    // kinds stay no-ops.
+    await _agentEventHandlers[event.runtimeType]?.call(
+      this,
+      event,
+      cancelToken,
+    );
+  }
+
+  /// gh-1449 AC6: persist a batch of FIRST-TIME orphan notes as the
+  /// hidden `orphan_report` record — the resume seed (see loadSession).
+  /// Re-drops of already-reported orphans write nothing.
+  /// Redaction note: the keys are canonical tool-call ids/timestamps
+  /// (no user content), so unlike the CLI path this write skips the
+  /// redaction pipeline on purpose.
+  void _onToolPairingRepair(ToolPairingRepairEvent event) {
+    final session = _session;
+    if (event.report.notedOrphanKeys.isEmpty || session == null) return;
+    unawaited(
+      session
+          .appendCustomEntry(
+            customType: orphanReportRecordType,
+            data: orphanReportRecordData(event.report.notedOrphanKeys.toSet()),
+          )
+          // A failed append must stay diagnosable: the batch is never
+          // persisted, and the next open would re-report the orphans it
+          // "already reported" with nothing pointing at the cause.
+          .then(
+            (_) {},
+            onError: (Object e) {
+              AppLog.i('persist', 'orphan_report append failed: $e');
+            },
+          ),
+    );
   }
 
   /// Run start: fresh streaming state, steering ledger and a fresh

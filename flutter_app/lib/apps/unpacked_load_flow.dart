@@ -5,6 +5,7 @@
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/unpacked_loader.dart';
 import 'package:fa/apps/widget_payload_validator.dart';
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -29,29 +30,88 @@ Future<void> loadUnpackedWidget(
   FolderPicker? picker,
   UnpackedWidgetLoader? loader,
 }) async {
+  // A host without a folder picker is an honest no-op — decided BEFORE
+  // anything is constructed (gh-1848 tier-4 review restore).
+  final folderPicker = picker ?? createFolderPicker();
+  if (folderPicker == null) return;
+  final store = _unpackedStore(manager, appsStore, loader);
+  final widgetLoader = _unpackedLoader(manager, store, loader);
+  await _runUnpackedLoad(
+    context,
+    manager: manager,
+    store: store,
+    widgetLoader: widgetLoader,
+    picker: folderPicker,
+  );
+}
+
+/// The env store the load writes into: an injected loader's own store, the
+/// injected store, or a fresh one over the session env.
+AppsStore _unpackedStore(
+  FlutterSessionManager manager,
+  AppsStore? appsStore,
+  UnpackedWidgetLoader? loader,
+) => loader?.appsStore ?? appsStore ?? AppsStore(manager.env);
+
+/// The loader proper: injected, or built over [store].
+UnpackedWidgetLoader _unpackedLoader(
+  FlutterSessionManager manager,
+  AppsStore store,
+  UnpackedWidgetLoader? loader,
+) => loader ?? UnpackedWidgetLoader(env: manager.env, appsStore: store);
+
+/// Pick → validate → confirm → install, stage by stage; every stage
+/// returns on its own early-out so the flow shape matches the docs above.
+Future<void> _runUnpackedLoad(
+  BuildContext context, {
+  required FlutterSessionManager manager,
+  required AppsStore store,
+  required UnpackedWidgetLoader widgetLoader,
+  required FolderPicker? picker,
+}) async {
   final folderPicker = picker ?? createFolderPicker();
   if (folderPicker == null) return; // host cannot pick folders — no-op
-  final store = loader?.appsStore ?? appsStore ?? AppsStore(manager.env);
-  final widgetLoader =
-      loader ?? UnpackedWidgetLoader(env: manager.env, appsStore: store);
+  final picked = await _pickUnpackedFolder(context, folderPicker);
+  if (picked == null || picked.isEmpty || !context.mounted) return;
+  final inspection = await widgetLoader.inspect({
+    for (final file in picked) file.name: file.bytes,
+  });
+  await _unpackedValidateStage(
+    context,
+    manager: manager,
+    store: store,
+    loader: widgetLoader,
+    inspection: inspection,
+  );
+}
 
-  // Pick. Empty = the user cancelled (or the folder vanished before the
-  // read — E1): an honest no-op, no error dialog over nothing.
+/// Picks the folder; null when the pick failed (error snack shown) — the
+/// empty/cancelled case stays an empty list (an honest no-op, E1).
+Future<List<UnpackedPickedFile>?> _pickUnpackedFolder(
+  BuildContext context,
+  FolderPicker folderPicker,
+) async {
   final List<UnpackedPickedFile> picked;
   try {
     picked = await folderPicker.pickFolder();
   } on Object catch (error) {
     AppLog.i('apps', 'unpacked pick failed: $error');
-    if (!context.mounted) return;
+    if (!context.mounted) return null;
     showFahErrorSnack(context, context.l10n.unpackedLoadFailed('$error'));
-    return;
+    return null;
   }
-  if (picked.isEmpty || !context.mounted) return;
+  return picked;
+}
 
-  // Validate (no writes yet).
-  final inspection = await widgetLoader.inspect({
-    for (final file in picked) file.name: file.bytes,
-  });
+/// The shared validator's verdict is a NAMED error dialog (AC2), never a
+/// raw engine string; a valid inspection moves on to the replace check.
+Future<void> _unpackedValidateStage(
+  BuildContext context, {
+  required FlutterSessionManager manager,
+  required AppsStore store,
+  required UnpackedWidgetLoader loader,
+  required UnpackedInspection inspection,
+}) async {
   if (!context.mounted) return;
   if (!inspection.isValid) {
     await showDialog<void>(
@@ -61,48 +121,92 @@ Future<void> loadUnpackedWidget(
     );
     return;
   }
+  await _unpackedConfirmInstallStage(
+    context,
+    manager: manager,
+    store: store,
+    loader: loader,
+    inspection: inspection,
+  );
+}
 
-  // Replace check (AC4/E3): ANY app already occupying the id needs an
-  // explicit confirm — including agent-created apps with no install
-  // record (their code would be overwritten without the recorded hashes
-  // protecting anything), so the warning keys off existence, not off the
-  // install record. The unknown source is labeled honestly (see the
-  // `agentCreatedSource` sentinel) instead of reading as a fresh load.
+/// Replace check (AC4/E3) + capability confirmation + the install itself.
+Future<void> _unpackedConfirmInstallStage(
+  BuildContext context, {
+  required FlutterSessionManager manager,
+  required AppsStore store,
+  required UnpackedWidgetLoader loader,
+  required UnpackedInspection inspection,
+}) async {
   final existing = await store.listApps();
   if (!context.mounted) return;
   final replaced = existing.where((app) => app.id == inspection.id).toList();
   final existingApp = replaced.isEmpty ? null : replaced.first;
-
-  // Capability + replace confirmation (the user grant).
   final l10n = context.l10n;
   final confirmed = await showDialog<bool>(
     context: context,
-    builder: (dialogContext) => UnpackedLoadConfirmDialog(
-      id: inspection.id!,
-      name: inspection.name ?? inspection.id!,
-      version: inspection.version,
-      network: inspection.network,
-      allowedCommands: inspection.allowedCommands,
-      existingSource: existingApp == null
-          ? null
-          : (existingApp.installSource ??
-                UnpackedWidgetLoader.agentCreatedSource),
-      existingVersion: existingApp?.version,
-    ),
+    builder: (dialogContext) =>
+        _unpackedConfirmDialog(inspection, existingApp: existingApp),
   );
   if (confirmed != true || !context.mounted) return;
+  await _unpackedInstallStage(
+    context,
+    manager: manager,
+    loader: loader,
+    inspection: inspection,
+    l10n: l10n,
+  );
+}
 
+/// The capability + replace confirmation dialog: any app already occupying
+/// the id is named (unknown source = the `agentCreatedSource` sentinel), so
+/// the warning keys off existence, not off the install record.
+Widget _unpackedConfirmDialog(
+  UnpackedInspection inspection, {
+  required JsAppInfo? existingApp,
+}) {
+  return UnpackedLoadConfirmDialog(
+    id: inspection.id!,
+    name: inspection.name ?? inspection.id!,
+    version: inspection.version,
+    network: inspection.network,
+    allowedCommands: inspection.allowedCommands,
+    existingSource: existingApp == null
+        ? null
+        : (existingApp.installSource ??
+              UnpackedWidgetLoader.agentCreatedSource),
+    existingVersion: existingApp?.version,
+  );
+}
+
+/// Installs and finishes: UI-side writes do not bump fsRevision themselves
+/// — the grid (and any panel) reloads on this (the catalog sheet's same
+/// contract).
+Future<void> _unpackedInstallStage(
+  BuildContext context, {
+  required FlutterSessionManager manager,
+  required UnpackedWidgetLoader loader,
+  required UnpackedInspection inspection,
+  required AppLocalizations l10n,
+}) async {
   try {
-    await widgetLoader.install(inspection);
+    await loader.install(inspection);
   } on Object catch (error) {
     AppLog.i('apps', 'unpacked install failed: $error');
     if (!context.mounted) return;
     showFahErrorSnack(context, l10n.unpackedLoadFailed('$error'));
     return;
   }
-  // UI-side writes do not bump fsRevision themselves — the grid (and any
-  // panel) reloads on this (the catalog sheet's same contract).
   manager.active?.service.fsRevision.value++;
+  _showUnpackedDone(context, l10n, inspection);
+}
+
+/// The done snack, naming the loaded widget.
+void _showUnpackedDone(
+  BuildContext context,
+  AppLocalizations l10n,
+  UnpackedInspection inspection,
+) {
   if (!context.mounted) return;
   showFahSnack(
     context,

@@ -74,6 +74,15 @@ final class _DiffOp {
 /// RecyclerView-style updates; replaying them over a list of old line
 /// indices yields the old→new line mapping.
 List<_DiffOp> _diffOps(List<String> oldTokens, List<String> newTokens) {
+  final oldToNew = List.filled(oldTokens.length, -1);
+  final newToOld = List.filled(newTokens.length, -1);
+  _diffApplyReplay(oldToNew, newToOld, _diffutilReplay(oldTokens, newTokens));
+  return _diffWalkOps(oldTokens, newTokens, oldToNew, newToOld);
+}
+
+/// Replays the diffutil update stream over the old indices: the result
+/// holds the old line index per current line, or -1 for inserted lines.
+List<int> _diffutilReplay(List<String> oldTokens, List<String> newTokens) {
   final result = diffutil.calculateListDiff<String>(
     oldTokens,
     newTokens,
@@ -84,19 +93,32 @@ List<_DiffOp> _diffOps(List<String> oldTokens, List<String> newTokens) {
   // Remove updates are ever produced.
   final replay = [for (var i = 0; i < oldTokens.length; i++) i];
   for (final update in result.getUpdates(batch: false)) {
-    switch (update) {
-      case diffutil.Insert(:final position, :final count):
-        replay.insertAll(position, List.filled(count, -1));
-      case diffutil.Remove(:final position, :final count):
-        for (var k = 0; k < count; k++) {
-          replay.removeAt(position);
-        }
-      case diffutil.Change() || diffutil.Move():
-        throw StateError('unexpected diff update: $update');
-    }
+    _applyDiffUpdate(replay, update);
   }
-  final oldToNew = List.filled(oldTokens.length, -1);
-  final newToOld = List.filled(newTokens.length, -1);
+  return replay;
+}
+
+/// Applies one diffutil update to the replayed old-index list.
+void _applyDiffUpdate(List<int> replay, diffutil.DiffUpdate update) {
+  switch (update) {
+    case diffutil.Insert(:final position, :final count):
+      replay.insertAll(position, List.filled(count, -1));
+    case diffutil.Remove(:final position, :final count):
+      for (var k = 0; k < count; k++) {
+        replay.removeAt(position);
+      }
+    case diffutil.Change() || diffutil.Move():
+      throw StateError('unexpected diff update: $update');
+  }
+}
+
+/// Applies the replay to fill the old→new and new→old token index maps
+/// (-1 = unmatched).
+void _diffApplyReplay(
+  List<int> oldToNew,
+  List<int> newToOld,
+  List<int> replay,
+) {
   for (var j = 0; j < replay.length; j++) {
     final oldIndex = replay[j];
     if (oldIndex >= 0) {
@@ -104,11 +126,31 @@ List<_DiffOp> _diffOps(List<String> oldTokens, List<String> newTokens) {
       newToOld[j] = oldIndex;
     }
   }
+}
+
+/// Whether the next walk step at old token [i] is a deletion (an old
+/// token with no new-file match).
+bool _isDiffDeleteStep(List<String> oldTokens, List<int> oldToNew, int i) =>
+    i < oldTokens.length && oldToNew[i] == -1;
+
+/// Whether the next walk step at new token [j] is an insertion (a new
+/// token with no old-file match).
+bool _isDiffInsertStep(List<String> newTokens, List<int> newToOld, int j) =>
+    j < newTokens.length && newToOld[j] == -1;
+
+/// Walks both token lists in lockstep, emitting the delete/insert/context
+/// op sequence the unified renderer consumes.
+List<_DiffOp> _diffWalkOps(
+  List<String> oldTokens,
+  List<String> newTokens,
+  List<int> oldToNew,
+  List<int> newToOld,
+) {
   final ops = <_DiffOp>[];
   var i = 0;
   var j = 0;
   while (i < oldTokens.length || j < newTokens.length) {
-    if (i < oldTokens.length && oldToNew[i] == -1) {
+    if (_isDiffDeleteStep(oldTokens, oldToNew, i)) {
       ops.add(
         _DiffOp(
           kind: _DiffOpKind.delete,
@@ -119,7 +161,7 @@ List<_DiffOp> _diffOps(List<String> oldTokens, List<String> newTokens) {
         ),
       );
       i++;
-    } else if (j < newTokens.length && newToOld[j] == -1) {
+    } else if (_isDiffInsertStep(newTokens, newToOld, j)) {
       ops.add(
         _DiffOp(
           kind: _DiffOpKind.insert,
@@ -195,38 +237,77 @@ String _formatUnified(
     final extent = _nextHunkExtent(ops, i, context);
     if (extent == null) break;
     final (hunkStart, hunkEnd) = extent;
-
-    var oldCount = 0;
-    var newCount = 0;
-    for (var k = hunkStart; k < hunkEnd; k++) {
-      if (ops[k].kind != _DiffOpKind.insert) oldCount++;
-      if (ops[k].kind != _DiffOpKind.delete) newCount++;
-    }
-    final first = ops[hunkStart];
-    final oldStart = oldCount == 0 ? first.oldBefore : first.oldBefore + 1;
-    final newStart = newCount == 0 ? first.newBefore : first.newBefore + 1;
-    out.writeln(
-      '@@ -${_hunkRange(oldStart, oldCount)} '
-      '+${_hunkRange(newStart, newCount)} @@',
-    );
-    for (var k = hunkStart; k < hunkEnd; k++) {
-      final op = ops[k];
-      final token = op.kind == _DiffOpKind.insert
-          ? newTokens[op.newIndex]
-          : oldTokens[op.oldIndex];
-      final noNewline = token.endsWith('\x00');
-      final text = noNewline ? token.substring(0, token.length - 1) : token;
-      final prefix = switch (op.kind) {
-        _DiffOpKind.context => ' ',
-        _DiffOpKind.delete => '-',
-        _DiffOpKind.insert => '+',
-      };
-      out.writeln('$prefix$text');
-      if (noNewline) out.writeln('\\ No newline at end of file');
-    }
+    _writeHunkHeader(out, ops, hunkStart, hunkEnd);
+    _writeHunkBody(out, ops, oldTokens, newTokens, hunkStart, hunkEnd);
     i = hunkEnd;
   }
   return out.toString();
+}
+
+/// Counts a hunk's old/new line totals (inserts add only new lines,
+/// deletes only old lines).
+(int, int) _hunkLineCounts(List<_DiffOp> ops, int hunkStart, int hunkEnd) {
+  var oldCount = 0;
+  var newCount = 0;
+  for (var k = hunkStart; k < hunkEnd; k++) {
+    if (ops[k].kind != _DiffOpKind.insert) oldCount++;
+    if (ops[k].kind != _DiffOpKind.delete) newCount++;
+  }
+  return (oldCount, newCount);
+}
+
+/// Writes one hunk's `@@ -a,b +c,d @@` header.
+void _writeHunkHeader(
+  StringBuffer out,
+  List<_DiffOp> ops,
+  int hunkStart,
+  int hunkEnd,
+) {
+  final (oldCount, newCount) = _hunkLineCounts(ops, hunkStart, hunkEnd);
+  final first = ops[hunkStart];
+  final oldStart = oldCount == 0 ? first.oldBefore : first.oldBefore + 1;
+  final newStart = newCount == 0 ? first.newBefore : first.newBefore + 1;
+  out.writeln(
+    '@@ -${_hunkRange(oldStart, oldCount)} '
+    '+${_hunkRange(newStart, newCount)} @@',
+  );
+}
+
+/// Renders one hunk body line: the GNU diff prefix plus the token text
+/// (any NUL no-newline sentinel stripped); the bool reports the sentinel.
+(String, bool) _hunkBodyLine(
+  _DiffOp op,
+  List<String> oldTokens,
+  List<String> newTokens,
+) {
+  final token = op.kind == _DiffOpKind.insert
+      ? newTokens[op.newIndex]
+      : oldTokens[op.oldIndex];
+  final noNewline = token.endsWith('\x00');
+  final text = noNewline ? token.substring(0, token.length - 1) : token;
+  final prefix = switch (op.kind) {
+    _DiffOpKind.context => ' ',
+    _DiffOpKind.delete => '-',
+    _DiffOpKind.insert => '+',
+  };
+  return ('$prefix$text', noNewline);
+}
+
+/// Writes one hunk's body lines with prefixes and
+/// `\ No newline at end of file` markers.
+void _writeHunkBody(
+  StringBuffer out,
+  List<_DiffOp> ops,
+  List<String> oldTokens,
+  List<String> newTokens,
+  int hunkStart,
+  int hunkEnd,
+) {
+  for (var k = hunkStart; k < hunkEnd; k++) {
+    final (line, noNewline) = _hunkBodyLine(ops[k], oldTokens, newTokens);
+    out.writeln(line);
+    if (noNewline) out.writeln('\\ No newline at end of file');
+  }
 }
 
 /// Formats one hunk range; a single-line range omits the count like GNU diff.
@@ -273,6 +354,7 @@ final class _PatchHunk {
   final int newCount;
   final List<String> body;
 }
+
 /// Reads one hunk body of [oldCount]/[newCount] lines from [lines]
 /// starting at [i] (hunk-header already consumed). Returns the body lines
 /// (including `\ No newline` markers) and the index after the body, or
@@ -283,31 +365,64 @@ final class _PatchHunk {
   int oldCount,
   int newCount,
 ) {
+  final counted = _parseCountedHunkBody(lines, i, oldCount, newCount);
+  if (counted == null) return null;
+  return (counted.$1, _absorbNoNewlineMarkers(counted.$1, lines, counted.$2));
+}
+
+/// Whether [kind] starts a valid hunk body line.
+bool _isValidHunkKind(String kind) => kind == ' ' || kind == '-' || kind == '+';
+
+/// Classifies the hunk body line at [i]: ' ', '-', '+', or `\` for a
+/// no-newline marker; null when it is not a valid body line.
+String? _hunkBodyLineKind(List<String> lines, int i) {
+  final kind = lines[i].isEmpty ? ' ' : lines[i][0];
+  if (kind == '\\') return kind;
+  return _isValidHunkKind(kind) ? kind : null;
+}
+
+/// The old/new line counts a hunk body line of [kind] contributes
+/// (context counts both; markers count nothing).
+(int, int) _hunkLineDelta(String kind) {
+  if (kind == '\\') return (0, 0);
+  return (kind == '+' ? 0 : 1, kind == '-' ? 0 : 1);
+}
+
+/// Reads [oldCount]+[newCount] counted hunk body lines from [i]; returns
+/// the body lines and the next index, or null on structural malformation
+/// or truncated input.
+(List<String>, int)? _parseCountedHunkBody(
+  List<String> lines,
+  int i,
+  int oldCount,
+  int newCount,
+) {
   final body = <String>[];
   var oldSeen = 0;
   var newSeen = 0;
   while (oldSeen < oldCount || newSeen < newCount) {
     if (i >= lines.length) return null;
-    final line = lines[i];
-    final kind = line.isEmpty ? ' ' : line[0];
-    if (kind == '\\') {
-      body.add(line);
-      i++;
-      continue;
-    }
-    if (kind != ' ' && kind != '-' && kind != '+') return null;
-    body.add(line);
-    if (kind != '+') oldSeen++;
-    if (kind != '-') newSeen++;
+    final kind = _hunkBodyLineKind(lines, i);
+    if (kind == null) return null;
+    body.add(lines[i]);
+    final delta = _hunkLineDelta(kind);
+    oldSeen += delta.$1;
+    newSeen += delta.$2;
     i++;
   }
+  return (body, i);
+}
+
+/// Advances [i] past trailing `\ No newline at end of file` marker lines,
+/// appending them to [body].
+int _absorbNoNewlineMarkers(List<String> body, List<String> lines, int i) {
   // A `\ No newline at end of file` marker can follow the last counted
   // body line.
   while (i < lines.length && lines[i].startsWith('\\')) {
     body.add(lines[i]);
     i++;
   }
-  return (body, i);
+  return i;
 }
 
 final _hunkHeaderPattern = RegExp(
@@ -383,12 +498,7 @@ String _stripPath(String name, int strip) {
 /// the no-newline markers: a `\ No newline` marker after `-` applies to
 /// the old file, after `+` to the new file, after ` ` (or an empty
 /// previous context) to both.
-({
-  List<String> oldPart,
-  List<String> newPart,
-  bool markerOld,
-  bool markerNew,
-})
+({List<String> oldPart, List<String> newPart, bool markerOld, bool markerNew})
 _hunkParts(List<String> body) {
   final oldPart = <String>[];
   final newPart = <String>[];

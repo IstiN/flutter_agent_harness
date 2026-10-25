@@ -95,17 +95,12 @@ final class MethodChannelHomeApi implements HomeApi {
   @override
   Future<HomeAccessory> readAccessory({required String id}) async {
     _ensureSupported();
-    final Map<dynamic, dynamic>? raw;
-    try {
-      raw = await _channel.invokeMapMethod<dynamic, dynamic>('readAccessory', {
+    final raw = await _guardHomeCall(
+      () => _channel.invokeMapMethod<dynamic, dynamic>('readAccessory', {
         'id': id,
-      });
-    } on MissingPluginException {
-      throw _unsupported();
-    } on PlatformException catch (error) {
-      AppLog.i('home', 'readAccessory failed: ${error.message}');
-      rethrow;
-    }
+      }),
+      'readAccessory',
+    );
     if (raw == null) throw StateError('no accessory with this id');
     return _parseAccessory(raw);
   }
@@ -234,13 +229,26 @@ final class MethodChannelHomeApi implements HomeApi {
     String method, [
     Map<String, Object?> args = const {},
   ]) async {
-    if (!homePlatformSupported) throw _unsupported();
+    _ensureSupported();
+    return _guardHomeCall(
+      () async =>
+          await _channel.invokeListMethod<dynamic>(method, args) ?? const [],
+      method,
+    );
+  }
+
+  /// The channel call wrapped: the unsupported mapping (MissingPlugin →
+  /// unsupported StateError) and failure logging, then rethrow.
+  Future<T> _guardHomeCall<T>(
+    Future<T> Function() call,
+    String logLabel,
+  ) async {
     try {
-      return await _channel.invokeListMethod<dynamic>(method, args) ?? const [];
+      return await call();
     } on MissingPluginException {
       throw _unsupported();
     } on PlatformException catch (error) {
-      AppLog.i('home', '$method failed: ${error.message}');
+      AppLog.i('home', '$logLabel failed: ${error.message}');
       rethrow;
     }
   }

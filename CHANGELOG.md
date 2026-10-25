@@ -115,6 +115,50 @@ block a release again.
   `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
   prompts, plaintext or encrypted privs mixed. Passphrase chain:
   env → per-channel macOS Keychain item → one prompt with save default.
+- feat(gh-1844): media slots never fall back to the main connection
+  implicitly — SDK/CLI, app store, and the JS bridge resolve a slot
+  without an override as UNCONFIGURED with an actionable
+  "configure the slot" error; the main connection serves a slot only via
+  the explicit per-slot `useMainConnection: true` opt-in (YAML
+  `models.slots.<slot>.useMainConnection` / app's "Same as main
+  connection" pick, preserved through `media_models.json`). Image and
+  video generation accept multimodal input (text + reference images:
+  sandbox paths, http(s) URLs, base64) on capability-declaring
+  OpenRouter endpoints (`input_references` + declared/probed
+  `input_modalities` gate; unsupported endpoints fail before any network
+  call); the OpenRouter video job API is a first-class video dialect
+  (submit → poll → mp4). New `decide` tool: structured decisions via
+  OpenRouter's Decisions API (`/v1/systemone`) — bool/choice/score
+  questions with calibrated probabilities, structured error results, no
+  streaming.
+
+- feat(gh-1834): the FinalizeGate contract counts a parity/conformance
+  claim as verified only with negative + combination self-checks — new
+  numbered step 2.6 in `prompts/cli/finalize_gate.md` (refused
+  incompatible/mutually exclusive options, empty/corrupt inputs, boundary
+  values, must-NOT-work cases, alongside happy paths; a blanket
+  "everything matches" is not verified). Universality: abstract example
+  only, no benchmark/task/flag names in the prompt; the step is
+  conditional, so tasks with no conformance claim see no gate change.
+  Ledger/verdict wire formats unchanged; validated end-to-end by the
+  scripted IT-4 replay (real CLI + real bash) whose persisted
+  `task_ledger` carries the rejection rows.
+
+- fix(gh-1832): release v1.0.635 published without `fa-extension.zip` — the
+  landing-page download 404'd. The extension's only producer (the daily
+  `build-macos.yml` build-extension leg) derives its tag as "latest+1 at its
+  own dispatch moment"; on 2026-10-24 the `v1.0.635` tag was cut by
+  `auto_release` before those legs ran, so the extension (and the DMGs)
+  landed on an orphaned `v1.0.636` draft while the tag train published
+  v1.0.635 — every leg green, nothing asserted the published asset set.
+  Now `scripts/release_required_assets.txt` is the single source of truth,
+  `scripts/assert_release_assets.sh` gates the `release-provenance` publish
+  flip (a missing asset leaves the release a draft and fails the run
+  loudly) and a new `release-asset-smoke` ci.yml job post-publish probes
+  every landing-page release link + the full required set (red on non-200).
+  Remediation: the exact-tag `fa-extension.zip` (built from the v1.0.635
+  tree by run 40064876732) was uploaded to release v1.0.635 — the landing
+  link serves 200 again.
 
 - fix(gh-1820): the arm64 DMG leg's stale size floor is reseeded onto the
   shipped v1.0.634 shape — run 4004758753 (post-#1815 SPM-lane adoption)

@@ -105,11 +105,23 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   /// A showcase (public channel) is read-only for regular members — only
   /// the owner/admins post (the rail's Showcases section).
   bool _isReadOnlyShowcase(NetworkSession session, String channelId) {
+    final channel = _lastChannel(session, channelId);
+    if (channel == null || !channel.isPublic) return false;
+    return _regularMember(session);
+  }
+
+  /// The channel row for [channelId]; ids are unique per session but the
+  /// scan keeps the LAST match, exactly like the lookup it replaces.
+  Channel? _lastChannel(NetworkSession session, String channelId) {
     Channel? channel;
     for (final c in session.channels) {
       if (c.id == channelId) channel = c;
     }
-    if (channel == null || !channel.isPublic) return false;
+    return channel;
+  }
+
+  /// True unless this wallet's membership is owner/admin.
+  bool _regularMember(NetworkSession session) {
     final memberClass = widget
         .manager
         .wallet

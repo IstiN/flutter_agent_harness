@@ -130,11 +130,19 @@ void _exchangeOpenRouterWebRedirect(SessionKeysStore sessionKeys) {
   if (!kIsWeb) return;
   WidgetsBinding.instance.addPostFrameCallback((_) async {
     final key = await completeOpenRouterOAuthFromRedirect();
-    if (key != null && key.isNotEmpty) {
-      await sessionKeys.set('OPENROUTER_API_KEY', key);
-      debugPrint('[Fa] OpenRouter key saved from redirect');
-    }
+    await _saveOpenRouterRedirectKey(sessionKeys, key);
   });
+}
+
+/// Persists a redirect-carried key; blank/absent redirects are ignored
+/// (gh-1848 split).
+Future<void> _saveOpenRouterRedirectKey(
+  SessionKeysStore sessionKeys,
+  String? key,
+) async {
+  if (key == null || key.isEmpty) return;
+  await sessionKeys.set('OPENROUTER_API_KEY', key);
+  debugPrint('[Fa] OpenRouter key saved from redirect');
 }
 
 class MyApp extends StatelessWidget {
@@ -239,12 +247,20 @@ class MyApp extends StatelessWidget {
       ThemeController.inMemory();
   @override
   Widget build(BuildContext context) {
-    final theme = themeController ?? _fallbackThemeController;
+    final theme = _resolvedThemeController;
+    Widget child = _themeListenable(theme);
+    return _wrapScopes(theme, child);
+  }
+
+  /// The controller this [MyApp] renders with: the injected one, or the
+  /// shared in-memory fallback (tests).
+  ThemeController get _resolvedThemeController =>
+      themeController ?? _fallbackThemeController;
+
+  /// The theme/branding reactive subtree (the [MaterialApp] inside).
+  Widget _themeListenable(ThemeController theme) {
     final packs = themePackStore;
-    final sessionKeys = sessionKeysStore;
-    final mediaModels = mediaModelsStore;
-    final onDeviceConfig = onDeviceConfigStore;
-    Widget child = ListenableBuilder(
+    return ListenableBuilder(
       listenable: packs == null ? theme : Listenable.merge([theme, packs]),
       builder: (context, _) {
         // The active theme pack (null → stock look). Stale ids (pack
@@ -252,67 +268,86 @@ class MyApp extends StatelessWidget {
         final uiTheme = packs?.byId(theme.packId)?.spec.toFaUiTheme();
         return FaUiThemeProvider(
           data: uiTheme ?? const FaUiTheme(),
-          child: MaterialApp(
-            title: 'Fa',
-            theme: buildFahThemeLight(uiTheme: uiTheme),
-            darkTheme: buildFahTheme(uiTheme: uiTheme),
-            themeMode: theme.themeMode,
-            localizationsDelegates: AppLocalizations.localizationsDelegates,
-            supportedLocales: AppLocalizations.supportedLocales,
-            // Some embedded browsers (CI containers, stripped webviews)
-            // report an EMPTY navigator.language; resolving through intl
-            // then throws "Incorrect locale information provided" and the
-            // app never boots. Fall back to English for a bogus device
-            // locale.
-            localeResolutionCallback: (deviceLocale, supported) =>
-                resolveAppLocale(deviceLocale),
-            navigatorObservers: analytics != null
-                ? [FirebaseAnalyticsObserver(analytics: analytics!)]
-                : const <NavigatorObserver>[],
-            // macOS desktop: the unified titlebar's traffic lights float
-            // over Flutter content (fullSizeContentView). The content fills
-            // the ENTIRE window — each screen handles its own
-            // traffic-light clearance. A transparent drag strip overlays
-            // the top so the window can still be moved.
-            builder: (context, navigatorChild) {
-              if (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) {
-                return navigatorChild ?? const SizedBox.shrink();
-              }
-              return Stack(
-                children: [
-                  Positioned.fill(
-                    child: navigatorChild ?? const SizedBox.shrink(),
-                  ),
-                  // Transparent drag strip for window movement.
-                  const Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    height: 28,
-                    child: _MacOSDragStrip(),
-                  ),
-                ],
-              );
-            },
-            home: BootstrapScreen(
-              env: env,
-              registry: registry,
-              lastConnectionStore: lastConnectionStore,
-              onboardingStore: onboardingStore,
-              skillsAccessStore: skillsAccessStore,
-              sessionKeysStore: sessionKeys,
-              taskModelsStore: taskModelsStore,
-              webLlmEngine: webLlmEngine,
-              gemmaEngine: gemmaEngine,
-              transformersJsEngine: transformersJsEngine,
-              networkMode: networkMode,
-              networkSessions: networkSessions,
-            ),
-          ),
+          child: _materialApp(theme, uiTheme),
         );
       },
     );
+  }
+
+  Widget _materialApp(ThemeController theme, FaUiTheme? uiTheme) {
+    return MaterialApp(
+      title: 'Fa',
+      theme: buildFahThemeLight(uiTheme: uiTheme),
+      darkTheme: buildFahTheme(uiTheme: uiTheme),
+      themeMode: theme.themeMode,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      // Some embedded browsers (CI containers, stripped webviews)
+      // report an EMPTY navigator.language; resolving through intl
+      // then throws "Incorrect locale information provided" and the
+      // app never boots. Fall back to English for a bogus device
+      // locale.
+      localeResolutionCallback: (deviceLocale, supported) =>
+          resolveAppLocale(deviceLocale),
+      navigatorObservers: analytics != null
+          ? [FirebaseAnalyticsObserver(analytics: analytics!)]
+          : const <NavigatorObserver>[],
+      // macOS desktop: the unified titlebar's traffic lights float
+      // over Flutter content (fullSizeContentView). The content fills
+      // the ENTIRE window — each screen handles its own
+      // traffic-light clearance. A transparent drag strip overlays
+      // the top so the window can still be moved.
+      builder: _navigatorBuilder,
+      home: BootstrapScreen(
+        env: env,
+        registry: registry,
+        lastConnectionStore: lastConnectionStore,
+        onboardingStore: onboardingStore,
+        skillsAccessStore: skillsAccessStore,
+        sessionKeysStore: sessionKeysStore,
+        taskModelsStore: taskModelsStore,
+        webLlmEngine: webLlmEngine,
+        gemmaEngine: gemmaEngine,
+        transformersJsEngine: transformersJsEngine,
+        networkMode: networkMode,
+        networkSessions: networkSessions,
+      ),
+    );
+  }
+
+  Widget _navigatorBuilder(BuildContext context, Widget? navigatorChild) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) {
+      return _plainNavigatorChild(navigatorChild);
+    }
+    return Stack(
+      children: [
+        Positioned.fill(child: _plainNavigatorChild(navigatorChild)),
+        // Transparent drag strip for window movement.
+        const Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 28,
+          child: _MacOSDragStrip(),
+        ),
+      ],
+    );
+  }
+
+  Widget _plainNavigatorChild(Widget? navigatorChild) =>
+      navigatorChild ?? const SizedBox.shrink();
+
+  /// The scope wrappers over the optional stores: every present store gets
+  /// its InheritedWidget down the tree.
+  Widget _wrapScopes(ThemeController theme, Widget child) {
     child = FahThemeScope(controller: theme, child: child);
+    return _wrapPreviewScopes(_wrapModelScopes(_wrapCoreScopes(child)));
+  }
+
+  Widget _wrapCoreScopes(Widget child) {
+    final packs = themePackStore;
+    final sessionKeys = sessionKeysStore;
+    final onDeviceConfig = onDeviceConfigStore;
     if (packs != null) {
       child = ThemePackScope(store: packs, child: child);
     }
@@ -322,18 +357,27 @@ class MyApp extends StatelessWidget {
     if (onDeviceConfig != null) {
       child = OnDeviceConfigScope(store: onDeviceConfig, child: child);
     }
+    return child;
+  }
+
+  Widget _wrapModelScopes(Widget child) {
+    final mediaModels = mediaModelsStore;
+    final taskModels = taskModelsStore;
     if (mediaModels != null) {
       child = MediaModelsScope(store: mediaModels, child: child);
     }
-    final taskModels = taskModelsStore;
     if (taskModels != null) {
       child = TaskModelsScope(store: taskModels, child: child);
     }
+    return child;
+  }
+
+  Widget _wrapPreviewScopes(Widget child) {
     final chatText = chatTextStore;
+    final imagePreviews = imagePreviewStore;
     if (chatText != null) {
       child = ChatTextScope(store: chatText, child: child);
     }
-    final imagePreviews = imagePreviewStore;
     if (imagePreviews != null) {
       child = ImagePreviewScope(store: imagePreviews, child: child);
     }

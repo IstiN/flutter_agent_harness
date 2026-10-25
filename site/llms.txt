@@ -19,7 +19,10 @@
   https://apps.apple.com/us/app/fa-ai-agent/id6793815163.
   Free-forever public TestFlight beta:
   https://testflight.apple.com/join/En1eC9UK. Store frames page:
-  https://fa1.dev/app-store/. Android: coming soon.
+  https://fa1.dev/app-store/. Android: direct APKs (god and standard
+  modes) from GitHub Releases (v1.0.636):
+  https://github.com/IstiN/flutter_agent_harness/releases/download/v1.0.636/app-god-release.apk
+  https://github.com/IstiN/flutter_agent_harness/releases/download/v1.0.636/app-store-release.apk
 - CLI (macOS, Windows, Linux; requires the Dart SDK, bundled with Flutter):
   `curl -fsSL "https://fa1.dev/install.sh" | sh`
   or `dart pub global activate flutter_agent_harness`. Both provide the `fah`
@@ -109,6 +112,17 @@
 - [GitHub repository](https://github.com/IstiN/flutter_agent_harness)
 - [pub.dev package](https://pub.dev/packages/flutter_agent_harness)
 - [Issue tracker](https://github.com/IstiN/flutter_agent_harness/issues)
+
+## Benchmarks
+
+- [ProgramBench results](https://fa1.dev/programbench.html): Fa's
+  self-reported results on
+  [facebookresearch/ProgramBench](https://github.com/facebookresearch/ProgramBench)
+  (rebuild a complete codebase from a compiled binary + its docs) —
+  pass@1 score per instance, cost, API calls, plus links to every run
+  and its analysis artifacts (trajectories, eval logs). Smoke-mode rows
+  are pipeline proofs, not leaderboard rows; nothing is auto-submitted
+  to the official registry.
 
 ## Key facts
 

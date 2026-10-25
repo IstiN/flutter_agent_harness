@@ -89,6 +89,7 @@ import '../task/subagent_tools.dart' show subagentMonitoringTools;
 import '../task/task_tool.dart' show TaskToolConfig, taskTool;
 import '../telemetry/agent_telemetry.dart';
 import '../tools/ask_tool.dart';
+import '../tools/bash_auto_background.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/generate_image.dart';
 import '../tools/generate_video.dart';
@@ -99,6 +100,7 @@ import '../tools/request_secret_tool.dart';
 import '../tools/shell_jobs.dart';
 import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
+import '../tools/decide_tool.dart';
 import '../web_search/web_search_tool.dart';
 import 'host_capability_profile.dart';
 import 'host_extension_api.dart';
@@ -141,6 +143,21 @@ final class MediaToolServices {
     this.modelsConfig,
     this.resolveKey,
   });
+}
+
+/// The structured-decisions facility (gh-1844, review thread): the
+/// `decide` tool has nothing to do with media — it only needs the live
+/// main-connection accessors and gates on the main provider kind itself
+/// before any network call. Its own bundle means a host that wires no
+/// [MediaToolServices] still surfaces `decide` when it provides this
+/// facility (matching `agent_cli_tools.dart`, which declares `decide`
+/// unconditionally).
+final class DecisionsServices {
+  /// The live main API key — resolved per call so runtime `/provider`
+  /// switches apply to decisions calls exactly as to chat calls.
+  final String Function() mainApiKey;
+
+  const DecisionsServices({required this.mainApiKey});
 }
 
 /// The subagent/task complex the builder assembles when the profile wires
@@ -195,6 +212,11 @@ final class SubagentServices {
   /// `agent.misuseBreaker` covers children too (issue #862).
   final bool misuseBreaker;
 
+  /// Pre-persistence redaction gate for subagent deliverable artifacts
+  /// (issue #1829, I3): the host's redaction pipeline applied to report
+  /// text before it lands in the session output store. Null = no pipeline.
+  final String Function(String text)? deliverableRedactor;
+
   /// Real JSONL child sessions, created at child COMPLETION (fast
   /// register keeps the steering race away; the transcript lands when the
   /// child finishes).
@@ -220,6 +242,7 @@ final class SubagentServices {
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
+    this.deliverableRedactor,
     this.childSessionFactory,
     this.sessionIoRetry,
   });
@@ -288,6 +311,7 @@ final class AgentCoreServices {
   final InspectImageConfig? vision;
   final TranscribeAudioConfig? transcribe;
   final MediaToolServices? media;
+  final DecisionsServices? decisions;
   final BrowserController? browserController;
 
   /// The browser screenshot saver. The builder hands it the SAME
@@ -390,6 +414,15 @@ final class AgentCoreServices {
   /// pipeline masks it in transcripts (review 5456649624).
   final Set<String> Function()? approvedSecretLiterals;
 
+  /// The gh-1835 auto-background liveness threshold for the bash tool: a
+  /// foreground call still running after this long is converted (never
+  /// restarted) to a background shell job, the pending tool call resolves
+  /// with the backgrounded result, and the model decides wait/watch/cancel.
+  /// `Duration.zero` is the kill switch (legacy foreground behavior). The
+  /// CLI threads `waiting.autoBackgroundSeconds` here; the default (60s)
+  /// keeps hosts that do not model the key — the app — at parity.
+  final Duration shellAutoBackgroundAfter;
+
   const AgentCoreServices({
     required this.baseEnv,
     this.sessionEnvVars,
@@ -413,6 +446,7 @@ final class AgentCoreServices {
     this.vision,
     this.transcribe,
     this.media,
+    this.decisions,
     this.browserController,
     this.saveBrowserScreenshot,
     this.extensions = const [],
@@ -426,6 +460,9 @@ final class AgentCoreServices {
     this.sessionCwd,
     this.redactionConfig,
     this.approvedSecretLiterals,
+    this.shellAutoBackgroundAfter = const Duration(
+      seconds: defaultShellAutoBackgroundSeconds,
+    ),
     this.telemetry,
     this.keyResolver,
     this.onKeySlotDrift,
@@ -724,6 +761,7 @@ List<AgentTool> _buildCoreTools({
       onPasswordPrompt: services.onPasswordPrompt,
       redactionConfig: services.redactionConfig,
       approvedSecretLiterals: services.approvedSecretLiterals,
+      shellAutoBackgroundAfter: services.shellAutoBackgroundAfter,
     ),
     ...memoryTools(services.memory, onChanged: services.onMemoryChanged),
     ...?services.scheduledMessages == null
@@ -780,6 +818,20 @@ List<AgentTool> _buildCoreTools({
               mainModelId: () => currentAgent()!.state.model.id,
               mainApiKey: media.mainApiKey,
               resolveKey: media.resolveKey,
+            ),
+          ],
+    // gh-1844: structured decisions via OpenRouter's Decisions API —
+    // rides the main connection when (and only when) the main provider
+    // is OpenRouter (the tool gates with an actionable error otherwise,
+    // before any network call). Its own facility bundle (review): the
+    // tool's availability must not depend on the media facility.
+    ...?services.decisions == null
+        ? null
+        : [
+            decideTool(
+              mainBaseUrl: () => currentAgent()!.state.model.baseUrl,
+              mainProviderKind: () => currentAgent()!.state.model.provider,
+              mainApiKey: services.decisions!.mainApiKey,
             ),
           ],
     ...?browser,
@@ -951,6 +1003,7 @@ _WiredTaskSurface? _wireTaskSurface({
     contextWindowRegistry: bundle.contextWindowRegistry,
     contextWindowCap: bundle.contextWindowCap,
     misuseBreaker: bundle.misuseBreaker,
+    deliverableRedactor: bundle.deliverableRedactor,
     childSessionFactory: bundle.childSessionFactory,
     // Issue #222: the resume path reopens a child's JSONL session by
     // path so task_resume/task_send continue the child in the SAME file.

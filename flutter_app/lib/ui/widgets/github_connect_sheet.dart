@@ -213,43 +213,68 @@ class _GithubConnectSheetState extends State<GithubConnectSheet>
   /// Guards the one-time authorize-URL auto-open per tab entry.
   bool _webLaunched = false;
 
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_deviceClientId == null) {
-      final override = widget.deviceClientId?.trim();
-      if (override != null) {
-        // Explicit override: empty string disables the device tab (tests).
-        _deviceClientId = override;
-      } else if (githubWidgetsClientId.isNotEmpty) {
-        _deviceClientId = githubWidgetsClientId;
-      } else {
-        // A user-registered OAuth App id can be configured at runtime in
-        // Settings → Keys under [githubOauthClientIdKeyName] — no rebuild
-        // needed. Without it the fallback Copilot plugin id stays
-        // identity-only (GitHub pins its consent screen).
-        final keys = SessionKeysScope.maybeOf(context);
-        final configured = keys?.valueOf(
-          githubOauthClientIdKeyName,
-        )?.trim();
-        if (configured != null && configured.isNotEmpty) {
-          _deviceClientId = configured;
-        } else {
-          _deviceClientId = copilotDeviceClientId;
-          _fallbackDeviceId = true;
-        }
-      }
+      _pickDeviceClientId();
       _resolveWebClientId();
       _tab = _deviceFlowAvailable ? _ConnectTab.device : _ConnectTab.token;
     }
-    if (_tab == _ConnectTab.device &&
-        !_deviceStarted &&
-        _grant == null &&
-        !_busy) {
-      _deviceStarted = true;
-      _startDeviceFlow();
+    _autoStartDeviceFlow();
+  }
+
+  /// Picks the device-flow client id once (first dependencies pass):
+  /// the explicit override (empty string disables the device tab,
+  /// tests), the build-time OAuth App, else the runtime Keys entry or
+  /// the public fallback (gh-1848 split).
+  void _pickDeviceClientId() {
+    final override = widget.deviceClientId?.trim();
+    if (override != null) {
+      // Explicit override: empty string disables the device tab (tests).
+      _deviceClientId = override;
+    } else if (githubWidgetsClientId.isNotEmpty) {
+      _deviceClientId = githubWidgetsClientId;
+    } else {
+      _pickConfiguredDeviceClientId();
     }
+  }
+
+  /// No override and no build-time OAuth App: a user-registered OAuth
+  /// App id configured at runtime in Settings → Keys under
+  /// [githubOauthClientIdKeyName] wins (no rebuild needed); without it
+  /// the fallback Copilot plugin id stays identity-only (GitHub pins
+  /// its consent screen) (gh-1848 split).
+  void _pickConfiguredDeviceClientId() {
+    final configured = _configuredDeviceClientId();
+    if (configured == null) {
+      _deviceClientId = copilotDeviceClientId;
+      _fallbackDeviceId = true;
+      return;
+    }
+    _deviceClientId = configured;
+  }
+
+  /// The runtime Keys entry (trimmed), or null when unset/blank.
+  String? _configuredDeviceClientId() {
+    final keys = SessionKeysScope.maybeOf(context);
+    final configured = keys?.valueOf(githubOauthClientIdKeyName)?.trim();
+    return (configured != null && configured.isNotEmpty) ? configured : null;
+  }
+
+  /// Auto-starts the device flow once per sheet lifetime: only on the
+  /// device tab, never twice (gh-1848 split).
+  void _autoStartDeviceFlow() {
+    if (_tab != _ConnectTab.device || _deviceStarted) return;
+    _startDeviceFlowIfIdle();
+  }
+
+  /// Second guard half of the auto-start: never while a grant already
+  /// landed or a request is in flight (gh-1848 split).
+  void _startDeviceFlowIfIdle() {
+    if (_grant != null || _busy) return;
+    _deviceStarted = true;
+    _startDeviceFlow();
   }
 
   /// Resolves the Browser-tab client id once: the explicit override
@@ -264,8 +289,9 @@ class _GithubConnectSheetState extends State<GithubConnectSheet>
     } else {
       final keys = SessionKeysScope.maybeOf(context);
       final configured = keys?.valueOf(githubOauthClientIdKeyName)?.trim();
-      _webClientId =
-          (configured != null && configured.isNotEmpty) ? configured : '';
+      _webClientId = (configured != null && configured.isNotEmpty)
+          ? configured
+          : '';
     }
   }
 
@@ -328,45 +354,51 @@ class _GithubConnectSheetState extends State<GithubConnectSheet>
 
   Future<void> _connectWithToken() async {
     final token = _tokenController.text.trim();
-    if (token.isEmpty || _busy) return;
+    if (!_tokenConnectAllowed(token)) return;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      final client =
-          widget.clientFactory?.call(token) ?? GithubApiClient(token: token);
-      final (user, scopes) = await client.getUserAndScopes();
-      if (_cancelled) return;
-      if (!GithubApiClient.tokenCanCreateRepos(scopes)) {
-        if (mounted) {
-          setState(() {
-            _busy = false;
-            _error = context.l10n.githubTokenNoRepoScope;
-          });
-        }
-        return;
-      }
-      await widget.account.connect(
-        token: token,
-        login: user.login,
-        avatarUrl: user.avatarUrl,
-      );
-      if (mounted) Navigator.of(context).pop(true);
+      await _connectTokenFlow(token);
     } on GithubApiException catch (error) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = error.message;
-        });
-      }
+      _tokenConnectFailed(() => error.message);
     } on Object catch (error) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = error.toString();
-        });
-      }
+      _tokenConnectFailed(() => error.toString());
+    }
+  }
+
+  bool _tokenConnectAllowed(String token) => token.isNotEmpty && !_busy;
+
+  GithubApiClient _tokenClient(String token) =>
+      widget.clientFactory?.call(token) ?? GithubApiClient(token: token);
+
+  Future<void> _connectTokenFlow(String token) async {
+    final client = _tokenClient(token);
+    final (user, scopes) = await client.getUserAndScopes();
+    if (_cancelled) return;
+    if (!GithubApiClient.tokenCanCreateRepos(scopes)) {
+      _tokenConnectFailed(() => context.l10n.githubTokenNoRepoScope);
+      return;
+    }
+    await widget.account.connect(
+      token: token,
+      login: user.login,
+      avatarUrl: user.avatarUrl,
+    );
+    if (mounted) Navigator.of(context).pop(true);
+  }
+
+  /// Drops the sheet back into idle with [message] as the error — the
+  /// shared shape of the PAT flow's failure paths. The message closure is
+  /// only invoked under the [mounted] guard (l10n lookups on a dead
+  /// context throw).
+  void _tokenConnectFailed(String Function() message) {
+    if (mounted) {
+      setState(() {
+        _busy = false;
+        _error = message();
+      });
     }
   }
 
@@ -380,55 +412,69 @@ class _GithubConnectSheetState extends State<GithubConnectSheet>
       _deviceStatus = null;
     });
     try {
-      final grant = await requestCopilotDeviceGrant(
-        clientId: _deviceClientId!,
-        scope: 'public_repo',
-        client: widget.httpClient,
-      );
-      if (_cancelled) return;
-      setState(() => _grant = grant);
-      // Issue #229: NO automatic browser launch here — copy-first UX:
-      // the code is prominent, the copy button and the manual open
-      // button (below) stay the explicit actions. An unconsented launch
-      // also backgrounds the app, which used to kill the poll.
-      final token = await pollCopilotDeviceGrant(
-        grant: grant,
-        clientId: _deviceClientId!,
-        delay: _devicePollDelay,
-        onStatus: (status) {
-          if (_cancelled || !mounted) return;
-          setState(() => _deviceStatus = status);
-        },
-        client: widget.httpClient,
-      );
-      if (_cancelled) return;
-      await _finishConnect(token);
+      await _runDeviceFlow();
     } on CopilotDeviceFlowError catch (error) {
-      if (_cancelled || !mounted) return;
-      if (error.kind == CopilotDeviceFlowErrorKind.endpointDisabled) {
-        // The OAuth App is not registered (or its device flow is off):
-        // fall back to the PAT tab, carrying the explanation.
-        setState(() {
-          _tab = _ConnectTab.token;
-          _busy = false;
-          _error = error.message;
-          _deviceStatus = null;
-        });
-      } else {
-        setState(() {
-          _busy = false;
-          _error = error.message;
-          _deviceStatus = null;
-        });
-      }
+      _deviceFlowFailed(error);
     } on Object catch (error) {
-      if (_cancelled || !mounted) return;
+      _deviceFlowFailedGeneric(error);
+    }
+  }
+
+  Future<void> _runDeviceFlow() async {
+    final grant = await requestCopilotDeviceGrant(
+      clientId: _deviceClientId!,
+      scope: 'public_repo',
+      client: widget.httpClient,
+    );
+    if (_cancelled) return;
+    setState(() => _grant = grant);
+    // Issue #229: NO automatic browser launch here — copy-first UX:
+    // the code is prominent, the copy button and the manual open
+    // button (below) stay the explicit actions. An unconsented launch
+    // also backgrounds the app, which used to kill the poll.
+    final token = await pollCopilotDeviceGrant(
+      grant: grant,
+      clientId: _deviceClientId!,
+      delay: _devicePollDelay,
+      onStatus: _onDeviceStatus,
+      client: widget.httpClient,
+    );
+    if (_cancelled) return;
+    await _finishConnect(token);
+  }
+
+  void _onDeviceStatus(String status) {
+    if (_cancelled || !mounted) return;
+    setState(() => _deviceStatus = status);
+  }
+
+  void _deviceFlowFailed(CopilotDeviceFlowError error) {
+    if (_cancelled || !mounted) return;
+    if (error.kind == CopilotDeviceFlowErrorKind.endpointDisabled) {
+      // The OAuth App is not registered (or its device flow is off):
+      // fall back to the PAT tab, carrying the explanation.
+      setState(() {
+        _tab = _ConnectTab.token;
+        _busy = false;
+        _error = error.message;
+        _deviceStatus = null;
+      });
+    } else {
       setState(() {
         _busy = false;
-        _error = error.toString();
+        _error = error.message;
         _deviceStatus = null;
       });
     }
+  }
+
+  void _deviceFlowFailedGeneric(Object error) {
+    if (_cancelled || !mounted) return;
+    setState(() {
+      _busy = false;
+      _error = error.toString();
+      _deviceStatus = null;
+    });
   }
 
   void _switchTab(_ConnectTab tab) {
