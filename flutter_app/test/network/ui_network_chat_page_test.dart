@@ -325,6 +325,85 @@ void main() {
       await rig.session.close();
     });
 
+    testWidgets('composer keys ignore non-Enter input, preserve Shift+Enter, '
+        'and send with Enter', (tester) async {
+      final rig = await pumpChat(tester);
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, 'keyboard send');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.f1);
+      await tester.pump();
+      expect(
+        rig.session.channelStates['c1']!.messages.where((m) => m.isOwn),
+        isEmpty,
+      );
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shift);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shift);
+      await tester.pump();
+      expect(
+        rig.session.channelStates['c1']!.messages.where((m) => m.isOwn),
+        isEmpty,
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      final sent = rig.session.channelStates['c1']!.messages.last;
+      expect(sent.isOwn, isTrue);
+      expect(sent.text, 'keyboard send');
+      await rig.session.close();
+    });
+
+    testWidgets('mention menu navigates upward and Escape dismisses it', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester);
+      rig.session.roster.addAll({
+        'agent-kb': const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        ),
+        'agent-helper': const Member(
+          id: 'agent-helper',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-helper',
+          presence: Presence.live,
+        ),
+      });
+      rig.session.notifyListeners();
+      await tester.pump();
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+
+      await tester.enterText(field, '@kb');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(tester.widget<TextField>(field).controller!.text, '@kb-helper ');
+
+      await tester.enterText(field, '@kb');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(tester.widget<TextField>(field).controller!.text, '@kb');
+      expect(find.byType(ListTile), findsNothing);
+      expect(
+        rig.session.channelStates['c1']!.messages.where((m) => m.isOwn),
+        isEmpty,
+      );
+      await rig.session.close();
+    });
+
     testWidgets('mention autocomplete filters, inserts the literal name, and '
         'resolves its member id on send', (tester) async {
       final rig = await pumpChat(tester);

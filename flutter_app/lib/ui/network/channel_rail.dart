@@ -161,12 +161,7 @@ class _ChannelRailState extends State<ChannelRail> {
       await session.deleteChannel(channel.id);
       if (!mounted) return;
       if (widget.controller.channelId == channel.id) {
-        final remaining = session.channels;
-        if (remaining.isEmpty) {
-          await widget.controller.backToChannels();
-        } else {
-          await _openChannel(remaining.first.id);
-        }
+        await _selectChannelAfterDelete(session);
       }
       if (mounted) {
         showFahSnack(context, context.l10n.networkChannelDeleted);
@@ -175,6 +170,15 @@ class _ChannelRailState extends State<ChannelRail> {
       if (mounted) showFahErrorSnack(context, e.message);
     } on Object catch (e) {
       if (mounted) showFahErrorSnack(context, '$e');
+    }
+  }
+
+  Future<void> _selectChannelAfterDelete(NetworkSession session) async {
+    final remaining = session.channels;
+    if (remaining.isEmpty) {
+      await widget.controller.backToChannels();
+    } else {
+      await _openChannel(remaining.first.id);
     }
   }
 
@@ -506,6 +510,15 @@ class _RosterMemberTile extends StatelessWidget {
   final String? channelId;
   final VoidCallback? onDrop;
 
+  static const _memberIcons = <MemberClass, IconData>{
+    MemberClass.agent: Icons.smart_toy_outlined,
+    MemberClass.owner: Icons.star_outline,
+    MemberClass.admin: Icons.admin_panel_settings_outlined,
+    MemberClass.guest: Icons.person_outline,
+    MemberClass.member: Icons.person,
+    MemberClass.unknown: Icons.help_outline,
+  };
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
@@ -516,39 +529,19 @@ class _RosterMemberTile extends StatelessWidget {
       _ => colors.dim,
     };
     final name = member.displayName.isEmpty ? member.id : member.displayName;
-    final accessLabel = _accessLabel(context);
     return ListTile(
       key: ValueKey('networkRosterMember:${member.id}'),
       dense: true,
-      leading: Icon(switch (member.memberClass) {
-        MemberClass.agent => Icons.smart_toy_outlined,
-        MemberClass.owner => Icons.star_outline,
-        MemberClass.admin => Icons.admin_panel_settings_outlined,
-        MemberClass.guest => Icons.person_outline,
-        MemberClass.member => Icons.person,
-        MemberClass.unknown => Icons.help_outline,
-      }, color: colors.dim),
+      leading: Icon(
+        _memberIcons[member.memberClass] ?? Icons.help_outline,
+        color: colors.dim,
+      ),
       title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(_memberClassLabel(context, member.memberClass)),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (accessLabel != null) ...[
-            Container(
-              key: ValueKey('networkRosterAccess:${member.id}'),
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                border: Border.all(color: colors.border),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                accessLabel,
-                maxLines: 1,
-                style: TextStyle(fontSize: 11, color: colors.dim),
-              ),
-            ),
-            const SizedBox(width: 10),
-          ],
+          ..._accessBadge(context, colors),
           Container(
             width: 8,
             height: 8,
@@ -579,6 +572,27 @@ class _RosterMemberTile extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  List<Widget> _accessBadge(BuildContext context, FahColors colors) {
+    final accessLabel = _accessLabel(context);
+    if (accessLabel == null) return const <Widget>[];
+    return [
+      Container(
+        key: ValueKey('networkRosterAccess:${member.id}'),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          border: Border.all(color: colors.border),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          accessLabel,
+          maxLines: 1,
+          style: TextStyle(fontSize: 11, color: colors.dim),
+        ),
+      ),
+      const SizedBox(width: 10),
+    ];
   }
 
   String? _accessLabel(BuildContext context) {

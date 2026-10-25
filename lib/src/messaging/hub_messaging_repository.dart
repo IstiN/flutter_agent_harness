@@ -285,19 +285,7 @@ final class HubMessagingRepository
         : _dialUrl.replace(queryParameters: {...query, 'dap_token': token});
     final HubSocket socket;
     try {
-      final secret = clientSecret;
-      if (secret == null || secret.isEmpty) {
-        socket = await _transport.connect(url);
-      } else {
-        final transport = _transport;
-        if (transport is! HubBearerTransport) {
-          throw StateError('hub transport has no bearer-auth capability');
-        }
-        socket = await (transport as HubBearerTransport).connectWithBearer(
-          url,
-          secret,
-        );
-      }
+      socket = await _connectSocket(url);
     } on Object catch (error) {
       // An authenticated dial never stringifies the transport error: a
       // hostile/rejecting server must not be able to echo the credential
@@ -343,6 +331,18 @@ final class HubMessagingRepository
     if (!identical(_socket, socket) || !isConnected) return;
     unawaited(_sendNow({'op': 'flush'}).catchError((Object _) {}));
     await _drainOutbound();
+  }
+
+  Future<HubSocket> _connectSocket(Uri url) {
+    final secret = clientSecret;
+    if (secret == null || secret.isEmpty) {
+      return _transport.connect(url);
+    }
+    final transport = _transport;
+    if (transport is! HubBearerTransport) {
+      throw StateError('hub transport has no bearer-auth capability');
+    }
+    return (transport as HubBearerTransport).connectWithBearer(url, secret);
   }
 
   Future<void> _sendHello() async {
@@ -431,11 +431,7 @@ final class HubMessagingRepository
     }
     switch (frame['op'] as String?) {
       case 'welcome':
-        final welcome = _welcome;
-        if (welcome != null && !welcome.isCompleted) {
-          welcome.complete();
-          _welcome = null;
-        }
+        _onWelcome();
       case 'msg':
         unawaited(_onMsg(frame));
       case 'agent_info':
@@ -445,27 +441,43 @@ final class HubMessagingRepository
       case 'flushed':
         break; // queued mail already arrived as msg frames
       case 'joined':
-        final channel = frame['channel'] as String? ?? '';
-        _joinOrder.remove(channel);
-        final waiter = _pendingJoins.remove(channel);
-        if (waiter != null && !waiter.isCompleted) waiter.complete();
+        _onJoined(frame);
       case 'error':
-        final code = frame['code'] as String? ?? 'unknown';
-        if (code == 'access_denied' && _joinOrder.isNotEmpty) {
-          final channel = _joinOrder.removeAt(0);
-          final waiter = _pendingJoins.remove(channel);
-          if (waiter != null && !waiter.isCompleted) {
-            waiter.completeError(StateError('hub denied channel join'));
-          }
-        }
-        _log(
-          clientSecret == null
-              ? 'hub error: $code ${frame['msg']}'
-              : 'authenticated hub error: $code',
-        );
+        _onErrorFrame(frame);
       default:
         break;
     }
+  }
+
+  void _onWelcome() {
+    final welcome = _welcome;
+    if (welcome != null && !welcome.isCompleted) {
+      welcome.complete();
+      _welcome = null;
+    }
+  }
+
+  void _onJoined(Map<String, dynamic> frame) {
+    final channel = frame['channel'] as String? ?? '';
+    _joinOrder.remove(channel);
+    final waiter = _pendingJoins.remove(channel);
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+  }
+
+  void _onErrorFrame(Map<String, dynamic> frame) {
+    final code = frame['code'] as String? ?? 'unknown';
+    if (code == 'access_denied' && _joinOrder.isNotEmpty) {
+      final channel = _joinOrder.removeAt(0);
+      final waiter = _pendingJoins.remove(channel);
+      if (waiter != null && !waiter.isCompleted) {
+        waiter.completeError(StateError('hub denied channel join'));
+      }
+    }
+    _log(
+      clientSecret == null
+          ? 'hub error: $code ${frame['msg']}'
+          : 'authenticated hub error: $code',
+    );
   }
 
   Future<void> _onMsg(Map<String, dynamic> frame) async {

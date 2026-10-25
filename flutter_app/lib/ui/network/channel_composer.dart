@@ -141,35 +141,45 @@ class _ChannelChatComposerState extends State<ChannelChatComposer> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
-    final key = event.logicalKey;
-    final keyboard = HardwareKeyboard.instance;
-    final isEnter =
-        key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter;
     if (_menuOpen) {
-      if (key == LogicalKeyboardKey.arrowDown) {
-        _moveHighlight(1);
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.arrowUp) {
-        _moveHighlight(-1);
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.escape) {
-        setState(() {
-          _options = const [];
-          _highlight = 0;
-        });
-        return KeyEventResult.handled;
-      }
-      // Tab and Enter accept the highlighted option instead of moving
-      // focus or sending the half-typed mention.
-      if (key == LogicalKeyboardKey.tab ||
-          (isEnter && !keyboard.isShiftPressed)) {
-        _insertMention(_options[_highlight]);
-        return KeyEventResult.handled;
-      }
+      final result = _handleMentionKey(event);
+      if (result != KeyEventResult.ignored) return result;
     }
-    if (event is! KeyDownEvent || !isEnter) return KeyEventResult.ignored;
+    return _handleEditingKey(event);
+  }
+
+  KeyEventResult _handleMentionKey(KeyEvent event) {
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _moveHighlight(1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      _moveHighlight(-1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      setState(() {
+        _options = const [];
+        _highlight = 0;
+      });
+      return KeyEventResult.handled;
+    }
+    // Tab and Enter accept the highlighted option instead of moving focus or
+    // sending the half-typed mention.
+    if (key == LogicalKeyboardKey.tab ||
+        (_isEnterKey(key) && !HardwareKeyboard.instance.isShiftPressed)) {
+      _insertMention(_options[_highlight]);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  KeyEventResult _handleEditingKey(KeyEvent event) {
+    if (event is! KeyDownEvent || !_isEnterKey(event.logicalKey)) {
+      return KeyEventResult.ignored;
+    }
+    final keyboard = HardwareKeyboard.instance;
     if (keyboard.isShiftPressed &&
         !keyboard.isMetaPressed &&
         !keyboard.isControlPressed) {
@@ -179,6 +189,9 @@ class _ChannelChatComposerState extends State<ChannelChatComposer> {
     unawaited(_send());
     return KeyEventResult.handled;
   }
+
+  static bool _isEnterKey(LogicalKeyboardKey key) =>
+      key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter;
 
   Future<void> _send() async {
     if (_sending) return;
