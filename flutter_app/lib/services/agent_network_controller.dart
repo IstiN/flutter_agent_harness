@@ -88,13 +88,16 @@ class AgentNetworkController extends ChangeNotifier {
   /// (the service construction path).
   Future<void> start() async {
     _store = await AgentNetworkStore.load(_env);
+    if (_disposed) return;
     if (!usesExternalEnrollment) {
       _enrollmentStore ??= await DapEnrollmentStore.load(
         _env,
         projectCwd: _effectiveProjectCwd,
       );
+      if (_disposed) return;
     }
     if (_store.enabled) await _joinSaved();
+    if (_disposed) return;
     notifyListeners();
   }
 
