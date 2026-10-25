@@ -325,6 +325,86 @@ void main() {
       await rig.session.close();
     });
 
+    testWidgets('plain Enter sends the draft', (tester) async {
+      final rig = await pumpChat(tester);
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, 'sent with enter');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(
+        rig.session.channelStates['c1']!.messages.last.text,
+        'sent with enter',
+      );
+      expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+      await rig.session.close();
+    });
+
+    testWidgets('Shift+Enter does not send; it stays editable text', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester);
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, 'kept in the composer');
+      await tester.sendKeyEvent(
+        LogicalKeyboardKey.enter,
+        modifiers: ModifierKey.shiftModifier,
+      );
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      // The draft is not sent and the field keeps its content (the
+      // newline insertion itself belongs to the text input layer).
+      expect(tester.widget<TextField>(field).controller!.text, isNot(isEmpty));
+      expect(
+        tester.widget<TextField>(field).controller!.text,
+        contains('kept in the composer'),
+      );
+      expect(
+        rig.channel.sentFrames.where((f) => f['type'] == 'envelope.send'),
+        isEmpty,
+      );
+      await rig.session.close();
+    });
+
+    testWidgets('Escape dismisses the mention menu without inserting', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester);
+      rig.session.roster.addAll({
+        'agent-kb': const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        ),
+      });
+      rig.session.notifyListeners();
+      await tester.pump();
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, '@kb');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('mentionOption:agent-kb')),
+        findsOneWidget,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('mentionOption:agent-kb')),
+        findsNothing,
+      );
+      expect(tester.widget<TextField>(field).controller!.text, '@kb');
+      await rig.session.close();
+    });
+
     testWidgets('mention autocomplete filters, inserts the literal name, and '
         'resolves its member id on send', (tester) async {
       final rig = await pumpChat(tester);

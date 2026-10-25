@@ -144,36 +144,56 @@ class _ChannelChatComposerState extends State<ChannelChatComposer> {
     final key = event.logicalKey;
     final keyboard = HardwareKeyboard.instance;
     final isEnter =
-        key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter;
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter;
     if (_menuOpen) {
-      if (key == LogicalKeyboardKey.arrowDown) {
-        _moveHighlight(1);
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.arrowUp) {
-        _moveHighlight(-1);
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.escape) {
-        setState(() {
-          _options = const [];
-          _highlight = 0;
-        });
-        return KeyEventResult.handled;
-      }
-      // Tab and Enter accept the highlighted option instead of moving
-      // focus or sending the half-typed mention.
-      if (key == LogicalKeyboardKey.tab ||
-          (isEnter && !keyboard.isShiftPressed)) {
-        _insertMention(_options[_highlight]);
-        return KeyEventResult.handled;
-      }
+      final menuResult = _handleMentionMenuKey(key, isEnter, keyboard);
+      if (menuResult != null) return menuResult;
     }
     if (event is! KeyDownEvent || !isEnter) return KeyEventResult.ignored;
+    return _handleEnterKey(keyboard);
+  }
+
+  /// Handles a key pressed while the mention menu is open: arrow keys
+  /// move the highlight, Escape dismisses the menu, and Tab or Enter
+  /// accept the highlighted option instead of moving focus or sending
+  /// the half-typed mention. Returns null when the key should fall
+  /// through to normal text editing.
+  KeyEventResult? _handleMentionMenuKey(
+    LogicalKeyboardKey key,
+    bool isEnter,
+    HardwareKeyboard keyboard,
+  ) {
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _moveHighlight(1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      _moveHighlight(-1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      setState(() {
+        _options = const [];
+        _highlight = 0;
+      });
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.tab ||
+        (isEnter && !keyboard.isShiftPressed)) {
+      _insertMention(_options[_highlight]);
+      return KeyEventResult.handled;
+    }
+    return null;
+  }
+
+  /// Decides what a bare Enter press does: Shift+Enter (and modified
+  /// Enters) stay a newline, matching the shared composer; a plain
+  /// Enter sends the current draft.
+  KeyEventResult _handleEnterKey(HardwareKeyboard keyboard) {
     if (keyboard.isShiftPressed &&
         !keyboard.isMetaPressed &&
         !keyboard.isControlPressed) {
-      // Shift+Enter stays a newline, matching the shared composer.
       return KeyEventResult.ignored;
     }
     unawaited(_send());
