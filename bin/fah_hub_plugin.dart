@@ -356,7 +356,14 @@ final class HubPluginHost implements FahPlugin {
               return (passphrase: answer, save: true);
             },
     );
-    _environment[hub.envChannelsFile] = overlay;
+    try {
+      _environment[hub.envChannelsFile] = overlay;
+    } on UnsupportedError {
+      // A read-only embedder still gets the scoped connector (which uses
+      // [overlay] directly). Its legacy /dap start path keeps the
+      // original friendly read-only error instead of crashing at plugin
+      // registration before any command can run.
+    }
   }
 
   /// Joins every effective membership on the LIVE client (AC1: no
