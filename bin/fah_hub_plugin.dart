@@ -1337,10 +1337,10 @@ final class HubPluginHost implements FahPlugin {
     final ask = context.askLine;
     final stopper =
         hubStopper ??
-        () => DapHubController(
+        (url) => DapHubController(
           home: _home,
           environment: _environment,
-          url: _localHubUrl,
+          url: url,
           secretPrompt: ask == null
               ? null
               : (question) => ask(question, secret: true),
