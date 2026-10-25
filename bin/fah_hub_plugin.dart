@@ -15,7 +15,8 @@ library;
 
 import 'dart:async';
 import 'dart:convert' show jsonEncode;
-import 'dart:io' show HttpClient, Platform, Process, ProcessStartMode, pid;
+import 'dart:io'
+    show File, HttpClient, Platform, Process, ProcessStartMode, pid;
 import 'dart:math' show Random;
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
@@ -903,6 +904,15 @@ final class HubPluginHost implements FahPlugin {
       await _dapMenu(context, pick);
       return;
     }
+    await _dapSlashArgs(context, positional);
+  }
+
+  /// `/dap` with args (or on a non-interactive host): a one-line status
+  /// with no args, the one-step start, or a direct host move.
+  Future<void> _dapSlashArgs(
+    PluginContext context,
+    List<String> positional,
+  ) async {
     try {
       if (positional.isEmpty) {
         await _printStatus(context);
@@ -912,30 +922,37 @@ final class HubPluginHost implements FahPlugin {
         await _dapStart(context);
         return;
       }
-      // Persist first (see _dapStart): a stale dead config makes the
-      // boot-time start() churn against the dead URL, and connectTo
-      // needs the repository up.
-      try {
-        await hub.persistDapConfig(
-          url: positional[0],
-          file: hub.defaultDapConfigFile(_home, _environment),
-        );
-        await _startHub().timeout(const Duration(seconds: 8));
-      } on Object {
-        // The connect below reports the real error.
-      }
-      final connection = await _hub.connectTo(
-        positional[0],
-        name: positional.length > 1 ? positional[1] : null,
-        channel: positional.length > 2 ? positional[2] : null,
-      );
-      context.io.writeln(
-        'connected to ${connection.url} as ${connection.agentId} — '
-        'channels: ${connection.channels.join(', ')}',
-      );
+      await _dapConnectArgs(context, positional);
     } on Object catch (error) {
       context.io.writeln('[hub] $error');
     }
+  }
+
+  /// `/dap <host> [name] [channel]`: persist first (a stale dead config
+  /// makes the boot-time start() churn against the dead URL, and
+  /// connectTo needs the repository up), then move the connection.
+  Future<void> _dapConnectArgs(
+    PluginContext context,
+    List<String> positional,
+  ) async {
+    try {
+      await hub.persistDapConfig(
+        url: positional[0],
+        file: hub.defaultDapConfigFile(_home, _environment),
+      );
+      await _startHub().timeout(const Duration(seconds: 8));
+    } on Object {
+      // The connect below reports the real error.
+    }
+    final connection = await _hub.connectTo(
+      positional[0],
+      name: positional.length > 1 ? positional[1] : null,
+      channel: positional.length > 2 ? positional[2] : null,
+    );
+    context.io.writeln(
+      'connected to ${connection.url} as ${connection.agentId} — '
+      'channels: ${connection.channels.join(', ')}',
+    );
   }
 
   /// `/dap start` — the one-step local bring-up: generates a session
@@ -943,125 +960,158 @@ final class HubPluginHost implements FahPlugin {
   /// zero-config port when none answers `/healthz`, then connects
   /// (persisting the URL, so the next boot is online by itself).
   Future<void> _dapStart(PluginContext context) async {
-    if (!_dapEnabled) {
-      try {
-        _environment[hub.envMasterSecret] = _generateSessionSecret();
-      } on Object {
-        context.io.writeln(
-          '[hub] this host\'s environment is read-only — export '
-          'DAP_MASTER_SECRET before launching instead',
-        );
-        return;
-      }
-      context.io.writeln(
-        'master secret generated for this session — '
-        'export DAP_MASTER_SECRET to make it permanent',
-      );
-    }
-    // Hub password: the one-button bring-up asks once, interactive hosts
-    // only. The answer is persisted into the hub state file — the
-    // detached `fa hub serve` has no terminal, so it reads the password
-    // from there (and later starts never ask again). Empty answer = stay
-    // open and ask again next time.
-    String? promptedPassword;
+    if (!await _dapEnsureSessionSecret(context)) return;
     final stateFile = defaultHubStateFile(
       home: _home,
       environment: _environment,
     );
-    if (context.askLine != null) {
-      final configured =
-          (_environment[envHubSecret] ?? '').isNotEmpty ||
-          await stateFile.exists();
-      if (!configured) {
-        final entered = await context.askLine!(
-          'Set a password for the local hub (empty = keep it open):',
-          secret: true,
-        );
-        final password = entered?.trim() ?? '';
-        promptedPassword = password.isEmpty ? null : password;
-        if (password.isNotEmpty) {
-          try {
-            if (!await stateFile.parent.exists()) {
-              await stateFile.parent.create(recursive: true);
-            }
-            await stateFile.writeAsString(
-              jsonEncode({
-                'masterSecret': password,
-                'clients': <String, String>{},
-              }),
-            );
-            await Process.run('chmod', ['600', stateFile.path]);
-            context.io.writeln('hub password saved to ${stateFile.path}');
-          } on Object catch (error) {
-            context.io.writeln('[hub] could not persist the password: $error');
-          }
-        }
-      }
-    }
+    final promptedPassword = await _dapPromptHubPassword(context, stateFile);
     final port = Uri.parse(_localHubUrl).port;
-    if (!await _hubHealthProbe(port)) {
-      context.io.writeln('starting a local hub on port $port…');
-      try {
-        await _hubSpawner(port);
-      } on Object catch (error) {
-        context.io.writeln('[hub] could not start a local hub: $error');
-        return;
-      }
-      final deadline = DateTime.now().add(const Duration(seconds: 8));
-      var up = false;
-      while (DateTime.now().isBefore(deadline)) {
-        await Future<void>.delayed(const Duration(milliseconds: 150));
-        if (await _hubHealthProbe(port)) {
-          up = true;
-          break;
-        }
-      }
-      if (!up) {
-        context.io.writeln('[hub] the local hub did not come up on port $port');
-        return;
-      }
+    if (!await _dapEnsureLocalHub(context, port)) return;
+    await _dapApplyHubPassword(context, stateFile, promptedPassword);
+    await _dapPersistLocalUrl();
+    await _dapBootAndConnect(context);
+  }
+
+  /// Generates a session master secret when none is set. False means
+  /// the host's environment is read-only — the friendly error is
+  /// printed and the bring-up stops.
+  Future<bool> _dapEnsureSessionSecret(PluginContext context) async {
+    if (_dapEnabled) return true;
+    try {
+      _environment[hub.envMasterSecret] = _generateSessionSecret();
+    } on Object {
+      context.io.writeln(
+        '[hub] this host\'s environment is read-only — export '
+        'DAP_MASTER_SECRET before launching instead',
+      );
+      return false;
     }
-    // The session's own client must hold the HUB's password, not the
-    // generated session secret — two different secrets were the 401
-    // loop (hub spawned with the prompted password while the client
-    // enrolled with the generated one). Resolution: prompted now > the
-    // state file (a previously saved password — /dap start on a later
-    // session reuses it). The password doubles as a master credential,
-    // so it both dials directly and enrolls; persisting it as
-    // clientSecret also retires any stale client secret left in the
-    // config by an older hub (which would otherwise win the resolution
-    // precedence and 401 forever).
-    final hubPassword =
-        promptedPassword ??
-        (() {
-          try {
-            return readHubStateSecret(stateFile);
-          } on Object {
-            return null;
-          }
-        })();
-    if (hubPassword != null && hubPassword.isNotEmpty) {
-      _environment[hub.envMasterSecret] = hubPassword;
-      try {
-        final dialSecret = hubPassword;
-        await hub.persistDapConfig(
-          url: _localHubUrl,
-          clientSecret: dialSecret,
-          file: hub.defaultDapConfigFile(_home, _environment),
-        );
-        context.io.writeln(
-          'this session joined the protected hub — the password was '
-          'applied to the connection',
-        );
-      } on Object {
-        // Best-effort — the env master above already authorizes enroll.
+    context.io.writeln(
+      'master secret generated for this session — '
+      'export DAP_MASTER_SECRET to make it permanent',
+    );
+    return true;
+  }
+
+  /// Hub password prompt (interactive hosts only): asks once, persists
+  /// the answer into the hub state file — the detached `fa hub serve`
+  /// has no terminal, so it reads the password from there (and later
+  /// starts never ask again). Empty answer = stay open and ask again
+  /// next time. Returns the prompted password, or null when there is
+  /// nothing to apply (no prompt / already configured / empty answer).
+  Future<String?> _dapPromptHubPassword(
+    PluginContext context,
+    File stateFile,
+  ) async {
+    final ask = context.askLine;
+    if (ask == null) return null;
+    final configured =
+        (_environment[envHubSecret] ?? '').isNotEmpty ||
+        await stateFile.exists();
+    if (configured) return null;
+    final entered = await ask(
+      'Set a password for the local hub (empty = keep it open):',
+      secret: true,
+    );
+    final password = (entered?.trim()) ?? '';
+    if (password.isEmpty) return null;
+    await _dapPersistHubPassword(context, stateFile, password);
+    return password;
+  }
+
+  Future<void> _dapPersistHubPassword(
+    PluginContext context,
+    File stateFile,
+    String password,
+  ) async {
+    try {
+      if (!await stateFile.parent.exists()) {
+        await stateFile.parent.create(recursive: true);
       }
+      await stateFile.writeAsString(
+        jsonEncode({
+          'masterSecret': password,
+          'clients': <String, String>{},
+        }),
+      );
+      await Process.run('chmod', ['600', stateFile.path]);
+      context.io.writeln('hub password saved to ${stateFile.path}');
+    } on Object catch (error) {
+      context.io.writeln('[hub] could not persist the password: $error');
     }
-    // Point the resolution at the live hub BEFORE start(): with a stale
-    // config (the dead-port case this command exists to fix) start()
-    // would otherwise resolve — and churn against — the dead URL, and
-    // connectTo would dead-end on "plugin not started". connectTo below
-    // persists the same URL again; this write just orders it first.
+  }
+
+  /// Brings up the local hub when none answers /healthz. False means
+  /// give up (the error is printed).
+  Future<bool> _dapEnsureLocalHub(PluginContext context, int port) async {
+    if (await _hubHealthProbe(port)) return true;
+    context.io.writeln('starting a local hub on port $port…');
+    try {
+      await _hubSpawner(port);
+    } on Object catch (error) {
+      context.io.writeln('[hub] could not start a local hub: $error');
+      return false;
+    }
+    if (await _dapWaitForHub(port)) return true;
+    context.io.writeln('[hub] the local hub did not come up on port $port');
+    return false;
+  }
+
+  Future<bool> _dapWaitForHub(int port) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 8));
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      if (await _hubHealthProbe(port)) return true;
+    }
+    return false;
+  }
+
+  /// Applies the hub password to this session's client: prompted now
+  /// wins over the state file (a previously saved password — /dap start
+  /// on a later session reuses it). The password doubles as a master
+  /// credential, so it both dials directly and enrolls; persisting it
+  /// as clientSecret also retires any stale client secret left in the
+  /// config by an older hub (which would otherwise win the resolution
+  /// precedence and 401 forever).
+  Future<void> _dapApplyHubPassword(
+    PluginContext context,
+    File stateFile,
+    String? promptedPassword,
+  ) async {
+    final hubPassword = promptedPassword ?? _readStateSecretQuietly(stateFile);
+    if (hubPassword == null || hubPassword.isEmpty) return;
+    _setEnv(hub.envMasterSecret, hubPassword);
+    try {
+      final dialSecret = hubPassword;
+      await hub.persistDapConfig(
+        url: _localHubUrl,
+        clientSecret: dialSecret,
+        file: hub.defaultDapConfigFile(_home, _environment),
+      );
+      context.io.writeln(
+        'this session joined the protected hub — the password was '
+        'applied to the connection',
+      );
+    } on Object {
+      // Best-effort — the env master above already authorizes enroll.
+    }
+  }
+
+  String? _readStateSecretQuietly(File stateFile) {
+    try {
+      return readHubStateSecret(stateFile);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Points the resolution at the live hub BEFORE start(): with a stale
+  /// config (the dead-port case this command exists to fix) start()
+  /// would otherwise resolve — and churn against — the dead URL, and
+  /// connectTo would dead-end on "plugin not started". connectTo below
+  /// persists the same URL again; this write just orders it first.
+  Future<void> _dapPersistLocalUrl() async {
     try {
       await hub.persistDapConfig(
         url: _localHubUrl,
@@ -1070,11 +1120,14 @@ final class HubPluginHost implements FahPlugin {
     } on Object {
       // Best-effort — connectTo below persists too.
     }
-    // Beat the boot race (see _menuConnect): start() is a no-op once the
-    // repository exists. SHORT wait on purpose: an in-flight boot start
-    // against a dead stale hub hangs on its reconnect backoff, and the
-    // retarget in connectTo below is exactly what un-wedges it — waiting
-    // long here would just make /dap start feel stuck.
+  }
+
+  /// Starts (no-op once started) and connects. SHORT wait on purpose:
+  /// an in-flight boot start against a dead stale hub hangs on its
+  /// reconnect backoff, and the retarget in connectTo below is exactly
+  /// what un-wedges it — waiting long here would just make /dap start
+  /// feel stuck.
+  Future<void> _dapBootAndConnect(PluginContext context) async {
     try {
       await _startHub().timeout(const Duration(seconds: 2));
     } on TimeoutException {
@@ -1173,14 +1226,22 @@ final class HubPluginHost implements FahPlugin {
   /// The one-line status, friendly when DAP is disabled.
   Future<void> _printStatus(PluginContext context) async {
     if (!_dapEnabled) {
-      context.io.writeln(
-        'DAP disabled — no master secret. '
-        'Run /dap start (it generates one and brings up a local hub), '
-        'or export DAP_MASTER_SECRET before launching.',
-      );
+      _printStatusDisabled(context);
       return;
     }
-    final status = await _hub.status();
+    _printHubStatus(context, await _hub.status());
+  }
+
+  /// The friendly one-liner when DAP has no master secret.
+  void _printStatusDisabled(PluginContext context) {
+    context.io.writeln(
+      'DAP disabled — no master secret. '
+      'Run /dap start (it generates one and brings up a local hub), '
+      'or export DAP_MASTER_SECRET before launching.',
+    );
+  }
+
+  void _printHubStatus(PluginContext context, hub.HubStatus status) {
     if (!status.connected) {
       // A disconnected status still carries the configured url (often a
       // stale loopback port from an old session) — say what to do next
@@ -1208,11 +1269,18 @@ final class HubPluginHost implements FahPlugin {
     final port = Uri.parse(_localHubUrl).port;
     final hubRunning = await _hubHealthProbe(port);
     final choice = await pick(
-      'DAP — Distributed Agents Platform: end-to-end-encrypted '
-      'messaging between agents over a local hub'
-      '${hubRunning ? ' — local hub RUNNING' : ''}',
+      _dapMenuTitle(hubRunning),
       dapMenuOptions(hubRunning: hubRunning),
     );
+    await _runDapMenuChoice(context, choice);
+  }
+
+  String _dapMenuTitle(bool hubRunning) =>
+      'DAP — Distributed Agents Platform: end-to-end-encrypted '
+      'messaging between agents over a local hub'
+      '${hubRunning ? ' — local hub RUNNING' : ''}';
+
+  Future<void> _runDapMenuChoice(PluginContext context, String? choice) async {
     switch (choice) {
       case 'start':
         await _dapStart(context);
@@ -1258,15 +1326,28 @@ final class HubPluginHost implements FahPlugin {
 
   /// Connect…: interactive host (+ optional name / channel) prompts.
   Future<void> _menuConnect(PluginContext context) async {
+    if (!await _menuConnectPreflight(context)) return;
+    final ask = context.askLine!;
+    final currentUrl = (await _hub.status()).url;
+    final host = await _menuPromptHost(ask, currentUrl);
+    if (host == null || host.isEmpty) return;
+    final name = await ask('display name (leave empty for the default): ');
+    final channel = await ask('channel (leave empty for the default room): ');
+    await _menuDial(context, host, name, channel);
+  }
+
+  /// The Connect… preconditions: a master secret must be set first, an
+  /// interactive ask-line must exist, and the repository must be up.
+  /// False means the caller stays quiet (the hint is printed).
+  Future<bool> _menuConnectPreflight(PluginContext context) async {
     if (!_dapEnabled) {
       context.io.writeln(
         'DAP needs a master secret first — pick '
         '"Set master secret…" in the /dap menu.',
       );
-      return;
+      return false;
     }
-    final ask = context.askLine;
-    if (ask == null) return;
+    if (context.askLine == null) return false;
     // Beat the boot race: the plugin connects in the background at
     // register time, so an immediate /dap connect can land before the
     // repository exists. start() is a no-op once started; a dead initial
@@ -1277,30 +1358,41 @@ final class HubPluginHost implements FahPlugin {
     } on Object {
       // The connect below reports the real error.
     }
-    // Pre-fill the current hub url (the `(empty = …)` convention makes the
-    // TUI prompt show it as the default): reconnecting to the configured
-    // hub is an Enter away, and a stale port is easy to edit in place.
-    final currentUrl = (await _hub.status()).url;
+    return true;
+  }
+
+  /// Pre-fills the current hub url (the `(empty = …)` convention makes
+  /// the TUI prompt show it as the default): reconnecting to the
+  /// configured hub is an Enter away, and a stale port is easy to edit
+  /// in place. Null = cancelled.
+  Future<String?> _menuPromptHost(
+    PluginAskLine ask,
+    String? currentUrl,
+  ) async {
     final hostInput = await ask(
       currentUrl != null
           ? 'hub host (empty = $currentUrl): '
           : 'hub host (host:port or ws(s):// URL): ',
     );
-    if (hostInput == null) return; // cancelled
+    if (hostInput == null) return null; // cancelled
     // The guided-flow convention: an empty answer keeps the default (the
     // TUI pre-fills it; line mode treats empty as "keep" too — Esc/Ctrl-C
     // is the cancel path, not an empty line).
-    final host = hostInput.trim().isEmpty ? currentUrl : hostInput.trim();
-    if (host == null || host.isEmpty) return;
-    // NB: the `(empty = X)` phrasing is the guided-flow DEFAULT convention
-    // — an empty submit resolves to X literally, so "leave empty for …"
-    // must not use that shape or Enter would set the name to "default".
-    final name = await ask('display name (leave empty for the default): ');
-    final channel = await ask('channel (leave empty for the default room): ');
+    final host = hostInput.trim();
+    return host.isEmpty ? currentUrl : host;
+  }
+
+  /// Persists the chosen host, (re)starts against it and connects.
+  Future<void> _menuDial(
+    PluginContext context,
+    String host,
+    String? name,
+    String? channel,
+  ) async {
+    // Persist first (see _dapStart): with a stale dead config the
+    // earlier start() resolved the dead URL — a second start() after
+    // this write resolves the host the user just chose.
     try {
-      // Persist first (see _dapStart): with a stale dead config the
-      // earlier start() resolved the dead URL — a second start() after
-      // this write resolves the host the user just chose.
       await hub.persistDapConfig(
         url: host,
         file: hub.defaultDapConfigFile(_home, _environment),
@@ -1334,15 +1426,7 @@ final class HubPluginHost implements FahPlugin {
       secret: true,
     );
     if (secret == null || secret.isEmpty) return;
-    try {
-      _environment[hub.envMasterSecret] = secret;
-    } on Object {
-      context.io.writeln(
-        '[hub] this host\'s environment is read-only — export '
-        'DAP_MASTER_SECRET before launching instead',
-      );
-      return;
-    }
+    if (!await _applySessionSecret(context, secret)) return;
     context.io.writeln(
       'master secret set for this session — '
       'export DAP_MASTER_SECRET to make it permanent',
@@ -1352,6 +1436,21 @@ final class HubPluginHost implements FahPlugin {
       await _printStatus(context);
     } on Object catch (error) {
       context.io.writeln('[hub] secret set; connect failed: $error');
+    }
+  }
+
+  /// Writes the session-only master secret. False means the host's
+  /// environment is read-only — the friendly error is printed.
+  Future<bool> _applySessionSecret(PluginContext context, String secret) async {
+    try {
+      _environment[hub.envMasterSecret] = secret;
+      return true;
+    } on Object {
+      context.io.writeln(
+        '[hub] this host\'s environment is read-only — export '
+        'DAP_MASTER_SECRET before launching instead',
+      );
+      return false;
     }
   }
 
@@ -1389,15 +1488,7 @@ final class HubPluginHost implements FahPlugin {
           : await _hub.externalSteeringSource();
       return [
         for (final message in inbound)
-          // Live LEAVE filter (AC4): a channel left at every scope
-          // stops delivering immediately; one scope left keeps the rest.
-          if (!(message.fromId == selfId && message.toId.startsWith('#')) &&
-              (scoped == null ||
-                  !message.toId.startsWith('#') ||
-                  await scoped.acceptsChannel(
-                    hubUrl ?? scoped.defaultHubUrl,
-                    message.toId.substring(1),
-                  )))
+          if (await _deliverable(scoped, hubUrl, selfId, message))
             AgentMessage(
               id: message.id,
               fromId: message.fromId,
@@ -1412,6 +1503,25 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
+  /// The live LEAVE filter (AC4): a channel left at every scope stops
+  /// delivering immediately; one scope left keeps the rest. Own outbound
+  /// channel copies never echo back as steering either.
+  Future<bool> _deliverable(
+    DapScopedMemberships? scoped,
+    String? hubUrl,
+    String? selfId,
+    hub.AgentMessage message,
+  ) async {
+    if (message.fromId == selfId && message.toId.startsWith('#')) {
+      return false;
+    }
+    if (scoped == null || !message.toId.startsWith('#')) return true;
+    return scoped.acceptsChannel(
+      hubUrl ?? scoped.defaultHubUrl,
+      message.toId.substring(1),
+    );
+  }
+
   /// Non-draining probe: unread mail in our own hub inbox AND every
   /// joined `#channel` inbox. Uses the ACTIVE (scoped) repository — the
   /// vendored one is null/dead in enrolled-credential mode, which used
@@ -1421,7 +1531,16 @@ final class HubPluginHost implements FahPlugin {
     final agentId = repository?.client.agentId;
     // No agentId yet (pre-welcome): peek the '' mailbox would report the
     // frames parked there forever and churn the wake loop — report empty.
-    if (repository == null || agentId == null) return false;
+    if (repository == null) return false;
+    if (agentId == null) return false;
+    return _peekAnyPending(repository, agentId);
+  }
+
+  /// True when our own inbox OR any joined `#channel` inbox holds mail.
+  Future<bool> _peekAnyPending(
+    hub.HubMessagingRepository repository,
+    String agentId,
+  ) async {
     try {
       if ((await repository.peek(agentId)).isNotEmpty) return true;
       for (final channel in await joinedChannelsFor(_hub)) {
@@ -1627,16 +1746,18 @@ final class HubPluginHost implements FahPlugin {
     }
     final byName = peers.where((peer) => peer.name == to).toList();
     if (byName.length == 1) return byName.single.agentId;
+    throw StateError(_peerNotFoundMessage(to, byName.isEmpty, peers));
+  }
+
+  String _peerNotFoundMessage(String to, bool noMatch, List<hub.AgentInfo> peers) {
     final online = [
       for (final peer in peers)
         '${peer.agentId} ${peer.name ?? '-'}'
             '${peer.online ? '' : ' (offline)'}',
     ].join('\n');
-    throw StateError(
-      byName.isEmpty
-          ? 'no online peer matches "$to" — online peers:\n$online'
-          : 'peer name "$to" is ambiguous — online peers:\n$online',
-    );
+    return noMatch
+        ? 'no online peer matches "$to" — online peers:\n$online'
+        : 'peer name "$to" is ambiguous — online peers:\n$online';
   }
 }
 
