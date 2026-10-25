@@ -75,7 +75,13 @@ Future<List<String>?> pollCodeMieSignIn({
     if (models != null) return models;
     if (openLogin) {
       loginAsked = true;
-      openLoginPage();
+      try {
+        openLoginPage();
+      } on Object {
+        // A throwing launch callback is transient, exactly like a
+        // throwing probe (the pre-split whole-iteration try): swallow it
+        // and keep polling (gh-1848 tier-4 review restore).
+      }
     }
     if (_pollAbandoned(cancelled, deadline)) return null;
     await Future<void>.delayed(interval);

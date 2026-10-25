@@ -659,10 +659,7 @@ class DynamicMessagesService extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    for (final timer in _noUiTimers.values) {
-      timer.cancel();
-    }
-    _noUiTimers.clear();
+    _cancelNoUiTimers();
     for (final engine in _engines.values) {
       engine.dispose();
     }

@@ -30,6 +30,10 @@ Future<void> loadUnpackedWidget(
   FolderPicker? picker,
   UnpackedWidgetLoader? loader,
 }) async {
+  // A host without a folder picker is an honest no-op — decided BEFORE
+  // anything is constructed (gh-1848 tier-4 review restore).
+  final folderPicker = picker ?? createFolderPicker();
+  if (folderPicker == null) return;
   final store = _unpackedStore(manager, appsStore, loader);
   final widgetLoader = _unpackedLoader(manager, store, loader);
   await _runUnpackedLoad(
@@ -37,7 +41,7 @@ Future<void> loadUnpackedWidget(
     manager: manager,
     store: store,
     widgetLoader: widgetLoader,
-    picker: picker,
+    picker: folderPicker,
   );
 }
 

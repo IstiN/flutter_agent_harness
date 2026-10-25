@@ -157,7 +157,6 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
       _buildBaseUrlField(),
       const SizedBox(height: 16),
       _buildKeyNoteRow(theme, selection),
-      ..._buildConfigNotes(theme, corsNote),
     ],
   );
 

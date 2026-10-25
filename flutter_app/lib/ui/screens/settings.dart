@@ -879,6 +879,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         ..._buildProviderHeader(),
         if (!_showProviderListOnly) ...[
           _buildProviderConfigFields(theme, selection, corsNote),
+          ..._buildConfigNotes(theme, corsNote),
         ],
         const SizedBox(height: 16),
         if (_error != null) _buildErrorText(theme),
