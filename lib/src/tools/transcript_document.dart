@@ -160,6 +160,16 @@ final class TranscriptDocument {
       s.replaceAll(RegExp(r'\s+'), ' ').trim();
 }
 
+/// True when [start]/[end] form a usable timestamp range: both numeric,
+/// finite, non-negative, and ordered. The single validity predicate shared
+/// by segment and word parsing (each condition carries a test).
+bool _isValidRange(Object? start, Object? end) {
+  if (start is! num || end is! num) return false;
+  if (!start.isFinite || !end.isFinite) return false;
+  if (start.isNegative || end.isNegative) return false;
+  return start <= end;
+}
+
 /// Validates one raw provider segment (`{id?, start, end, text?}`).
 /// Returns null (with a warning appended) when the entry is unusable.
 TranscriptSegment? _parseSegment(
@@ -171,31 +181,17 @@ TranscriptSegment? _parseSegment(
     warnings.add('$warningInvalidTimestampDropped: non-object segment entry');
     return null;
   }
-  final start = raw['start'];
-  final end = raw['end'];
-  if (start is! num ||
-      end is! num ||
-      !start.isFinite ||
-      !end.isFinite ||
-      start.isNegative ||
-      end.isNegative) {
+  if (!_isValidRange(raw['start'], raw['end'])) {
     warnings.add(
       '$warningInvalidTimestampDropped: segment ${raw['id'] ?? fallbackId} '
-      'has non-numeric/negative/NaN bounds',
-    );
-    return null;
-  }
-  if (start > end) {
-    warnings.add(
-      '$warningInvalidTimestampDropped: segment ${raw['id'] ?? fallbackId} '
-      'has start > end ($start > $end)',
+      'has non-numeric/negative/NaN/reversed bounds',
     );
     return null;
   }
   return TranscriptSegment(
     id: raw['id'] is int ? raw['id'] as int : fallbackId,
-    start: start.toDouble(),
-    end: end.toDouble(),
+    start: (raw['start'] as num).toDouble(),
+    end: (raw['end'] as num).toDouble(),
     text: raw['text'] is String ? raw['text'] as String : '',
   );
 }
@@ -207,31 +203,168 @@ TranscriptWord? _parseWord(Object? raw, List<String> warnings) {
     return null;
   }
   final text = raw['word'];
-  final start = raw['start'];
-  final end = raw['end'];
-  final confidence = raw['confidence'];
-  if (text is! String ||
-      start is! num ||
-      end is! num ||
-      !start.isFinite ||
-      !end.isFinite ||
-      start.isNegative ||
-      end.isNegative ||
-      start > end) {
+  if (text is! String || !_isValidRange(raw['start'], raw['end'])) {
     warnings.add(
       '$warningInvalidTimestampDropped: word entry with missing/invalid '
       'text or bounds',
     );
     return null;
   }
+  final confidence = raw['confidence'];
   return TranscriptWord(
     word: text,
-    start: start.toDouble(),
-    end: end.toDouble(),
+    start: (raw['start'] as num).toDouble(),
+    end: (raw['end'] as num).toDouble(),
     confidence: confidence is num && confidence.isFinite
         ? confidence.toDouble()
         : null,
   );
+}
+
+/// Validates the raw provider segments and enforces the ordering
+/// invariant: starts non-decreasing, offenders DROPPED (never sorted —
+/// reordering would fabricate an ordering the provider did not report).
+List<TranscriptSegment> _validatedSegments(
+  List<Object?>? rawSegments,
+  List<String> warnings,
+) {
+  final segments = <TranscriptSegment>[];
+  var lastStart = -1.0;
+  var nextId = 0;
+  for (final raw in rawSegments ?? const <Object?>[]) {
+    final segment = _parseSegment(raw, nextId, warnings);
+    if (segment == null) continue;
+    nextId++;
+    if (lastStart >= 0 && segment.start < lastStart) {
+      warnings.add(
+        '$warningInvalidTimestampDropped: segment ${segment.id} starts '
+        '(${segment.start}) before the previous segment ($lastStart)',
+      );
+      continue;
+    }
+    lastStart = segment.start;
+    segments.add(segment);
+  }
+  return segments;
+}
+
+/// Validates the raw provider words against the ordering invariant (same
+/// drop-don't-sort rule as the segments).
+List<TranscriptWord> _validatedWords(
+  List<Object?>? rawWords,
+  List<String> warnings,
+) {
+  final words = <TranscriptWord>[];
+  var lastWordStart = -1.0;
+  for (final raw in rawWords ?? const <Object?>[]) {
+    final word = _parseWord(raw, warnings);
+    if (word == null) continue;
+    if (lastWordStart >= 0 && word.start < lastWordStart) {
+      warnings.add(
+        '$warningInvalidTimestampDropped: word "${word.word}" starts '
+        '(${word.start}) before the previous word ($lastWordStart)',
+      );
+      continue;
+    }
+    lastWordStart = word.start;
+    words.add(word);
+  }
+  return words;
+}
+
+/// The nesting result: segments with their words attached, plus any words
+/// that stay at document level (when the endpoint reported no segments,
+/// E4).
+final class _NestedTimings {
+  _NestedTimings(this.segments, this.documentWords);
+  final List<TranscriptSegment> segments;
+  final List<TranscriptWord>? documentWords;
+}
+
+/// Nests validated words under the segments containing their start; a word
+/// outside its segment's range is clamped with an explicit warning, never
+/// silently (E4 keeps segment-less words at document level).
+_NestedTimings _nestWords(
+  List<TranscriptSegment> segments,
+  List<TranscriptWord> words,
+  List<String> warnings,
+) {
+  final wordsBySegment = <TranscriptSegment, List<TranscriptWord>>{};
+  List<TranscriptWord>? documentWords;
+  for (final word in words) {
+    if (segments.isEmpty) {
+      (documentWords ??= []).add(word);
+      continue;
+    }
+    final host = _hostSegmentFor(segments, word.start);
+    final clampedStart = word.start.clamp(host.start, host.end).toDouble();
+    final clampedEnd = word.end.clamp(host.start, host.end).toDouble();
+    if (clampedStart != word.start || clampedEnd != word.end) {
+      warnings.add(
+        '$warningWordClamped: word "${word.word}" '
+        '[${word.start}, ${word.end}] outside segment ${host.id} '
+        '[${host.start}, ${host.end}] — clamped',
+      );
+    }
+    (wordsBySegment[host] ??= []).add(
+      TranscriptWord(
+        word: word.word,
+        start: clampedStart,
+        end: clampedEnd,
+        confidence: word.confidence,
+      ),
+    );
+  }
+  return _NestedTimings(<TranscriptSegment>[
+    for (final segment in segments)
+      TranscriptSegment(
+        id: segment.id,
+        start: segment.start,
+        end: segment.end,
+        text: segment.text,
+        words: wordsBySegment[segment],
+      ),
+  ], documentWords);
+}
+
+/// The text-fidelity invariant: segments must reproduce `text` up to
+/// whitespace. A mismatch (possible after drops or from an inconsistent
+/// endpoint) is repaired toward the invariant with an explicit warning —
+/// the joined text is still provider data, nothing is synthesized.
+String _resolvedText(
+  String text,
+  List<TranscriptSegment> segments,
+  List<String> warnings,
+) {
+  final trimmed = text.trim();
+  if (segments.isEmpty) return trimmed;
+  final joined = TranscriptDocument.normalizeWhitespace(
+    segments.map((s) => s.text).join(' '),
+  );
+  if (joined == TranscriptDocument.normalizeWhitespace(trimmed)) {
+    return trimmed;
+  }
+  warnings.add(
+    '$warningTextMismatchRejoined: provider text and segment '
+    'concatenation disagreed up to whitespace; the segment concatenation '
+    'is authoritative',
+  );
+  return segments.map((s) => s.text).join(' ');
+}
+
+/// Validates the payload duration: usable numbers pass, anything else is
+/// omitted with a warning (missing duration is simply absent).
+double? _resolvedDuration(Object? durationSeconds, List<String> warnings) {
+  if (durationSeconds == null) return null;
+  if (durationSeconds is! num || !durationSeconds.isFinite) {
+    warnings.add('$warningDurationOmitted: non-finite duration');
+    return null;
+  }
+  if (durationSeconds.isNegative) {
+    warnings.add('$warningDurationOmitted: negative duration');
+    return null;
+  }
+  return durationSeconds.toDouble();
 }
 
 /// Builds a validated [TranscriptDocument] from a verbose provider payload.
@@ -253,123 +386,15 @@ TranscriptDocument buildTranscriptDocument({
   List<String> warnings = const [],
 }) {
   final allWarnings = List.of(warnings);
-
-  // Segments: validate, then enforce non-decreasing starts by dropping
-  // offenders (never sorting — reordering would fabricate an ordering the
-  // provider did not report).
-  final segments = <TranscriptSegment>[];
-  var lastStart = -1.0;
-  var nextId = 0;
-  for (final raw in rawSegments ?? const <Object?>[]) {
-    final segment = _parseSegment(raw, nextId, allWarnings);
-    if (segment == null) continue;
-    nextId++;
-    if (lastStart >= 0 && segment.start < lastStart) {
-      allWarnings.add(
-        '$warningInvalidTimestampDropped: segment ${segment.id} starts '
-        '(${segment.start}) before the previous segment ($lastStart)',
-      );
-      continue;
-    }
-    lastStart = segment.start;
-    segments.add(segment);
-  }
-
-  // Words: validate, then enforce non-decreasing starts by dropping
-  // offenders (never sorting — reordering would fabricate an ordering the
-  // provider did not report).
-  final words = <TranscriptWord>[];
-  var lastWordStart = -1.0;
-  for (final raw in rawWords ?? const <Object?>[]) {
-    final word = _parseWord(raw, allWarnings);
-    if (word == null) continue;
-    if (lastWordStart >= 0 && word.start < lastWordStart) {
-      allWarnings.add(
-        '$warningInvalidTimestampDropped: word "${word.word}" starts '
-        '(${word.start}) before the previous word ($lastWordStart)',
-      );
-      continue;
-    }
-    lastWordStart = word.start;
-    words.add(word);
-  }
-
-  // Nest words under the segments containing their start; a word outside
-  // its segment's range is clamped with an explicit warning, never
-  // silently. Words without segments stay at document level (E4).
-  final wordsBySegment = <TranscriptSegment, List<TranscriptWord>>{};
-  List<TranscriptWord>? documentWords;
-  for (final word in words) {
-    if (segments.isEmpty) {
-      (documentWords ??= []).add(word);
-      continue;
-    }
-    final host = _hostSegmentFor(segments, word.start);
-    final clampedStart = word.start.clamp(host.start, host.end).toDouble();
-    final clampedEnd = word.end.clamp(host.start, host.end).toDouble();
-    if (clampedStart != word.start || clampedEnd != word.end) {
-      allWarnings.add(
-        '$warningWordClamped: word "${word.word}" '
-        '[${word.start}, ${word.end}] outside segment ${host.id} '
-        '[${host.start}, ${host.end}] — clamped',
-      );
-    }
-    (wordsBySegment[host] ??= []).add(
-      TranscriptWord(
-        word: word.word,
-        start: clampedStart,
-        end: clampedEnd,
-        confidence: word.confidence,
-      ),
-    );
-  }
-  final nestedSegments = <TranscriptSegment>[
-    for (final segment in segments)
-      TranscriptSegment(
-        id: segment.id,
-        start: segment.start,
-        end: segment.end,
-        text: segment.text,
-        words: wordsBySegment[segment],
-      ),
-  ];
-
-  // Text fidelity: segments must reproduce `text` up to whitespace. A
-  // mismatch (possible after drops or from an inconsistent endpoint) is
-  // repaired toward the invariant with an explicit warning — the joined
-  // text is still provider data, nothing is synthesized.
-  var documentText = text.trim();
-  if (nestedSegments.isNotEmpty) {
-    final joined = TranscriptDocument.normalizeWhitespace(
-      nestedSegments.map((s) => s.text).join(' '),
-    );
-    if (joined != TranscriptDocument.normalizeWhitespace(text)) {
-      documentText = nestedSegments.map((s) => s.text).join(' ');
-      allWarnings.add(
-        '$warningTextMismatchRejoined: provider text and '
-        'segment concatenation disagreed up to whitespace; the segment '
-        'concatenation is authoritative',
-      );
-    }
-  }
-
-  double? duration;
-  if (durationSeconds is num && durationSeconds.isFinite) {
-    if (!durationSeconds.isNegative) {
-      duration = durationSeconds.toDouble();
-    } else {
-      allWarnings.add('$warningDurationOmitted: negative duration');
-    }
-  } else if (durationSeconds != null) {
-    allWarnings.add('$warningDurationOmitted: non-finite duration');
-  }
-
+  final segments = _validatedSegments(rawSegments, allWarnings);
+  final words = _validatedWords(rawWords, allWarnings);
+  final nested = _nestWords(segments, words, allWarnings);
   return TranscriptDocument(
-    text: documentText,
+    text: _resolvedText(text, nested.segments, allWarnings),
     language: language,
-    durationSeconds: duration,
-    segments: nestedSegments,
-    words: documentWords,
+    durationSeconds: _resolvedDuration(durationSeconds, allWarnings),
+    segments: nested.segments,
+    words: nested.documentWords,
     source: source,
     warnings: allWarnings,
   );

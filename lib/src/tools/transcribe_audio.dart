@@ -202,21 +202,21 @@ final class TranscriptionAdapter {
 
   /// OpenAI (`whisper-1`): word granularity guaranteed — sent whenever
   /// requested, no probing.
-  static final TranscriptionAdapter openai = TranscriptionAdapter._(
+  static const TranscriptionAdapter openai = TranscriptionAdapter._(
     TranscriptionProviderKind.openai,
     true,
   );
 
   /// Groq (OpenAI-compatible surface): per-model granularity support is
   /// probed — a 400 rejecting the granularity downgrades once.
-  static final TranscriptionAdapter groq = TranscriptionAdapter._(
+  static const TranscriptionAdapter groq = TranscriptionAdapter._(
     TranscriptionProviderKind.groq,
     false,
   );
 
   /// OpenRouter/local/custom: usable only if the baseUrl actually exposes
   /// `/audio/transcriptions`; failures carry an actionable message.
-  static final TranscriptionAdapter custom = TranscriptionAdapter._(
+  static const TranscriptionAdapter custom = TranscriptionAdapter._(
     TranscriptionProviderKind.custom,
     false,
   );
@@ -227,37 +227,40 @@ final class TranscriptionAdapter {
   /// the degradation ladder (Groq, custom).
   final bool assumesWordGranularity;
 
+  static const _labelByKind = {
+    TranscriptionProviderKind.openai: 'openai',
+    TranscriptionProviderKind.groq: 'groq',
+    TranscriptionProviderKind.custom: 'custom',
+  };
+
+  /// Dispatch table: kind → adapter (also the explicit-kind path of
+  /// [forConfig]; CC-1 lookups, no branching).
+  static const _byKind = {
+    TranscriptionProviderKind.openai: openai,
+    TranscriptionProviderKind.groq: groq,
+    TranscriptionProviderKind.custom: custom,
+  };
+
   /// `providerKind` label recorded in the document source block.
-  String get label {
-    switch (kind) {
-      case TranscriptionProviderKind.openai:
-        return 'openai';
-      case TranscriptionProviderKind.groq:
-        return 'groq';
-      case TranscriptionProviderKind.custom:
-        return 'custom';
-    }
-  }
+  String get label => _labelByKind[kind]!;
 
   /// Resolves the adapter for [config]: explicit kind wins, otherwise the
-  /// endpoint host decides (api.openai.com → OpenAI, *.groq.com → Groq,
-  /// anything else → custom).
+  /// endpoint host decides (see [_inferKind]).
   static TranscriptionAdapter forConfig(TranscribeAudioConfig config) {
     final explicit = config.providerKind;
-    if (explicit != null) {
-      switch (explicit) {
-        case TranscriptionProviderKind.openai:
-          return openai;
-        case TranscriptionProviderKind.groq:
-          return groq;
-        case TranscriptionProviderKind.custom:
-          return custom;
-      }
-    }
-    final host = Uri.parse(config.baseUrl ?? 'https://api.openai.com/v1').host;
-    if (host == 'api.openai.com') return openai;
-    if (host.endsWith('groq.com')) return groq;
-    return custom;
+    if (explicit != null) return _byKind[explicit]!;
+    return _byKind[_inferKind(_defaultHost(config))]!;
+  }
+
+  static String _defaultHost(TranscribeAudioConfig config) =>
+      Uri.parse(config.baseUrl ?? 'https://api.openai.com/v1').host;
+
+  /// Host-based family inference (CC 3): api.openai.com → OpenAI,
+  /// *.groq.com → Groq, anything else → custom.
+  static TranscriptionProviderKind _inferKind(String host) {
+    if (host == 'api.openai.com') return TranscriptionProviderKind.openai;
+    if (host.endsWith('groq.com')) return TranscriptionProviderKind.groq;
+    return TranscriptionProviderKind.custom;
   }
 }
 
@@ -447,6 +450,186 @@ Future<http.Response> _sendOnce(
   return http.Response.fromStream(await client.send(request));
 }
 
+/// The outcome of one classified 400 on the verbose ladder.
+enum _DowngradeAction {
+  /// Retry once without the word granularity field.
+  dropWords,
+
+  /// Give up on verbose_json entirely and retry today's plain-json shape.
+  dropVerbose,
+
+  /// Not a recognized downgrade: a hard HTTP failure.
+  hardError,
+
+  /// A `require` level the endpoint cannot satisfy: hard actionable error.
+  requirementViolated,
+}
+
+/// Classifies a granularity-rejecting 400 (Groq probe, custom endpoints):
+/// `require: word` makes the downgrade a hard error; otherwise the ladder
+/// may drop the word field once.
+_DowngradeAction _classifyWordRejection(
+  TranscribeAudioConfig config,
+  _LadderState state,
+) {
+  if (state.wordsDowngraded) return _DowngradeAction.hardError;
+  if (config.require == TranscriptionRequirement.word) {
+    return _DowngradeAction.requirementViolated;
+  }
+  return _DowngradeAction.dropWords;
+}
+
+/// Classifies a verbose_json-rejecting 400: any non-none `require` makes
+/// the downgrade a hard error; otherwise the ladder may fall back to the
+/// plain-json shape once.
+_DowngradeAction _classifyVerboseRejection(TranscribeAudioConfig config) {
+  if (config.require != TranscriptionRequirement.none) {
+    return _DowngradeAction.requirementViolated;
+  }
+  return _DowngradeAction.dropVerbose;
+}
+
+/// The actionable hard error for a `require` level the endpoint rejected
+/// with a 400 (AC5) — distinguishes which level was demanded.
+Never _throwRequirementRejected400(
+  TranscribeAudioConfig config,
+  String endpointHost,
+) {
+  if (config.require == TranscriptionRequirement.word) {
+    throw StateError(
+      'Transcription: word timings were required (require: word) but the '
+      'endpoint at $endpointHost rejected timestamp_granularities[]=word '
+      '(HTTP 400). Configure an endpoint that provides word-level '
+      'granularity (e.g. OpenAI whisper-1), or lower the requirement.',
+    );
+  }
+  throw StateError(
+    'Transcription: timing granularity was required '
+    '(require: ${config.require.wireName}) but the endpoint at '
+    '$endpointHost rejected response_format=verbose_json (HTTP 400). '
+    'Configure a Whisper-compatible endpoint, or lower the requirement.',
+  );
+}
+
+/// Resolves one 400 on the verbose ladder into an action, applying the
+/// per-downgrade single-retry bookkeeping and the machine-readable warning.
+_DowngradeAction _resolveVerbose400(
+  String body,
+  TranscribeAudioConfig config,
+  _LadderState state,
+  Set<TranscriptionGranularity> requested,
+  List<String> warnings,
+  String endpointHost,
+) {
+  final warning = _classifyDowngrade(body);
+  if (warning == warningWordTimingsUnsupported &&
+      requested.contains(TranscriptionGranularity.word)) {
+    final action = _classifyWordRejection(config, state);
+    if (action == _DowngradeAction.dropWords) {
+      state.wordsDowngraded = true;
+      warnings.add(warningWordTimingsUnsupported);
+    }
+    return action;
+  }
+  if (warning == warningVerboseJsonUnsupported) {
+    final action = _classifyVerboseRejection(config);
+    if (action == _DowngradeAction.dropVerbose) {
+      state.verboseDowngraded = true;
+      warnings.add(warningVerboseJsonUnsupported);
+    }
+    return action;
+  }
+  return _DowngradeAction.hardError;
+}
+
+/// Strict parse of a 200 verbose payload (OpenAI-family verbose_json): the
+/// sanitized body must decode to a JSON object. A non-JSON body (proxy
+/// HTML, empty response) is an actionable endpoint error, not a parse
+/// guess (E5).
+Map<String, dynamic> _decodeVerbosePayload(String body, String endpointHost) {
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(body);
+  } on FormatException {
+    throw StateError(
+      'Transcription endpoint at $endpointHost returned HTTP 200 with a '
+      'non-JSON body — it likely does not expose a Whisper-compatible '
+      '/audio/transcriptions endpoint. Check the configured baseUrl.',
+    );
+  }
+  if (decoded is! Map<String, dynamic>) {
+    throw StateError(
+      'Transcription endpoint at $endpointHost returned HTTP 200 with '
+      'unexpected JSON (${decoded.runtimeType}) — expected a verbose_json '
+      'object. Check the configured baseUrl.',
+    );
+  }
+  return decoded;
+}
+
+/// Enforces the `require` contract against a 200 payload that silently
+/// lacks the demanded timings (a downgrade is a downgrade even when the
+/// endpoint answers 200 — AC5). Without `require`, the machine-readable
+/// warning records the degradation. Never fabricates timings.
+void _enforceRequirementsOnPayload(
+  Map<String, dynamic> payload,
+  TranscribeAudioConfig config,
+  _LadderState state,
+  Set<TranscriptionGranularity> requested,
+  List<String> warnings,
+  String endpointHost,
+) {
+  final payloadWords = payload['words'];
+  final hasPayloadWords = payloadWords is List && payloadWords.isNotEmpty;
+  final payloadSegments = payload['segments'];
+  final hasPayloadSegments =
+      payloadSegments is List && payloadSegments.isNotEmpty;
+  if (requested.contains(TranscriptionGranularity.word) && !hasPayloadWords) {
+    if (config.require == TranscriptionRequirement.word) {
+      throw StateError(
+        'Transcription: word timings were required (require: word) but the '
+        'endpoint at $endpointHost answered HTTP 200 without any '
+        'word-level timestamps (it silently ignored '
+        'timestamp_granularities[]=word). Configure an endpoint that '
+        'provides word-level granularity (e.g. OpenAI whisper-1), or '
+        'lower the requirement.',
+      );
+    }
+    if (!state.wordsDowngraded) {
+      warnings.add(warningWordTimingsUnsupported);
+    }
+  }
+  if (config.require == TranscriptionRequirement.segment &&
+      !hasPayloadSegments) {
+    throw StateError(
+      'Transcription: segment timings were required (require: segment) but '
+      'the endpoint at $endpointHost answered HTTP 200 without any '
+      'segments. Configure a Whisper-compatible verbose_json endpoint, or '
+      'lower the requirement.',
+    );
+  }
+}
+
+/// The plain-json fallback after a verbose_json-rejecting 400: today's
+/// request shape re-wrapped as a text-only document with the accumulated
+/// ladder warnings.
+Future<TranscriptDocument> _transcribePlainFallback(
+  TranscribeAudioConfig config,
+  Uint8List bytes,
+  String filename,
+  String? language,
+  String? prompt,
+  TranscriptSource source,
+  List<String> warnings,
+) async {
+  final text = await _transcribe(config, bytes, filename, language, prompt);
+  return buildTranscriptDocument(
+    text: text,
+    source: source,
+    warnings: warnings,
+  );
+}
+
 /// Runs the full verbose ladder: attempt with the requested granularities,
 /// downgrade at most once per step on classified 400s, parse strictly, and
 /// return the final document.
@@ -479,117 +662,52 @@ Future<TranscriptDocument> _transcribeVerbose({
       );
 
       if (response.statusCode == 400) {
-        final warning = _classifyDowngrade(response.body);
-        if (warning == warningWordTimingsUnsupported &&
-            !state.wordsDowngraded &&
-            requested.contains(TranscriptionGranularity.word)) {
-          if (config.require == TranscriptionRequirement.word) {
-            throw StateError(
-              'Transcription: word timings were required (require: word) but '
-              'the endpoint at $endpointHost rejected '
-              'timestamp_granularities[]=word (HTTP 400). Configure an '
-              'endpoint that provides word-level granularity (e.g. OpenAI '
-              'whisper-1), or lower the requirement.',
+        final action = _resolveVerbose400(
+          response.body,
+          config,
+          state,
+          requested,
+          warnings,
+          endpointHost,
+        );
+        switch (action) {
+          case _DowngradeAction.dropWords:
+            continue; // single retry: re-uploads the audio
+          case _DowngradeAction.dropVerbose:
+            return await _transcribePlainFallback(
+              config,
+              bytes,
+              filename,
+              language,
+              prompt,
+              source,
+              warnings,
             );
-          }
-          state.wordsDowngraded = true;
-          warnings.add(warningWordTimingsUnsupported);
-          continue; // single retry: re-uploads the audio
+          case _DowngradeAction.requirementViolated:
+            _throwRequirementRejected400(config, endpointHost);
+          case _DowngradeAction.hardError:
+            _throwHttpError(400, response.body, config.apiKey);
         }
-        if (warning == warningVerboseJsonUnsupported &&
-            !state.verboseDowngraded) {
-          if (config.require != TranscriptionRequirement.none) {
-            throw StateError(
-              'Transcription: timing granularity was required '
-              '(require: ${config.require.wireName}) but the endpoint at '
-              '$endpointHost rejected response_format=verbose_json '
-              '(HTTP 400). Configure a Whisper-compatible endpoint, or '
-              'lower the requirement.',
-            );
-          }
-          state.verboseDowngraded = true;
-          warnings.add(warningVerboseJsonUnsupported);
-          // Fall back to today's plain-json behavior, wrapped as a document.
-          final text = await _transcribe(
-            config,
-            bytes,
-            filename,
-            language,
-            prompt,
-          );
-          return buildTranscriptDocument(
-            text: text,
-            source: source,
-            warnings: warnings,
-          );
-        }
-        _throwHttpError(400, response.body, config.apiKey);
       }
 
       if (response.statusCode != 200) {
         _throwHttpError(response.statusCode, response.body, config.apiKey);
       }
 
-      // 200: strict parse of the verbose payload. A non-JSON body (proxy
-      // HTML, empty response) is an actionable endpoint error, not a parse
-      // guess (E5).
-      final sanitizedBody = _redactSecret(response.body, config.apiKey);
-      Object? decoded;
-      try {
-        decoded = jsonDecode(sanitizedBody);
-      } on FormatException {
-        throw StateError(
-          'Transcription endpoint at $endpointHost returned HTTP 200 with a '
-          'non-JSON body — it likely does not expose a Whisper-compatible '
-          '/audio/transcriptions endpoint. Check the configured baseUrl.',
-        );
-      }
-      if (decoded is! Map<String, dynamic>) {
-        throw StateError(
-          'Transcription endpoint at $endpointHost returned HTTP 200 with '
-          'unexpected JSON (${decoded.runtimeType}) — expected a '
-          'verbose_json object. Check the configured baseUrl.',
-        );
-      }
-
-      // Timings were requested but the endpoint answered without them —
-      // either a silent-ignore of the granularity fields or a bare
-      // verbose payload. `require` turns ANY downgrade into a hard,
-      // actionable error (AC5); without `require` the machine-readable
-      // warning records the degradation. Never fabricate timings.
-      final payloadWords = decoded['words'];
-      final hasPayloadWords = payloadWords is List && payloadWords.isNotEmpty;
-      final payloadSegments = decoded['segments'];
-      final hasPayloadSegments =
-          payloadSegments is List && payloadSegments.isNotEmpty;
-      if (requested.contains(TranscriptionGranularity.word) &&
-          !hasPayloadWords) {
-        if (config.require == TranscriptionRequirement.word) {
-          throw StateError(
-            'Transcription: word timings were required (require: word) but '
-            'the endpoint at $endpointHost answered HTTP 200 without any '
-            'word-level timestamps (it silently ignored '
-            'timestamp_granularities[]=word). Configure an endpoint that '
-            'provides word-level granularity (e.g. OpenAI whisper-1), or '
-            'lower the requirement.',
-          );
-        }
-        if (!state.wordsDowngraded) {
-          warnings.add(warningWordTimingsUnsupported);
-        }
-      }
-      if (config.require == TranscriptionRequirement.segment &&
-          !hasPayloadSegments) {
-        throw StateError(
-          'Transcription: segment timings were required (require: segment) '
-          'but the endpoint at $endpointHost answered HTTP 200 without any '
-          'segments. Configure a Whisper-compatible verbose_json endpoint, '
-          'or lower the requirement.',
-        );
-      }
-
+      final payload = _decodeVerbosePayload(
+        _redactSecret(response.body, config.apiKey),
+        endpointHost,
+      );
+      _enforceRequirementsOnPayload(
+        payload,
+        config,
+        state,
+        requested,
+        warnings,
+        endpointHost,
+      );
       return parseVerboseTranscriptionPayload(
-        payload: decoded,
+        payload: payload,
         source: source,
         warnings: warnings,
       );

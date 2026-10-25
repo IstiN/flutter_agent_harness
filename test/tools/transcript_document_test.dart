@@ -296,6 +296,27 @@ void main() {
       );
     });
 
+    test('non-numeric bounds are dropped with a warning', () {
+      final document = buildTranscriptDocument(
+        text: 'a b',
+        source: _source,
+        rawSegments: [
+          {'id': 0, 'start': '0.0', 'end': 1.0, 'text': 'a'},
+        ],
+        rawWords: [
+          {'word': 'b', 'start': 'x', 'end': 1.0},
+        ],
+      );
+      expect(document.segments, isEmpty);
+      expect(document.words, isNull);
+      expect(
+        document.warnings.where(
+          (w) => w.startsWith(warningInvalidTimestampDropped),
+        ),
+        hasLength(2),
+      );
+    });
+
     test('negative/non-finite duration is omitted with a warning', () {
       final document = buildTranscriptDocument(
         text: '',
