@@ -107,19 +107,29 @@ extension on AgentCli {
     final interrupted = io.interrupts.first.then((_) => true);
     var stopped = false;
     while (!stopped) {
-      try {
-        for (final line in tailer.tail(await session.getBranch())) {
-          io.writeln(line);
-        }
-      } on Object catch (error) {
-        io.writeln(tuiError('trajectory: tail failed: $error'));
-        return;
-      }
-      stopped = await Future.any<bool>([
-        interrupted,
-        Future<void>.delayed(trajectoryPollInterval).then((_) => false),
-      ]);
+      stopped = await _tailPoll(tailer, session, interrupted);
     }
+  }
+
+  /// One tail poll: prints the fresh lines; true when the poll FAILED
+  /// (the error is printed) or the interrupt fired.
+  Future<bool> _tailPoll(
+    TrajectoryTailer tailer,
+    Session session,
+    Future<bool> interrupted,
+  ) async {
+    try {
+      for (final line in tailer.tail(await session.getBranch())) {
+        io.writeln(line);
+      }
+    } on Object catch (error) {
+      io.writeln(tuiError('trajectory: tail failed: $error'));
+      return true;
+    }
+    return Future.any<bool>([
+      interrupted,
+      Future<void>.delayed(trajectoryPollInterval).then((_) => false),
+    ]);
   }
 
   /// The active session's snapshot, or null after printing why not.
@@ -141,9 +151,7 @@ extension on AgentCli {
     if (session == null || _heavyScanGuardShown) return;
     _heavyScanGuardShown = true;
     final path = (await session.getMetadata()).path;
-    final heavy = await sessionSizeIfHeavy(_coreToolEnv, path);
-    if (heavy == null) return;
-    for (final line in heavyScanGuardLines(heavy, path)) {
+    for (final line in await heavyScanGuardIfHeavy(_coreToolEnv, path)) {
       io.writeln(_style.dim(line));
     }
   }

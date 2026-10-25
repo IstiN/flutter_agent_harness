@@ -226,7 +226,7 @@ import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/session_search_tool.dart';
 import '../session/session_chunk_reader.dart'
-    show heavyScanGuardLines, sessionSizeIfHeavy;
+    show heavyScanGuardIfHeavy, heavyScanGuardLines, sessionSizeIfHeavy;
 import '../session/session_search.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';

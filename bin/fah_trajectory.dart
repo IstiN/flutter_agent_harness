@@ -36,13 +36,7 @@ Future<int> _runTrajectoryCommand(
   // + the hygiene escapes) before the scan starts. tail is excluded: it
   // follows the resident window and never primes the head.
   if (command.verb != 'tail') {
-    final metadata = await session.getMetadata();
-    final heavy = await sessionSizeIfHeavy(env, metadata.path);
-    if (heavy != null) {
-      for (final line in heavyScanGuardLines(heavy, metadata.path)) {
-        stderr.writeln(line);
-      }
-    }
+    await _warnHeavyTrajectoryFile(io, env, session);
   }
   final parseSw = Stopwatch()..start();
   // gh-1555 W1 (d6): view --at/cost/inspect read the WHOLE branch, but
@@ -124,6 +118,19 @@ Future<int> _runTrajectoryCommand(
     );
   }
   return exitCode;
+}
+
+/// Issue #1882 AC3: the headless trajectory read's heavy-file warning —
+/// exact size + the hygiene escapes, to stderr (payload goes to stdout).
+Future<void> _warnHeavyTrajectoryFile(
+  CliIO io,
+  FileSystem env,
+  Session session,
+) async {
+  final metadata = await session.getMetadata();
+  for (final line in await heavyScanGuardIfHeavy(env, metadata.path)) {
+    stderr.writeln(line);
+  }
 }
 
 /// Prints trajectory payload lines to stdout (newline-terminated).

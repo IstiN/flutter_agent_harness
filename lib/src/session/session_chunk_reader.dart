@@ -61,14 +61,30 @@ List<String> heavyScanGuardLines(int sizeBytes, String path) => [
 /// The file's size when it is over the [sessionHeavyScanWarnBytes] guard,
 /// else null (stat miss / small file / fs without [fileInfo]).
 Future<int?> sessionSizeIfHeavy(FileSystem fs, String path) async {
+  final size = await _statFileSize(fs, path);
+  if (size == null || size <= sessionHeavyScanWarnBytes) return null;
+  return size;
+}
+
+/// The file's size in bytes, or null when the stat misses, the path is
+/// not a plain file, or the filesystem cannot stat.
+Future<int?> _statFileSize(FileSystem fs, String path) async {
   try {
-    final info = await fs.fileInfo(path);
-    final file = info.valueOrNull;
+    final file = (await fs.fileInfo(path)).valueOrNull;
     if (file == null || file.kind != FileKind.file) return null;
-    return file.size > sessionHeavyScanWarnBytes ? file.size : null;
+    return file.size;
   } on Object {
     return null;
   }
+}
+
+/// The [heavyScanGuardLines] for [path] when it is over the warn bound,
+/// else empty — the shared shape the resume line, the REPL trajectory
+/// guard and the headless dispatcher print.
+Future<List<String>> heavyScanGuardIfHeavy(FileSystem fs, String path) async {
+  final heavy = await sessionSizeIfHeavy(fs, path);
+  if (heavy == null) return const [];
+  return heavyScanGuardLines(heavy, path);
 }
 
 /// One parsed record with the byte range it occupies in the session file.
