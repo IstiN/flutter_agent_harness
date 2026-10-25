@@ -66,7 +66,13 @@ export 'src/cli/cli_config.dart'
 export 'src/config/app_config_sections.dart';
 export 'src/cli/pi_mode.dart';
 export 'src/cli/links_config.dart'
-    show LinksConfig, defaultAppStoreUrl, defaultSiteUrl, defaultTestFlightUrl;
+    show
+        LinksConfig,
+        defaultApkGodUrl,
+        defaultApkStandardUrl,
+        defaultAppStoreUrl,
+        defaultSiteUrl,
+        defaultTestFlightUrl;
 export 'src/cli/tui_status_line.dart'
     show
         LaidSegment,
