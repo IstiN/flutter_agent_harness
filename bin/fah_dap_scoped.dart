@@ -338,20 +338,8 @@ final class DapScopedMemberships {
     final stored = await store?.read(item);
     if (stored != null && stored.isNotEmpty) return stored;
     if (autoProvision && store != null) {
-      final random = Random.secure();
-      final generated = base64UrlEncode(
-        List<int>.generate(32, (_) => random.nextInt(256)),
-      ).replaceAll('=', '');
-      try {
-        await store.write(item, generated);
-        return generated;
-      } on Object {
-        // An unavailable/unwritable store is equivalent to no Keychain:
-        // discard the unrecoverable generated value and use the fallback.
-        loadWarnings.add(
-          'dap: could not save an auto-generated passphrase to Keychain',
-        );
-      }
+      final generated = await _autoProvisionPassphrase(item, store);
+      if (generated != null) return generated;
     }
     final prompt = passphrasePrompt;
     if (prompt == null) return null;
@@ -361,10 +349,34 @@ final class DapScopedMemberships {
       try {
         await store.write(item, answer.passphrase);
       } on Object {
+        // Best effort: the joined key works this run either way.
         loadWarnings.add('dap: could not save the passphrase to Keychain');
       }
     }
     return answer.passphrase;
+  }
+
+  /// Generates a random passphrase and persists it into [store]. Null
+  /// means the store is unavailable/unwritable — equivalent to no
+  /// Keychain: the unrecoverable generated value is discarded and the
+  /// caller falls back to the next source.
+  Future<String?> _autoProvisionPassphrase(
+    String item,
+    DapChannelKeychain store,
+  ) async {
+    final random = Random.secure();
+    final generated = base64UrlEncode(
+      List<int>.generate(32, (_) => random.nextInt(256)),
+    ).replaceAll('=', '');
+    try {
+      await store.write(item, generated);
+      return generated;
+    } on Object {
+      loadWarnings.add(
+        'dap: could not save an auto-generated passphrase to Keychain',
+      );
+      return null;
+    }
   }
 
   /// Decrypts a stored priv for the runtime union. Plaintext passes
@@ -489,86 +501,25 @@ final class DapScopedMemberships {
     );
 
     if (scope == DapChannelScope.global) {
-      // The legacy global import path (byte-equivalent effective
-      // membership with `fa dap import`, REG-*).
-      final priv = invite.priv;
-      if (invite.pub != null && priv != null) {
-        await client.persistChannelKeys(
-          globalChannelsFile,
-          invite.channel,
-          client.ChannelKeys(pub: invite.pub!, priv: priv),
-        );
-      }
-      await client.persistDapConfig(
-        channels: [invite.channel],
-        file: globalConfigFile,
-      );
-      final config = client.readDapConfig(globalConfigFile);
-      if (config['url'] is! String || (config['url'] as String).isEmpty) {
-        await client.persistDapConfig(
-          url: invite.hubUrl,
-          file: globalConfigFile,
-        );
-      }
-      if (hubClientSecret != null) {
-        // The legacy global files carry ONE clientSecret for the default
-        // hub — writing a foreign hub's name-bound credential there
-        // would break the default connection. Memory only, honestly.
-        _memoryOnlySecrets[membership.key] = hubClientSecret;
-        warnings.add(
-          'dap: hub credential for #${invite.channel} is kept in memory '
-          'only at global scope — after a restart re-paste the DAP block '
-          'or export DAP_CLIENT_SECRET / DAP_AGENT_NAME',
-        );
-      }
+      await _joinGlobal(invite, membership, hubClientSecret, warnings);
     } else {
       // Encrypted-at-rest for session/project (v3): no passphrase → the
       // key stays in MEMORY for this run, never plaintext on disk.
-      var storedPriv = invite.priv;
-      var storedSecret = hubClientSecret;
-      if (storedPriv != null || storedSecret != null) {
-        final passphrase = await _resolvePassphrase(
-          invite.hubUrl,
-          invite.channel,
-          autoProvision: true,
-        );
-        if (passphrase == null) {
-          if (storedPriv != null) {
-            warnings.add(
-              'dap: no passphrase (DAP_KEY_PASSPHRASE / Keychain / prompt) — '
-              '#${invite.channel} key is kept in memory only this run; '
-              '$_dapPassphraseRecovery',
-            );
-            _memoryOnlyKeys[membership.key] = invite.priv!;
-            storedPriv = null;
-          }
-          if (storedSecret != null) {
-            warnings.add(
-              'dap: no passphrase — the hub credential for '
-              '#${invite.channel} is kept in memory only this run; '
-              '$_dapPassphraseRecovery',
-            );
-            _memoryOnlySecrets[membership.key] = storedSecret;
-            storedSecret = null;
-          }
-        } else {
-          if (storedPriv != null) {
-            storedPriv = await encryptChannelPriv(storedPriv, passphrase);
-          }
-          if (storedSecret != null) {
-            storedSecret = await encryptChannelPriv(storedSecret, passphrase);
-          }
-        }
-      }
+      final secrets = await _encryptJoinSecrets(
+        invite,
+        membership.key,
+        hubClientSecret,
+        warnings,
+      );
       final stored = DapChannelMembership(
         hubUrl: membership.hubUrl,
         channelId: membership.channelId,
         scope: scope,
         joinedAt: membership.joinedAt,
-        pub: membership.pub,
-        priv: storedPriv,
+        pub: invite.pub,
+        priv: secrets.priv,
         agentName: agentName,
-        hubClientSecret: storedSecret,
+        hubClientSecret: secrets.hubClientSecret,
       );
       if (scope == DapChannelScope.session) {
         final append = appendSessionRecord;
@@ -582,6 +533,92 @@ final class DapScopedMemberships {
     }
     _union = null;
     return DapScopedOutcome(membership, warnings);
+  }
+
+  /// The legacy global import path (byte-equivalent effective membership
+  /// with `fa dap import`, REG-*).
+  Future<void> _joinGlobal(
+    DapInviteImport invite,
+    DapChannelMembership membership,
+    String? hubClientSecret,
+    List<String> warnings,
+  ) async {
+    final priv = invite.priv;
+    if (invite.pub != null && priv != null) {
+      await client.persistChannelKeys(
+        globalChannelsFile,
+        invite.channel,
+        client.ChannelKeys(pub: invite.pub!, priv: priv),
+      );
+    }
+    await client.persistDapConfig(
+      channels: [invite.channel],
+      file: globalConfigFile,
+    );
+    final config = client.readDapConfig(globalConfigFile);
+    if (config['url'] is! String || (config['url'] as String).isEmpty) {
+      await client.persistDapConfig(url: invite.hubUrl, file: globalConfigFile);
+    }
+    if (hubClientSecret != null) {
+      // The legacy global files carry ONE clientSecret for the default
+      // hub — writing a foreign hub's name-bound credential there would
+      // break the default connection. Memory only, honestly.
+      _memoryOnlySecrets[membership.key] = hubClientSecret;
+      warnings.add(
+        'dap: hub credential for #${invite.channel} is kept in memory '
+        'only at global scope — after a restart re-paste the DAP block '
+        'or export DAP_CLIENT_SECRET / DAP_AGENT_NAME',
+      );
+    }
+  }
+
+  /// Encrypts the join secrets at rest; without a passphrase they are
+  /// demoted to MEMORY-ONLY for this run (never plaintext on disk) and
+  /// a recovery hint lands in [warnings].
+  Future<({String? priv, String? hubClientSecret})> _encryptJoinSecrets(
+    DapInviteImport invite,
+    String membershipKey,
+    String? hubClientSecret,
+    List<String> warnings,
+  ) async {
+    var storedPriv = invite.priv;
+    var storedSecret = hubClientSecret;
+    if (storedPriv == null && storedSecret == null) {
+      return (priv: storedPriv, hubClientSecret: storedSecret);
+    }
+    final passphrase = await _resolvePassphrase(
+      invite.hubUrl,
+      invite.channel,
+      autoProvision: true,
+    );
+    if (passphrase == null) {
+      if (storedPriv != null) {
+        warnings.add(
+          'dap: no passphrase (DAP_KEY_PASSPHRASE / Keychain / prompt) — '
+          '#${invite.channel} key is kept in memory only this run; '
+          '$_dapPassphraseRecovery',
+        );
+        _memoryOnlyKeys[membershipKey] = invite.priv!;
+        storedPriv = null;
+      }
+      if (storedSecret != null) {
+        warnings.add(
+          'dap: no passphrase — the hub credential for '
+          '#${invite.channel} is kept in memory only this run; '
+          '$_dapPassphraseRecovery',
+        );
+        _memoryOnlySecrets[membershipKey] = storedSecret;
+        storedSecret = null;
+      }
+      return (priv: storedPriv, hubClientSecret: storedSecret);
+    }
+    if (storedPriv != null) {
+      storedPriv = await encryptChannelPriv(storedPriv, passphrase);
+    }
+    if (storedSecret != null) {
+      storedSecret = await encryptChannelPriv(storedSecret, passphrase);
+    }
+    return (priv: storedPriv, hubClientSecret: storedSecret);
   }
 
   Future<void> _projectJoin(DapChannelMembership membership) async {

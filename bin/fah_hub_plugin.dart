@@ -1567,17 +1567,12 @@ final class HubPluginHost implements FahPlugin {
         content: [
           TextContent(
             text:
-                'agentId: ${status.agentId ?? '-'}
-'
-                'name: ${status.name ?? '-'}
-'
-                'url: ${status.url ?? '-'}
-'
-                'connected: ${status.connected}
-'
+                'agentId: ${status.agentId ?? '-'}\n'
+                'name: ${status.name ?? '-'}\n'
+                'url: ${status.url ?? '-'}\n'
+                'connected: ${status.connected}\n'
                 'channels: '
-                '${status.channels.isEmpty ? '-' : status.channels.join(', ')}
-'
+                '${status.channels.isEmpty ? '-' : status.channels.join(', ')}\n'
                 'handshakes: ${status.hellos} hello(s), '
                 '${status.welcomes} welcome(s)',
           ),
@@ -1585,7 +1580,6 @@ final class HubPluginHost implements FahPlugin {
       );
     },
   );
-
   AgentTool _dapPeersTool() => AgentTool(
     name: 'dap_peers',
     label: 'dap_peers',
@@ -1603,8 +1597,7 @@ final class HubPluginHost implements FahPlugin {
               for (final peer in peers)
                 '${peer.agentId} ${peer.name ?? '-'}'
                     '${peer.self ? ' (self)' : ''}',
-            ].join('
-');
+            ].join('\n');
       return ToolExecutionResult(content: [TextContent(text: text)]);
     },
   );

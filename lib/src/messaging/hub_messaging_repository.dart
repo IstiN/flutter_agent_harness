@@ -279,60 +279,10 @@ final class HubMessagingRepository
 
   Future<void> _dialOnce() async {
     if (!_started || _disposed) return;
-    final query = _dialUrl.queryParameters;
-    final url = token == null || token!.isEmpty
-        ? _dialUrl
-        : _dialUrl.replace(queryParameters: {...query, 'dap_token': token});
-    final HubSocket socket;
-    try {
-      final secret = clientSecret;
-      if (secret == null || secret.isEmpty) {
-        socket = await _transport.connect(url);
-      } else {
-        final transport = _transport;
-        if (transport is! HubBearerTransport) {
-          throw StateError('hub transport has no bearer-auth capability');
-        }
-        socket = await (transport as HubBearerTransport).connectWithBearer(
-          url,
-          secret,
-        );
-      }
-    } on Object catch (error) {
-      // An authenticated dial never stringifies the transport error: a
-      // hostile/rejecting server must not be able to echo the credential
-      // into host logs.
-      _log(
-        clientSecret == null
-            ? 'hub connect failed: $error'
-            : 'authenticated hub connect failed',
-      );
-      _scheduleReconnect();
-      return;
-    }
-    _socket = socket;
-    _whoisCache.clear();
-    _dhKeys.clear();
-    _inbound = socket.messages.cast<String>().listen(
-      _onFrame,
-      onDone: _onLinkDown,
-      onError: (Object _) => _onLinkDown,
-      cancelOnError: true,
-    );
-    final welcomed = _welcome = Completer<void>();
-    try {
-      await _sendHello();
-      await welcomed.future.timeout(_replyTimeout);
-    } on Object catch (error) {
-      _log(
-        clientSecret == null
-            ? 'hub handshake failed: $error'
-            : 'authenticated hub handshake failed',
-      );
-      await _dropSocket();
-      _scheduleReconnect();
-      return;
-    }
+    final socket = await _dialSocket(_dialUrlWithToken);
+    if (socket == null) return;
+    _attachSocket(socket);
+    if (!await _hubHandshake(socket)) return;
     // Welcomed: live. Restore channel memberships, reset the backoff and
     // drain the offline mailbox plus everything queued while disconnected.
     _attempt = 0;
@@ -343,6 +293,78 @@ final class HubMessagingRepository
     if (!identical(_socket, socket) || !isConnected) return;
     unawaited(_sendNow({'op': 'flush'}).catchError((Object _) {}));
     await _drainOutbound();
+  }
+
+  /// The dial URL with the bearer token attached when one is set.
+  Uri get _dialUrlWithToken {
+    final query = _dialUrl.queryParameters;
+    return token == null || token!.isEmpty
+        ? _dialUrl
+        : _dialUrl.replace(queryParameters: {...query, 'dap_token': token});
+  }
+
+  /// Opens the socket (bearer-auth when a client secret is set). Null
+  /// means the dial failed — the error is logged (credential-safe) and a
+  /// reconnect is scheduled.
+  Future<HubSocket?> _dialSocket(Uri url) async {
+    try {
+      final secret = clientSecret;
+      if (secret == null || secret.isEmpty) {
+        return await _transport.connect(url);
+      }
+      final transport = _transport;
+      if (transport is! HubBearerTransport) {
+        throw StateError('hub transport has no bearer-auth capability');
+      }
+      return await (transport as HubBearerTransport).connectWithBearer(
+        url,
+        secret,
+      );
+    } on Object catch (error) {
+      // An authenticated dial never stringifies the transport error: a
+      // hostile/rejecting server must not be able to echo the credential
+      // into host logs.
+      _log(
+        clientSecret == null
+            ? 'hub connect failed: $error'
+            : 'authenticated hub connect failed',
+      );
+      _scheduleReconnect();
+      return null;
+    }
+  }
+
+  void _attachSocket(HubSocket socket) {
+    _socket = socket;
+    _whoisCache.clear();
+    _dhKeys.clear();
+    _inbound = socket.messages.cast<String>().listen(
+      _onFrame,
+      onDone: _onLinkDown,
+      onError: (Object _) => _onLinkDown,
+      cancelOnError: true,
+    );
+  }
+
+  /// Sends hello and waits for the welcome. False means the handshake
+  /// failed — the error is logged (credential-safe), the socket dropped
+  /// and a reconnect scheduled.
+  Future<bool> _hubHandshake(HubSocket socket) async {
+    final welcomed = _welcome = Completer<void>();
+    try {
+      await _sendHello();
+      await welcomed.future.timeout(_replyTimeout);
+      return true;
+    } on Object catch (error) {
+      _log(
+        clientSecret == null
+            ? 'hub handshake failed: $error'
+            : 'authenticated hub handshake failed',
+      );
+      await _dropSocket();
+      _scheduleReconnect();
+      return false;
+    }
   }
 
   Future<void> _sendHello() async {
@@ -431,11 +453,7 @@ final class HubMessagingRepository
     }
     switch (frame['op'] as String?) {
       case 'welcome':
-        final welcome = _welcome;
-        if (welcome != null && !welcome.isCompleted) {
-          welcome.complete();
-          _welcome = null;
-        }
+        _onWelcomed();
       case 'msg':
         unawaited(_onMsg(frame));
       case 'agent_info':
@@ -445,27 +463,43 @@ final class HubMessagingRepository
       case 'flushed':
         break; // queued mail already arrived as msg frames
       case 'joined':
-        final channel = frame['channel'] as String? ?? '';
-        _joinOrder.remove(channel);
-        final waiter = _pendingJoins.remove(channel);
-        if (waiter != null && !waiter.isCompleted) waiter.complete();
+        _onJoined(frame);
       case 'error':
-        final code = frame['code'] as String? ?? 'unknown';
-        if (code == 'access_denied' && _joinOrder.isNotEmpty) {
-          final channel = _joinOrder.removeAt(0);
-          final waiter = _pendingJoins.remove(channel);
-          if (waiter != null && !waiter.isCompleted) {
-            waiter.completeError(StateError('hub denied channel join'));
-          }
-        }
-        _log(
-          clientSecret == null
-              ? 'hub error: $code ${frame['msg']}'
-              : 'authenticated hub error: $code',
-        );
+        _onErrorFrame(frame);
       default:
         break;
     }
+  }
+
+  void _onWelcomed() {
+    final welcome = _welcome;
+    if (welcome != null && !welcome.isCompleted) {
+      welcome.complete();
+      _welcome = null;
+    }
+  }
+
+  void _onJoined(Map<String, dynamic> frame) {
+    final channel = frame['channel'] as String? ?? '';
+    _joinOrder.remove(channel);
+    final waiter = _pendingJoins.remove(channel);
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+  }
+
+  void _onErrorFrame(Map<String, dynamic> frame) {
+    final code = frame['code'] as String? ?? 'unknown';
+    if (code == 'access_denied' && _joinOrder.isNotEmpty) {
+      final channel = _joinOrder.removeAt(0);
+      final waiter = _pendingJoins.remove(channel);
+      if (waiter != null && !waiter.isCompleted) {
+        waiter.completeError(StateError('hub denied channel join'));
+      }
+    }
+    _log(
+      clientSecret == null
+          ? 'hub error: $code ${frame['msg']}'
+          : 'authenticated hub error: $code',
+    );
   }
 
   Future<void> _onMsg(Map<String, dynamic> frame) async {
