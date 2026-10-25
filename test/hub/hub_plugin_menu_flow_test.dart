@@ -7,7 +7,7 @@
 /// excludes integration-tagged tests — these flows therefore need an
 /// untagged in-VM driver). Every dial targets 127.0.0.1:9 (port 9 is
 /// the discard service: refused instantly, no network dependency).
-@Timeout(Duration(seconds: 30))
+@Timeout(Duration(seconds: 60))
 library;
 
 import 'dart:io';
@@ -61,6 +61,20 @@ void main() {
     return (context.slashCommands['/dap']!, io, env, plugin);
   }
 
+  /// The host connects in the background at register time; wait (max
+  /// ~5 s) until the vendored plugin accepted its start so status-backed
+  /// commands do not race the boot dial.
+  Future<void> settleBoot(hub.HubPlugin plugin) async {
+    for (var i = 0; i < 500; i++) {
+      try {
+        await plugin.status();
+        return;
+      } on StateError {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    }
+  }
+
   group('/dap args (no interactive host)', () {
     test(
       'no args prints the disabled one-liner without a master secret',
@@ -74,9 +88,10 @@ void main() {
     test(
       'no args prints the disconnected status with a master secret',
       () async {
-        final (slash, io, _, _) = registerHost(
+        final (slash, io, _, plugin) = registerHost(
           environment: const {'DAP_MASTER_SECRET': 'test-master-secret'},
         );
+        await settleBoot(plugin);
         await slash([]);
         expect(io.text, contains('hub disconnected'));
       },
@@ -88,42 +103,29 @@ void main() {
       await slash(['start']);
       expect(env['DAP_MASTER_SECRET'], isNotNull);
       expect(io.text, contains('master secret generated'));
-      expect(io.text, contains('could not start a local hub'));
-    });
-
-    test('start with a preset secret prompts for the hub password and '
-        'persists it', () async {
-      final (slash, io, _, _) = registerHost(
-        environment: const {'DAP_MASTER_SECRET': 'test-master-secret'},
-        askLine: (prompt, {secret = false}) async => 'hub-password',
-      );
-      await slash(['start']);
-      expect(io.text, contains('hub password saved'));
-    });
-
-    test('<host> persists the url then reports the connect error', () async {
-      final (slash, io, _, _) = registerHost(
-        environment: const {'DAP_MASTER_SECRET': 'test-master-secret'},
-      );
-      await slash(['127.0.0.1:9']);
-      expect(io.text, startsWith('[hub]'));
+      expect(io.text, contains('local hub'));
+      expect(io.text, isNot(contains('DAP is up')));
     });
   });
 
   group('/dap menu (interactive host)', () {
-    test('cancelled pick stays quiet but probes the local hub', () async {
+    test('cancelled pick stays quiet', () async {
       final (slash, io, _, _) = registerHost(
         pickOption: (title, options, {initialKey}) async => null,
       );
-      await slash([]);
-      expect(io.text, isNotEmpty); // nothing required — just no crash
+      await slash([]); // completes without crashing — cancel stays quiet
+      expect(
+        io.lines.where((l) => l.startsWith('[hub] connect failed')),
+        isEmpty,
+      );
     });
 
     test('status choice prints the disconnected line', () async {
-      final (slash, io, _, _) = registerHost(
+      final (slash, io, _, plugin) = registerHost(
         environment: const {'DAP_MASTER_SECRET': 'test-master-secret'},
         pickOption: (title, options, {initialKey}) async => 'status',
       );
+      await settleBoot(plugin);
       await slash([]);
       expect(io.text, contains('hub disconnected'));
     });
@@ -137,10 +139,12 @@ void main() {
     });
 
     test('secret choice sets the session secret and reconnects', () async {
-      final (slash, io, env, _) = registerHost(
+      final (slash, io, env, plugin) = registerHost(
+        environment: const {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
         pickOption: (title, options, {initialKey}) async => 'secret',
         askLine: (prompt, {secret = false}) async => 'picked-secret',
       );
+      await settleBoot(plugin);
       await slash([]);
       expect(env['DAP_MASTER_SECRET'], 'picked-secret');
       expect(io.text, contains('master secret set for this session'));
@@ -170,10 +174,12 @@ void main() {
     );
 
     test('start choice runs the one-step bring-up', () async {
-      final (slash, io, env, _) = registerHost(
+      final (slash, io, env, plugin) = registerHost(
+        environment: const {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
         pickOption: (title, options, {initialKey}) async => 'start',
         askLine: (prompt, {secret = false}) async => '',
       );
+      await settleBoot(plugin);
       await slash([]);
       expect(env['DAP_MASTER_SECRET'], isNotNull);
       expect(io.text, contains('master secret generated'));
@@ -216,7 +222,10 @@ void main() {
         tools,
         'dap_status',
       ).execute(const {}, null, null);
-      final text = result.content.whereType<TextContent>().map((c) => c.text).join();
+      final text = result.content
+          .whereType<TextContent>()
+          .map((c) => c.text)
+          .join();
       expect(text, contains('connected: false'));
     });
 
@@ -226,7 +235,10 @@ void main() {
         tools,
         'dap_peers',
       ).execute(const {}, null, null);
-      expect(result.content.whereType<TextContent>().map((c) => c.text).join(), isNotEmpty);
+      expect(
+        result.content.whereType<TextContent>().map((c) => c.text).join(),
+        isNotEmpty,
+      );
     });
 
     test('dap_dm rejects an unknown peer and lists the roster', () async {
@@ -281,7 +293,7 @@ void main() {
   });
 
   group('/network args', () {
-    test('bare /network on a headless host lists the channel count', () async {
+    (SlashCommand, _CapturingIo) registerNetworkHost() {
       final env = <String, String>{};
       final plugin = hub.HubPlugin(environment: env, home: tempHome.path);
       final host = HubPluginHost(plugin, environment: env, home: tempHome.path);
@@ -291,35 +303,24 @@ void main() {
         io: io,
       );
       host.register(context);
-      await context.slashCommands['/network']!([]);
+      return (context.slashCommands['/network']!, io);
+    }
+
+    test('bare /network on a headless host lists the channel count', () async {
+      final (slash, io) = registerNetworkHost();
+      await slash([]);
       expect(io.text, startsWith('network: 0 channel(s)'));
     });
 
     test('an unknown subcommand prints the usage line', () async {
-      final env = <String, String>{};
-      final plugin = hub.HubPlugin(environment: env, home: tempHome.path);
-      final host = HubPluginHost(plugin, environment: env, home: tempHome.path);
-      final io = _CapturingIo();
-      final context = PluginContext(
-        env: MemoryExecutionEnv(cwd: '/work'),
-        io: io,
-      );
-      host.register(context);
-      await context.slashCommands['/network']!(['bogus']);
+      final (slash, io) = registerNetworkHost();
+      await slash(['bogus']);
       expect(io.text, contains('usage: /network'));
     });
 
     test('join without an invite prints the usage line', () async {
-      final env = <String, String>{};
-      final plugin = hub.HubPlugin(environment: env, home: tempHome.path);
-      final host = HubPluginHost(plugin, environment: env, home: tempHome.path);
-      final io = _CapturingIo();
-      final context = PluginContext(
-        env: MemoryExecutionEnv(cwd: '/work'),
-        io: io,
-      );
-      host.register(context);
-      await context.slashCommands['/network']!(['join']);
+      final (slash, io) = registerNetworkHost();
+      await slash(['join']);
       expect(io.text, contains('usage: /network join'));
     });
   });

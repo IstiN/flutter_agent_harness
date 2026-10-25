@@ -10,15 +10,9 @@ void main() {
   // The macOS Keychain backend must degrade to "no stored passphrase"
   // when the `security` CLI is unavailable (every non-macOS host,
   // including Linux CI) instead of crashing the passphrase resolution.
-  test(
-    'MacOsDapChannelKeychain.read returns null when the security CLI '
-    'is unavailable',
-    () async {
-      const keychain = MacOsDapChannelKeychain();
-      expect(
-        await keychain.read('fa.dap.channel-key.none.missing'),
-        isNull,
-      );
-    },
-  );
+  test('MacOsDapChannelKeychain.read returns null when the security CLI '
+      'is unavailable', () async {
+    const keychain = MacOsDapChannelKeychain();
+    expect(await keychain.read('fa.dap.channel-key.none.missing'), isNull);
+  });
 }
