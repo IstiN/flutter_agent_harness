@@ -85,8 +85,12 @@ const expectedUsesPerWorkflow = {
   // gh-1538: nightly slimmed to builds + integration-only — the
   // full-quality / cli-visual / flutter-app-macos jobs (3 of the 4
   // pre-migration resolutions) are gone as pre-merge-gate duplication.
-  // Only build-release resolves flutter_app now.
-  '.github/workflows/nightly.yml': 1,
+  // 1 + 1 (issue #1850 AC5): the memory-churn report job resolves
+  // flutter_app through the shared action before its flutter-engine
+  // crap4dart memory pass — a nightly measurement leg must retry and
+  // enforce the committed lockfile exactly like the build legs (its
+  // numbers are only comparable when resolution is deterministic).
+  '.github/workflows/nightly.yml': 2,
   '.github/workflows/build-mobile.yml': 4,
   '.github/workflows/build-macos.yml': 1,
   '.github/workflows/browser-ext.yml': 1,
