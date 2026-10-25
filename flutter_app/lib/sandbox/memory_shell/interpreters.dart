@@ -73,6 +73,11 @@ Future<Uint8List?> _readSqliteDb(
   return read.isOk ? read.valueOrNull : null;
 }
 
+/// The `:memory:` database lives in sql.js only — there is no file to
+/// read or persist.
+bool _isMemorySqliteDb(String? dbPath) =>
+    dbPath == null || dbPath == ':memory:';
+
 /// Persists the exported database back after every invocation so it
 /// survives across exec calls (sql.js keeps it in memory only).
 Future<void> _writeBackSqliteDb(
@@ -81,16 +86,28 @@ Future<void> _writeBackSqliteDb(
   String? dbPath,
   Uint8List? dbBytes,
 ) async {
-  if (dbPath == null || dbPath == ':memory:' || dbBytes == null) return;
-  await fs.writeBinaryFile(resolveSandboxPath(dbPath, cwd), dbBytes);
+  final path = _writableSqlitePath(dbPath);
+  if (path == null || dbBytes == null) return;
+  await fs.writeBinaryFile(resolveSandboxPath(path, cwd), dbBytes);
 }
+
+/// The on-disk target for a run's db bytes: null when the run persists no
+/// db (null path) or the db lives in the shell's memory store.
+String? _writableSqlitePath(String? dbPath) =>
+    dbPath == null || _isMemorySqliteDb(dbPath) ? null : dbPath;
+
+/// The stdout shape: sql.js output re-terminated with one newline.
+String _sqliteStdout(String stdout) => stdout.isEmpty ? '' : '$stdout\n';
+
+/// The stderr shape: a SQL error is surfaced as `Error: …`.
+String _sqliteStderr(String stderr) => stderr.isEmpty ? '' : 'Error: $stderr\n';
 
 /// Shapes a sql.js run: a non-empty stderr is a SQL error with exit 1.
 InterpreterOutcome _sqliteOutcome(SqliteRunResult r) {
   final hasError = r.stderr.isNotEmpty;
   return (
-    stdout: r.stdout.isEmpty ? '' : '${r.stdout}\n',
-    stderr: hasError ? 'Error: ${r.stderr}\n' : '',
+    stdout: _sqliteStdout(r.stdout),
+    stderr: _sqliteStderr(r.stderr),
     exitCode: hasError ? 1 : 0,
   );
 }

@@ -28,7 +28,7 @@ import 'package:fa/sandbox/shell_job.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:fa/sandbox/shell_script.dart';
 import 'package:fa/sandbox/wasm_shell_builtins.dart'
-    show exportEnvVarName, isNullDevicePath;
+    show StageRedirects, exportEnvVarName, isNullDevicePath;
 import 'package:fa/sandbox/web_git.dart';
 import 'package:fa/sandbox/web_interpreters_stub.dart'
     if (dart.library.html) 'web_interpreters_web.dart';
@@ -291,37 +291,18 @@ final class MemoryShell implements Shell, BackgroundShell {
       final cwd = _effectiveCwd(options);
 
       final redirects = parseStageRedirects(stage.redirects);
-      final stdoutFile = redirects.stdoutFile;
-      final stderrFile = redirects.stderrFile;
-      final appendStdout = redirects.appendStdout;
-      final appendStderr = redirects.appendStderr;
-      final stdinFile = redirects.stdinFile;
-      final stdinBody = redirects.stdinBody;
 
-      String? stdinText;
-      if (stdinBody != null) {
-        stdinText = stdinBody;
-      } else if (stdinFile != null &&
-          isNullDevicePath(resolveSandboxPath(stdinFile, cwd))) {
-        // `< /dev/null` is an empty stream (gh-1393 WS-1): the null sink
-        // never materializes the file, so reads answer EOF directly.
-        stdinText = '';
-      } else if (stdinFile != null) {
-        final read = await _fs.readTextFile(resolveSandboxPath(stdinFile, cwd));
-        if (read.isErr) {
-          stageResult = _StageResult(
-            stdout: const [],
-            stderr: utf8.encode('sh: $stdinFile: No such file or directory\n'),
-            exitCode: 1,
-          );
-          _lastExitCode = stageResult.exitCode;
-          _lastStderr = (_lastStderr ?? '') + utf8.decode(stageResult.stderr);
-          pipeInput = null;
-          continue;
-        }
-        stdinText = read.valueOrNull;
-      } else if (pipeInput != null) {
-        stdinText = utf8.decode(pipeInput, allowMalformed: true);
+      final (stdinText, stdinFailure) = await _stageStdin(
+        redirects,
+        cwd,
+        pipeInput,
+      );
+      if (stdinFailure != null) {
+        stageResult = stdinFailure;
+        _lastExitCode = stageResult.exitCode;
+        _lastStderr = (_lastStderr ?? '') + utf8.decode(stageResult.stderr);
+        pipeInput = null;
+        continue;
       }
 
       stageResult = await _runCommand(
@@ -338,44 +319,136 @@ final class MemoryShell implements Shell, BackgroundShell {
       // collectStageRedirects already routes a file-destination dup onto
       // the same target with append mode (POSIX ordering); only the
       // capture/pipe destinations merge here.
-      var outBytes = stageResult.stdout;
-      var errBytes = stageResult.stderr;
-      if (redirects.dupStderrIntoStdout && stdoutFile == null) {
-        outBytes = [...outBytes, ...errBytes];
-        errBytes = const [];
-      } else if (redirects.dupStdoutIntoStderr && stderrFile == null) {
-        errBytes = [...errBytes, ...outBytes];
-        outBytes = const [];
-      }
-
-      if (stdoutFile != null) {
-        await _writeRedirect(stdoutFile, outBytes, appendStdout, cwd);
-      } else {
-        final text = utf8.decode(outBytes, allowMalformed: true);
-        // Only the LAST stage's stdout leaves the pipeline (the rest goes
-        // into the pipe) — intermediate stages must not leak into command
-        // substitution captures or the exec accumulator.
-        if (isLastStage && text.isNotEmpty) {
-          _lastStdout = (_lastStdout ?? '') + text;
-          _capture.feed(text);
-          if (!_capture.isActive) options?.onStdout?.call(text);
-        }
-      }
-
-      if (stderrFile != null) {
-        await _writeRedirect(stderrFile, errBytes, appendStderr, cwd);
-      } else {
-        final text = utf8.decode(errBytes, allowMalformed: true);
-        if (isLastStage && text.isNotEmpty) {
-          _lastStderr = (_lastStderr ?? '') + text;
-          if (!_capture.isActive) options?.onStderr?.call(text);
-        }
-      }
+      final (outBytes, errBytes) = _foldFdDups(
+        redirects,
+        stageResult.stdout,
+        stageResult.stderr,
+      );
+      await _emitStageStdout(outBytes, redirects, isLastStage, options, cwd);
+      await _emitStageStderr(errBytes, redirects, isLastStage, options, cwd);
 
       pipeInput = outBytes;
     }
 
     return Ok(stageResult);
+  }
+
+  /// Resolves the stdin source for one pipeline stage: an inline here-doc /
+  /// here-string body, `/dev/null` (an empty stream — the null sink never
+  /// materializes the file, gh-1393 WS-1), a file's content, or the
+  /// previous stage's pipe output; no source means a null stdin. Returns
+  /// `(text, null)` on success or `(null, failure)` when the stdin file
+  /// cannot be read — the caller records the failure and skips the stage.
+  Future<(String?, _StageResult?)> _stageStdin(
+    StageRedirects redirects,
+    String cwd,
+    List<int>? pipeInput,
+  ) async {
+    final stdinBody = redirects.stdinBody;
+    final stdinFile = redirects.stdinFile;
+    if (stdinBody != null) return (stdinBody, null);
+    if (stdinFile != null &&
+        isNullDevicePath(resolveSandboxPath(stdinFile, cwd))) {
+      return ('', null);
+    }
+    if (stdinFile != null) {
+      return _readStdinFile(stdinFile, cwd);
+    }
+    if (pipeInput != null) {
+      return (utf8.decode(pipeInput, allowMalformed: true), null);
+    }
+    return (null, null);
+  }
+
+  /// Reads a `< file` stdin source; a missing file yields the shell's
+  /// `No such file or directory` failure (exit 1).
+  Future<(String?, _StageResult?)> _readStdinFile(
+    String stdinFile,
+    String cwd,
+  ) async {
+    final read = await _fs.readTextFile(resolveSandboxPath(stdinFile, cwd));
+    if (read.isErr) {
+      return (
+        null,
+        _StageResult(
+          stdout: const [],
+          stderr: utf8.encode('sh: $stdinFile: No such file or directory\n'),
+          exitCode: 1,
+        ),
+      );
+    }
+    return (read.valueOrNull, null);
+  }
+
+  /// Folds `2>&1` / `>&2` for one stage: stderr merges into stdout (or the
+  /// reverse) only while that destination is the capture/pipe; a file
+  /// destination was already routed onto the same target with append mode
+  /// by collectStageRedirects.
+  (List<int>, List<int>) _foldFdDups(
+    StageRedirects redirects,
+    List<int> outBytes,
+    List<int> errBytes,
+  ) {
+    if (redirects.dupStderrIntoStdout && redirects.stdoutFile == null) {
+      return ([...outBytes, ...errBytes], const []);
+    }
+    if (redirects.dupStdoutIntoStderr && redirects.stderrFile == null) {
+      return (const [], [...errBytes, ...outBytes]);
+    }
+    return (outBytes, errBytes);
+  }
+
+  /// Routes one stage's stdout to its redirect file or, on the LAST stage
+  /// only, folds the text into the shell's accumulator and capture stack
+  /// (plus the live listener when no capture is active) — intermediate
+  /// stages must not leak into command-substitution captures or the exec
+  /// accumulator.
+  Future<void> _emitStageStdout(
+    List<int> outBytes,
+    StageRedirects redirects,
+    bool isLastStage,
+    ShellExecOptions? options,
+    String cwd,
+  ) async {
+    if (redirects.stdoutFile != null) {
+      await _writeRedirect(
+        redirects.stdoutFile!,
+        outBytes,
+        redirects.appendStdout,
+        cwd,
+      );
+      return;
+    }
+    final text = utf8.decode(outBytes, allowMalformed: true);
+    if (isLastStage && text.isNotEmpty) {
+      _lastStdout = (_lastStdout ?? '') + text;
+      _capture.feed(text);
+      if (!_capture.isActive) options?.onStdout?.call(text);
+    }
+  }
+
+  /// Routes one stage's stderr the way [_emitStageStdout] routes stdout.
+  Future<void> _emitStageStderr(
+    List<int> errBytes,
+    StageRedirects redirects,
+    bool isLastStage,
+    ShellExecOptions? options,
+    String cwd,
+  ) async {
+    if (redirects.stderrFile != null) {
+      await _writeRedirect(
+        redirects.stderrFile!,
+        errBytes,
+        redirects.appendStderr,
+        cwd,
+      );
+      return;
+    }
+    final text = utf8.decode(errBytes, allowMalformed: true);
+    if (isLastStage && text.isNotEmpty) {
+      _lastStderr = (_lastStderr ?? '') + text;
+      if (!_capture.isActive) options?.onStderr?.call(text);
+    }
   }
 
   /// Effective cwd for an exec (gh-1393 WS-1): the shell-tracked
@@ -697,38 +770,63 @@ final class MemoryShell implements Shell, BackgroundShell {
     // The format string is reused until every argument is consumed (POSIX).
     while (true) {
       final consumedBefore = argIndex;
-      for (var i = 0; i < format.length; i++) {
-        final ch = format[i];
-        if (ch == '%' && i + 1 < format.length) {
-          final spec = format[i + 1];
-          if (spec == '%') {
-            out.write('%');
-            i++;
-            continue;
-          }
-          final arg = argIndex < args.length ? args[argIndex] : '';
-          switch (spec) {
-            case 's':
-              argIndex++;
-              out.write(arg);
-            case 'd' || 'i':
-              argIndex++;
-              out.write(int.tryParse(arg) ?? 0);
-            case 'c':
-              argIndex++;
-              if (arg.isNotEmpty) out.write(arg[0]);
-            default:
-              out.write('%');
-              out.write(spec);
-          }
-          i++;
-          continue;
-        }
-        out.write(ch);
-      }
+      argIndex = _formatPrintfPass(format, args, out, argIndex);
       if (argIndex >= args.length || argIndex == consumedBefore) break;
     }
     return _text(out.toString());
+  }
+
+  /// One reuse pass of the printf format string over [args], appending to
+  /// [out] and returning the advanced argument index.
+  int _formatPrintfPass(
+    String format,
+    List<String> args,
+    StringBuffer out,
+    int argIndex,
+  ) {
+    for (var i = 0; i < format.length; i++) {
+      final ch = format[i];
+      if (ch == '%' && i + 1 < format.length) {
+        final spec = format[i + 1];
+        if (spec == '%') {
+          out.write('%');
+          i++;
+          continue;
+        }
+        argIndex = _writePrintfSpec(out, spec, args, argIndex);
+        i++;
+        continue;
+      }
+      out.write(ch);
+    }
+    return argIndex;
+  }
+
+  /// Writes one `%` directive ([spec]) with the next argument (empty once
+  /// exhausted) to [out]; unknown directives pass through literally and
+  /// consume no argument. Returns the advanced argument index.
+  int _writePrintfSpec(
+    StringBuffer out,
+    String spec,
+    List<String> args,
+    int argIndex,
+  ) {
+    final arg = argIndex < args.length ? args[argIndex] : '';
+    switch (spec) {
+      case 's':
+        argIndex++;
+        out.write(arg);
+      case 'd' || 'i':
+        argIndex++;
+        out.write(int.tryParse(arg) ?? 0);
+      case 'c':
+        argIndex++;
+        if (arg.isNotEmpty) out.write(arg[0]);
+      default:
+        out.write('%');
+        out.write(spec);
+    }
+    return argIndex;
   }
 
   /// Interprets the backslash escapes printf understands in its format
@@ -1195,17 +1293,7 @@ final class MemoryShell implements Shell, BackgroundShell {
   }
 
   Future<_StageResult> _ls(_Context ctx) async {
-    var showAll = false;
-    var long = false;
-    final paths = <String>[];
-    for (final arg in ctx.args) {
-      if (arg.startsWith('-') && arg != '-') {
-        if (arg.contains('a')) showAll = true;
-        if (arg.contains('l')) long = true;
-      } else {
-        paths.add(arg);
-      }
-    }
+    final (showAll, longMode, paths) = _parseLsArgs(ctx.args);
     if (paths.isEmpty) paths.add('.');
 
     final out = StringBuffer();
@@ -1213,33 +1301,18 @@ final class MemoryShell implements Shell, BackgroundShell {
     var exitCode = 0;
     var first = true;
     for (final arg in paths) {
-      final resolved = resolveSandboxPath(arg, ctx.cwd);
-      final info = await _fs.fileInfo(resolved);
-      if (info.isErr) {
-        err.write('ls: cannot access $arg: No such file or directory\n');
-        exitCode = 1;
-        continue;
-      }
-      final fileInfo = info.valueOrNull!;
-      if (fileInfo.kind == FileKind.file) {
-        out.writeln(long ? _longLine(fileInfo) : fileInfo.name);
-        continue;
-      }
-      if (paths.length > 1) {
-        if (!first) out.writeln();
-        out.writeln('$arg:');
-      }
-      first = false;
-      final entries = await _fs.listDir(resolved);
-      if (entries.isErr) {
-        err.write('ls: cannot open directory $arg\n');
-        exitCode = 1;
-        continue;
-      }
-      for (final entry in entries.valueOrNull!) {
-        if (!showAll && entry.name.startsWith('.')) continue;
-        out.writeln(long ? _longLine(entry) : entry.name);
-      }
+      final (headerPrinted, failed) = await _listLsPath(
+        out: out,
+        err: err,
+        arg: arg,
+        cwd: ctx.cwd,
+        showHeader: paths.length > 1,
+        showAll: showAll,
+        longMode: longMode,
+        isFirst: first,
+      );
+      if (headerPrinted) first = false;
+      if (failed) exitCode = 1;
     }
     return _StageResult(
       stdout: utf8.encode(out.toString()),
@@ -1247,6 +1320,88 @@ final class MemoryShell implements Shell, BackgroundShell {
       exitCode: exitCode,
     );
   }
+
+  /// Splits `ls` arguments: a dash-prefixed word (`-la`) sets the short
+  /// flags (`a` → hidden entries, `l` → long form); a bare `-` is a path,
+  /// not a flag. Everything else is a path operand.
+  (bool, bool, List<String>) _parseLsArgs(List<String> args) {
+    var showAll = false;
+    var longMode = false;
+    final paths = <String>[];
+    for (final arg in args) {
+      if (arg.startsWith('-') && arg != '-') {
+        if (arg.contains('a')) showAll = true;
+        if (arg.contains('l')) longMode = true;
+      } else {
+        paths.add(arg);
+      }
+    }
+    return (showAll, longMode, paths);
+  }
+
+  /// Emits one `ls` path into [out]/[err]: missing paths and unreadable
+  /// directories report the shell error (`failed`); files print one line;
+  /// directories print a `name:` header (blank-line separated unless this
+  /// is the first listing) then their entries, dotfiles hidden unless
+  /// [showAll]. Returns `(headerPrinted, failed)`.
+  Future<(bool, bool)> _listLsPath({
+    required StringBuffer out,
+    required StringBuffer err,
+    required String arg,
+    required String cwd,
+    required bool showHeader,
+    required bool showAll,
+    required bool longMode,
+    required bool isFirst,
+  }) async {
+    final resolved = resolveSandboxPath(arg, cwd);
+    final info = await _fs.fileInfo(resolved);
+    if (info.isErr) {
+      err.write('ls: cannot access $arg: No such file or directory\n');
+      return (false, true);
+    }
+    final fileInfo = info.valueOrNull!;
+    if (fileInfo.kind == FileKind.file) {
+      out.writeln(_lsLine(fileInfo, longMode));
+      return (false, false);
+    }
+    var headerPrinted = false;
+    if (showHeader) {
+      if (!isFirst) out.writeln();
+      out.writeln('$arg:');
+      headerPrinted = true;
+    }
+    final entries = await _fs.listDir(resolved);
+    if (entries.isErr) {
+      err.write('ls: cannot open directory $arg\n');
+      return (headerPrinted, true);
+    }
+    _writeLsEntries(
+      out,
+      entries.valueOrNull!,
+      showAll: showAll,
+      longMode: longMode,
+    );
+    return (headerPrinted, false);
+  }
+
+  /// Writes the entries of one listed directory, dotfiles hidden unless
+  /// [showAll].
+  void _writeLsEntries(
+    StringBuffer out,
+    List<FileInfo> entries, {
+    required bool showAll,
+    required bool longMode,
+  }) {
+    for (final entry in entries) {
+      if (!showAll && entry.name.startsWith('.')) continue;
+      out.writeln(_lsLine(entry, longMode));
+    }
+  }
+
+  /// One `ls` line: `ls -l` long form or the bare name.
+  String _lsLine(FileInfo info, bool longMode) =>
+      longMode ? _longLine(info) : info.name;
 
   String _longLine(FileInfo info) {
     final perms = info.kind == FileKind.directory ? 'drwxr-xr-x' : '-rw-r--r--';

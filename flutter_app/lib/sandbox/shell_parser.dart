@@ -336,14 +336,27 @@ final class _Heredoc extends _Token {
   String? body;
 }
 
-List<_Token> _tokenize(String input) {
+/// Mutable state threaded through the [_tokenize] character loop: the
+/// emitted tokens, the in-progress word buffer with its expandable/quoted
+/// flags, and here-documents awaiting body capture (gh-1848 split — the
+/// tokenizer loop was CC21; each stage below stays ≤CC6).
+final class _TokenizerState {
+  _TokenizerState(this.input);
+
+  final String input;
   final tokens = <_Token>[];
   final buffer = StringBuffer();
-  var i = 0;
-  var wordExpandable = true;
-  var wordQuoted = false;
   final pendingHeredocs = <_Heredoc>[];
 
+  /// False when any fragment of the in-progress word came from single
+  /// quotes or a `\$` escape: the word must not be `$`-expanded later.
+  var wordExpandable = true;
+
+  /// True when a fragment came from quotes: substitution results must not
+  /// be word-split inside this word.
+  var wordQuoted = false;
+
+  /// Emits the buffered word, if any, and resets the word flags.
   void flushWord() {
     if (buffer.isEmpty) return;
     tokens.add(
@@ -354,68 +367,88 @@ List<_Token> _tokenize(String input) {
     wordQuoted = false;
   }
 
-  String peek() => i + 1 < input.length ? input[i + 1] : '';
+  /// Consumes the construct beginning at [i] — escape, substitution, quote,
+  /// separator, here-doc operator, metacharacter, or fd redirect — and
+  /// returns the next index; any other character joins the word buffer.
+  int step(int i) {
+    final escaped = _scanEscapeAt(i);
+    if (escaped != null) return escaped;
+    final substituted = _scanSubstitutionAt(i);
+    if (substituted != null) return substituted;
+    final quoted = _scanQuoteAt(i);
+    if (quoted != null) return quoted;
+    final separated = _flushSeparatorAt(i);
+    if (separated != null) return separated;
+    final special = _scanSpecialAt(i);
+    if (special != null) return special;
+    buffer.write(input[i]);
+    return i + 1;
+  }
 
-  while (i < input.length) {
-    final ch = input[i];
+  /// Backslash escape at [i]: the next character joins the word literally
+  /// (`\$` additionally marks the word non-expandable), or null.
+  int? _scanEscapeAt(int i) {
+    if (input[i] != '\\' || i + 1 >= input.length) return null;
+    // `\$` produces a literal dollar sign: the word must not be expanded
+    // later by the shell.
+    if (input[i + 1] == '\$') wordExpandable = false;
+    buffer.write(input[i + 1]);
+    return i + 2;
+  }
 
-    if (ch == '\\' && i + 1 < input.length) {
-      // `\$` produces a literal dollar sign: the word must not be expanded
-      // later by the shell.
-      if (input[i + 1] == '\$') wordExpandable = false;
-      buffer.write(input[i + 1]);
-      i += 2;
-      continue;
+  /// Command substitution at [i] (`$(...)` or a backquote), kept RAW in the
+  /// word text (balanced/quoted regions honored); the shell executes it at
+  /// expansion time. Single quotes never reach this branch.
+  int? _scanSubstitutionAt(int i) {
+    if (!((input[i] == '\$' && i + 1 < input.length && input[i + 1] == '(') ||
+        input[i] == '`')) {
+      return null;
     }
+    _rejectArithmeticExpansion(input, i);
+    return _scanSubstitution(input, i, buffer);
+  }
 
-    // Command substitution: `$(...)` and backquotes are kept RAW in the word
-    // text (balanced/quoted regions honored); the shell executes them at
-    // expansion time. Single quotes below never reach this branch.
-    if ((ch == '\$' && peek() == '(') || ch == '`') {
-      _rejectArithmeticExpansion(input, i);
-      i = _scanSubstitution(input, i, buffer);
-      continue;
-    }
-
-    if (ch == "'") {
-      // No flush at the quote boundary: POSIX glues adjacent fragments into
-      // one word (`X="a b"` is ONE word, `a'b'` is `ab`). The word ends at
-      // the next unquoted separator.
+  /// A quote section at [i]: single quotes mark the word literal, double
+  /// quotes only mark it quoted (a `\$` inside still disables expansion).
+  /// POSIX glues adjacent fragments into one word (`X="a b"` is ONE word,
+  /// `a'b'` is `ab`), so no flush happens at the boundary.
+  int? _scanQuoteAt(int i) {
+    if (input[i] == "'") {
       wordExpandable = false;
       wordQuoted = true;
-      i = _scanSingleQuote(input, i, buffer);
-      continue;
+      return _scanSingleQuote(input, i, buffer);
     }
+    if (input[i] != '"') return null;
+    wordQuoted = true;
+    final (end, expandable) = _scanDoubleQuote(input, i + 1, buffer);
+    if (!expandable) wordExpandable = false;
+    return end + 1; // skip closing quote — the word continues until a separator
+  }
 
-    if (ch == '"') {
-      wordQuoted = true;
-      final (end, expandable) = _scanDoubleQuote(input, i + 1, buffer);
-      if (!expandable) wordExpandable = false;
-      i = end + 1; // skip closing quote — the word continues until a separator
-      continue;
-    }
-
+  /// Word separators at [i]: blanks end the word; a newline also ends the
+  /// statement (`;`) after capturing pending here-doc bodies from the
+  /// FOLLOWING lines (POSIX: body text is never tokenized as shell syntax).
+  int? _flushSeparatorAt(int i) {
+    final ch = input[i];
     if (ch == ' ' || ch == '\t' || ch == '\r') {
       flushWord();
-      i++;
-      continue;
+      return i + 1;
     }
-
-    // A newline separates statements exactly like `;`. Pending here-docs
-    // capture their bodies from the FOLLOWING lines first (POSIX): the
-    // body text is never tokenized as shell syntax.
-    if (ch == '\n') {
-      flushWord();
-      var next = i + 1;
-      if (pendingHeredocs.isNotEmpty) {
-        next = _captureHeredocs(input, i + 1, pendingHeredocs, tokens);
-        pendingHeredocs.clear();
-      }
-      tokens.add(_Operator(';'));
-      i = next;
-      continue;
+    if (ch != '\n') return null;
+    flushWord();
+    var next = i + 1;
+    if (pendingHeredocs.isNotEmpty) {
+      next = _captureHeredocs(input, i + 1, pendingHeredocs, tokens);
+      pendingHeredocs.clear();
     }
+    tokens.add(_Operator(';'));
+    return next;
+  }
 
+  /// Everything that starts a new token at [i]: process-substitution
+  /// rejection, here-doc/here-string operators, metacharacters, and
+  /// fd-prefixed redirects (a non-redirect digit run joins the word).
+  int? _scanSpecialAt(int i) {
     // Process substitution `<(cmd)` / `>(cmd)` is not supported (gh-1086).
     _rejectProcessSubstitution(input, i);
 
@@ -425,8 +458,7 @@ List<_Token> _tokenize(String input) {
       flushWord();
       tokens.addAll(heredocOp.$1);
       pendingHeredocs.addAll(heredocOp.$1.whereType<_Heredoc>());
-      i = heredocOp.$2;
-      continue;
+      return heredocOp.$2;
     }
 
     // Shell metacharacters always start a new token, even when they touch a
@@ -435,36 +467,42 @@ List<_Token> _tokenize(String input) {
     if (meta != null) {
       flushWord();
       tokens.addAll(meta.$1);
-      i = meta.$2;
-      continue;
+      return meta.$2;
     }
 
     // File-descriptor redirects: N> N>> N>&1 (basic forms); a digit run
     // that is not a redirect joins the word buffer.
-    if (_isDigit(ch)) {
-      final (added, next) = _scanDigits(input, i);
-      if (added.isNotEmpty) {
-        tokens.addAll(added);
-        pendingHeredocs.addAll(added.whereType<_Heredoc>());
-      } else {
-        buffer.write(input.substring(i, next));
-      }
-      i = next;
-      continue;
+    if (!_isDigit(input[i])) return null;
+    final (added, next) = _scanDigits(input, i);
+    if (added.isNotEmpty) {
+      tokens.addAll(added);
+      pendingHeredocs.addAll(added.whereType<_Heredoc>());
+    } else {
+      buffer.write(input.substring(i, next));
     }
-
-    buffer.write(ch);
-    i++;
+    return next;
   }
-  flushWord();
-  if (pendingHeredocs.isNotEmpty) {
-    // The input ended on the command line itself: no body line exists.
+
+  /// Throws when the input ended on the command line itself with a
+  /// here-document still pending: no body line exists.
+  void throwIfUnterminatedHeredoc() {
+    if (pendingHeredocs.isEmpty) return;
     final delim = _heredocDelimiter(pendingHeredocs.first, tokens);
     throw ShellParseException(
       "unterminated here-document (delimiter '$delim')",
     );
   }
-  return tokens;
+}
+
+List<_Token> _tokenize(String input) {
+  final state = _TokenizerState(input);
+  var i = 0;
+  while (i < input.length) {
+    i = state.step(i);
+  }
+  state.flushWord();
+  state.throwIfUnterminatedHeredoc();
+  return state.tokens;
 }
 
 /// `$((` (arithmetic expansion) is rejected at the tokenizer level
@@ -629,52 +667,64 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
   return (i, expandable);
 }
 
+/// Whether [ch] is a shell metacharacter (`|` `&` `;` `>` `<`).
+bool _isMetaChar(String ch) =>
+    ch == '|' || ch == '&' || ch == ';' || ch == '>' || ch == '<';
+
+/// The character after [i], or the empty string at the end of [input].
+String _peekChar(String input, int i) =>
+    i + 1 < input.length ? input[i + 1] : '';
+
 /// Tokenizes a metacharacter (`|` `&` `;` `>` `<` and their doubled /
 /// appending forms) at [i]; returns the tokens and the new index, or null
 /// when [i] does not hold a metacharacter.
 (List<_Token>, int)? _metaToken(String input, int i) {
+  if (!_isMetaChar(input[i])) return null;
+  final operator = _operatorAt(input, i);
+  if (operator != null) return ([operator.$1], operator.$2);
+  final redirect = _redirectAt(input, i);
+  return ([redirect.$1], redirect.$2);
+}
+
+/// Resolves the operator forms (`||`, `&&`, `|`, `;`) at [i], or null.
+(_Token, int)? _operatorAt(String input, int i) {
   final ch = input[i];
-  if (ch != '|' && ch != '&' && ch != ';' && ch != '>' && ch != '<') {
-    return null;
+  if (ch == '|' && _peekChar(input, i) == '|') {
+    return (_Operator('||'), i + 2);
   }
-  String peek() => i + 1 < input.length ? input[i + 1] : '';
-  _Token token;
-  if (ch == '|' && peek() == '|') {
-    token = _Operator('||');
-    i += 2;
-  } else if (ch == '&' && peek() == '&') {
-    token = _Operator('&&');
-    i += 2;
-  } else if (ch == '|') {
-    token = _Operator('|');
-    i += 1;
-  } else if (ch == ';') {
-    token = _Operator(';');
-    i += 1;
-  } else if (ch == '&' && peek() == '>') {
-    if (i + 2 < input.length && input[i + 2] == '>') {
-      token = _Redirect(-1, RedirectKind.append);
-      i += 3;
-    } else {
-      token = _Redirect(-1, RedirectKind.write);
-      i += 2;
-    }
-  } else if (ch == '>' && peek() == '>') {
-    token = _Redirect(1, RedirectKind.append);
-    i += 2;
-  } else if (ch == '>') {
-    token = _Redirect(1, RedirectKind.write);
-    i += 1;
-  } else if (ch == '&') {
+  if (ch == '&' && _peekChar(input, i) == '&') {
+    return (_Operator('&&'), i + 2);
+  }
+  if (ch == '|') return (_Operator('|'), i + 1);
+  if (ch == ';') return (_Operator(';'), i + 1);
+  return null;
+}
+
+/// Resolves the redirect forms (`&>`, `&>>`, `>>`, `>`, `&`, `<`) at [i].
+(_Token, int) _redirectAt(String input, int i) {
+  final both = _bothRedirectAt(input, i);
+  if (both != null) return both;
+  final ch = input[i];
+  if (ch == '>' && _peekChar(input, i) == '>') {
+    return (_Redirect(1, RedirectKind.append), i + 2);
+  }
+  if (ch == '>') return (_Redirect(1, RedirectKind.write), i + 1);
+  if (ch == '&') {
     // Bare `&` — background execution, rejected with a precise message by
     // the stage parser (gh-1086 AC5).
-    token = _Redirect(-1, RedirectKind.background);
-    i += 1;
-  } else {
-    token = _Redirect(0, RedirectKind.read);
-    i += 1;
+    return (_Redirect(-1, RedirectKind.background), i + 1);
   }
-  return ([token], i);
+  return (_Redirect(0, RedirectKind.read), i + 1);
+}
+
+/// Resolves `&>` / `&>>` — one redirect covering both stdout and stderr
+/// (fd -1) — at [i], or null.
+(_Token, int)? _bothRedirectAt(String input, int i) {
+  if (input[i] != '&' || _peekChar(input, i) != '>') return null;
+  if (i + 2 < input.length && input[i + 2] == '>') {
+    return (_Redirect(-1, RedirectKind.append), i + 3);
+  }
+  return (_Redirect(-1, RedirectKind.write), i + 2);
 }
 
 /// Scans a digit run at [i]: a redirect (`N>`, `N>>`, `N<`) yields its
@@ -685,38 +735,60 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
   while (j < input.length && _isDigit(input[j])) {
     j++;
   }
-  final number = input.substring(i, j);
   if (j < input.length && (input[j] == '>' || input[j] == '<')) {
-    final fd = int.parse(number);
-    // fd-prefixed process substitution `2>(cmd)` / `2<(cmd)` — the main
-    // loop's `<(`/`>(` guard never sees these (gh-1086 review).
-    if (j + 1 < input.length && input[j + 1] == '(') {
-      throw const ShellParseException(
-        'process substitution <(...) / >(...) is not supported in the sandbox shell',
-      );
-    }
-    if (input[j] == '>' && j + 1 < input.length && input[j + 1] == '>') {
-      return ([_Redirect(fd, RedirectKind.append)], j + 2);
-    }
-    if (input[j] == '>') return ([_Redirect(fd, RedirectKind.write)], j + 1);
-    // fd-prefixed here-document: `3<<DELIM` / `3<<-DELIM` (gh-1086).
-    if (input[j] == '<' && j + 1 < input.length && input[j + 1] == '<') {
-      if (j + 2 < input.length && input[j + 2] == '<') {
-        throw const ShellParseException(
-          'fd-prefixed here-strings (3<<<word) are not supported; '
-          'use plain <<<word',
-        );
-      }
-      final strip = j + 2 < input.length && input[j + 2] == '-';
-      return ([_Heredoc(fd, stripTabs: strip)], j + (strip ? 3 : 2));
-    }
-    return ([_Redirect(fd, RedirectKind.read)], j + 1);
+    return _fdRedirectAt(input, j, int.parse(input.substring(i, j)));
   }
   return (const <_Token>[], j);
 }
 
+/// Resolves the fd-prefixed redirect whose digits ended at [j] (the
+/// `>` / `<` sits at [j]); [fd] is the parsed descriptor number.
+(List<_Token>, int) _fdRedirectAt(String input, int j, int fd) {
+  // fd-prefixed process substitution `2>(cmd)` / `2<(cmd)` — the main
+  // loop's `<(`/`>(` guard never sees these (gh-1086 review).
+  if (j + 1 < input.length && input[j + 1] == '(') {
+    throw const ShellParseException(
+      'process substitution <(...) / >(...) is not supported in the sandbox shell',
+    );
+  }
+  final write = _fdWriteAt(input, j, fd);
+  if (write != null) return write;
+  // fd-prefixed here-document: `3<<DELIM` / `3<<-DELIM` (gh-1086).
+  if (input[j] == '<' && j + 1 < input.length && input[j + 1] == '<') {
+    return _fdHeredocAt(input, j, fd);
+  }
+  return ([_Redirect(fd, RedirectKind.read)], j + 1);
+}
+
+/// Resolves `N>` / `N>>` at [j], or null when [j] does not hold `>`.
+(List<_Token>, int)? _fdWriteAt(String input, int j, int fd) {
+  if (input[j] != '>') return null;
+  if (j + 1 < input.length && input[j + 1] == '>') {
+    return ([_Redirect(fd, RedirectKind.append)], j + 2);
+  }
+  return ([_Redirect(fd, RedirectKind.write)], j + 1);
+}
+
+/// Resolves the fd-prefixed here-document `N<<DELIM` / `N<<-DELIM` at [j];
+/// an fd-prefixed here-string (`3<<<word`) is rejected.
+(List<_Token>, int) _fdHeredocAt(String input, int j, int fd) {
+  if (j + 2 < input.length && input[j + 2] == '<') {
+    throw const ShellParseException(
+      'fd-prefixed here-strings (3<<<word) are not supported; '
+      'use plain <<<word',
+    );
+  }
+  final strip = j + 2 < input.length && input[j + 2] == '-';
+  return ([_Heredoc(fd, stripTabs: strip)], j + (strip ? 3 : 2));
+}
+
 bool _isDigit(String ch) =>
     ch.length == 1 && ch.codeUnitAt(0) >= 48 && ch.codeUnitAt(0) <= 57;
+
+/// Display form of a redirect token in stage traces: `&kind` for the
+/// both-streams / background forms, `Nkind` for a numbered fd.
+String _redirectValue(_Redirect token) =>
+    '${token.fd == -1 ? '&' : token.fd}${token.kind.name}';
 
 /// Fail-fast guards (gh-1086 AC5): constructs the sandbox shell cannot
 /// honor must throw a NAMED parse error instead of silently producing
@@ -1150,10 +1222,7 @@ final class _ScriptParser {
 
   String _opValue(_Token token) {
     if (token is _Operator) return token.value;
-    if (token is _Redirect) {
-      final name = token.fd == -1 ? '&' : '${token.fd}';
-      return '$name${token.kind.name}';
-    }
+    if (token is _Redirect) return _redirectValue(token);
     return token.toString();
   }
 }

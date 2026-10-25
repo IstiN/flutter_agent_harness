@@ -162,7 +162,27 @@ class WidgetPublishService {
   Future<List<WidgetPreflightIssue>> preflight(JsAppInfo app) async {
     final issues = <WidgetPreflightIssue>[];
 
-    // Id shape: catalog ids are lowercase slug segments.
+    _checkPreflightId(app, issues);
+    _checkPreflightVersion(app, issues);
+    final manifest = await _readPreflightManifest(app, issues);
+    await _checkPreflightEntry(app, issues);
+    await _checkPreflightIcon(app, issues);
+    await _checkPreflightFolderLimits(app, issues);
+
+    // The catalog's own rule engine (issue #1045 AC1): every manifest rule
+    // the CI validator enforces — required strings, strict semver,
+    // minRuntime — checked on-device with the engine's VERBATIM error
+    // strings, so what the user sees here is byte-identical to what the
+    // run would have said. Advisory only (I2): CI stays the authority.
+    if (manifest != null) {
+      issues.addAll(await _catalogValidatorIssues(app, manifest));
+    }
+
+    return issues;
+  }
+
+  /// Id shape: catalog ids are lowercase slug segments.
+  void _checkPreflightId(JsAppInfo app, List<WidgetPreflightIssue> issues) {
     if (!_idPattern.hasMatch(app.id)) {
       issues.add(
         WidgetPreflightIssue(
@@ -173,8 +193,13 @@ class WidgetPublishService {
         ),
       );
     }
+  }
 
-    // Version shape.
+  /// Version shape.
+  void _checkPreflightVersion(
+    JsAppInfo app,
+    List<WidgetPreflightIssue> issues,
+  ) {
     if (!_semverPattern.hasMatch(app.version)) {
       issues.add(
         WidgetPreflightIssue(
@@ -184,8 +209,15 @@ class WidgetPublishService {
         ),
       );
     }
+  }
 
-    // Manifest parses and its id matches the folder name.
+  /// Manifest parses and its id matches the folder name. Returns the
+  /// decoded manifest (null when missing/invalid — the failure already
+  /// carries its issue).
+  Future<Map<String, Object?>?> _readPreflightManifest(
+    JsAppInfo app,
+    List<WidgetPreflightIssue> issues,
+  ) async {
     final manifestText = (await _env.readTextFile(
       app.manifestPath,
     )).valueOrNull;
@@ -227,9 +259,15 @@ class WidgetPublishService {
         );
       }
     }
+    return manifest;
+  }
 
-    // Entry file: widget.js, or the tile entry when the app has no full
-    // widget entry.
+  /// Entry file: widget.js, or the tile entry when the app has no full
+  /// widget entry.
+  Future<void> _checkPreflightEntry(
+    JsAppInfo app,
+    List<WidgetPreflightIssue> issues,
+  ) async {
     final entryOk =
         await _nonEmptyFile('${app.dir}/widget.js') ||
         (app.tileWidget != null && await _nonEmptyFile(app.tileWidgetPath));
@@ -242,8 +280,13 @@ class WidgetPublishService {
         ),
       );
     }
+  }
 
-    // Icon: an icon.svg file OR a non-empty emoji/string icon field.
+  /// Icon: an icon.svg file OR a non-empty emoji/string icon field.
+  Future<void> _checkPreflightIcon(
+    JsAppInfo app,
+    List<WidgetPreflightIssue> issues,
+  ) async {
     final hasIconFile =
         (await _env.exists('${app.dir}/icon.svg')).valueOrNull == true;
     if (!hasIconFile && app.icon.trim().isEmpty) {
@@ -255,8 +298,13 @@ class WidgetPublishService {
         ),
       );
     }
+  }
 
-    // Folder limits (E4).
+  /// Folder limits (E4): total bytes and file count over the walk.
+  Future<void> _checkPreflightFolderLimits(
+    JsAppInfo app,
+    List<WidgetPreflightIssue> issues,
+  ) async {
     var totalBytes = 0;
     var totalFiles = 0;
     await _walk(app.dir, (path, size) {
@@ -281,17 +329,6 @@ class WidgetPublishService {
         ),
       );
     }
-
-    // The catalog's own rule engine (issue #1045 AC1): every manifest rule
-    // the CI validator enforces — required strings, strict semver,
-    // minRuntime — checked on-device with the engine's VERBATIM error
-    // strings, so what the user sees here is byte-identical to what the
-    // run would have said. Advisory only (I2): CI stays the authority.
-    if (manifest != null) {
-      issues.addAll(await _catalogValidatorIssues(app, manifest));
-    }
-
-    return issues;
   }
 
   /// [manifest] with `minRuntime` stamped (issue #1045 AC2): a present,
@@ -757,76 +794,29 @@ class WidgetPublishService {
       GithubApiClient.catalogRepo,
       prNumber,
     );
-    final state = pull == null
-        ? WidgetPublication.stateUnknown
-        : pull.state == 'open'
-        ? WidgetPublication.stateOpen
-        : pull.merged
-        ? WidgetPublication.stateMerged
-        : WidgetPublication.stateClosed;
+    final state = _pullState(pull);
 
     // CI verdict on the PR head (issue #1045 AC3). A failed check read
     // (offline / rate limit) keeps the plain open state — never invent a
     // verdict the API did not confirm.
-    var effective = state;
-    var validatorErrors = publication.validatorErrors;
-    var runUrl = publication.runHtmlUrl;
+    var (effective, validatorErrors, runUrl) = (
+      state,
+      publication.validatorErrors,
+      publication.runHtmlUrl,
+    );
     if (state == WidgetPublication.stateOpen && pull?.headSha != null) {
-      try {
-        final checks = await client.listCheckRuns(
-          GithubApiClient.catalogOwner,
-          GithubApiClient.catalogRepo,
-          pull!.headSha!,
-        );
-        final failing = checks.where((check) => check.isFailed).toList();
-        if (checks.isEmpty || checks.any((check) => !check.isCompleted)) {
-          effective = WidgetPublication.stateValidating;
-          validatorErrors = const [];
-          runUrl = null;
-        } else if (failing.isNotEmpty) {
-          effective = WidgetPublication.stateInvalid;
-          validatorErrors = await _verbatimValidatorErrors(client, failing);
-          runUrl = failing.first.htmlUrl;
-        } else {
-          effective = WidgetPublication.stateOpen;
-          validatorErrors = const [];
-          runUrl = null;
-        }
-      } on Object {
-        // Offline / rate limit: keep the plain open state — never invent a
-        // verdict the API did not confirm.
-      }
+      (effective, validatorErrors, runUrl) = await _ciVerdict(
+        client,
+        pull!,
+        publication,
+      );
     }
 
     // Reviewer feedback snapshot (AC7): the latest comments ride the same
     // refresh as the state so the publications view needs one action per
     // update. Capped at the newest [_maxStoredComments] to bound the
     // ledger file; bodies stay plain text (display-only data).
-    var comments = publication.comments;
-    if (pull != null) {
-      try {
-        final fetched = await client.listPullComments(
-          GithubApiClient.catalogOwner,
-          GithubApiClient.catalogRepo,
-          prNumber,
-        );
-        comments = [
-          for (final c
-              in fetched.length > _maxStoredComments
-                  ? fetched.sublist(fetched.length - _maxStoredComments)
-                  : fetched)
-            WidgetPublicationComment(
-              author: c.author,
-              body: c.body,
-              createdAt: c.createdAt,
-              isReview: c.isReview,
-            ),
-        ];
-      } on Object {
-        // State still refreshes when comments are unreachable (a partial
-        // degrade beats a failed refresh).
-      }
-    }
+    final comments = await _latestComments(client, prNumber, publication, pull);
 
     // Persist only on a real change: the effective state (PR state merged
     // with the CI verdict — `open` under the hood must NOT re-record every
@@ -834,12 +824,14 @@ class WidgetPublishService {
     // lines, the run link, or the comment snapshot differs. The poller
     // runs on a timer — re-recording an unchanged publication would
     // rewrite the ledger file and notify listeners every tick for nothing.
-    final changed =
-        effective != publication.lastKnownState ||
-        !listEquals(validatorErrors, publication.validatorErrors) ||
-        runUrl != publication.runHtmlUrl ||
-        (pull != null && !listEquals(comments, publication.comments));
-    if (changed) {
+    if (_refreshChanged(
+      publication,
+      effective,
+      validatorErrors,
+      runUrl,
+      comments,
+      pull: pull,
+    )) {
       await _ledger.record(
         publication.copyWith(
           lastKnownState: effective,
@@ -850,6 +842,109 @@ class WidgetPublishService {
       );
     }
     return widgetPublicationStateOf(effective);
+  }
+
+  /// The stored `lastKnownState` for a fetched PR.
+  static String _pullState(GithubPull? pull) => pull == null
+      ? WidgetPublication.stateUnknown
+      : pull.state == 'open'
+      ? WidgetPublication.stateOpen
+      : pull.merged
+      ? WidgetPublication.stateMerged
+      : WidgetPublication.stateClosed;
+
+  /// The CI verdict on an open PR's head sha (issue #1045 AC3): pending →
+  /// `validating`, any failure → `invalid` with the validator's error
+  /// lines stored VERBATIM plus the run link, all green → plain `open`.
+  /// Returns `(effectiveState, validatorErrors, runUrl)`. A failed check
+  /// read (offline / rate limit) keeps the plain open state — never invent
+  /// a verdict the API did not confirm.
+  Future<(String, List<String>, String?)> _ciVerdict(
+    GithubApiClient client,
+    GithubPull pull,
+    WidgetPublication publication,
+  ) async {
+    var effective = WidgetPublication.stateOpen;
+    var validatorErrors = publication.validatorErrors;
+    var runUrl = publication.runHtmlUrl;
+    try {
+      final checks = await client.listCheckRuns(
+        GithubApiClient.catalogOwner,
+        GithubApiClient.catalogRepo,
+        pull.headSha!,
+      );
+      final failing = checks.where((check) => check.isFailed).toList();
+      if (checks.isEmpty || checks.any((check) => !check.isCompleted)) {
+        effective = WidgetPublication.stateValidating;
+        validatorErrors = const [];
+        runUrl = null;
+      } else if (failing.isNotEmpty) {
+        effective = WidgetPublication.stateInvalid;
+        validatorErrors = await _verbatimValidatorErrors(client, failing);
+        runUrl = failing.first.htmlUrl;
+      } else {
+        effective = WidgetPublication.stateOpen;
+        validatorErrors = const [];
+        runUrl = null;
+      }
+    } on Object {
+      // Offline / rate limit: keep the plain open state — never invent a
+      // verdict the API did not confirm.
+    }
+    return (effective, validatorErrors, runUrl);
+  }
+
+  /// The newest reviewer comments, capped at the stored newest
+  /// [_maxStoredComments]; the publication's own snapshot is kept when the
+  /// PR is gone or comments are unreachable (a partial degrade beats a
+  /// failed refresh).
+  Future<List<WidgetPublicationComment>> _latestComments(
+    GithubApiClient client,
+    int prNumber,
+    WidgetPublication publication,
+    GithubPull? pull,
+  ) async {
+    var comments = publication.comments;
+    if (pull == null) return comments;
+    try {
+      final fetched = await client.listPullComments(
+        GithubApiClient.catalogOwner,
+        GithubApiClient.catalogRepo,
+        prNumber,
+      );
+      final newest = fetched.length > _maxStoredComments
+          ? fetched.sublist(fetched.length - _maxStoredComments)
+          : fetched;
+      comments = [
+        for (final c in newest)
+          WidgetPublicationComment(
+            author: c.author,
+            body: c.body,
+            createdAt: c.createdAt,
+            isReview: c.isReview,
+          ),
+      ];
+    } on Object {
+      // State still refreshes when comments are unreachable (a partial
+      // degrade beats a failed refresh).
+    }
+    return comments;
+  }
+
+  /// Whether anything the ledger persists changed (state, verbatim error
+  /// lines, run link, or comment snapshot).
+  static bool _refreshChanged(
+    WidgetPublication publication,
+    String effective,
+    List<String> validatorErrors,
+    String? runUrl,
+    List<WidgetPublicationComment> comments, {
+    required GithubPull? pull,
+  }) {
+    return effective != publication.lastKnownState ||
+        !listEquals(validatorErrors, publication.validatorErrors) ||
+        runUrl != publication.runHtmlUrl ||
+        (pull != null && !listEquals(comments, publication.comments));
   }
 
   /// The failing checks' error lines, VERBATIM (issue #1045 — "no

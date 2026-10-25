@@ -2,6 +2,8 @@
 name: task
 description: Description of the task tool that fans work out to parallel subagents with schema-validated results, ported from oh-my-pi's task tool prompt.
 ---
+Your session context is limited. Before performing a user request, think whether the work can be delegated to subagents — orchestrate subagents and deliver the result to the user. If it is a simple ask, just perform it yourself.
+
 Run subagents in parallel by passing multiple items in a single `tasks[]` batch. Execution blocks until every item finishes unless `background` is true — then you receive job ids immediately and results deliver as jobs settle.
 
 # Task Design

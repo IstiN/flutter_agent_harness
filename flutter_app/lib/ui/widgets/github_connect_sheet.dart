@@ -213,43 +213,68 @@ class _GithubConnectSheetState extends State<GithubConnectSheet>
   /// Guards the one-time authorize-URL auto-open per tab entry.
   bool _webLaunched = false;
 
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_deviceClientId == null) {
-      final override = widget.deviceClientId?.trim();
-      if (override != null) {
-        // Explicit override: empty string disables the device tab (tests).
-        _deviceClientId = override;
-      } else if (githubWidgetsClientId.isNotEmpty) {
-        _deviceClientId = githubWidgetsClientId;
-      } else {
-        // A user-registered OAuth App id can be configured at runtime in
-        // Settings → Keys under [githubOauthClientIdKeyName] — no rebuild
-        // needed. Without it the fallback Copilot plugin id stays
-        // identity-only (GitHub pins its consent screen).
-        final keys = SessionKeysScope.maybeOf(context);
-        final configured = keys?.valueOf(
-          githubOauthClientIdKeyName,
-        )?.trim();
-        if (configured != null && configured.isNotEmpty) {
-          _deviceClientId = configured;
-        } else {
-          _deviceClientId = copilotDeviceClientId;
-          _fallbackDeviceId = true;
-        }
-      }
+      _pickDeviceClientId();
       _resolveWebClientId();
       _tab = _deviceFlowAvailable ? _ConnectTab.device : _ConnectTab.token;
     }
-    if (_tab == _ConnectTab.device &&
-        !_deviceStarted &&
-        _grant == null &&
-        !_busy) {
-      _deviceStarted = true;
-      _startDeviceFlow();
+    _autoStartDeviceFlow();
+  }
+
+  /// Picks the device-flow client id once (first dependencies pass):
+  /// the explicit override (empty string disables the device tab,
+  /// tests), the build-time OAuth App, else the runtime Keys entry or
+  /// the public fallback (gh-1848 split).
+  void _pickDeviceClientId() {
+    final override = widget.deviceClientId?.trim();
+    if (override != null) {
+      // Explicit override: empty string disables the device tab (tests).
+      _deviceClientId = override;
+    } else if (githubWidgetsClientId.isNotEmpty) {
+      _deviceClientId = githubWidgetsClientId;
+    } else {
+      _pickConfiguredDeviceClientId();
     }
+  }
+
+  /// No override and no build-time OAuth App: a user-registered OAuth
+  /// App id configured at runtime in Settings → Keys under
+  /// [githubOauthClientIdKeyName] wins (no rebuild needed); without it
+  /// the fallback Copilot plugin id stays identity-only (GitHub pins
+  /// its consent screen) (gh-1848 split).
+  void _pickConfiguredDeviceClientId() {
+    final configured = _configuredDeviceClientId();
+    if (configured == null) {
+      _deviceClientId = copilotDeviceClientId;
+      _fallbackDeviceId = true;
+      return;
+    }
+    _deviceClientId = configured;
+  }
+
+  /// The runtime Keys entry (trimmed), or null when unset/blank.
+  String? _configuredDeviceClientId() {
+    final keys = SessionKeysScope.maybeOf(context);
+    final configured = keys?.valueOf(githubOauthClientIdKeyName)?.trim();
+    return (configured != null && configured.isNotEmpty) ? configured : null;
+  }
+
+  /// Auto-starts the device flow once per sheet lifetime: only on the
+  /// device tab, never twice (gh-1848 split).
+  void _autoStartDeviceFlow() {
+    if (_tab != _ConnectTab.device || _deviceStarted) return;
+    _startDeviceFlowIfIdle();
+  }
+
+  /// Second guard half of the auto-start: never while a grant already
+  /// landed or a request is in flight (gh-1848 split).
+  void _startDeviceFlowIfIdle() {
+    if (_grant != null || _busy) return;
+    _deviceStarted = true;
+    _startDeviceFlow();
   }
 
   /// Resolves the Browser-tab client id once: the explicit override
@@ -264,8 +289,9 @@ class _GithubConnectSheetState extends State<GithubConnectSheet>
     } else {
       final keys = SessionKeysScope.maybeOf(context);
       final configured = keys?.valueOf(githubOauthClientIdKeyName)?.trim();
-      _webClientId =
-          (configured != null && configured.isNotEmpty) ? configured : '';
+      _webClientId = (configured != null && configured.isNotEmpty)
+          ? configured
+          : '';
     }
   }
 

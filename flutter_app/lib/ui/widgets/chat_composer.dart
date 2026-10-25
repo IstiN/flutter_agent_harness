@@ -147,11 +147,17 @@ class ChatComposer extends StatelessWidget {
     } on Object {
       // Clipboard access is best effort — a failure just means "no image".
     }
-    if (bytes == null || bytes.isEmpty) return null;
+    if (!_hasClipboardImage(bytes)) return null;
     // The issue contract's synthesized paste name (issue #465).
     final name = 'paste-${DateTime.now().millisecondsSinceEpoch}.png';
-    return (name: name, bytes: bytes, mimeType: mimeTypeForUploadName(name));
+    // The guard above proves the bytes non-null; the predicate form just
+    // defeats promotion.
+    return (name: name, bytes: bytes!, mimeType: mimeTypeForUploadName(name));
   }
+
+  /// Null/empty pasteboard — no image to paste (gh-1848 split).
+  static bool _hasClipboardImage(Uint8List? bytes) =>
+      bytes != null && bytes.isNotEmpty;
 }
 
 /// [fa_ui.FaChatVoiceInput] over the app's [AsrApi] + [AsrTranscriber]

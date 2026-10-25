@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'dart:math' as math;
 
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -302,6 +303,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
           widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
     );
     if (!mounted) return;
+    _announceAuthRecovery(ok);
+  }
+
+  /// The re-auth outcome snack (gh-1848 split).
+  void _announceAuthRecovery(bool ok) {
     ok
         ? showFahSnack(
             context,
@@ -1182,6 +1188,49 @@ class SessionChatSheetState extends State<SessionChatSheet>
     // [_selectedSessionId]): pending tap → SW live id → manager slot.
     // The dot moves the moment the row is tapped, not a beat later.
     final activeId = _selectedSessionId;
+    final entries = _drawerEntries();
+    // Live search over the drawer's rows (issue #200): a pure filter on
+    // the in-memory projection, name matches rank first. A blank query
+    // keeps the list exactly as it was.
+    final query = _drawerQuery.trim();
+    final visible = rankSessionEntries(entries, _drawerQuery, (e) {
+      return (
+        title:
+            _namesStore?.titleFor(e.id) ??
+            derivedSessionTitle(context, id: e.id, createdAt: e.createdAt),
+        id: e.id,
+        cwd: e.cwd,
+        updatedAt: e.lastUpdatedAt,
+      );
+    });
+    // AC2 (tree interop): a matching subagent surfaces under its dimmed
+    // parent — the SAME composition the wide sidebar applies.
+    final contextParents = _searchContextParents(entries, visible, query);
+    // Folder-grouped, parent-nested rows (issue #198): the SAME tree row
+    // model the wide sidebar renders — subagent sessions collapse under
+    // their parent's count badge, orphans surface top-level marked.
+    // Issue #426: explicit collapse overrides ride alongside (small
+    // groups default open, so closing one is a choice).
+    final drawerRows = sessionTreeRows(
+      visible,
+      metadataById: _metadataById,
+      personalLabel: l10n.sessionFolderPersonal,
+      activeSessionId: activeId,
+      expandedIds: query.isEmpty
+          ? _expandedParents
+          : {..._expandedParents, ...contextParents},
+      collapsedIds: _collapsedParents,
+      dimmedIds: contextParents,
+    );
+    return _drawerScaffold(colors, l10n, activeId, entries, drawerRows);
+  }
+
+  /// The drawer's row model (gh-1848 split): live sessions, then
+  /// persisted disk sessions, then presence-only rows (a `fa` CLI just
+  /// started and its session file does not exist yet — the CLI
+  /// materializes the JSONL on the first message), sorted stably by
+  /// creation time.
+  List<SessionEntry> _drawerEntries() {
     final entries =
         <SessionEntry>[
             for (final s in _liveSessions)
@@ -1208,9 +1257,6 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 cwd: m.cwd,
                 persisted: m,
               ),
-            // Presence-only rows: a `fa` CLI just started and its session
-            // file does not exist yet (the CLI materializes the JSONL on
-            // the first message) — the live dot must show regardless.
             for (final id in (_presence?.live.keys ?? const <String>[]))
               if (!_liveSessions.any((s) => s.id == id) &&
                   !_persisted.any((m) => m.id == id))
@@ -1228,22 +1274,17 @@ class SessionChatSheetState extends State<SessionChatSheet>
           // activity sort teleported the clicked row to the top on every
           // switch (archive mtime bump + fresh slot stamp).
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    // Live search over the drawer's rows (issue #200): a pure filter on
-    // the in-memory projection, name matches rank first. A blank query
-    // keeps the list exactly as it was.
-    final query = _drawerQuery.trim();
-    final visible = rankSessionEntries(entries, _drawerQuery, (e) {
-      return (
-        title:
-            _namesStore?.titleFor(e.id) ??
-            derivedSessionTitle(context, id: e.id, createdAt: e.createdAt),
-        id: e.id,
-        cwd: e.cwd,
-        updatedAt: e.lastUpdatedAt,
-      );
-    });
-    // AC2 (tree interop): a matching subagent surfaces under its dimmed
-    // parent — the SAME composition the wide sidebar applies.
+    return entries;
+  }
+
+  /// A matching subagent's parent pulled in as search context (AC2, tree
+  /// interop): it lands in [visible] so the tree can render it dimmed
+  /// under the matching child. Empty without a query.
+  Set<String> _searchContextParents(
+    List<SessionEntry> entries,
+    List<SessionEntry> visible,
+    String query,
+  ) {
     final contextParents = <String>{};
     if (query.isNotEmpty) {
       final visibleIds = {for (final e in visible) e.id};
@@ -1266,22 +1307,18 @@ class SessionChatSheetState extends State<SessionChatSheet>
       }
       visible.addAll([for (final id in contextParents) entryById[id]!]);
     }
-    // Folder-grouped, parent-nested rows (issue #198): the SAME tree row
-    // model the wide sidebar renders — subagent sessions collapse under
-    // their parent's count badge, orphans surface top-level marked.
-    // Issue #426: explicit collapse overrides ride alongside (small
-    // groups default open, so closing one is a choice).
-    final drawerRows = sessionTreeRows(
-      visible,
-      metadataById: _metadataById,
-      personalLabel: l10n.sessionFolderPersonal,
-      activeSessionId: activeId,
-      expandedIds: query.isEmpty
-          ? _expandedParents
-          : {..._expandedParents, ...contextParents},
-      collapsedIds: _collapsedParents,
-      dimmedIds: contextParents,
-    );
+    return contextParents;
+  }
+
+  /// The drawer's chrome (gh-1848 split): header row, new-session row,
+  /// search field, then the body.
+  Widget _drawerScaffold(
+    FahColors colors,
+    AppLocalizations l10n,
+    String? activeId,
+    List<SessionEntry> entries,
+    List<SessionListRow> drawerRows,
+  ) {
     return Container(
       key: const ValueKey('sessionChatDrawer'),
       clipBehavior: Clip.antiAlias,
@@ -1348,120 +1385,145 @@ class SessionChatSheetState extends State<SessionChatSheet>
             ),
             Divider(height: 1, color: colors.border),
             Expanded(
-              child: entries.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                          l10n.sidebarNoSessions,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodySmall?.copyWith(color: colors.dim),
-                        ),
-                      ),
-                    )
-                  : drawerRows.isEmpty
-                  // E1: the query matched nothing — say so, offer a
-                  // way out; never a blank void.
-                  ? sessionSearchEmptyState(
-                      context,
-                      colors,
-                      _drawerQuery.trim(),
-                      _clearDrawerSearch,
-                    )
-                  : ListView.builder(
-                      // The drawer slides out UNDER the input bar: pad the
-                      // list tail so the last row clears it. Horizontal
-                      // insets match the wide sidebar's list.
-                      padding: EdgeInsets.fromLTRB(8, 4, 8, _barHeight + 8),
-                      // Rows = folder group headers + session tiles: the
-                      // sessions of one project stay together under their
-                      // folder name.
-                      itemCount: drawerRows.length,
-                      itemBuilder: (context, index) {
-                        final row = drawerRows[index];
-                        if (row.isHeader) {
-                          return Padding(
-                            key: ValueKey(
-                              'sessionChatDrawerHeader:${row.label}',
-                            ),
-                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 2),
-                            child: Text(
-                              row.label!,
-                              style: TextStyle(
-                                color: colors.dim,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          );
-                        }
-                        final entry = row.entry!;
-                        // AC2: a parent pulled in as search context renders
-                        // faintly — scaffolding for the matching child,
-                        // still tappable.
-                        final isActive = entry.id == activeId;
-                        final tile = SessionTile(
-                          key: ValueKey('sessionChatDrawerEntry:${entry.id}'),
-                          title: sessionEntryTitle(
-                            context,
-                            entry,
-                            namesStore: _namesStore,
-                            subagent: row.isChild,
-                          ),
-                          subtitle: sessionTileSubtitle(entry.lastUpdatedAt),
-                          // The folder basename IS the group header — a
-                          // per-tile cwd label would duplicate it.
-                          cwd: null,
-                          isActive: isActive,
-                          // A running fa CLI owns this session: green dot,
-                          // tap attaches to it instead of opening it here.
-                          live: _presence?.isLive(entry.id) ?? false,
-                          onTap: () =>
-                              unawaited(_openSessionFromDrawer(entry.id)),
-                          onMenu: (anchor) => unawaited(
-                            showSessionActionsMenu(
-                              context,
-                              anchor: anchor,
-                              manager: widget.manager,
-                              namesStore: _namesStore,
-                              sessionId: entry.id,
-                              createdAt: entry.createdAt,
-                              live: entry.live,
-                              persisted: entry.persisted,
-                              // Persisted-only deletes don't notify the
-                              // manager — resync the drawer's list.
-                              onDeleted: () => unawaited(_reloadPersisted()),
-                            ),
-                          ),
-                          // The SAME tree furniture as the wide sidebar
-                          // (issue #198): parents collapse their subagent
-                          // children behind a count badge, children indent
-                          // with the agent glyph.
-                          childCount: row.childCount,
-                          expanded: row.expanded,
-                          onToggleExpand: row.childCount > 0
-                              ? () => setState(() {
-                                  if (!_expandedParents.remove(entry.id)) {
-                                    _expandedParents.add(entry.id);
-                                  }
-                                })
-                              : null,
-                          subagent: row.isChild,
-                          indent: row.isChild && !row.orphaned
-                              ? sessionChildIndent
-                              : 0,
-                        );
-                        if (!row.dimmed) return tile;
-                        return Opacity(opacity: 0.45, child: tile);
-                      },
-                    ),
+              child: _drawerBody(colors, l10n, activeId, entries, drawerRows),
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// The drawer body's emptiness ladder (gh-1848 split): no sessions at
+  /// all, a search that matched nothing, else the tree list.
+  Widget _drawerBody(
+    FahColors colors,
+    AppLocalizations l10n,
+    String? activeId,
+    List<SessionEntry> entries,
+    List<SessionListRow> drawerRows,
+  ) {
+    return entries.isEmpty
+        ? Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                l10n.sidebarNoSessions,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.dim),
+              ),
+            ),
+          )
+        : drawerRows.isEmpty
+        // E1: the query matched nothing — say so, offer a
+        // way out; never a blank void.
+        ? sessionSearchEmptyState(
+            context,
+            colors,
+            _drawerQuery.trim(),
+            _clearDrawerSearch,
+          )
+        : _drawerList(colors, activeId, drawerRows);
+  }
+
+  /// The drawer's session list (gh-1848 split): rows = folder group
+  /// headers + session tiles; the list tail pads clear of the input bar
+  /// the drawer slides under.
+  Widget _drawerList(
+    FahColors colors,
+    String? activeId,
+    List<SessionListRow> drawerRows,
+  ) {
+    return ListView.builder(
+      padding: EdgeInsets.fromLTRB(8, 4, 8, _barHeight + 8),
+      itemCount: drawerRows.length,
+      itemBuilder: (context, index) {
+        final row = drawerRows[index];
+        if (row.isHeader) {
+          return _drawerGroupHeader(colors, row);
+        }
+        return _drawerSessionTile(colors, activeId, row);
+      },
+    );
+  }
+
+  /// A folder group header row.
+  Widget _drawerGroupHeader(FahColors colors, SessionListRow row) {
+    return Padding(
+      key: ValueKey('sessionChatDrawerHeader:${row.label}'),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 2),
+      child: Text(
+        row.label!,
+        style: TextStyle(
+          color: colors.dim,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  /// One session tile of the drawer (gh-1848 split): the SAME tree
+  /// furniture as the wide sidebar (issue #198) — parents collapse their
+  /// subagent children behind a count badge, children indent with the
+  /// agent glyph, and an AC2 context parent renders faintly.
+  Widget _drawerSessionTile(
+    FahColors colors,
+    String? activeId,
+    SessionListRow row,
+  ) {
+    final entry = row.entry!;
+    // AC2: a parent pulled in as search context renders
+    // faintly — scaffolding for the matching child,
+    // still tappable.
+    final isActive = entry.id == activeId;
+    final tile = SessionTile(
+      key: ValueKey('sessionChatDrawerEntry:${entry.id}'),
+      title: sessionEntryTitle(
+        context,
+        entry,
+        namesStore: _namesStore,
+        subagent: row.isChild,
+      ),
+      subtitle: sessionTileSubtitle(entry.lastUpdatedAt),
+      // The folder basename IS the group header — a
+      // per-tile cwd label would duplicate it.
+      cwd: null,
+      isActive: isActive,
+      // A running fa CLI owns this session: green dot,
+      // tap attaches to it instead of opening it here.
+      live: _presence?.isLive(entry.id) ?? false,
+      onTap: () => unawaited(_openSessionFromDrawer(entry.id)),
+      onMenu: (anchor) => unawaited(
+        showSessionActionsMenu(
+          context,
+          anchor: anchor,
+          manager: widget.manager,
+          namesStore: _namesStore,
+          sessionId: entry.id,
+          createdAt: entry.createdAt,
+          live: entry.live,
+          persisted: entry.persisted,
+          // Persisted-only deletes don't notify the
+          // manager — resync the drawer's list.
+          onDeleted: () => unawaited(_reloadPersisted()),
+        ),
+      ),
+      childCount: row.childCount,
+      expanded: row.expanded,
+      onToggleExpand: row.childCount > 0
+          ? () => setState(() {
+              if (!_expandedParents.remove(entry.id)) {
+                _expandedParents.add(entry.id);
+              }
+            })
+          : null,
+      subagent: row.isChild,
+      indent: row.isChild && !row.orphaned ? sessionChildIndent : 0,
+    );
+    if (!row.dimmed) return tile;
+    return Opacity(opacity: 0.45, child: tile);
   }
 
   /// Opens the shared rename dialog for the active session (Save / Clear /

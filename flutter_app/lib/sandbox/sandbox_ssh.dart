@@ -1181,24 +1181,10 @@ final class SandboxSshBuiltins {
   ) async {
     final state = _SftpBatchState(initialLocalCwd: _normalizeLocal(cwd));
     for (final line in _parseSftpBatchLines(batch)) {
-      if (line.command == 'exit' ||
-          line.command == 'quit' ||
-          line.command == 'bye') {
+      if (_isSftpExitCommand(line.command)) {
         return _ok(state.stdout.takeBytes());
       }
-      final handler = switch (line.command) {
-        'pwd' => _sftpPwd,
-        'lpwd' => _sftpLpwd,
-        'cd' => _sftpCd,
-        'lcd' => _sftpLcd,
-        'ls' => _sftpLs,
-        'get' => _sftpGet,
-        'put' => _sftpPut,
-        'mkdir' => _sftpMkdir,
-        'rm' => _sftpRm,
-        'rmdir' => _sftpRmdir,
-        _ => null,
-      };
+      final handler = _sftpHandlerFor(line.command);
       if (handler == null) {
         return _sftpFail('unknown command: ${line.command}');
       }
@@ -1210,6 +1196,44 @@ final class SandboxSshBuiltins {
       }
     }
     return _ok(state.stdout.takeBytes());
+  }
+
+  /// `exit`/`quit`/`bye` end the batch immediately.
+  static bool _isSftpExitCommand(String command) =>
+      command == 'exit' || command == 'quit' || command == 'bye';
+
+  /// Resolves the handler for one sftp opcode, or null when unknown.
+  ///
+  /// gh-1848 tier 3 split: the original single opcode switch, halved in
+  /// the same order — inspect/move opcodes ([_sftpQueryHandler]) before
+  /// transfer/mutate opcodes ([_sftpTransferHandler]); the case labels are
+  /// disjoint so the `??` fallback cannot change a lookup.
+  _SftpCommandHandler? _sftpHandlerFor(String command) {
+    return _sftpQueryHandler(command) ?? _sftpTransferHandler(command);
+  }
+
+  /// pwd/lpwd/cd/lcd/ls: inspect or move; never transfer files.
+  _SftpCommandHandler? _sftpQueryHandler(String command) {
+    return switch (command) {
+      'pwd' => _sftpPwd,
+      'lpwd' => _sftpLpwd,
+      'cd' => _sftpCd,
+      'lcd' => _sftpLcd,
+      'ls' => _sftpLs,
+      _ => null,
+    };
+  }
+
+  /// get/put/mkdir/rm/rmdir: transfer or mutate files.
+  _SftpCommandHandler? _sftpTransferHandler(String command) {
+    return switch (command) {
+      'get' => _sftpGet,
+      'put' => _sftpPut,
+      'mkdir' => _sftpMkdir,
+      'rm' => _sftpRm,
+      'rmdir' => _sftpRmdir,
+      _ => null,
+    };
   }
 
   /// Usage failure inside an sftp batch: aborts the run with exit 1.
@@ -1447,6 +1471,16 @@ final class _ScpConnection {
   /// Remote host.
   final String host;
 }
+
+/// One sftp opcode handler: given the batch context (ftp channel, argv,
+/// mutable state), returns the terminal batch result — or null to keep
+/// executing the batch.
+typedef _SftpCommandHandler =
+    Future<SandboxBuiltinResult?> Function(
+      SandboxSshFtp ftp,
+      List<String> args,
+      _SftpBatchState state,
+    );
 
 /// Mutable state of one sftp batch run: the working directories advanced by
 /// `cd`/`lcd` and the stdout accumulated by the printing opcodes.

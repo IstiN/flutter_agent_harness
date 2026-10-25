@@ -68,10 +68,38 @@ final class StageRedirects {
 /// Resolves a stage's redirect list into targets.
 ///
 /// Replicates the original precedence exactly: fd 0 read wins first, then
-/// `fd == 1 || fd == -1`, then `fd == 2 || fd == -1` — so `&>` (fd -1
+/// `fd == 1 || fd == -1`, then `fd == 2 || fd == -1` - so `&>` (fd -1
 /// write) lands on stdout only, and a later redirect for the same stream
 /// overwrites an earlier one.
+///
+/// gh-1848 tier 3 split: the loop dispatches one redirect at a time to the
+/// fd-0 reader ([_applyStdinRedirect]), the `2>&1`/`1>&2` duplicator
+/// ([_applyDupRedirect], per-direction in [_applyDupPair]) and the
+/// stream-file writers ([_applyStreamFileRedirect] over
+/// [_applyStdoutFile]/[_applyStderrFile]); the collected fields live in a
+/// [_RedirectState] until the final [StageRedirects] is built.
 StageRedirects collectStageRedirects(List<Redirect> redirects) {
+  final s = _RedirectState();
+  for (final redirect in redirects) {
+    if (_applyStdinRedirect(redirect, s)) continue;
+    if (_applyDupRedirect(redirect, s)) continue;
+    _applyStreamFileRedirect(redirect, s);
+  }
+  return StageRedirects(
+    stdoutFile: s.stdoutFile,
+    stderrFile: s.stderrFile,
+    stdinFile: s.stdinFile,
+    stdinBody: s.stdinBody,
+    appendStdout: s.appendStdout,
+    appendStderr: s.appendStderr,
+    dupStderrIntoStdout: s.dupStderrIntoStdout,
+    dupStdoutIntoStderr: s.dupStdoutIntoStderr,
+  );
+}
+
+/// Mutable collection state for [collectStageRedirects]: one field per
+/// [StageRedirects] target, updated in redirect order.
+class _RedirectState {
   String? stdoutFile;
   String? stderrFile;
   var dupStderrIntoStdout = false;
@@ -79,69 +107,97 @@ StageRedirects collectStageRedirects(List<Redirect> redirects) {
   String? stdinFile;
   var appendStdout = false;
   var appendStderr = false;
-
   String? stdinBody;
-  for (final redirect in redirects) {
-    if (redirect.fd == 0 && redirect.kind == RedirectKind.read) {
-      stdinFile = redirect.target;
-      stdinBody = null;
-    } else if (redirect.fd == 0 && redirect.kind == RedirectKind.heredoc) {
-      stdinBody = redirect.body ?? '';
-      stdinFile = null;
-    } else if (redirect.fd == 0 && redirect.kind == RedirectKind.hereString) {
+}
+
+/// Handles the fd-0 redirects: `<` read (clearing an earlier inline body)
+/// and the `<<`/`<<<` inline bodies (clearing an earlier read target).
+/// Returns whether [redirect] was an fd-0 stdin redirect; other fd-0
+/// redirects fall through unhandled, exactly as in the original chain.
+bool _applyStdinRedirect(Redirect redirect, _RedirectState s) {
+  if (redirect.fd != 0) return false;
+  switch (redirect.kind) {
+    case RedirectKind.read:
+      s.stdinFile = redirect.target;
+      s.stdinBody = null;
+    case RedirectKind.heredoc:
+      s.stdinBody = redirect.body ?? '';
+      s.stdinFile = null;
+    case RedirectKind.hereString:
       // POSIX here-strings append a trailing newline after expansion.
-      stdinBody = '${redirect.target}\n';
-      stdinFile = null;
-    } else if (redirect.kind == RedirectKind.dup) {
-      // `2>&1` folds stderr into stdout's destination; `1>&2`/`>&2` the
-      // reverse. POSIX: the dup snapshots the target AT THIS POINT —
-      // `2>&1 > f` sends stderr to the pre-redirect stdout, `> f 2>&1`
-      // sends it to f. Applied by the WASI pipeline stage runner only.
-      if (redirect.target == '1' && redirect.fd == 2) {
-        if (stdoutFile != null) {
-          stderrFile = stdoutFile;
-          appendStderr = true;
-        } else {
-          dupStderrIntoStdout = true;
-        }
-      } else if (redirect.target == '2' && redirect.fd == 1) {
-        if (stderrFile != null) {
-          stdoutFile = stderrFile;
-          appendStdout = true;
-        } else {
-          dupStdoutIntoStderr = true;
-        }
-      }
-    } else if (redirect.fd == 1 || redirect.fd == -1) {
-      if (redirect.kind == RedirectKind.write ||
-          redirect.kind == RedirectKind.append) {
-        stdoutFile = redirect.target;
-        appendStdout = redirect.kind == RedirectKind.append;
-        // A file redirect replaces the fd: an earlier dup of (or into)
-        // this fd no longer routes here.
-        dupStderrIntoStdout = false;
-        dupStdoutIntoStderr = false;
-      }
-    } else if (redirect.fd == 2 || redirect.fd == -1) {
-      if (redirect.kind == RedirectKind.write ||
-          redirect.kind == RedirectKind.append) {
-        stderrFile = redirect.target;
-        appendStderr = redirect.kind == RedirectKind.append;
-        dupStderrIntoStdout = false;
-        dupStdoutIntoStderr = false;
-      }
+      s.stdinBody = '${redirect.target}\n';
+      s.stdinFile = null;
+    default:
+      return false;
+  }
+  return true;
+}
+
+/// Handles the `2>&1`/`1>&2`/`>&2` duplicates (any fd). Returns whether
+/// [redirect] was a dup.
+bool _applyDupRedirect(Redirect redirect, _RedirectState s) {
+  if (redirect.kind != RedirectKind.dup) return false;
+  _applyDupPair(redirect, s);
+  return true;
+}
+
+/// One dup direction: `2>&1` folds stderr into stdout's destination;
+/// `1>&2`/`>&2` the reverse. POSIX: the dup snapshots the target AT THIS
+/// POINT — `2>&1 > f` sends stderr to the pre-redirect stdout, `> f 2>&1`
+/// sends it to f. Applied by the WASI pipeline stage runner only. A dup
+/// naming an unknown pair is ignored.
+void _applyDupPair(Redirect redirect, _RedirectState s) {
+  if (redirect.target == '1' && redirect.fd == 2) {
+    if (s.stdoutFile != null) {
+      s.stderrFile = s.stdoutFile;
+      s.appendStderr = true;
+    } else {
+      s.dupStderrIntoStdout = true;
+    }
+  } else if (redirect.target == '2' && redirect.fd == 1) {
+    if (s.stderrFile != null) {
+      s.stdoutFile = s.stderrFile;
+      s.appendStdout = true;
+    } else {
+      s.dupStdoutIntoStderr = true;
     }
   }
-  return StageRedirects(
-    stdoutFile: stdoutFile,
-    stderrFile: stderrFile,
-    stdinFile: stdinFile,
-    stdinBody: stdinBody,
-    appendStdout: appendStdout,
-    appendStderr: appendStderr,
-    dupStderrIntoStdout: dupStderrIntoStdout,
-    dupStdoutIntoStderr: dupStdoutIntoStderr,
-  );
+}
+
+/// Terminal chain node for the file redirects: fd 1 (or the `&`-style -1)
+/// writes/append to stdout, fd 2 (or -1, after the stdout check) to
+/// stderr. A file redirect replaces the fd, so an earlier dup of (or
+/// into) it no longer routes there.
+void _applyStreamFileRedirect(Redirect redirect, _RedirectState s) {
+  if (redirect.fd == 1 || redirect.fd == -1) {
+    _applyStdoutFile(redirect, s);
+  } else if (redirect.fd == 2 || redirect.fd == -1) {
+    _applyStderrFile(redirect, s);
+  }
+}
+
+/// Applies a stdout-bound write/append redirect (and clears the dup
+/// flags); other kinds on fd 1 are ignored.
+void _applyStdoutFile(Redirect redirect, _RedirectState s) {
+  if (redirect.kind == RedirectKind.write ||
+      redirect.kind == RedirectKind.append) {
+    s.stdoutFile = redirect.target;
+    s.appendStdout = redirect.kind == RedirectKind.append;
+    s.dupStderrIntoStdout = false;
+    s.dupStdoutIntoStderr = false;
+  }
+}
+
+/// Applies a stderr-bound write/append redirect (and clears the dup
+/// flags); other kinds on fd 2 are ignored.
+void _applyStderrFile(Redirect redirect, _RedirectState s) {
+  if (redirect.kind == RedirectKind.write ||
+      redirect.kind == RedirectKind.append) {
+    s.stderrFile = redirect.target;
+    s.appendStderr = redirect.kind == RedirectKind.append;
+    s.dupStderrIntoStdout = false;
+    s.dupStdoutIntoStderr = false;
+  }
 }
 
 /// Matches SIGPIPE stderr noise only: bare `Broken pipe` or the

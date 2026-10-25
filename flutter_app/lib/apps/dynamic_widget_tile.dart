@@ -669,19 +669,46 @@ Future<void> editDynamicWidgetPermissions(
 ) async {
   final store = await AppPermissionsStore.load(service.env);
   if (!context.mounted) return;
-  final changed = await showDialog<bool>(
+  final changed = await _showDynamicPermissionsDialog(
+    context,
+    service,
+    definition,
+    store,
+  );
+  await _restartDynamicEngineIfSaved(context, service, definition, changed);
+}
+
+/// Restarts the engine only on an explicit save (gh-1848 tier-3 split);
+/// true only when the dialog saved and the context is still mounted.
+Future<void> _restartDynamicEngineIfSaved(
+  BuildContext context,
+  DynamicMessagesService service,
+  DynamicMessageDefinition definition,
+  bool? changed,
+) async {
+  if (changed != true || !context.mounted) return;
+  await service.restartEngine(
+    definition,
+    locale: Localizations.localeOf(context).languageCode,
+    theme: jsThemeMap(context),
+  );
+}
+
+/// The permission dialog itself (gh-1848 split): identical to an
+/// installed app's dialog; true only on explicit save.
+Future<bool?> _showDynamicPermissionsDialog(
+  BuildContext context,
+  DynamicMessagesService service,
+  DynamicMessageDefinition definition,
+  AppPermissionsStore store,
+) {
+  return showDialog<bool>(
     context: context,
     builder: (context) => AppPermissionsDialog(
       app: service.appInfoFor(definition),
       env: service.env,
       store: store,
     ),
-  );
-  if (changed != true || !context.mounted) return;
-  await service.restartEngine(
-    definition,
-    locale: Localizations.localeOf(context).languageCode,
-    theme: jsThemeMap(context),
   );
 }
 

@@ -276,81 +276,128 @@ typedef SedInvocation = ({
 
 /// Parses the `sed` argument list (pure): flags, scripts, and files, with
 /// the usage errors the driver reports verbatim.
+///
+/// gh-1848 tier 3 split: one argv token per [_sedConsumeArg] call —
+/// boolean flags in [_sedToggleFlag], `-e` scripts in [_sedAddScript],
+/// operands in [_sedAddOperand] — collected in a mutable [_SedArgsState];
+/// [_sedValidate] applies the post-loop rules. The original branch order
+/// is preserved (toggle flags, then `-e`, then unknown dash-args, then
+/// operands); the flag sets are disjoint so regrouping cannot reorder
+/// side effects.
 SedInvocation parseSedArgs(List<String> args) {
+  final s = _SedArgsState();
+  for (var i = 0; i < args.length; i++) {
+    final (error, consumed) = _sedConsumeArg(args[i], args, i, s);
+    if (error != null) return s.record(error);
+    i += consumed;
+  }
+  return s.record(_sedValidate(s));
+}
+
+/// Mutable parse state for [parseSedArgs]: the toggled flags and the
+/// collected scripts/files, in argv order.
+class _SedArgsState {
   var quiet = false;
   var inPlace = false;
   final scripts = <String>[];
   final files = <String>[];
 
-  for (var i = 0; i < args.length; i++) {
-    final arg = args[i];
-    if (arg == '-n' || arg == '--quiet' || arg == '--silent') {
-      quiet = true;
-    } else if (arg.startsWith('-i')) {
-      inPlace = true;
-    } else if (arg == '-e') {
-      if (i + 1 >= args.length) {
-        return (
-          quiet: quiet,
-          inPlace: inPlace,
-          scripts: scripts,
-          files: files,
-          error: (
-            message: 'sed: option requires an argument -- e\n',
-            exitCode: 1,
-          ),
-        );
-      }
-      scripts.add(args[++i]);
-    } else if (arg.startsWith('-e')) {
-      scripts.add(arg.substring(2));
-    } else if (arg == '-E' || arg == '-r') {
-      // Extended regex is the only syntax this subset supports anyway.
-    } else if (arg == '--') {
-      // End of options.
-    } else if (arg.startsWith('-') && arg != '-') {
-      return (
-        quiet: quiet,
-        inPlace: inPlace,
-        scripts: scripts,
-        files: files,
-        error: (message: 'sed: unsupported option $arg\n', exitCode: 1),
-      );
-    } else if (scripts.isEmpty && files.isEmpty) {
-      scripts.add(arg);
-    } else {
-      files.add(arg);
-    }
-  }
-
-  if (scripts.isEmpty) {
-    return (
-      quiet: quiet,
-      inPlace: inPlace,
-      scripts: scripts,
-      files: files,
-      error: (
-        message: 'usage: sed [-n] [-i] [-e script] [script] [file...]\n',
-        exitCode: 1,
-      ),
-    );
-  }
-  if (inPlace && files.isEmpty) {
-    return (
-      quiet: quiet,
-      inPlace: inPlace,
-      scripts: scripts,
-      files: files,
-      error: (message: 'sed: -i requires file arguments\n', exitCode: 1),
-    );
-  }
-  return (
+  /// Builds the invocation record (the mid-parse error returns keep the
+  /// state collected so far, exactly as the original did).
+  SedInvocation record(({String message, int exitCode})? error) => (
     quiet: quiet,
     inPlace: inPlace,
     scripts: scripts,
     files: files,
-    error: null,
+    error: error,
   );
+}
+
+/// Consumes one argv token, mutating [s]. Returns the usage error that
+/// stops the parse (or null to continue) plus how many EXTRA argv tokens
+/// were consumed beyond [arg] — 1 for `-e <script>`, whose value the
+/// caller's loop index must skip exactly like the original `++i`.
+(({String message, int exitCode})?, int) _sedConsumeArg(
+  String arg,
+  List<String> args,
+  int i,
+  _SedArgsState s,
+) {
+  if (_sedToggleFlag(arg, s)) return (null, 0);
+  if (arg == '-e' || arg.startsWith('-e')) {
+    return _sedAddScript(arg, args, i, s);
+  }
+  if (arg.startsWith('-') && arg != '-') {
+    return ((message: 'sed: unsupported option $arg\n', exitCode: 1), 0);
+  }
+  _sedAddOperand(arg, s);
+  return (null, 0);
+}
+
+/// Handles the boolean flags: `-n`/`--quiet`/`--silent` (quiet), `-i*`
+/// (in-place), `-E`/`-r` (extended regex — the only syntax this subset
+/// supports anyway) and `--` (end of options). Returns whether [arg] was
+/// one of them.
+bool _sedToggleFlag(String arg, _SedArgsState s) {
+  if (arg == '-n' || arg == '--quiet' || arg == '--silent') {
+    s.quiet = true;
+  } else if (arg.startsWith('-i')) {
+    s.inPlace = true;
+  } else if (arg == '-E' || arg == '-r') {
+    // Extended regex is the only syntax this subset supports anyway.
+  } else if (arg == '--') {
+    // End of options.
+  } else {
+    return false;
+  }
+  return true;
+}
+
+/// Consumes `-e` (the script in the next token) or `-e<script>`. Returns
+/// the usage error for a bare `-e` with no following token, plus the
+/// EXTRA argv tokens consumed (1 when the script is the next token).
+(({String message, int exitCode})?, int) _sedAddScript(
+  String arg,
+  List<String> args,
+  int i,
+  _SedArgsState s,
+) {
+  if (arg == '-e') {
+    if (i + 1 >= args.length) {
+      return (
+        (message: 'sed: option requires an argument -- e\n', exitCode: 1),
+        0,
+      );
+    }
+    s.scripts.add(args[i + 1]);
+    return (null, 1);
+  }
+  s.scripts.add(arg.substring(2));
+  return (null, 0);
+}
+
+/// Files come after the first operand; a leading operand is an inline
+/// script (the one-script-without-`-e` form).
+void _sedAddOperand(String arg, _SedArgsState s) {
+  if (s.scripts.isEmpty && s.files.isEmpty) {
+    s.scripts.add(arg);
+  } else {
+    s.files.add(arg);
+  }
+}
+
+/// Post-loop rules: a script is required, and `-i` needs file arguments.
+({String message, int exitCode})? _sedValidate(_SedArgsState s) {
+  if (s.scripts.isEmpty) {
+    return (
+      message: 'usage: sed [-n] [-i] [-e script] [script] [file...]\n',
+      exitCode: 1,
+    );
+  }
+  if (s.inPlace && s.files.isEmpty) {
+    return (message: 'sed: -i requires file arguments\n', exitCode: 1);
+  }
+  return null;
 }
 
 /// Applies [commands] to [input] line by line; auto-prints each line

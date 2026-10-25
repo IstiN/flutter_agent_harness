@@ -1326,13 +1326,23 @@ class AgentService extends ChangeNotifier
     final handle = _subagentManager?[id];
     if (handle == null) return const [];
     try {
-      final exists = await env.fileInfo(handle.sessionId);
-      if (exists.valueOrNull == null) return const [];
-      final session = await _repo.open(_subagentSessionMetadata(handle));
-      return tailMessagePairs(await session.buildContextMessages(), tail);
+      return await _observeSubagentSessionTail(handle, tail);
     } on Object {
       return const [];
     }
+  }
+
+  /// The try-body of [observeSubagent]: verify the child session file
+  /// still exists, open it, and return its tail pairs. Throws on any
+  /// backend failure — the caller degrades to empty.
+  Future<List<(String, String)>> _observeSubagentSessionTail(
+    SubagentHandle handle,
+    int tail,
+  ) async {
+    final exists = await env.fileInfo(handle.sessionId);
+    if (exists.valueOrNull == null) return const [];
+    final session = await _repo.open(_subagentSessionMetadata(handle));
+    return tailMessagePairs(await session.buildContextMessages(), tail);
   }
 
   /// Sends a follow-up message to subagent [id] (settings Agents section →
