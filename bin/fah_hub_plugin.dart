@@ -1335,18 +1335,16 @@ final class HubPluginHost implements FahPlugin {
   /// (27.1: queued hub mail is forwarded when the hub returns).
   Future<void> _dapStop(PluginContext context) async {
     final ask = context.askLine;
-    final stopper =
-        hubStopper ??
-        () => DapHubController(
-          home: _home,
-          environment: _environment,
-          url: _localHubUrl,
-          secretPrompt: ask == null
-              ? null
-              : (question) => ask(question, secret: true),
-          out: context.io.writeln,
-        ).stop();
-    final code = await stopper(_localHubUrl);
+    Future<int> defaultStopper(String _) => DapHubController(
+      home: _home,
+      environment: _environment,
+      url: _localHubUrl,
+      secretPrompt: ask == null
+          ? null
+          : (question) => ask(question, secret: true),
+      out: context.io.writeln,
+    ).stop();
+    final code = await (hubStopper ?? defaultStopper)(_localHubUrl);
     if (code != 0) {
       context.io.writeln('[hub] stop did not complete (exit $code)');
     }

@@ -140,7 +140,7 @@ void main() {
 
     test('secret choice sets the session secret and reconnects', () async {
       final (slash, io, env, plugin) = registerHost(
-        environment: const {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
+        environment: {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
         pickOption: (title, options, {initialKey}) async => 'secret',
         askLine: (prompt, {secret = false}) async => 'picked-secret',
       );
@@ -175,14 +175,12 @@ void main() {
 
     test('start choice runs the one-step bring-up', () async {
       final (slash, io, env, plugin) = registerHost(
-        environment: const {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
+        environment: {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
         pickOption: (title, options, {initialKey}) async => 'start',
         askLine: (prompt, {secret = false}) async => '',
       );
       await settleBoot(plugin);
       await slash([]);
-      // ignore: avoid_print
-      print('DEBUG io: ${io.text}');
       expect(env['DAP_MASTER_SECRET'], isNotNull);
       expect(io.text, contains('master secret generated'));
     });
@@ -198,7 +196,7 @@ void main() {
   });
 
   group('dap_* tools', () {
-    List<AgentTool> registerToolsHost() {
+    (List<AgentTool>, hub.HubPlugin) registerToolsHost() {
       final env = <String, String>{
         'DAP_MASTER_SECRET': 'test-master-secret',
         'DAP_HUB_URL': 'ws://127.0.0.1:9/ws',
@@ -212,14 +210,15 @@ void main() {
       host.register(context);
       final tools = context.tools;
       expect(tools.length, 5);
-      return tools;
+      return (tools, plugin);
     }
 
     AgentTool toolByName(List<AgentTool> tools, String name) =>
         tools.firstWhere((t) => t.name == name);
 
     test('dap_status reports the disconnected state', () async {
-      final tools = registerToolsHost();
+      final (tools, plugin) = registerToolsHost();
+      await settleBoot(plugin);
       final result = await toolByName(
         tools,
         'dap_status',
@@ -232,7 +231,8 @@ void main() {
     });
 
     test('dap_peers tolerates a dead hub', () async {
-      final tools = registerToolsHost();
+      final (tools, plugin) = registerToolsHost();
+      await settleBoot(plugin);
       final result = await toolByName(
         tools,
         'dap_peers',
@@ -244,7 +244,7 @@ void main() {
     });
 
     test('dap_dm rejects an unknown peer and lists the roster', () async {
-      final tools = registerToolsHost();
+      final (tools, _) = registerToolsHost();
       await expectLater(
         toolByName(
           tools,
@@ -255,7 +255,7 @@ void main() {
     });
 
     test('dap_invite surfaces the not-started error', () async {
-      final tools = registerToolsHost();
+      final (tools, _) = registerToolsHost();
       await expectLater(
         toolByName(
           tools,
@@ -266,7 +266,7 @@ void main() {
     });
 
     test('dap_connect surfaces the dial error', () async {
-      final tools = registerToolsHost();
+      final (tools, _) = registerToolsHost();
       await expectLater(
         toolByName(
           tools,
