@@ -12,9 +12,10 @@ import 'package:fa/network/channel_chat_service.dart';
 import 'package:fa/network/models.dart';
 
 /// The channel-only text composer. It keeps the shared composer's chrome and
-/// adds roster-backed `@displayName` completion above the input. Completion
-/// changes only the draft: [ChannelChatService] resolves the literal names to
-/// envelope mention ids at send time.
+/// adds roster-backed `@displayName` completion in a panel directly above the
+/// input (no overlay, so it cannot render off-screen or lose key events).
+/// Completion changes only the draft: [ChannelChatService] resolves the
+/// literal names to envelope mention ids at send time.
 class ChannelChatComposer extends StatefulWidget {
   const ChannelChatComposer({super.key, required this.service});
 
@@ -28,11 +29,14 @@ class _ChannelChatComposerState extends State<ChannelChatComposer> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   bool _sending = false;
-  int? _selectedMentionCaret;
+  List<Member> _options = const [];
+  int _highlight = 0;
 
   @override
   void initState() {
     super.initState();
+    _controller.addListener(_refreshMentionMenu);
+    _focusNode.addListener(_refreshMentionMenu);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focusNode.requestFocus();
     });
@@ -40,12 +44,16 @@ class _ChannelChatComposerState extends State<ChannelChatComposer> {
 
   @override
   void dispose() {
+    _controller.removeListener(_refreshMentionMenu);
+    _focusNode.removeListener(_refreshMentionMenu);
     _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
 
-  Iterable<Member> _mentionOptions(TextEditingValue value) {
+  bool get _menuOpen => _options.isNotEmpty && _focusNode.hasFocus;
+
+  Iterable<Member> _matchingMembers(TextEditingValue value) {
     final token = _MentionToken.atSelection(value);
     if (token == null) return const [];
     final query = token.query.toLowerCase();
@@ -75,45 +83,99 @@ class _ChannelChatComposerState extends State<ChannelChatComposer> {
     _ => 2,
   };
 
-  bool get _hasMentionOptions =>
-      _focusNode.hasFocus && _mentionOptions(_controller.value).isNotEmpty;
-
-  /// RawAutocomplete replaces the whole field with this value immediately
-  /// before calling `onSelected`. Return the full draft with only the active
-  /// token replaced, then restore the caret in [_selectMention].
-  String _displayMention(Member member) {
-    final token = _MentionToken.atSelection(_controller.value);
-    if (token == null) return member.displayName;
-    final inserted = '@${member.displayName} ';
-    _selectedMentionCaret = token.start + inserted.length;
-    return _controller.text.replaceRange(token.start, token.end, inserted);
+  void _refreshMentionMenu() {
+    if (!mounted) return;
+    final next = _focusNode.hasFocus
+        ? _matchingMembers(_controller.value).toList()
+        : const <Member>[];
+    final previous = _highlight < _options.length ? _options[_highlight] : null;
+    var highlight = 0;
+    if (previous != null) {
+      final kept = next.indexWhere((m) => m.id == previous.id);
+      if (kept >= 0) highlight = kept;
+    }
+    if (next.length == _options.length &&
+        highlight == _highlight &&
+        _listEquals(next, _options)) {
+      return;
+    }
+    setState(() {
+      _options = next;
+      _highlight = next.isEmpty ? 0 : highlight;
+    });
   }
 
-  void _selectMention(Member member) {
-    final caret = _selectedMentionCaret;
-    if (caret != null && caret <= _controller.text.length) {
-      _controller.selection = TextSelection.collapsed(offset: caret);
+  static bool _listEquals(List<Member> a, List<Member> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
     }
-    _selectedMentionCaret = null;
+    return true;
+  }
+
+  void _moveHighlight(int delta) {
+    if (_options.isEmpty) return;
+    setState(() {
+      _highlight = (_highlight + delta) % _options.length;
+      if (_highlight < 0) _highlight += _options.length;
+    });
+  }
+
+  void _insertMention(Member member) {
+    final value = _controller.value;
+    final token = _MentionToken.atSelection(value);
+    if (token == null) return;
+    final inserted = '@${member.displayName} ';
+    _controller.value = TextEditingValue(
+      text: value.text.replaceRange(token.start, token.end, inserted),
+      selection: TextSelection.collapsed(offset: token.start + inserted.length),
+    );
+    setState(() {
+      _options = const [];
+      _highlight = 0;
+    });
     _focusNode.requestFocus();
   }
 
   KeyEventResult _handleComposerKey(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    final keyboard = HardwareKeyboard.instance;
-    final isEnter =
-        event.logicalKey == LogicalKeyboardKey.enter ||
-        event.logicalKey == LogicalKeyboardKey.numpadEnter;
-    if (!isEnter ||
-        (keyboard.isShiftPressed &&
-            !keyboard.isMetaPressed &&
-            !keyboard.isControlPressed)) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
-    // RawAutocomplete owns Enter while its menu is visible (highlight
-    // navigation and selection). Otherwise Enter sends; Shift+Enter remains
-    // a newline, matching the shared composer.
-    if (_hasMentionOptions) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    final keyboard = HardwareKeyboard.instance;
+    final isEnter =
+        key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter;
+    if (_menuOpen) {
+      if (key == LogicalKeyboardKey.arrowDown) {
+        _moveHighlight(1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowUp) {
+        _moveHighlight(-1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.escape) {
+        setState(() {
+          _options = const [];
+          _highlight = 0;
+        });
+        return KeyEventResult.handled;
+      }
+      // Tab and Enter accept the highlighted option instead of moving
+      // focus or sending the half-typed mention.
+      if (key == LogicalKeyboardKey.tab ||
+          (isEnter && !keyboard.isShiftPressed)) {
+        _insertMention(_options[_highlight]);
+        return KeyEventResult.handled;
+      }
+    }
+    if (event is! KeyDownEvent || !isEnter) return KeyEventResult.ignored;
+    if (keyboard.isShiftPressed &&
+        !keyboard.isMetaPressed &&
+        !keyboard.isControlPressed) {
+      // Shift+Enter stays a newline, matching the shared composer.
+      return KeyEventResult.ignored;
+    }
     unawaited(_send());
     return KeyEventResult.handled;
   }
@@ -153,131 +215,114 @@ class _ChannelChatComposerState extends State<ChannelChatComposer> {
         top: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: RawAutocomplete<Member>(
-                  textEditingController: _controller,
-                  focusNode: _focusNode,
-                  optionsViewOpenDirection: OptionsViewOpenDirection.up,
-                  optionsBuilder: _mentionOptions,
-                  displayStringForOption: _displayMention,
-                  onSelected: _selectMention,
-                  fieldViewBuilder:
-                      (context, controller, focusNode, onFieldSubmitted) {
-                        return Focus(
-                          onKeyEvent: _handleComposerKey,
-                          child: TextField(
-                            controller: controller,
-                            focusNode: focusNode,
-                            decoration: InputDecoration(
-                              hintText: strings.chatInputHint,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              border: const OutlineInputBorder(
-                                borderRadius: BorderRadius.all(
-                                  Radius.circular(24),
-                                ),
-                                borderSide: BorderSide.none,
-                              ),
-                              enabledBorder: const OutlineInputBorder(
-                                borderRadius: BorderRadius.all(
-                                  Radius.circular(24),
-                                ),
-                                borderSide: BorderSide.none,
-                              ),
-                              focusedBorder: const OutlineInputBorder(
-                                borderRadius: BorderRadius.all(
-                                  Radius.circular(24),
-                                ),
-                                borderSide: BorderSide.none,
-                              ),
-                              filled: true,
+              if (_menuOpen)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  constraints: const BoxConstraints(maxHeight: 240),
+                  decoration: BoxDecoration(
+                    color: palette.panelAlt,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Theme.of(context).dividerColor),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    itemCount: _options.length,
+                    itemBuilder: (context, index) {
+                      final member = _options[index];
+                      final highlighted = index == _highlight;
+                      return Material(
+                        color: highlighted
+                            ? palette.indigo.withValues(alpha: 0.12)
+                            : Colors.transparent,
+                        child: ListTile(
+                          key: ValueKey('mentionOption:${member.id}'),
+                          dense: true,
+                          leading: Icon(
+                            member.memberClass == MemberClass.agent
+                                ? Icons.smart_toy_outlined
+                                : Icons.person_outline,
+                            size: 20,
+                            color: palette.dim,
+                          ),
+                          title: Text(
+                            member.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: member.presence == Presence.live
+                                  ? palette.teal
+                                  : palette.dim,
+                              shape: BoxShape.circle,
                             ),
-                            keyboardType: TextInputType.multiline,
-                            textInputAction: TextInputAction.newline,
-                            maxLines: 6,
-                            minLines: 1,
                           ),
-                        );
-                      },
-                  optionsViewBuilder: (context, onSelected, options) {
-                    return Align(
-                      alignment: Alignment.bottomLeft,
-                      child: Material(
-                        elevation: 8,
-                        color: palette.panelAlt,
-                        borderRadius: BorderRadius.circular(12),
-                        clipBehavior: Clip.antiAlias,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 240),
-                          child: ListView.builder(
-                            shrinkWrap: true,
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            itemCount: options.length,
-                            itemBuilder: (context, index) {
-                              final member = options.elementAt(index);
-                              final highlighted =
-                                  AutocompleteHighlightedOption.of(context) ==
-                                  index;
-                              return Material(
-                                color: highlighted
-                                    ? palette.indigo.withValues(alpha: 0.12)
-                                    : Colors.transparent,
-                                child: ListTile(
-                                  key: ValueKey('mentionOption:${member.id}'),
-                                  dense: true,
-                                  leading: Icon(
-                                    member.memberClass == MemberClass.agent
-                                        ? Icons.smart_toy_outlined
-                                        : Icons.person_outline,
-                                    size: 20,
-                                    color: palette.dim,
-                                  ),
-                                  title: Text(
-                                    member.displayName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  trailing: Container(
-                                    width: 8,
-                                    height: 8,
-                                    decoration: BoxDecoration(
-                                      color: member.presence == Presence.live
-                                          ? palette.teal
-                                          : palette.dim,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                  onTap: () => onSelected(member),
-                                ),
-                              );
-                            },
-                          ),
+                          onTap: () => _insertMention(member),
                         ),
+                      );
+                    },
+                  ),
+                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Focus(
+                      onKeyEvent: _handleComposerKey,
+                      child: TextField(
+                        controller: _controller,
+                        focusNode: _focusNode,
+                        decoration: InputDecoration(
+                          hintText: strings.chatInputHint,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          border: const OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(24)),
+                            borderSide: BorderSide.none,
+                          ),
+                          enabledBorder: const OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(24)),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: const OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(24)),
+                            borderSide: BorderSide.none,
+                          ),
+                          filled: true,
+                        ),
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
+                        maxLines: 6,
+                        minLines: 1,
                       ),
-                    );
-                  },
-                ),
-              ),
-              Container(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).brightness == Brightness.light
-                      ? palette.indigo
-                      : null,
-                  gradient: Theme.of(context).brightness == Brightness.dark
-                      ? palette.brandGradient
-                      : null,
-                  shape: BoxShape.circle,
-                ),
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_upward, size: 20),
-                  color: palette.onAccent,
-                  tooltip: strings.chatSendTooltip,
-                  onPressed: _sending ? null : () => unawaited(_send()),
-                ),
+                    ),
+                  ),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).brightness == Brightness.light
+                          ? palette.indigo
+                          : null,
+                      gradient: Theme.of(context).brightness == Brightness.dark
+                          ? palette.brandGradient
+                          : null,
+                      shape: BoxShape.circle,
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_upward, size: 20),
+                      color: palette.onAccent,
+                      tooltip: strings.chatSendTooltip,
+                      onPressed: _sending ? null : () => unawaited(_send()),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

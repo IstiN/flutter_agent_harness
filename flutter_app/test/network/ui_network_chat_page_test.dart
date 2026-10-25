@@ -14,6 +14,7 @@ import 'package:fa/network/showcase_viewer.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
@@ -182,6 +183,73 @@ void main() {
       );
       expect(frame['channelId'], 'c1');
       expect(frame['payload']! as String, isNot(contains('hello channel')));
+      await rig.session.close();
+    });
+
+    testWidgets('mention menu accepts the highlighted option with Tab',
+        (tester) async {
+      final rig = await pumpChat(tester);
+      rig.session.roster.addAll({
+        'agent-kb': const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        ),
+        'agent-helper': const Member(
+          id: 'agent-helper',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-helper',
+          presence: Presence.offline,
+        ),
+      });
+      rig.session.notifyListeners();
+      await tester.pump();
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, '@');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('mentionOption:agent-kb')),
+        findsOneWidget,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(tester.widget<TextField>(field).controller!.text, '@kb-agent ');
+      expect(find.byKey(const ValueKey('mentionOption:agent-kb')), findsNothing);
+      await rig.session.close();
+    });
+
+    testWidgets('mention menu navigates with arrows and accepts with Enter',
+        (tester) async {
+      final rig = await pumpChat(tester);
+      rig.session.roster.addAll({
+        'agent-kb': const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        ),
+        'agent-helper': const Member(
+          id: 'agent-helper',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-helper',
+          presence: Presence.live,
+        ),
+      });
+      rig.session.notifyListeners();
+      await tester.pump();
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, '@kb');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(tester.widget<TextField>(field).controller!.text, '@kb-helper ');
       await rig.session.close();
     });
 
