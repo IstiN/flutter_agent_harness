@@ -2503,6 +2503,32 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkChannelOptions => 'Параметры канала';
 
   @override
+  String get networkRenameChannel => 'Переименовать канал…';
+
+  @override
+  String get networkRenameChannelTitle => 'Переименовать канал';
+
+  @override
+  String get networkRename => 'Переименовать';
+
+  @override
+  String get networkChannelNameRequired =>
+      'Название канала не должно быть пустым.';
+
+  @override
+  String get networkDeleteChannel => 'Удалить канал…';
+
+  @override
+  String get networkDeleteChannelTitle => 'Удалить этот канал?';
+
+  @override
+  String get networkDeleteChannelBody =>
+      'Канал и все его сообщения будут удалены для всех. Это действие нельзя отменить.';
+
+  @override
+  String get networkChannelDeleted => 'Канал удалён';
+
+  @override
   String get networkAddAgent => 'Добавить агента…';
 
   @override

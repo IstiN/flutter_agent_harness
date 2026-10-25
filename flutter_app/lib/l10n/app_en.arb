@@ -1308,6 +1308,38 @@
   "@networkChannelOptions": {
     "description": "Channel overflow menu tooltip"
   },
+  "networkRenameChannel": "Rename channel…",
+  "@networkRenameChannel": {
+    "description": "Channel overflow menu item for renaming"
+  },
+  "networkRenameChannelTitle": "Rename channel",
+  "@networkRenameChannelTitle": {
+    "description": "Rename-channel dialog title"
+  },
+  "networkRename": "Rename",
+  "@networkRename": {
+    "description": "Rename-channel dialog confirm button"
+  },
+  "networkChannelNameRequired": "Channel name cannot be empty.",
+  "@networkChannelNameRequired": {
+    "description": "Rename-channel validation error"
+  },
+  "networkDeleteChannel": "Delete channel…",
+  "@networkDeleteChannel": {
+    "description": "Channel overflow menu item for deleting"
+  },
+  "networkDeleteChannelTitle": "Delete this channel?",
+  "@networkDeleteChannelTitle": {
+    "description": "Delete-channel confirmation title"
+  },
+  "networkDeleteChannelBody": "The channel and all its messages are deleted for everyone. This cannot be undone.",
+  "@networkDeleteChannelBody": {
+    "description": "Delete-channel confirmation body"
+  },
+  "networkChannelDeleted": "Channel deleted",
+  "@networkChannelDeleted": {
+    "description": "Snackbar after a channel was deleted"
+  },
   "networkAddAgent": "Add agent…",
   "@networkAddAgent": {
     "description": "Channel overflow menu item opening the agent invite"

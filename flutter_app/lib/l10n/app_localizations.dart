@@ -4388,6 +4388,54 @@ abstract class AppLocalizations {
   /// **'Channel options'**
   String get networkChannelOptions;
 
+  /// Channel overflow menu item for renaming
+  ///
+  /// In en, this message translates to:
+  /// **'Rename channel…'**
+  String get networkRenameChannel;
+
+  /// Rename-channel dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Rename channel'**
+  String get networkRenameChannelTitle;
+
+  /// Rename-channel dialog confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get networkRename;
+
+  /// Rename-channel validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Channel name cannot be empty.'**
+  String get networkChannelNameRequired;
+
+  /// Channel overflow menu item for deleting
+  ///
+  /// In en, this message translates to:
+  /// **'Delete channel…'**
+  String get networkDeleteChannel;
+
+  /// Delete-channel confirmation title
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this channel?'**
+  String get networkDeleteChannelTitle;
+
+  /// Delete-channel confirmation body
+  ///
+  /// In en, this message translates to:
+  /// **'The channel and all its messages are deleted for everyone. This cannot be undone.'**
+  String get networkDeleteChannelBody;
+
+  /// Snackbar after a channel was deleted
+  ///
+  /// In en, this message translates to:
+  /// **'Channel deleted'**
+  String get networkChannelDeleted;
+
   /// Channel overflow menu item opening the agent invite
   ///
   /// In en, this message translates to:

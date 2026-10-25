@@ -113,6 +113,47 @@ void main() {
       expect(find.text('Network deleted'), findsOneWidget);
     });
 
+    testWidgets('deleting the selected network selects a remaining one', (
+      tester,
+    ) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.addNetwork(
+        networkId: 'net1',
+        name: 'fa-team',
+        memberClass: 'owner',
+      );
+      await wallet.addNetwork(networkId: 'net2', name: 'side-project');
+      final httpClient = FakeHttpClient()..respond(204);
+      final controller = NetworkModeController.inMemory(
+        mode: AppMode.network,
+        networkId: 'net1',
+        channelId: 'c1',
+      );
+      final manager = await _manager(
+        wallet: wallet,
+        httpClient: httpClient,
+        jwt: 'jwt-1',
+      );
+
+      await tester.pumpWidget(
+        _wrap(NetworksSidebar(controller: controller, manager: manager)),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('networkRowMenu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete network…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirmDeleteNetwork')));
+      await tester.pumpAndSettle();
+
+      expect(manager.sessions.containsKey('net1'), isFalse);
+      expect(wallet.networks['net1'], isNull);
+      expect(wallet.networks['net2'], isNotNull);
+      expect(controller.networkId, 'net2');
+      expect(controller.channelId, isNull);
+      expect(find.text('side-project'), findsOneWidget);
+    });
+
     testWidgets('delete cancel keeps the membership and sends nothing', (
       tester,
     ) async {

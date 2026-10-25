@@ -436,7 +436,14 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
       await widget.manager.deleteNetwork(networkId);
       if (!mounted) return;
       if (widget.controller.networkId == networkId) {
-        await widget.controller.backToNetworks();
+        final remaining = widget.manager.wallet.networks.keys;
+        if (remaining.isEmpty) {
+          await widget.controller.backToNetworks();
+        } else {
+          // The shell's session-restoration listener resumes this membership
+          // just as it does after an ordinary network-row tap.
+          await widget.controller.enterNetwork(remaining.first);
+        }
       }
       if (mounted) showFahSnack(context, context.l10n.networkDeleted);
     } on FaNetworkException catch (e) {

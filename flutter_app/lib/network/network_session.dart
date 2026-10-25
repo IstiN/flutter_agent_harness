@@ -169,6 +169,33 @@ final class NetworkSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Renames a channel through the owner/admin management route and replaces
+  /// its local metadata only after the server accepts the change.
+  Future<Channel> renameChannel(String channelId, String name) async {
+    final normalized = name.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(name, 'name', 'must not be empty');
+    }
+    final updated = await _client.updateChannel(channelId, name: normalized);
+    channels = [
+      for (final channel in channels)
+        if (channel.id == channelId) updated else channel,
+    ];
+    notifyListeners();
+    return updated;
+  }
+
+  /// Deletes a channel through the owner/admin management route, then drops
+  /// its local list entry, message state and realtime subscription. There is
+  /// no delete frame on the socket; the 204 response is the source of truth.
+  Future<void> deleteChannel(String channelId) async {
+    await _client.deleteChannel(channelId);
+    channels = channels.where((c) => c.id != channelId).toList();
+    channelStates.remove(channelId);
+    _ws.unsubscribe(channelId);
+    notifyListeners();
+  }
+
   /// Opens a channel: first history page + socket subscription.
   ///
   /// The history load yields to the event loop before notifying: callers

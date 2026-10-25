@@ -1001,6 +1001,38 @@
   "networkConnecting": "Подключение…",
   "networkNoChannels": "Нет каналов",
   "networkChannelOptions": "Параметры канала",
+  "networkRenameChannel": "Переименовать канал…",
+  "@networkRenameChannel": {
+    "description": "Channel overflow menu item for renaming"
+  },
+  "networkRenameChannelTitle": "Переименовать канал",
+  "@networkRenameChannelTitle": {
+    "description": "Rename-channel dialog title"
+  },
+  "networkRename": "Переименовать",
+  "@networkRename": {
+    "description": "Rename-channel dialog confirm button"
+  },
+  "networkChannelNameRequired": "Название канала не должно быть пустым.",
+  "@networkChannelNameRequired": {
+    "description": "Rename-channel validation error"
+  },
+  "networkDeleteChannel": "Удалить канал…",
+  "@networkDeleteChannel": {
+    "description": "Channel overflow menu item for deleting"
+  },
+  "networkDeleteChannelTitle": "Удалить этот канал?",
+  "@networkDeleteChannelTitle": {
+    "description": "Delete-channel confirmation title"
+  },
+  "networkDeleteChannelBody": "Канал и все его сообщения будут удалены для всех. Это действие нельзя отменить.",
+  "@networkDeleteChannelBody": {
+    "description": "Delete-channel confirmation body"
+  },
+  "networkChannelDeleted": "Канал удалён",
+  "@networkChannelDeleted": {
+    "description": "Snackbar after a channel was deleted"
+  },
   "networkAddAgent": "Добавить агента…",
   "networkShowcasePublic": "Витрина (публичный)",
   "networkAddAgentTitle": "Добавить агента",

@@ -2474,6 +2474,31 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkChannelOptions => 'Channel options';
 
   @override
+  String get networkRenameChannel => 'Rename channel…';
+
+  @override
+  String get networkRenameChannelTitle => 'Rename channel';
+
+  @override
+  String get networkRename => 'Rename';
+
+  @override
+  String get networkChannelNameRequired => 'Channel name cannot be empty.';
+
+  @override
+  String get networkDeleteChannel => 'Delete channel…';
+
+  @override
+  String get networkDeleteChannelTitle => 'Delete this channel?';
+
+  @override
+  String get networkDeleteChannelBody =>
+      'The channel and all its messages are deleted for everyone. This cannot be undone.';
+
+  @override
+  String get networkChannelDeleted => 'Channel deleted';
+
+  @override
   String get networkAddAgent => 'Add agent…';
 
   @override

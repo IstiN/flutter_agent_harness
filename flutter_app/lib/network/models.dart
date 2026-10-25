@@ -139,6 +139,16 @@ class Member {
   );
 }
 
+/// The display label for a channel: its real name when present, otherwise a
+/// short id preview. CLI/hub-created channels often have no name, and their
+/// 64-character ids must not become page titles or composer hints.
+String channelDisplayLabel(String channelId, [String? name]) {
+  if (name != null && name.trim().isNotEmpty) return name;
+  if (channelId.isEmpty) return '…';
+  final end = channelId.length < 8 ? channelId.length : 8;
+  return '${channelId.substring(0, end)}…';
+}
+
 /// A channel of a network. Message payloads stay opaque ciphertext.
 class Channel {
   const Channel({

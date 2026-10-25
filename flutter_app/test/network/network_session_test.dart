@@ -43,6 +43,75 @@ void main() {
       expect(connector.channels, isNotEmpty);
     });
 
+    test(
+      'renameChannel PATCHes with JWT auth and updates local metadata',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody);
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: FakeWsConnector(),
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+          jwtToken: 'jwt-1',
+        );
+        addTearDown(session.close);
+        await session.start();
+        httpClient.respond(
+          200,
+          body:
+              '{"id":"c1","networkId":"net1","name":"ops",'
+              '"public":false}',
+        );
+
+        final updated = await session.renameChannel('c1', '  ops  ');
+
+        expect(updated.name, 'ops');
+        expect(session.channels.single.name, 'ops');
+        final patch = httpClient.requests.last;
+        expect(patch.method, 'PATCH');
+        expect(patch.url.path, '/api/channels/c1');
+        expect(patch.headers['authorization'], 'Bearer jwt-1');
+        expect(jsonDecode(patch.body), {'name': 'ops'});
+      },
+    );
+
+    test(
+      'deleteChannel waits for 204 then drops local channel state',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody)
+          ..respond(200, body: '{"items":[],"nextCursor":""}')
+          ..respond(204);
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: FakeWsConnector(),
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+          jwtToken: 'jwt-1',
+        );
+        addTearDown(session.close);
+        await session.start();
+        await session.openChannel('c1');
+        expect(session.channelStates['c1'], isNotNull);
+
+        await session.deleteChannel('c1');
+
+        expect(session.channels, isEmpty);
+        expect(session.channelStates.containsKey('c1'), isFalse);
+        final delete = httpClient.requests.last;
+        expect(delete.method, 'DELETE');
+        expect(delete.url.path, '/api/channels/c1');
+        expect(delete.headers['authorization'], 'Bearer jwt-1');
+      },
+    );
+
     test('openChannel decrypts history oldest-first and dedupes', () async {
       final wallet = await walletWithChannel(
         channelPub: channelKeys.pub,

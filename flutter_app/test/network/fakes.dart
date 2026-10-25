@@ -245,10 +245,12 @@ NetworkSession buildSession({
   required FakeHttpClient httpClient,
   required FakeWsConnector connector,
   required KeyWallet wallet,
+  String? jwtToken,
 }) {
   final client = FaNetworkClient(
     baseUrl: testBase,
     httpClient: httpClient,
+    jwtToken: jwtToken,
     sessionToken: 'st-1',
   );
   final ws = FaNetworkWs(

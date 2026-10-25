@@ -109,6 +109,24 @@ void main() {
       await rig.session.close();
     });
 
+    testWidgets('an unnamed 64-char id renders as a friendly short label', (
+      tester,
+    ) async {
+      final rig = await _rig(tester);
+      const id =
+          '0123456789abcdef0123456789abcdef'
+          '0123456789abcdef0123456789abcdef';
+      rig.session.channels = [
+        const Channel(id: id, networkId: 'net1', isPublic: false),
+      ];
+      rig.session.notifyListeners();
+      await tester.pump();
+
+      expect(find.text(id), findsNothing);
+      expect(find.text('01234567…'), findsOneWidget);
+      await rig.session.close();
+    });
+
     testWidgets('the online counter opens a live-first roster sheet', (
       tester,
     ) async {
@@ -249,6 +267,128 @@ void main() {
         await rig.session.close();
       },
     );
+  });
+
+  group('ChannelRail channel management', () {
+    testWidgets('rename prefills, validates, PATCHes and updates the rail', (
+      tester,
+    ) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      rig.httpClient.respond(
+        200,
+        body:
+            '{"id":"c1","networkId":"net1","name":"ops",'
+            '"public":false}',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('channelMenu:c1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rename channel…'));
+      await tester.pumpAndSettle();
+
+      final field = find.byKey(const ValueKey('renameChannelName'));
+      expect(tester.widget<TextField>(field).controller!.text, 'general');
+      await tester.enterText(field, '   ');
+      await tester.tap(find.byKey(const ValueKey('renameChannelConfirm')));
+      await tester.pump();
+      expect(find.text('Channel name cannot be empty.'), findsOneWidget);
+      expect(
+        rig.httpClient.requests.where((request) => request.method == 'PATCH'),
+        isEmpty,
+      );
+
+      await tester.enterText(field, 'ops');
+      await tester.tap(find.byKey(const ValueKey('renameChannelConfirm')));
+      await tester.pumpAndSettle();
+
+      final patch = rig.httpClient.requests.singleWhere(
+        (request) => request.method == 'PATCH',
+      );
+      expect(patch.url.path, '/api/channels/c1');
+      expect(patch.body, '{"name":"ops"}');
+      expect(rig.session.channels.first.name, 'ops');
+      expect(find.text('ops'), findsOneWidget);
+      expect(find.text('general'), findsNothing);
+      await rig.session.close();
+    });
+
+    testWidgets('deleting the open channel DELETEs and opens a remaining one', (
+      tester,
+    ) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      await rig.controller.selectChannel('c1');
+      rig.httpClient.respond(204);
+      rig.httpClient.respond(200, body: '{"items":[],"nextCursor":""}');
+
+      await tester.tap(find.byKey(const ValueKey('channelMenu:c1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete channel…'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete this channel?'), findsOneWidget);
+      expect(find.textContaining('general'), findsWidgets);
+
+      await tester.tap(find.byKey(const ValueKey('confirmDeleteChannel')));
+      await tester.pumpAndSettle();
+
+      final delete = rig.httpClient.requests.singleWhere(
+        (request) => request.method == 'DELETE',
+      );
+      expect(delete.url.path, '/api/channels/c1');
+      expect(rig.session.channels.map((channel) => channel.id), ['c2']);
+      expect(rig.session.channelStates.containsKey('c1'), isFalse);
+      expect(rig.controller.channelId, 'c2');
+      expect(rig.session.channelStates['c2'], isNotNull);
+      expect(find.text('Channel deleted'), findsOneWidget);
+      await rig.session.close();
+    });
+
+    testWidgets('deleting the last open channel returns to the empty state', (
+      tester,
+    ) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      rig.session.channels = [rig.session.channels.first];
+      rig.session.notifyListeners();
+      await rig.controller.selectChannel('c1');
+      await tester.pump();
+      rig.httpClient.respond(204);
+
+      await tester.tap(find.byKey(const ValueKey('channelMenu:c1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete channel…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirmDeleteChannel')));
+      await tester.pumpAndSettle();
+
+      expect(rig.controller.channelId, isNull);
+      expect(rig.session.channels, isEmpty);
+      expect(find.text('No channels'), findsOneWidget);
+      await rig.session.close();
+    });
+
+    testWidgets('a delete rejection keeps state and surfaces a polite error', (
+      tester,
+    ) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      await rig.controller.selectChannel('c1');
+      rig.httpClient.respond(
+        403,
+        body:
+            '{"error":{"code":"forbidden_by_class",'
+            '"message":"owner or admin required"}}',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('channelMenu:c1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete channel…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirmDeleteChannel')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('owner or admin required'), findsOneWidget);
+      expect(rig.session.channels.map((channel) => channel.id), ['c1', 'c2']);
+      expect(rig.controller.channelId, 'c1');
+      await rig.session.close();
+    });
   });
 
   group('ChannelRail create channel', () {

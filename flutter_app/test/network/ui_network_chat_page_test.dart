@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/network/envelope_codec.dart';
+import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
@@ -52,21 +53,42 @@ void main() {
         NetworkSession session,
         FakeNetworkChannel channel,
         NetworkSessionManager manager,
+        FakeHttpClient httpClient,
       })
     >
-    pumpChat(WidgetTester tester) async {
-      final wallet = await walletWithChannel(
-        channelPub: channelKeys.pub,
-        channelPriv: channelKeys.priv,
+    pumpChat(
+      WidgetTester tester, {
+      String channelId = 'c1',
+      String? channelName = 'general',
+    }) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
+      await wallet.addChannelKeys(
+        networkId: 'net1',
+        channel: channelId,
+        pub: channelKeys.pub,
+        priv: channelKeys.priv,
       );
       final payload = await encryptAs(
         sender: otherIdentity,
         channelPub: channelKeys.pub,
         envelopeId: 'e-1',
         plaintext: 'from olya',
+        aadTarget: channelName ?? channelId,
       );
       final httpClient = FakeHttpClient()
-        ..respond(200, body: channelsBody) // start: channels
+        ..respond(
+          200,
+          body: jsonEncode([
+            {
+              'id': channelId,
+              'networkId': 'net1',
+              'name': ?channelName,
+              'public': false,
+            },
+          ]),
+        ) // start: channels
         ..respond(200, body: membersBody) // start: members
         ..respond(
           200,
@@ -74,7 +96,7 @@ void main() {
             'items': [
               {
                 'id': 'e-1',
-                'channelId': 'c1',
+                'channelId': channelId,
                 'senderId': 'other-1',
                 'payload': payload,
               },
@@ -93,7 +115,7 @@ void main() {
       final controller = NetworkModeController.inMemory(
         mode: AppMode.network,
         networkId: 'net1',
-        channelId: 'c1',
+        channelId: channelId,
       );
       final manager = NetworkSessionManager(
         baseUrl: testBase,
@@ -118,6 +140,7 @@ void main() {
         session: session,
         channel: connector.channels.single,
         manager: manager,
+        httpClient: httpClient,
       );
     }
 
@@ -153,6 +176,50 @@ void main() {
       }
       expect(find.textContaining('hello from dap'), findsWidgets);
       expect(find.textContaining('fa-agent'), findsWidgets);
+      await rig.session.close();
+    });
+
+    testWidgets('unnamed title and composer use the short label; rename '
+        'updates both live', (tester) async {
+      const id =
+          '0123456789abcdef0123456789abcdef'
+          '0123456789abcdef0123456789abcdef';
+      final rig = await pumpChat(tester, channelId: id, channelName: null);
+      const fallback = '01234567…';
+
+      expect(find.text(id), findsNothing);
+      expect(find.text(fallback), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == 'Message $fallback',
+        ),
+        findsOneWidget,
+      );
+
+      rig.httpClient.respond(
+        200,
+        body: jsonEncode({
+          'id': id,
+          'networkId': 'net1',
+          'name': 'ops',
+          'public': false,
+        }),
+      );
+      await rig.session.renameChannel(id, 'ops');
+      await tester.pump();
+
+      expect(find.text(fallback), findsNothing);
+      expect(find.text('ops'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == 'Message ops',
+        ),
+        findsOneWidget,
+      );
       await rig.session.close();
     });
 

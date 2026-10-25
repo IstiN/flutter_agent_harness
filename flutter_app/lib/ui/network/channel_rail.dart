@@ -42,9 +42,9 @@ class _ChannelRailState extends State<ChannelRail> {
   NetworkSession? get _session =>
       widget.manager.sessions[widget.controller.networkId];
 
-  /// Channel creation is owner/admin only (the wallet entry carries the
+  /// Channel management is owner/admin only (the wallet entry carries the
   /// member class recorded at join).
-  bool get _canCreateChannel {
+  bool get _canManageChannels {
     final networkId = widget.controller.networkId;
     final memberClass = widget.manager.wallet.networks[networkId]?.memberClass;
     return memberClass == 'owner' || memberClass == 'admin';
@@ -99,6 +99,72 @@ class _ChannelRailState extends State<ChannelRail> {
         priv: keys.priv,
       );
       await _openChannel(channel.id);
+    } on FaNetworkException catch (e) {
+      if (mounted) showFahErrorSnack(context, e.message);
+    } on Object catch (e) {
+      if (mounted) showFahErrorSnack(context, '$e');
+    }
+  }
+
+  Future<void> _renameChannel(Channel channel) async {
+    final session = _session;
+    if (session == null) return;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _RenameChannelDialog(initialName: channel.name ?? ''),
+    );
+    if (name == null || !mounted) return;
+    try {
+      await session.renameChannel(channel.id, name);
+    } on FaNetworkException catch (e) {
+      if (mounted) showFahErrorSnack(context, e.message);
+    } on Object catch (e) {
+      if (mounted) showFahErrorSnack(context, '$e');
+    }
+  }
+
+  Future<void> _deleteChannel(Channel channel) async {
+    final session = _session;
+    if (session == null) return;
+    final label = channelDisplayLabel(channel.id, channel.name);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.l10n.networkDeleteChannelTitle),
+        content: Text(
+          '"$label"\n\n${dialogContext.l10n.networkDeleteChannelBody}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(dialogContext.l10n.commonCancel),
+          ),
+          FilledButton(
+            key: const ValueKey('confirmDeleteChannel'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(dialogContext.l10n.commonDelete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await session.deleteChannel(channel.id);
+      if (!mounted) return;
+      if (widget.controller.channelId == channel.id) {
+        final remaining = session.channels;
+        if (remaining.isEmpty) {
+          await widget.controller.backToChannels();
+        } else {
+          await _openChannel(remaining.first.id);
+        }
+      }
+      if (mounted) {
+        showFahSnack(context, context.l10n.networkChannelDeleted);
+      }
     } on FaNetworkException catch (e) {
       if (mounted) showFahErrorSnack(context, e.message);
     } on Object catch (e) {
@@ -174,7 +240,7 @@ class _ChannelRailState extends State<ChannelRail> {
                     ),
                   ),
                 ),
-              if (_canCreateChannel)
+              if (_canManageChannels)
                 IconButton(
                   key: const ValueKey('createChannelButton'),
                   icon: const Icon(Icons.add, size: 20),
@@ -257,6 +323,12 @@ class _ChannelRailState extends State<ChannelRail> {
                       selected: widget.controller.channelId == channel.id,
                       manager: widget.manager,
                       onTap: () => unawaited(_openChannel(channel.id)),
+                      onRename: _canManageChannels
+                          ? () => unawaited(_renameChannel(channel))
+                          : null,
+                      onDelete: _canManageChannels
+                          ? () => unawaited(_deleteChannel(channel))
+                          : null,
                     );
                   },
                 ),
@@ -472,12 +544,16 @@ class _ChannelTile extends StatelessWidget {
     required this.selected,
     required this.manager,
     required this.onTap,
+    this.onRename,
+    this.onDelete,
   });
 
   final Channel channel;
   final bool selected;
   final NetworkSessionManager manager;
   final VoidCallback onTap;
+  final VoidCallback? onRename;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -505,7 +581,7 @@ class _ChannelTile extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    channel.name ?? channel.id,
+                    channelDisplayLabel(channel.id, channel.name),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -535,6 +611,10 @@ class _ChannelTile extends StatelessWidget {
                             ),
                           ),
                         );
+                      } else if (value == 'rename') {
+                        onRename?.call();
+                      } else if (value == 'delete') {
+                        onDelete?.call();
                       }
                     },
                     itemBuilder: (context) => [
@@ -542,6 +622,23 @@ class _ChannelTile extends StatelessWidget {
                         value: 'addAgent',
                         child: Text(context.l10n.networkAddAgent),
                       ),
+                      if (onRename != null)
+                        PopupMenuItem(
+                          key: ValueKey('renameChannel:${channel.id}'),
+                          value: 'rename',
+                          child: Text(context.l10n.networkRenameChannel),
+                        ),
+                      if (onDelete != null)
+                        PopupMenuItem(
+                          key: ValueKey('deleteChannel:${channel.id}'),
+                          value: 'delete',
+                          child: Text(
+                            context.l10n.networkDeleteChannel,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
               ],
@@ -549,6 +646,78 @@ class _ChannelTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Rename dialog with the current real name prefilled. Unnamed channels start
+/// with an empty field rather than turning their id preview into a real name.
+class _RenameChannelDialog extends StatefulWidget {
+  const _RenameChannelDialog({required this.initialName});
+
+  final String initialName;
+
+  @override
+  State<_RenameChannelDialog> createState() => _RenameChannelDialogState();
+}
+
+class _RenameChannelDialogState extends State<_RenameChannelDialog> {
+  late final TextEditingController _name;
+  bool _showRequired = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _showRequired = true);
+      return;
+    }
+    Navigator.of(context).pop(name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(context.l10n.networkRenameChannelTitle),
+      content: TextField(
+        key: const ValueKey('renameChannelName'),
+        controller: _name,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: context.l10n.networkNameLabel,
+          errorText: _showRequired
+              ? context.l10n.networkChannelNameRequired
+              : null,
+        ),
+        onChanged: (_) {
+          if (_showRequired && _name.text.trim().isNotEmpty) {
+            setState(() => _showRequired = false);
+          }
+        },
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.l10n.commonCancel),
+        ),
+        FilledButton(
+          key: const ValueKey('renameChannelConfirm'),
+          onPressed: _submit,
+          child: Text(context.l10n.networkRename),
+        ),
+      ],
     );
   }
 }

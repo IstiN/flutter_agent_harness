@@ -154,6 +154,19 @@ void main() {
     });
   });
 
+  group('channelDisplayLabel', () {
+    test('keeps real names and never exposes a full unnamed hash id', () {
+      const id =
+          '0123456789abcdef0123456789abcdef'
+          '0123456789abcdef0123456789abcdef';
+      expect(id.length, 64);
+      expect(channelDisplayLabel(id), '01234567…');
+      expect(channelDisplayLabel(id), isNot(id));
+      expect(channelDisplayLabel(id, '   '), '01234567…');
+      expect(channelDisplayLabel(id, 'general'), 'general');
+    });
+  });
+
   group('NetworkAgent.fromJson', () {
     test('full + minimal payloads', () {
       final a = NetworkAgent.fromJson(

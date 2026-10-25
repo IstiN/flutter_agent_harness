@@ -92,7 +92,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   }
 
   String _channelLabel(NetworkSession session, String channelId) {
-    return _channel(session, channelId)?.name ?? channelId;
+    return channelDisplayLabel(channelId, _channel(session, channelId)?.name);
   }
 
   Channel? _channel(NetworkSession session, String channelId) {
@@ -126,11 +126,11 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
       return Center(child: Text(context.l10n.networkSelectChannel));
     }
     final session = chatFor.$1;
-    final label = _channelLabel(session, chatFor.$2);
     return ListenableBuilder(
       listenable: session,
       builder: (context, _) {
         final channel = _channel(session, chatFor.$2);
+        final label = _channelLabel(session, chatFor.$2);
         return Column(
           children: [
             _ChannelHeader(
