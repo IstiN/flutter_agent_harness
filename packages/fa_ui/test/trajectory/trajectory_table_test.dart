@@ -15,6 +15,7 @@ import 'package:fa_ui/src/theme/app_theme.dart';
 import 'package:fa_ui/src/trajectory/trajectory_controller.dart';
 import 'package:fa_ui/src/trajectory/trajectory_table.dart';
 import 'package:fa_ui/src/trajectory/trajectory_cell.dart';
+import 'package:fa_ui/src/trajectory/trajectory_cell_assistant.dart';
 import 'package:fa_ui/src/trajectory/trajectory_turn.dart';
 
 import 'fixture_table.dart';
@@ -724,6 +725,377 @@ void main() {
         controller.dispose();
       },
     );
+  });
+
+  group('expanded text (trajectoryExpandedText)', () {
+    test('user and context rows expand to their full text', () {
+      const user = TrajectoryUserRecord(
+        index: 1,
+        recordId: 'u1',
+        text: 'full prompt',
+        opensTurn: true,
+      );
+      const context = TrajectoryContextRecord(
+        index: 2,
+        recordId: 'c1',
+        text: 'injected context',
+      );
+      expect(trajectoryExpandedText(user), 'full prompt');
+      expect(trajectoryExpandedText(context), 'injected context');
+    });
+
+    test('assistant rows join the non-empty thinking and output sections', () {
+      const record = TrajectoryAssistantRecord(
+        index: 1,
+        recordId: 'm1',
+        messageId: 'msg1',
+        turn: 1,
+        step: 1,
+        thinkingDetail: 'pondering',
+        outputDetail: 'the answer',
+        displayText: 'fallback',
+      );
+      expect(trajectoryExpandedText(record), 'pondering\n\nthe answer');
+    });
+
+    test('assistant rows fall back to the display text without sections', () {
+      const record = TrajectoryAssistantRecord(
+        index: 1,
+        recordId: 'm1',
+        messageId: 'msg1',
+        turn: 1,
+        step: 1,
+        displayText: 'plain display',
+      );
+      expect(trajectoryExpandedText(record), 'plain display');
+    });
+
+    test('tool rows pretty-print the args and append the result', () {
+      const record = TrajectoryToolRecord(
+        index: 1,
+        recordId: 't1',
+        callId: 'call1',
+        parentCallId: null,
+        name: 'read',
+        argsRaw: '{"path":"a.md"}',
+        result: 'file body',
+      );
+      expect(
+        trajectoryExpandedText(record),
+        'read({\n  "path": "a.md"\n})\n\n'
+        'file body',
+      );
+    });
+
+    test('tool rows keep unparsable args verbatim and skip empty parts', () {
+      const unparsable = TrajectoryToolRecord(
+        index: 1,
+        recordId: 't1',
+        callId: 'call1',
+        parentCallId: null,
+        name: 'bash',
+        argsRaw: 'not json at all',
+        result: 'exit 0',
+      );
+      expect(
+        trajectoryExpandedText(unparsable),
+        'bash(not json at all)\n\nexit 0',
+      );
+
+      const emptyArgs = TrajectoryToolRecord(
+        index: 2,
+        recordId: 't2',
+        callId: 'call2',
+        parentCallId: null,
+        name: 'list',
+        argsRaw: '',
+        result: 'nothing here',
+      );
+      expect(trajectoryExpandedText(emptyArgs), 'nothing here');
+
+      const emptyResult = TrajectoryToolRecord(
+        index: 3,
+        recordId: 't3',
+        callId: 'call3',
+        parentCallId: null,
+        name: 'write',
+        argsRaw: '[]',
+      );
+      expect(trajectoryExpandedText(emptyResult), 'write([])');
+    });
+
+    test('compacted rows prefer the summary and fall back to the text', () {
+      const withSummary = TrajectoryCompactedRecord(
+        index: 1,
+        recordId: 'k1',
+        text: 'preview',
+        summary: 'full summary',
+      );
+      const withoutSummary = TrajectoryCompactedRecord(
+        index: 2,
+        recordId: 'k2',
+        text: 'only text',
+        summary: '',
+      );
+      expect(trajectoryExpandedText(withSummary), 'full summary');
+      expect(trajectoryExpandedText(withoutSummary), 'only text');
+    });
+
+    test('system rows prefer a non-empty detail and fall back to the text', () {
+      const withDetail = TrajectorySystemRecord(
+        index: 1,
+        recordId: 's1',
+        text: 'model changed',
+        change: TrajectorySystemChange.modelChange,
+        detail: 'claude-test → gpt-test',
+      );
+      const emptyDetail = TrajectorySystemRecord(
+        index: 2,
+        recordId: 's2',
+        text: 'turn ended',
+        change: TrajectorySystemChange.turnEnd,
+      );
+      const blankDetail = TrajectorySystemRecord(
+        index: 3,
+        recordId: 's3',
+        text: 'turn ended',
+        change: TrajectorySystemChange.turnEnd,
+        detail: '',
+      );
+      expect(trajectoryExpandedText(withDetail), 'claude-test → gpt-test');
+      expect(trajectoryExpandedText(emptyDetail), 'turn ended');
+      expect(trajectoryExpandedText(blankDetail), 'turn ended');
+    });
+  });
+
+  group('record json (trajectoryRecordJson)', () {
+    test('every kind carries the shared identity plus per-kind fields', () {
+      final started = DateTime.utc(2026, 1, 1, 12);
+      final json = trajectoryRecordJson(
+        const TrajectoryAssistantRecord(
+          index: 4,
+          recordId: 'm1',
+          messageId: 'msg1',
+          turn: 2,
+          step: 1,
+          provider: 'anthropic',
+          model: 'claude-test',
+          thinkingDetail: 'pondering',
+          outputDetail: 'the answer',
+          timeSeconds: Duration(seconds: 3),
+          isError: false,
+          requestOnly: false,
+          displayText: 'the answer',
+        ),
+      );
+      expect(json['kind'], 'message');
+      expect(json['index'], 4);
+      expect(json['recordId'], 'm1');
+      // identityJson() entries ride along.
+      expect(json['messageId'], 'msg1');
+      expect(json['turn'], 2);
+      expect(json['step'], 1);
+      expect(json['provider'], 'anthropic');
+      expect(json['model'], 'claude-test');
+      expect(json['usage'], isNull);
+      expect(json['thinkingDetail'], 'pondering');
+      expect(json['outputDetail'], 'the answer');
+      expect(json['timeSeconds'], 3000);
+      expect(json['isError'], false);
+      expect(json['errorCode'], isNull);
+      expect(json['errorMessage'], isNull);
+      expect(json['requestOnly'], false);
+      expect(json['displayText'], 'the answer');
+      expect(json['requestDetail'], isNull);
+
+      final tool = trajectoryRecordJson(
+        TrajectoryToolRecord(
+          index: 5,
+          recordId: 't1',
+          callId: 'call1',
+          parentCallId: null,
+          name: 'read',
+          argsRaw: '{"path":"a.md"}',
+          result: 'file body',
+          isError: false,
+          timeSeconds: const Duration(milliseconds: 1500),
+          startedAt: started,
+        ),
+      );
+      expect(tool['kind'], 'tool');
+      expect(tool['callId'], 'call1');
+      expect(tool['parentCallId'], isNull);
+      expect(tool['name'], 'read');
+      expect(tool['argsRaw'], '{"path":"a.md"}');
+      expect(tool['result'], 'file body');
+      expect(tool['isError'], false);
+      expect(tool['timeSeconds'], 1500);
+      expect(tool['startedAt'], '2026-01-01T12:00:00.000Z');
+
+      final user = trajectoryRecordJson(
+        const TrajectoryUserRecord(
+          index: 1,
+          recordId: 'u1',
+          text: 'full prompt',
+          previewMarkdown: 'full prompt',
+          opensTurn: true,
+          inputDetail: 'req markdown',
+          startedAt: null,
+        ),
+      );
+      expect(user['kind'], 'user');
+      expect(user['text'], 'full prompt');
+      expect(user['previewMarkdown'], 'full prompt');
+      expect(user['opensTurn'], true);
+      expect(user['inputDetail'], 'req markdown');
+      expect(user['startedAt'], isNull);
+
+      final context = trajectoryRecordJson(
+        const TrajectoryContextRecord(
+          index: 2,
+          recordId: 'c1',
+          text: 'injected context',
+          previewMarkdown: 'injected',
+        ),
+      );
+      expect(context['kind'], 'context');
+      expect(context['text'], 'injected context');
+      expect(context['previewMarkdown'], 'injected');
+      expect(context['startedAt'], isNull);
+
+      final compacted = trajectoryRecordJson(
+        const TrajectoryCompactedRecord(
+          index: 3,
+          recordId: 'k1',
+          text: 'preview',
+          summary: 'full summary',
+          firstKeptEntryId: 'm9',
+          timeSeconds: Duration(seconds: 12),
+          interrupted: true,
+        ),
+      );
+      expect(compacted['kind'], 'compacted');
+      expect(compacted['summary'], 'full summary');
+      expect(compacted['firstKeptEntryId'], 'm9');
+      expect(compacted['timeSeconds'], 12000);
+      expect(compacted['interrupted'], true);
+
+      final system = trajectoryRecordJson(
+        TrajectorySystemRecord(
+          index: 6,
+          recordId: 's1',
+          text: 'model changed',
+          change: TrajectorySystemChange.modelChange,
+          detail: 'claude-test → gpt-test',
+          time: started,
+          errorCode: 'E1',
+          errorMessage: 'boom',
+        ),
+      );
+      expect(system['kind'], 'system');
+      expect(system['change'], 'modelChange');
+      expect(system['detail'], 'claude-test → gpt-test');
+      expect(system['time'], '2026-01-01T12:00:00.000Z');
+      expect(system['errorCode'], 'E1');
+      expect(system['errorMessage'], 'boom');
+    });
+  });
+
+  group('assistant cell (TrajectoryCellAssistant)', () {
+    Widget host(TrajectoryAssistantRecord record) => MaterialApp(
+      home: Scaffold(body: TrajectoryCellAssistant(record: record)),
+    );
+
+    testWidgets('a failed step shows the error message as title and meta', (
+      tester,
+    ) async {
+      const record = TrajectoryAssistantRecord(
+        index: 1,
+        recordId: 'm1',
+        messageId: 'msg1',
+        turn: 1,
+        step: 1,
+        isError: true,
+        errorMessage: 'rate limited',
+        timeSeconds: Duration(milliseconds: 2500),
+      );
+      await tester.pumpWidget(host(record));
+
+      // Title segment and the trailing meta segment both render it
+      // (row texts carry a trailing selectable-terminating newline).
+      expect(find.textContaining('rate limited'), findsNWidgets(2));
+      expect(find.textContaining('step 1 · 2.5s'), findsOneWidget);
+    });
+
+    testWidgets('an error message equal to the display stays title-only', (
+      tester,
+    ) async {
+      const record = TrajectoryAssistantRecord(
+        index: 1,
+        recordId: 'm1',
+        messageId: 'msg1',
+        turn: 1,
+        step: 1,
+        isError: true,
+        errorMessage: 'rate limited',
+        outputDetail: 'rate limited',
+      );
+      await tester.pumpWidget(host(record));
+
+      expect(find.textContaining('rate limited'), findsOneWidget);
+    });
+
+    testWidgets('a request-only step renders the no-content placeholder', (
+      tester,
+    ) async {
+      const record = TrajectoryAssistantRecord(
+        index: 1,
+        recordId: 'm1',
+        messageId: 'msg1',
+        turn: 1,
+        step: 1,
+        requestOnly: true,
+      );
+      await tester.pumpWidget(host(record));
+
+      expect(find.textContaining('No content'), findsOneWidget);
+      expect(find.text('step 1\n'), findsOneWidget);
+    });
+
+    testWidgets('meta sums input and output tokens without a total', (
+      tester,
+    ) async {
+      const record = TrajectoryAssistantRecord(
+        index: 1,
+        recordId: 'm1',
+        messageId: 'msg1',
+        turn: 1,
+        step: 1,
+        outputDetail: 'answer',
+        inputTokens: 100,
+        outputTokens: 20,
+      );
+      await tester.pumpWidget(host(record));
+
+      expect(find.textContaining('120 tok'), findsOneWidget);
+    });
+
+    testWidgets('meta omits the token segment when nothing was reported', (
+      tester,
+    ) async {
+      const record = TrajectoryAssistantRecord(
+        index: 1,
+        recordId: 'm1',
+        messageId: 'msg1',
+        turn: 1,
+        step: 1,
+        outputDetail: 'answer',
+      );
+      await tester.pumpWidget(host(record));
+
+      expect(find.text('step 1\n'), findsOneWidget);
+      expect(find.textContaining('tok'), findsNothing);
+    });
   });
 }
 

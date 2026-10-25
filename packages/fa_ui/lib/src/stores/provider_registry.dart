@@ -347,88 +347,130 @@ class ProviderRegistry extends ChangeNotifier {
   }
 
   Future<void> _load() async {
+    await _loadPersisted();
+    await _hydrateKeys();
+  }
+
+  /// Reads and applies `providers.json`; a missing, unreadable, or corrupt
+  /// file is ignored (the registry stays as-is, never crashes boot).
+  Future<void> _loadPersisted() async {
     final env = _env;
-    if (env != null) {
-      try {
-        final text = (await env.readTextFile(
-          '${env.cwd}/$fileName',
-        )).valueOrNull;
-        if (text != null) {
-          final decoded = jsonDecode(text);
-          if (decoded is Map<String, dynamic> &&
-              decoded['version'] == _version &&
-              decoded['providers'] is List) {
-            _providers
-              ..clear()
-              ..addAll([
-                for (final entry in decoded['providers'] as List)
-                  CustomProvider.fromJson(
-                    (entry as Map).cast<String, dynamic>(),
-                  ),
-              ]);
-            _presetModels
-              ..clear()
-              ..addAll({
-                // Unknown/absent keys load as empty; non-string values are
-                // ignored (a hand-edited file must not crash boot).
-                if (decoded['presetModels'] is Map)
-                  for (final entry in (decoded['presetModels'] as Map).entries)
-                    if (entry.key is String &&
-                        entry.value is String &&
-                        (entry.value as String).isNotEmpty)
-                      entry.key as String: entry.value as String,
-              });
-          }
-        }
-      } on Object {
-        // Corrupt or incompatible file → empty registry, never crash boot.
-      }
+    if (env == null) return;
+    try {
+      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
+      if (text != null) _applyPersisted(text);
+    } on Object {
+      // Corrupt or incompatible file → empty registry, never crash boot.
     }
-    // With a Keychain backend, hydrate the per-provider keys from it. This
-    // runs even without a registry file (fresh installs): the file is not
-    // the source of truth for keys.
+  }
+
+  /// Decodes [text] into the provider list and preset-model overrides; an
+  /// envelope with the wrong version or shape applies nothing.
+  void _applyPersisted(String text) {
+    final decoded = jsonDecode(text);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['version'] != _version ||
+        decoded['providers'] is! List) {
+      return;
+    }
+    _providers
+      ..clear()
+      ..addAll([
+        for (final entry in decoded['providers'] as List)
+          CustomProvider.fromJson((entry as Map).cast<String, dynamic>()),
+      ]);
+    _applyPresetModels(decoded['presetModels']);
+  }
+
+  /// Applies the persisted preset-model overrides: unknown/absent keys
+  /// load as empty; non-string values are ignored (a hand-edited file must
+  /// not crash boot).
+  void _applyPresetModels(Object? raw) {
+    if (raw is! Map) return;
+    _presetModels
+      ..clear()
+      ..addAll({
+        for (final entry in raw.entries)
+          if (_validPresetModelEntry(entry))
+            entry.key as String: entry.value as String,
+      });
+  }
+
+  /// A preset-model override persists only as `String: non-empty String`.
+  static bool _validPresetModelEntry(MapEntry<Object?, Object?> entry) =>
+      entry.key is String &&
+      entry.value is String &&
+      (entry.value as String).isNotEmpty;
+
+  /// Hydrates per-provider keys from the Keychain backend. This runs even
+  /// without a registry file (fresh installs): the file is not the source
+  /// of truth for keys.
+  Future<void> _hydrateKeys() async {
     final keychain = _keychain;
-    if (keychain != null && await keychain.isAvailable()) {
-      _useKeychain = true;
-      final secure = await keychain.readAll();
-      var markerUpgraded = false;
-      for (var i = 0; i < _providers.length; i++) {
-        final provider = _providers[i];
-        var value = secure[keyNameFor(provider.baseUrl)];
-        if (value == null || value.isEmpty) {
-          // Copilot entries persist the GitHub token ENTRY-scoped
-          // (`FA_KEY_COPILOT_<NAME>`, the connect flow / CLI contract),
-          // never host-scoped — hydrate from that slot or a restart loses
-          // the key and every model fetch silently 401s.
-          if (isCopilotBaseUrl(provider.baseUrl)) {
-            final scoped =
-                secure[CustomProviderRegistry.copilotEntryKeyName(
-                  provider.name,
-                )];
-            if (scoped != null && scoped.isNotEmpty) value = scoped;
-          }
-        }
-        if (value != null && value.isNotEmpty) {
-          _sessionKeys[provider.id] = value;
-          // Upgrade path: a key stored before the marker existed is a
-          // keyed entry. Persist the flip HERE — waiting for the next
-          // save would redo the upgrade on every boot (issue #329).
-          if (!provider.requiresKey) {
-            _providers[i] = CustomProvider(
-              id: provider.id,
-              name: provider.name,
-              baseUrl: provider.baseUrl,
-              modelId: provider.modelId,
-              provenance: provider.provenance,
-              requiresKey: true,
-              kind: provider.kind,
-            );
-            markerUpgraded = true;
-          }
-        }
-      }
-      if (markerUpgraded) await _save();
+    if (keychain == null || !await keychain.isAvailable()) return;
+    _useKeychain = true;
+    final secure = await keychain.readAll();
+    if (_hydrateProviderKeys(secure)) await _save();
+  }
+
+  /// Hydrates every provider's key from [secure]; returns true when a
+  /// requiresKey marker was upgraded — the flip persists HERE, waiting for
+  /// the next save would redo the upgrade on every boot (issue #329).
+  bool _hydrateProviderKeys(Map<String, String> secure) {
+    var markerUpgraded = false;
+    for (var i = 0; i < _providers.length; i++) {
+      if (_hydrateProviderKey(secure, i)) markerUpgraded = true;
     }
+    return markerUpgraded;
+  }
+
+  /// Hydrates provider [i]'s key from [secure]; returns true when the
+  /// entry was upgraded to a keyed one.
+  bool _hydrateProviderKey(Map<String, String> secure, int i) {
+    final provider = _providers[i];
+    final value = _secureKeyFor(secure, provider);
+    if (value == null || value.isEmpty) return false;
+    _sessionKeys[provider.id] = value;
+    if (!provider.requiresKey) {
+      _providers[i] = CustomProvider(
+        id: provider.id,
+        name: provider.name,
+        baseUrl: provider.baseUrl,
+        modelId: provider.modelId,
+        provenance: provider.provenance,
+        requiresKey: true,
+        kind: provider.kind,
+      );
+      return true;
+    }
+    return false;
+  }
+
+  /// The secure-store key for [provider]: host-scoped normally; Copilot
+  /// entries fall back to the entry-scoped GitHub token slot (see
+  /// [_copilotEntryKey]).
+  String? _secureKeyFor(Map<String, String> secure, CustomProvider provider) {
+    final value = secure[keyNameFor(provider.baseUrl)];
+    if (value == null || value.isEmpty) {
+      final scoped = _copilotEntryKey(secure, provider);
+      if (scoped != null) return scoped;
+    }
+    return value;
+  }
+
+  /// Copilot entries persist the GitHub token ENTRY-scoped
+  /// (`FA_KEY_COPILOT_<NAME>`, the connect flow / CLI contract), never
+  /// host-scoped — hydrate from that slot or a restart loses the key and
+  /// every model fetch silently 401s.
+  String? _copilotEntryKey(
+    Map<String, String> secure,
+    CustomProvider provider,
+  ) {
+    if (!isCopilotBaseUrl(provider.baseUrl)) return null;
+    final scoped =
+        secure[CustomProviderRegistry.copilotEntryKeyName(provider.name)];
+    if (scoped == null || scoped.isEmpty) return null;
+    return scoped;
   }
 
   Future<void> _save() async {

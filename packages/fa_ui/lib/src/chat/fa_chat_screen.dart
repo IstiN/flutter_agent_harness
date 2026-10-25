@@ -498,14 +498,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     _chatScrollController.addListener(_updateTopReveal);
     _subscribeToService(widget.service);
     if (widget.features.trajectory) _trajectory;
-    _isStreaming = widget.service.isStreaming;
-    _error = widget.service.error;
-    _historyAbove = widget.service.historyAboveCount;
-    _historyLoadError = widget.service.historyLoadError;
-    _historyLoading = widget.service.historyLoading;
-    _historyHasNewer = widget.service.historyHasNewer;
-    _historyBelow = widget.service.historyBelowCount;
-    _historyTotal = widget.service.historyTotalCount;
+    _mirrorServiceState();
     _syncMessages();
   }
 
@@ -522,14 +515,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       _userNearBottom = true;
       _unbindTrajectory();
       if (widget.features.trajectory) _trajectory;
-      _isStreaming = widget.service.isStreaming;
-      _error = widget.service.error;
-      _historyAbove = widget.service.historyAboveCount;
-      _historyLoadError = widget.service.historyLoadError;
-      _historyLoading = widget.service.historyLoading;
-      _historyHasNewer = widget.service.historyHasNewer;
-      _historyBelow = widget.service.historyBelowCount;
-      _historyTotal = widget.service.historyTotalCount;
+      _mirrorServiceState();
       _syncMessages();
       setState(() {});
     }
@@ -550,63 +536,87 @@ class _FaChatScreenState extends State<FaChatScreen>
   int _armExtent(ScrollPosition position) =>
       FollowMode.nearBottomArmExtent(position.viewportDimension.round());
 
+  /// Whether this notification reaches the follow classifier at all:
+  /// depth 0 only (inner tool-output scrollables don't count) and only
+  /// position-carrying activity (updates and ends).
+  bool _isTrackableScroll(ScrollNotification notification) =>
+      notification.depth == 0 &&
+      (notification is ScrollUpdateNotification ||
+          notification is ScrollEndNotification);
+
   /// Classifies scroll activity on the transcript's own scrollable
-  /// (depth 0 — inner tool-output scrollables don't count) through the
-  /// shared [FollowMode] machine (gh-1439): a user drag parking beyond
-  /// the near-bottom arm band holds (no more yank); landing inside the
-  /// band re-arms live and flushes the count. E6 debounce: only the
-  /// USER's position classifies — programmatic moves (the tail follow
-  /// and the #379 clamp's own animateTo) never hold and never re-arm;
-  /// non-drag updates can only relatch at the near-bottom.
+  /// through the shared [FollowMode] machine (gh-1439): a user drag
+  /// parking beyond the near-bottom arm band holds (no more yank);
+  /// landing inside the band re-arms live and flushes the count. E6
+  /// debounce: only the USER's position classifies — programmatic moves
+  /// (the tail follow and the #379 clamp's own animateTo) never hold and
+  /// never re-arm; non-drag updates can only relatch at the near-bottom.
   void _trackUserScroll(ScrollNotification notification) {
-    if (notification.depth != 0) return;
-    if (notification is! ScrollUpdateNotification &&
-        notification is! ScrollEndNotification) {
-      return;
-    }
+    if (!_isTrackableScroll(notification)) return;
     if (!_chatScrollController.hasClients) return;
-    final position = _chatScrollController.position;
-    final distance = position.pixels.round();
-    final arm = _armExtent(position);
     final wasAway = _follow.isHeld;
-    if (notification is ScrollUpdateNotification &&
-        (notification.dragDetails != null || _wheelGesturePending)) {
-      // USER gesture: the landing position classifies — inside the band
-      // re-arms live (flushed), beyond it holds. A drag leaves its
-      // momentum coast in flight; a wheel/trackpad tick (dragDetails ==
-      // null, gh-1439 re-review) is its own whole gesture.
-      _userGestureInFlight = notification.dragDetails != null;
-      _wheelGesturePending = false;
-      final next = _follow.userScrolled(
-        distanceFromLiveEdge: distance,
-        armExtent: arm,
-      );
-      if (next != _follow && mounted) {
-        setState(() => _follow = next);
-      }
-    } else if (_userGestureInFlight &&
-        distance <= arm &&
-        _follow.isHeld &&
-        mounted) {
-      // Momentum-coast updates only ever RELATCH at the near-bottom —
-      // they never classify away (the #379 follow clamp's own animateTo
-      // must keep working, E6 debounce). Content-driven repositions (a
-      // big-diff re-anchor) arrive as non-drag updates too; for those
-      // the gate is false — the sync invalidated it.
-      setState(() => _follow = _follow.jumpToLive());
-      _userGestureInFlight = false;
-    }
-    if (notification is ScrollEndNotification) {
-      // The finger lifted → a coast may follow (the gate stays up); the
-      // ballistic end → the gesture is over.
-      _userGestureInFlight = notification.dragDetails != null;
-    }
+    _classifyScroll(notification);
     if (wasAway && !_follow.isHeld) {
       // Landing back at the bottom with a deep-paged window rejoins the
       // live tail on its own — no stuck banner post-run (issue #1159
       // AC4).
       _followTailIfPinned();
     }
+  }
+
+  /// One trackable scroll update: measures the landing position, applies
+  /// the user-gesture or momentum-coast rule, then settles the gesture
+  /// gate on the ballistic end.
+  void _classifyScroll(ScrollNotification notification) {
+    final position = _chatScrollController.position;
+    final distance = position.pixels.round();
+    final arm = _armExtent(position);
+    if (notification is ScrollUpdateNotification &&
+        (notification.dragDetails != null || _wheelGesturePending)) {
+      _applyUserGesture(notification, distance, arm);
+    } else {
+      _relatchMomentumCoast(distance, arm);
+    }
+    if (notification is ScrollEndNotification) {
+      // The finger lifted → a coast may follow (the gate stays up); the
+      // ballistic end → the gesture is over.
+      _userGestureInFlight = notification.dragDetails != null;
+    }
+  }
+
+  /// USER gesture: the landing position classifies — inside the band
+  /// re-arms live (flushed), beyond it holds.
+  void _applyUserGesture(
+    ScrollUpdateNotification notification,
+    int distance,
+    int arm,
+  ) {
+    _userGestureInFlight = notification.dragDetails != null;
+    _wheelGesturePending = false;
+    final next = _follow.userScrolled(
+      distanceFromLiveEdge: distance,
+      armExtent: arm,
+    );
+    if (next != _follow && mounted) {
+      setState(() => _follow = next);
+    }
+  }
+
+  /// Whether a non-drag update may relatch the held follow at the
+  /// near-bottom (E6 debounce): only a momentum coast of a real user
+  /// gesture.
+  bool _coastMayRelatch(int distance, int arm) =>
+      _userGestureInFlight && distance <= arm && _follow.isHeld && mounted;
+
+  /// Momentum-coast updates only ever RELATCH at the near-bottom — they
+  /// never classify away (the #379 follow clamp's own animateTo must keep
+  /// working, E6 debounce). Content-driven repositions (a big-diff
+  /// re-anchor) arrive as non-drag updates too; for those the gate is
+  /// false — the sync invalidated it.
+  void _relatchMomentumCoast(int distance, int arm) {
+    if (!_coastMayRelatch(distance, arm)) return;
+    setState(() => _follow = _follow.jumpToLive());
+    _userGestureInFlight = false;
   }
 
   /// The one-action re-engage (gh-1439): live again, count flushed, and
@@ -948,54 +958,85 @@ class _FaChatScreenState extends State<FaChatScreen>
     super.dispose();
   }
 
-  void _onServiceChanged() {
+  /// Re-syncs the transcript soon: the 50ms debounce coalesces a burst of
+  /// service notifications (and a sync racing a new notification) into
+  /// one sync pass.
+  void _scheduleDeferredSync() {
     _syncDebounce?.cancel();
     _syncDebounce = Timer(const Duration(milliseconds: 50), () {
       if (mounted) _syncMessages();
     });
+  }
 
-    final needsRebuild =
-        widget.service.isStreaming != _isStreaming ||
-        widget.service.error != _error ||
-        widget.service.historyAboveCount != _historyAbove ||
-        widget.service.historyLoadError != _historyLoadError ||
-        widget.service.historyLoading != _historyLoading ||
-        widget.service.historyHasNewer != _historyHasNewer ||
-        widget.service.historyBelowCount != _historyBelow ||
-        widget.service.historyTotalCount != _historyTotal;
-    if (needsRebuild) {
-      final wasStreaming = _isStreaming;
-      _isStreaming = widget.service.isStreaming;
-      _error = widget.service.error;
-      _historyAbove = widget.service.historyAboveCount;
-      _historyLoadError = widget.service.historyLoadError;
-      _historyLoading = widget.service.historyLoading;
-      _historyHasNewer = widget.service.historyHasNewer;
-      _historyBelow = widget.service.historyBelowCount;
-      _historyTotal = widget.service.historyTotalCount;
+  /// Whether a mirrored service field moved (the rebuild trigger): one
+  /// structural compare of the whole mirror row.
+  bool _serviceStateMoved() {
+    final s = widget.service;
+    return (
+          s.isStreaming,
+          s.error,
+          s.historyAboveCount,
+          s.historyLoadError,
+          s.historyLoading,
+          s.historyHasNewer,
+          s.historyBelowCount,
+          s.historyTotalCount,
+        ) !=
+        (
+          _isStreaming,
+          _error,
+          _historyAbove,
+          _historyLoadError,
+          _historyLoading,
+          _historyHasNewer,
+          _historyBelow,
+          _historyTotal,
+        );
+  }
 
-      // Issue #379: the turn ended while the user had scrolled away —
-      // release the clamp for the current target; returning to the tail
-      // later must not re-clamp it (GOAL §1).
-      if (wasStreaming && !_isStreaming && _userScrolledAway) {
-        final target = _clampTarget();
-        if (target != null) _releasedClamps.add(target.$1);
-      }
-      if (mounted) setState(() {});
-      // A "newer" state arriving while the user is parked at the bottom
-      // is followed immediately — the tail rejoin clears it (issue #1159
-      // AC2).
-      _followTailIfPinned();
-    }
+  /// Mirrors the service's user-facing state into the screen fields that
+  /// drive the build (streaming flag, error, history paging state).
+  void _mirrorServiceState() {
+    final s = widget.service;
+    _isStreaming = s.isStreaming;
+    _error = s.error;
+    _historyAbove = s.historyAboveCount;
+    _historyLoadError = s.historyLoadError;
+    _historyLoading = s.historyLoading;
+    _historyHasNewer = s.historyHasNewer;
+    _historyBelow = s.historyBelowCount;
+    _historyTotal = s.historyTotalCount;
+  }
+
+  /// Issue #379: the turn ended while the user had scrolled away —
+  /// release the clamp for the current target; returning to the tail
+  /// later must not re-clamp it (GOAL §1).
+  void _releaseClampOnStreamEnd(bool wasStreaming) {
+    if (!wasStreaming || _isStreaming || !_userScrolledAway) return;
+    _releaseCurrentClamp();
+  }
+
+  void _releaseCurrentClamp() {
+    final target = _clampTarget();
+    if (target != null) _releasedClamps.add(target.$1);
+  }
+
+  void _onServiceChanged() {
+    _scheduleDeferredSync();
+    if (!_serviceStateMoved()) return;
+    final wasStreaming = _isStreaming;
+    _mirrorServiceState();
+    _releaseClampOnStreamEnd(wasStreaming);
+    if (mounted) setState(() {});
+    // A "newer" state arriving while the user is parked at the bottom
+    // is followed immediately — the tail rejoin clears it (issue #1159
+    // AC2).
+    _followTailIfPinned();
   }
 
   Future<void> _syncMessages() async {
-    var followCounted = false;
     if (_isSyncing) {
-      _syncDebounce?.cancel();
-      _syncDebounce = Timer(const Duration(milliseconds: 50), () {
-        if (mounted) _syncMessages();
-      });
+      _scheduleDeferredSync();
       return;
     }
     _isSyncing = true;
@@ -1011,122 +1052,8 @@ class _FaChatScreenState extends State<FaChatScreen>
       // synced window; an emptiness flip must repaint it even when no
       // service field changed (the initial history sync notifies nobody).
       final emptinessFlipped = _lastSynced.isEmpty != newList.isEmpty;
-
-      if (_lastSynced.isEmpty || newList.isEmpty) {
-        // History load: instant, no set animation (messages are read from
-        // disk; they must appear as one frame, not slide in).
-        await _chatController.setMessages(newList, animated: false);
-      } else {
-        final oldLen = _lastSynced.length;
-        final newLen = newList.length;
-        final minLen = math.min(oldLen, newLen);
-
-        var commonPrefix = 0;
-        while (commonPrefix < minLen &&
-            _lastSynced[commonPrefix].id == newList[commonPrefix].id) {
-          commonPrefix++;
-        }
-        // gh-1439: held appends are COUNTED (the model keeps everything —
-        // zero loss, AC4); the pill's counter is the affordance. Live
-        // appends never count (the viewport shows them — today's
-        // behavior). Counted for BOTH render paths (big-diff setMessages
-        // and the per-row insert loop alike).
-        // (re-review) Only pure tail growth is an arrival — and the
-        // prefix for COUNTING must be content-aware: ids are index-based
-        // (`msg-$index`), so a "Load earlier" PREPEND shifts every row's
-        // content while REUSING every id; the id-based `commonPrefix`
-        // stays == oldLen and `newLen - commonPrefix` billed the loaded
-        // page as arrivals. A length-preserving content edit must not
-        // count either. The render diff below keeps the id-based prefix
-        // (in-place edits must updateMessage, not remove+insert); only
-        // the count scans content.
-        var countedPrefix = 0;
-        while (countedPrefix < minLen &&
-            _lastSynced[countedPrefix].id == newList[countedPrefix].id &&
-            !_messageChanged(
-              _lastSynced[countedPrefix],
-              newList[countedPrefix],
-            )) {
-          countedPrefix++;
-        }
-        final isTailAppend = countedPrefix == oldLen && newLen > oldLen;
-        if (isTailAppend && _follow.isHeld) {
-          _follow = _follow.appended(newLen - oldLen);
-          followCounted = true;
-        }
-
-        final changes =
-            (commonPrefix - math.min(oldLen, commonPrefix)) +
-            (oldLen - commonPrefix) +
-            (newLen - commonPrefix);
-        // A big diff (a session switch, an external-history load) syncs in
-        // ONE setMessages pass: per-message inserts rebuild the list per
-        // row and stream in bottom-up, visibly slow on long transcripts.
-        if (changes > 12) {
-          // (re-review) The replacement re-anchors the scrollable: its
-          // corrections glide for several frames and are programmatic —
-          // invalidate any in-flight gesture so the settle cannot flush
-          // the held count by "landing" inside the arm band.
-          _userGestureInFlight = false;
-          _wheelGesturePending = false;
-          await _chatController.setMessages(newList, animated: false);
-        } else {
-          for (var i = 0; i < commonPrefix; i++) {
-            if (_messageChanged(_lastSynced[i], newList[i])) {
-              await _chatController.updateMessage(_lastSynced[i], newList[i]);
-            }
-          }
-
-          for (var i = oldLen - 1; i >= commonPrefix; i--) {
-            await _chatController.removeMessage(_lastSynced[i]);
-          }
-
-          // A big append (an external-history reload pulled many rows at
-          // once) skips the per-row insert animations the same way.
-          final appended = newLen - commonPrefix;
-          final oldSuppress = _suppressInsertAnimations;
-          if (appended > 12) {
-            _suppressInsertAnimations = true;
-          }
-          for (var i = commonPrefix; i < newLen; i++) {
-            await _chatController.insertMessage(newList[i], index: i);
-          }
-          _suppressInsertAnimations = oldSuppress;
-        }
-      }
-
-      _lastSynced = newList;
-      if (followCounted && mounted) {
-        setState(() {});
-      }
-
-      // E3 (issue #379): a widget id entering the current turn afresh —
-      // a NEW dynamic message, or the same widget re-presented later —
-      // re-arms its chip/clamp state.
-      final turnIds = {for (final (id, _) in _turnWidgets()) id};
-      for (final id in turnIds) {
-        if (_turnWidgetIds.contains(id)) continue;
-        _dismissedWidgetChips.remove(id);
-        _interactedWidgets.remove(id);
-        _releasedClamps.remove(id);
-      }
-      _turnWidgetIds = turnIds;
-      // The chip lives outside the animated list: rebuild the shell when
-      // a sync changed its target (a new widget appeared, or the current
-      // one aged out of the turn).
-      final chipId = _chipTarget()?.$1;
-      if (chipId != _lastChipTargetId) {
-        _lastChipTargetId = chipId;
-        if (mounted) setState(() {});
-      }
-      if (emptinessFlipped && mounted) setState(() {});
-      // Drop jump anchors for ids the sync removed (edits rebuild ids).
-      final liveIds = {for (final message in newList) message.id};
-      _itemKeys.removeWhere((id, _) => !liveIds.contains(id));
-      // The first completed sync was the history load — live inserts from
-      // here on animate normally.
-      _suppressInsertAnimations = false;
-      _scrollToTailIfFollowing();
+      final followCounted = await _applyDiff(newList);
+      _finishSync(newList, followCounted, emptinessFlipped);
     } on Object catch (e, stack) {
       // _syncMessages runs from a Timer callback: an escape here is an
       // unhandled async error that repeats on every service notification
@@ -1135,13 +1062,195 @@ class _FaChatScreenState extends State<FaChatScreen>
       debugPrint('chat sync failed: $e\n$stack');
     } finally {
       _isSyncing = false;
-      // The sync may have attached the list (first message) or changed
-      // the scroll extents (a paged-in page) — re-measure the reveal
-      // gate on the laid-out frame (issue #974).
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _updateTopReveal();
-      });
+      _remeasureRevealPostFrame();
     }
+  }
+
+  /// Applies one transcript diff to the chat controller. Returns whether
+  /// a held follow counted arrivals (the pill's rebuild trigger).
+  Future<bool> _applyDiff(List<Message> newList) async {
+    if (_lastSynced.isEmpty || newList.isEmpty) {
+      // History load: instant, no set animation (messages are read from
+      // disk; they must appear as one frame, not slide in).
+      await _chatController.setMessages(newList, animated: false);
+      return false;
+    }
+    final commonPrefix = _commonIdPrefix(newList);
+    final followCounted = _countHeldArrivals(newList);
+    final oldLen = _lastSynced.length;
+    final changes =
+        (commonPrefix - math.min(oldLen, commonPrefix)) +
+        (oldLen - commonPrefix) +
+        (newList.length - commonPrefix);
+    // A big diff (a session switch, an external-history load) syncs in
+    // ONE setMessages pass: per-message inserts rebuild the list per
+    // row and stream in bottom-up, visibly slow on long transcripts.
+    if (changes > 12) {
+      await _replaceWholeList(newList);
+    } else {
+      await _applyIncrementalDiff(newList, commonPrefix);
+    }
+    return followCounted;
+  }
+
+  /// The id-based common prefix between the synced and the new list:
+  /// in-place edits inside it must updateMessage, not remove+insert.
+  int _commonIdPrefix(List<Message> newList) {
+    final minLen = math.min(_lastSynced.length, newList.length);
+    var commonPrefix = 0;
+    while (commonPrefix < minLen &&
+        _lastSynced[commonPrefix].id == newList[commonPrefix].id) {
+      commonPrefix++;
+    }
+    return commonPrefix;
+  }
+
+  /// gh-1439: held appends are COUNTED (the model keeps everything —
+  /// zero loss, AC4); the pill's counter is the affordance. Live
+  /// appends never count (the viewport shows them — today's
+  /// behavior). Counted for BOTH render paths (big-diff setMessages
+  /// and the per-row insert loop alike).
+  /// (re-review) Only pure tail growth is an arrival — and the prefix for
+  /// COUNTING must be content-aware: ids are index-based
+  /// (`msg-$index`), so a "Load earlier" PREPEND shifts every row's
+  /// content while REUSING every id; the id-based `commonPrefix`
+  /// stays == oldLen and `newLen - commonPrefix` billed the loaded
+  /// page as arrivals. A length-preserving content edit must not
+  /// count either. The render diff keeps the id-based prefix; only
+  /// the count scans content.
+  bool _countHeldArrivals(List<Message> newList) {
+    final oldLen = _lastSynced.length;
+    final isTailAppend =
+        _countedContentPrefix(newList) == oldLen && newList.length > oldLen;
+    if (isTailAppend && _follow.isHeld) {
+      _follow = _follow.appended(newList.length - oldLen);
+      return true;
+    }
+    return false;
+  }
+
+  /// The content-aware prefix for ARRIVAL COUNTING: an id match alone is
+  /// not enough (prepends reuse index-based ids); a content edit breaks
+  /// it too.
+  int _countedContentPrefix(List<Message> newList) {
+    final minLen = math.min(_lastSynced.length, newList.length);
+    var countedPrefix = 0;
+    while (countedPrefix < minLen &&
+        _lastSynced[countedPrefix].id == newList[countedPrefix].id &&
+        !_messageChanged(_lastSynced[countedPrefix], newList[countedPrefix])) {
+      countedPrefix++;
+    }
+    return countedPrefix;
+  }
+
+  Future<void> _replaceWholeList(List<Message> newList) async {
+    // (re-review) The replacement re-anchors the scrollable: its
+    // corrections glide for several frames and are programmatic —
+    // invalidate any in-flight gesture so the settle cannot flush
+    // the held count by "landing" inside the arm band.
+    _userGestureInFlight = false;
+    _wheelGesturePending = false;
+    await _chatController.setMessages(newList, animated: false);
+  }
+
+  Future<void> _applyIncrementalDiff(
+    List<Message> newList,
+    int commonPrefix,
+  ) async {
+    await _updateEditedPrefix(newList, commonPrefix);
+    await _removeShrunkenTail(commonPrefix);
+    await _insertAppendedRows(newList, commonPrefix);
+  }
+
+  Future<void> _updateEditedPrefix(
+    List<Message> newList,
+    int commonPrefix,
+  ) async {
+    for (var i = 0; i < commonPrefix; i++) {
+      if (_messageChanged(_lastSynced[i], newList[i])) {
+        await _chatController.updateMessage(_lastSynced[i], newList[i]);
+      }
+    }
+  }
+
+  Future<void> _removeShrunkenTail(int commonPrefix) async {
+    for (var i = _lastSynced.length - 1; i >= commonPrefix; i--) {
+      await _chatController.removeMessage(_lastSynced[i]);
+    }
+  }
+
+  Future<void> _insertAppendedRows(
+    List<Message> newList,
+    int commonPrefix,
+  ) async {
+    // A big append (an external-history reload pulled many rows at
+    // once) skips the per-row insert animations the same way.
+    final appended = newList.length - commonPrefix;
+    final oldSuppress = _suppressInsertAnimations;
+    if (appended > 12) {
+      _suppressInsertAnimations = true;
+    }
+    for (var i = commonPrefix; i < newList.length; i++) {
+      await _chatController.insertMessage(newList[i], index: i);
+    }
+    _suppressInsertAnimations = oldSuppress;
+  }
+
+  /// Post-diff bookkeeping: swap the synced mirror, repaint the counted
+  /// pill / emptiness flip, re-arm turn widgets, prune jump anchors, and
+  /// re-pin the tail when following.
+  void _finishSync(
+    List<Message> newList,
+    bool followCounted,
+    bool emptinessFlipped,
+  ) {
+    _lastSynced = newList;
+    if (followCounted && mounted) {
+      setState(() {});
+    }
+    _rearmTurnWidgetIds();
+    _rebuildChipShellIfTargetMoved();
+    if (emptinessFlipped && mounted) setState(() {});
+    // Drop jump anchors for ids the sync removed (edits rebuild ids).
+    final liveIds = {for (final message in newList) message.id};
+    _itemKeys.removeWhere((id, _) => !liveIds.contains(id));
+    // The first completed sync was the history load — live inserts from
+    // here on animate normally.
+    _suppressInsertAnimations = false;
+    _scrollToTailIfFollowing();
+  }
+
+  /// E3 (issue #379): a widget id entering the current turn afresh —
+  /// a NEW dynamic message, or the same widget re-presented later —
+  /// re-arms its chip/clamp state.
+  void _rearmTurnWidgetIds() {
+    final turnIds = {for (final (id, _) in _turnWidgets()) id};
+    for (final id in turnIds) {
+      if (_turnWidgetIds.contains(id)) continue;
+      _dismissedWidgetChips.remove(id);
+      _interactedWidgets.remove(id);
+      _releasedClamps.remove(id);
+    }
+    _turnWidgetIds = turnIds;
+  }
+
+  /// The widget chip lives outside the animated list: rebuild the shell
+  /// when a sync changed its target (a new widget appeared, or the
+  /// current one aged out of the turn).
+  void _rebuildChipShellIfTargetMoved() {
+    final chipId = _chipTarget()?.$1;
+    if (chipId == _lastChipTargetId) return;
+    _lastChipTargetId = chipId;
+    if (mounted) setState(() {});
+  }
+
+  /// The sync may have attached the list (first message) or changed
+  /// the scroll extents (a paged-in page) — re-measure the reveal
+  /// gate on the laid-out frame (issue #974).
+  void _remeasureRevealPostFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _updateTopReveal();
+    });
   }
 
   bool _messageChanged(Message a, Message b) {
@@ -1329,7 +1438,6 @@ class _FaChatScreenState extends State<FaChatScreen>
   }
 
   Widget _buildChatBody(BuildContext context) {
-    final composerBuilder = widget.composerBuilder;
     final strings = FaChatStrings.of(context);
     // Pinned history banners (issue #135): "Load earlier" at the top of
     // the loaded range, "Load newer" at the bottom (the page-down path
@@ -1338,8 +1446,6 @@ class _FaChatScreenState extends State<FaChatScreen>
     // and turn into the terminal "Beginning of session (1 of N)" once
     // the top of the file is reached (E6).
     final historyAbove = _historyAbove;
-    final historyBelow = _historyBelow;
-    final wallpaper = widget.wallpaperBuilder;
     Widget body = DropTarget(
       // Drag-and-drop over the chat area stages attachments (issue #465).
       // Hosts that turn the attachments feature off keep drops off too.
@@ -1349,184 +1455,215 @@ class _FaChatScreenState extends State<FaChatScreen>
       onDragDone: _onDropDone,
       child: Column(
         children: [
-          // Issue #692 (friendly auth errors): an auth-expired service
-          // error carries the raw CLI recovery hint plus the
-          // `[[auth-expired:…]]` marker — render the friendly localized
-          // banner (with the host's re-authorize action when wired)
-          // instead. Every other error keeps the raw line below.
-          if (_error case final error?)
-            if (authExpiredProvider(error) case final expiredProvider?)
-              _AuthExpiredBanner(
-                strings: strings,
-                error: error,
-                providerId: expiredProvider,
-                onAuthorize: widget.onAuthRecovery,
-              )
-            else
-              Material(
-                color: Theme.of(context).colorScheme.errorContainer,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.error,
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          error,
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onErrorContainer,
-                          ),
-                        ),
-                      ),
-                      // Issue #869: one tap puts the full error on the
-                      // clipboard — errors are for pasting, not screenshots.
-                      FahErrorCopyButton(
-                        text: error,
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-          if (_topBannerVisible(historyAbove))
-            _historyPinnedBanner(
-              top: true,
-              label: _topBannerLabel(strings, historyAbove),
-              // An error banner IS the retry surface (round-1 behavior).
-              tappable:
-                  !_historyLoading &&
-                  !(historyAbove == 0 && _historyLoadError == null),
-            ),
-          Expanded(
-            // Layout-time extent changes (first list attach, a paged-in
-            // page) never move the scroll position, so the reveal-on-top
-            // gate (issue #974) listens for them here. The framework
-            // defers the dispatch until after the frame completes (a
-            // mid-layout dispatch would be useless); the post-frame
-            // re-measure keeps the gate in sync regardless of when a
-            // given Flutter version dispatches it.
-            child: NotificationListener<ScrollMetricsNotification>(
-              onNotification: (notification) {
-                if (notification.depth != 0) return false;
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) _updateTopReveal();
-                });
-                return false;
-              },
-              child: NotificationListener<ScrollNotification>(
-                onNotification: (notification) {
-                  _trackUserScroll(notification);
-                  return false;
-                },
-                child: Listener(
-                  onPointerSignal: (event) {
-                    if (event is PointerScrollEvent) {
-                      _wheelGesturePending = true;
-                    }
-                  },
-                  child: Chat(
-                    currentUserId: 'user',
-                    resolveUser: _resolveUser,
-                    chatController: _chatController,
-                    // With a wallpaper layer the transcript surface paints
-                    // transparent so the layer underneath shows through (E2: the
-                    // layer itself owns the color fallback when the image is gone).
-                    backgroundColor: wallpaper == null
-                        ? null
-                        : const Color(0x00000000),
-                    builders: Builders(
-                      textMessageBuilder: _buildTextMessage,
-                      customMessageBuilder: _buildCustomMessage,
-                      chatAnimatedListBuilder: (context, itemBuilder) => ChatAnimatedList(
-                        // Tests target the transcript's scrollable
-                        // through this key (E2E scroll-to-top for the
-                        // reveal-on-top banner) instead of tree order.
-                        key: const ValueKey('faChatTranscriptList'),
-                        itemBuilder: itemBuilder,
-                        scrollController: _chatScrollController,
-                        // Reversed list (the learn.ai pattern): index 0 is the
-                        // newest message, the list starts AT the bottom — no
-                        // initial scroll-to-end, no jump, or "stuck mid-list"
-                        // on long transcripts. New rows grow upwards, exactly
-                        // like a chat.
-                        reversed: true,
-                        // The initial history load (and big external reloads)
-                        // renders without the per-row insert animation cascade;
-                        // live messages keep the default animation. 1ms instead
-                        // of a true zero: a zero duration leaves the package's
-                        // initial-scroll timer unsettled inside fake_async
-                        // test bindings.
-                        insertAnimationDurationResolver: (_) =>
-                            _suppressInsertAnimations
-                            ? const Duration(milliseconds: 1)
-                            : const Duration(milliseconds: 250),
-                        // The single transient status row lives IN the list
-                        // (issues #459, #1042): in a reversed scroll view
-                        // the bottom sliver renders visually LAST — below
-                        // the newest message, right above the composer —
-                        // and on completion it is replaced by the assistant
-                        // message (it self-hides when the run ends; never a
-                        // composer-docked second row).
-                        bottomSliver: SliverToBoxAdapter(
-                          key: const ValueKey('faChatRunStatusRow'),
-                          child: FaRunStatusRow(service: widget.service),
-                        ),
-                      ),
-                      // While streaming with an empty transcript the status row
-                      // is the only item (E1) — the package's default
-                      // "No messages yet" overlay would stack under it; idle
-                      // keeps the default (the row renders nothing then).
-                      emptyChatListBuilder: (context) => _isStreaming
-                          ? const SizedBox.shrink()
-                          : const EmptyChatList(),
-                      composerBuilder: (_) => const SizedBox.shrink(),
-                    ),
-                    theme: Theme.of(context).brightness == Brightness.light
-                        ? buildFahChatThemeLight(
-                            uiTheme: FaUiThemeProvider.of(context),
-                          )
-                        : buildFahChatTheme(
-                            uiTheme: FaUiThemeProvider.of(context),
-                          ),
-                  ),
-                ),
-              ),
-            ),
-          ),
+          ?_buildErrorBanner(context, strings),
+          ?_buildTopHistoryBanner(strings, historyAbove),
+          Expanded(child: _buildTranscript(context)),
           ?_buildWidgetOpenChip(context),
-          if (_historyHasNewer)
-            _historyPinnedBanner(
-              top: false,
-              label: _historyLoadError != null
-                  ? strings.chatLoadEarlierFailed
-                  : historyBelow == null || historyBelow <= 0
-                  ? strings.chatLoadNewer
-                  : strings.chatLoadNewerCount('$historyBelow'),
-              tappable: !_historyLoading,
-            ),
+          if (_historyHasNewer) _buildNewerHistoryBanner(strings),
           // The follow-mode jump pill (gh-1439): a SIBLING of the history
           // banner, live-updating — visible exactly while held with
           // counted arrivals, one tap returns to the live tail.
           if (_follow.isHeld && _follow.unseen > 0) _followLivePill(strings),
-          composerBuilder != null
-              ? composerBuilder(context, widget.service, _dropBridge)
-              : ChatComposer(
-                  service: widget.service,
-                  features: widget.features,
-                  dropBridge: _dropBridge,
-                ),
+          _buildComposer(context),
         ],
       ),
     );
-    // The drop highlight rides in a Stack above the body so the border
-    // overlay never shifts the transcript layout (AC3).
-    body = Stack(
+    body = _wrapDropHighlight(body);
+    return _wrapWallpaper(body);
+  }
+
+  // Issue #692 (friendly auth errors): an auth-expired service error
+  // carries the raw CLI recovery hint plus the `[[auth-expired:…]]`
+  // marker — render the friendly localized banner (with the host's
+  // re-authorize action when wired) instead. Every other error keeps
+  // the raw line below.
+  Widget? _buildErrorBanner(BuildContext context, FaChatStrings strings) {
+    final error = _error;
+    if (error == null) return null;
+    final expiredProvider = authExpiredProvider(error);
+    if (expiredProvider == null) {
+      return Material(
+        color: Theme.of(context).colorScheme.errorContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Icon(Icons.error, color: Theme.of(context).colorScheme.error),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  error,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                  ),
+                ),
+              ),
+              // Issue #869: one tap puts the full error on the
+              // clipboard — errors are for pasting, not screenshots.
+              FahErrorCopyButton(
+                text: error,
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return _AuthExpiredBanner(
+      strings: strings,
+      error: error,
+      providerId: expiredProvider,
+      onAuthorize: widget.onAuthRecovery,
+    );
+  }
+
+  Widget? _buildTopHistoryBanner(FaChatStrings strings, int? historyAbove) {
+    if (!_topBannerVisible(historyAbove)) return null;
+    return _historyPinnedBanner(
+      top: true,
+      label: _topBannerLabel(strings, historyAbove),
+      // An error banner IS the retry surface (round-1 behavior).
+      tappable:
+          !_historyLoading && !(historyAbove == 0 && _historyLoadError == null),
+    );
+  }
+
+  Widget _buildNewerHistoryBanner(FaChatStrings strings) {
+    final historyBelow = _historyBelow;
+    return _historyPinnedBanner(
+      top: false,
+      label: _historyLoadError != null
+          ? strings.chatLoadEarlierFailed
+          : historyBelow == null || historyBelow <= 0
+          ? strings.chatLoadNewer
+          : strings.chatLoadNewerCount('$historyBelow'),
+      tappable: !_historyLoading,
+    );
+  }
+
+  Widget _buildComposer(BuildContext context) {
+    final composerBuilder = widget.composerBuilder;
+    return composerBuilder != null
+        ? composerBuilder(context, widget.service, _dropBridge)
+        : ChatComposer(
+            service: widget.service,
+            features: widget.features,
+            dropBridge: _dropBridge,
+          );
+  }
+
+  /// The transcript column child: scroll/metrics notification plumbing
+  /// around the chat list (follow classifier, reveal gate, wheel gate).
+  Widget _buildTranscript(BuildContext context) =>
+      _buildScrollLayer(_buildChatList(context));
+
+  /// The three notification layers around the [Chat]:
+  /// - layout-time extent changes never move the scroll position, so the
+  ///   reveal-on-top gate (issue #974) listens for them on metrics; the
+  ///   framework defers the dispatch until after the frame completes (a
+  ///   mid-layout dispatch would be useless), and the post-frame
+  ///   re-measure keeps the gate in sync regardless of when a given
+  ///   Flutter version dispatches it;
+  /// - scroll updates classify the follow mode;
+  /// - raw pointer signals mark wheel/trackpad ticks as user gestures.
+  Widget _buildScrollLayer(Widget child) {
+    return NotificationListener<ScrollMetricsNotification>(
+      onNotification: (notification) {
+        if (notification.depth != 0) return false;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _updateTopReveal();
+        });
+        return false;
+      },
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          _trackUserScroll(notification);
+          return false;
+        },
+        child: Listener(
+          onPointerSignal: (event) {
+            if (event is PointerScrollEvent) {
+              _wheelGesturePending = true;
+            }
+          },
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChatList(BuildContext context) {
+    final wallpaper = widget.wallpaperBuilder;
+    return Chat(
+      currentUserId: 'user',
+      resolveUser: _resolveUser,
+      chatController: _chatController,
+      // With a wallpaper layer the transcript surface paints
+      // transparent so the layer underneath shows through (E2: the
+      // layer itself owns the color fallback when the image is gone).
+      backgroundColor: wallpaper == null ? null : const Color(0x00000000),
+      builders: _chatBuilders(context),
+      theme: _chatTheme(context),
+    );
+  }
+
+  ChatTheme _chatTheme(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.light
+      ? buildFahChatThemeLight(uiTheme: FaUiThemeProvider.of(context))
+      : buildFahChatTheme(uiTheme: FaUiThemeProvider.of(context));
+
+  Builders _chatBuilders(BuildContext context) {
+    return Builders(
+      textMessageBuilder: _buildTextMessage,
+      customMessageBuilder: _buildCustomMessage,
+      chatAnimatedListBuilder: (context, itemBuilder) => ChatAnimatedList(
+        // Tests target the transcript's scrollable
+        // through this key (E2E scroll-to-top for the
+        // reveal-on-top banner) instead of tree order.
+        key: const ValueKey('faChatTranscriptList'),
+        itemBuilder: itemBuilder,
+        scrollController: _chatScrollController,
+        // Reversed list (the learn.ai pattern): index 0 is the
+        // newest message, the list starts AT the bottom — no
+        // initial scroll-to-end, no jump, or "stuck mid-list"
+        // on long transcripts. New rows grow upwards, exactly
+        // like a chat.
+        reversed: true,
+        // The initial history load (and big external reloads)
+        // renders without the per-row insert animation cascade;
+        // live messages keep the default animation. 1ms instead
+        // of a true zero: a zero duration leaves the package's
+        // initial-scroll timer unsettled inside fake_async
+        // test bindings.
+        insertAnimationDurationResolver: (_) => _suppressInsertAnimations
+            ? const Duration(milliseconds: 1)
+            : const Duration(milliseconds: 250),
+        // The single transient status row lives IN the list
+        // (issues #459, #1042): in a reversed scroll view
+        // the bottom sliver renders visually LAST — below
+        // the newest message, right above the composer —
+        // and on completion it is replaced by the assistant
+        // message (it self-hides when the run ends; never a
+        // composer-docked second row).
+        bottomSliver: SliverToBoxAdapter(
+          key: const ValueKey('faChatRunStatusRow'),
+          child: FaRunStatusRow(service: widget.service),
+        ),
+      ),
+      // While streaming with an empty transcript the status row
+      // is the only item (E1) — the package's default
+      // "No messages yet" overlay would stack under it; idle
+      // keeps the default (the row renders nothing then).
+      emptyChatListBuilder: (context) =>
+          _isStreaming ? const SizedBox.shrink() : const EmptyChatList(),
+      composerBuilder: (_) => const SizedBox.shrink(),
+    );
+  }
+
+  /// The drop highlight rides in a Stack above the body so the border
+  /// overlay never shifts the transcript layout (AC3).
+  Widget _wrapDropHighlight(Widget body) {
+    return Stack(
       children: [
         Positioned.fill(child: body),
         if (_dropHovering)
@@ -1547,6 +1684,12 @@ class _FaChatScreenState extends State<FaChatScreen>
           ),
       ],
     );
+  }
+
+  /// The theme-pack wallpaper paints under the transcript; null keeps
+  /// the stock opaque surface.
+  Widget _wrapWallpaper(Widget body) {
+    final wallpaper = widget.wallpaperBuilder;
     if (wallpaper == null) return body;
     return Stack(
       children: [
@@ -1711,32 +1854,33 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   @override
   Widget build(BuildContext context) {
-    final strings = FaChatStrings.of(context);
     final isWide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
     final fileBrowserBuilder = widget.features.fileBrowser
         ? _fileBrowserBuilder
         : null;
-    final appsToggleButton = FaChatHost.appsToggleButtonBuilder?.call(
-      context,
-      widget.service,
+    return Scaffold(
+      key: _scaffoldKey,
+      appBar: _buildAppBar(
+        isWide,
+        _buildHeaderActions(isWide, fileBrowserBuilder),
+      ),
+      endDrawer: _buildEndDrawer(isWide, fileBrowserBuilder),
+      body: _buildBody(isWide, fileBrowserBuilder),
     );
-    final dynamicMessagesButton = FaChatHost.dynamicMessagesButtonBuilder?.call(
-      context,
-      widget.service,
-    );
-    // The adaptive header's action list (issue #225): the list IS the
-    // priority order and demotion removes from the tail, so the pinned
-    // streaming stop comes first (never demoted — E2), then the primary
-    // actions (files, trajectory), then the secondary ones (copy, the
-    // host's ✦ and Apps widgets) that yield first on tight widths.
-    final headerActions = <FaHeaderAction>[
-      if (_isStreaming)
-        FaHeaderAction(
-          icon: Icons.stop,
-          label: strings.chatAbortTooltip,
-          onPressed: widget.service.abort,
-          pinned: true,
-        ),
+  }
+
+  /// The adaptive header's action list (issue #225): the list IS the
+  /// priority order and demotion removes from the tail, so the pinned
+  /// streaming stop comes first (never demoted — E2), then the primary
+  /// actions (files, trajectory), then the secondary ones (copy, the
+  /// host's ✦ and Apps widgets) that yield first on tight widths.
+  List<FaHeaderAction> _buildHeaderActions(
+    bool isWide,
+    WidgetBuilder? fileBrowserBuilder,
+  ) {
+    final strings = FaChatStrings.of(context);
+    return [
+      ?_streamingStopAction(strings),
       if (fileBrowserBuilder != null)
         FaHeaderAction(
           icon: Icons.folder_outlined,
@@ -1757,9 +1901,33 @@ class _FaChatScreenState extends State<FaChatScreen>
           label: strings.chatCopySessionTooltip,
           onPressed: _copySession,
         ),
-      // The host's dynamic-messages affordance (issue #102: the ✦ button)
-      // and apps-collapse toggle (issue #224: the Apps icon), rendered
-      // exactly as the host styles them, demotable into the ⋮ menu.
+      ..._hostHeaderActions(),
+    ];
+  }
+
+  /// The pinned streaming stop — never demoted (E2).
+  FaHeaderAction? _streamingStopAction(FaChatStrings strings) => _isStreaming
+      ? FaHeaderAction(
+          icon: Icons.stop,
+          label: strings.chatAbortTooltip,
+          onPressed: widget.service.abort,
+          pinned: true,
+        )
+      : null;
+
+  /// The host's dynamic-messages affordance (issue #102: the ✦ button)
+  /// and apps-collapse toggle (issue #224: the Apps icon), rendered
+  /// exactly as the host styles them, demotable into the ⋮ menu.
+  List<FaHeaderAction> _hostHeaderActions() {
+    final dynamicMessagesButton = FaChatHost.dynamicMessagesButtonBuilder?.call(
+      context,
+      widget.service,
+    );
+    final appsToggleButton = FaChatHost.appsToggleButtonBuilder?.call(
+      context,
+      widget.service,
+    );
+    return [
       if (dynamicMessagesButton != null)
         FaHeaderAction.widget(
           widget: dynamicMessagesButton.widget,
@@ -1773,82 +1941,99 @@ class _FaChatScreenState extends State<FaChatScreen>
           onPressed: appsToggleButton.onPressed,
         ),
     ];
-    return Scaffold(
-      key: _scaffoldKey,
-      appBar: widget.showAppBar
-          ? AppBar(
-              // The ONE adaptive header (issue #225): project identity ·
-              // title · model chip · actions · ⋮ overflow in one row.
-              title: FaAdaptiveHeader(
-                title: widget.title,
-                projectIcon: widget.projectIcon,
-                projectIconColor: widget.projectIconColor,
-                projectLabel: widget.projectLabel,
-                onProjectTap: widget.onProjectTap,
-                chip: widget.modelChip,
-                onChipTap: widget.onModelChipTap,
-                chipMenuLabel: widget.chipMenuLabel,
-                actions: headerActions,
+  }
+
+  PreferredSizeWidget? _buildAppBar(
+    bool isWide,
+    List<FaHeaderAction> headerActions,
+  ) {
+    if (!widget.showAppBar) return null;
+    return AppBar(
+      // The ONE adaptive header (issue #225): project identity ·
+      // title · model chip · actions · ⋮ overflow in one row.
+      title: FaAdaptiveHeader(
+        title: widget.title,
+        projectIcon: widget.projectIcon,
+        projectIconColor: widget.projectIconColor,
+        projectLabel: widget.projectLabel,
+        onProjectTap: widget.onProjectTap,
+        chip: widget.modelChip,
+        onChipTap: widget.onModelChipTap,
+        chipMenuLabel: widget.chipMenuLabel,
+        actions: headerActions,
+      ),
+      // Narrow: the Chat | Trajectory switcher sits in the app
+      // bar's bottom slot and swaps the screen body.
+      bottom: widget.features.trajectory && !isWide
+          ? PreferredSize(
+              preferredSize: const Size.fromHeight(52),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Center(child: _trajectorySwitcher(context)),
               ),
-              // Narrow: the Chat | Trajectory switcher sits in the app
-              // bar's bottom slot and swaps the screen body.
-              bottom: widget.features.trajectory && !isWide
-                  ? PreferredSize(
-                      preferredSize: const Size.fromHeight(52),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                        child: Center(child: _trajectorySwitcher(context)),
-                      ),
-                    )
-                  : null,
             )
           : null,
-      endDrawer: isWide || fileBrowserBuilder == null
-          ? null
-          : Drawer(
-              width: kFaChatFilesPanelWidth,
-              child: SafeArea(child: fileBrowserBuilder(context)),
+    );
+  }
+
+  /// The files end drawer (narrow layouts only — wide uses the side
+  /// panel in the body row); null hides it.
+  Widget? _buildEndDrawer(bool isWide, WidgetBuilder? fileBrowserBuilder) {
+    if (isWide || fileBrowserBuilder == null) return null;
+    return Drawer(
+      width: kFaChatFilesPanelWidth,
+      child: SafeArea(child: fileBrowserBuilder(context)),
+    );
+  }
+
+  /// Narrow + trajectory swaps Chat ⇄ Trajectory in an IndexedStack
+  /// (PopScope closes the trajectory page first); everything else is the
+  /// body row with the optional files side panel.
+  Widget _buildBody(bool isWide, WidgetBuilder? fileBrowserBuilder) {
+    if (!isWide && widget.features.trajectory) return _buildNarrowBody();
+    return _buildBodyRow(isWide, fileBrowserBuilder);
+  }
+
+  Widget _buildNarrowBody() {
+    return PopScope(
+      canPop: !_showTrajectory,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) setState(() => _showTrajectory = false);
+      },
+      child: IndexedStack(
+        index: _showTrajectory ? 1 : 0,
+        children: [
+          _buildChatBody(context),
+          TrajectoryScreen(
+            controller: _trajectory,
+            loaded: _trajectoryLoaded,
+            scope: TrajectoryProjectionScope(
+              above: widget.service.historyAboveCount,
+              below: widget.service.historyBelowCount,
+              total: widget.service.historyTotalCount,
             ),
-      body: !isWide && widget.features.trajectory
-          ? PopScope(
-              canPop: !_showTrajectory,
-              onPopInvokedWithResult: (didPop, _) {
-                if (!didPop) setState(() => _showTrajectory = false);
-              },
-              child: IndexedStack(
-                index: _showTrajectory ? 1 : 0,
-                children: [
-                  _buildChatBody(context),
-                  TrajectoryScreen(
-                    controller: _trajectory,
-                    loaded: _trajectoryLoaded,
-                    scope: TrajectoryProjectionScope(
-                      above: widget.service.historyAboveCount,
-                      below: widget.service.historyBelowCount,
-                      total: widget.service.historyTotalCount,
-                    ),
-                    onRecordActivate: (record) =>
-                        widget.service.jumpToMessage(record.recordId),
-                    onClose: () => setState(() => _showTrajectory = false),
-                  ),
-                ],
-              ),
-            )
-          : Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: _buildChatBody(context)),
-                if (isWide &&
-                    _filesPanelOpen &&
-                    fileBrowserBuilder != null) ...[
-                  const VerticalDivider(width: 1),
-                  SizedBox(
-                    width: kFaChatFilesPanelWidth,
-                    child: fileBrowserBuilder(context),
-                  ),
-                ],
-              ],
-            ),
+            onRecordActivate: (record) =>
+                widget.service.jumpToMessage(record.recordId),
+            onClose: () => setState(() => _showTrajectory = false),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBodyRow(bool isWide, WidgetBuilder? fileBrowserBuilder) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: _buildChatBody(context)),
+        if (isWide && _filesPanelOpen && fileBrowserBuilder != null) ...[
+          const VerticalDivider(width: 1),
+          SizedBox(
+            width: kFaChatFilesPanelWidth,
+            child: fileBrowserBuilder(context),
+          ),
+        ],
+      ],
     );
   }
 

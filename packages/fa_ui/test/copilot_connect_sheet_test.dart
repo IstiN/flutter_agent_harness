@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:fa_llm/fa_llm.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -312,10 +313,7 @@ void main() {
 
     // No list, no default: the manual id field keeps Connect disabled
     // until a value is typed.
-    expect(
-      find.textContaining('enter a model id manually'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('enter a model id manually'), findsOneWidget);
     expect(result, isNull);
     await tester.enterText(
       find.widgetWithText(TextField, 'Model'),
@@ -345,5 +343,71 @@ void main() {
 
     expect(result!.accountType, CopilotAccountType.business);
     expect(result!.baseUrlOverride, isNull);
+  });
+
+  group('waiting-step verification-uri button', () {
+    const launcherChannel = MethodChannel('plugins.flutter.io/url_launcher');
+    final launchedUrls = <Uri>[];
+
+    void stubLaunch(WidgetTester tester, bool launched) {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        launcherChannel,
+        (call) async {
+          launchedUrls.add(Uri.parse(call.arguments['url'] as String));
+          return launched;
+        },
+      );
+    }
+
+    Future<void> pumpToWaiting(
+      WidgetTester tester,
+      Completer<String> poll,
+    ) async {
+      await _pump(tester, _fakes(poll: (_) => poll.future), (_) {});
+      await tester.tap(find.text('Sign in with GitHub'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('ABCD-1234'), findsOneWidget);
+    }
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(launcherChannel, null);
+      launchedUrls.clear();
+    });
+
+    testWidgets('opens the verification page in the browser', (tester) async {
+      final pollGate = Completer<String>();
+      stubLaunch(tester, true);
+      await pumpToWaiting(tester, pollGate);
+
+      await tester.tap(find.text('Open github.com/login/device'));
+      await tester.pump();
+
+      expect(launchedUrls, [Uri.parse('https://github.com/login/device')]);
+      expect(find.byType(SnackBar), findsNothing);
+
+      // Release the gate so the pending poll future never leaks.
+      pollGate.complete('gho_done');
+      await tester.pump();
+    });
+
+    testWidgets('a refused launch tells the user to open the page manually', (
+      tester,
+    ) async {
+      final pollGate = Completer<String>();
+      stubLaunch(tester, false);
+      await pumpToWaiting(tester, pollGate);
+
+      await tester.tap(find.text('Open github.com/login/device'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(launchedUrls, hasLength(1));
+      expect(find.textContaining('visit the page manually'), findsOneWidget);
+
+      pollGate.complete('gho_done');
+      await tester.pump();
+    });
   });
 }

@@ -63,11 +63,17 @@ String trajectoryExpandedText(TrajectoryRecord record) => switch (record) {
   TrajectoryAssistantRecord() => _assistantExpandedText(record),
   TrajectoryToolRecord() => _toolExpandedText(record),
   TrajectoryContextRecord(:final text) => text,
-  TrajectoryCompactedRecord(:final summary, :final text) =>
-    summary.isEmpty ? text : summary,
-  TrajectorySystemRecord(:final detail, :final text) =>
-    detail == null || detail.isEmpty ? text : detail,
+  TrajectoryCompactedRecord() => _compactedExpandedText(record),
+  TrajectorySystemRecord() => _systemExpandedText(record),
 };
+
+String _compactedExpandedText(TrajectoryCompactedRecord record) =>
+    record.summary.isEmpty ? record.text : record.summary;
+
+String _systemExpandedText(TrajectorySystemRecord record) {
+  final detail = record.detail;
+  return detail == null || detail.isEmpty ? record.text : detail;
+}
 
 String _assistantExpandedText(TrajectoryAssistantRecord record) {
   final sections = [
@@ -95,111 +101,76 @@ String _prettyJson(String raw) {
 /// The full record as a JSON-encodable map, for the per-row copy
 /// affordance. The core model classes carry no per-record `toJson`, so
 /// this composes the fields per kind.
-Map<String, Object?> trajectoryRecordJson(TrajectoryRecord record) {
-  String? at(DateTime? time) => time?.toIso8601String();
-  return {
-    'kind': record.kind.name,
-    'index': record.index,
-    'recordId': record.recordId,
-    ...switch (record) {
-      TrajectoryAssistantRecord(
-        :final outputDetail,
-        :final timeSeconds,
-        :final isError,
-        :final errorCode,
-        :final errorMessage,
-        :final requestOnly,
-        :final displayText,
-        :final requestDetail,
-      ) =>
-        {
-          ...record.identityJson(),
-          'outputDetail': outputDetail,
-          'timeSeconds': timeSeconds?.inMilliseconds,
-          'isError': isError,
-          'errorCode': errorCode,
-          'errorMessage': errorMessage,
-          'requestOnly': requestOnly,
-          'displayText': displayText,
-          'requestDetail': requestDetail?.toJson(),
-        },
-      TrajectoryToolRecord(
-        :final callId,
-        :final parentCallId,
-        :final name,
-        :final argsRaw,
-        :final result,
-        :final isError,
-        :final timeSeconds,
-        :final startedAt,
-      ) =>
-        {
-          'callId': callId,
-          'parentCallId': parentCallId,
-          'name': name,
-          'argsRaw': argsRaw,
-          'result': result,
-          'isError': isError,
-          'timeSeconds': timeSeconds?.inMilliseconds,
-          'startedAt': at(startedAt),
-        },
-      TrajectoryUserRecord(
-        :final text,
-        :final previewMarkdown,
-        :final opensTurn,
-        :final inputDetail,
-        :final startedAt,
-      ) =>
-        {
-          'text': text,
-          'previewMarkdown': previewMarkdown,
-          'opensTurn': opensTurn,
-          'inputDetail': inputDetail,
-          'startedAt': at(startedAt),
-        },
-      TrajectoryContextRecord(
-        :final text,
-        :final previewMarkdown,
-        :final startedAt,
-      ) =>
-        {
-          'text': text,
-          'previewMarkdown': previewMarkdown,
-          'startedAt': at(startedAt),
-        },
-      TrajectoryCompactedRecord(
-        :final text,
-        :final summary,
-        :final firstKeptEntryId,
-        :final timeSeconds,
-        :final interrupted,
-      ) =>
-        {
-          'text': text,
-          'summary': summary,
-          'firstKeptEntryId': firstKeptEntryId,
-          'timeSeconds': timeSeconds?.inMilliseconds,
-          'interrupted': interrupted,
-        },
-      TrajectorySystemRecord(
-        :final text,
-        :final change,
-        :final detail,
-        :final time,
-        :final errorCode,
-        :final errorMessage,
-      ) =>
-        {
-          'text': text,
-          'change': change.name,
-          'detail': detail,
-          'time': at(time),
-          'errorCode': errorCode,
-          'errorMessage': errorMessage,
-        },
-    },
-  };
-}
+Map<String, Object?> trajectoryRecordJson(TrajectoryRecord record) => {
+  'kind': record.kind.name,
+  'index': record.index,
+  'recordId': record.recordId,
+  ...switch (record) {
+    TrajectoryAssistantRecord() => _assistantJson(record),
+    TrajectoryToolRecord() => _toolJson(record),
+    TrajectoryUserRecord() => _userJson(record),
+    TrajectoryContextRecord() => _contextJson(record),
+    TrajectoryCompactedRecord() => _compactedJson(record),
+    TrajectorySystemRecord() => _systemJson(record),
+  },
+};
+
+/// ISO-8601 stamp for the JSON export; null stays null.
+String? _isoAt(DateTime? time) => time?.toIso8601String();
+
+Map<String, Object?> _assistantJson(TrajectoryAssistantRecord record) => {
+  ...record.identityJson(),
+  'outputDetail': record.outputDetail,
+  'timeSeconds': record.timeSeconds?.inMilliseconds,
+  'isError': record.isError,
+  'errorCode': record.errorCode,
+  'errorMessage': record.errorMessage,
+  'requestOnly': record.requestOnly,
+  'displayText': record.displayText,
+  'requestDetail': record.requestDetail?.toJson(),
+};
+
+Map<String, Object?> _toolJson(TrajectoryToolRecord record) => {
+  'callId': record.callId,
+  'parentCallId': record.parentCallId,
+  'name': record.name,
+  'argsRaw': record.argsRaw,
+  'result': record.result,
+  'isError': record.isError,
+  'timeSeconds': record.timeSeconds?.inMilliseconds,
+  'startedAt': _isoAt(record.startedAt),
+};
+
+Map<String, Object?> _userJson(TrajectoryUserRecord record) => {
+  'text': record.text,
+  'previewMarkdown': record.previewMarkdown,
+  'opensTurn': record.opensTurn,
+  'inputDetail': record.inputDetail,
+  'startedAt': _isoAt(record.startedAt),
+};
+
+Map<String, Object?> _contextJson(TrajectoryContextRecord record) => {
+  'text': record.text,
+  'previewMarkdown': record.previewMarkdown,
+  'startedAt': _isoAt(record.startedAt),
+};
+
+Map<String, Object?> _compactedJson(TrajectoryCompactedRecord record) => {
+  'text': record.text,
+  'summary': record.summary,
+  'firstKeptEntryId': record.firstKeptEntryId,
+  'timeSeconds': record.timeSeconds?.inMilliseconds,
+  'interrupted': record.interrupted,
+};
+
+Map<String, Object?> _systemJson(TrajectorySystemRecord record) => {
+  'text': record.text,
+  'change': record.change.name,
+  'detail': record.detail,
+  'time': _isoAt(record.time),
+  'errorCode': record.errorCode,
+  'errorMessage': record.errorMessage,
+};
 
 /// Copies [record]'s full JSON to the clipboard (per-row copy affordance).
 void copyTrajectoryRecord(TrajectoryRecord record) {

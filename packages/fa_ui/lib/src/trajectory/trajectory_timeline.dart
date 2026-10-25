@@ -721,22 +721,38 @@ class TrajectoryTimelinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(TrajectoryTimelinePainter oldDelegate) =>
-      oldDelegate.model != model ||
-      oldDelegate.records != records ||
-      oldDelegate.mode != mode ||
-      oldDelegate.colors != colors ||
-      oldDelegate.laneLabels != laneLabels ||
-      oldDelegate.fontFamily != fontFamily ||
-      oldDelegate.viewport != viewport ||
-      oldDelegate.selection != selection ||
-      oldDelegate.draft != draft ||
-      oldDelegate.dragging != dragging ||
-      oldDelegate.hoverIndex != hoverIndex ||
-      oldDelegate.guideX != guideX ||
-      oldDelegate.searchMatches != searchMatches ||
-      oldDelegate.selectedRecordIndex != selectedRecordIndex ||
-      oldDelegate.pulses != pulses ||
-      oldDelegate.pulsePhase != pulsePhase;
+      _canvasChanged(oldDelegate) ||
+      _layoutChanged(oldDelegate) ||
+      _overlayChanged(oldDelegate) ||
+      _focusChanged(oldDelegate);
+
+  /// Timeline data and palette.
+  bool _canvasChanged(TrajectoryTimelinePainter old) =>
+      old.model != model ||
+      old.records != records ||
+      old.mode != mode ||
+      old.colors != colors;
+
+  /// Labels, font, window, and in-progress markers.
+  bool _layoutChanged(TrajectoryTimelinePainter old) =>
+      old.laneLabels != laneLabels ||
+      old.fontFamily != fontFamily ||
+      old.viewport != viewport ||
+      old.pulses != pulses;
+
+  /// Selection/drag overlays.
+  bool _overlayChanged(TrajectoryTimelinePainter old) =>
+      old.selection != selection ||
+      old.draft != draft ||
+      old.dragging != dragging ||
+      old.hoverIndex != hoverIndex;
+
+  /// Hover/focus aids and the pulse animation.
+  bool _focusChanged(TrajectoryTimelinePainter old) =>
+      old.guideX != guideX ||
+      old.searchMatches != searchMatches ||
+      old.selectedRecordIndex != selectedRecordIndex ||
+      old.pulsePhase != pulsePhase;
 
   @override
   bool operator ==(Object other) => identical(this, other);
@@ -1174,36 +1190,70 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline>
 
   Widget? _buildTooltip(BoxConstraints constraints) {
     final index = _tooltipIndex;
+    final span = _tooltipSpan(index);
+    if (span == null || index == null || index > _controller.records.length) {
+      return null;
+    }
+    return _tooltipOverlay(
+      constraints,
+      span,
+      _tooltipRows(_controller.records[index - 1]),
+    );
+  }
+
+  /// The hovered span for the pending tooltip, or null when no tooltip is
+  /// pending (no index, no model, or no matching span).
+  TrajectoryTimelineSpan? _tooltipSpan(int? index) {
     final model = _viewportModel;
     if (index == null || model == null) return null;
     TrajectoryTimelineSpan? span;
     for (final candidate in model.spans) {
       if (candidate.index == index) span = candidate;
     }
-    if (span == null || index > _controller.records.length) return null;
+    return span;
+  }
+
+  /// Tooltip lines: kind, wall-clock window, and the assistant TTFT/
+  /// decoding split when the timing is complete.
+  List<String> _tooltipRows(TrajectoryRecord record) {
     final strings = TrajectoryStrings.of(context);
-    final colors = FahColors.of(context);
-    final record = _controller.records[index - 1];
-    final rows = <String>[
-      switch (record.kind) {
-        TrajectoryCellKind.system => strings.kindSystem,
-        TrajectoryCellKind.user => strings.kindUser,
-        TrajectoryCellKind.context => strings.kindContext,
-        TrajectoryCellKind.compacted => strings.kindCompacted,
-        TrajectoryCellKind.message => strings.kindAssistant,
-        TrajectoryCellKind.tool => strings.kindTool,
-        TrajectoryCellKind.subtool => strings.kindSubtool,
-      },
+    return [
+      _kindLabel(record.kind, strings),
+      ..._tooltipTimingRows(record, strings),
+      ?_tooltipPerformanceRow(record, strings),
     ];
+  }
+
+  String _kindLabel(TrajectoryCellKind kind, TrajectoryStrings strings) => {
+    TrajectoryCellKind.system: strings.kindSystem,
+    TrajectoryCellKind.user: strings.kindUser,
+    TrajectoryCellKind.context: strings.kindContext,
+    TrajectoryCellKind.compacted: strings.kindCompacted,
+    TrajectoryCellKind.message: strings.kindAssistant,
+    TrajectoryCellKind.tool: strings.kindTool,
+    TrajectoryCellKind.subtool: strings.kindSubtool,
+  }[kind]!;
+
+  /// The `Started` line: wall-clock start with a ` → end` suffix when the
+  /// duration is known, or a bare label for untimed kinds.
+  List<String> _tooltipTimingRows(
+    TrajectoryRecord record,
+    TrajectoryStrings strings,
+  ) {
     final (startedAt, durationMs) = trajectoryTimelineRecordTiming(record);
-    if (startedAt != null) {
-      final end = durationMs != null && durationMs > 0
-          ? ' → ${_clock(startedAt.add(Duration(milliseconds: durationMs)))}'
-          : '';
-      rows.add(strings.timelineStarted('${_clock(startedAt)}$end'));
-    } else {
-      rows.add(strings.timingStarted);
-    }
+    if (startedAt == null) return [strings.timingStarted];
+    final end = durationMs != null && durationMs > 0
+        ? ' → ${_clock(startedAt.add(Duration(milliseconds: durationMs)))}'
+        : '';
+    return [strings.timelineStarted('${_clock(startedAt)}$end')];
+  }
+
+  /// The TTFT/decoding split row, or null without a complete assistant
+  /// timing.
+  String? _tooltipPerformanceRow(
+    TrajectoryRecord record,
+    TrajectoryStrings strings,
+  ) {
     if (record is TrajectoryAssistantRecord &&
         trajectoryTimelineTtftFraction(record) != null) {
       final total = record.completedTime!
@@ -1213,12 +1263,19 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline>
           .difference(record.stepStartTime!)
           .inMilliseconds;
       final decoding = total - first;
-      rows.add(
-        '${strings.timelineTotal(formatTimelineOffset(total.toDouble()))}'
-        ' · '
-        '${strings.timelineTtftDecoding(formatTimelineOffset(first.toDouble()), formatTimelineOffset(decoding.toDouble()))}',
-      );
+      return '${strings.timelineTotal(formatTimelineOffset(total.toDouble()))}'
+          ' · '
+          '${strings.timelineTtftDecoding(formatTimelineOffset(first.toDouble()), formatTimelineOffset(decoding.toDouble()))}';
     }
+    return null;
+  }
+
+  Widget _tooltipOverlay(
+    BoxConstraints constraints,
+    TrajectoryTimelineSpan span,
+    List<String> rows,
+  ) {
+    final colors = FahColors.of(context);
     final rect = trajectoryTimelineSpanRect(
       span,
       viewport: _effectiveViewport,
@@ -1261,13 +1318,7 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline>
     final model = controller.timelineModel;
     final strings = TrajectoryStrings.of(context);
     final colors = FahColors.of(context);
-    // Re-clamp a stored viewport when the snapshot changed the domain.
-    if (!identical(_viewportModel, model)) {
-      _viewportModel = model;
-      if (_viewport != null && model != null) {
-        _viewport = trajectoryTimelineClampViewport(_viewport!, model, _mode);
-      }
-    }
+    _syncViewportModel(model);
     // E8: a timed projection without anchored spans hides the strip
     // entirely; only the sequence projection keeps the placeholder.
     if (model == null && _mode != TrajectoryTimelineMode.sequence) {
@@ -1290,93 +1341,145 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline>
           child: model == null
               ? placeholder
               : LayoutBuilder(
-                  builder: (context, constraints) {
-                    _trackWidth = math.max(
-                      0.0,
-                      constraints.maxWidth - trajectoryTimelineLabelGutter,
-                    );
-                    final selectedId = controller.selectedRecordId;
-                    int? selectedIndex;
-                    for (final record in controller.records) {
-                      if (record.recordId == selectedId) {
-                        selectedIndex = record.index;
-                      }
-                    }
-                    final draft =
-                        _dragging && _draftStart != null && _draftEnd != null
-                        ? TrajectoryTimeRange(
-                            start: math.min(_draftStart!, _draftEnd!),
-                            end: math.max(_draftStart!, _draftEnd!),
-                          )
-                        : null;
-                    final pulses = _pulses(model);
-                    final pulsing =
-                        pulses.isNotEmpty &&
-                        !TrajectoryTimeline.deterministicPulse;
-                    if (pulsing && !_pulseClock.isAnimating) {
-                      _pulseClock.repeat();
-                    } else if (!pulsing && _pulseClock.isAnimating) {
-                      _pulseClock.stop();
-                    }
-                    final painter = TrajectoryTimelinePainter(
-                      model: model,
-                      records: controller.records,
-                      mode: _mode,
-                      colors: colors,
-                      laneLabels: [
-                        strings.usageInput,
-                        strings.detailsModel,
-                        strings.tabTools,
-                      ],
-                      fontFamily: DefaultTextStyle.of(context).style.fontFamily,
-                      viewport: _viewport,
-                      selection: controller.timelineSelection,
-                      draft: draft,
-                      dragging: _dragging,
-                      hoverIndex: _hoverIndex,
-                      guideX: _guideX,
-                      searchMatches: controller.searchMatchRecordIds == null
-                          ? null
-                          : controller.searchMatchIndexes,
-                      selectedRecordIndex: selectedIndex,
-                      pulses: pulses,
-                      pulsePhase: TrajectoryTimeline.deterministicPulse
-                          ? 0.25
-                          : _pulseClock.value,
-                    );
-                    return Stack(
-                      children: [
-                        Positioned.fill(
-                          child: MouseRegion(
-                            onHover: _onHover,
-                            onExit: _onExit,
-                            child: Listener(
-                              onPointerDown: _onPointerDown,
-                              onPointerMove: _onPointerMove,
-                              onPointerUp: _onPointerUp,
-                              onPointerCancel: _onPointerCancel,
-                              onPointerSignal: _onPointerSignal,
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onDoubleTap: () =>
-                                    controller.setTimelineSelection(null),
-                                child: CustomPaint(
-                                  size: Size.infinite,
-                                  painter: painter,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        ?_buildTooltip(constraints),
-                      ],
-                    );
-                  },
+                  builder: (context, constraints) => _timelineBody(
+                    context,
+                    constraints,
+                    model,
+                    controller,
+                    strings,
+                    colors,
+                  ),
                 ),
         ),
       ),
     );
   }
+
+  /// Re-clamps a stored viewport when the snapshot changed the domain.
+  void _syncViewportModel(TrajectoryTimelineModel? model) {
+    if (!identical(_viewportModel, model)) {
+      _viewportModel = model;
+      if (_viewport != null && model != null) {
+        _viewport = trajectoryTimelineClampViewport(_viewport!, model, _mode);
+      }
+    }
+  }
+
+  Widget _timelineBody(
+    BuildContext context,
+    BoxConstraints constraints,
+    TrajectoryTimelineModel model,
+    TrajectoryController controller,
+    TrajectoryStrings strings,
+    FahColors colors,
+  ) {
+    _trackWidth = math.max(
+      0.0,
+      constraints.maxWidth - trajectoryTimelineLabelGutter,
+    );
+    final draft = _draftRange();
+    final pulses = _pulses(model);
+    _syncPulseClock(pulses);
+    final painter = _buildPainter(
+      context,
+      model,
+      controller,
+      strings,
+      colors,
+      _selectedIndex(controller),
+      draft,
+      pulses,
+    );
+    return Stack(
+      children: [
+        Positioned.fill(child: _interactionStack(controller, painter)),
+        ?_buildTooltip(constraints),
+      ],
+    );
+  }
+
+  /// Ledger index of the selected record (last match wins), or null.
+  int? _selectedIndex(TrajectoryController controller) {
+    final selectedId = controller.selectedRecordId;
+    int? selectedIndex;
+    for (final record in controller.records) {
+      if (record.recordId == selectedId) selectedIndex = record.index;
+    }
+    return selectedIndex;
+  }
+
+  /// The in-flight drag selection, or null when no drag drafts a range.
+  TrajectoryTimeRange? _draftRange() =>
+      _dragging && _draftStart != null && _draftEnd != null
+      ? TrajectoryTimeRange(
+          start: math.min(_draftStart!, _draftEnd!),
+          end: math.max(_draftStart!, _draftEnd!),
+        )
+      : null;
+
+  /// Runs the pulse clock exactly while visible pulses animate.
+  void _syncPulseClock(List<TrajectoryTimelinePulse> pulses) {
+    final pulsing = pulses.isNotEmpty && !TrajectoryTimeline.deterministicPulse;
+    if (pulsing && !_pulseClock.isAnimating) {
+      _pulseClock.repeat();
+      return;
+    }
+    if (!pulsing && _pulseClock.isAnimating) {
+      _pulseClock.stop();
+    }
+  }
+
+  TrajectoryTimelinePainter _buildPainter(
+    BuildContext context,
+    TrajectoryTimelineModel model,
+    TrajectoryController controller,
+    TrajectoryStrings strings,
+    FahColors colors,
+    int? selectedIndex,
+    TrajectoryTimeRange? draft,
+    List<TrajectoryTimelinePulse> pulses,
+  ) => TrajectoryTimelinePainter(
+    model: model,
+    records: controller.records,
+    mode: _mode,
+    colors: colors,
+    laneLabels: [strings.usageInput, strings.detailsModel, strings.tabTools],
+    fontFamily: DefaultTextStyle.of(context).style.fontFamily,
+    viewport: _viewport,
+    selection: controller.timelineSelection,
+    draft: draft,
+    dragging: _dragging,
+    hoverIndex: _hoverIndex,
+    guideX: _guideX,
+    searchMatches: controller.searchMatchRecordIds == null
+        ? null
+        : controller.searchMatchIndexes,
+    selectedRecordIndex: selectedIndex,
+    pulses: pulses,
+    pulsePhase: TrajectoryTimeline.deterministicPulse
+        ? 0.25
+        : _pulseClock.value,
+  );
+
+  Widget _interactionStack(
+    TrajectoryController controller,
+    TrajectoryTimelinePainter painter,
+  ) => MouseRegion(
+    onHover: _onHover,
+    onExit: _onExit,
+    child: Listener(
+      onPointerDown: _onPointerDown,
+      onPointerMove: _onPointerMove,
+      onPointerUp: _onPointerUp,
+      onPointerCancel: _onPointerCancel,
+      onPointerSignal: _onPointerSignal,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onDoubleTap: () => controller.setTimelineSelection(null),
+        child: CustomPaint(size: Size.infinite, painter: painter),
+      ),
+    ),
+  );
 }
 
 /// `HH:mm:ss.mmm` wall-clock label used by span tooltips.

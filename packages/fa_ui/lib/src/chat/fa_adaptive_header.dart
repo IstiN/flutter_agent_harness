@@ -170,138 +170,258 @@ class FaAdaptiveHeader extends StatelessWidget {
   /// adjusted by the density, which is exactly how the bar buttons size.
   double get _slot => 48 + 4 * visualDensity.horizontal;
 
+  /// Whether a project identity pill renders (either half present).
+  bool get _hasProject => projectIcon != null || projectLabel != null;
+
+  /// The leading slot's width (0 when absent).
+  double get _leadingWidth => leading != null ? _slot : 0.0;
+
+  /// Width budget the fit arithmetic reserves for the chip (0 when absent).
+  double get _chipBudget => chip != null ? chipMaxWidth : 0.0;
+
+  /// The project pill's minimum width (0 when absent): a tappable pill
+  /// needs its icon+label minimum, a bare identity needs less.
+  double get _pillMin {
+    if (!_hasProject) return 0.0;
+    return onProjectTap != null ? 38.0 : 22.0;
+  }
+
+  /// The demotable (non-pinned) actions, in order — the tail that shrinks
+  /// on tight widths.
+  List<FaHeaderAction> get _demotable => [
+    for (final action in actions)
+      if (!action.pinned) action,
+  ];
+
+  /// The ⋮ slot's width: present when more actions may demote or
+  /// menu-only entries keep the menu alive.
+  double _overflowSlot(int inline, int demotableCount, bool overflowVisible) =>
+      (inline < demotableCount || overflowVisible) ? _slot : 0.0;
+
+  /// Greedy-fit width: the fixed content plus [inline] demotable slots
+  /// and [chipWidth] of chip budget.
+  // ponytail: the chip/pill budgets are caps, not measurements — a
+  // render-object fit is the upgrade path if real widths ever drift.
+  double _widthFor({
+    required int inline,
+    required double chipWidth,
+    required int demotableCount,
+    required int pinnedCount,
+    required bool overflowVisible,
+  }) =>
+      _leadingWidth +
+      _pillMin +
+      chipWidth +
+      pinnedCount * _slot +
+      inline * _slot +
+      _overflowSlot(inline, demotableCount, overflowVisible);
+
+  /// How many demotable actions stay inline at [maxWidth]: the greedy
+  /// tail-first demotion (secondary before primary, issue #225).
+  int _inlineCount({
+    required int demotableCount,
+    required int pinnedCount,
+    required double chipWidth,
+    required bool overflowVisible,
+    required double maxWidth,
+  }) {
+    var inline = demotableCount;
+    while (inline > 0 &&
+        _widthFor(
+              inline: inline,
+              chipWidth: chipWidth,
+              demotableCount: demotableCount,
+              pinnedCount: pinnedCount,
+              overflowVisible: overflowVisible,
+            ) >
+            maxWidth) {
+      inline--;
+    }
+    return inline;
+  }
+
+  /// The title/pill text budget split: the pill gets up to a 35% share,
+  /// never under [pillMin] and never over the available space.
+  double _pillCap(double availableForText, double pillMin) {
+    var cap = availableForText * 0.35;
+    if (cap < pillMin) cap = pillMin;
+    if (cap > availableForText) cap = availableForText;
+    return cap;
+  }
+
+  /// One fit pass: greedy demotion, chip-demotes-last, and the pill cap.
+  _HeaderFit _planFit(BoxConstraints constraints) {
+    final demotable = _demotable;
+    final pinnedCount = actions.length - demotable.length;
+    final overflowVisible = menuItems.isNotEmpty;
+    final chipWidth = _chipBudget;
+    final inlineCount = _inlineCount(
+      demotableCount: demotable.length,
+      pinnedCount: pinnedCount,
+      chipWidth: chipWidth,
+      overflowVisible: overflowVisible,
+      maxWidth: constraints.maxWidth,
+    );
+    // The chip demotes last (issue #225): only when even with every
+    // action in the menu the row still cannot fit it.
+    final chipInline =
+        chip != null &&
+        _widthFor(
+              inline: 0,
+              chipWidth: chipWidth,
+              demotableCount: demotable.length,
+              pinnedCount: pinnedCount,
+              overflowVisible: overflowVisible,
+            ) <=
+            constraints.maxWidth;
+    // The pill never participates in a flex split that could undercut
+    // its icon minimum: it gets all remaining space it may use (35%
+    // share, at least its minimum), and the title absorbs the rest.
+    final fixedForText =
+        _leadingWidth +
+        (chipInline ? chipWidth : 0.0) +
+        pinnedCount * _slot +
+        inlineCount * _slot +
+        _overflowSlot(inlineCount, demotable.length, overflowVisible);
+    final availableForText = constraints.maxWidth - fixedForText;
+    return _HeaderFit(
+      inlineCount: inlineCount,
+      chipInline: chipInline,
+      pillCap: _pillCap(availableForText, _pillMin),
+      overflow: demotable.sublist(inlineCount),
+      showOverflow: inlineCount < demotable.length || overflowVisible,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final strings = FaChatStrings.of(context);
-    final hasProject = projectIcon != null || projectLabel != null;
     return LayoutBuilder(
-      builder: (context, constraints) {
-        final demotable = [
-          for (final action in actions)
-            if (!action.pinned) action,
-        ];
-        final pinnedCount = actions.length - demotable.length;
-        final overflowVisible = menuItems.isNotEmpty;
+      builder: (context, constraints) =>
+          _buildRow(context, FaChatStrings.of(context), _planFit(constraints)),
+    );
+  }
 
-        // Greedy fit: keep as many demotable actions inline as the fixed
-        // content allows, demoting tail-first (secondary before primary).
-        // ponytail: the chip/pill budgets are caps, not measurements — a
-        // render-object fit is the upgrade path if real widths ever drift.
-        var inline = demotable.length;
-        final chipBudget = chip != null ? chipMaxWidth : 0.0;
-        final pillMin = hasProject ? (onProjectTap != null ? 38.0 : 22.0) : 0.0;
-        double widthFor(int n, double chipWidth) =>
-            (leading != null ? _slot : 0) +
-            pillMin +
-            chipWidth +
-            pinnedCount * _slot +
-            n * _slot +
-            ((n < demotable.length || overflowVisible) ? _slot : 0);
-        while (inline > 0 &&
-            widthFor(inline, chipBudget) > constraints.maxWidth) {
-          inline--;
-        }
-        // The chip demotes last (issue #225): only when even with every
-        // action in the menu the row still cannot fit it.
-        final chipInline = chip != null &&
-            widthFor(0, chipBudget) <= constraints.maxWidth;
-        // The pill never participates in a flex split that could undercut
-        // its icon minimum: it gets all remaining space it may use (35%
-        // share, at least its minimum), and the title absorbs the rest.
-        final fixedForText = (leading != null ? _slot : 0) +
-            (chipInline ? chipBudget : 0) +
-            pinnedCount * _slot +
-            inline * _slot +
-            ((inline < demotable.length || overflowVisible) ? _slot : 0);
-        final availableForText = constraints.maxWidth - fixedForText;
-        var pillCap = availableForText * 0.35;
-        if (pillCap < pillMin) pillCap = pillMin;
-        if (pillCap > availableForText) pillCap = availableForText;
-        final overflow = demotable.sublist(inline);
+  /// The row for one fit pass (the [LayoutBuilder] body).
+  Widget _buildRow(
+    BuildContext context,
+    FaChatStrings strings,
+    _HeaderFit fit,
+  ) => Row(
+    children: [
+      ..._leadingRegion(),
+      if (_hasProject)
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: fit.pillCap),
+          child: _projectPill(context),
+        ),
+      _titleRegion(_hasProject),
+      if (fit.chipInline) chip!,
+      ..._actionsRegion(fit),
+      if (fit.showOverflow) _overflowMenu(context, strings, fit),
+    ],
+  );
 
-        return Row(
+  /// The row's leading slot (the sheet's sessions glyph).
+  List<Widget> _leadingRegion() =>
+      leading == null ? const <Widget>[] : [leading!, const SizedBox(width: 4)];
+
+  /// The title slot: ellipsized text, or a spacer when the header has
+  /// neither title nor project identity.
+  Widget _titleRegion(bool hasProject) {
+    if (title == null) {
+      return hasProject ? const SizedBox.shrink() : const Spacer();
+    }
+    return Expanded(
+      flex: hasProject ? 2 : 1,
+      child: Text(
+        title!,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: titleStyle,
+      ),
+    );
+  }
+
+  /// The action group: pinned actions render unconditionally at the head
+  /// (only the demotable tail shrinks), then the inline head of the tail.
+  List<Widget> _actionsRegion(_HeaderFit fit) => [
+    for (final action in actions)
+      if (action.pinned) _barButton(action),
+    for (final action in _demotable.sublist(0, fit.inlineCount))
+      _barButton(action),
+  ];
+
+  /// The ⋮-menu row for the demoted model chip, or null when the chip
+  /// rendered inline (or no tap route exists).
+  PopupMenuItem<String>? _chipMenuItem(FaChatStrings strings, _HeaderFit fit) {
+    if (chip == null || fit.chipInline || onChipTap == null) return null;
+    return PopupMenuItem<String>(
+      value: 'chip',
+      child: Row(
+        children: [
+          Icon(chipMenuIcon, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              chipMenuLabel ?? strings.chatModelPicker,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The ⋮-menu rows for the demoted actions, in demotion order.
+  List<PopupMenuItem<String>> _actionMenuItems(_HeaderFit fit) => [
+    for (var i = 0; i < fit.overflow.length; i++)
+      PopupMenuItem<String>(
+        value: 'action:$i',
+        child: Row(
           children: [
-            if (leading != null) ...[leading!, const SizedBox(width: 4)],
-            if (hasProject)
-              ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: pillCap),
-                child: _projectPill(context),
-              ),
-            if (title != null)
-              Expanded(
-                flex: hasProject ? 2 : 1,
-                child: Text(
-                  title!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: titleStyle,
-                ),
-              )
-            else if (!hasProject)
-              const Spacer(),
-            if (chipInline) chip!,
-            // Pinned actions render unconditionally at the head of the
-            // action group; only the demotable tail shrinks.
-            for (final action in actions)
-              if (action.pinned) _barButton(action),
-            for (final action in demotable.sublist(0, inline))
-              _barButton(action),
-            if (inline < demotable.length || overflowVisible)
-              PopupMenuButton<String>(
-                key: overflowMenuKey,
-                icon: Icon(Icons.more_vert, size: iconSize),
-                tooltip: overflowTooltip ?? strings.chatMoreTooltip,
-                color: menuColor,
-                itemBuilder: (context) => [
-                  // The demoted model chip (issue #225 AC3): when the row
-                  // cannot fit the chip it lands here, so model switching
-                  // stays reachable at any width.
-                  if (chip != null && !chipInline && onChipTap != null)
-                    PopupMenuItem<String>(
-                      value: 'chip',
-                      child: Row(
-                        children: [
-                          Icon(chipMenuIcon, size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              chipMenuLabel ?? strings.chatModelPicker,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  for (var i = 0; i < overflow.length; i++)
-                    PopupMenuItem<String>(
-                      value: 'action:$i',
-                      child: Row(
-                        children: [
-                          if (overflow[i].icon != null) ...[
-                            Icon(overflow[i].icon, size: 20),
-                            const SizedBox(width: 12),
-                          ],
-                          Expanded(child: Text(overflow[i].label)),
-                        ],
-                      ),
-                    ),
-                  ...menuItems,
-                ],
-                onSelected: (value) {
-                  if (value == 'chip') {
-                    onChipTap?.call();
-                  } else if (value.startsWith('action:')) {
-                    overflow[int.parse(value.substring(7))].onPressed
-                        ?.call();
-                  } else {
-                    onMenuSelected?.call(value);
-                  }
-                },
-              ),
+            if (fit.overflow[i].icon != null) ...[
+              Icon(fit.overflow[i].icon, size: 20),
+              const SizedBox(width: 12),
+            ],
+            Expanded(child: Text(fit.overflow[i].label)),
           ],
-        );
-      },
+        ),
+      ),
+  ];
+
+  /// Routes a ⋮ selection: the demoted chip reopens the model picker, an
+  /// `action:N` value fires the demoted action, anything else is a
+  /// menu-only entry.
+  void _onOverflowSelected(String value, _HeaderFit fit) {
+    if (value == 'chip') {
+      onChipTap?.call();
+    } else if (value.startsWith('action:')) {
+      fit.overflow[int.parse(value.substring(7))].onPressed?.call();
+    } else {
+      onMenuSelected?.call(value);
+    }
+  }
+
+  /// The ⋮ overflow menu: the demoted chip (issue #225 AC3), the demoted
+  /// actions, then the host's menu-only entries.
+  Widget _overflowMenu(
+    BuildContext context,
+    FaChatStrings strings,
+    _HeaderFit fit,
+  ) {
+    final chipItem = _chipMenuItem(strings, fit);
+    return PopupMenuButton<String>(
+      key: overflowMenuKey,
+      icon: Icon(Icons.more_vert, size: iconSize),
+      tooltip: overflowTooltip ?? strings.chatMoreTooltip,
+      color: menuColor,
+      itemBuilder: (context) => [
+        ?chipItem,
+        ..._actionMenuItems(fit),
+        ...menuItems,
+      ],
+      onSelected: (value) => _onOverflowSelected(value, fit),
     );
   }
 
@@ -354,4 +474,31 @@ class FaAdaptiveHeader extends StatelessWidget {
       onPressed: action.onPressed,
     );
   }
+}
+
+/// The width-fit outcome for one [FaAdaptiveHeader] layout pass: how many
+/// actions stay inline, whether the chip fits, and what the ⋮ menu carries.
+final class _HeaderFit {
+  const _HeaderFit({
+    required this.inlineCount,
+    required this.chipInline,
+    required this.pillCap,
+    required this.overflow,
+    required this.showOverflow,
+  });
+
+  /// Demotable actions kept inline (the tail demotes first).
+  final int inlineCount;
+
+  /// Whether the model chip renders inline (it demotes last, issue #225).
+  final bool chipInline;
+
+  /// The project pill's max width for this pass.
+  final double pillCap;
+
+  /// The actions demoted into the ⋮ menu, in demotion order.
+  final List<FaHeaderAction> overflow;
+
+  /// Whether the ⋮ button renders at all.
+  final bool showOverflow;
 }

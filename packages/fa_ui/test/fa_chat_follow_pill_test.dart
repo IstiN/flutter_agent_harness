@@ -320,8 +320,7 @@ void main() {
     expect(
       find.text('⌄ 3 new'),
       findsOneWidget,
-      reason:
-          'prepends are not arrivals — the pill counts tail growth only',
+      reason: 'prepends are not arrivals — the pill counts tail growth only',
     );
     expect(find.text('⌄ 28 new'), findsNothing);
   });
@@ -399,5 +398,57 @@ void main() {
       findsNothing,
       reason: 'landing inside the band by wheel re-arms live',
     );
+  });
+
+  testWidgets('re-review: a momentum COAST into the near-bottom band '
+      'relatches live (the drag itself parked beyond the arm)', (tester) async {
+    final service = _FollowTestService()
+      ..msgs = _msgs(30)
+      ..streaming = true;
+    await _pump(tester, service);
+
+    // Park held CLOSE to the ~10% arm band so a coast can re-enter it.
+    await _dragTowardHistory(tester, 160);
+    service.append(2);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('faChatJumpToLivePill')), findsOneWidget);
+
+    // A short flick back toward the tail: its drag updates still park
+    // BEYOND the arm band (held stays held), then the finger lifts and
+    // the momentum coast — non-drag updates — carries the viewport into
+    // the arm band. That landing relatches (E6: coast updates may
+    // relatch, never classify away). Spaced pointer stamps so the
+    // velocity tracker produces a real ballistic.
+    final center = tester.getCenter(find.byType(Scrollable).first);
+    final pointer = TestPointer(7);
+    await tester.sendEventToBinding(
+      pointer.down(center, timeStamp: const Duration(milliseconds: 1000)),
+    );
+    await tester.pump();
+    for (var i = 1; i <= 10; i++) {
+      await tester.sendEventToBinding(
+        pointer.move(
+          center - Offset(0, 6.0 * i),
+          timeStamp: Duration(milliseconds: 1000 + i * 10),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+    await tester.sendEventToBinding(
+      pointer.up(timeStamp: const Duration(milliseconds: 1100)),
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(
+      find.byKey(const ValueKey('faChatJumpToLivePill')),
+      findsNothing,
+      reason: 'the coast landing inside the band relatches live',
+    );
+
+    // Stays live: further arrivals never re-show the pill.
+    service.append(2);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('faChatJumpToLivePill')), findsNothing);
   });
 }

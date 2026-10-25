@@ -221,66 +221,86 @@ class _FaVoicePresetPickerState extends State<FaVoicePresetPicker> {
     final strings = FaUiStrings.of(context);
     final theme = Theme.of(context);
     final value = widget.value;
-    final selected = value == null
-        ? null
-        : widget.presets.where((preset) => preset.id == value).firstOrNull;
-    final items = [
-      for (final preset in widget.presets)
-        DropdownMenuItem(
-          value: preset.id,
-          child: Text(
-            preset.trait == null
-                ? preset.label
-                : '${preset.label} — ${preset.trait}',
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      // A saved voice unknown to the presets stays selectable as-is.
-      if (value != null && value.isNotEmpty && selected == null)
-        DropdownMenuItem(
-          value: value,
-          child: Text(value, overflow: TextOverflow.ellipsis),
-        ),
-    ];
+    final selected = _selected(value);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
-          child: DropdownButtonFormField<String>(
-            // The key re-seeds the FormField when the value changes
-            // programmatically (a model switch replacing the presets).
-            key: ValueKey<String?>(value),
-            initialValue: value == null || value.isEmpty ? null : value,
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: strings.mediaModelsVoiceLabel,
-            ),
-            items: items,
-            onChanged: !widget.enabled
-                ? null
-                : (picked) {
-                    if (picked != null) widget.onChanged(picked);
-                  },
+          child: _dropdown(
+            strings,
+            value: value,
+            items: _items(value, selected),
           ),
         ),
         if (selected?.sampleUrl != null) ...[
           const SizedBox(width: 4),
-          IconButton(
-            onPressed: () => unawaited(_togglePreview(selected!.sampleUrl!)),
-            visualDensity: VisualDensity.compact,
-            color: theme.colorScheme.primary,
-            icon: switch (_previewState) {
-              _PreviewState.loading => const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              _PreviewState.playing => const Icon(Icons.stop, size: 20),
-              _PreviewState.idle => const Icon(Icons.play_arrow, size: 20),
-            },
-          ),
+          _previewButton(theme, selected!),
         ],
       ],
     );
   }
+
+  /// The preset matching [value], or null for unset / free-form voices.
+  FaVoicePreset? _selected(String? value) => value == null
+      ? null
+      : widget.presets.where((preset) => preset.id == value).firstOrNull;
+
+  /// `label — trait` items over the presets; a saved voice unknown to the
+  /// presets stays selectable as a raw extra item.
+  List<DropdownMenuItem<String>> _items(
+    String? value,
+    FaVoicePreset? selected,
+  ) => [
+    for (final preset in widget.presets)
+      DropdownMenuItem(
+        value: preset.id,
+        child: Text(_itemLabel(preset), overflow: TextOverflow.ellipsis),
+      ),
+    if (_keepsRawValue(value, selected))
+      DropdownMenuItem(
+        value: value,
+        child: Text(value!, overflow: TextOverflow.ellipsis),
+      ),
+  ];
+
+  String _itemLabel(FaVoicePreset preset) =>
+      preset.trait == null ? preset.label : '${preset.label} — ${preset.trait}';
+
+  bool _keepsRawValue(String? value, FaVoicePreset? selected) =>
+      value != null && value.isNotEmpty && selected == null;
+
+  Widget _dropdown(
+    FaUiStrings strings, {
+    required String? value,
+    required List<DropdownMenuItem<String>> items,
+  }) => DropdownButtonFormField<String>(
+    // The key re-seeds the FormField when the value changes
+    // programmatically (a model switch replacing the presets).
+    key: ValueKey<String?>(value),
+    initialValue: value == null || value.isEmpty ? null : value,
+    isExpanded: true,
+    decoration: InputDecoration(labelText: strings.mediaModelsVoiceLabel),
+    items: items,
+    onChanged: !widget.enabled
+        ? null
+        : (picked) {
+            if (picked != null) widget.onChanged(picked);
+          },
+  );
+
+  /// The compact play/stop button previewing the selected sample.
+  Widget _previewButton(ThemeData theme, FaVoicePreset selected) => IconButton(
+    onPressed: () => unawaited(_togglePreview(selected.sampleUrl!)),
+    visualDensity: VisualDensity.compact,
+    color: theme.colorScheme.primary,
+    icon: switch (_previewState) {
+      _PreviewState.loading => const SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+      _PreviewState.playing => const Icon(Icons.stop, size: 20),
+      _PreviewState.idle => const Icon(Icons.play_arrow, size: 20),
+    },
+  );
 }

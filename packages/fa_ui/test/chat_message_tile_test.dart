@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -589,5 +590,127 @@ void main() {
     await tester.tap(find.text('Show more'));
     await tester.pump();
     expect(find.text('x' * 2000), findsOneWidget);
+  });
+
+  group('role dispatch + per-theme surfaces (issue #1848 decomposition)', () {
+    Widget themedWrap(Widget child, {bool light = false}) {
+      return FaUiThemeProvider(
+        data: const FaUiTheme(),
+        child: MaterialApp(
+          theme: light ? buildFahThemeLight() : buildFahTheme(),
+          home: Scaffold(body: Center(child: child)),
+        ),
+      );
+    }
+
+    ChatMessageTile tile(
+      FaChatMessage message, {
+      FaDynamicWidgetTileBuilder? dynamicWidgetTileBuilder,
+      bool compact = false,
+    }) => ChatMessageTile(
+      message: message,
+      images: images(),
+      dynamicWidgetTileBuilder: dynamicWidgetTileBuilder,
+      compact: compact,
+    );
+
+    testWidgets('light theme renders the assistant shadow-card look and the '
+        'light tool surface', (tester) async {
+      await tester.pumpWidget(
+        themedWrap(
+          tile(FaChatMessage(role: 'assistant', content: 'light hi')),
+          light: true,
+        ),
+      );
+      expect(find.text('light hi'), findsOneWidget);
+      expect(find.byType(FaAiAvatar), findsOneWidget);
+
+      await tester.pumpWidget(
+        themedWrap(
+          tile(
+            FaChatMessage(role: 'tool', content: 'ok out', toolName: 'bash'),
+          ),
+          light: true,
+        ),
+      );
+      expect(find.textContaining('ok out'), findsOneWidget);
+      expect(find.byIcon(Icons.check), findsOneWidget);
+    });
+
+    testWidgets('an empty assistant message renders as nothing', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        themedWrap(tile(FaChatMessage(role: 'assistant', content: ''))),
+      );
+      expect(find.byType(MarkdownBody), findsNothing);
+      expect(find.byType(FaAiAvatar), findsNothing);
+    });
+
+    testWidgets('a thinking message renders the reasoning row, not a '
+        'bubble', (tester) async {
+      await tester.pumpWidget(
+        themedWrap(tile(FaChatMessage(role: 'thinking', content: 'step one'))),
+      );
+      expect(find.textContaining('step one'), findsOneWidget);
+      expect(find.byType(MarkdownBody), findsNothing);
+    });
+
+    testWidgets('a widget-role message renders the host tile when a builder '
+        'is wired, the system shell row when not', (tester) async {
+      await tester.pumpWidget(
+        themedWrap(
+          tile(
+            FaChatMessage(role: 'widget', content: 'live chip'),
+            dynamicWidgetTileBuilder: (context, message) =>
+                const Text('HOST TILE'),
+          ),
+        ),
+      );
+      expect(find.text('HOST TILE'), findsOneWidget);
+      // The stock system tile did NOT render.
+      expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+
+      await tester.pumpWidget(
+        themedWrap(tile(FaChatMessage(role: 'widget', content: 'echo'))),
+      );
+      // Builder missing → the stock system tile: no tool header, the `$`
+      // echo line instead.
+      expect(find.text('HOST TILE'), findsNothing);
+      expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+      expect(find.textContaining('echo', findRichText: true), findsOneWidget);
+    });
+
+    testWidgets('compact mode right-aligns user bubbles and bottom-pads the '
+        'rest', (tester) async {
+      Future<void> expectCompactAlignment(String role) async {
+        await tester.pumpWidget(
+          themedWrap(
+            tile(FaChatMessage(role: role, content: 'body'), compact: true),
+          ),
+        );
+        final align = find.byType(Align);
+        if (role == 'user') {
+          expect(align, findsOneWidget);
+          expect(tester.widget<Align>(align).alignment, Alignment.centerRight);
+        } else {
+          expect(align, findsNothing);
+        }
+      }
+
+      await expectCompactAlignment('user');
+      await expectCompactAlignment('assistant');
+      await expectCompactAlignment('tool');
+    });
+
+    testWidgets('a system row with no content renders an empty row', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        themedWrap(tile(FaChatMessage(role: 'system', content: ''))),
+      );
+      expect(find.byType(MarkdownBody), findsNothing);
+      expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+    });
   });
 }

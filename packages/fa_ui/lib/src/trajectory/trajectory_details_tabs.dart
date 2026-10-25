@@ -67,217 +67,311 @@ List<TrajectoryDetailsTab> trajectoryDetailTabs(
 }) {
   switch (record) {
     case TrajectorySystemRecord():
-      final blobs = snapshot?.blobs;
-      final promptBlob = record.systemPromptHash == null
-          ? null
-          : blobs?.systemPrompts[record.systemPromptHash];
-      final prevPromptBlob = record.previousSystemPromptHash == null
-          ? null
-          : blobs?.systemPrompts[record.previousSystemPromptHash];
-      final manifestBlob = record.toolManifestHash == null
-          ? null
-          : blobs?.toolManifests[record.toolManifestHash];
-      final prevManifestBlob = record.previousToolManifestHash == null
-          ? null
-          : blobs?.toolManifests[record.previousToolManifestHash];
-      return [
-        TrajectoryDetailsTab(
-          id: 'system-prompt',
-          label: strings.tabSystemPrompt,
-          build: (context) => _TabPage(
-            strings: strings,
-            copyText: promptBlob?.text ?? record.detail,
-            child: promptBlob == null
-                ? (record.detail == null
-                      ? _mutedPage(strings.recordSystemPromptMissing)
-                      : _bounded(
-                          context,
-                          record.detail!,
-                          (context, text) => _markdownPage(context, text),
-                        ))
-                : (prevPromptBlob == null
-                      ? _bounded(
-                          context,
-                          promptBlob.text,
-                          (context, text) => _markdownPage(context, text),
-                        )
-                      : _diffPage(
-                          context,
-                          prevPromptBlob.text,
-                          promptBlob.text,
-                        )),
-          ),
-        ),
-        TrajectoryDetailsTab(
-          id: 'tools',
-          label: strings.tabTools,
-          build: (context) => _TabPage(
-            strings: strings,
-            copyText: manifestBlob == null ? null : _manifestCopy(manifestBlob),
-            child: manifestBlob == null
-                ? (record.activeToolNames == null ||
-                          record.activeToolNames!.isEmpty
-                      ? _mutedPage(strings.recordToolsMissing)
-                      : _bounded(
-                          context,
-                          record.activeToolNames!.join('\n'),
-                          _textPage,
-                        ))
-                : _manifestPage(
-                    context,
-                    manifestBlob,
-                    prevManifestBlob,
-                    strings,
-                  ),
-          ),
-        ),
-      ];
+      return _systemTabs(record, snapshot, strings);
     case TrajectoryCompactedRecord():
-      return [
-        _summaryTab(record, snapshot, strings),
-        if (record.summary.isNotEmpty)
-          TrajectoryDetailsTab(
-            id: 'raw',
-            label: strings.tabRawOutput,
-            build: (context) => _TabPage(
-              strings: strings,
-              copyText: record.summary,
-              child: _bounded(context, record.summary, _textPage),
-            ),
-          ),
-        if (record.hiddenRecordIds != null && resolveHiddenRecords != null)
-          TrajectoryDetailsTab(
-            id: 'hidden',
-            label: strings.tabHiddenRecords,
-            build: (context) => _hiddenRecordsPage(
-              context,
-              record,
-              resolveHiddenRecords,
-              strings,
-            ),
-          ),
-      ];
+      return _compactedTabs(record, snapshot, strings, resolveHiddenRecords);
     case TrajectoryToolRecord():
-      return [
-        _summaryTab(record, snapshot, strings),
-        if (record.argsRaw.isNotEmpty)
-          TrajectoryDetailsTab(
-            id: 'payload',
-            label: strings.tabPayload,
-            build: (context) => _TabPage(
-              strings: strings,
-              copyText: record.argsRaw,
-              child: _bounded(context, _prettyJson(record.argsRaw), _jsonPage),
-            ),
-          ),
-        TrajectoryDetailsTab(
-          id: 'result',
-          label: strings.tabResult,
-          build: (context) => _resultPage(context, record, strings),
-        ),
-        if (_hasSchema(record, snapshot))
-          TrajectoryDetailsTab(
-            id: 'schema',
-            label: strings.tabSchema,
-            build: (context) =>
-                _schemaPage(context, record.name, snapshot, strings),
-          ),
-        if (_hasTiming(record))
-          TrajectoryDetailsTab(
-            id: 'timing',
-            label: strings.tabTiming,
-            build: (context) =>
-                _TabPage(strings: strings, child: _timingPage(record, strings)),
-          ),
-      ];
+      return _toolTabs(record, snapshot, strings);
     case TrajectoryAssistantRecord():
-      final request = record.requestDetail;
-      final pair =
-          record.previousPromptDetail != null && record.promptDetail != null
-          ? (record.previousPromptDetail!, record.promptDetail!)
-          : null;
-      final preview = _previewMarkdown(record);
-      return [
-        _summaryTab(record, snapshot, strings),
-        if (request != null)
-          TrajectoryDetailsTab(
-            id: 'request',
-            label: strings.tabRequest,
-            build: (context) => _requestPage(context, request, strings),
-          ),
-        if (pair != null)
-          TrajectoryDetailsTab(
-            id: 'diff',
-            label: strings.tabDiff,
-            build: (context) => _diffPage(context, pair.$1, pair.$2),
-          ),
-        TrajectoryDetailsTab(
-          id: 'preview',
-          label: strings.tabPreview,
-          build: (context) => preview == null || preview.isEmpty
-              ? _TabPage(
-                  strings: strings,
-                  child: _emptyResponsePage(record, strings),
-                )
-              : _TabPage(
-                  strings: strings,
-                  copyText: preview,
-                  child: _bounded(context, preview, _markdownPage),
-                ),
-        ),
-        TrajectoryDetailsTab(
-          id: 'raw',
-          label: strings.tabRaw,
-          build: (context) {
-            final json = const JsonEncoder.withIndent(
-              '  ',
-            ).convert(_recordJsonMap(record));
-            return _TabPage(
-              strings: strings,
-              copyText: json,
-              child: _bounded(context, json, _jsonPage),
-            );
-          },
-        ),
-        if (_hasTiming(record))
-          TrajectoryDetailsTab(
-            id: 'timing',
-            label: strings.tabTiming,
-            build: (context) =>
-                _TabPage(strings: strings, child: _timingPage(record, strings)),
-          ),
-      ];
+      return _assistantTabs(record, snapshot, strings);
     case TrajectoryUserRecord():
     case TrajectoryContextRecord():
-      final preview = _previewMarkdown(record) ?? '';
-      return [
-        _summaryTab(record, snapshot, strings),
-        if (preview.isNotEmpty)
-          TrajectoryDetailsTab(
-            id: 'preview',
-            label: strings.tabPreview,
-            build: (context) => _TabPage(
-              strings: strings,
-              copyText: preview,
-              child: _bounded(context, preview, _markdownPage),
-            ),
-          ),
-        TrajectoryDetailsTab(
-          id: 'raw',
-          label: strings.tabRaw,
-          build: (context) {
-            final json = const JsonEncoder.withIndent(
-              '  ',
-            ).convert(_recordJsonMap(record));
-            return _TabPage(
-              strings: strings,
-              copyText: json,
-              child: _bounded(context, json, _jsonPage),
-            );
-          },
-        ),
-      ];
+      return _userContextTabs(record, snapshot, strings);
   }
+}
+
+/// Prompt/manifest blob lookup: null hash or a snapshot without the
+/// captured table resolves to nothing (E6).
+TrajectoryPromptBlob? _promptBlobOf(
+  String? hash,
+  TrajectorySnapshot? snapshot,
+) => hash == null ? null : snapshot?.blobs.systemPrompts[hash];
+
+TrajectoryToolManifestBlob? _manifestBlobOf(
+  String? hash,
+  TrajectorySnapshot? snapshot,
+) => hash == null ? null : snapshot?.blobs.toolManifests[hash];
+
+/// System records: [System Prompt, Tools] — both keep explicit empty
+/// statements.
+List<TrajectoryDetailsTab> _systemTabs(
+  TrajectorySystemRecord record,
+  TrajectorySnapshot? snapshot,
+  TrajectoryStrings strings,
+) => [
+  _systemPromptTab(
+    record,
+    _promptBlobOf(record.systemPromptHash, snapshot),
+    _promptBlobOf(record.previousSystemPromptHash, snapshot),
+    strings,
+  ),
+  _systemToolsTab(
+    record,
+    _manifestBlobOf(record.toolManifestHash, snapshot),
+    _manifestBlobOf(record.previousToolManifestHash, snapshot),
+    strings,
+  ),
+];
+
+TrajectoryDetailsTab _systemPromptTab(
+  TrajectorySystemRecord record,
+  TrajectoryPromptBlob? promptBlob,
+  TrajectoryPromptBlob? prevPromptBlob,
+  TrajectoryStrings strings,
+) => TrajectoryDetailsTab(
+  id: 'system-prompt',
+  label: strings.tabSystemPrompt,
+  build: (context) => _TabPage(
+    strings: strings,
+    copyText: promptBlob?.text ?? record.detail,
+    child: promptBlob == null
+        ? _systemPromptInlinePage(context, record, strings)
+        : _systemPromptBlobPage(context, promptBlob, prevPromptBlob),
+  ),
+);
+
+/// In-place prompt detail (no captured blob).
+Widget _systemPromptInlinePage(
+  BuildContext context,
+  TrajectorySystemRecord record,
+  TrajectoryStrings strings,
+) => record.detail == null
+    ? _mutedPage(strings.recordSystemPromptMissing)
+    : _bounded(
+        context,
+        record.detail!,
+        (context, text) => _markdownPage(context, text),
+      );
+
+/// Captured prompt blob, with a previous-version diff when the session
+/// recorded two.
+Widget _systemPromptBlobPage(
+  BuildContext context,
+  TrajectoryPromptBlob promptBlob,
+  TrajectoryPromptBlob? prevPromptBlob,
+) => prevPromptBlob == null
+    ? _bounded(
+        context,
+        promptBlob.text,
+        (context, text) => _markdownPage(context, text),
+      )
+    : _diffPage(context, prevPromptBlob.text, promptBlob.text);
+
+TrajectoryDetailsTab _systemToolsTab(
+  TrajectorySystemRecord record,
+  TrajectoryToolManifestBlob? manifestBlob,
+  TrajectoryToolManifestBlob? prevManifestBlob,
+  TrajectoryStrings strings,
+) => TrajectoryDetailsTab(
+  id: 'tools',
+  label: strings.tabTools,
+  build: (context) => _TabPage(
+    strings: strings,
+    copyText: manifestBlob == null ? null : _manifestCopy(manifestBlob),
+    child: manifestBlob == null
+        ? _systemToolsInlinePage(context, record, strings)
+        : _manifestPage(context, manifestBlob, prevManifestBlob, strings),
+  ),
+);
+
+/// In-place active-tool list (no captured manifest).
+Widget _systemToolsInlinePage(
+  BuildContext context,
+  TrajectorySystemRecord record,
+  TrajectoryStrings strings,
+) => record.activeToolNames == null || record.activeToolNames!.isEmpty
+    ? _mutedPage(strings.recordToolsMissing)
+    : _bounded(context, record.activeToolNames!.join('\n'), _textPage);
+
+/// Compacted records: [Summary, Raw Output?, Hidden Records?].
+List<TrajectoryDetailsTab> _compactedTabs(
+  TrajectoryCompactedRecord record,
+  TrajectorySnapshot? snapshot,
+  TrajectoryStrings strings,
+  Future<List<TrajectoryHiddenRecordPreview>> Function(
+    TrajectoryCompactedRecord record,
+  )?
+  resolveHiddenRecords,
+) => [
+  _summaryTab(record, snapshot, strings),
+  if (record.summary.isNotEmpty) _compactedRawTab(record, strings),
+  if (record.hiddenRecordIds != null && resolveHiddenRecords != null)
+    _hiddenTab(record, resolveHiddenRecords, strings),
+];
+
+TrajectoryDetailsTab _compactedRawTab(
+  TrajectoryCompactedRecord record,
+  TrajectoryStrings strings,
+) => TrajectoryDetailsTab(
+  id: 'raw',
+  label: strings.tabRawOutput,
+  build: (context) => _TabPage(
+    strings: strings,
+    copyText: record.summary,
+    child: _bounded(context, record.summary, _textPage),
+  ),
+);
+
+TrajectoryDetailsTab _hiddenTab(
+  TrajectoryCompactedRecord record,
+  Future<List<TrajectoryHiddenRecordPreview>> Function(
+    TrajectoryCompactedRecord record,
+  )
+  resolveHiddenRecords,
+  TrajectoryStrings strings,
+) => TrajectoryDetailsTab(
+  id: 'hidden',
+  label: strings.tabHiddenRecords,
+  build: (context) =>
+      _hiddenRecordsPage(context, record, resolveHiddenRecords, strings),
+);
+
+/// Tool records: [Summary, Payload?, Result, Schema?, Timing?].
+List<TrajectoryDetailsTab> _toolTabs(
+  TrajectoryToolRecord record,
+  TrajectorySnapshot? snapshot,
+  TrajectoryStrings strings,
+) => [
+  _summaryTab(record, snapshot, strings),
+  if (record.argsRaw.isNotEmpty) _payloadTab(record, strings),
+  TrajectoryDetailsTab(
+    id: 'result',
+    label: strings.tabResult,
+    build: (context) => _resultPage(context, record, strings),
+  ),
+  if (_hasSchema(record, snapshot))
+    TrajectoryDetailsTab(
+      id: 'schema',
+      label: strings.tabSchema,
+      build: (context) => _schemaPage(context, record.name, snapshot, strings),
+    ),
+  if (_hasTiming(record)) _timingTab(record, strings),
+];
+
+TrajectoryDetailsTab _payloadTab(
+  TrajectoryToolRecord record,
+  TrajectoryStrings strings,
+) => TrajectoryDetailsTab(
+  id: 'payload',
+  label: strings.tabPayload,
+  build: (context) => _TabPage(
+    strings: strings,
+    copyText: record.argsRaw,
+    child: _bounded(context, _prettyJson(record.argsRaw), _jsonPage),
+  ),
+);
+
+/// Shared Timing tab for timed records.
+TrajectoryDetailsTab _timingTab(
+  TrajectoryRecord record,
+  TrajectoryStrings strings,
+) => TrajectoryDetailsTab(
+  id: 'timing',
+  label: strings.tabTiming,
+  build: (context) =>
+      _TabPage(strings: strings, child: _timingPage(record, strings)),
+);
+
+/// Assistant records: [Summary, Request?, Diff?, Preview, Raw, Timing?].
+List<TrajectoryDetailsTab> _assistantTabs(
+  TrajectoryAssistantRecord record,
+  TrajectorySnapshot? snapshot,
+  TrajectoryStrings strings,
+) {
+  final pair = _promptPair(record);
+  return [
+    _summaryTab(record, snapshot, strings),
+    if (record.requestDetail != null)
+      _requestTab(record.requestDetail!, strings),
+    if (pair != null) _diffTab(pair, strings),
+    _assistantPreviewTab(record, strings),
+    _rawTab(record, strings),
+    if (_hasTiming(record)) _timingTab(record, strings),
+  ];
+}
+
+/// The Diff tab keys off a prompt pair (before vs after).
+(String, String)? _promptPair(TrajectoryAssistantRecord record) =>
+    record.previousPromptDetail != null && record.promptDetail != null
+    ? (record.previousPromptDetail!, record.promptDetail!)
+    : null;
+
+TrajectoryDetailsTab _requestTab(
+  TrajectoryRequestDetail request,
+  TrajectoryStrings strings,
+) => TrajectoryDetailsTab(
+  id: 'request',
+  label: strings.tabRequest,
+  build: (context) => _requestPage(context, request, strings),
+);
+
+TrajectoryDetailsTab _diffTab(
+  (String, String) pair,
+  TrajectoryStrings strings,
+) => TrajectoryDetailsTab(
+  id: 'diff',
+  label: strings.tabDiff,
+  build: (context) => _diffPage(context, pair.$1, pair.$2),
+);
+
+TrajectoryDetailsTab _assistantPreviewTab(
+  TrajectoryAssistantRecord record,
+  TrajectoryStrings strings,
+) {
+  final preview = _previewMarkdown(record);
+  return TrajectoryDetailsTab(
+    id: 'preview',
+    label: strings.tabPreview,
+    build: (context) => preview == null || preview.isEmpty
+        ? _TabPage(strings: strings, child: _emptyResponsePage(record, strings))
+        : _TabPage(
+            strings: strings,
+            copyText: preview,
+            child: _bounded(context, preview, _markdownPage),
+          ),
+  );
+}
+
+/// Raw view shared by assistant and user/context records.
+TrajectoryDetailsTab _rawTab(
+  TrajectoryRecord record,
+  TrajectoryStrings strings,
+) => TrajectoryDetailsTab(
+  id: 'raw',
+  label: strings.tabRaw,
+  build: (context) {
+    final json = const JsonEncoder.withIndent(
+      '  ',
+    ).convert(_recordJsonMap(record));
+    return _TabPage(
+      strings: strings,
+      copyText: json,
+      child: _bounded(context, json, _jsonPage),
+    );
+  },
+);
+
+/// User/context records: [Summary, Preview?, Raw].
+List<TrajectoryDetailsTab> _userContextTabs(
+  TrajectoryRecord record,
+  TrajectorySnapshot? snapshot,
+  TrajectoryStrings strings,
+) {
+  final preview = _previewMarkdown(record) ?? '';
+  return [
+    _summaryTab(record, snapshot, strings),
+    if (preview.isNotEmpty)
+      TrajectoryDetailsTab(
+        id: 'preview',
+        label: strings.tabPreview,
+        build: (context) => _TabPage(
+          strings: strings,
+          copyText: preview,
+          child: _bounded(context, preview, _markdownPage),
+        ),
+      ),
+    _rawTab(record, strings),
+  ];
 }
 
 /// Tab set for a captured provider request: Summary, Usage, Timing.
@@ -331,70 +425,96 @@ List<TrajectoryPromptDiffLine> trajectoryPromptDiffLines(
   final beforeLines = before.split('\n');
   final afterLines = after.split('\n');
   final shared = math.min(beforeLines.length, afterLines.length);
+  final prefix = _commonPrefix(beforeLines, afterLines, shared);
+  final suffix = _commonSuffix(beforeLines, afterLines, shared, prefix);
+  if (prefix == beforeLines.length && prefix == afterLines.length) {
+    return const [];
+  }
+  return [
+    ..._leadingContext(beforeLines, prefix),
+    ..._removedLines(beforeLines, prefix, suffix),
+    ..._addedLines(afterLines, prefix, suffix),
+    ..._trailingContext(beforeLines, suffix),
+  ];
+}
+
+int _commonPrefix(
+  List<String> beforeLines,
+  List<String> afterLines,
+  int shared,
+) {
   var prefix = 0;
   while (prefix < shared && beforeLines[prefix] == afterLines[prefix]) {
     prefix++;
   }
+  return prefix;
+}
+
+int _commonSuffix(
+  List<String> beforeLines,
+  List<String> afterLines,
+  int shared,
+  int prefix,
+) {
   var suffix = 0;
   while (suffix < shared - prefix &&
       beforeLines[beforeLines.length - 1 - suffix] ==
           afterLines[afterLines.length - 1 - suffix]) {
     suffix++;
   }
-  if (prefix == beforeLines.length && prefix == afterLines.length) {
-    return const [];
-  }
-  final lines = <TrajectoryPromptDiffLine>[];
-  if (prefix > 3) {
-    lines.add(
-      const TrajectoryPromptDiffLine(
-        TrajectoryPromptDiffLineKind.ellipsis,
-        '⋯',
-      ),
-    );
-  }
-  for (var i = math.max(0, prefix - 3); i < prefix; i++) {
-    lines.add(
-      TrajectoryPromptDiffLine(
-        TrajectoryPromptDiffLineKind.context,
-        beforeLines[i],
-      ),
-    );
-  }
-  for (var i = prefix; i < beforeLines.length - suffix; i++) {
-    lines.add(
-      TrajectoryPromptDiffLine(
-        TrajectoryPromptDiffLineKind.removed,
-        '- ${beforeLines[i]}',
-      ),
-    );
-  }
-  for (var i = prefix; i < afterLines.length - suffix; i++) {
-    lines.add(
-      TrajectoryPromptDiffLine(
-        TrajectoryPromptDiffLineKind.added,
-        '+ ${afterLines[i]}',
-      ),
-    );
-  }
-  if (suffix > 3) {
-    lines.add(
-      const TrajectoryPromptDiffLine(
-        TrajectoryPromptDiffLineKind.ellipsis,
-        '⋯',
-      ),
-    );
-  }
-  for (var i = 0; i < math.min(3, suffix); i++) {
-    lines.add(
-      TrajectoryPromptDiffLine(
-        TrajectoryPromptDiffLineKind.context,
-        beforeLines[beforeLines.length - suffix + i],
-      ),
-    );
-  }
-  return lines;
+  return suffix;
 }
+
+/// Up to 3 context lines before the change, with an ellipsis marker where
+/// more were collapsed.
+List<TrajectoryPromptDiffLine> _leadingContext(
+  List<String> lines,
+  int prefix,
+) => [
+  if (prefix > 3)
+    const TrajectoryPromptDiffLine(TrajectoryPromptDiffLineKind.ellipsis, '⋯'),
+  for (var i = math.max(0, prefix - 3); i < prefix; i++)
+    TrajectoryPromptDiffLine(TrajectoryPromptDiffLineKind.context, lines[i]),
+];
+
+List<TrajectoryPromptDiffLine> _removedLines(
+  List<String> lines,
+  int prefix,
+  int suffix,
+) => [
+  for (var i = prefix; i < lines.length - suffix; i++)
+    TrajectoryPromptDiffLine(
+      TrajectoryPromptDiffLineKind.removed,
+      '- ${lines[i]}',
+    ),
+];
+
+List<TrajectoryPromptDiffLine> _addedLines(
+  List<String> lines,
+  int prefix,
+  int suffix,
+) => [
+  for (var i = prefix; i < lines.length - suffix; i++)
+    TrajectoryPromptDiffLine(
+      TrajectoryPromptDiffLineKind.added,
+      '+ ${lines[i]}',
+    ),
+];
+
+/// Up to 3 context lines after the change, with an ellipsis marker where
+/// more were collapsed.
+List<TrajectoryPromptDiffLine> _trailingContext(
+  List<String> lines,
+  int suffix,
+) => [
+  if (suffix > 3)
+    const TrajectoryPromptDiffLine(TrajectoryPromptDiffLineKind.ellipsis, '⋯'),
+  for (var i = 0; i < math.min(3, suffix); i++)
+    TrajectoryPromptDiffLine(
+      TrajectoryPromptDiffLineKind.context,
+      lines[lines.length - suffix + i],
+    ),
+];
 
 // Pages ----------------------------------------------------------------------
 
@@ -767,96 +887,132 @@ Widget _summaryPage(
   TrajectoryRecord record,
   TrajectorySnapshot? snapshot,
   TrajectoryStrings strings,
-) {
-  final errorColor = Theme.of(context).colorScheme.error;
-  final rows = <Widget>[
-    _DetailRow(strings.detailsStatus, _statusLabel(record, strings)),
-  ];
-  switch (record) {
-    case TrajectoryAssistantRecord():
-      final provider = record.provider;
-      final model = record.model;
-      if (provider != null) {
-        rows.add(_DetailRow(strings.detailsProvider, provider));
-      }
-      if (model != null) {
-        rows.add(_DetailRow(strings.detailsModel, model));
-      }
-      rows.add(
-        _DetailRow(strings.detailsSource, '${record.sourceBlocks.length}'),
-      );
-      rows.add(
+) => _listPage([
+  _DetailRow(strings.detailsStatus, _statusLabel(record, strings)),
+  ..._summaryExtraRows(
+    context,
+    record,
+    snapshot,
+    strings,
+    Theme.of(context).colorScheme.error,
+  ),
+]);
+
+/// Per-kind rows below the status row.
+List<Widget> _summaryExtraRows(
+  BuildContext context,
+  TrajectoryRecord record,
+  TrajectorySnapshot? snapshot,
+  TrajectoryStrings strings,
+  Color errorColor,
+) => switch (record) {
+  TrajectoryAssistantRecord() => _assistantSummaryRows(
+    record,
+    snapshot,
+    strings,
+    errorColor,
+  ),
+  TrajectoryToolRecord(:final isError) =>
+    isError
+        ? [_DetailRow(strings.detailsError, record.result, color: errorColor)]
+        : const [],
+  // Unreachable via the tab sets (system records carry no Summary tab);
+  // kept for record-kind completeness.
+  TrajectorySystemRecord() => _systemErrorRows(
+    record.errorCode,
+    record.errorMessage,
+    strings,
+    errorColor,
+  ),
+  _ => const [],
+};
+
+List<Widget> _systemErrorRows(
+  String? errorCode,
+  String? errorMessage,
+  TrajectoryStrings strings,
+  Color errorColor,
+) => errorCode != null || errorMessage != null
+    ? [
         _DetailRow(
-          strings.detailsToolCalls,
-          '${_countToolCalls(record.sourceBlocks) + _countToolCalls(record.outputBlocks)}',
+          strings.detailsError,
+          _errorMessage(errorCode, errorMessage, strings),
+          color: errorColor,
         ),
-      );
-      if (record.isError ?? false) {
-        rows.add(
-          _DetailRow(
-            strings.detailsError,
-            _errorMessage(record.errorCode, record.errorMessage, strings),
-            color: errorColor,
-          ),
-        );
-      }
-      final usage = record.usage ?? _usageFromFlat(record);
-      if (usage != null) {
-        final reasoning = usage.reasoning;
-        rows.add(
-          _DetailRow(
-            strings.usageOutput,
-            strings.unitTokens('${usage.output}'),
-          ),
-        );
-        if (reasoning != null) {
-          rows.add(
-            _DetailRow(
-              strings.usageReasoning,
-              strings.unitTokens('$reasoning'),
-            ),
-          );
-          rows.add(
-            _DetailRow(
-              strings.usageContent,
-              strings.unitTokens('${math.max(0, usage.output - reasoning)}'),
-            ),
-          );
-        }
-      }
-      final request = snapshot == null
-          ? null
-          : _matchingRequest(snapshot, record.turn, record.step);
-      if (request != null) {
-        rows.add(
-          _DetailRow(
-            strings.detailsHierarchy,
-            strings.requestLabel(request.seq),
-          ),
-        );
-      }
-    case TrajectoryToolRecord():
-      if (record.isError) {
-        rows.add(
-          _DetailRow(strings.detailsError, record.result, color: errorColor),
-        );
-      }
-    case TrajectorySystemRecord():
-      if (record.errorCode != null || record.errorMessage != null) {
-        rows.add(
-          _DetailRow(
-            strings.detailsError,
-            _errorMessage(record.errorCode, record.errorMessage, strings),
-            color: errorColor,
-          ),
-        );
-      }
-    case TrajectoryCompactedRecord() ||
-        TrajectoryUserRecord() ||
-        TrajectoryContextRecord():
-      break;
-  }
-  return _listPage(rows);
+      ]
+    : const [];
+
+List<Widget> _assistantSummaryRows(
+  TrajectoryAssistantRecord record,
+  TrajectorySnapshot? snapshot,
+  TrajectoryStrings strings,
+  Color errorColor,
+) => [
+  ..._assistantIdentityRows(record, strings),
+  _DetailRow(strings.detailsSource, '${record.sourceBlocks.length}'),
+  _DetailRow(
+    strings.detailsToolCalls,
+    '${_countToolCalls(record.sourceBlocks) + _countToolCalls(record.outputBlocks)}',
+  ),
+  ..._assistantErrorRow(record, strings, errorColor),
+  ..._assistantUsageRows(record, strings),
+  ..._assistantHierarchyRow(record, snapshot, strings),
+];
+
+List<Widget> _assistantIdentityRows(
+  TrajectoryAssistantRecord record,
+  TrajectoryStrings strings,
+) => [
+  if (record.provider != null)
+    _DetailRow(strings.detailsProvider, record.provider!),
+  if (record.model != null) _DetailRow(strings.detailsModel, record.model!),
+];
+
+List<Widget> _assistantErrorRow(
+  TrajectoryAssistantRecord record,
+  TrajectoryStrings strings,
+  Color errorColor,
+) => (record.isError ?? false)
+    ? [
+        _DetailRow(
+          strings.detailsError,
+          _errorMessage(record.errorCode, record.errorMessage, strings),
+          color: errorColor,
+        ),
+      ]
+    : const [];
+
+List<Widget> _assistantUsageRows(
+  TrajectoryAssistantRecord record,
+  TrajectoryStrings strings,
+) {
+  final usage = record.usage ?? _usageFromFlat(record);
+  if (usage == null) return const [];
+  final reasoning = usage.reasoning;
+  return [
+    _DetailRow(strings.usageOutput, strings.unitTokens('${usage.output}')),
+    if (reasoning != null) ...[
+      _DetailRow(strings.usageReasoning, strings.unitTokens('$reasoning')),
+      _DetailRow(
+        strings.usageContent,
+        strings.unitTokens('${math.max(0, usage.output - reasoning)}'),
+      ),
+    ],
+  ];
+}
+
+List<Widget> _assistantHierarchyRow(
+  TrajectoryAssistantRecord record,
+  TrajectorySnapshot? snapshot,
+  TrajectoryStrings strings,
+) {
+  final request = snapshot == null
+      ? null
+      : _matchingRequest(snapshot, record.turn, record.step);
+  if (request == null) return const [];
+  return [
+    _DetailRow(strings.detailsHierarchy, strings.requestLabel(request.seq)),
+  ];
 }
 
 Widget _requestUsagePage(
@@ -1285,34 +1441,42 @@ String _statusLabel(TrajectoryRecord record, TrajectoryStrings strings) =>
 enum _RecordStatus { failed, pending, completed }
 
 _RecordStatus _statusOf(TrajectoryRecord record) => switch (record) {
-  TrajectoryAssistantRecord(
-    :final isError,
-    :final completedTime,
-    :final stepStartTime,
-  ) =>
-    isError ?? false
-        ? _RecordStatus.failed
-        : completedTime == null && stepStartTime != null
-        ? _RecordStatus.pending
-        : _RecordStatus.completed,
-  TrajectoryToolRecord(:final isError, :final result) =>
-    isError
-        ? _RecordStatus.failed
-        : result.isEmpty
-        ? _RecordStatus.pending
-        : _RecordStatus.completed,
-  TrajectoryCompactedRecord(:final interrupted, :final timeSeconds) =>
-    interrupted
-        ? _RecordStatus.failed
-        : timeSeconds == null
-        ? _RecordStatus.pending
-        : _RecordStatus.completed,
-  TrajectorySystemRecord(:final errorCode, :final errorMessage) =>
-    errorCode != null || errorMessage != null
-        ? _RecordStatus.failed
-        : _RecordStatus.completed,
+  TrajectoryAssistantRecord() => _assistantStatus(record),
+  TrajectoryToolRecord() => _toolStatus(record),
+  TrajectoryCompactedRecord() => _compactedStatus(record),
+  TrajectorySystemRecord() => _systemStatus(record),
   _ => _RecordStatus.completed,
 };
+
+/// Failed on error; pending while a step started but never completed.
+_RecordStatus _assistantStatus(TrajectoryAssistantRecord record) {
+  if (record.isError ?? false) return _RecordStatus.failed;
+  if (record.completedTime == null && record.stepStartTime != null) {
+    return _RecordStatus.pending;
+  }
+  return _RecordStatus.completed;
+}
+
+/// Failed on error; pending until a result arrives.
+_RecordStatus _toolStatus(TrajectoryToolRecord record) => record.isError
+    ? _RecordStatus.failed
+    : record.result.isEmpty
+    ? _RecordStatus.pending
+    : _RecordStatus.completed;
+
+/// Failed when interrupted; pending until a duration is recorded.
+_RecordStatus _compactedStatus(TrajectoryCompactedRecord record) =>
+    record.interrupted
+    ? _RecordStatus.failed
+    : record.timeSeconds == null
+    ? _RecordStatus.pending
+    : _RecordStatus.completed;
+
+/// Failed on a turn-end error.
+_RecordStatus _systemStatus(TrajectorySystemRecord record) =>
+    record.errorCode != null || record.errorMessage != null
+    ? _RecordStatus.failed
+    : _RecordStatus.completed;
 
 String _requestStatusLabel(
   TrajectoryRequestStatus status,

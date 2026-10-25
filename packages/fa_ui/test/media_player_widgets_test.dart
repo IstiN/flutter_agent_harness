@@ -410,6 +410,100 @@ void main() {
       expect(find.byIcon(Icons.volume_off), findsOneWidget);
     });
   });
+
+  group('showFahMediaDialog', () {
+    Future<void> openDialog(
+      WidgetTester tester, {
+      required SandboxMediaKind kind,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => Center(
+                child: TextButton(
+                  onPressed: () => showFahMediaDialog(
+                    context,
+                    bytes: Future.value(Uint8List(4)),
+                    kind: kind,
+                    audioControllerFactory: (bytes) => _FakeAudioController(
+                      duration: const Duration(seconds: 9),
+                    ),
+                    videoControllerFactory: (path, bytes) =>
+                        _FakeVideoController(
+                          duration: const Duration(seconds: 9),
+                          position: const Duration(seconds: 1),
+                          surface: const ColoredBox(
+                            key: _surfaceKey,
+                            color: Color(0xFF223344),
+                            child: SizedBox(width: 320, height: 180),
+                          ),
+                        ),
+                  ),
+                  child: const Text('open media'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open media'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('audio kind opens the dialog with the inline audio player', (
+      tester,
+    ) async {
+      await openDialog(tester, kind: SandboxMediaKind.audio);
+
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.byType(SandboxAudioPlayer), findsOneWidget);
+      expect(find.byType(SandboxVideoPlayer), findsNothing);
+      expect(find.text('0:00 / 0:09'), findsOneWidget);
+      // The audio dialog is the narrower of the two caps.
+      final box = tester.widget<ConstrainedBox>(
+        find
+            .ancestor(
+              of: find.byType(SandboxAudioPlayer),
+              matching: find.byType(ConstrainedBox),
+            )
+            .first,
+      );
+      expect(box.constraints.maxWidth, 360);
+    });
+
+    testWidgets('video kind opens the dialog with the inline video player', (
+      tester,
+    ) async {
+      await openDialog(tester, kind: SandboxMediaKind.video);
+
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.byType(SandboxVideoPlayer), findsOneWidget);
+      expect(find.byType(SandboxAudioPlayer), findsNothing);
+      expect(find.byKey(_surfaceKey), findsOneWidget);
+      final box = tester.widget<ConstrainedBox>(
+        find
+            .ancestor(
+              of: find.byType(SandboxVideoPlayer),
+              matching: find.byType(ConstrainedBox),
+            )
+            .first,
+      );
+      expect(box.constraints.maxWidth, 480);
+    });
+
+    testWidgets('tapping the modal barrier dismisses the dialog', (
+      tester,
+    ) async {
+      await openDialog(tester, kind: SandboxMediaKind.audio);
+      expect(find.byType(Dialog), findsOneWidget);
+
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing);
+      expect(find.byType(SandboxAudioPlayer), findsNothing);
+    });
+  });
 }
 
 /// Bytes that never resolve — keeps the player in its loading state.

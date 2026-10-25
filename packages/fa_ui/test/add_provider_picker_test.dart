@@ -7,6 +7,40 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// Stub connect page: [buildStubOnDevicePage] renders one button that
+/// applies a canned config and one that cancels — the seam the picker's
+/// on-device tile drives (issue #1848 tier-2 branch coverage).
+Widget buildStubOnDevicePage(
+  BuildContext context,
+  Future<void> Function(FaChatModelConfig config) onApply,
+) => Scaffold(
+  body: Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text('stub on-device connect page'),
+        TextButton(
+          key: const ValueKey('applyConfig'),
+          onPressed: () => onApply(
+            const FaChatModelConfig(
+              providerKind: 'webllm-on-device',
+              modelId: 'local-model',
+              baseUrl: '',
+              apiKey: '',
+            ),
+          ),
+          child: const Text('apply'),
+        ),
+        TextButton(
+          key: const ValueKey('cancelConfig'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('cancel'),
+        ),
+      ],
+    ),
+  ),
+);
+
 void main() {
   test('addProviderPresetEnabled follows the catalog visibility rules', () {
     // ChatGPT Codex shipped (b6b85c66 unhid it): the catalog marks it
@@ -298,6 +332,73 @@ void main() {
     );
     expect(registry.providers, hasLength(1));
   });
+
+  /// Scrolls the lazy tile list to [tileName] and taps it, returning the
+  /// editor the tap pushed.
+  Future<ProviderEditorPage> openEditor(
+    WidgetTester tester,
+    String tileName,
+  ) async {
+    await tester.scrollUntilVisible(
+      find.text(tileName),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(tileName));
+    await tester.pumpAndSettle();
+    return tester.widget<ProviderEditorPage>(find.byType(ProviderEditorPage));
+  }
+
+  // Issue #1848 (preset-matcher decomposition): every keyed tile opens the
+  // editor seeded with ITS preset — preset mode for the ProviderPreset-
+  // backed quick-adds, editable prefill for the rest.
+  for (final mapping in const {
+    'OpenRouter': ProviderPreset.openrouter,
+    'Ollama Cloud': ProviderPreset.ollamaCloud,
+    'Google Gemini': ProviderPreset.gemini,
+    'DIAL': ProviderPreset.dial,
+    'MiniMax': ProviderPreset.minimax,
+  }.entries) {
+    testWidgets('the ${mapping.key} tile opens the editor in '
+        '${mapping.value.name} preset mode', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: AddProviderPresetPickerPage()),
+      );
+      final editor = await openEditor(tester, mapping.key);
+      expect(editor.preset, mapping.value);
+    });
+  }
+
+  for (final preset in defaultAddProviderPresets.where(
+    (p) => const ['openai', 'anthropic', 'kimi', 'zai'].contains(p.key),
+  )) {
+    testWidgets('the ${preset.name} tile opens the editor with an editable '
+        'prefill and no preset', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: AddProviderPresetPickerPage()),
+      );
+      final editor = await openEditor(tester, preset.name);
+      expect(editor.preset, isNull, reason: preset.name);
+      expect(editor.prefillBaseUrl, preset.baseUrl, reason: preset.name);
+      expect(editor.prefillName, preset.name, reason: preset.name);
+    });
+  }
+
+  testWidgets('a cancelled keyed add keeps the picker open and lands '
+      'nothing', (tester) async {
+    final registry = ProviderRegistry.inMemory();
+    await tester.pumpWidget(
+      MaterialApp(home: AddProviderPresetPickerPage(registry: registry)),
+    );
+    await openEditor(tester, 'OpenRouter');
+    // The editor pops with null (cancel) — the picker stays, no entry.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(ProviderEditorPage), findsNothing);
+    expect(find.byType(AddProviderPresetPickerPage), findsOneWidget);
+    expect(registry.providers, isEmpty);
+  });
 }
 
 /// A quota adapter that counts its fetches (the probe contract).
@@ -311,4 +412,67 @@ class _CountingQuotaAdapter implements QuotaAdapter {
   }
 }
 
-void _noop() {}
+void _noop() {
+  testWidgets('an on-device tile pushes its connect page and lands the '
+      'config through onOnDeviceConnected', (tester) async {
+    const config = FaChatModelConfig(
+      providerKind: 'webllm-on-device',
+      modelId: 'local-model',
+      baseUrl: '',
+      apiKey: '',
+    );
+    FaChatModelConfig? connected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AddProviderPresetPickerPage(
+          onDeviceRoutes: [
+            const FaOnDeviceRoute(
+              label: 'WebLLM (local)',
+              pageBuilder: buildStubOnDevicePage,
+            ),
+          ],
+          onOnDeviceConnected: (c) => connected = c,
+        ),
+      ),
+    );
+    expect(find.text('WebLLM (local)'), findsOneWidget);
+    expect(find.text('Runs on this device — download once'), findsOneWidget);
+
+    await tester.tap(find.text('WebLLM (local)'));
+    await tester.pumpAndSettle();
+    expect(find.text('stub on-device connect page'), findsOneWidget);
+
+    // The connect page applies the config: the picker pops back to the
+    // tile, reports the config and pops itself with `true`.
+    await tester.tap(find.byKey(const ValueKey('applyConfig')));
+    await tester.pumpAndSettle();
+    expect(connected, same(config));
+    expect(find.text('WebLLM (local)'), findsNothing);
+    expect(find.text('stub on-device connect page'), findsNothing);
+  });
+
+  testWidgets('cancelling the on-device connect page keeps the picker up '
+      'and reports nothing', (tester) async {
+    var connected = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AddProviderPresetPickerPage(
+          onDeviceRoutes: [
+            const FaOnDeviceRoute(
+              label: 'Gemma (local)',
+              pageBuilder: buildStubOnDevicePage,
+            ),
+          ],
+          onOnDeviceConnected: (_) => connected++,
+        ),
+      ),
+    );
+    await tester.tap(find.text('Gemma (local)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('cancelConfig')));
+    await tester.pumpAndSettle();
+    expect(connected, 0);
+    expect(find.text('Gemma (local)'), findsOneWidget);
+    expect(find.text('stub on-device connect page'), findsNothing);
+  });
+}
