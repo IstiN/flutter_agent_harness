@@ -437,9 +437,7 @@ final class HubPluginHost implements FahPlugin {
   bool _throttleRuntimeDial() {
     final notBefore = _runtimeConnectNotBefore;
     if (notBefore != null && DateTime.now().isBefore(notBefore)) return true;
-    _runtimeConnectNotBefore = DateTime.now().add(
-      const Duration(seconds: 10),
-    );
+    _runtimeConnectNotBefore = DateTime.now().add(const Duration(seconds: 10));
     return false;
   }
 
@@ -520,9 +518,7 @@ final class HubPluginHost implements FahPlugin {
   /// has not flipped `connected` yet (regression: network_wizard_test
   /// saw two scoped connects for one join).
   void _markChannelDialed() {
-    _runtimeConnectNotBefore = DateTime.now().add(
-      const Duration(seconds: 10),
-    );
+    _runtimeConnectNotBefore = DateTime.now().add(const Duration(seconds: 10));
   }
 
   /// Dials [normalized] with the process-local enrolled credential on a
@@ -1030,10 +1026,7 @@ final class HubPluginHost implements FahPlugin {
         await stateFile.parent.create(recursive: true);
       }
       await stateFile.writeAsString(
-        jsonEncode({
-          'masterSecret': password,
-          'clients': <String, String>{},
-        }),
+        jsonEncode({'masterSecret': password, 'clients': <String, String>{}}),
       );
       await Process.run('chmod', ['600', stateFile.path]);
       context.io.writeln('hub password saved to ${stateFile.path}');
@@ -1365,10 +1358,7 @@ final class HubPluginHost implements FahPlugin {
   /// the TUI prompt show it as the default): reconnecting to the
   /// configured hub is an Enter away, and a stale port is easy to edit
   /// in place. Null = cancelled.
-  Future<String?> _menuPromptHost(
-    PluginAskLine ask,
-    String? currentUrl,
-  ) async {
+  Future<String?> _menuPromptHost(PluginAskLine ask, String? currentUrl) async {
     final hostInput = await ask(
       currentUrl != null
           ? 'hub host (empty = $currentUrl): '
@@ -1555,186 +1545,202 @@ final class HubPluginHost implements FahPlugin {
   /// The `dap_*` tools: status/peers are read-only; dm/invite/connect
   /// reach the network and are gated at the exec tier (like MCP tools).
   List<AgentTool> _dapTools() => [
-    AgentTool(
-      name: 'dap_status',
-      label: 'dap_status',
-      tier: ApprovalTier.read,
-      description:
-          'Show the DAP hub connection: our agent id, display name, hub '
-          'url, connected state, joined channels, and hello/welcome '
-          'handshake counters.',
-      parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
-      execute: (arguments, cancelToken, onUpdate) async {
-        final status = await _hub.status();
-        return ToolExecutionResult(
-          content: [
-            TextContent(
-              text:
-                  'agentId: ${status.agentId ?? '-'}\n'
-                  'name: ${status.name ?? '-'}\n'
-                  'url: ${status.url ?? '-'}\n'
-                  'connected: ${status.connected}\n'
-                  'channels: '
-                  '${status.channels.isEmpty ? '-' : status.channels.join(', ')}\n'
-                  'handshakes: ${status.hellos} hello(s), '
-                  '${status.welcomes} welcome(s)',
-            ),
-          ],
-        );
-      },
-    ),
-    AgentTool(
-      name: 'dap_peers',
-      label: 'dap_peers',
-      tier: ApprovalTier.read,
-      description:
-          'List ONLINE peers known to the DAP hub. Your own entry is '
-          'included and flagged self — do not DM yourself. Use the ids '
-          'from this list as dap_dm recipients.',
-      parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
-      execute: (arguments, cancelToken, onUpdate) async {
-        final peers = await _hub.peers();
-        final text = peers.isEmpty
-            ? 'no peers on the hub'
-            : [
-                for (final peer in peers)
-                  '${peer.agentId} ${peer.name ?? '-'}'
-                      '${peer.self ? ' (self)' : ''}',
-              ].join('\n');
-        return ToolExecutionResult(content: [TextContent(text: text)]);
-      },
-    ),
-    AgentTool(
-      name: 'dap_dm',
-      label: 'dap_dm',
-      tier: ApprovalTier.exec,
-      description:
-          'Send an end-to-end encrypted direct message to a hub peer. '
-          '`to` is the 16-hex agent id or a display name (run dap_peers '
-          'first). Prefer agent_message for peers listed in '
-          'agent_directory (issue #304: hub peers are first-class inbox '
-          'agents) — use dap_dm only when the fabric is off or the peer '
-          'is absent from the directory.',
-      parameters: const {
-        'type': 'object',
-        'properties': {
-          'to': {
-            'type': 'string',
-            'description': 'Recipient: 16-hex agent id or display name',
-          },
-          'text': {'type': 'string', 'description': 'Message body'},
-        },
-        'required': ['to', 'text'],
-      },
-      execute: (arguments, cancelToken, onUpdate) async {
-        final to = arguments['to'] as String;
-        final target = await _resolvePeer(to);
-        final repository = _hub.repository;
-        final agentId = _hub.agentId;
-        if (repository == null || agentId == null) {
-          throw StateError('not connected to a hub — run /dap to connect');
-        }
-        await repository.send(
-          hub.AgentMessage(
-            id: newMessageId(),
-            fromId: agentId,
-            toId: target,
-            text: arguments['text'] as String,
-            sentAt: DateTime.now().toUtc().toIso8601String(),
-          ),
-        );
-        return ToolExecutionResult(
-          content: [TextContent(text: 'DM sent to $target')],
-        );
-      },
-    ),
-    AgentTool(
-      name: 'dap_invite',
-      label: 'dap_invite',
-      tier: ApprovalTier.exec,
-      description:
-          'Invite a peer into a channel: DMs them the channel keypair '
-          '(their membership). An offline or unknown name arms a pending '
-          'invite that is delivered automatically when they come online.',
-      parameters: const {
-        'type': 'object',
-        'properties': {
-          'nameOrId': {
-            'type': 'string',
-            'description': 'Peer display name or 16-hex agent id',
-          },
-          'channel': {
-            'type': 'string',
-            'description': 'Channel to invite into (default: the current room)',
-          },
-        },
-        'required': ['nameOrId'],
-      },
-      execute: (arguments, cancelToken, onUpdate) async {
-        final result = await _hub.inviteTo(
-          arguments['nameOrId'] as String,
-          channel: arguments['channel'] as String?,
-        );
-        if (!result.ok) {
-          throw StateError('invite failed: ${result.error}');
-        }
-        return ToolExecutionResult(
-          content: [
-            TextContent(
-              text: result.pending
-                  ? 'invite armed for ${result.to} on ${result.channel} — '
-                        'delivered when they come online'
-                  : 'invite sent to ${result.to} on ${result.channel}',
-            ),
-          ],
-        );
-      },
-    ),
-    AgentTool(
-      name: 'dap_connect',
-      label: 'dap_connect',
-      tier: ApprovalTier.exec,
-      description:
-          'Connect the agent to any DAP hub at runtime. `host` is a bare '
-          'host, host:port, or ws(s):// URL; an optional `name` is the '
-          'display name AND identity (a new name is a new agentId); an '
-          'optional `channel` is the default room joined after connecting.',
-      parameters: const {
-        'type': 'object',
-        'properties': {
-          'host': {
-            'type': 'string',
-            'description': 'Hub host, host:port, or ws(s):// URL',
-          },
-          'name': {
-            'type': 'string',
-            'description': 'Display name AND identity (new name = new agentId)',
-          },
-          'channel': {
-            'type': 'string',
-            'description': 'Default room to join after connecting',
-          },
-        },
-        'required': ['host'],
-      },
-      execute: (arguments, cancelToken, onUpdate) async {
-        final connection = await _hub.connectTo(
-          arguments['host'] as String,
-          name: arguments['name'] as String?,
-          channel: arguments['channel'] as String?,
-        );
-        return ToolExecutionResult(
-          content: [
-            TextContent(
-              text:
-                  'connected to ${connection.url} as ${connection.agentId} — '
-                  'channels: ${connection.channels.join(', ')}',
-            ),
-          ],
-        );
-      },
-    ),
+    _dapStatusTool(),
+    _dapPeersTool(),
+    _dapDmTool(),
+    _dapInviteTool(),
+    _dapConnectTool(),
   ];
+
+  AgentTool _dapStatusTool() => AgentTool(
+    name: 'dap_status',
+    label: 'dap_status',
+    tier: ApprovalTier.read,
+    description:
+        'Show the DAP hub connection: our agent id, display name, hub '
+        'url, connected state, joined channels, and hello/welcome '
+        'handshake counters.',
+    parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
+    execute: (arguments, cancelToken, onUpdate) async {
+      final status = await _hub.status();
+      return ToolExecutionResult(
+        content: [
+          TextContent(
+            text:
+                'agentId: ${status.agentId ?? '-'}
+'
+                'name: ${status.name ?? '-'}
+'
+                'url: ${status.url ?? '-'}
+'
+                'connected: ${status.connected}
+'
+                'channels: '
+                '${status.channels.isEmpty ? '-' : status.channels.join(', ')}
+'
+                'handshakes: ${status.hellos} hello(s), '
+                '${status.welcomes} welcome(s)',
+          ),
+        ],
+      );
+    },
+  );
+
+  AgentTool _dapPeersTool() => AgentTool(
+    name: 'dap_peers',
+    label: 'dap_peers',
+    tier: ApprovalTier.read,
+    description:
+        'List ONLINE peers known to the DAP hub. Your own entry is '
+        'included and flagged self — do not DM yourself. Use the ids '
+        'from this list as dap_dm recipients.',
+    parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
+    execute: (arguments, cancelToken, onUpdate) async {
+      final peers = await _hub.peers();
+      final text = peers.isEmpty
+          ? 'no peers on the hub'
+          : [
+              for (final peer in peers)
+                '${peer.agentId} ${peer.name ?? '-'}'
+                    '${peer.self ? ' (self)' : ''}',
+            ].join('
+');
+      return ToolExecutionResult(content: [TextContent(text: text)]);
+    },
+  );
+
+  AgentTool _dapDmTool() => AgentTool(
+    name: 'dap_dm',
+    label: 'dap_dm',
+    tier: ApprovalTier.exec,
+    description:
+        'Send an end-to-end encrypted direct message to a hub peer. '
+        '`to` is the 16-hex agent id or a display name (run dap_peers '
+        'first). Prefer agent_message for peers listed in '
+        'agent_directory (issue #304: hub peers are first-class inbox '
+        'agents) — use dap_dm only when the fabric is off or the peer '
+        'is absent from the directory.',
+    parameters: const {
+      'type': 'object',
+      'properties': {
+        'to': {
+          'type': 'string',
+          'description': 'Recipient: 16-hex agent id or display name',
+        },
+        'text': {'type': 'string', 'description': 'Message body'},
+      },
+      'required': ['to', 'text'],
+    },
+    execute: (arguments, cancelToken, onUpdate) async {
+      final to = arguments['to'] as String;
+      final target = await _resolvePeer(to);
+      final repository = _hub.repository;
+      final agentId = _hub.agentId;
+      if (repository == null || agentId == null) {
+        throw StateError('not connected to a hub — run /dap to connect');
+      }
+      await repository.send(
+        hub.AgentMessage(
+          id: newMessageId(),
+          fromId: agentId,
+          toId: target,
+          text: arguments['text'] as String,
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      return ToolExecutionResult(
+        content: [TextContent(text: 'DM sent to $target')],
+      );
+    },
+  );
+
+  AgentTool _dapInviteTool() => AgentTool(
+    name: 'dap_invite',
+    label: 'dap_invite',
+    tier: ApprovalTier.exec,
+    description:
+        'Invite a peer into a channel: DMs them the channel keypair '
+        '(their membership). An offline or unknown name arms a pending '
+        'invite that is delivered automatically when they come online.',
+    parameters: const {
+      'type': 'object',
+      'properties': {
+        'nameOrId': {
+          'type': 'string',
+          'description': 'Peer display name or 16-hex agent id',
+        },
+        'channel': {
+          'type': 'string',
+          'description': 'Channel to invite into (default: the current room)',
+        },
+      },
+      'required': ['nameOrId'],
+    },
+    execute: (arguments, cancelToken, onUpdate) async {
+      final result = await _hub.inviteTo(
+        arguments['nameOrId'] as String,
+        channel: arguments['channel'] as String?,
+      );
+      if (!result.ok) {
+        throw StateError('invite failed: ${result.error}');
+      }
+      return ToolExecutionResult(
+        content: [
+          TextContent(
+            text: result.pending
+                ? 'invite armed for ${result.to} on ${result.channel} — '
+                      'delivered when they come online'
+                : 'invite sent to ${result.to} on ${result.channel}',
+          ),
+        ],
+      );
+    },
+  );
+
+  AgentTool _dapConnectTool() => AgentTool(
+    name: 'dap_connect',
+    label: 'dap_connect',
+    tier: ApprovalTier.exec,
+    description:
+        'Connect the agent to any DAP hub at runtime. `host` is a bare '
+        'host, host:port, or ws(s):// URL; an optional `name` is the '
+        'display name AND identity (a new name is a new agentId); an '
+        'optional `channel` is the default room joined after connecting.',
+    parameters: const {
+      'type': 'object',
+      'properties': {
+        'host': {
+          'type': 'string',
+          'description': 'Hub host, host:port, or ws(s):// URL',
+        },
+        'name': {
+          'type': 'string',
+          'description': 'Display name AND identity (new name = new agentId)',
+        },
+        'channel': {
+          'type': 'string',
+          'description': 'Default room to join after connecting',
+        },
+      },
+      'required': ['host'],
+    },
+    execute: (arguments, cancelToken, onUpdate) async {
+      final connection = await _hub.connectTo(
+        arguments['host'] as String,
+        name: arguments['name'] as String?,
+        channel: arguments['channel'] as String?,
+      );
+      return ToolExecutionResult(
+        content: [
+          TextContent(
+            text:
+                'connected to ${connection.url} as ${connection.agentId} — '
+                'channels: ${connection.channels.join(', ')}',
+          ),
+        ],
+      );
+    },
+  );
 
   /// Resolves [to] to a peer agent id: an exact id wins, otherwise the
   /// display name must match exactly one online peer. Ambiguity and
@@ -1749,7 +1755,11 @@ final class HubPluginHost implements FahPlugin {
     throw StateError(_peerNotFoundMessage(to, byName.isEmpty, peers));
   }
 
-  String _peerNotFoundMessage(String to, bool noMatch, List<hub.AgentInfo> peers) {
+  String _peerNotFoundMessage(
+    String to,
+    bool noMatch,
+    List<hub.AgentInfo> peers,
+  ) {
     final online = [
       for (final peer in peers)
         '${peer.agentId} ${peer.name ?? '-'}'
