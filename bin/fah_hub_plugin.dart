@@ -433,6 +433,7 @@ final class HubPluginHost implements FahPlugin {
         return;
       }
       await _connectScoped(normalized);
+      _markChannelDialed();
       return;
     }
     final repository = _activeRepository;
@@ -447,6 +448,18 @@ final class HubPluginHost implements FahPlugin {
       await repository.start();
     }
     _connectedHubUrl = normalized;
+    _markChannelDialed();
+  }
+
+  /// A successful live dial (wizard join, boot, runtime sync) also arms
+  /// the runtime-sync throttle: the very next sync must not immediately
+  /// dial the SAME hub a second time just because the client handshake
+  /// has not flipped `connected` yet (regression: network_wizard_test
+  /// saw two scoped connects for one join).
+  void _markChannelDialed() {
+    _runtimeConnectNotBefore = DateTime.now().add(
+      const Duration(seconds: 10),
+    );
   }
 
   /// Dials [normalized] with the process-local enrolled credential on a
