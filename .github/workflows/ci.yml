@@ -77,8 +77,9 @@ concurrency:
 #   guards   → CRAP + jscpd + cross-module dupx              (core/shared/app)
 #   flutter-analyze → flutter_app analyze on ubuntu          (app/core/shared)
 #   flutter-tests → flutter_app tests sharded ×2 on ubuntu   (app/core/shared;
-#                   golden suite stays in build-macos.yml — goldens are
-#                   host-locked, see issue #177 E5 discussion)
+#                   golden suite stays out — baselines are macOS-captured;
+#                   the nightly build-release macOS row guards goldens on
+#                   the pinned-font env, issue #1856 / #177 E5)
 #   flutter-app-exzone → JS-engine exclusion-zone tests on macOS (issue
 #               #1267 N1; PATH-TRIGGERED on pull_request events and SM
 #               validation dispatches alike — the changes classifier
@@ -2041,14 +2042,14 @@ jobs:
 
       - uses: ./.github/actions/flutter-pub-get
 
-      # Golden suite is intentionally NOT here: goldens are host-locked
-      # (same macOS host renders them differently across minor SDKs — see the
-      # dynamic_messages saga) and would all redden on ubuntu. Widget/unit
-      # tests run here on a cheap runner; goldens stay guarded by
-      # build-macos.yml and the nightly full matrix (issue #177 E5/OQ3:
-      # pinned-font golden migration is a follow-up, not this card).
+      # Golden suite is intentionally NOT here: this leg runs on ubuntu
+      # and the baselines are macOS-captured. Goldens are guarded by the
+      # pinned-font leg in the nightly build-release macOS row (issue
+      # #1856): the test env renders every glyph from bundled fonts, so a
+      # golden diff fails the same way on any host (#177 E5/OQ3).
       - name: flutter test (shard ${{ matrix.shard }}/2)
-        # Goldens stay out (host-locked, see the golden comment above).
+        # Goldens stay out (macOS-captured baselines, see the golden
+        # comment above).
         # Native-dependent tests (quickjs_c_bridge .so, mic channel) are NOT
         # excluded — issue #184 made them host-portable via the skip guard in
         # flutter_app/test/native_test_guard.dart + the injected-ASR fix.
