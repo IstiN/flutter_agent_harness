@@ -47,6 +47,9 @@ bool isGlobWord(String word) =>
 /// segment whose own pattern starts with `.` (bash dotglob off). `**`
 /// crosses directory levels (zero or more, depth-capped); `*`/`?` never
 /// cross `/`.
+///
+/// The per-segment arms live in the `_expand*Segment` helpers below; the
+/// loop only routes (gh-1848 CRAP descent).
 Future<List<String>?> expandGlobPattern(
   String pattern,
   String cwd,
@@ -66,69 +69,106 @@ Future<List<String>?> expandGlobPattern(
   for (var i = 0; i < segments.length; i++) {
     final segment = segments[i];
     final last = i == segments.length - 1;
-    final next = <_Candidate>[];
+    final List<_Candidate> next;
     if (segment == '**') {
-      for (final candidate in candidates) {
-        // `**` matches zero or more directory levels (globstar): keep the
-        // candidate itself plus every descendant directory — and, when it
-        // is the last segment, every file too (bash `dir/**` lists the
-        // whole subtree).
-        next.add(_Candidate(candidate.path, dir: true, keep: true));
-        await _descend(
-          next,
-          candidate.path,
-          listDir,
-          _globstarDepthCap,
-          includeFiles: last,
-        );
-      }
+      next = await _expandGlobstarSegment(candidates, last, listDir);
     } else if (isGlobWord(segment)) {
-      final matcher = _segmentToRegExp(segment);
-      final matchDot = segment.startsWith('.');
-      for (final candidate in candidates) {
-        final entries = await listDir(candidate.path);
-        if (entries == null) continue;
-        for (final entry in entries) {
-          if (!matchDot && entry.name.startsWith('.')) continue;
-          if (!matcher.hasMatch(entry.name)) continue;
-          final path = _join(candidate.path, entry.name);
-          next.add(_Candidate(path, dir: entry.isDir, keep: !last));
-        }
-      }
+      next = await _expandWildcardSegment(candidates, segment, last, listDir);
     } else {
-      // Literal segment: candidates extend; existence is verified lazily —
-      // a listing of the parent must contain the name (bash only emits
-      // existing paths).
-      for (final candidate in candidates) {
-        if (last) {
-          final parent = candidate.path.isEmpty ? '/' : candidate.path;
-          final entries = await listDir(parent);
-          if (entries == null || !entries.any((e) => e.name == segment)) {
-            continue;
-          }
-        }
-        next.add(_Candidate(_join(candidate.path, segment), keep: !last));
-      }
+      next = await _expandLiteralSegment(candidates, segment, last, listDir);
     }
     candidates = next;
     if (candidates.isEmpty) return null;
   }
+  return _formatMatches(candidates, cwd, absolute);
+}
 
+/// The `**` segment: keep every candidate (zero levels crossed) plus
+/// every descendant directory — and, when it is the last segment, every
+/// file too (bash `dir/**` lists the whole subtree).
+Future<List<_Candidate>> _expandGlobstarSegment(
+  List<_Candidate> candidates,
+  bool last,
+  GlobDirList listDir,
+) async {
+  final next = <_Candidate>[];
+  for (final candidate in candidates) {
+    next.add(_Candidate(candidate.path, dir: true, keep: true));
+    await _descend(
+      next,
+      candidate.path,
+      listDir,
+      _globstarDepthCap,
+      includeFiles: last,
+    );
+  }
+  return next;
+}
+
+/// A wildcard segment (`*`/`?`/brackets): list each candidate directory
+/// and keep the entries the segment matcher accepts.
+Future<List<_Candidate>> _expandWildcardSegment(
+  List<_Candidate> candidates,
+  String segment,
+  bool last,
+  GlobDirList listDir,
+) async {
+  final matcher = _segmentToRegExp(segment);
+  final matchDot = segment.startsWith('.');
+  final next = <_Candidate>[];
+  for (final candidate in candidates) {
+    final entries = await listDir(candidate.path);
+    if (entries == null) continue;
+    for (final entry in entries) {
+      if (!matchDot && entry.name.startsWith('.')) continue;
+      if (!matcher.hasMatch(entry.name)) continue;
+      final path = _join(candidate.path, entry.name);
+      next.add(_Candidate(path, dir: entry.isDir, keep: !last));
+    }
+  }
+  return next;
+}
+
+/// A literal segment: candidates extend; existence is verified lazily —
+/// a listing of the parent must contain the name (bash only emits
+/// existing paths).
+Future<List<_Candidate>> _expandLiteralSegment(
+  List<_Candidate> candidates,
+  String segment,
+  bool last,
+  GlobDirList listDir,
+) async {
+  final next = <_Candidate>[];
+  for (final candidate in candidates) {
+    if (last) {
+      final parent = candidate.path.isEmpty ? '/' : candidate.path;
+      final entries = await listDir(parent);
+      if (entries == null || !entries.any((e) => e.name == segment)) {
+        continue;
+      }
+    }
+    next.add(_Candidate(_join(candidate.path, segment), keep: !last));
+  }
+  return next;
+}
+
+/// Output in the pattern's shape: relative matches are relative to [cwd]
+/// (bash emits `apps/x/app.json`, not the absolute path); sorted
+/// lexicographically; `null` when nothing matched.
+List<String>? _formatMatches(
+  List<_Candidate> candidates,
+  String cwd,
+  bool absolute,
+) {
   final matches =
-      candidates
-          .where((c) => c.path.isNotEmpty && c.path != '/')
-          .map((c) {
-            var path = c.path;
-            if (!absolute) {
-              // Output in the pattern's shape: relative matches are relative to
-              // [cwd] (bash emits `apps/x/app.json`, not the absolute path).
-              final prefix = cwd == '/' ? '/' : '$cwd/';
-              if (path.startsWith(prefix)) path = path.substring(prefix.length);
-            }
-            return path;
-          })
-          .toList()
-        ..sort();
+      candidates.where((c) => c.path.isNotEmpty && c.path != '/').map((c) {
+        var path = c.path;
+        if (!absolute) {
+          final prefix = cwd == '/' ? '/' : '$cwd/';
+          if (path.startsWith(prefix)) path = path.substring(prefix.length);
+        }
+        return path;
+      }).toList()..sort();
   return matches.isEmpty ? null : matches;
 }
 
