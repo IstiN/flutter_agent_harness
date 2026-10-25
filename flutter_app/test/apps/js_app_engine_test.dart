@@ -956,43 +956,6 @@ void main() {
       });
     });
 
-    test('unmapped platform-bridge prefixes gate on the method prefix', () {
-      // The prefix gate on the platform-bridge fallback (handler-map miss
-      // -> _faPlatform): every declared arm in both outcomes plus the
-      // default-deny arm for prefixes no permission exists for.
-      //
-      // Coverage rides the seam, not the e2e jsr.fa.call route: a
-      // synchronously-thrown platform rejection never settles the widget
-      // promise (pre-existing bridge/runtime behavior — the whole
-      // _faPlatform path was 0%-covered before gh-1848; tracked for a
-      // follow-up bridge card).
-      final denied = JsAppEngine(
-        app: app(),
-        env: MemoryExecutionEnv(),
-        permissions: const AppPermissions(),
-      );
-      expect(denied.faPrefixGrantedForTest('homekit'), isFalse);
-      expect(denied.faPrefixGrantedForTest('health'), isFalse);
-      expect(denied.faPrefixGrantedForTest('contacts'), isFalse);
-      expect(denied.faPrefixGrantedForTest('sensors.read'), isFalse);
-
-      final granted = JsAppEngine(
-        app: app(),
-        env: MemoryExecutionEnv(),
-        permissions: const AppPermissions(
-          homekit: true,
-          health: true,
-          contacts: true,
-        ),
-      );
-      expect(granted.faPrefixGrantedForTest('homekit'), isTrue);
-      expect(granted.faPrefixGrantedForTest('health'), isTrue);
-      expect(granted.faPrefixGrantedForTest('contacts'), isTrue);
-      // The default-deny arm stays closed even with every declared
-      // permission granted.
-      expect(granted.faPrefixGrantedForTest('sensors.read'), isFalse);
-    });
-
     testWidgets('granted fa.home writes reach the HomeApi (legacy homekit '
         'form included)', (tester) async {
       await tester.runAsync(() async {

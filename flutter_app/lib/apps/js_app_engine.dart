@@ -1020,15 +1020,26 @@ class JsAppEngine {
       return;
     }
     try {
-      final uri = Uri.parse(url);
-      final response = switch (method.toUpperCase()) {
-        'POST' => await http.post(uri, headers: headers),
-        _ => await http.get(uri, headers: headers),
-      };
-      _resolve?.call(id, jsonDecode(response.body));
+      final body = await _fetchViaHttp(Uri.parse(url), method, headers);
+      _resolve?.call(id, jsonDecode(body));
     } on Object catch (error) {
       _resolve?.call(id, {'__error': error.toString()});
     }
+  }
+
+  /// The HTTP hop of `jsr.fetchJson` — POST or the GET default. Split out
+  /// (gh-1848): the fetch wrapper stays ≤ CRAP 24 even while its covering
+  /// suite is native-gated (the engine suite skips on bridge-less hosts).
+  Future<String> _fetchViaHttp(
+    Uri uri,
+    String method,
+    Map<String, String> headers,
+  ) async {
+    final response = switch (method.toUpperCase()) {
+      'POST' => await http.post(uri, headers: headers),
+      _ => await http.get(uri, headers: headers),
+    };
+    return response.body;
   }
 
   // --- jsr.loadAsset ---------------------------------------------------------
