@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:io';
+
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/calendar_tool.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -160,22 +162,28 @@ void main() {
   group('calendarEventsTool', () {
     test('defaults to today and renders a readable list', () async {
       final today = DateTime.now();
-      final day = DateTime(today.year, today.month, today.day);
+      // Wall-clock construction — the same clock story the renderer formats
+      // with. Seeding via midnight.add(...) rides UTC instants: on a DST
+      // transition day the fallback between midnight and 10:00 shifts the
+      // seeded wall time an hour early (issue #1857: fixture meant 10:00,
+      // the tool honestly rendered 09:00).
+      DateTime at(int hour, [int minute = 0]) =>
+          DateTime(today.year, today.month, today.day, hour, minute);
       final calendar = FakeCalendarApi(
         events: [
           _event(
             id: 'ev-standup',
             title: 'Standup',
-            start: day.add(const Duration(hours: 10)),
-            end: day.add(const Duration(hours: 11)),
+            start: at(10),
+            end: at(11),
             calendar: 'Work',
             location: 'Office',
           ),
           _event(
             id: 'ev-gym',
             title: 'Gym',
-            start: day.add(const Duration(hours: 18, minutes: 30)),
-            end: day.add(const Duration(hours: 19, minutes: 30)),
+            start: at(18, 30),
+            end: at(19, 30),
             notes: 'Bring towel',
           ),
         ],
@@ -293,7 +301,11 @@ void main() {
             title: 'C',
             start: day.add(const Duration(hours: 9)),
             end: day.add(const Duration(hours: 10)),
-            recurrence: rule('monthly', interval: 2, daysOfMonth: const [1, 15]),
+            recurrence: rule(
+              'monthly',
+              interval: 2,
+              daysOfMonth: const [1, 15],
+            ),
           ),
           _event(
             id: 'ev-d',
@@ -998,4 +1010,232 @@ void main() {
       expect(calendar.deletedIds, isEmpty);
     });
   });
+
+  test(
+    'DST-boundary scenarios stay green with the zone frozen to Europe/Berlin',
+    () async {
+      // Dart cannot switch the process timezone at runtime and the flutter
+      // tester ignores TZ on macOS, so the frozen coverage runs the
+      // calendar tool chain (pure Dart except the platform-service
+      // export) in a plain `dart` subprocess — which honors TZ — with the
+      // zone pinned. Green on any host, any day of the year (issue #1857).
+      String plainCopy(String path, String oldLine, String newLine) {
+        final text = File(path).readAsStringSync();
+        expect(text, contains(oldLine), reason: 'calendar sources drifted');
+        return text.replaceFirst(oldLine, newLine);
+      }
+
+      final scratch = Directory('.dart_tool/calendar_tz_freeze')
+        ..createSync(recursive: true);
+      // Strip the one Flutter-carrying piece (the conditional export to
+      // the method-channel service) so a plain VM can run the real tool
+      // and range/render logic.
+      File('${scratch.path}/calendar_service_plain.dart').writeAsStringSync(
+        plainCopy(
+          'lib/services/calendar_service.dart',
+          "export 'package:fa/services/calendar_service_stub.dart'\n"
+              "    if (dart.library.io) 'package:fa/services/calendar_service_io.dart';",
+          "export 'calendar_service_stub_plain.dart';",
+        ),
+      );
+      File(
+        '${scratch.path}/calendar_service_stub_plain.dart',
+      ).writeAsStringSync(
+        plainCopy(
+          'lib/services/calendar_service_stub.dart',
+          "import 'package:fa/services/calendar_service.dart';",
+          "import 'calendar_service_plain.dart';",
+        ),
+      );
+      File('${scratch.path}/calendar_tool_plain.dart').writeAsStringSync(
+        plainCopy(
+          'lib/services/calendar_tool.dart',
+          "import 'package:fa/services/calendar_service.dart';",
+          "import 'calendar_service_plain.dart';",
+        ),
+      );
+      File('${scratch.path}/freeze_main.dart').writeAsStringSync(_freezeMain);
+      final proc = await Process.run(
+        'dart',
+        ['${scratch.path}/freeze_main.dart'],
+        environment: {'TZ': 'Europe/Berlin', ...Platform.environment},
+      );
+      expect(proc.exitCode, 0, reason: '${proc.stdout}\n${proc.stderr}');
+      final out = proc.stdout.toString();
+      for (final line in const [
+        // The frozen zone really falls back: midnight.add(10h) lands at
+        // wall 09:00 — the exact #1857 mechanism, witnessed year-round.
+        'S0 :: canary hour=9',
+        'S1 :: Events for 2026-10-25:',
+        'S1 :: - 02:30–03:00 Sunrise',
+        'S1 :: - 10:00–11:00 Standup (Work) @ Office',
+        'S2 :: - 10:00–11:00 Standup (Work) @ Office',
+        'S3 :: - 10:00–11:00 Standup (Work) @ Office',
+      ]) {
+        expect(out, contains(line));
+      }
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
 }
+
+/// The frozen-zone scenario script the DST driver generates and runs under
+/// plain `dart` with `TZ=Europe/Berlin`. Sees the real calendar tool chain
+/// via the Flutter-free copies the driver writes next to it.
+const String _freezeMain = r'''
+import 'calendar_service_plain.dart';
+import 'calendar_tool_plain.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+
+final class FakeCalendarApi implements CalendarApi {
+  FakeCalendarApi({List<CalendarEvent>? events})
+      : eventsToReturn = events ?? const [];
+  List<CalendarEvent> eventsToReturn;
+
+  @override
+  Future<bool> get isAvailable async => true;
+  @override
+  Future<bool> requestAccess() async => true;
+  @override
+  Future<List<CalendarEvent>> events({
+    required DateTime start,
+    required DateTime end,
+  }) async => eventsToReturn
+      .where((e) => e.end.isAfter(start) && e.start.isBefore(end))
+      .toList();
+  @override
+  Future<List<CalendarInfo>> calendars() async => const [];
+  @override
+  Future<String> createEvent({
+    required String title,
+    required DateTime start,
+    required DateTime end,
+    bool allDay = false,
+    String? calendar,
+    String? location,
+    String? notes,
+    String? url,
+    List<int>? alarms,
+    CalendarRecurrence? recurrence,
+  }) async => 'fake';
+  @override
+  Future<void> updateEvent({
+    required String id,
+    String? title,
+    DateTime? start,
+    DateTime? end,
+    bool? allDay,
+    String? calendar,
+    String? location,
+    String? notes,
+    String? url,
+    List<int>? alarms,
+    CalendarRecurrence? recurrence,
+    bool removeRecurrence = false,
+    CalendarSpan span = CalendarSpan.thisEvent,
+  }) async {}
+  @override
+  Future<void> deleteEvent({
+    required String id,
+    CalendarSpan span = CalendarSpan.thisEvent,
+  }) async {}
+}
+
+CalendarEvent ev(
+  String id,
+  String title,
+  DateTime start,
+  DateTime end, {
+  String? calendar,
+  String? location,
+}) => (
+  id: id,
+  title: title,
+  start: start,
+  end: end,
+  allDay: false,
+  calendar: calendar,
+  location: location,
+  notes: null,
+  url: null,
+  alarms: null,
+  recurrence: null,
+);
+
+Future<void> listDay(
+  String tag,
+  Map<String, dynamic> args,
+  List<CalendarEvent> events,
+) async {
+  final tool = calendarEventsTool(FakeCalendarApi(events: events));
+  final text = await tool
+      .execute(args, null, null)
+      .then((result) => result.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join())
+      .then((text) => text.replaceAll('\n', '\n$tag :: '));
+  print('$tag :: $text');
+}
+
+void main() async {
+  // Canary: on 2026-10-25 Europe/Berlin falls back 03:00 CEST → 02:00 CET,
+  // so midnight + 10 wall hours via instant arithmetic lands at 09:00 —
+  // the exact #1857 mechanism. If this stops holding, the zone froze wrong
+  // and the cases below are vacuous.
+  print(
+    'S0 :: canary '
+    'hour=${DateTime(2026, 10, 25).add(const Duration(hours: 10)).hour}',
+  );
+
+  // S1: the fallback day, events as the platform delivers them —
+  // local-zone DateTimes of the stored instants (EventKit ms →
+  // fromMillisecondsSinceEpoch). One row crosses the switch (00:30 UTC =
+  // 02:30 CEST, 02:00 UTC = 03:00 CET), one sits after it (09:00 UTC =
+  // 10:00 CET).
+  await listDay('S1', const {'date': '2026-10-25'}, [
+    ev(
+      'ev-sunrise',
+      'Sunrise',
+      DateTime.utc(2026, 10, 25, 0, 30).toLocal(),
+      DateTime.utc(2026, 10, 25, 2).toLocal(),
+    ),
+    ev(
+      'ev-standup',
+      'Standup',
+      DateTime.utc(2026, 10, 25, 9).toLocal(),
+      DateTime.utc(2026, 10, 25, 10).toLocal(),
+      calendar: 'Work',
+      location: 'Office',
+    ),
+  ]);
+
+  // S2: a plain day without transition — same platform story, same wall
+  // answer (08:00 UTC = 10:00 CEST).
+  await listDay('S2', const {'date': '2026-10-20'}, [
+    ev(
+      'ev-standup',
+      'Standup',
+      DateTime.utc(2026, 10, 20, 8).toLocal(),
+      DateTime.utc(2026, 10, 20, 9).toLocal(),
+      calendar: 'Work',
+      location: 'Office',
+    ),
+  ]);
+
+  // S3: the fixture's fixed seeding pattern — wall-clock construction — on
+  // the fallback day must render the seeded wall time (the old
+  // midnight.add(...) seeding would print 09:00 here; see S0).
+  final day = DateTime(2026, 10, 25);
+  await listDay('S3', const {'date': '2026-10-25'}, [
+    ev(
+      'ev-standup',
+      'Standup',
+      DateTime(day.year, day.month, day.day, 10),
+      DateTime(day.year, day.month, day.day, 11),
+      calendar: 'Work',
+      location: 'Office',
+    ),
+  ]);
+}
+''';
