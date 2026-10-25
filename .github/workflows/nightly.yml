@@ -385,6 +385,114 @@ jobs:
         shell: bash
         run: ${{ matrix.cmd }}
 
+  # Issue #1850 AC5: the allocation-churn report, nightly-only because a
+  # full pass is slow (the card's verification discipline: per-PR checks
+  # stay on the targeted files; the suite-wide churn number lives here).
+  # Two legs, one job:
+  #   core  — dart engine, churnNewMb (exact reclaimed-new-gen volume),
+  #           whole test/ suite; budget = AC4's ≤35,000 MB.
+  #   app   — flutter engine via the VM allocation profile (allocatedMb;
+  #           churnNewMb is intentionally null there, crap4dart ≥0.19.0),
+  #           subset = the #1850-named suites (the whole app suite would
+  #           blow the 6 h hosted-job cap: every test is a fresh
+  #           flutter_tester). Budget starts at 3,000 MB allocated for
+  #           the subset and is re-baselined from the recorded runs —
+  #           ratchet down, never up (docs/memory-churn.md).
+  # Both JSONs + badges upload as artifacts; the before/after workflow
+  # that consumes them is docs/memory-churn.md. A red leg feeds the
+  # deduped nightly-red issue via auto-issue (needs: below).
+  memory-churn:
+    name: Memory churn report (issue #1850 AC5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+      - name: Activate crap4dart (>=0.19.0 — VM-service allocation profile on flutter, churnNewMb null by design)
+        run: dart pub global activate crap4dart ">=0.19.0 <0.20.0"
+      - name: Core suite churn (dart engine)
+        run: |
+          dart pub get
+          mkdir -p memory-results
+          # AC4 budget: total core churn ≤35,000 MB (56,393 MB baseline −
+          # the #1872 crypto fix and #1873 trajectory fix).
+          dart pub global run crap4dart memory --format json --top 40 \
+            --badge memory-results/core-churn-badge.svg \
+            --badge-threshold 35000 \
+            test > memory-results/memory-core.json
+      - name: App subset allocated (flutter engine)
+        # Pinned SDK: the app baseline is engine-sensitive (same pin the
+        # golden baselines use). Placeholder .env/firebase seed the same
+        # way the build legs do — the named suites are engine-accurate
+        # without secrets.
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+      - name: Create placeholder firebase_options.dart
+        shell: bash
+        run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+      - name: Install Flutter dependencies
+        uses: ./.github/actions/flutter-pub-get
+      - name: crap4dart memory on the #1850 app subset
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          mkdir -p ../memory-results
+          # Initial budget: the card's six named suites + the heaviest
+          # pure file, allocated-volume basis. Re-baseline from the
+          # recorded runs; ratchet down, never up.
+          dart pub global run crap4dart memory --engine flutter \
+            --format json --top 40 \
+            --badge ../memory-results/app-allocated-badge.svg \
+            --badge-threshold 3000 \
+            test/session_chat_sheet_persisted_test.dart \
+            test/settings_limits_test.dart \
+            test/settings_providers_queue_test.dart \
+            test/settings_screen_sections_test.dart \
+            test/file_browser_test.dart \
+            test/session_oversized_windowed_test.dart \
+            test/bridge_loud_failures_test.dart \
+            > ../memory-results/memory-app.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: memory-churn-report
+          path: memory-results/
+          retention-days: 90
+      - name: Record totals in the step summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Memory churn (issue #1850 AC5)"
+            for f in memory-results/memory-core.json memory-results/memory-app.json; do
+              if [ -f "$f" ]; then
+                echo "### $f"
+                jq -r '"totalAllocatedMb: \(.totalAllocatedMb // .totalChurnMb // "?") · tests: \(.testCount // "?")"' "$f" || head -c 400 "$f"
+                echo
+              else
+                echo "### $f — missing (leg red)"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Files ONE deduped issue when the scheduled nightly run goes red: the
   # open `nightly-red` issue is searched first and only commented on, so a
   # persistent failure never spams duplicates. A GREEN scheduled run closes
@@ -404,7 +512,7 @@ jobs:
   # schedule-event runs preceding this one — dispatch runs never count).
   auto-issue:
     name: File nightly-red issue
-    needs: [pty-integration, build-release]
+    needs: [pty-integration, build-release, memory-churn]
     if: >-
       always() && !cancelled() &&
       (github.event_name == 'schedule' ||
