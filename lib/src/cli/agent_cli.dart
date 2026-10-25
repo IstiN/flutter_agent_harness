@@ -196,6 +196,7 @@ import '../session/session_record.dart';
 import '../env/session_parse_executor.dart';
 import '../session/session_repo.dart';
 import '../session_io_retry.dart';
+import '../session_repair.dart' show SessionRepairReport, repairSessionLedgers;
 import '../session/attach/file_presence_store.dart';
 import '../session_retention.dart';
 import '../session/attach/session_presence.dart';
