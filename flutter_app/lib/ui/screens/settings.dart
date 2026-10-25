@@ -78,6 +78,7 @@ import 'endpoint_models_controller.dart';
 export 'package:fa_ui/fa_ui.dart'
     show ProviderPreset, ModelIdAutocompleteField, OpenRouterOAuthButton;
 part 'settings_sections.dart';
+part 'settings_flows.dart';
 
 /// The key-storage notes match the platform: on secure-store surfaces
 /// (iOS/macOS Keychain, Android Keystore — see [KeychainStore]) saved keys
@@ -1974,59 +1975,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return _reauthenticateAiin(context, registry, service, provider);
     }
     return _reauthenticateOther(context, registry, service, provider);
-  }
-
-  /// The non-AIIN re-auth dispatch (gh-1848 tier-3 split): the Copilot
-  /// connect flow for Copilot base URLs, the Codemie SSO flow otherwise.
-  Future<bool> _reauthenticateOther(
-    BuildContext context,
-    ProviderRegistry registry,
-    AgentService? service,
-    CustomProvider provider,
-  ) {
-    if (isCopilotBaseUrl(provider.baseUrl)) {
-      return runCopilotConnectFlow(
-        context: context,
-        registry: registry,
-        service: service,
-        lastConnectionStore: _fallbackConnectionStore(),
-      );
-    }
-    return runCodemieSsoFlow(
-      context: context,
-      registry: registry,
-      service: service,
-      lastConnectionStore: _fallbackConnectionStore(),
-      orgUrl: codeMieOrgUrl(provider.baseUrl),
-    );
-  }
-
-  /// AIIN entries re-run the AIIN sign-in flow in re-auth mode
-  /// (gh-1848 split).
-  Future<bool> _reauthenticateAiin(
-    BuildContext context,
-    ProviderRegistry registry,
-    AgentService? service,
-    CustomProvider provider,
-  ) {
-    return runAiinConnectFlow(
-      context: context,
-      registry: registry,
-      service: service,
-      lastConnectionStore: _fallbackConnectionStore(),
-      reauthenticateFor: provider,
-    );
-  }
-
-  /// Runs one connect flow after a registry guard — the shared shape of
-  /// the section's connect callbacks: a null registry renders the
-  /// section but the flows do nothing (gh-1848 split).
-  Future<void> _runConnectFlow(
-    Future<void> Function(ProviderRegistry registry) run,
-  ) async {
-    final registry = widget.registry;
-    if (registry == null) return;
-    await run(registry);
   }
 
   /// The providers block with every sign-in/connect wiring (issue #702:
