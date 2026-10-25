@@ -278,8 +278,13 @@ class _SpanGridLayout extends SliverGridLayout {
     for (var i = 0; i < _tiles.length; i++) {
       if (_tiles[i].y + _tiles[i].h > scrollOffset) return i;
     }
-    return _tiles.isEmpty ? 0 : _tiles.length - 1;
+    return _lastTileIndex();
   }
+
+  /// The bottom-most child when the offset is past every tile (gh-1848
+  /// split): y is not monotonic in index (first-fit backfills holes), so
+  /// an overshoot pins the LAST tile, not the tallest.
+  int _lastTileIndex() => _tiles.isEmpty ? 0 : _tiles.length - 1;
 
   @override
   int getMaxChildIndexForScrollOffset(double scrollOffset) {

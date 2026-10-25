@@ -156,30 +156,62 @@ class WidgetPayloadValidator {
     }
     files = stripCommonRoot(files);
 
-    // ── manifest ────────────────────────────────────────────────────────
-    Map<String, Object?>? manifest;
+    // ── manifest / entry / icon / size caps ─────────────────────────────
+    final manifest = _checkManifest(files, errors, warnings);
+    _checkEntry(files, manifest, errors);
+    _checkIcon(manifest, files, warnings);
+    _checkSizeCaps(files, errors);
+
+    return WidgetPayloadValidation(
+      files: files,
+      manifest: manifest,
+      errors: errors,
+      warnings: warnings,
+    );
+  }
+
+  /// The manifest stage: presence, JSON decoding, and the schema pass.
+  /// Returns the decoded manifest (null when missing/undecodable — every
+  /// failure already added its named error).
+  Map<String, Object?>? _checkManifest(
+    Map<String, Uint8List> files,
+    List<WidgetPayloadError> errors,
+    List<WidgetPayloadWarning> warnings,
+  ) {
     final manifestBytes = files[manifestFile];
     if (manifestBytes == null) {
-      final root = _sharedRootOf(files);
       errors.add(
         WidgetPayloadError(
           'manifest_missing',
-          root == null
-              ? 'manifest.json not found in the picked folder — a widget is '
-                    'a folder with manifest.json and widget.js at its root'
-              : 'manifest.json not found in the picked folder (looked at '
-                    '"$root/manifest.json") — a widget is a folder with '
-                    'manifest.json and widget.js at its root',
+          _manifestMissingMessage(_sharedRootOf(files)),
         ),
       );
-    } else {
-      manifest = _decodeManifest(manifestBytes, errors);
-      if (manifest != null) {
-        _checkSchema(manifest, errors, warnings);
-      }
+      return null;
     }
+    final manifest = _decodeManifest(manifestBytes, errors);
+    if (manifest != null) {
+      _checkSchema(manifest, errors, warnings);
+    }
+    return manifest;
+  }
 
-    // ── entry presence ──────────────────────────────────────────────────
+  /// The `manifest_missing` message: names the shared root when the pick
+  /// had one, else the bare folder-shape hint.
+  static String _manifestMissingMessage(String? root) => root == null
+      ? 'manifest.json not found in the picked folder — a widget is '
+            'a folder with manifest.json and widget.js at its root'
+      : 'manifest.json not found in the picked folder (looked at '
+            '"$root/manifest.json") — a widget is a folder with '
+            'manifest.json and widget.js at its root';
+
+  /// The entry stage: `widget.js` present and non-empty, plus any declared
+  /// tile entry (as mandatory as the main entry — the tile host would fail
+  /// at boot otherwise).
+  void _checkEntry(
+    Map<String, Uint8List> files,
+    Map<String, Object?>? manifest,
+    List<WidgetPayloadError> errors,
+  ) {
     final entryBytes = files[entryFile];
     if (entryBytes == null) {
       errors.add(
@@ -192,16 +224,8 @@ class WidgetPayloadValidator {
     } else if (entryBytes.isEmpty) {
       errors.add(const WidgetPayloadError('entry_empty', 'widget.js is empty'));
     }
-    // A declared live-tile entry is as mandatory as the main entry: the
-    // tile host would fail at boot otherwise.
-    final tileEntry = switch (manifest?['widget']) {
-      final Map<Object?, Object?> widget => widget['entry']?.toString(),
-      _ => null,
-    };
-    if (tileEntry != null &&
-        tileEntry.isNotEmpty &&
-        tileEntry != entryFile &&
-        !files.containsKey(tileEntry)) {
+    final tileEntry = _missingTileEntry(manifest, files);
+    if (tileEntry != null) {
       errors.add(
         WidgetPayloadError(
           'tile_entry_missing',
@@ -209,8 +233,36 @@ class WidgetPayloadValidator {
         ),
       );
     }
+  }
 
-    // ── declared icon (cosmetic — warns, never blocks) ──────────────────
+  /// The tile entry the manifest declares but the pick lacks, or null when
+  /// there is nothing to flag (no widget map, blank/main entry, or the
+  /// file is present).
+  static String? _missingTileEntry(
+    Map<String, Object?>? manifest,
+    Map<String, Uint8List> files,
+  ) {
+    final entry = switch (manifest?['widget']) {
+      final Map<Object?, Object?> widget => widget['entry']?.toString(),
+      _ => null,
+    };
+    if (entry == null ||
+        entry.isEmpty ||
+        entry == entryFile ||
+        files.containsKey(entry)) {
+      return null;
+    }
+    return entry;
+  }
+
+  /// The declared icon stage (cosmetic — warns, never blocks): a file-ish
+  /// icon name (`foo.svg`, not an inline `&#…` glyph or a bare "📦") that
+  /// is missing from the pick.
+  void _checkIcon(
+    Map<String, Object?>? manifest,
+    Map<String, Uint8List> files,
+    List<WidgetPayloadWarning> warnings,
+  ) {
     final icon = manifest?['icon']?.toString();
     if (icon != null &&
         icon.isNotEmpty &&
@@ -225,8 +277,13 @@ class WidgetPayloadValidator {
         ),
       );
     }
+  }
 
-    // ── size caps (E4) ──────────────────────────────────────────────────
+  /// The size caps (E4): per-file and total-package byte limits.
+  void _checkSizeCaps(
+    Map<String, Uint8List> files,
+    List<WidgetPayloadError> errors,
+  ) {
     var total = 0;
     for (final entry in files.entries) {
       total += entry.value.length;
@@ -249,13 +306,6 @@ class WidgetPayloadValidator {
         ),
       );
     }
-
-    return WidgetPayloadValidation(
-      files: files,
-      manifest: manifest,
-      errors: errors,
-      warnings: warnings,
-    );
   }
 
   /// The id rule — one named error per failing id (deduped by the

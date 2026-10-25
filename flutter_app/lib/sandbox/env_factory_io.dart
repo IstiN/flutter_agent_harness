@@ -49,11 +49,15 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
     return MemoryExecutionEnv(cwd: '/');
   }
 
-  if (Platform.isAndroid || Platform.isIOS) {
+  if (_isMobilePlatform()) {
     return createMobileSandboxEnv(httpClient: httpClient);
   }
   return createDesktopEnv();
 }
+
+/// Only reached off-web (the caller's web branch returns first) — safe to
+/// touch `Platform`.
+bool _isMobilePlatform() => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
 /// The Android/iOS branch of [createPlatformEnv]: a sandboxed host directory
 /// plus the WASI shell backed by MIT-licensed uutils/ripgrep WASM binaries

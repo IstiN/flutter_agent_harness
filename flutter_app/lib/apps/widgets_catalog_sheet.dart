@@ -839,29 +839,36 @@ class _CatalogIcon extends StatelessWidget {
     }
     return FutureBuilder<String?>(
       future: iconFuture,
-      builder: (context, snapshot) {
-        final markup = snapshot.data;
-        if (markup == null || markup.trim().isEmpty) return _fallback();
-        // The SVG sits in a neutral rounded tile: widgets whose icon is a
-        // bare glyph (crypto's ₿) get a proper frame instead of floating
-        // naked next to the colored icons.
-        return Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: theme.colorScheme.outlineVariant),
-          ),
-          child: Center(
-            child: SizedBox(
-              width: 26,
-              height: 26,
-              child: SvgPicture.string(markup, fit: BoxFit.contain),
-            ),
-          ),
-        );
-      },
+      builder: (context, snapshot) => _iconTile(context, theme, snapshot),
+    );
+  }
+
+  /// The SVG tile for a loaded icon; the letter fallback while loading or
+  /// when the markup is blank (gh-1848 split). The SVG sits in a neutral
+  /// rounded tile: widgets whose icon is a bare glyph (crypto's ₿) get a
+  /// proper frame instead of floating naked next to the colored icons.
+  Widget _iconTile(
+    BuildContext context,
+    ThemeData theme,
+    AsyncSnapshot<String?> snapshot,
+  ) {
+    final markup = snapshot.data;
+    if (markup == null || markup.trim().isEmpty) return _fallback();
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Center(
+        child: SizedBox(
+          width: 26,
+          height: 26,
+          child: SvgPicture.string(markup, fit: BoxFit.contain),
+        ),
+      ),
     );
   }
 
