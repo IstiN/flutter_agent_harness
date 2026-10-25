@@ -30,6 +30,39 @@ final class _CapturingIo implements PluginIO {
   String get text => lines.join('\n');
 }
 
+/// Deterministic disconnected hub: no sockets, retries, or wall-clock waits.
+final class _DeadHubPlugin extends hub.HubPlugin {
+  _DeadHubPlugin({
+    required Map<String, String> environment,
+    required String home,
+  }) : super(environment: environment, home: home);
+
+  @override
+  Future<void> start({hub.HubIdentity? identity}) async {}
+
+  @override
+  Future<hub.HubStatus> status() async => const hub.HubStatus(
+    connected: false,
+    agentId: null,
+    name: null,
+    url: 'ws://127.0.0.1:9/ws',
+    channels: [],
+    welcomes: 0,
+    hellos: 0,
+  );
+
+  @override
+  Future<List<hub.AgentInfo>> peers() async =>
+      throw StateError('test hub is disconnected');
+
+  @override
+  Future<hub.DapConnection> connectTo(
+    String host, {
+    String? name,
+    String? channel,
+  }) async => throw StateError('test hub is disconnected');
+}
+
 void main() {
   late Directory tempHome;
 
@@ -46,9 +79,12 @@ void main() {
     PluginPickOption? pickOption,
     PluginAskLine? askLine,
     Map<String, String>? environment,
+    bool deadHub = false,
   }) {
     final env = environment ?? <String, String>{};
-    final plugin = hub.HubPlugin(environment: env, home: tempHome.path);
+    final plugin = deadHub
+        ? _DeadHubPlugin(environment: env, home: tempHome.path)
+        : hub.HubPlugin(environment: env, home: tempHome.path);
     final host = HubPluginHost(plugin, environment: env, home: tempHome.path);
     final io = _CapturingIo();
     final context = PluginContext(
@@ -140,8 +176,9 @@ void main() {
 
     test('secret choice sets the session secret and reconnects', () async {
       final (slash, io, env, plugin) = registerHost(
-        environment: const {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
+        environment: <String, String>{'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
         pickOption: (title, options, {initialKey}) async => 'secret',
+        deadHub: true,
         askLine: (prompt, {secret = false}) async => 'picked-secret',
       );
       await settleBoot(plugin);
@@ -163,26 +200,29 @@ void main() {
     test(
       'connect choice dials the prompted host and reports the error',
       () async {
-        final (slash, io, _, _) = registerHost(
-          environment: const {'DAP_MASTER_SECRET': 'test-master-secret'},
+        final (slash, io, _, plugin) = registerHost(
+          environment: <String, String>{
+            'DAP_MASTER_SECRET': 'test-master-secret',
+            'DAP_HUB_URL': 'ws://127.0.0.1:9/ws',
+          },
+          deadHub: true,
           pickOption: (title, options, {initialKey}) async => 'connect',
           askLine: (prompt, {secret = false}) async => '127.0.0.1:9',
         );
-        await slash([]);
+        await settleBoot(plugin);
+        await slash([]).timeout(const Duration(seconds: 15));
         expect(io.text, contains('[hub]'));
       },
     );
 
     test('start choice runs the one-step bring-up', () async {
       final (slash, io, env, plugin) = registerHost(
-        environment: const {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
+        environment: <String, String>{'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
         pickOption: (title, options, {initialKey}) async => 'start',
         askLine: (prompt, {secret = false}) async => '',
       );
       await settleBoot(plugin);
       await slash([]);
-      // ignore: avoid_print
-      print('DEBUG io: ${io.text}');
       expect(env['DAP_MASTER_SECRET'], isNotNull);
       expect(io.text, contains('master secret generated'));
     });
@@ -193,23 +233,24 @@ void main() {
         pickOption: (title, options, {initialKey}) async => 'stop',
       );
       await slash([]);
-      expect(io.lines, isEmpty);
+      expect(io.text, contains('DAP hub is not running'));
     });
   });
 
   group('dap_* tools', () {
-    List<AgentTool> registerToolsHost() {
+    Future<List<AgentTool>> registerToolsHost() async {
       final env = <String, String>{
         'DAP_MASTER_SECRET': 'test-master-secret',
         'DAP_HUB_URL': 'ws://127.0.0.1:9/ws',
       };
-      final plugin = hub.HubPlugin(environment: env, home: tempHome.path);
+      final plugin = _DeadHubPlugin(environment: env, home: tempHome.path);
       final host = HubPluginHost(plugin, environment: env, home: tempHome.path);
       final context = PluginContext(
         env: MemoryExecutionEnv(cwd: '/work'),
         io: _CapturingIo(),
       );
       host.register(context);
+      await settleBoot(plugin);
       final tools = context.tools;
       expect(tools.length, 5);
       return tools;
@@ -219,7 +260,7 @@ void main() {
         tools.firstWhere((t) => t.name == name);
 
     test('dap_status reports the disconnected state', () async {
-      final tools = registerToolsHost();
+      final tools = await registerToolsHost();
       final result = await toolByName(
         tools,
         'dap_status',
@@ -231,20 +272,16 @@ void main() {
       expect(text, contains('connected: false'));
     });
 
-    test('dap_peers tolerates a dead hub', () async {
-      final tools = registerToolsHost();
-      final result = await toolByName(
-        tools,
-        'dap_peers',
-      ).execute(const {}, null, null);
-      expect(
-        result.content.whereType<TextContent>().map((c) => c.text).join(),
-        isNotEmpty,
+    test('dap_peers surfaces a dead hub as an error', () async {
+      final tools = await registerToolsHost();
+      await expectLater(
+        toolByName(tools, 'dap_peers').execute(const {}, null, null),
+        throwsA(isA<StateError>()),
       );
     });
 
     test('dap_dm rejects an unknown peer and lists the roster', () async {
-      final tools = registerToolsHost();
+      final tools = await registerToolsHost();
       await expectLater(
         toolByName(
           tools,
@@ -255,7 +292,7 @@ void main() {
     });
 
     test('dap_invite surfaces the not-started error', () async {
-      final tools = registerToolsHost();
+      final tools = await registerToolsHost();
       await expectLater(
         toolByName(
           tools,
@@ -266,7 +303,7 @@ void main() {
     });
 
     test('dap_connect surfaces the dial error', () async {
-      final tools = registerToolsHost();
+      final tools = await registerToolsHost();
       await expectLater(
         toolByName(
           tools,
