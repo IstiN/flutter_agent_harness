@@ -66,33 +66,71 @@ JsAppErrorEvent? parseJsAppErrorLogLine(String line) {
 /// line mentioning the marker) or no balanced object exists (a truncated
 /// record).
 String? _balancedJsonObjectAfter(String line, int from) {
+  final start = _objectStartAfter(line, from);
+  if (start == null) return null;
+  return _BalancedObjectScan(line, start).scan();
+}
+
+/// The position of the record's `{` (first non-whitespace at or after
+/// [from]), or null when anything but whitespace precedes it (a plain
+/// log line mentioning the marker).
+int? _objectStartAfter(String line, int from) {
   var start = from;
   while (start < line.length && line[start].trim().isEmpty) {
     start++;
   }
   if (start >= line.length || line[start] != '{') return null;
+  return start;
+}
+
+/// Cursor over one candidate record: honors string literals and
+/// backslash escapes so braces inside message/stack text never cut the
+/// record short (gh-1848 tier-4 split; the `_TokenizerState` shape).
+final class _BalancedObjectScan {
+  _BalancedObjectScan(this.line, this.start);
+
+  final String line;
+  final int start;
   var depth = 0;
   var inString = false;
-  for (var i = start; i < line.length; i++) {
-    final ch = line[i];
-    if (inString) {
-      if (ch == r'\') {
-        i++; // skip the escaped character verbatim
-      } else if (ch == '"') {
-        inString = false;
-      }
-      continue;
+
+  /// The balanced object's full text, or null when unbalanced (a
+  /// truncated record).
+  String? scan() {
+    var i = start;
+    while (i < line.length) {
+      final end = _step(i);
+      if (end != null) return line.substring(start, end);
+      i = _next(i);
     }
+    return null;
+  }
+
+  /// The record end position when [i] closes the outer object.
+  int? _step(int i) {
+    final ch = line[i];
+    if (inString) return _stepInString(i);
     if (ch == '"') {
       inString = true;
     } else if (ch == '{') {
       depth++;
     } else if (ch == '}') {
       depth--;
-      if (depth == 0) return line.substring(start, i + 1);
+      if (depth == 0) return i + 1;
     }
+    return null;
   }
-  return null; // unbalanced — truncated record
+
+  int? _stepInString(int i) {
+    if (line[i] == '"') inString = false;
+    return null;
+  }
+
+  int _next(int i) {
+    // Skip the escaped character verbatim (inside strings only).
+    if (inString && line[i] == r'\') return i + 2;
+    return i + 1;
+  }
 }
 
 /// One dedup-gate decision: whether a report is new enough to deliver,

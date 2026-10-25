@@ -127,34 +127,8 @@ final class FaHttpBridge {
   /// Performs the bridged request and returns raw HTTP/1.1 response bytes.
   Future<List<int>> _perform(String authority, List<int> raw) async {
     _sweepStaleResponses();
-    final separator = _headerBodySeparator(raw);
-    final headerText = latin1.decode(raw.sublist(0, separator));
-    final body = raw.sublist(separator + 4);
-    final lines = headerText.split('\r\n');
-    final requestLine = lines.first.split(' ');
-    if (requestLine.length < 2) {
-      throw FormatException('malformed bridged request line: ${lines.first}');
-    }
-    final method = requestLine[0];
-    final target = requestLine[1];
-    final headers = <String, String>{};
-    for (final line in lines.skip(1)) {
-      final colon = line.indexOf(':');
-      if (colon > 0) {
-        headers[line.substring(0, colon).trim().toLowerCase()] = line
-            .substring(colon + 1)
-            .trim();
-      }
-    }
-
-    // The python side prefixes the authority with its scheme
-    // (`https://host:port`), so TLS endpoints stay TLS on the host side.
-    final uri = target.startsWith('/')
-        ? Uri.parse(
-            authority.contains('://') ? '$authority$target'
-                : 'http://$authority$target',
-          )
-        : Uri.parse(target);
+    final (:method, :target, :headers, :body) = _parseBridgedRequest(raw);
+    final uri = _bridgeUri(authority, target);
     final request = http.Request(method, uri)
       ..followRedirects = false
       ..headers.addAll({
@@ -169,19 +143,8 @@ final class FaHttpBridge {
     final response = await _httpClient.send(request);
     final builder = BytesBuilder(copy: false);
     await response.stream.forEach(builder.add);
-    var bytes = builder.toBytes();
     final responseHeaders = Map<String, String>.from(response.headers);
-    // gzip responses: decode when they arrive compressed; always drop the
-    // encoding marker once the body is plain. dart:io autoUncompress and
-    // NSURLSession decode transparently but KEEP the header - handing
-    // python plain bytes labeled gzip kills urllib3 with `incorrect
-    // header check` on every gzip-serving server (issue #337 review).
-    if (responseHeaders['content-encoding']?.contains('gzip') ?? false) {
-      if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
-        bytes = Uint8List.fromList(gzip.decode(bytes));
-      }
-      responseHeaders.remove('content-encoding');
-    }
+    final bytes = _unwrapGzip(builder.toBytes(), responseHeaders);
     responseHeaders
       ..remove('transfer-encoding')
       ..['content-length'] = '${bytes.length}';
@@ -193,21 +156,85 @@ final class FaHttpBridge {
     return [...latin1.encode(out.toString()), ...bytes];
   }
 
+  /// Splits a bridged raw HTTP/1.1 request into its request line,
+  /// headers (names lower-cased), and body.
+  ({String method, String target, Map<String, String> headers, List<int> body})
+  _parseBridgedRequest(List<int> raw) {
+    final separator = _headerBodySeparator(raw);
+    final lines = latin1.decode(raw.sublist(0, separator)).split('\r\n');
+    final requestLine = lines.first.split(' ');
+    if (requestLine.length < 2) {
+      throw FormatException('malformed bridged request line: ${lines.first}');
+    }
+    final headers = <String, String>{};
+    for (final line in lines.skip(1)) {
+      final colon = line.indexOf(':');
+      if (colon > 0) {
+        headers[line.substring(0, colon).trim().toLowerCase()] = line
+            .substring(colon + 1)
+            .trim();
+      }
+    }
+    return (
+      method: requestLine[0],
+      target: requestLine[1],
+      headers: headers,
+      body: raw.sublist(separator + 4),
+    );
+  }
+
+  /// The absolute URI for a bridged request target: the python side
+  /// prefixes the authority with its scheme (`https://host:port`), so
+  /// TLS endpoints stay TLS on the host side; an absolute-form target
+  /// (proxy style) is used as-is.
+  Uri _bridgeUri(String authority, String target) => target.startsWith('/')
+      ? Uri.parse(
+          authority.contains('://')
+              ? '$authority$target'
+              : 'http://$authority$target',
+        )
+      : Uri.parse(target);
+
+  /// gzip responses: decode when they arrive compressed; always drop the
+  /// encoding marker once the body is plain. dart:io autoUncompress and
+  /// NSURLSession decode transparently but KEEP the header - handing
+  /// python plain bytes labeled gzip kills urllib3 with `incorrect
+  /// header check` on every gzip-serving server (issue #337 review).
+  /// Returns the (possibly decoded) body.
+  List<int> _unwrapGzip(List<int> bytes, Map<String, String> responseHeaders) {
+    if (responseHeaders['content-encoding']?.contains('gzip') ?? false) {
+      responseHeaders.remove('content-encoding');
+      if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
+        return Uint8List.fromList(gzip.decode(bytes));
+      }
+    }
+    return bytes;
+  }
+
   /// Deletes response files left behind by stages that timed out between
   /// the request and the poll (issue #337 review): every request sweeps
   /// anything older than ten minutes.
   void _sweepStaleResponses() {
     try {
-      final dir = Directory('$_root/dev/.fahttp');
-      if (!dir.existsSync()) return;
-      final cutoff = DateTime.now().subtract(const Duration(minutes: 10));
-      for (final entity in dir.listSync()) {
-        if (entity is! File) continue;
-        if (entity.statSync().modified.isBefore(cutoff)) entity.deleteSync();
-      }
+      _sweepStaleResponsesIn(Directory('$_root/dev/.fahttp'));
     } on Object {
       // Sweeping is best-effort housekeeping.
     }
+  }
+
+  /// The sweep proper: files in [dir] older than ten minutes go away.
+  void _sweepStaleResponsesIn(Directory dir) {
+    if (!dir.existsSync()) return;
+    final cutoff = DateTime.now().subtract(const Duration(minutes: 10));
+    for (final entity in dir.listSync()) {
+      _deleteIfStale(entity, cutoff);
+    }
+  }
+
+  /// Deletes [entity] when it is a file last modified before [cutoff].
+  static void _deleteIfStale(FileSystemEntity entity, DateTime cutoff) {
+    if (entity is! File) return;
+    if (entity.statSync().modified.isBefore(cutoff)) entity.deleteSync();
   }
 
   Future<void> _writeResponse(String rid, List<int> bytes) async {

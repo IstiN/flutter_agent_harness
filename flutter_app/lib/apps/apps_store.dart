@@ -877,15 +877,31 @@ class AppsStore {
   Future<bool> _i18nRefsUnchanged(JsAppInfo app, String dirId) async {
     final recorded = _refHashes[dirId];
     if (recorded == null) return true;
+    return _allI18nRefsUnchanged(app, recorded);
+  }
+
+  /// Whether every ref file recorded under [dirId] still matches its
+  /// parse-time digest; the FIRST changed (or missing) file decides.
+  Future<bool> _allI18nRefsUnchanged(
+    JsAppInfo app,
+    Map<String, String> recorded,
+  ) async {
     for (final entry in recorded.entries) {
-      final current = (await _env.readTextFile(
-        '${app.dir}/${entry.key}',
-      )).valueOrNull;
-      if (current == null || _digest(current) != entry.value) {
-        return false;
-      }
+      if (!await _i18nRefUnchanged(app, entry)) return false;
     }
     return true;
+  }
+
+  /// Whether one ref file still matches the digest recorded at parse
+  /// time (a missing file counts as changed).
+  Future<bool> _i18nRefUnchanged(
+    JsAppInfo app,
+    MapEntry<String, String> entry,
+  ) async {
+    final current = (await _env.readTextFile(
+      '${app.dir}/${entry.key}',
+    )).valueOrNull;
+    return current != null && _digest(current) == entry.value;
   }
 
   /// Reads the JS source of [app].

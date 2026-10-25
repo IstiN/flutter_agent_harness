@@ -186,77 +186,111 @@ class _FilePreviewViewState extends State<FilePreviewView> {
 
   Future<void> _load() async {
     try {
-      final infoResult = await widget.env.fileInfo(widget.path);
-      if (!mounted) return;
-      final info = infoResult.valueOrNull;
-      if (info == null) {
-        _showError(
-          infoResult.errorOrNull?.message ?? context.l10n.filePreviewCannotStat,
-        );
-        return;
-      }
-      _size = info.size;
-      if (info.size > kPreviewReadCapBytes) {
-        _showInfo(context.l10n.filePreviewTooLarge);
-        return;
-      }
-      final bytesResult = await widget.env.readBinaryFile(widget.path);
-      if (!mounted) return;
-      final bytes = bytesResult.valueOrNull;
-      if (bytes == null) {
-        _showError(
-          bytesResult.errorOrNull?.message ??
-              context.l10n.filePreviewCannotRead,
-        );
-        return;
-      }
-      final ext = fileExtension(widget.name);
-      if (_kImageExtensions.contains(ext)) {
-        if (!sniffsAsImage(bytes)) {
-          _showInfo(context.l10n.filePreviewNoPreview);
-        } else {
-          setState(() {
-            _imageBytes = bytes;
-            _state = _PreviewState.image;
-          });
-        }
-        return;
-      }
-      // Audio/video preview hands the raw bytes to the sandbox media
-      // players — no sniffing (the extension is the contract, like the
-      // chat's media tiles).
-      if (_kAudioExtensions.contains(ext)) {
-        setState(() {
-          _mediaBytes = bytes;
-          _state = _PreviewState.audio;
-        });
-        return;
-      }
-      if (_kVideoExtensions.contains(ext)) {
-        setState(() {
-          _mediaBytes = bytes;
-          _state = _PreviewState.video;
-        });
-        return;
-      }
-      if (_looksBinary(bytes)) {
-        _showInfo(context.l10n.filePreviewNoPreview);
-        return;
-      }
-      var text = utf8.decode(bytes, allowMalformed: true);
-      final truncated = text.length > kTextPreviewCapChars;
-      if (truncated) text = text.substring(0, kTextPreviewCapChars);
-      setState(() {
-        _text = text;
-        _truncated = truncated;
-        _richKind = _richKindFor(widget.name);
-        _state = _PreviewState.text;
-      });
+      final bytes = await _readPreviewBytes();
+      if (bytes == null) return;
+      _showPreviewFor(bytes);
     } on Object catch (e) {
       // Defensive: the FileSystem contract says operations never throw, but
       // a broken backend must not take down the browser UI.
       if (mounted) _showError(e.toString());
     }
+  }
+
+  /// Stats then reads the file; null when it vanished, is too large, or
+  /// the read failed (the reason is already on screen).
+  Future<Uint8List?> _readPreviewBytes() async {
+    final info = await _statPreviewFile();
+    if (info == null) return null;
+    if (info.size > kPreviewReadCapBytes) {
+      _showInfo(context.l10n.filePreviewTooLarge);
+      return null;
+    }
+    return _readCappedBytes();
+  }
+
+  Future<FileInfo?> _statPreviewFile() async {
+    final infoResult = await widget.env.fileInfo(widget.path);
+    if (!mounted) return null;
+    final info = infoResult.valueOrNull;
+    if (info == null) {
+      _showError(
+        infoResult.errorOrNull?.message ?? context.l10n.filePreviewCannotStat,
+      );
+      return null;
+    }
+    _size = info.size;
+    return info;
+  }
+
+  Future<Uint8List?> _readCappedBytes() async {
+    final bytesResult = await widget.env.readBinaryFile(widget.path);
+    if (!mounted) return null;
+    final bytes = bytesResult.valueOrNull;
+    if (bytes == null) {
+      _showError(
+        bytesResult.errorOrNull?.message ?? context.l10n.filePreviewCannotRead,
+      );
+      return null;
+    }
+    return bytes;
+  }
+
+  void _showPreviewFor(Uint8List bytes) {
+    final ext = fileExtension(widget.name);
+    if (_kImageExtensions.contains(ext)) {
+      _showImagePreview(bytes);
+    } else {
+      _showNonImagePreview(bytes, ext);
+    }
+  }
+
+  void _showImagePreview(Uint8List bytes) {
+    if (!sniffsAsImage(bytes)) {
+      _showInfo(context.l10n.filePreviewNoPreview);
+    } else {
+      setState(() {
+        _imageBytes = bytes;
+        _state = _PreviewState.image;
+      });
+    }
+  }
+
+  void _showNonImagePreview(Uint8List bytes, String ext) {
+    // Audio/video preview hands the raw bytes to the sandbox media
+    // players — no sniffing (the extension is the contract, like the
+    // chat's media tiles).
+    if (_kAudioExtensions.contains(ext)) {
+      _setMediaPreview(bytes, _PreviewState.audio);
+      return;
+    }
+    if (_kVideoExtensions.contains(ext)) {
+      _setMediaPreview(bytes, _PreviewState.video);
+      return;
+    }
+    if (_looksBinary(bytes)) {
+      _showInfo(context.l10n.filePreviewNoPreview);
+      return;
+    }
+    _showTextPreview(bytes);
+  }
+
+  void _setMediaPreview(Uint8List bytes, _PreviewState state) {
+    setState(() {
+      _mediaBytes = bytes;
+      _state = state;
+    });
+  }
+
+  void _showTextPreview(Uint8List bytes) {
+    var text = utf8.decode(bytes, allowMalformed: true);
+    final truncated = text.length > kTextPreviewCapChars;
+    if (truncated) text = text.substring(0, kTextPreviewCapChars);
+    setState(() {
+      _text = text;
+      _truncated = truncated;
+      _richKind = _richKindFor(widget.name);
+      _state = _PreviewState.text;
+    });
   }
 
   void _showError(String message) {

@@ -243,65 +243,110 @@ int? _parseValuedShortLetter(
 ) {
   switch (letter) {
     case 'e':
-      if (rest.isNotEmpty) {
-        state.pattern = rest;
-        return i + 1;
-      }
-      if (i + 1 >= args.length) return null;
-      state.pattern = args[i + 1];
-      return i + 2;
+      return _grepPatternLetter(state, rest, args, i);
     case 'm':
-      if (rest.isNotEmpty) {
-        if (int.tryParse(rest) == null) {
-          state.error = 'grep: invalid max count: $rest\n';
-        } else {
-          state.flags.add('-m$rest');
-        }
-        return i + 1;
-      }
-      state.flags.add('-m');
-      if (i + 1 < args.length) {
-        state.flags.add(args[i + 1]);
-        return i + 2;
-      }
-      return i + 1;
+      return _grepMaxCountLetter(state, rest, args, i);
     default: // 'A' | 'B' | 'C' — context flags, count attached or next.
-      if (rest.isNotEmpty) {
-        if (int.tryParse(rest) == null) {
-          state.error = 'grep: invalid context length: $rest\n';
-        } else {
-          state.flags.addAll(['-$letter', rest]);
-        }
-        return i + 1;
-      }
-      if (i + 1 < args.length && int.tryParse(args[i + 1]) != null) {
-        state.flags.addAll(['-$letter', args[i + 1]]);
-        return i + 2;
-      }
-      state.error = "grep: option requires an argument -- '$letter'\n";
-      return i + 1;
+      return _grepContextLetter(state, letter, rest, args, i);
   }
+}
+
+/// `-e PATTERN`: attached (`-ePATTERN`) or the next token. Null = syntax
+/// error (missing pattern).
+int? _grepPatternLetter(
+  _GrepParse state,
+  String rest,
+  List<String> args,
+  int i,
+) {
+  if (rest.isNotEmpty) {
+    state.pattern = rest;
+    return i + 1;
+  }
+  if (i + 1 >= args.length) return null;
+  state.pattern = args[i + 1];
+  return i + 2;
+}
+
+/// `-m COUNT`: attached or next; a non-integer count is the recorded
+/// error. A bare `-m` still consumes nothing and keeps the bare flag.
+int? _grepMaxCountLetter(
+  _GrepParse state,
+  String rest,
+  List<String> args,
+  int i,
+) {
+  if (rest.isNotEmpty) {
+    if (int.tryParse(rest) == null) {
+      state.error = 'grep: invalid max count: $rest\n';
+    } else {
+      state.flags.add('-m$rest');
+    }
+    return i + 1;
+  }
+  state.flags.add('-m');
+  if (i + 1 < args.length) {
+    state.flags.add(args[i + 1]);
+    return i + 2;
+  }
+  return i + 1;
+}
+
+/// `-A`/`-B`/`-C`: the count rides the letter (`-A3`) or is the next
+/// token; anything else is the recorded usage error.
+int? _grepContextLetter(
+  _GrepParse state,
+  String letter,
+  String rest,
+  List<String> args,
+  int i,
+) {
+  if (rest.isNotEmpty) {
+    if (int.tryParse(rest) == null) {
+      state.error = 'grep: invalid context length: $rest\n';
+    } else {
+      state.flags.addAll(['-$letter', rest]);
+    }
+    return i + 1;
+  }
+  if (i + 1 < args.length && int.tryParse(args[i + 1]) != null) {
+    state.flags.addAll(['-$letter', args[i + 1]]);
+    return i + 2;
+  }
+  state.error = "grep: option requires an argument -- '$letter'\n";
+  return i + 1;
 }
 
 /// The value-less short letters. Returns `false` for a letter with no
 /// faithful translation — the caller records the POSIX-style error.
 bool _applySimpleShortLetter(_GrepParse state, String letter) {
+  if (_isSimpleNoOpLetter(letter)) return true;
+  if (_applyTranslatedSimpleLetter(state, letter)) return true;
+  // Letters rg spells the same way pass through verbatim.
+  if (_rgSameLetterFlags.contains(letter)) {
+    state.flags.add('-$letter');
+    return true;
+  }
+  return false;
+}
+
+/// Accepted no-ops for the sandbox surface: rg labels matches by default
+/// (`-H`) and the `-T`/`-d`/`-s` behaviors have no rg counterpart.
+bool _isSimpleNoOpLetter(String letter) =>
+    letter == 'H' || letter == 'T' || letter == 'd' || letter == 's';
+
+/// The letters that translate to a DIFFERENT rg flag or state.
+bool _applyTranslatedSimpleLetter(_GrepParse state, String letter) {
   switch (letter) {
     case 'h':
       // grep -h = no filename column; rg's -h is help — translate.
       state.flags.add('-I');
-    case 'H':
-      break; // rg labels matches by default
     case 'r' || 'R':
       state.recursive = true;
     case 'E':
       state.extended = true; // rg regex syntax is ERE-shaped already
     case 'q':
       state.quiet = true;
-    case 'T' || 'd' || 's':
-      break; // accepted no-ops for the sandbox surface
-    case _ when _rgSameLetterFlags.contains(letter):
-      state.flags.add('-$letter');
     default:
       return false;
   }

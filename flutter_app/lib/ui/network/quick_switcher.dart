@@ -91,17 +91,31 @@ class NetworkQuickSwitcher extends StatelessWidget {
   /// mode store, resume the session through the manager.
   void _switchTo(BuildContext context, String networkId) {
     unawaited(controller.enterNetwork(networkId));
-    unawaited(() async {
-      try {
-        await manager.resume(networkId);
-      } on StateError catch (e) {
-        if (context.mounted) showFahErrorSnack(context, e.message);
-      } on FaNetworkException catch (e) {
-        if (context.mounted) showFahErrorSnack(context, e.message);
-      } on Object catch (e) {
-        if (context.mounted) showFahErrorSnack(context, '$e');
-      }
-    }());
+    unawaited(_resumeSwitchedNetwork(context, networkId));
+  }
+
+  Future<void> _resumeSwitchedNetwork(
+    BuildContext context,
+    String networkId,
+  ) async {
+    try {
+      await manager.resume(networkId);
+    } on Object catch (e) {
+      _showResumeError(context, _resumeErrorMessage(e));
+    }
+  }
+
+  /// Named failures first ([StateError.message], the network errors'
+  /// message); anything else its toString — the same mapping the
+  /// per-type catches it replaces.
+  String _resumeErrorMessage(Object e) {
+    if (e is StateError) return e.message;
+    if (e is FaNetworkException) return e.message;
+    return '$e';
+  }
+
+  void _showResumeError(BuildContext context, String message) {
+    if (context.mounted) showFahErrorSnack(context, message);
   }
 
   void _openSwitcher(BuildContext context) {

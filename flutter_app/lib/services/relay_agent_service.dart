@@ -633,36 +633,63 @@ final class RelayAgentService extends AgentService {
 
   /// Protocol-message dispatch, one handler per message type (issue
   /// #486). `UiProtocolMessage` is a sealed family of `final class`es —
-  /// the pattern cases are the dispatch table, and an unmapped type (the
-  /// UI→SW-only messages, raw hello frames) stays the old no-op.
+  /// the table below is the dispatch, keyed by exact runtime type (the
+  /// family admits no subclasses), and an unmapped type (the UI→SW-only
+  /// messages, raw hello frames) stays the old no-op.
   void _onProtocolMessage(UiProtocolMessage message) {
-    switch (message) {
-      case HelloAckMsg(:final sessionId):
-        _onHelloAckMsg(sessionId);
-      case AttachedMsg(:final sessionId, :final replay):
-        _onAttachedMsg(sessionId, replay);
-      case MessageDoneMsg(:final message):
-        _onMessageDoneMsg(message);
-      case ApprovalRequestMsg(:final id, :final call, :final reason):
-        unawaited(_decideApproval(id, call, reason));
-      case StreamMsg(:final event):
-        _onHostEvent(event);
-      case SettingsResultMsg(:final settings):
-        _onSettingsResultMsg(settings);
-      case ToolsStateMsg(:final tools):
-        _onToolsStateMsg(tools);
-      case SessionsResultMsg(:final sessions):
-        _sessionsQuery?.complete(sessions);
-      case ExtResultMsg(:final id, :final ok, :final data, :final error):
-        _onExtResultMsg(id, ok, data, error);
-      case ToolsPutMsg():
-        break; // UI -> SW only
-      case ErrorMsg(:final message):
-        _error = message;
-        notifyListeners();
-      default:
-        break; // hello_ack/attach are the transport's business
-    }
+    final handler = _protocolMessageHandlers[message.runtimeType];
+    if (handler != null) handler(message);
+  }
+
+  /// Per-type handlers for [_onProtocolMessage]; unmapped types no-op.
+  /// Lives in a field so the one-line adapters never count against any
+  /// method's complexity.
+  late final Map<Type, void Function(UiProtocolMessage)>
+  _protocolMessageHandlers = {
+    HelloAckMsg: (message) =>
+        _onHelloAckMsg((message as HelloAckMsg).sessionId),
+    AttachedMsg: (message) {
+      final msg = message as AttachedMsg;
+      _onAttachedMsg(msg.sessionId, msg.replay);
+    },
+    MessageDoneMsg: (message) =>
+        _onMessageDoneMsg((message as MessageDoneMsg).message),
+    ApprovalRequestMsg: (message) {
+      final msg = message as ApprovalRequestMsg;
+      _onApprovalRequestMsg(msg.id, msg.call, msg.reason);
+    },
+    StreamMsg: (message) => _onHostEvent((message as StreamMsg).event),
+    SettingsResultMsg: (message) =>
+        _onSettingsResultMsg((message as SettingsResultMsg).settings),
+    ToolsStateMsg: (message) =>
+        _onToolsStateMsg((message as ToolsStateMsg).tools),
+    SessionsResultMsg: (message) =>
+        _onSessionsResultMsg((message as SessionsResultMsg).sessions),
+    ExtResultMsg: (message) {
+      final msg = message as ExtResultMsg;
+      _onExtResultMsg(msg.id, msg.ok, msg.data, msg.error);
+    },
+    ErrorMsg: (message) => _onErrorMsg((message as ErrorMsg).message),
+  };
+
+  /// A tool call awaits the human's decision.
+  void _onApprovalRequestMsg(
+    String id,
+    Map<String, dynamic> call,
+    String reason,
+  ) {
+    unawaited(_decideApproval(id, call, reason));
+  }
+
+  /// Answer to `sessions_query`: complete the awaiting panel query.
+  void _onSessionsResultMsg(List<Map<String, dynamic>> sessions) {
+    _sessionsQuery?.complete(sessions);
+  }
+
+  /// SW → UI protocol error: surface it in the panel's error slot.
+  void _onErrorMsg(String message) {
+    _error = message;
+    notifyListeners();
   }
 
   /// Hello (re)syncs after boot, panel reload and SW reconnect. The SW
@@ -780,89 +807,168 @@ final class RelayAgentService extends AgentService {
     notifyListeners();
   }
 
+  /// Host event dispatch. Events split into two families — streaming
+  /// conversation content (delta/thinking_delta/message_done) and
+  /// state/meta (everything else); each family dispatches to one handler
+  /// per event type, and unknown types keep the old no-op-and-repaint.
   void _onHostEvent(Map<String, dynamic> event, {bool silent = false}) {
     switch (event['type']) {
       case 'delta':
-        _currentAssistant ??= _append(
-          fa_ui.FaChatMessage(role: 'assistant', content: ''),
-        );
-        _currentAssistant!.content += event['text'] as String? ?? '';
       case 'thinking_delta':
-        // Reasoning stream from the model: its own collapsible bubble
-        // (same shape the local AgentService renders), never merged into
-        // the assistant text. A new turn starts a fresh bubble —
-        // _finishAssistant clears the current one.
-        _currentThinking ??= _append(
-          fa_ui.FaChatMessage(role: 'thinking', content: ''),
-        );
-        _currentThinking!.content += event['text'] as String? ?? '';
       case 'message_done':
-        if ((event['role'] as String? ?? 'assistant') == 'user') {
-          // The composer echo is reconciled in the live path; replay
-          // has no local echo, so the copy is needed there.
-          if (silent) {
-            final content = _stripTurnContext(event['text'] as String? ?? '');
-            _append(fa_ui.FaChatMessage(role: 'user', content: content));
-            _trajectoryAppend(
-              UserMessage.text(content, timestamp: _rowTimestamp(event)),
-            );
-          }
-        } else {
-          _finishAssistant(event, silent: silent);
-        }
-      case 'tool_result':
-        final toolText = event['text'] as String? ?? '';
-        final toolName = event['toolName'] as String?;
-        final toolIsError = event['isError'] as bool? ?? false;
-        _append(
-          fa_ui.FaChatMessage(
-            role: 'tool',
-            content: toolText,
-            toolName: toolName,
-            isError: toolIsError,
-          ),
-        );
+        _onHostStreamEvent(event, silent: silent);
+      default:
+        _onHostStateEvent(event, silent: silent);
+    }
+  }
+
+  /// Streaming conversation content: assistant text deltas, reasoning
+  /// deltas, and turn-final message_done. Always repaints when live.
+  void _onHostStreamEvent(Map<String, dynamic> event, {bool silent = false}) {
+    switch (event['type']) {
+      case 'delta':
+        _onHostDeltaEvent(event);
+      case 'thinking_delta':
+        _onHostThinkingDeltaEvent(event);
+      case 'message_done':
+        _onHostMessageDoneEvent(event, silent);
+    }
+    if (!silent) notifyListeners();
+  }
+
+  /// Assistant text delta: append to the streaming partial (creating it
+  /// on the first delta of the turn).
+  void _onHostDeltaEvent(Map<String, dynamic> event) {
+    _currentAssistant ??= _append(
+      fa_ui.FaChatMessage(role: 'assistant', content: ''),
+    );
+    _currentAssistant!.content += event['text'] as String? ?? '';
+  }
+
+  /// Reasoning stream from the model: its own collapsible bubble (same
+  /// shape the local AgentService renders), never merged into the
+  /// assistant text. A new turn starts a fresh bubble — _finishAssistant
+  /// clears the current one.
+  void _onHostThinkingDeltaEvent(Map<String, dynamic> event) {
+    _currentThinking ??= _append(
+      fa_ui.FaChatMessage(role: 'thinking', content: ''),
+    );
+    _currentThinking!.content += event['text'] as String? ?? '';
+  }
+
+  /// Turn-final message_done: user echoes render only in replays (live
+  /// sends were echoed locally — see [_onMessageDoneMsg]); everything
+  /// else finalizes the assistant turn.
+  void _onHostMessageDoneEvent(Map<String, dynamic> event, bool silent) {
+    if ((event['role'] as String? ?? 'assistant') == 'user') {
+      // The composer echo is reconciled in the live path; replay has no
+      // local echo, so the copy is needed there.
+      if (silent) {
+        final content = _stripTurnContext(event['text'] as String? ?? '');
+        _append(fa_ui.FaChatMessage(role: 'user', content: content));
         _trajectoryAppend(
-          ToolResultMessage(
-            toolCallId: '',
-            toolName: toolName ?? 'tool',
-            content: [TextContent(text: toolText)],
-            isError: toolIsError,
-            timestamp: _rowTimestamp(event),
-          ),
+          UserMessage.text(content, timestamp: _rowTimestamp(event)),
         );
+      }
+    } else {
+      _finishAssistant(event, silent: silent);
+    }
+  }
+
+  /// State/meta events: tool results, run status, routed mail, errors
+  /// and SW diagnostics. Any unknown type falls through to the
+  /// diagnostics handler, which ignores it — no-op plus repaint, exactly
+  /// like the pre-split switch.
+  void _onHostStateEvent(Map<String, dynamic> event, {bool silent = false}) {
+    switch (event['type']) {
+      case 'tool_result':
       case 'status':
-        _running = event['running'] as bool? ?? _running;
-        final provider = event['provider'];
-        if (provider is Map) {
-          _modelId = provider['model'] as String? ?? _modelId;
-          _baseUrl = provider['baseUrl'] as String? ?? _baseUrl;
-        }
-        _syncPendingMail(event['mail']);
+        _onHostProgressEvent(event, silent: silent);
       case 'mail_routed':
-        // Issue #320 AC4: the session binding re-pointed the live
-        // session for inbound mail — say so instead of silently moving
-        // the conversation out from under the user.
-        _append(
-          fa_ui.FaChatMessage(
-            role: 'system',
-            content:
-                'mail from ${event['from']} routed to session '
-                '${event['sessionId']}',
-          ),
-        );
-        // Paint NOW — _append alone does not notify, and the notice must
-        // not wait for the routed turn's first delta.
-        if (!silent) notifyListeners();
-      case 'error':
-        _error = event['error'] as String? ?? 'unknown relay error';
-        _pendingEchoes.clear();
-      case 'debug':
-        // SW-side diagnostics (provider response/terminal events): the
-        // SW console is a separate DevTools window nobody opens, so the
-        // lines ride the relay into THIS console — visible next to the
-        // [fah][relay] lines when an empty turn needs a cause.
-        debugPrint('[fah][sw] ${event['text']}');
+        _onHostMailRoutedEvent(event, silent);
+      default:
+        _onHostDiagnosticsEvent(event, silent: silent);
+    }
+  }
+
+  /// Per-turn progress: the tool_result row and the running/provider
+  /// status snapshot.
+  void _onHostProgressEvent(Map<String, dynamic> event, {bool silent = false}) {
+    if (event['type'] == 'tool_result') {
+      _onHostToolResultEvent(event);
+    } else {
+      _onHostStatusEvent(event);
+    }
+    if (!silent) notifyListeners();
+  }
+
+  /// Tool result row: chat bubble with tool name/error marker plus its
+  /// trajectory record.
+  void _onHostToolResultEvent(Map<String, dynamic> event) {
+    final toolText = event['text'] as String? ?? '';
+    final toolName = event['toolName'] as String?;
+    final toolIsError = event['isError'] as bool? ?? false;
+    _append(
+      fa_ui.FaChatMessage(
+        role: 'tool',
+        content: toolText,
+        toolName: toolName,
+        isError: toolIsError,
+      ),
+    );
+    _trajectoryAppend(
+      ToolResultMessage(
+        toolCallId: '',
+        toolName: toolName ?? 'tool',
+        content: [TextContent(text: toolText)],
+        isError: toolIsError,
+        timestamp: _rowTimestamp(event),
+      ),
+    );
+  }
+
+  /// Run status snapshot: running flag, provider trio, pending mail.
+  void _onHostStatusEvent(Map<String, dynamic> event) {
+    _running = event['running'] as bool? ?? _running;
+    final provider = event['provider'];
+    if (provider is Map) {
+      _modelId = provider['model'] as String? ?? _modelId;
+      _baseUrl = provider['baseUrl'] as String? ?? _baseUrl;
+    }
+    _syncPendingMail(event['mail']);
+  }
+
+  /// Issue #320 AC4: the session binding re-pointed the live session for
+  /// inbound mail — say so instead of silently moving the conversation
+  /// out from under the user.
+  void _onHostMailRoutedEvent(Map<String, dynamic> event, bool silent) {
+    _append(
+      fa_ui.FaChatMessage(
+        role: 'system',
+        content:
+            'mail from ${event['from']} routed to session '
+            '${event['sessionId']}',
+      ),
+    );
+    // Paint NOW — _append alone does not notify, and the notice must not
+    // wait for the routed turn's first delta.
+    if (!silent) notifyListeners();
+  }
+
+  /// Errors and SW-side diagnostics (provider response/terminal events):
+  /// the SW console is a separate DevTools window nobody opens, so the
+  /// lines ride the relay into THIS console — visible next to the
+  /// [fah][relay] lines when an empty turn needs a cause. Unknown event
+  /// types land here too and are ignored.
+  void _onHostDiagnosticsEvent(
+    Map<String, dynamic> event, {
+    bool silent = false,
+  }) {
+    if (event['type'] == 'error') {
+      _error = event['error'] as String? ?? 'unknown relay error';
+      _pendingEchoes.clear();
+    } else if (event['type'] == 'debug') {
+      debugPrint('[fah][sw] ${event['text']}');
     }
     if (!silent) notifyListeners();
   }
@@ -1009,58 +1115,68 @@ final class RelayAgentService extends AgentService {
     // The finished thinking bubble stays on screen; the next turn's
     // reasoning opens a fresh one.
     _currentThinking = null;
-    // An errored turn (expired SSO session, gateway failure) carries its
-    // message in the `error` field with an EMPTY text — surface it as an
-    // error bubble (the [[auth-expired:…]] marker renders the
-    // re-authorize card), never as the "empty response" placeholder.
+    if (_finishAssistantError(message, role, silent: silent)) return;
+    _finishAssistantContent(message, role, text);
+    notifyListeners();
+  }
+
+  /// An errored turn (expired SSO session, gateway failure) carries its
+  /// message in the `error` field with an EMPTY text — surface it as an
+  /// error bubble (the [[auth-expired:…]] marker renders the
+  /// re-authorize card), never as the "empty response" placeholder.
+  /// Returns true when [message] WAS such an error row and is fully
+  /// handled (the caller must stop processing).
+  bool _finishAssistantError(
+    Map<String, dynamic> message,
+    String role, {
+    required bool silent,
+  }) {
     final errorText = message['error'] as String?;
-    if (role == 'assistant' && errorText != null && errorText.isNotEmpty) {
-      _append(
-        fa_ui.FaChatMessage(
-          role: 'assistant',
-          content: errorText,
-          isError: true,
-        ),
-      );
-      _trajectoryAppend(
-        _assistantRecord(
-          errorText,
-          timestamp: _rowTimestamp(message),
-          stopReason: StopReason.error,
-          errorMessage: errorText,
-        ),
-      );
-      // The CLI restarts CodeMie SSO the moment the saved cookie is
-      // expired; the extension does the same reactively — open the login
-      // tab and resend, no manual Authorize click needed. LIVE failures
-      // only: a replayed historical error row must not fire the flow at
-      // every boot (and `_baseUrl` may still be empty before the settings
-      // snapshot lands — a relative probe URL then resolves against the
-      // extension origin and 404s forever).
-      if (!silent &&
-          authExpiredProvider(errorText) == 'codemie' &&
-          (Uri.tryParse(_baseUrl)?.hasScheme ?? false)) {
-        unawaited(_autoReauthCodemie());
-      }
-      notifyListeners();
-      return;
+    if (role != 'assistant' || errorText == null || errorText.isEmpty) {
+      return false;
     }
-    if (role == 'assistant' && text.isEmpty) {
-      // A tool-call-only assistant turn legitimately has no text — the
-      // tool_result rows that follow tell the story; a placeholder here
-      // reads like a failure mid-flow (the approval dialog opens while
-      // the empty bubble is already on screen).
-      final toolCalls = message['toolCalls'];
-      final hasToolCalls = toolCalls is List && toolCalls.isNotEmpty;
-      if (!hasToolCalls) {
-        _append(
-          fa_ui.FaChatMessage(
-            content: fa_ui.emptyResponsePlaceholder,
-            role: 'assistant',
-          ),
-        );
-      }
-    } else if (role == 'tool') {
+    _append(
+      fa_ui.FaChatMessage(role: 'assistant', content: errorText, isError: true),
+    );
+    _trajectoryAppend(
+      _assistantRecord(
+        errorText,
+        timestamp: _rowTimestamp(message),
+        stopReason: StopReason.error,
+        errorMessage: errorText,
+      ),
+    );
+    _maybeAutoReauthCodemie(errorText, silent: silent);
+    notifyListeners();
+    return true;
+  }
+
+  /// The CLI restarts CodeMie SSO the moment the saved cookie is expired;
+  /// the extension does the same reactively — open the login tab and
+  /// resend, no manual Authorize click needed. LIVE failures only: a
+  /// replayed historical error row must not fire the flow at every boot
+  /// (and `_baseUrl` may still be empty before the settings snapshot
+  /// lands — a relative probe URL then resolves against the extension
+  /// origin and 404s forever).
+  void _maybeAutoReauthCodemie(String errorText, {required bool silent}) {
+    if (!silent &&
+        authExpiredProvider(errorText) == 'codemie' &&
+        (Uri.tryParse(_baseUrl)?.hasScheme ?? false)) {
+      unawaited(_autoReauthCodemie());
+    }
+  }
+
+  /// Renders the finalized non-error row by role: tool rows carry the
+  /// tool name, an empty assistant turn renders the "empty response"
+  /// placeholder unless the turn made tool calls (see
+  /// [_finishEmptyAssistant]), assistant text rows also append their
+  /// trajectory record, and anything else appends verbatim.
+  void _finishAssistantContent(
+    Map<String, dynamic> message,
+    String role,
+    String text,
+  ) {
+    if (role == 'tool') {
       _append(
         fa_ui.FaChatMessage(
           role: 'tool',
@@ -1068,15 +1184,37 @@ final class RelayAgentService extends AgentService {
           toolName: message['toolName'] as String?,
         ),
       );
-    } else if (role == 'assistant' && text.isNotEmpty) {
-      _append(fa_ui.FaChatMessage(role: role, content: text));
-      _trajectoryAppend(
-        _assistantRecord(text, timestamp: _rowTimestamp(message)),
-      );
-    } else {
-      _append(fa_ui.FaChatMessage(role: role, content: text));
+      return;
     }
-    notifyListeners();
+    if (role != 'assistant') {
+      _append(fa_ui.FaChatMessage(role: role, content: text));
+      return;
+    }
+    if (text.isEmpty) {
+      _finishEmptyAssistant(message);
+      return;
+    }
+    _append(fa_ui.FaChatMessage(role: role, content: text));
+    _trajectoryAppend(
+      _assistantRecord(text, timestamp: _rowTimestamp(message)),
+    );
+  }
+
+  /// An assistant turn with no text: a tool-call-only turn legitimately
+  /// has no text — the tool_result rows that follow tell the story; a
+  /// placeholder here reads like a failure mid-flow (the approval dialog
+  /// opens while the empty bubble is already on screen).
+  void _finishEmptyAssistant(Map<String, dynamic> message) {
+    final toolCalls = message['toolCalls'];
+    final hasToolCalls = toolCalls is List && toolCalls.isNotEmpty;
+    if (!hasToolCalls) {
+      _append(
+        fa_ui.FaChatMessage(
+          content: fa_ui.emptyResponsePlaceholder,
+          role: 'assistant',
+        ),
+      );
+    }
   }
 
   fa_ui.FaChatMessage _append(fa_ui.FaChatMessage message) {

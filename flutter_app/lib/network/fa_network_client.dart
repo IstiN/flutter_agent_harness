@@ -644,6 +644,34 @@ class FaNetworkClient {
     required Set<int> expected,
   }) async {
     final uri = _uri(path, query, base: authService ? authBaseUrl : null);
+    final request = _buildFaRequest(
+      method: method,
+      uri: uri,
+      requestHeaders: _faHeaders(auth, management, headers),
+      encodedBody: body == null ? null : jsonEncode(body),
+    );
+    final streamed = await _http.send(request);
+    final response = await http.Response.fromStream(streamed);
+    if (!expected.contains(response.statusCode)) {
+      final error = _errorFor(response);
+      AppLog.i(
+        'fa_network',
+        '$method $path → ${response.statusCode} ${error.code} '
+            '(bearer=${_sentTokenClass(auth: auth, management: management)}): '
+            '${error.message}',
+      );
+      throw error;
+    }
+    return response;
+  }
+
+  /// JSON content/accept headers plus the bearer when [auth] is on and
+  /// a matching token exists.
+  Map<String, String> _faHeaders(
+    bool auth,
+    bool management,
+    Map<String, String>? headers,
+  ) {
     final requestHeaders = <String, String>{
       'content-type': 'application/json',
       'accept': 'application/json',
@@ -653,31 +681,35 @@ class FaNetworkClient {
       final token = _token(management: management);
       if (token != null) requestHeaders['authorization'] = 'Bearer $token';
     }
-    final encodedBody = body == null ? null : jsonEncode(body);
+    return requestHeaders;
+  }
+
+  /// The outgoing request with its optional JSON body.
+  http.Request _buildFaRequest({
+    required String method,
+    required Uri uri,
+    required Map<String, String> requestHeaders,
+    required String? encodedBody,
+  }) {
     final request = http.Request(method, uri)..headers.addAll(requestHeaders);
     if (encodedBody != null) request.body = encodedBody;
-    final streamed = await _http.send(request);
-    final response = await http.Response.fromStream(streamed);
-    if (!expected.contains(response.statusCode)) {
-      // Diagnostics without secrets: which token CLASS rode the request
-      // (jwt/session/none), never its value.
-      final sent = auth
-          ? (_token(management: management) != null
-                ? (management
-                      ? (_jwt != null ? 'jwt' : 'session')
-                      : (_session != null ? 'session' : 'jwt'))
-                : 'none')
-          : 'off';
-      final error = _errorFor(response);
-      AppLog.i(
-        'fa_network',
-        '$method $path → ${response.statusCode} ${error.code} '
-            '(bearer=$sent): ${error.message}',
-      );
-      throw error;
-    }
-    return response;
+    return request;
   }
+
+  /// Diagnostics without secrets: which token CLASS rode the request
+  /// (jwt/session/none — or `off`, when auth is disabled), never its
+  /// value.
+  String _sentTokenClass({required bool auth, required bool management}) {
+    if (!auth) return 'off';
+    if (_token(management: management) == null) return 'none';
+    return _sentTokenClassName(management: management);
+  }
+
+  /// The token CLASS a management/member route just sent (see
+  /// [_sentTokenClass]) — which of the two stores won the pick.
+  String _sentTokenClassName({required bool management}) => management
+      ? (_jwt != null ? 'jwt' : 'session')
+      : (_session != null ? 'session' : 'jwt');
 
   FaNetworkException _errorFor(http.Response response) {
     final retryAfter = int.tryParse(response.headers['retry-after'] ?? '');

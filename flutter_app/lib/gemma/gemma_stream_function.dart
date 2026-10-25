@@ -457,32 +457,57 @@ const _charsPerTokenEstimate = 4;
 }
 
 /// Hard-truncates the text content of [message] to [spareTokens] (ellipsis
-/// marked), preserving its role and shape.
-Message _truncateGemmaMessage(Message message, int spareTokens) {
+/// marked), preserving its role and shape. Kinds without text content
+/// (system notes) pass through untouched.
+Message _truncateGemmaMessage(Message message, int spareTokens) =>
+    _gemmaMessageTruncators[message.runtimeType]?.call(message, spareTokens) ??
+    message;
+
+/// Per-kind truncators (exact runtimeType dispatch over the message
+/// family's final classes; unmapped kinds pass through untouched).
+final Map<Type, Message Function(Message message, int spareTokens)>
+_gemmaMessageTruncators = {
+  UserMessage: (message, spareTokens) {
+    final user = message as UserMessage;
+    return switch (user.content) {
+      final String text => UserMessage(
+        content: _cutGemmaText(text, spareTokens),
+        timestamp: user.timestamp,
+      ),
+      final List<ContentBlock> blocks => UserMessage(
+        content: _cutGemmaBlocks(blocks, spareTokens),
+        timestamp: user.timestamp,
+      ),
+      _ => user,
+    };
+  },
+  ToolResultMessage: (message, spareTokens) {
+    final result = message as ToolResultMessage;
+    return ToolResultMessage(
+      toolCallId: result.toolCallId,
+      toolName: result.toolName,
+      content: _cutGemmaBlocks(result.content, spareTokens),
+      isError: result.isError,
+      timestamp: result.timestamp,
+    );
+  },
+  AssistantMessage: (message, spareTokens) => (message as AssistantMessage)
+      .copyWith(content: _cutGemmaBlocks(message.content, spareTokens)),
+};
+
+/// The char budget for [spareTokens], ellipsis-marked when cut.
+String _cutGemmaText(String text, int spareTokens) {
   final spareChars = spareTokens * _charsPerTokenEstimate;
-  String cut(String text) =>
-      text.length <= spareChars ? text : '${text.substring(0, spareChars)}…';
-  List<ContentBlock> cutBlocks(List<ContentBlock> blocks) => [
-    for (final block in blocks)
-      block is TextContent ? TextContent(text: cut(block.text)) : block,
-  ];
-  return switch (message) {
-    UserMessage(content: final String text) => UserMessage(
-      content: cut(text),
-      timestamp: message.timestamp,
-    ),
-    UserMessage(content: final List<ContentBlock> blocks) => UserMessage(
-      content: cutBlocks(blocks),
-      timestamp: message.timestamp,
-    ),
-    ToolResultMessage() => ToolResultMessage(
-      toolCallId: message.toolCallId,
-      toolName: message.toolName,
-      content: cutBlocks(message.content),
-      isError: message.isError,
-      timestamp: message.timestamp,
-    ),
-    AssistantMessage() => message.copyWith(content: cutBlocks(message.content)),
-    _ => message,
-  };
+  return text.length <= spareChars ? text : '${text.substring(0, spareChars)}…';
 }
+
+/// Every text block cut to the budget; non-text blocks pass through.
+List<ContentBlock> _cutGemmaBlocks(
+  List<ContentBlock> blocks,
+  int spareTokens,
+) => [
+  for (final block in blocks)
+    block is TextContent
+        ? TextContent(text: _cutGemmaText(block.text, spareTokens))
+        : block,
+];

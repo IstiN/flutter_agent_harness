@@ -816,88 +816,122 @@ PipRunResult _formatMicropipResult(
 ) {
   final error = result.error;
   if (error != null) {
-    if (error.contains(_kNotFound)) {
-      return (
-        stdout: '',
-        stderr: 'WARNING: Package(s) not found: ${parsed.specs.single.name}\n',
-        exitCode: 0,
-      );
-    }
-    var text = error.trim();
-    if (text.contains('wheel') || text.contains('micropip')) {
-      text +=
-          '\n(hint: the sandbox python only supports pure-Python wheels; '
-          'native extensions cannot be loaded)';
-    }
-    return (stdout: '', stderr: '$text\n', exitCode: 1);
+    return _micropipErrorResult(parsed, error);
   }
 
   final names = [for (final s in parsed.specs) s.name];
   for (final line in result.stdout.split('\n')) {
-    if (line.startsWith(_kMissing)) {
-      final missing = line.substring(_kMissing.length).split(',');
-      return (
-        stdout: [
-          for (final name in missing)
-            'WARNING: Skipping $name as it is not installed.\n',
-        ].join(),
-        stderr: '',
-        exitCode: 0,
-      );
-    }
-    if (line.startsWith(_kUninstalled)) {
-      final versions =
-          (jsonDecode(line.substring(_kUninstalled.length))
-                  as Map<String, dynamic>)
-              .cast<String, String>();
-      return (
-        stdout: [
-          for (final name in names)
-            'Successfully uninstalled $name-${versions[name]}\n',
-        ].join(),
-        stderr: '',
-        exitCode: 0,
-      );
-    }
-    if (line.startsWith(_kVer)) {
-      final versions =
-          (jsonDecode(line.substring(_kVer.length)) as Map<String, dynamic>)
-              .cast<String, String>();
-      return (
-        stdout:
-            'Successfully installed '
-            '${names.map((n) => '$n-${versions[n]}').join(' ')}\n',
-        stderr: '',
-        exitCode: 0,
-      );
-    }
-    if (line.startsWith(_kList)) {
-      final packages =
-          (jsonDecode(line.substring(_kList.length)) as Map<String, dynamic>)
-              .cast<String, String>();
-      return (stdout: _formatListTable(packages), stderr: '', exitCode: 0);
-    }
-    if (line.startsWith(_kShow)) {
-      final fields =
-          (jsonDecode(line.substring(_kShow.length)) as Map<String, dynamic>)
-              .cast<String, String>();
-      final buffer = StringBuffer();
-      for (final key in [
-        'Name',
-        'Version',
-        'Summary',
-        'Home-page',
-        'Author',
-        'License',
-      ]) {
-        final value = fields[key];
-        if (value != null && value.isNotEmpty) buffer.write('$key: $value\n');
-      }
-      return (stdout: buffer.toString(), stderr: '', exitCode: 0);
-    }
+    final marker = _micropipMarkerResult(line, names);
+    if (marker != null) return marker;
   }
   // No marker: surface whatever python printed (e.g. micropip's own log).
   return (stdout: result.stdout, stderr: result.stderr, exitCode: 0);
+}
+
+/// Renders the runner-error branch: package-not-found becomes pip's
+/// WARNING, other failures get the pure-Python-wheel hint when applicable.
+PipRunResult _micropipErrorResult(PipArgs parsed, String error) {
+  if (error.contains(_kNotFound)) {
+    return (
+      stdout: '',
+      stderr: 'WARNING: Package(s) not found: ${parsed.specs.single.name}\n',
+      exitCode: 0,
+    );
+  }
+  var text = error.trim();
+  if (text.contains('wheel') || text.contains('micropip')) {
+    text +=
+        '\n(hint: the sandbox python only supports pure-Python wheels; '
+        'native extensions cannot be loaded)';
+  }
+  return (stdout: '', stderr: '$text\n', exitCode: 1);
+}
+
+/// Renders one runner stdout marker line into its pip output, or null
+/// when [line] is not a marker.
+PipRunResult? _micropipMarkerResult(String line, List<String> names) {
+  return _micropipRemoveMarker(line, names) ??
+      _micropipInstallMarker(line, names) ??
+      _micropipListMarker(line);
+}
+
+/// The `_kMissing`/`_kUninstalled` marker outputs, or null.
+PipRunResult? _micropipRemoveMarker(String line, List<String> names) {
+  if (line.startsWith(_kMissing)) {
+    final missing = line.substring(_kMissing.length).split(',');
+    return (
+      stdout: [
+        for (final name in missing)
+          'WARNING: Skipping $name as it is not installed.\n',
+      ].join(),
+      stderr: '',
+      exitCode: 0,
+    );
+  }
+  if (line.startsWith(_kUninstalled)) {
+    final versions =
+        (jsonDecode(line.substring(_kUninstalled.length))
+                as Map<String, dynamic>)
+            .cast<String, String>();
+    return (
+      stdout: [
+        for (final name in names)
+          'Successfully uninstalled $name-${versions[name]}\n',
+      ].join(),
+      stderr: '',
+      exitCode: 0,
+    );
+  }
+  return null;
+}
+
+/// The `_kVer` (Successfully installed) marker output, or null.
+PipRunResult? _micropipInstallMarker(String line, List<String> names) {
+  if (!line.startsWith(_kVer)) return null;
+  final versions =
+      (jsonDecode(line.substring(_kVer.length)) as Map<String, dynamic>)
+          .cast<String, String>();
+  return (
+    stdout:
+        'Successfully installed '
+        '${names.map((n) => '$n-${versions[n]}').join(' ')}\n',
+    stderr: '',
+    exitCode: 0,
+  );
+}
+
+/// The `_kList`/`_kShow` marker outputs, or null.
+PipRunResult? _micropipListMarker(String line) {
+  if (line.startsWith(_kList)) {
+    final packages =
+        (jsonDecode(line.substring(_kList.length)) as Map<String, dynamic>)
+            .cast<String, String>();
+    return (stdout: _formatListTable(packages), stderr: '', exitCode: 0);
+  }
+  if (line.startsWith(_kShow)) {
+    final fields =
+        (jsonDecode(line.substring(_kShow.length)) as Map<String, dynamic>)
+            .cast<String, String>();
+    return (stdout: _formatMicropipShowFields(fields), stderr: '', exitCode: 0);
+  }
+  return null;
+}
+
+/// Renders `pip show`-style fields in the fixed key order.
+String _formatMicropipShowFields(Map<String, String> fields) {
+  final buffer = StringBuffer();
+  for (final key in [
+    'Name',
+    'Version',
+    'Summary',
+    'Home-page',
+    'Author',
+    'License',
+  ]) {
+    final value = fields[key];
+    if (value != null && value.isNotEmpty) buffer.write('$key: $value\n');
+  }
+  return buffer.toString();
 }
 
 /// Renders the `pip list` table from a name → version map.

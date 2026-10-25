@@ -586,9 +586,8 @@ Future<bool> runAiinMobileConnect({
   final intercepted = authSession ? Completer<String?>() : null;
   // gh-1044 AC2/AC4: the diagnostic bundle behind the visible failure.
   final trace = _AiinFlowTrace();
-  AiinConnectResult? result;
-  try {
-    result = aiinConnectFn != null
+  final result = await _runAiinMobileCliFlow(
+    () async => aiinConnectFn != null
         ? await aiinConnectFn()
         : await runAiinConnectCliFlow(
             onStatus: (message) {
@@ -600,48 +599,14 @@ Future<bool> runAiinMobileConnect({
             // always open the surface — the CLI's headless auto-detect
             // must not gate the flow here (gh-1450).
             shouldOpenBrowserFn: () => true,
-            // The redirect advertises the literal loopback address on
-            // every surface: interception is scheme-based (host plays no
-            // role) and the fallback leg needs an address that reaches
-            // the server's IPv4 loopback bind without resolver ambiguity
-            // (`localhost` may answer `::1`).
-            openBrowserFn: authSession
-                ? (url) async {
-                    final callbackUrl = await _openAiinAuthSession(url);
-                    if (intercepted != null && !intercepted.isCompleted) {
-                      intercepted.complete(callbackUrl);
-                    }
-                    return true;
-                  }
-                : (url) => url_launcher.launchUrl(
-                    Uri.parse(url),
-                    mode: url_launcher.LaunchMode.externalApplication,
-                  ),
-            interceptedCallback: intercepted == null
-                ? null
-                : () => intercepted.future,
-            onCallback: authSession ? _dismissAiinAuthSession : null,
-            // The iOS sheet resolving without a callback is a user
-            // cancel — surface the failure immediately instead of
-            // waiting out the callback timeout; the timeout there only
-            // guards a stalled network, so it stays at the desktop
-            // default. The external Android browser gives no cancel
-            // signal — its 3 minute bound is the abandonment protection.
+            openBrowserFn: _aiinOpenBrowserFn(authSession, intercepted),
+            interceptedCallback: _aiinInterceptedFn(intercepted),
+            onCallback: _aiinOnCallbackFn(authSession),
             cancelWhenOpenSettles: authSession,
-            timeout: Duration(minutes: authSession ? 5 : 3),
-          );
-  } on AiinSurfaceClosedException {
-    // The sheet closed without a callback — user cancel.
-    result = null;
-  } on PlatformException catch (error) {
-    // The auth session could not start (no presentation context).
-    result = null;
-    trace.add('the system sign-in sheet could not start (${error.code})');
-  } on MissingPluginException {
-    // The native channel is missing (stale host).
-    result = null;
-    trace.add('the system sign-in sheet is unavailable on this host');
-  }
+            timeout: _aiinFlowTimeout(authSession),
+          ),
+    trace: trace,
+  );
   if (!context.mounted) return false;
   return _completeAiinConnect(
     context,
@@ -656,6 +621,76 @@ Future<bool> runAiinMobileConnect({
     trace: trace,
   );
 }
+
+/// Runs the CLI loopback flow for mobile, normalizing the cancel and
+/// channel-failure surfaces into a null result: a sheet closed without
+/// a callback is a user cancel; a dead auth session (no presentation
+/// context) and a stale host (missing channel) cancel too, but land in
+/// [trace] so the failure card can say why.
+Future<AiinConnectResult?> _runAiinMobileCliFlow(
+  Future<AiinConnectResult?> Function() flow, {
+  required _AiinFlowTrace trace,
+}) async {
+  try {
+    return await flow();
+  } on AiinSurfaceClosedException {
+    // The sheet closed without a callback — user cancel.
+    return null;
+  } on PlatformException catch (error) {
+    // The auth session could not start (no presentation context).
+    trace.add('the system sign-in sheet could not start (${error.code})');
+    return null;
+  } on MissingPluginException {
+    // The native channel is missing (stale host).
+    trace.add('the system sign-in sheet is unavailable on this host');
+    return null;
+  }
+}
+
+/// The browser-opening leg of the CLI flow: on iOS the system
+/// auth-session sheet, whose completion value feeds the intercepted
+/// completer; elsewhere the external browser, whose redirect reaches
+/// the on-device loopback server directly.
+Future<bool> Function(String url) _aiinOpenBrowserFn(
+  bool authSession,
+  Completer<String?>? intercepted,
+) => authSession
+    ? (url) async {
+        final callbackUrl = await _openAiinAuthSession(url);
+        if (intercepted != null && !intercepted.isCompleted) {
+          intercepted.complete(callbackUrl);
+        }
+        return true;
+      }
+    : (url) => url_launcher.launchUrl(
+        Uri.parse(url),
+        mode: url_launcher.LaunchMode.externalApplication,
+      );
+
+/// The intercepted-callback leg: the sheet's completion value rides the
+/// same completer (see [runAiinMobileConnect]).
+Future<String?> Function()? _aiinInterceptedFn(
+  Completer<String?>? intercepted,
+) {
+  if (intercepted == null) return null;
+  final completer = intercepted;
+  return () => completer.future;
+}
+
+/// The callback leg: dismiss the (already-resolved) sheet when the
+/// callback landed on the flow's loopback server; best-effort by
+/// contract ([_dismissAiinAuthSession]). The external Android browser
+/// navigates the redirect for real and needs no dismissal.
+Future<void> Function()? _aiinOnCallbackFn(bool authSession) =>
+    authSession ? _dismissAiinAuthSession : null;
+
+/// The iOS sheet resolving without a callback is a user cancel —
+/// surface the failure immediately instead of waiting out the callback
+/// timeout; the timeout there only guards a stalled network, so it
+/// stays at the desktop default. The external Android browser gives no
+/// cancel signal — its 3 minute bound is the abandonment protection.
+Duration _aiinFlowTimeout(bool authSession) =>
+    Duration(minutes: authSession ? 5 : 3);
 
 /// The shared post-connect continuation: model pick from the public
 /// `/v1/models`, a named registry entry (the account email), entry-scoped

@@ -242,6 +242,31 @@ typedef _SftpArgs = ({
   int port,
 });
 
+/// Mutable `ssh`/`sftp` leading-option scan state: the identity, batch
+/// file, login user, port, and where the operands start. [error] carries
+/// the usage result when the scan failed.
+final class _SshArgScan {
+  _SshArgScan({required this.label, required this.usage});
+
+  /// Builtin name for diagnostics (`ssh` / `sftp`).
+  final String label;
+
+  /// Usage text embedded in the malformed-invocation messages.
+  final String usage;
+
+  String? identity;
+  String? batchFile; // sftp -b
+  String? user; // ssh -l
+  var port = 22;
+
+  /// The usage result for the first malformed option, if any.
+  SandboxBuiltinResult? error;
+
+  /// Index of the first remaining word (the destination, or the command
+  /// start after `--`). Only meaningful when [error] is null.
+  var next = 0;
+}
+
 /// Parsed `scp` options (see `SandboxSshBuiltins._parseScpOptions`);
 /// [operandStart] is where the operand list begins.
 typedef _ScpOptions = ({
@@ -400,6 +425,99 @@ final class SandboxSshBuiltins {
     );
   }
 
+  /// Scans leading short options (shared by `ssh` and `sftp`): every
+  /// word up to `--` or the first non-option goes through [consume]. On
+  /// success [scan.next] is the index of the first remaining word; on
+  /// failure [scan.error] carries the usage result and false is returned.
+  static bool _scanSshOptions(
+    List<String> args,
+    _SshArgScan scan,
+    int? Function(List<String>, int, _SshArgScan) consume,
+  ) {
+    var i = 0;
+    while (i < args.length) {
+      final arg = args[i];
+      if (arg == '--') {
+        i++;
+        break;
+      }
+      if (!arg.startsWith('-')) break;
+      final consumed = consume(args, i, scan);
+      if (consumed == null) return false;
+      i = consumed + 1;
+    }
+    scan.next = i;
+    return true;
+  }
+
+  /// The word after the option at [i], or null (usage error stashed in
+  /// [scan]) when the argv ends first.
+  static String? _sshOperand(List<String> args, int i, _SshArgScan scan) {
+    if (i + 1 >= args.length) {
+      scan.error = _error(scan.usage, 2);
+      return null;
+    }
+    return args[i + 1];
+  }
+
+  /// Consumes the operand of the option at [i] into [set]; null (usage
+  /// error stashed) when the operand is missing.
+  static int? _sshTake(
+    List<String> args,
+    int i,
+    _SshArgScan scan,
+    void Function(String) set,
+  ) {
+    final operand = _sshOperand(args, i, scan);
+    if (operand == null) return null;
+    set(operand);
+    return i + 1;
+  }
+
+  /// Consumes the `-p`/`-P` port at [i]; rejects out-of-range values
+  /// like OpenSSH.
+  static int? _sshTakePort(List<String> args, int i, _SshArgScan scan) {
+    final operand = _sshOperand(args, i, scan);
+    if (operand == null) return null;
+    final port = int.tryParse(operand) ?? -1;
+    if (port < 1 || port > 65535) {
+      scan.error = _error('${scan.label}: bad port number\n${scan.usage}', 2);
+      return null;
+    }
+    scan.port = port;
+    return i + 1;
+  }
+
+  /// Consumes one `ssh` option word at [i] (`-i`, `-l`, `-p`); null
+  /// after a usage error.
+  static int? _sshConsumeOption(List<String> args, int i, _SshArgScan scan) =>
+      switch (args[i]) {
+        '-i' => _sshTake(args, i, scan, (v) => scan.identity = v),
+        '-l' => _sshTake(args, i, scan, (v) => scan.user = v),
+        '-p' => _sshTakePort(args, i, scan),
+        _ => _sshUnknownOption(args[i], scan),
+      };
+
+  /// Consumes one `sftp` option word at [i] (`-i`, `-b`, `-P`); null
+  /// after a usage error.
+  static int? _sftpConsumeOption(List<String> args, int i, _SshArgScan scan) =>
+      switch (args[i]) {
+        '-i' => _sshTake(args, i, scan, (v) => scan.identity = v),
+        '-b' => _sshTake(args, i, scan, (v) => scan.batchFile = v),
+        '-P' => _sshTakePort(args, i, scan),
+        _ => _sshUnknownOption(args[i], scan),
+      };
+
+  /// Stashes the unknown-option usage error and returns null (the
+  /// consume contract's failure shape).
+  static int? _sshUnknownOption(String arg, _SshArgScan scan) {
+    scan.error = _error(
+      '${scan.label}: unknown option -- ${arg.substring(1)}\n${scan.usage}',
+      2,
+    );
+    return null;
+  }
+
   /// Parses `ssh` options, the `[user@]host` destination, and the remote
   /// command operands. Returns the usage-error result for any malformed
   /// invocation.
@@ -415,36 +533,11 @@ final class SandboxSshBuiltins {
       port: 0,
       command: const [],
     );
-    String? identity;
-    String? user;
-    var port = 22;
-    var i = 0;
-    for (; i < args.length; i++) {
-      final arg = args[i];
-      if (arg == '--') {
-        i++;
-        break;
-      }
-      if (arg == '-i') {
-        if (i + 1 >= args.length) return usage();
-        identity = args[++i];
-      } else if (arg == '-l') {
-        if (i + 1 >= args.length) return usage();
-        user = args[++i];
-      } else if (arg == '-p') {
-        if (i + 1 >= args.length) return usage();
-        port = int.tryParse(args[++i]) ?? -1;
-        if (port < 1 || port > 65535) {
-          return usage(_error('ssh: bad port number\n$_sshUsage', 2));
-        }
-      } else if (arg.startsWith('-')) {
-        return usage(
-          _error('ssh: unknown option -- ${arg.substring(1)}\n$_sshUsage', 2),
-        );
-      } else {
-        break;
-      }
+    final scan = _SshArgScan(label: 'ssh', usage: _sshUsage);
+    if (!_scanSshOptions(args, scan, _sshConsumeOption)) {
+      return usage(scan.error);
     }
+    var i = scan.next;
     if (i >= args.length) return usage();
     final destination = args[i++];
     final command = args.sublist(i);
@@ -457,14 +550,14 @@ final class SandboxSshBuiltins {
         ),
       );
     }
-    final remote = _parseDestination(destination, user: user, env: env);
+    final remote = _parseDestination(destination, user: scan.user, env: env);
     if (remote == null) return usage();
     return (
       error: null,
-      identity: identity,
+      identity: scan.identity,
       user: remote.user,
       host: remote.host,
-      port: port,
+      port: scan.port,
       command: command,
     );
   }
@@ -874,45 +967,95 @@ final class SandboxSshBuiltins {
     return null;
   }
 
-  Future<SandboxBuiltinResult?> _uploadDir(
+  /// Ensures [remoteDir] is usable as a recursive-upload destination: a
+  /// non-directory target fails, a missing one is created.
+  Future<SandboxBuiltinResult?> _ensureUploadDir(
     SandboxSshFtp ftp,
-    String localDir,
     String remoteDir,
   ) async {
     final stat = await _ftpStatSafe(ftp, remoteDir);
     if (stat != null && !stat.isDirectory) {
       return _error('scp: $remoteDir: not a directory\n', 1);
     }
-    if (stat == null) {
-      try {
-        await ftp.mkdir(remoteDir);
-      } on Object catch (e) {
-        return _error('scp: $remoteDir: $e\n', 1);
-      }
-    }
-    final List<String> entries;
+    if (stat == null) return _mkdirRemote(ftp, remoteDir);
+    return null;
+  }
+
+  /// Creates [remoteDir] on the remote, mapping the failure to an scp
+  /// error result.
+  Future<SandboxBuiltinResult?> _mkdirRemote(
+    SandboxSshFtp ftp,
+    String remoteDir,
+  ) async {
     try {
-      entries = await listLocalDir(localDir);
+      await ftp.mkdir(remoteDir);
     } on Object catch (e) {
-      return _error('scp: $localDir: $e\n', 1);
+      return _error('scp: $remoteDir: $e\n', 1);
     }
+    return null;
+  }
+
+  /// Lists [localDir], or maps the failure to an scp error result.
+  Future<(List<String>, SandboxBuiltinResult?)> _listLocalEntries(
+    String localDir,
+  ) async {
+    try {
+      return (await listLocalDir(localDir), null);
+    } on Object catch (e) {
+      return (const <String>[], _error('scp: $localDir: $e\n', 1));
+    }
+  }
+
+  /// Uploads one child entry of a recursive directory copy (directories
+  /// recurse, files upload, other kinds are skipped like scp does).
+  /// Returns the error result, or null on success/skip.
+  Future<SandboxBuiltinResult?> _uploadDirEntry(
+    SandboxSshFtp ftp,
+    String localChild,
+    String remoteChild,
+  ) async {
+    final kind = await localKind(localChild);
+    if (kind == SandboxSshEntryKind.directory) {
+      return _uploadDir(ftp, localChild, remoteChild);
+    }
+    if (kind == SandboxSshEntryKind.file) {
+      return _uploadDirFile(ftp, localChild, remoteChild);
+    }
+    return null;
+  }
+
+  /// Uploads one file entry; an unreadable source is skipped (null).
+  Future<SandboxBuiltinResult?> _uploadDirFile(
+    SandboxSshFtp ftp,
+    String localChild,
+    String remoteChild,
+  ) async {
+    final bytes = await readBinaryFile(localChild);
+    if (bytes == null) return null;
+    try {
+      await ftp.writeFile(remoteChild, bytes);
+    } on Object catch (e) {
+      return _error('scp: $remoteChild: $e\n', 1);
+    }
+    return null;
+  }
+
+  Future<SandboxBuiltinResult?> _uploadDir(
+    SandboxSshFtp ftp,
+    String localDir,
+    String remoteDir,
+  ) async {
+    final dirError = await _ensureUploadDir(ftp, remoteDir);
+    if (dirError != null) return dirError;
+    final (entries, listError) = await _listLocalEntries(localDir);
+    if (listError != null) return listError;
     for (final name in entries) {
-      final localChild = _localJoin(localDir, name);
-      final remoteChild = _remoteJoin(remoteDir, name);
-      final kind = await localKind(localChild);
-      if (kind == SandboxSshEntryKind.directory) {
-        final error = await _uploadDir(ftp, localChild, remoteChild);
-        if (error != null) return error;
-      } else if (kind == SandboxSshEntryKind.file) {
-        final bytes = await readBinaryFile(localChild);
-        if (bytes == null) continue;
-        try {
-          await ftp.writeFile(remoteChild, bytes);
-        } on Object catch (e) {
-          return _error('scp: $remoteChild: $e\n', 1);
-        }
-      }
-      // Other kinds (symlinks, sockets) are skipped, like scp does.
+      final error = await _uploadDirEntry(
+        ftp,
+        _localJoin(localDir, name),
+        _remoteJoin(remoteDir, name),
+      );
+      if (error != null) return error;
     }
     return null;
   }
@@ -1100,48 +1243,22 @@ final class SandboxSshBuiltins {
       host: '',
       port: 0,
     );
-    String? identity;
-    String? batchFile;
-    var port = 22;
-    String? destination;
-    var i = 0;
-    for (; i < args.length; i++) {
-      final arg = args[i];
-      if (arg == '--') {
-        i++;
-        break;
-      }
-      if (arg == '-i') {
-        if (i + 1 >= args.length) return usage();
-        identity = args[++i];
-      } else if (arg == '-b') {
-        if (i + 1 >= args.length) return usage();
-        batchFile = args[++i];
-      } else if (arg == '-P') {
-        if (i + 1 >= args.length) return usage();
-        port = int.tryParse(args[++i]) ?? -1;
-        if (port < 1 || port > 65535) {
-          return usage(_error('sftp: bad port number\n$_sftpUsage', 2));
-        }
-      } else if (arg.startsWith('-')) {
-        return usage(
-          _error('sftp: unknown option -- ${arg.substring(1)}\n$_sftpUsage', 2),
-        );
-      } else {
-        break;
-      }
+    final scan = _SshArgScan(label: 'sftp', usage: _sftpUsage);
+    if (!_scanSshOptions(args, scan, _sftpConsumeOption)) {
+      return usage(scan.error);
     }
-    if (i < args.length) destination = args[i];
-    if (destination == null) return usage();
+    var i = scan.next;
+    if (i >= args.length) return usage();
+    final destination = args[i];
     final remote = _parseDestination(destination, env: env);
     if (remote == null) return usage();
     return (
       error: null,
-      identity: identity,
-      batchFile: batchFile,
+      identity: scan.identity,
+      batchFile: scan.batchFile,
       user: remote.user,
       host: remote.host,
-      port: port,
+      port: scan.port,
     );
   }
 

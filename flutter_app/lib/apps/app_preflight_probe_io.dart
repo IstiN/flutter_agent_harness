@@ -19,34 +19,46 @@ final bool jsEngineBootable = _probeNativeJsEngine();
 
 bool _probeNativeJsEngine() {
   try {
-    if (Platform.isMacOS || Platform.isIOS) {
-      // flutter_js picks JavascriptCoreRuntime on Apple desktops/devices;
-      // jsc_ffi.dart dlopens the system framework with this fallback chain.
-      DynamicLibrary lib;
-      try {
-        lib = DynamicLibrary.open('JavaScriptCore.framework/JavaScriptCore');
-      } on ArgumentError {
-        lib = DynamicLibrary.open(
-          '/System/Library/Frameworks/JavaScriptCore.framework/JavaScriptCore',
-        );
-      }
-      // The engine cannot evaluate without this entry point.
-      lib.lookup<NativeFunction<Void Function()>>('JSEvaluateScript');
-      return true;
-    }
-    // Everywhere else the engine is QuickJsRuntime2, whose constructor
-    // resolves `jsNewRuntime` from the bridge library.
-    final lib = Platform.isWindows
-        ? DynamicLibrary.open('quickjs_c_bridge.dll')
-        : Platform.isAndroid
-        ? DynamicLibrary.open('libfastdev_quickjs_runtime.so')
-        : DynamicLibrary.open(
-            Platform.environment['LIBQUICKJSC_TEST_PATH'] ??
-                'libquickjs_c_bridge_plugin.so',
-          );
-    lib.lookup<NativeFunction<Void Function()>>('jsNewRuntime');
-    return true;
+    return _probeJsEngineLibrary();
   } on Object {
     return false;
   }
+}
+
+/// QuickJS bridge on Linux/Windows/Android, JavaScriptCore framework on
+/// Apple platforms — mirrors the flutter_js native load path the same
+/// way `test/native_test_guard.dart` does for the test suites.
+bool _probeJsEngineLibrary() => Platform.isMacOS || Platform.isIOS
+    ? _probeJavaScriptCore()
+    : _probeQuickJsBridge();
+
+/// flutter_js picks JavascriptCoreRuntime on Apple desktops/devices;
+/// jsc_ffi.dart dlopens the system framework with this fallback chain.
+bool _probeJavaScriptCore() {
+  DynamicLibrary lib;
+  try {
+    lib = DynamicLibrary.open('JavaScriptCore.framework/JavaScriptCore');
+  } on ArgumentError {
+    lib = DynamicLibrary.open(
+      '/System/Library/Frameworks/JavaScriptCore.framework/JavaScriptCore',
+    );
+  }
+  // The engine cannot evaluate without this entry point.
+  lib.lookup<NativeFunction<Void Function()>>('JSEvaluateScript');
+  return true;
+}
+
+/// Everywhere else the engine is QuickJsRuntime2, whose constructor
+/// resolves `jsNewRuntime` from the bridge library.
+bool _probeQuickJsBridge() {
+  final lib = Platform.isWindows
+      ? DynamicLibrary.open('quickjs_c_bridge.dll')
+      : Platform.isAndroid
+      ? DynamicLibrary.open('libfastdev_quickjs_runtime.so')
+      : DynamicLibrary.open(
+          Platform.environment['LIBQUICKJSC_TEST_PATH'] ??
+              'libquickjs_c_bridge_plugin.so',
+        );
+  lib.lookup<NativeFunction<Void Function()>>('jsNewRuntime');
+  return true;
 }
