@@ -31,6 +31,13 @@ Future<int> _runTrajectoryCommand(
   // Phased open timing (issue #262 AC0): FA_TIMING=1 prints the
   // storage-read+parse, ledger-projection, and render durations to stderr.
   final timing = _envTruthy('FA_TIMING');
+  // Issue #1882 AC3: no silent GB-scale operations — view/cost/inspect/
+  // export page the whole branch in, so a heavy file says so (exact size
+  // + the hygiene escapes) before the scan starts. tail is excluded: it
+  // follows the resident window and never primes the head.
+  if (command.verb != 'tail') {
+    await _warnHeavyTrajectoryFile(io, env, session);
+  }
   final parseSw = Stopwatch()..start();
   // gh-1555 W1 (d6): view --at/cost/inspect read the WHOLE branch, but
   // the resolver opened windowed (the only way past the gh-1073
@@ -93,12 +100,7 @@ Future<int> _runTrajectoryCommand(
       // gh-1681 Gap 2: the harbor adapter exports the trial's ATIF
       // trajectory from here after the agent phase — the leaderboard
       // static analysis requires <trial>/agent/trajectory.json.
-      exitCode = await _runTrajectoryExport(
-        io,
-        session,
-        baseSnapshot,
-        command,
-      );
+      exitCode = await _runTrajectoryExport(io, session, baseSnapshot, command);
       break;
     case 'tail':
       // Never returns: follows until interrupted, so the render-stop and
@@ -116,6 +118,19 @@ Future<int> _runTrajectoryCommand(
     );
   }
   return exitCode;
+}
+
+/// Issue #1882 AC3: the headless trajectory read's heavy-file warning —
+/// exact size + the hygiene escapes, to stderr (payload goes to stdout).
+Future<void> _warnHeavyTrajectoryFile(
+  CliIO io,
+  FileSystem env,
+  Session session,
+) async {
+  final metadata = await session.getMetadata();
+  for (final line in await heavyScanGuardIfHeavy(env, metadata.path)) {
+    stderr.writeln(line);
+  }
 }
 
 /// Prints trajectory payload lines to stdout (newline-terminated).

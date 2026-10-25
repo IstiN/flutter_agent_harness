@@ -101,24 +101,35 @@ extension on AgentCli {
       io.writeln('no active session');
       return;
     }
+    await _warnHeavyScanOnce();
     io.writeln(_style.dim('following session records — Ctrl+C to stop'));
     final tailer = TrajectoryTailer(width: _trajectoryWidth);
     final interrupted = io.interrupts.first.then((_) => true);
     var stopped = false;
     while (!stopped) {
-      try {
-        for (final line in tailer.tail(await session.getBranch())) {
-          io.writeln(line);
-        }
-      } on Object catch (error) {
-        io.writeln(tuiError('trajectory: tail failed: $error'));
-        return;
-      }
-      stopped = await Future.any<bool>([
-        interrupted,
-        Future<void>.delayed(trajectoryPollInterval).then((_) => false),
-      ]);
+      stopped = await _tailPoll(tailer, session, interrupted);
     }
+  }
+
+  /// One tail poll: prints the fresh lines; true when the poll FAILED
+  /// (the error is printed) or the interrupt fired.
+  Future<bool> _tailPoll(
+    TrajectoryTailer tailer,
+    Session session,
+    Future<bool> interrupted,
+  ) async {
+    try {
+      for (final line in tailer.tail(await session.getBranch())) {
+        io.writeln(line);
+      }
+    } on Object catch (error) {
+      io.writeln(tuiError('trajectory: tail failed: $error'));
+      return true;
+    }
+    return Future.any<bool>([
+      interrupted,
+      Future<void>.delayed(trajectoryPollInterval).then((_) => false),
+    ]);
   }
 
   /// The active session's snapshot, or null after printing why not.
@@ -128,7 +139,21 @@ extension on AgentCli {
       io.writeln('no active session');
       return null;
     }
+    await _warnHeavyScanOnce();
     return trajectorySnapshotOf(await session.getBranch());
+  }
+
+  /// Issue #1882 AC3: a trajectory read over a heavy session file warns
+  /// once per process (exact size + the hygiene escapes) instead of
+  /// silently scanning gigabytes.
+  Future<void> _warnHeavyScanOnce() async {
+    final session = _session;
+    if (session == null || _heavyScanGuardShown) return;
+    _heavyScanGuardShown = true;
+    final path = (await session.getMetadata()).path;
+    for (final line in await heavyScanGuardIfHeavy(_coreToolEnv, path)) {
+      io.writeln(_style.dim(line));
+    }
   }
 
   /// Persists the outbound-request capture so replayed sessions rebuild the

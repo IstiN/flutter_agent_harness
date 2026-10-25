@@ -41,6 +41,7 @@ String formatSessionSearchOutcome(SessionSearchOutcome outcome) {
     return 'session_search unavailable: $unavailable';
   }
   final lines = <String>[
+    if (outcome.sizeNote.isNotEmpty) outcome.sizeNote,
     if (outcome.hits.isEmpty)
       'no records match (examined ${outcome.recordsExamined} of '
           '${outcome.recordsTotal} records)'
@@ -82,6 +83,7 @@ String _formatArchiveMap(SessionSearchOutcome outcome) {
   final counts = map.kindCounts.entries.toList()
     ..sort((a, b) => b.value.compareTo(a.value));
   final lines = <String>[
+    if (outcome.sizeNote.isNotEmpty) outcome.sizeNote,
     'session map: ${map.recordCount} records',
     'counts: ${counts.isEmpty ? '(none)' : [for (final e in counts) '${e.key} ${e.value}'].join(', ')}',
     'hidden: ${map.hiddenRangeCount} hidden_range record(s) covering '
