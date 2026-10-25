@@ -965,7 +965,16 @@ jobs:
           security default-keychain -s build.keychain
           security unlock-keychain -p "" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
-          security list-keychains -d user -s build.keychain ~/Library/Keychains/login.keychain-db
+          # gh-1866: publish the search list ADDITIVELY, never with a fixed
+          # list — this job runs CONCURRENTLY with the daily cli leg's
+          # build-macos legs on the same host/user (fa-m5 registrations
+          # share one account), and this exact fixed-list write evicted
+          # build-arm64.keychain 75 s after its import on 2026-10-25
+          # (runs 40165497544 → 40165498619, "No certificate for team
+          # YP9HC3USZ3 matching ... found"). The helper unions the current
+          # list and verifies this keychain survived the write.
+          bash scripts/keychain_searchlist_add.sh \
+            "$HOME/Library/Keychains/build.keychain-db"
 
           echo "$IOS_P12_BASE64" | base64 --decode > certificate.p12
           security import certificate.p12 -k build.keychain -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign
