@@ -8,29 +8,33 @@ import 'package:test/test.dart';
 
 void main() {
   group('renderAppStoreBlockHtml', () {
-    test(
-      'default config renders all three surfaces and the coming-soon slot',
-      () {
-        final html = renderAppStoreBlockHtml(const LinksConfig());
-        expect(html, contains(defaultAppStoreUrl));
-        expect(html, contains(defaultTestFlightUrl));
-        expect(html, contains(defaultSiteUrl));
-        // Android not live: the disabled coming-soon button, twice (button +
-        // release-channel pill).
-        expect(RegExp('coming soon').allMatches(html).length, 2);
-        expect(html, contains('btn-soon'));
-        expect(html, contains('aria-disabled="true"'));
-        expect(html, isNot(contains('Get it on Google Play')));
-      },
-    );
+    test('default config renders all three surfaces and the APK downloads', () {
+      final html = renderAppStoreBlockHtml(const LinksConfig());
+      expect(html, contains(defaultAppStoreUrl));
+      expect(html, contains(defaultTestFlightUrl));
+      expect(html, contains(defaultSiteUrl));
+      // Android is live via direct APK downloads (issue #1864): two
+      // buttons (god + standard), each link once, no coming-soon slot.
+      expect(html, contains('href="$defaultApkGodUrl"'));
+      expect(html, contains('href="$defaultApkStandardUrl"'));
+      expect(html, contains('God mode APK'));
+      expect(html, contains('Standard APK'));
+      expect(html, contains('data-store-referral="apk-god"'));
+      expect(html, contains('data-store-referral="apk-standard"'));
+      expect(html, isNot(contains('coming soon')));
+      expect(html, isNot(contains('btn-soon')));
+      expect(html, isNot(contains('aria-disabled')));
+      expect(html, isNot(contains('Get it on Google Play')));
+    });
 
-    test('a live play link replaces the coming-soon slot', () {
+    test('a live play link replaces the APK slot', () {
       const play = 'https://play.google.com/store/apps?id=dev.fa';
       final html = renderAppStoreBlockHtml(const LinksConfig(play: play));
       expect(html, contains(play));
       expect(html, contains('Get it on Google Play'));
       expect(html, contains('on Google Play'));
-      expect(html, isNot(contains('coming soon')));
+      expect(html, isNot(contains('app-god-release.apk')));
+      expect(html, isNot(contains('app-store-release.apk')));
       expect(html, isNot(contains('btn-soon')));
     });
 
