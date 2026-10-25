@@ -58,6 +58,17 @@ import 'package:test/test.dart';
 
 String read(String path) => File(path).readAsStringSync();
 
+/// Workflow YAML and the Fastfile carry long incident comments that
+/// legitimately mention the evicting command — the guard targets
+/// EXECUTABLE writes, so strip shell/Ruby `#` comments before matching.
+String stripComments(String content) => content
+    .split('\n')
+    .map((line) {
+      final hash = line.indexOf('#');
+      return hash == -1 ? line : line.substring(0, hash);
+    })
+    .join('\n');
+
 /// Files that historically wrote the user-global keychain search list.
 final _searchListSurfaces = <String>[
   '.github/workflows/build-macos.yml',
@@ -72,7 +83,7 @@ void main() {
       r'list-keychains\s+-d\s+user\s+-s',
     );
     for (final path in _searchListSurfaces) {
-      final content = read(path);
+      final content = stripComments(read(path));
       final matches = fixedListWrite.allMatches(content);
       expect(
         matches,

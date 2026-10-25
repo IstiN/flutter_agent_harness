@@ -37,9 +37,14 @@
 //   AC2  audit: ANY job whose steps run `security default-keychain -s` or
 //        `security list-keychains -d user -s` (user-global keychain
 //        mutations) while its matrix can fan out to more than one leg
-//        must declare `max-parallel: 1`. Cross-workflow stomping is out
-//        of scope here (build-mobile's iOS legs resolve to fa-m5-1 BY
-//        NAME, concurrency 1 by construction, gh-1692).
+//        must declare `max-parallel: 1`. Cross-workflow stomping is NOT
+//        covered by serialization — it is fixed separately: every
+//        user-search-list write is additive via
+//        scripts/keychain_searchlist_add.sh (gh-186: the concurrent
+//        build-mobile iOS job on another fa-m5 registration of the same
+//        host/user evicted build-arm64.keychain 75 s after import, run
+//        40165498619), pinned by
+//        test/ci_keychain_searchlist_union_guard_test.dart.
 import 'dart:io';
 
 import 'package:test/test.dart';
