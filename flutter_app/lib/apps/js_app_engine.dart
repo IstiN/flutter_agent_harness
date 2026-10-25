@@ -921,6 +921,15 @@ class JsAppEngine {
     Map<String, dynamic> changed,
   ) {
     if (changed.isEmpty) return;
+    _deliverToOtherSiblings(siblings, changed);
+  }
+
+  /// The fan-out leg (gh-1848 split): one `state.sync` per sibling engine
+  /// other than this one — the writer skips itself.
+  void _deliverToOtherSiblings(
+    Iterable<JsAppEngine> siblings,
+    Map<String, dynamic> changed,
+  ) {
     for (final sibling in siblings) {
       if (!identical(sibling, this)) {
         _sendStateSync(sibling, changed, writer: instanceId);
@@ -1066,8 +1075,14 @@ class JsAppEngine {
       _resolve?.call(id, {'__error': 'cannot launch $url'});
       return;
     }
+    _resolve?.call(id, await _launchExternal(uri));
+  }
+
+  /// The external-launch arm of `jsr.openUrl` (gh-1848 split): `true`
+  /// when the platform launched it, an error map when the launch failed.
+  Future<Object> _launchExternal(Uri uri) async {
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    _resolve?.call(id, ok ? true : {'__error': 'launch failed'});
+    return ok ? true : {'__error': 'launch failed'};
   }
 
   // --- jsr.exec + the jsr.fa bridge ------------------------------------------
@@ -1507,15 +1522,22 @@ Object.defineProperty(jsr, 'onBack', {
   /// `llm`; a missing handler is a setup error, not a permission error.
   Future<Object?> _faLlm(String method, Map<String, Object?> args) async {
     if (!permissions.llm) throw StateError(_denied('llm'));
+    final handler = _requireLlmHandler();
+    final messages = _faLlmMessages(method, args);
+    if (method != 'llm.stream') return handler(messages);
+    return _faLlmStream(handler, messages, (args['stream'] ?? '').toString());
+  }
+
+  /// The connected LLM handler or an actionable setup error (gh-1848
+  /// split): a missing model is setup, not a permission failure.
+  FaLlmHandler _requireLlmHandler() {
     final handler = llmHandler;
     if (handler == null) {
       throw StateError(
         'no LLM is connected — connect a model in the Fa settings first',
       );
     }
-    final messages = _faLlmMessages(method, args);
-    if (method != 'llm.stream') return handler(messages);
-    return _faLlmStream(handler, messages, (args['stream'] ?? '').toString());
+    return handler;
   }
 
   /// A bare `llm` call carries `{prompt}`; the chat/stream forms carry
@@ -1555,15 +1577,23 @@ Object.defineProperty(jsr, 'onBack', {
     final event = (args['event'] ?? '').toString();
     if (event.isEmpty) return {'__error': 'emit requires an event name'};
     final sink = onEmit;
-    if (sink != null) {
-      // A throwing host sink must not reject the bridge promise.
-      try {
-        sink(event, emitPayload(args['payload']));
-      } on Object catch (error) {
-        AppLog.i('apps', 'jsr.fa.emit handler failed: $error');
-      }
-    }
+    if (sink != null) _deliverEmit(sink, event, args);
     return {'emitted': sink != null};
+  }
+
+  /// One emit delivery (gh-1848 split): a throwing host sink is logged
+  /// and never rejects the bridge promise.
+  void _deliverEmit(
+    void Function(String event, Map<String, Object?> payload) sink,
+    String event,
+    Map<String, Object?> args,
+  ) {
+    // A throwing host sink must not reject the bridge promise.
+    try {
+      sink(event, emitPayload(args['payload']));
+    } on Object catch (error) {
+      AppLog.i('apps', 'jsr.fa.emit handler failed: $error');
+    }
   }
 
   /// The `emit` payload (issue #565 descent): a map is copied so the JS
@@ -1739,6 +1769,12 @@ Object.defineProperty(jsr, 'onBack', {
     if (!await api.isAvailable) {
       throw StateError('calendar is not available on this platform');
     }
+    return _grantedCalendarAccess(api);
+  }
+
+  /// The OS-access arm of the calendar gate (gh-1848 split): a denied
+  /// request rejects with the system privacy settings pointer.
+  Future<CalendarApi> _grantedCalendarAccess(CalendarApi api) async {
     if (!await api.requestAccess()) {
       throw StateError(
         'calendar access was denied — enable it in the system privacy '
@@ -1901,6 +1937,12 @@ Object.defineProperty(jsr, 'onBack', {
     if (!await api.isAvailable) {
       throw StateError('contacts are not available on this platform');
     }
+    return _grantedContactsAccess(api);
+  }
+
+  /// The OS-access arm of the contacts gate (gh-1848 split): a denied
+  /// request rejects with the system privacy settings pointer.
+  Future<ContactApi> _grantedContactsAccess(ContactApi api) async {
     if (!await api.requestAccess()) {
       throw StateError(
         'contacts access was denied — enable it in the system privacy '
@@ -1935,6 +1977,12 @@ Object.defineProperty(jsr, 'onBack', {
     if (!await api.isAvailable) {
       throw StateError('health data is not available on this platform');
     }
+    return _grantedHealthAccess(api);
+  }
+
+  /// The OS-access arm of the health gate (gh-1848 split): a denied
+  /// request rejects with the Health app pointer.
+  Future<HealthApi> _grantedHealthAccess(HealthApi api) async {
     if (!await api.requestAccess()) {
       throw StateError(
         'health access was denied — enable it in the Health app '
@@ -2285,6 +2333,12 @@ Object.defineProperty(jsr, 'onBack', {
         'microphone recording is not available on this platform',
       );
     }
+    return _grantedAsrAccess(api);
+  }
+
+  /// The OS-access arm of the microphone gate (gh-1848 split): a denied
+  /// request rejects with the system privacy settings pointer.
+  Future<AsrApi> _grantedAsrAccess(AsrApi api) async {
     if (!await api.requestAccess()) {
       throw StateError(
         'microphone access was denied — enable it in the system privacy '
@@ -2332,6 +2386,12 @@ Object.defineProperty(jsr, 'onBack', {
         'local notifications are not available on this platform',
       );
     }
+    return _grantedNotifyAccess(api);
+  }
+
+  /// The OS-access arm of the notifications gate (gh-1848 split): a
+  /// denied request rejects with the system settings pointer.
+  Future<NotifyApi> _grantedNotifyAccess(NotifyApi api) async {
     if (!await api.requestAccess()) {
       throw StateError(
         'notification access was denied — enable it in the system settings '
@@ -2412,10 +2472,7 @@ Object.defineProperty(jsr, 'onBack', {
       );
     }
     final path = mediaReadVideoPath(args);
-    final exists = await env.exists(path);
-    if (exists.valueOrNull != true) {
-      throw StateError('no such file: $path');
-    }
+    await _requireVideoFile(path);
     // The platform extractor (AVAssetImageGenerator) works on host paths;
     // the sandbox env maps the app-visible path.
     final hostPath = (await env.absolutePath(path)).valueOrNull ?? path;
@@ -2425,6 +2482,15 @@ Object.defineProperty(jsr, 'onBack', {
       question: args['question']?.toString(),
     );
     return {'description': description};
+  }
+
+  /// The sandbox-file guard of `media.readVideo` (gh-1848 split): the
+  /// app-visible path must exist before the host mapping below.
+  Future<void> _requireVideoFile(String path) async {
+    final exists = await env.exists(path);
+    if (exists.valueOrNull != true) {
+      throw StateError('no such file: $path');
+    }
   }
 
   /// The sandbox path of `media.readVideo` (issue #565 descent) — required,
@@ -2492,6 +2558,19 @@ Object.defineProperty(jsr, 'onBack', {
   /// resolves with the value, a decline/cancel rejects.
   Future<Map<String, Object?>> _keysRequest(Map<String, Object?> args) async {
     if (!permissions.keys) throw StateError(_denied('keys'));
+    final handler = _requireKeyRequestHandler();
+    final request = keysRequestArgs(args, appName: app.name);
+    final result = await handler(request.name, request.reason);
+    if (result == null) {
+      throw StateError('the user declined to provide ${request.name}');
+    }
+    return {'name': result.name, 'value': result.value};
+  }
+
+  /// The host's secret-prompt handler or an actionable setup error
+  /// (gh-1848 split): without a prompt channel the user must add the key
+  /// by hand.
+  RequestSecretCallback _requireKeyRequestHandler() {
     final handler = keyRequestHandler;
     if (handler == null) {
       throw StateError(
@@ -2499,12 +2578,7 @@ Object.defineProperty(jsr, 'onBack', {
         'in the Fa settings Keys section',
       );
     }
-    final request = keysRequestArgs(args, appName: app.name);
-    final result = await handler(request.name, request.reason);
-    if (result == null) {
-      throw StateError('the user declined to provide ${request.name}');
-    }
-    return {'name': result.name, 'value': result.value};
+    return handler;
   }
 
   /// The validated name + prompt reason of `keys.request` (issue #565

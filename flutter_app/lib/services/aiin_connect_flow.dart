@@ -682,53 +682,156 @@ Future<bool> _finishAiinConnect(
   // name/model), persist like the connect flow does, and reconnect on the
   // saved model — no model pick, no new entry.
   if (reauthenticateFor case final existing?) {
-    registry.rememberKey(existing.id, key);
-    final keyName = CustomProviderRegistry.keyNameFor(
-      existing.baseUrl,
-      providerName: existing.name,
-    );
-    var persisted = false;
-    final keychain = keychainStore ?? const KeychainStore();
-    if (await keychain.isAvailable()) {
-      persisted = await keychain.set(keyName, key);
-    }
-    if (!persisted) {
-      await sessionKeysStore?.set(keyName, key);
-    }
-    final config = AgentConfig(
-      providerKind: 'aiin',
-      modelId: existing.modelId,
-      baseUrl: existing.baseUrl,
+    return _reauthenticateAiin(
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore,
+      keychainStore: keychainStore,
       apiKey: key,
+      existing: existing,
     );
-    if (service != null) {
-      await service.reconfigure(config, fromProviderAddFlow: true);
-    }
-    await lastConnectionStore.saveFromConfig(config);
-    return true;
   }
-  // ── Pick a model (public /v1/models on api.aiin.by) ─────────────────
+  final modelId = await _pickAiinModel(
+    context,
+    apiKey: key,
+    aiinModelsFetcher: aiinModelsFetcher,
+  );
+  if (modelId == null) return false;
+  await _registerAiinProvider(
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    sessionKeysStore: sessionKeysStore,
+    keychainStore: keychainStore,
+    apiKey: key,
+    accountLabel: accountLabel ?? 'AIIN',
+    modelId: modelId,
+  );
+  return true;
+}
+
+/// Re-auth mode: refreshes the stored key on the existing entry (keeps its
+/// name/model), persists like the connect flow does, and reconnects on the
+/// saved model.
+Future<bool> _reauthenticateAiin({
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required SessionKeysStore? sessionKeysStore,
+  required KeychainStore? keychainStore,
+  required String apiKey,
+  required CustomProvider existing,
+}) async {
+  registry.rememberKey(existing.id, apiKey);
+  final keyName = CustomProviderRegistry.keyNameFor(
+    existing.baseUrl,
+    providerName: existing.name,
+  );
+  await _persistAiinKey(keyName, apiKey, sessionKeysStore, keychainStore);
+  final config = AgentConfig(
+    providerKind: 'aiin',
+    modelId: existing.modelId,
+    baseUrl: existing.baseUrl,
+    apiKey: apiKey,
+  );
+  if (service != null) {
+    await service.reconfigure(config, fromProviderAddFlow: true);
+  }
+  await lastConnectionStore.saveFromConfig(config);
+  return true;
+}
+
+/// The model pick: fetches the public `/v1/models` listing (network
+/// errors leave the picker empty for a manual id), pushes the picker
+/// page, and returns the chosen id — null when the user backed out or the
+/// context unmounted.
+Future<String?> _pickAiinModel(
+  BuildContext context, {
+  required String apiKey,
+  required Future<List<String>> Function(
+    String baseUrl, {
+    required String apiKey,
+  })?
+  aiinModelsFetcher,
+}) async {
   const baseUrl = aiinDefaultChatBaseUrl;
-  List<String> models = const [];
-  try {
-    models = aiinModelsFetcher != null
-        ? await aiinModelsFetcher(baseUrl, apiKey: key)
-        : (await fetchModelsForEndpoint(baseUrl, apiKey: key)).$1;
-  } on Object {
-    // Network error — the picker opens empty and takes a manual id.
-  }
-  if (!context.mounted) return false;
+  final models = await _fetchAiinModels(baseUrl, apiKey, aiinModelsFetcher);
+  if (!context.mounted) return null;
   final modelId = await pushFaPage<String>(
     context,
     _AiinModelPickerPage(models: models),
   );
-  if (modelId == null || modelId.isEmpty) return false;
-  if (!context.mounted) return false;
+  if (modelId == null || modelId.isEmpty) return null;
+  if (!context.mounted) return null;
+  return modelId;
+}
 
-  // ── Save provider + key ─────────────────────────────────────────────
-  // The entry name IS the signed-in account's email (fall back to 'AIIN');
-  // de-duplicated so a second AIIN account gets its own entry.
-  final identity = accountLabel ?? 'AIIN';
+Future<List<String>> _fetchAiinModels(
+  String baseUrl,
+  String apiKey,
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
+) async {
+  try {
+    return aiinModelsFetcher != null
+        ? await aiinModelsFetcher(baseUrl, apiKey: apiKey)
+        : (await fetchModelsForEndpoint(baseUrl, apiKey: apiKey)).$1;
+  } on Object {
+    // Network error — the picker opens empty and takes a manual id.
+    return const [];
+  }
+}
+
+/// Saves the provider + key: a named registry entry (the account email,
+/// de-duplicated so a second AIIN account gets its own entry),
+/// entry-scoped key persistence, and the service reconnect.
+Future<void> _registerAiinProvider({
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required SessionKeysStore? sessionKeysStore,
+  required KeychainStore? keychainStore,
+  required String apiKey,
+  required String accountLabel,
+  required String modelId,
+}) async {
+  const baseUrl = aiinDefaultChatBaseUrl;
+  final name = _uniqueAiinProviderName(registry, accountLabel, baseUrl);
+  final provider = await registry.add(
+    name: name,
+    baseUrl: baseUrl,
+    modelId: modelId,
+  );
+  registry.rememberKey(provider.id, apiKey);
+  // Entry-scoped secure persistence (the CLI contract): Keychain first,
+  // saved-keys store as the portable fallback.
+  final keyName = CustomProviderRegistry.keyNameFor(
+    baseUrl,
+    providerName: name,
+  );
+  await _persistAiinKey(keyName, apiKey, sessionKeysStore, keychainStore);
+
+  // ── Connect ─────────────────────────────────────────────────────────
+  final config = AgentConfig(
+    providerKind: 'aiin',
+    modelId: modelId,
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+  );
+  if (service != null) {
+    await service.reconfigure(config, fromProviderAddFlow: true);
+  }
+  await lastConnectionStore.saveFromConfig(config);
+}
+
+/// The first `identity`, `identity-2`, `identity-3`, … not yet taken by a
+/// provider on the same base URL.
+String _uniqueAiinProviderName(
+  ProviderRegistry registry,
+  String identity,
+  String baseUrl,
+) {
   var name = identity;
   var suffix = 2;
   while (registry.providers.any(
@@ -736,18 +839,17 @@ Future<bool> _finishAiinConnect(
   )) {
     name = '$identity-${suffix++}';
   }
-  final provider = await registry.add(
-    name: name,
-    baseUrl: baseUrl,
-    modelId: modelId,
-  );
-  registry.rememberKey(provider.id, key);
-  // Entry-scoped secure persistence (the CLI contract): Keychain first,
-  // saved-keys store as the portable fallback.
-  final keyName = CustomProviderRegistry.keyNameFor(
-    baseUrl,
-    providerName: name,
-  );
+  return name;
+}
+
+/// Entry-scoped secure persistence (the CLI contract): Keychain first,
+/// saved-keys store as the portable fallback.
+Future<void> _persistAiinKey(
+  String keyName,
+  String key,
+  SessionKeysStore? sessionKeysStore,
+  KeychainStore? keychainStore,
+) async {
   var persisted = false;
   final keychain = keychainStore ?? const KeychainStore();
   if (await keychain.isAvailable()) {
@@ -756,20 +858,6 @@ Future<bool> _finishAiinConnect(
   if (!persisted) {
     await sessionKeysStore?.set(keyName, key);
   }
-
-  // ── Connect ─────────────────────────────────────────────────────────
-  final config = AgentConfig(
-    providerKind: 'aiin',
-    modelId: modelId,
-    baseUrl: baseUrl,
-    apiKey: key,
-  );
-  if (service != null) {
-    await service.reconfigure(config, fromProviderAddFlow: true);
-  }
-  await lastConnectionStore.saveFromConfig(config);
-
-  return true;
 }
 
 /// The app-side default chat endpoint of the AIIN provider (the catalog

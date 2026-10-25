@@ -1855,23 +1855,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     Stage stage,
   ) async {
     if (stage.args.length >= 2 && stage.args[0] == '-v') {
-      final name = stage.args[1];
-      if (_isCommandAvailable(name)) {
-        return Ok(
-          StageResult(
-            stdout: utf8.encode('/bin/$name\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('command: $name: not found\n'),
-          exitCode: 1,
-        ),
-      );
+      return Ok(await _commandNameResult(stage.args[1]));
     }
     return Ok(
       StageResult(
@@ -1879,6 +1863,23 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         stderr: utf8.encode('command: unsupported usage\n'),
         exitCode: 1,
       ),
+    );
+  }
+
+  /// The `command -v <name>` arm (gh-1848 split): `/bin/<name>` when the
+  /// command is available, a `not found` line with exit 1 otherwise.
+  Future<StageResult> _commandNameResult(String name) async {
+    if (_isCommandAvailable(name)) {
+      return StageResult(
+        stdout: utf8.encode('/bin/$name\n'),
+        stderr: const [],
+        exitCode: 0,
+      );
+    }
+    return StageResult(
+      stdout: const [],
+      stderr: utf8.encode('command: $name: not found\n'),
+      exitCode: 1,
     );
   }
 

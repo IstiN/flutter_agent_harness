@@ -160,6 +160,15 @@ class _AppsGridViewState extends State<AppsGridView> {
     if (!mounted) return;
     final appService =
         (await widget.resolveAppService?.call(app.id)) ?? widget.agentService;
+    await _openAppViewIfMounted(app, appService);
+  }
+
+  /// Opens [app] fullscreen after the resolver's await gap — only while
+  /// the grid is still mounted (gh-1848 split).
+  Future<void> _openAppViewIfMounted(
+    JsAppInfo app,
+    AgentService? appService,
+  ) async {
     if (!mounted) return;
     // Wide screens: push inside the apps panel's nested Navigator and hide
     // the in-app Fa chrome (the main chat is always visible alongside).

@@ -1485,9 +1485,17 @@ class _P2State extends State<_P2> {
   }
 
   Future<bool> _connectSso(String presetKey, faui.ProviderRegistry registry) {
+    if (presetKey == 'codemie') return _connectCodemie(registry);
+    return _connectChatGptOrAiin(presetKey, registry);
+  }
+
+  /// The remaining SSO presets (gh-1848 split): ChatGPT → its OAuth
+  /// browser flow, everything else (AIIN) → its connect flow.
+  Future<bool> _connectChatGptOrAiin(
+    String presetKey,
+    faui.ProviderRegistry registry,
+  ) {
     switch (presetKey) {
-      case 'codemie':
-        return _connectCodemie(registry);
       case 'chatgpt':
         return _connectChatGpt(registry);
       default:

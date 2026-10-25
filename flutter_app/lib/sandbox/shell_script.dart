@@ -350,16 +350,35 @@ bool _isAssignmentWord(String word) {
   return _isIdentifierName(word.substring(0, eq));
 }
 
+/// ASCII identifier char class: `[A-Za-z0-9_]`.
+bool _isIdentifierCharCode(int code) =>
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    (code >= 48 && code <= 57) ||
+    code == 95;
+
+/// Whether [code] may START a shell identifier: any identifier character
+/// except a digit.
+bool _isIdentifierStartCode(int code) =>
+    _isIdentifierCharCode(code) && !(code >= 48 && code <= 57);
+
+/// Whether the identifier character at index [i] of [name] is valid: digits
+/// are only allowed after the first position.
+bool _isIdentifierCharAt(String name, int i) {
+  if (i == 0) return _isIdentifierStartCode(name.codeUnitAt(i));
+  return _isIdentifierCharCode(name.codeUnitAt(i));
+}
+
 bool _isIdentifierName(String name) {
   if (name.isEmpty) return false;
+  return _allIdentifierChars(name);
+}
+
+/// Every character of [name] is a valid identifier character (digits only
+/// after the first position — gh-1848 tier-3 split).
+bool _allIdentifierChars(String name) {
   for (var i = 0; i < name.length; i++) {
-    final c = name.codeUnitAt(i);
-    final ok =
-        (c >= 65 && c <= 90) ||
-        (c >= 97 && c <= 122) ||
-        (c >= 48 && c <= 57) ||
-        c == 95;
-    if (!ok || (i == 0 && c >= 48 && c <= 57)) return false;
+    if (!_isIdentifierCharAt(name, i)) return false;
   }
   return true;
 }
@@ -463,6 +482,17 @@ int _expandPlainAt(
     buffer.write(ch);
     return i + 1;
   }
+  return _expandDollarAt(input, i, env, buffer);
+}
+
+/// Expands the `$`-reference starting at the `$` at [i]: `$?`, the braced
+/// `${NAME}`, and bare `$NAME`; any other `$` stays literal.
+int _expandDollarAt(
+  String input,
+  int i,
+  Map<String, String> env,
+  StringBuffer buffer,
+) {
   if (i + 1 >= input.length) {
     buffer.write('\$');
     return i + 1;
@@ -475,30 +505,41 @@ int _expandPlainAt(
     return i + 2;
   }
   if (next == '{') {
-    final end = input.indexOf('}', i + 2);
-    if (end == -1) {
-      buffer.write('\${');
-      return i + 2;
-    }
-    buffer.write(env[input.substring(i + 2, end)] ?? '');
-    return end + 1;
+    return _expandBracedAt(input, i, env, buffer);
   }
-  final code = next.codeUnitAt(0);
-  final isVarStart =
-      (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code == 95;
-  if (!isVarStart) {
+  if (!_isIdentifierStartCode(next.codeUnitAt(0))) {
     buffer.write('\$');
     return i + 1;
   }
+  return _expandVarAt(input, i, env, buffer);
+}
+
+/// Expands `${NAME}` at the `$` at [i]; an unterminated brace keeps the
+/// `\${` text literal.
+int _expandBracedAt(
+  String input,
+  int i,
+  Map<String, String> env,
+  StringBuffer buffer,
+) {
+  final end = input.indexOf('}', i + 2);
+  if (end == -1) {
+    buffer.write('\${');
+    return i + 2;
+  }
+  buffer.write(env[input.substring(i + 2, end)] ?? '');
+  return end + 1;
+}
+
+/// Expands bare `$NAME` at the `$` at [i], consuming the identifier run.
+int _expandVarAt(
+  String input,
+  int i,
+  Map<String, String> env,
+  StringBuffer buffer,
+) {
   var j = i + 1;
-  while (j < input.length) {
-    final c = input.codeUnitAt(j);
-    final isVarChar =
-        (c >= 65 && c <= 90) ||
-        (c >= 97 && c <= 122) ||
-        (c >= 48 && c <= 57) ||
-        c == 95;
-    if (!isVarChar) break;
+  while (j < input.length && _isIdentifierCharCode(input.codeUnitAt(j))) {
     j++;
   }
   buffer.write(env[input.substring(i + 1, j)] ?? '');

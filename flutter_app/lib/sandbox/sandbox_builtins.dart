@@ -68,7 +68,6 @@ final class CurlArgs {
   /// `-w`/`--write-out` template; printed to stdout after the transfer
   /// (even with `-o`), like real curl.
   String? writeOut;
-
 }
 
 /// Parsed `jq`/`yq` command line; see [SandboxBuiltins.parseJqArgs].
@@ -307,7 +306,11 @@ final class SandboxBuiltins {
   /// Builds the `package:http` request from parsed curl arguments: a data
   /// argument implies POST unless `-X` says otherwise (an explicit
   /// `-X GET -d ...` sends GET with a body).
-  static http.Request _curlRequest(CurlArgs parsed, Uri uri, List<int>? bodyBytes) {
+  static http.Request _curlRequest(
+    CurlArgs parsed,
+    Uri uri,
+    List<int>? bodyBytes,
+  ) {
     final method = !parsed.explicitMethod && parsed.dataArgs.isNotEmpty
         ? 'POST'
         : parsed.method;
@@ -318,6 +321,14 @@ final class SandboxBuiltins {
     return request;
   }
 
+  /// Runs the `curl` builtin: prelude (usage/version), parse, body
+  /// assembly, the exchange, the drain, then result assembly.
+  ///
+  /// gh-1848 tier 3 split: sending (with the AC3 request id and timeout)
+  /// lives in [_curlExchange], body draining in [_curlDrain], and the
+  /// stderr/status-line/-w/-o assembly in [_curlStatusLine], [_curlStderr],
+  /// [_curlWriteOutBytes] and [_curlEmit]. [_curlBody] and [_curlRequest]
+  /// predate the split.
   Future<SandboxBuiltinResult> curl(
     List<String> args, {
     List<int>? stdinBytes,
@@ -345,18 +356,73 @@ final class SandboxBuiltins {
 
     final request = _curlRequest(parsed, uri, bodyBytes);
 
-    final effectiveTimeout = timeout ?? const Duration(seconds: 30);
-    // gh-1444 AC3: every exchange gets a request id so the tool result's
-    // `[bridge]` line correlates with the app.log entry.
-    final rid = _nextCurlRid();
-    final host = uri.host.isEmpty ? parsed.url! : uri.host;
+    final exchange = _curlExchangeContext(
+      uri,
+      rawUrl: parsed.url!,
+      timeout: timeout,
+    );
+    final (sendError, streamedResponse) = await _curlExchange(
+      request,
+      rid: exchange.rid,
+      host: exchange.host,
+      timeout: exchange.timeout,
+    );
+    if (sendError != null) return sendError;
 
-    final stderrLines = <String>[];
-    final http.StreamedResponse streamedResponse;
+    // Drain the body manually: a connection reset MID-BODY (gh-1444 E2)
+    // must deliver the partial bytes with a `[bridge]` truncation line —
+    // never a clean empty success — and a body past the size cap (E7)
+    // aborts with a quota error naming both byte numbers.
+    final (bytes, truncated, stderrLines, quotaError) = await _curlDrain(
+      streamedResponse!,
+      request,
+      rid: exchange.rid,
+      host: exchange.host,
+    );
+    if (quotaError != null) return quotaError;
+
+    final stderr = _curlStderr(
+      parsed,
+      _curlStatusLine(streamedResponse),
+      stderrLines,
+    );
+    return _curlEmit(
+      parsed,
+      streamedResponse,
+      request,
+      bytes,
+      truncated,
+      stderr,
+    );
+  }
+
+  /// The AC3 exchange context, computed once per exchange: the request id,
+  /// the failure-line host (the verbatim URL when the URI is hostless) and
+  /// the effective timeout (30s when not given).
+  ({String rid, String host, Duration timeout}) _curlExchangeContext(
+    Uri uri, {
+    required String rawUrl,
+    required Duration? timeout,
+  }) {
+    return (
+      rid: _nextCurlRid(),
+      host: uri.host.isEmpty ? rawUrl : uri.host,
+      timeout: timeout ?? const Duration(seconds: 30),
+    );
+  }
+
+  /// Sends [request] and returns the streamed response, or the terminal
+  /// curl error: exit 28 on timeout, exit 7 on connect/transport failure.
+  /// Both build the gh-1444 AC3 `[bridge]` line ([rid] + [host]) so the
+  /// tool result correlates with the app.log entry.
+  Future<(SandboxBuiltinResult?, http.StreamedResponse?)> _curlExchange(
+    http.Request request, {
+    required String rid,
+    required String host,
+    required Duration timeout,
+  }) async {
     try {
-      streamedResponse = await _httpClient
-          .send(request)
-          .timeout(effectiveTimeout);
+      return (null, await _httpClient.send(request).timeout(timeout));
     } on TimeoutException catch (e) {
       // A real curl exits 28 on timeouts; the `[bridge]` line names the
       // host and class so the failure is diagnosable (AC3).
@@ -367,7 +433,7 @@ final class SandboxBuiltins {
         rid: rid,
       );
       _logFailure(line);
-      return _error('curl: (28) Operation timed out\n$line\n', 28);
+      return (_error('curl: (28) Operation timed out\n$line\n', 28), null);
     } on Object catch (e) {
       // Includes connection failures and browser CORS rejections. Exactly
       // ONE attempt is made — never an automatic retry of a non-idempotent
@@ -379,16 +445,24 @@ final class SandboxBuiltins {
         rid: rid,
       );
       _logFailure(line);
-      return _error('curl: (7) $line\n', 7);
+      return (_error('curl: (7) $line\n', 7), null);
     }
+  }
 
-    // Drain the body manually: a connection reset MID-BODY (gh-1444 E2)
-    // must deliver the partial bytes with a `[bridge]` truncation line —
-    // never a clean empty success — and a body past the size cap (E7)
-    // aborts with a quota error naming both byte numbers.
+  /// Drains [streamedResponse] into bytes. A connection reset mid-body
+  /// keeps the partial bytes and adds the `[bridge]` truncation line to
+  /// the returned stderr lines; a body past the size cap comes back as
+  /// [quotaError] (exit 63).
+  Future<(List<int>, bool, List<String>, SandboxBuiltinResult?)> _curlDrain(
+    http.StreamedResponse streamedResponse,
+    http.Request request, {
+    required String rid,
+    required String host,
+  }) async {
     final builder = BytesBuilder(copy: false);
     var truncated = false;
     var quotaExceeded = false;
+    final stderrLines = <String>[];
     try {
       await for (final chunk in streamedResponse.stream) {
         builder.add(chunk);
@@ -409,42 +483,78 @@ final class SandboxBuiltins {
       _logFailure(line);
       stderrLines.add(line);
     }
-    if (quotaExceeded) {
-      return _error(
-        'curl: (63) response body exceeds the sandbox limit: received '
-        '${builder.length} bytes, cap is $maxCurlResponseBytes\n',
-        63,
-      );
-    }
+    final quotaError = quotaExceeded
+        ? _error(
+            'curl: (63) response body exceeds the sandbox limit: received '
+            '${builder.length} bytes, cap is $maxCurlResponseBytes\n',
+            63,
+          )
+        : null;
+    return (builder.toBytes(), truncated, stderrLines, quotaError);
+  }
 
-    final bytes = builder.toBytes();
-    final statusLine =
-        'HTTP ${streamedResponse.statusCode} '
+  /// `HTTP <code> <reason>` lead line for the non-silent stderr.
+  static String _curlStatusLine(http.StreamedResponse streamedResponse) {
+    return 'HTTP ${streamedResponse.statusCode} '
         '${streamedResponse.reasonPhrase ?? ""}\n';
-    final stderr = parsed.silent
-        ? utf8.encode('${stderrLines.join('\n')}${stderrLines.isEmpty ? '' : '\n'}')
-        : utf8.encode('$statusLine${stderrLines.join('\n')}${stderrLines.isEmpty ? '' : '\n'}');
+  }
 
-    // `-w` prints its template (variables + escapes expanded) to stdout
-    // after the body/-o write, like real curl — including the truncated
-    // case, where `size_download` reports the partial byte count.
-    final writeOut = parsed.writeOut == null
-        ? const <int>[]
-        : utf8.encode(
-            _renderCurlWriteOut(
-              parsed.writeOut!,
-              statusCode: streamedResponse.statusCode,
-              headers: streamedResponse.headers,
-              url: request.url,
-              bodyLength: bytes.length,
-            ),
-          );
+  /// Encodes the exchange's stderr: the status line leads unless `-s` was
+  /// given; failure lines (if any) follow, newline-terminated.
+  static List<int> _curlStderr(
+    CurlArgs parsed,
+    String statusLine,
+    List<String> stderrLines,
+  ) {
+    final body = parsed.silent
+        ? stderrLines.join('\n')
+        : '$statusLine${stderrLines.join('\n')}';
+    return utf8.encode('$body${stderrLines.isEmpty ? '' : '\n'}');
+  }
+
+  /// Expands the `-w` template (variables + escapes expanded) to print to
+  /// stdout after the body/-o write, like real curl — including the
+  /// truncated case, where `size_download` reports the partial byte count.
+  static List<int> _curlWriteOutBytes(
+    CurlArgs parsed,
+    http.StreamedResponse streamedResponse,
+    http.Request request,
+    List<int> bytes,
+  ) {
+    if (parsed.writeOut == null) return const <int>[];
+    return utf8.encode(
+      _renderCurlWriteOut(
+        parsed.writeOut!,
+        statusCode: streamedResponse.statusCode,
+        headers: streamedResponse.headers,
+        url: request.url,
+        bodyLength: bytes.length,
+      ),
+    );
+  }
+
+  /// Assembles the final result: `-o file` writes the body to disk and
+  /// returns only the `-w` output on stdout; otherwise the body (plus the
+  /// `-w` expansion) streams back. A truncated exchange exits 18 with the
+  /// partial bytes (gh-1444 E2).
+  Future<SandboxBuiltinResult> _curlEmit(
+    CurlArgs parsed,
+    http.StreamedResponse streamedResponse,
+    http.Request request,
+    List<int> bytes,
+    bool truncated,
+    List<int> stderr,
+  ) async {
+    final writeOut = _curlWriteOutBytes(
+      parsed,
+      streamedResponse,
+      request,
+      bytes,
+    );
 
     if (parsed.outputFile != null) {
       await writeBinaryFile(parsed.outputFile!, bytes);
-      return truncated
-          ? _ok(writeOut, stderr, 18)
-          : _ok(writeOut, stderr);
+      return truncated ? _ok(writeOut, stderr, 18) : _ok(writeOut, stderr);
     }
 
     return truncated
@@ -522,6 +632,7 @@ final class SandboxBuiltins {
     }
     return out.toString();
   }
+
   /// Pure `wget` → `curl` argument translation: `-O f`/`--output-document=f`
   /// become `-o f` (a missing value drops the flag), `-q`/`--quiet` become
   /// `-s`, and `--no-check-certificate` is dropped (TLS verification is not
@@ -581,7 +692,10 @@ final class SandboxBuiltins {
   static (String, String)? _curlHeaderPair(String header) {
     final idx = header.indexOf(':');
     if (idx > 0) {
-      return (header.substring(0, idx).trim(), header.substring(idx + 1).trim());
+      return (
+        header.substring(0, idx).trim(),
+        header.substring(idx + 1).trim(),
+      );
     }
     return null;
   }
@@ -590,32 +704,75 @@ final class SandboxBuiltins {
   /// `-o`, `--url`). [next] is the argument after [arg] (null at the end);
   /// returns whether the value was consumed. A value flag at the end of the
   /// line is silently ignored, like real curl.
+  ///
+  /// gh-1848 tier 3 split: one handler per flag family, tried in the
+  /// original switch order until one consumes the flag
+  /// ([_curlRequestMethodFlag], [_curlHeaderFlag], [_curlDataFlag],
+  /// [_curlOutputFlag], [_curlWriteOutFlag], [_curlUrlFlag]).
   static bool _curlValueFlag(CurlArgs c, String arg, String? next) {
-    switch (arg) {
-      case '-X' || '--request':
-        if (next == null) return false;
-        c.method = next;
-        c.explicitMethod = true;
-      case '-H' || '--header':
-        if (next == null) return false;
-        final pair = _curlHeaderPair(next);
-        if (pair != null) c.headers[pair.$1] = pair.$2;
-      case '-d' || '--data' || '--data-raw' || '--data-binary':
-        if (next == null) return false;
-        // `--data-raw` treats the value literally: no @file/@- expansion.
-        c.dataArgs.add((next, arg != '--data-raw'));
-      case '-o' || '--output':
-        if (next == null) return false;
-        c.outputFile = next;
-      case '-w' || '--write-out':
-        if (next == null) return false;
-        c.writeOut = next;
-      case '--url':
-        if (next == null) return false;
-        c.url = next;
-      default:
-        return false;
+    return _curlRequestMethodFlag(c, arg, next) ||
+        _curlHeaderFlag(c, arg, next) ||
+        _curlDataFlag(c, arg, next) ||
+        _curlOutputFlag(c, arg, next) ||
+        _curlWriteOutFlag(c, arg, next) ||
+        _curlUrlFlag(c, arg, next);
+  }
+
+  /// Handles `-X`/`--request <method>`: sets the method and marks it
+  /// explicit (an explicit `-X GET -d ...` sends GET with a body).
+  static bool _curlRequestMethodFlag(CurlArgs c, String arg, String? next) {
+    if (arg != '-X' && arg != '--request') return false;
+    if (next == null) return false;
+    c.method = next;
+    c.explicitMethod = true;
+    return true;
+  }
+
+  /// Handles `-H <header>`/`--header <header>`; a header without a colon
+  /// (or with an empty name) is ignored.
+  static bool _curlHeaderFlag(CurlArgs c, String arg, String? next) {
+    if (arg != '-H' && arg != '--header') return false;
+    if (next == null) return false;
+    final pair = _curlHeaderPair(next);
+    if (pair != null) c.headers[pair.$1] = pair.$2;
+    return true;
+  }
+
+  /// Handles `-d`/`--data`/`--data-raw`/`--data-binary`; `--data-raw`
+  /// treats the value literally (no @file/@- expansion).
+  static bool _curlDataFlag(CurlArgs c, String arg, String? next) {
+    if (arg != '-d' &&
+        arg != '--data' &&
+        arg != '--data-raw' &&
+        arg != '--data-binary') {
+      return false;
     }
+    if (next == null) return false;
+    c.dataArgs.add((next, arg != '--data-raw'));
+    return true;
+  }
+
+  /// Handles `-o <file>`/`--output <file>`.
+  static bool _curlOutputFlag(CurlArgs c, String arg, String? next) {
+    if (arg != '-o' && arg != '--output') return false;
+    if (next == null) return false;
+    c.outputFile = next;
+    return true;
+  }
+
+  /// Handles `-w <template>`/`--write-out <template>`.
+  static bool _curlWriteOutFlag(CurlArgs c, String arg, String? next) {
+    if (arg != '-w' && arg != '--write-out') return false;
+    if (next == null) return false;
+    c.writeOut = next;
+    return true;
+  }
+
+  /// Handles `--url <url>`.
+  static bool _curlUrlFlag(CurlArgs c, String arg, String? next) {
+    if (arg != '--url') return false;
+    if (next == null) return false;
+    c.url = next;
     return true;
   }
 
@@ -774,7 +931,6 @@ final class SandboxBuiltins {
         .join('\n');
     return _ok(utf8.encode(output.isNotEmpty ? '$output\n' : ''));
   }
-
 
   /// Pure `jq`/`yq` argument pre-scan: leading flags (any `-x` before the
   /// first positional) are accepted; only `-r`/`--raw-output` and
@@ -946,23 +1102,59 @@ final class SandboxBuiltins {
   /// entirely. Hunks are applied with offset search (no fuzz); a file is
   /// written only when all of its hunks apply. Exit codes follow GNU patch:
   /// 0 when everything applied, 1 when hunks failed, 2 on error.
+  ///
+  /// gh-1848 tier 3 split: input loading ([_patchLoadText]), input
+  /// validation ([_patchValidateInputs]) and the per-file apply loop
+  /// ([_patchApplyAll], one file per [_patchApplyFile] over
+  /// [_patchTargetName]/[_patchLoadDoc]/_applyHunks/_patchWriteResult).
   Future<SandboxBuiltinResult> patch(List<String> args, {String? stdin}) async {
     final (error, parsed) = parsePatchArgs(args);
     if (parsed == null) return error!;
     final (:strip, :patchFile, :target) = parsed;
 
-    final String patchText;
-    if (patchFile != null) {
-      final read = await readTextFile(patchFile);
-      if (read == null) {
-        return _error('patch: $patchFile: No such file or directory\n', 2);
-      }
-      patchText = read;
-    } else {
-      patchText = stdin ?? '';
-    }
+    final (loadError, patchText) = await _patchLoadText(patchFile, stdin);
+    if (loadError != null) return loadError;
 
     final files = _parsePatch(patchText);
+    final validateError = _patchValidateInputs(files, target);
+    if (validateError != null) return validateError;
+
+    final (fatal, stdout, stderr, failed) = await _patchApplyAll(
+      files!,
+      target,
+      strip,
+    );
+    if (fatal != null) return fatal;
+    return SandboxBuiltinResult(
+      stdout: utf8.encode(stdout),
+      stderr: utf8.encode(stderr),
+      exitCode: failed ? 1 : 0,
+    );
+  }
+
+  /// Reads the patch input: `-i file`/`--input=file` content, or the piped
+  /// [stdin] (empty when absent). Returns the terminal error when the
+  /// named patch file does not exist.
+  Future<(SandboxBuiltinResult?, String)> _patchLoadText(
+    String? patchFile,
+    String? stdin,
+  ) async {
+    if (patchFile == null) {
+      return (null, stdin ?? '');
+    }
+    final read = await readTextFile(patchFile);
+    if (read == null) {
+      return (_error('patch: $patchFile: No such file or directory\n', 2), '');
+    }
+    return (null, read);
+  }
+
+  /// Rejects malformed patch input, an empty patch, and a target operand
+  /// combined with a multi-file patch (the target would be ambiguous).
+  static SandboxBuiltinResult? _patchValidateInputs(
+    List<_PatchFile>? files,
+    String? target,
+  ) {
     if (files == null) {
       return _error('patch: malformed patch input\n', 2);
     }
@@ -975,51 +1167,121 @@ final class SandboxBuiltins {
         2,
       );
     }
+    return null;
+  }
 
+  /// Applies every file section of the patch in order, accumulating
+  /// `patching file` lines ([stdout]) and hunk-failure diagnostics
+  /// ([stderr]). Recoverable failures ("already exists", failed hunks)
+  /// mark the run [failed] and continue; unrecoverable ones come back as
+  /// [fatal] and abort.
+  Future<(SandboxBuiltinResult?, String, String, bool)> _patchApplyAll(
+    List<_PatchFile> files,
+    String? target,
+    int strip,
+  ) async {
     final out = StringBuffer();
     final err = StringBuffer();
     var failed = false;
     for (final file in files) {
-      if (file.deletesFile) {
-        return _error('patch: deleting files is not supported\n', 2);
+      final (fatal, fileFailed) = await _patchApplyFile(
+        file,
+        target,
+        strip,
+        out,
+        err,
+      );
+      if (fatal != null) return (fatal, '', '', false);
+      failed = failed || fileFailed;
+    }
+    return (null, out.toString(), err.toString(), failed);
+  }
+
+  /// Applies one patch file section: resolves the target name, loads the
+  /// document, applies the hunks, and on success writes the patched
+  /// content. Returns the terminal error (unsupported delete marker,
+  /// stripping to an empty name, missing file) and whether this file
+  /// failed recoverably — never a partially patched write.
+  Future<(SandboxBuiltinResult?, bool)> _patchApplyFile(
+    _PatchFile file,
+    String? target,
+    int strip,
+    StringBuffer out,
+    StringBuffer err,
+  ) async {
+    final (nameError, name) = _patchTargetName(file, target, strip);
+    if (nameError != null) return (nameError, false);
+    final (loadFatal, failureLine, doc) = await _patchLoadDoc(name, file);
+    if (loadFatal != null) return (loadFatal, false);
+    if (failureLine != null) {
+      err.write(failureLine);
+      return (null, true);
+    }
+    final applied = _applyHunks(doc!, file.hunks);
+    if (applied.failures.isNotEmpty) {
+      for (final hunkNumber in applied.failures) {
+        err.write('patch: Hunk #$hunkNumber FAILED in $name\n');
       }
-      final name = target ?? _stripPath(file.targetName, strip);
-      if (name.isEmpty) {
-        return _error('patch: empty file name after -p stripping\n', 2);
+      return (null, true); // Never write a partially patched file.
+    }
+    await _patchWriteResult(name, out, applied);
+    return (null, false);
+  }
+
+  /// Resolves the on-disk name for [file]: the [target] operand overrides
+  /// the diff header names (`-p`/`--strip` then strips leading
+  /// components). The unsupported delete marker and an empty stripped
+  /// name are terminal errors.
+  static (SandboxBuiltinResult?, String) _patchTargetName(
+    _PatchFile file,
+    String? target,
+    int strip,
+  ) {
+    if (file.deletesFile) {
+      return (_error('patch: deleting files is not supported\n', 2), '');
+    }
+    final name = target ?? _stripPath(file.targetName, strip);
+    if (name.isEmpty) {
+      return (_error('patch: empty file name after -p stripping\n', 2), '');
+    }
+    return (null, name);
+  }
+
+  /// Loads the document the hunks apply to: a creating file starts empty;
+  /// an existing file must be readable. The "already exists" case is NOT
+  /// terminal — it comes back as [failureLine] so the run is marked
+  /// failed and the next file proceeds (GNU patch semantics).
+  Future<(SandboxBuiltinResult?, String?, _LineDoc?)> _patchLoadDoc(
+    String name,
+    _PatchFile file,
+  ) async {
+    if (file.createsFile) {
+      if (await readTextFile(name) != null) {
+        return (null, 'patch: $name: already exists\n', null);
       }
-      final _LineDoc doc;
-      if (file.createsFile) {
-        if (await readTextFile(name) != null) {
-          err.write('patch: $name: already exists\n');
-          failed = true;
-          continue;
-        }
-        doc = _LineDoc('');
-      } else {
-        final content = await readTextFile(name);
-        if (content == null) {
-          return _error('patch: $name: No such file or directory\n', 2);
-        }
-        doc = _LineDoc(content);
-      }
-      final applied = _applyHunks(doc, file.hunks);
-      if (applied.failures.isNotEmpty) {
-        failed = true;
-        for (final hunkNumber in applied.failures) {
-          err.write('patch: Hunk #$hunkNumber FAILED in $name\n');
-        }
-        continue; // Never write a partially patched file.
-      }
-      out.write('patching file $name\n');
-      await writeBinaryFile(
-        name,
-        utf8.encode(_joinLines(applied.lines, applied.trailingNewline)),
+      return (null, null, _LineDoc(''));
+    }
+    final content = await readTextFile(name);
+    if (content == null) {
+      return (
+        _error('patch: $name: No such file or directory\n', 2),
+        null,
+        null,
       );
     }
-    return SandboxBuiltinResult(
-      stdout: utf8.encode(out.toString()),
-      stderr: utf8.encode(err.toString()),
-      exitCode: failed ? 1 : 0,
+    return (null, null, _LineDoc(content));
+  }
+
+  /// Writes the patched content and logs `patching file <name>` on stdout.
+  Future<void> _patchWriteResult(
+    String name,
+    StringBuffer out,
+    ({List<String> lines, bool trailingNewline, List<int> failures}) applied,
+  ) async {
+    out.write('patching file $name\n');
+    await writeBinaryFile(
+      name,
+      utf8.encode(_joinLines(applied.lines, applied.trailingNewline)),
     );
   }
 
@@ -1269,7 +1531,12 @@ final class SandboxBuiltins {
   /// optional record TYPE (defaults to A; a second TYPE is a usage error).
   /// `-x` converts an IPv4 literal to its PTR name. Table-tested; see
   /// [dig].
-  static ({bool reverse, String? name, String type, SandboxBuiltinResult? error})
+  static ({
+    bool reverse,
+    String? name,
+    String type,
+    SandboxBuiltinResult? error,
+  })
   parseDigArgs(List<String> args) {
     var reverse = false;
     String? name;
@@ -1682,6 +1949,7 @@ final class SandboxBuiltins {
     if (out.isNotEmpty) return out.toString();
     return '${const JsonEncoder.withIndent('  ').convert(doc)}\n';
   }
+
   /// Extracts the display name (`fn`) from an RDAP entity's vCard, falling
   /// back to the entity handle.
   static String? _rdapEntityName(Map<String, dynamic> entity) {
@@ -1854,10 +2122,14 @@ final class SandboxBuiltins {
         );
       }
       return (depth, 1, null);
-  }
+    }
     final depth = int.tryParse(arg.substring(2));
     if (depth == null || depth < 1) {
-      return (null, 0, _error('tree: Invalid level, must be greater than 0.\n', 2));
+      return (
+        null,
+        0,
+        _error('tree: Invalid level, must be greater than 0.\n', 2),
+      );
     }
     return (depth, 0, null);
   }
@@ -1865,7 +2137,12 @@ final class SandboxBuiltins {
   /// Pure `tree` argument parser: `-a`, `-L n`/`-Ln`, one optional root,
   /// `--help`. [early] carries the `--help` output or the usage error and
   /// ends the command. Table-tested; see [tree].
-  static ({bool showHidden, int? maxDepth, String? root, SandboxBuiltinResult? early})
+  static ({
+    bool showHidden,
+    int? maxDepth,
+    String? root,
+    SandboxBuiltinResult? early,
+  })
   parseTreeArgs(List<String> args) {
     var showHidden = false;
     int? maxDepth;
@@ -1893,7 +2170,12 @@ final class SandboxBuiltins {
         early = _error('tree: too many arguments\n', 2);
       }
     }
-    return (showHidden: showHidden, maxDepth: maxDepth, root: root, early: early);
+    return (
+      showHidden: showHidden,
+      maxDepth: maxDepth,
+      root: root,
+      early: early,
+    );
   }
 
   /// Draws the recursive `tree` listing into [out], counting directories
@@ -2155,6 +2437,7 @@ final class SandboxBuiltins {
       error: null,
     );
   }
+
   Future<SandboxBuiltinResult> _decompress(
     String name,
     List<String> args, {
@@ -2215,13 +2498,13 @@ final class SandboxBuiltins {
   // base64
   // ---------------------------------------------------------------------------
 
-
   /// Resolves a `-w`/`--wrap`/`--wrap=`/`-wN` flag. Returns the columns
   /// string (null for the bare `-w`/`--wrap` form) and whether the next
   /// argument was consumed, or null when [arg] is not a wrap flag.
   static (String?, bool)? _base64WrapFlag(String arg) {
     if (arg == '-w' || arg == '--wrap') return (null, true);
-    if (arg.startsWith('--wrap=')) return (arg.substring('--wrap='.length), false);
+    if (arg.startsWith('--wrap='))
+      return (arg.substring('--wrap='.length), false);
     if (arg.startsWith('-w') && arg.length > 2) {
       return (arg.substring(2), false);
     }
@@ -2255,7 +2538,10 @@ final class SandboxBuiltins {
         // The bare flag form consumed its value above via ++i.
         if (!consumed) continue;
       } else if (arg.startsWith('-') && arg != '-') {
-        b.error = _error("base64: invalid option -- '${arg.substring(1)}'\n", 2);
+        b.error = _error(
+          "base64: invalid option -- '${arg.substring(1)}'\n",
+          2,
+        );
         return b;
       } else if (b.inputFile == null) {
         b.inputFile = arg;
@@ -2414,15 +2700,12 @@ final class SandboxBuiltins {
       exitCode: failed ? 1 : 0,
     );
   }
+
   /// Pure `unzip` argument parser: `-d dir` (target directory), `-q`/`-o`
   /// accepted as no-ops (quiet/overwrite are the defaults), archive
   /// operands. Any other option is an error (exit code 1, matching the
   /// sandbox unzip's convention). Table-tested; see [unzip].
-  static ({
-    String? destDir,
-    List<String> archives,
-    SandboxBuiltinResult? error,
-  })
+  static ({String? destDir, List<String> archives, SandboxBuiltinResult? error})
   parseUnzipArgs(List<String> args) {
     String? destDir;
     final archives = <String>[];
