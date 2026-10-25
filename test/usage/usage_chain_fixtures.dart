@@ -32,22 +32,30 @@ String segmentMarkerLine(int n) => jsonEncode({
 
 /// One `model_request_summary` custom record with the given outbound
 /// message chars (input-estimation basis for the estimated fallback).
-String requestSummaryLine(int n, {List<int> messageChars = const [400, 100]}) =>
-    jsonEncode({
-      ..._recordBase(n),
-      'type': 'custom',
-      'customType': 'model_request_summary',
-      'data': {
-        'messageCount': messageChars.length,
-        'systemPromptChars': 10,
-        'toolCount': 0,
-        'toolNames': const <String>[],
-        'messages': [
-          for (final chars in messageChars)
-            {'role': 'user', 'chars': chars, 'preview': 'p'},
-        ],
+String requestSummaryLine(
+  int n, {
+  List<int> messageChars = const [400, 100],
+  ({int count, int chars})? droppedMessages,
+}) => jsonEncode({
+  ..._recordBase(n),
+  'type': 'custom',
+  'customType': 'model_request_summary',
+  'data': {
+    'messageCount': messageChars.length + (droppedMessages?.count ?? 0),
+    'systemPromptChars': 10,
+    'toolCount': 0,
+    'toolNames': const <String>[],
+    'messages': [
+      for (final chars in messageChars)
+        {'role': 'user', 'chars': chars, 'preview': 'p'},
+    ],
+    if (droppedMessages != null)
+      'droppedMessages': {
+        'count': droppedMessages.count,
+        'chars': droppedMessages.chars,
       },
-    });
+  },
+});
 
 /// Provider-reported usage (non-zero everywhere a real provider reports).
 Map<String, dynamic> reportedUsage({
