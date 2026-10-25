@@ -954,6 +954,7 @@ void main() {
       final registry = ProviderRegistry.inMemory();
       final service = _RecordingService(MemoryExecutionEnv());
       Future<bool>? done;
+      Object? thrown;
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -971,6 +972,18 @@ void main() {
                       throw StateError('idp down');
                     },
                   );
+                  // Pre-attach the catcher INSIDE onPressed: the flow's
+                  // error lands on the future within microtasks of the call
+                  // (`_acquireCredentials` returns the injected flow's
+                  // future directly), long before the test body could attach
+                  // expectLater — and an unlistened error would fail the
+                  // zone. The capture asserts the propagation; the save
+                  // assertions below prove nothing was persisted.
+                  // ignore: unawaited_futures
+                  done!.catchError((Object e) {
+                    thrown = e;
+                    return false;
+                  });
                 },
                 child: const Text('go'),
               ),
@@ -978,13 +991,13 @@ void main() {
           ),
         ),
       );
-      tester.tap(find.text('go'));
-      // Listen BEFORE the error microtask lands — an unlistened errored
-      // future would fail the zone as an unhandled async error.
-      final assertion = expectLater(done!, throwsA(isA<StateError>()));
-      await tester.pump();
-      await assertion;
+      await tester.tap(find.text('go'));
+      await tester.pumpAndSettle();
 
+      expect(
+        thrown,
+        isA<StateError>().having((e) => e.message, 'message', 'idp down'),
+      );
       expect(registry.providers, isEmpty);
       expect(service.reconfigured, isNull);
     });

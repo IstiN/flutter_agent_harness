@@ -36,18 +36,17 @@ typedef FaLlmMessage = ({String role, String content});
 /// LLM completion used by the `jsr.fa.llm*` bridge calls. Receives the
 /// conversation and resolves with the assistant's reply text. When [onDelta]
 /// is given (the `llm.stream` call), it reports text deltas as they arrive.
-typedef FaLlmHandler = Future<Object?> Function(
-  List<FaLlmMessage> messages, {
-  void Function(String delta)? onDelta,
-});
+typedef FaLlmHandler =
+    Future<Object?> Function(
+      List<FaLlmMessage> messages, {
+      void Function(String delta)? onDelta,
+    });
 
 /// Handler for platform bridges still without a real backend (health
 /// actions other than `health.summary`). Receives the action name
 /// (`health.stepsToday`, …) and args.
-typedef FaPlatformHandler = Future<Object?> Function(
-  String action,
-  Map<String, Object?> args,
-);
+typedef FaPlatformHandler =
+    Future<Object?> Function(String action, Map<String, Object?> args);
 
 /// Read source for the host's merged secrets (dotenv + saved keys) behind
 /// the `jsr.fa.keys.list/get` bridge calls; returns a fresh name → value
@@ -56,10 +55,11 @@ typedef FaHostKeysSource = Map<String, String> Function();
 
 /// One `home`/`homekit` action handler: resolves the bridge map from the
 /// gated [HomeApi] (see [_homeActions]).
-typedef _HomeAction = Future<Map<String, Object?>> Function(
-  HomeApi api,
-  Map<String, Object?> args,
-);
+typedef _HomeAction =
+    Future<Map<String, Object?>> Function(
+      HomeApi api,
+      Map<String, Object?> args,
+    );
 
 /// Theme-pack bridge behind `jsr.fa.theme.list/current/apply` (issue #169).
 /// The host implements it; the apply leg ALWAYS renders a consent prompt —
@@ -580,7 +580,9 @@ class JsAppEngine {
   @visibleForTesting
   static List<String> missingSourceFiles(String assembledJs) {
     final missing = <String>[];
-    final marker = RegExp(r"/\* (?:import|jsr\.include): file not found: (.+?) \*/");
+    final marker = RegExp(
+      r"/\* (?:import|jsr\.include): file not found: (.+?) \*/",
+    );
     for (final match in marker.allMatches(assembledJs)) {
       final path = match.group(1)!;
       if (!missing.contains(path)) missing.add(path);
@@ -1470,10 +1472,21 @@ Object.defineProperty(jsr, 'onBack', {
     Map<String, Object?> args,
   ) async {
     try {
+      // ignore: avoid_print
+      print(
+        'FA-CALL method=' +
+            method +
+            ' resolveMapNull=' +
+            (_resolve == null).toString(),
+      );
       final handler =
           _faHandlers[method] ?? (args) => _faPlatform(method, args);
       _resolve?.call(id, await handler(args));
+      // ignore: avoid_print
+      print('FA-CALL resolved-ok id=' + id);
     } on Object catch (error) {
+      // ignore: avoid_print
+      print('FA-CALL threw=' + error.toString());
       _resolve?.call(id, {'__error': error.toString()});
     }
   }
@@ -1570,6 +1583,13 @@ Object.defineProperty(jsr, 'onBack', {
       _ => false,
     };
   }
+
+  /// gh-1848: test seam — the prefix gate is otherwise reachable only via
+  /// `jsr.fa.call` on an unmapped method, and that promise never settles
+  /// for synchronously-thrown platform rejections (pre-existing bridge
+  /// behavior, documented on the gh-1848 PR — not this card's fix).
+  @visibleForTesting
+  bool faPrefixGrantedForTest(String prefix) => _faPrefixGranted(prefix);
 
   /// `jsr.fa.calendar({date, days})` → `{events: [...]}` — system calendar
   /// access, gated on the `calendar` permission.

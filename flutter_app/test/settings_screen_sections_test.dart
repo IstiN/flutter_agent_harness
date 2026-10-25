@@ -195,7 +195,13 @@ void main() {
   group('send test crash report (gh-1848)', () {
     testWidgets('without Firebase the button answers the no-firebase '
         'error snack', (tester) async {
-      await pumpScreen(tester);
+      // Pump the section directly: on the full screen it sits below the
+      // fold, where the tap cannot reach it. The Scaffold host gives the
+      // root ScaffoldMessenger somewhere to render the snack.
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: DebugLogsSection())),
+      );
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byTooltip('Send test crash report'));
       await tester.pump();
