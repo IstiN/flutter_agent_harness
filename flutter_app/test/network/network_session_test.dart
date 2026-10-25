@@ -396,45 +396,6 @@ void main() {
       },
     );
 
-    test('roster.snapshot replaces the roster on a live socket', () async {
-      final httpClient = FakeHttpClient()
-        ..respond(200, body: channelsBody)
-        ..respond(200, body: membersBody);
-      final connector = FakeWsConnector();
-      final session = buildSession(
-        httpClient: httpClient,
-        connector: connector,
-        wallet: await walletWithChannel(
-          channelPub: channelKeys.pub,
-          channelPriv: channelKeys.priv,
-        ),
-      );
-      addTearDown(session.close);
-
-      await session.start();
-      await pumpEventQueue();
-      expect(session.roster['other-1']?.presence, Presence.offline);
-
-      connector.channels.single.serverEvent('roster.snapshot', [
-        {
-          'id': 'other-1',
-          'displayName': 'Olya',
-          'class': 'member',
-          'presence': 'live',
-        },
-        {
-          'id': 'agent-9',
-          'displayName': 'Hub Agent',
-          'class': 'agent',
-          'presence': 'busy',
-        },
-      ]);
-      await pumpEventQueue();
-      expect(session.roster, hasLength(2));
-      expect(session.roster['other-1']?.presence, Presence.live);
-      expect(session.roster['agent-9']?.memberClass, MemberClass.agent);
-    });
-
     test('presence.changed updates the roster', () async {
       final httpClient = FakeHttpClient()
         ..respond(200, body: channelsBody)
@@ -568,6 +529,66 @@ void main() {
         contains('"text":"hi all"'),
       );
     });
+
+    test(
+      'socket dispatch handles both roster shapes, wakeup and errors',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody);
+        final connector = FakeWsConnector();
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: connector,
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+        );
+        addTearDown(session.close);
+        await session.start();
+        await pumpEventQueue();
+        final channel = connector.channels.single;
+
+        channel.serverEvent('roster.snapshot', {
+          'members': [
+            {
+              'id': 'agent-1',
+              'class': 'agent',
+              'displayName': 'Helper',
+              'presence': 'live',
+            },
+          ],
+        });
+        await pumpEventQueue();
+        expect(session.roster.keys, ['agent-1']);
+        expect(session.roster['agent-1']?.presence, Presence.live);
+
+        channel.serverEvent('roster.snapshot', [
+          {
+            'id': 'member-2',
+            'class': 'member',
+            'displayName': 'Legacy member',
+            'presence': 'offline',
+          },
+        ]);
+        await pumpEventQueue();
+        expect(session.roster.keys, ['member-2']);
+        expect(session.roster['member-2']?.displayName, 'Legacy member');
+
+        var notifications = 0;
+        session.addListener(() => notifications++);
+        channel.serverEvent('wakeup.dispatched', {'agentId': 'agent-1'});
+        await pumpEventQueue();
+        expect(notifications, 0);
+        expect(session.error, isNull);
+
+        channel.serverEvent('error', {'message': 'relay failed'});
+        await pumpEventQueue();
+        expect(session.error, 'relay failed');
+        expect(notifications, 1);
+      },
+    );
 
     test('network.drain rebuilds channels + open-channel history', () async {
       final wallet = await walletWithChannel(

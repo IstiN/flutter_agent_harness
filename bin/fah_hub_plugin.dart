@@ -183,20 +183,35 @@ final class HubPluginHost implements FahPlugin {
     String channel,
   ) async {
     final host = _byPlugin[plugin];
-    final scoped = host?._scoped;
-    if (host == null || scoped == null) return false;
+    if (host == null) return false;
+    return host._isPublicChannel(channel);
+  }
+
+  Future<bool> _isPublicChannel(String channel) async {
+    final scoped = _scoped;
+    if (scoped == null) return false;
     try {
       final effective = await scoped.runtimeEffective();
-      final hubUrl = host._connectedHubUrl;
       return effective.any(
-        (m) =>
-            m.channelId == channel &&
-            (hubUrl == null || m.hubUrl == hubUrl) &&
-            (m.pub == null || m.priv == null),
+        (membership) => _isPublicMembership(membership, channel),
       );
     } on Object {
       return false;
     }
+  }
+
+  bool _isPublicMembership(DapChannelMembership membership, String channel) {
+    if (!_membershipMatchesChannel(membership, channel)) return false;
+    return membership.pub == null || membership.priv == null;
+  }
+
+  bool _membershipMatchesChannel(
+    DapChannelMembership membership,
+    String channel,
+  ) {
+    if (membership.channelId != channel) return false;
+    final hubUrl = _connectedHubUrl;
+    return hubUrl == null || membership.hubUrl == hubUrl;
   }
 
   final List<AgentMessage> _networkNotices = [];
@@ -287,58 +302,63 @@ final class HubPluginHost implements FahPlugin {
   /// keeps its full error.
   Future<void> _connect(PluginContext context) async {
     try {
-      // Issue #1825: seed the runtime channel-key overlay with the
-      // scoped union BEFORE the vendored client loads its channel
-      // store, so boot joins cover project/global/env scopes (session
-      // records arrive later and sync on the first drain).
-      final scoped = _scoped;
-      final preferred = await scoped?.preferredBootMembership();
-      if (preferred != null) {
-        // The invite hub, not the zero-config local default — dial it
-        // directly (process env only, ~/.dap/config.json untouched),
-        // with the enrolled name-bound credential when one is stored.
-        _applyBootMembershipEnv(preferred);
-        _connectedHubUrl = preferred.hubUrl;
-      }
-      await scoped?.seedOverlay();
-      await _connectBootTarget(preferred);
-      _connectedHubUrl ??= scoped?.defaultHubUrl;
+      await _connectWithScopedBoot();
     } on Object catch (error) {
-      if (_hub.isDefaultUrl) {
-        context.io.writeln('[hub] not configured — set DAP_HUB_URL to enable');
-        return;
-      }
-      context.io.writeln('[hub] connect failed: $error');
+      _printBootConnectError(context, error);
     }
   }
 
-  /// Process-env view of a boot membership: the invite hub wins over
-  /// the zero-config default, with the enrolled name-bound credential
-  /// when one is stored.
-  void _applyBootMembershipEnv(DapChannelMembership preferred) {
-    _setEnv('DAP_HUB_URL', preferred.hubUrl);
-    final bootSecret = preferred.hubClientSecret;
-    if (bootSecret != null && bootSecret.isNotEmpty) {
-      _setEnv('DAP_CLIENT_SECRET', bootSecret);
-    }
-    final bootName = preferred.agentName;
-    if (bootName != null && bootName.isNotEmpty) {
-      _setEnv('DAP_AGENT_NAME', bootName);
-    }
-  }
-
-  /// Dials the boot target: the scoped (enrolled-credential) connection
-  /// when the membership carries one, otherwise the regular start.
-  Future<void> _connectBootTarget(DapChannelMembership? preferred) async {
+  Future<void> _connectWithScopedBoot() async {
+    // Issue #1825: seed the runtime channel-key overlay with the scoped
+    // union BEFORE the vendored client loads its channel store, so boot
+    // joins cover project/global/env scopes (session records arrive later
+    // and sync on the first drain).
+    final scoped = _scoped;
+    final preferred = await scoped?.preferredBootMembership();
+    _applyBootMembership(preferred);
+    await scoped?.seedOverlay();
     if (preferred?.hubClientSecret != null) {
-      try {
-        await _ensureChannelConnection(preferred!.hubUrl);
-      } on Object catch (e) {
-        _pluginIo?.writeln('[hub] scoped boot connect failed: $e');
-      }
+      await _tryScopedBootConnect(preferred!.hubUrl);
     } else {
       await _startHub();
     }
+    _connectedHubUrl ??= scoped?.defaultHubUrl;
+  }
+
+  void _applyBootMembership(DapChannelMembership? preferred) {
+    if (preferred == null) return;
+    // The invite hub, not the zero-config local default — dial it directly
+    // (process env only, ~/.dap/config.json untouched), with the enrolled
+    // name-bound credential when one is stored.
+    _environment['DAP_HUB_URL'] = preferred.hubUrl;
+    _applyScopedIdentity(preferred.hubClientSecret, preferred.agentName);
+    _connectedHubUrl = preferred.hubUrl;
+  }
+
+  void _applyScopedIdentity(String? secret, String? name) {
+    _setEnvironmentValue('DAP_CLIENT_SECRET', secret);
+    _setEnvironmentValue('DAP_AGENT_NAME', name);
+  }
+
+  void _setEnvironmentValue(String key, String? value) {
+    if (value == null || value.isEmpty) return;
+    _environment[key] = value;
+  }
+
+  Future<void> _tryScopedBootConnect(String hubUrl) async {
+    try {
+      await _ensureChannelConnection(hubUrl);
+    } on Object catch (error) {
+      _pluginIo?.writeln('[hub] scoped boot connect failed: $error');
+    }
+  }
+
+  void _printBootConnectError(PluginContext context, Object error) {
+    if (_hub.isDefaultUrl) {
+      context.io.writeln('[hub] not configured — set DAP_HUB_URL to enable');
+      return;
+    }
+    context.io.writeln('[hub] connect failed: $error');
   }
 
   /// Builds the scoped membership service (issue #1825) and points the
@@ -380,106 +400,97 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
-  /// Sets a process-env override; silently skips read-only environment
-  /// maps (const maps in tests, unmodifiable embedder environments).
-  /// Writes whose FAILURE is user-facing (the master-secret enablement
-  /// checks) stay direct so they can report the read-only state.
-  void _setEnv(String key, String value) {
-    try {
-      _environment[key] = value;
-    } on UnsupportedError {
-      // Read-only environment — nothing else can observe the value.
-    }
-  }
-
   /// Joins every effective membership on the LIVE client (AC1: no
   /// restart). Idempotent: re-joins are cheap and reconnect-safe.
   Future<void> _syncRuntimeMemberships() async {
     if (!_runtimeSyncPending) return;
+    await _syncPendingRuntimeMemberships();
+  }
+
+  Future<void> _syncPendingRuntimeMemberships() async {
     final scoped = _scoped;
     if (scoped == null) return;
     scoped.invalidateCache();
-    // Session-scoped memberships are invisible to boot (the JSONL is
-    // replayed later): the boot dial may have targeted the zero-config
-    // default hub with nothing listening. Once replay lands, dial the hub
-    // the membership actually belongs to BEFORE joining channels on the
-    // active client — otherwise resume "joins" a dead local client and
-    // channel mail never flows.
-    await _syncDial(await scoped.preferredBootMembership());
+    await _dialRuntimeMembershipHub(scoped);
     final client = _activeRepository?.client;
-    // No live client yet (hub down / still connecting): RETRY on the
-    // next drain instead of consuming the one-shot sync.
+    // No live client yet (hub down / still connecting): RETRY on the next
+    // drain instead of consuming the one-shot sync.
     if (client == null) return;
     _runtimeSyncPending = false;
-    await _joinEffectiveChannels(client, await scoped.runtimeEffective());
+    await _joinRuntimeMemberships(scoped, client);
   }
 
-  /// Dials the membership's OWN hub (throttled to one attempt per 10 s)
-  /// whenever the active client is down or on a different hub. Channel
-  /// joins still run on the current client when the dial is throttled —
-  /// a fresh invite must not sit unaccepted for seconds.
-  Future<void> _syncDial(DapChannelMembership? preferred) async {
-    if (preferred == null) return;
-    final needsDial =
-        _activeRepository?.client.connected != true ||
-        _connectedHubUrl !=
-            DapScopedMemberships.normalizeHubUrl(preferred.hubUrl);
-    if (!needsDial) return;
-    final throttled = _throttleRuntimeDial();
-    _applyDialEnv(preferred);
-    if (!throttled) {
-      await _ensureChannelConnection(preferred.hubUrl);
-    }
+  Future<void> _dialRuntimeMembershipHub(DapScopedMemberships scoped) async {
+    // Session-scoped memberships are invisible to boot (the JSONL is
+    // replayed later): dial the membership's hub BEFORE joining channels
+    // on the active client. Throttled: a rejected dial must not be retried
+    // on every inbox probe.
+    final preferred = await scoped.preferredBootMembership();
+    if (preferred == null || !_needsRuntimeDial(preferred)) return;
+    await _dialPreferredRuntimeMembership(preferred);
   }
 
-  /// Arms the 10 s dial throttle; true while a re-dial is still
-  /// suppressed.
-  bool _throttleRuntimeDial() {
-    final notBefore = _runtimeConnectNotBefore;
-    if (notBefore != null && DateTime.now().isBefore(notBefore)) return true;
-    _runtimeConnectNotBefore = DateTime.now().add(const Duration(seconds: 10));
-    return false;
+  bool _needsRuntimeDial(DapChannelMembership preferred) {
+    if (_activeRepository?.client.connected != true) return true;
+    final normalized = DapScopedMemberships.normalizeHubUrl(preferred.hubUrl);
+    return _connectedHubUrl != normalized;
   }
 
-  /// Process-env view of the dial target: the enrolled name-bound
-  /// credential the (re)start below authenticates with.
-  void _applyDialEnv(DapChannelMembership preferred) {
-    final secret = preferred.hubClientSecret;
-    if (secret != null && secret.isNotEmpty) {
-      _setEnv('DAP_CLIENT_SECRET', secret);
-    }
-    final name = preferred.agentName;
-    if (name != null && name.isNotEmpty) {
-      _setEnv('DAP_AGENT_NAME', name);
-    }
-  }
-
-  /// Accepts and joins every effective membership on the LIVE client.
-  /// Idempotent: re-joins are cheap and reconnect-safe.
-  Future<void> _joinEffectiveChannels(
-    hub.HubClient client,
-    List<DapChannelMembership> memberships,
+  Future<void> _dialPreferredRuntimeMembership(
+    DapChannelMembership preferred,
   ) async {
-    final store = client.channelStore;
-    for (final m in memberships) {
-      try {
-        final priv = m.priv;
-        if (m.pub == null || priv == null) {
-          // PUBLIC showcase channel: join keyless and NEVER mint a
-          // chankey — the client decodes the raw base64 public payload
-          // contract instead of attempting (and failing) chankey E2E.
-          client.join(m.channelId, '');
-          continue;
-        }
-        await store?.accept(
-          m.channelId,
-          hub.ChannelKeys(pub: m.pub!, priv: priv),
-        );
-        client.join(m.channelId, m.pub!);
-      } on Object {
-        // A single bad channel must not block the others.
-      }
+    // Throttling suppresses ONLY the re-dial: channel joins (and the key
+    // accept they carry) must still run on the current client — otherwise
+    // a fresh invite sits unaccepted for seconds and the first outbound
+    // frame auto-keygens a pair nobody can read.
+    final throttled = _runtimeDialThrottled();
+    if (!throttled) _markChannelDialed();
+    _applyScopedIdentity(preferred.hubClientSecret, preferred.agentName);
+    if (!throttled) await _ensureChannelConnection(preferred.hubUrl);
+  }
+
+  bool _runtimeDialThrottled() {
+    final notBefore = _runtimeConnectNotBefore;
+    return notBefore != null && DateTime.now().isBefore(notBefore);
+  }
+
+  Future<void> _joinRuntimeMemberships(
+    DapScopedMemberships scoped,
+    hub.HubClient client,
+  ) async {
+    for (final membership in await scoped.runtimeEffective()) {
+      await _tryJoinRuntimeMembership(client, membership);
     }
+  }
+
+  Future<void> _tryJoinRuntimeMembership(
+    hub.HubClient client,
+    DapChannelMembership membership,
+  ) async {
+    try {
+      await _joinRuntimeMembership(client, membership);
+    } on Object {
+      // A single bad channel must not block the others.
+    }
+  }
+
+  Future<void> _joinRuntimeMembership(
+    hub.HubClient client,
+    DapChannelMembership membership,
+  ) async {
+    final priv = membership.priv;
+    if (membership.pub == null || priv == null) {
+      // PUBLIC showcase channel: join keyless and NEVER mint a chankey —
+      // the client decodes the raw base64 public payload contract instead
+      // of attempting (and failing) chankey E2E.
+      client.join(membership.channelId, '');
+      return;
+    }
+    await client.channelStore?.accept(
+      membership.channelId,
+      hub.ChannelKeys(pub: membership.pub!, priv: priv),
+    );
+    client.join(membership.channelId, membership.pub!);
   }
 
   /// Dials [hubUrl] on the live client without persisting it over the
@@ -636,48 +647,38 @@ final class HubPluginHost implements FahPlugin {
   Future<void> _networkSlash(PluginContext context, List<String> args) async {
     final scoped = _scoped;
     if (scoped == null) return;
-    final positional = args.where((a) => a.isNotEmpty).toList();
+    final positional = args.where((arg) => arg.isNotEmpty).toList();
     if (positional.isNotEmpty) {
       await _networkArgs(context, scoped, positional);
       return;
     }
-    await _networkMenu(context, scoped);
+    await _networkDefault(context, scoped);
   }
 
-  /// `/network <args>` — only `join` exists today; everything else gets
-  /// the one-line usage (E4: inline validation, nothing stored).
   Future<void> _networkArgs(
     PluginContext context,
     DapScopedMemberships scoped,
     List<String> positional,
   ) async {
-    final io = context.io;
     if (positional.first != 'join') {
-      io.writeln('usage: /network [join <invite|channel-id>]');
+      context.io.writeln('usage: /network [join <invite|channel-id>]');
       return;
     }
     final invite = positional.sublist(1).join(' ').trim();
     if (invite.isEmpty) {
-      io.writeln('usage: /network join <invite|channel-id>');
+      context.io.writeln('usage: /network join <invite|channel-id>');
       return;
     }
     await _networkJoin(context, scoped, invite);
   }
 
-  /// Bare `/network`: the wizard on interactive hosts, a one-line
-  /// status on headless/line hosts.
-  Future<void> _networkMenu(
+  Future<void> _networkDefault(
     PluginContext context,
     DapScopedMemberships scoped,
   ) async {
     final pick = context.pickOption;
     if (pick == null) {
-      // Headless/line hosts: one-line status, no menus.
-      final effective = await scoped.union().then((u) => u.effective());
-      context.io.writeln(
-        'network: ${effective.length} channel(s): '
-        '${effective.map((m) => '#${m.channelId}').join(', ')}',
-      );
+      await _printNetworkChannelsStatus(context, scoped);
       return;
     }
     final action = await pick('Network', [
@@ -685,20 +686,27 @@ final class HubPluginHost implements FahPlugin {
       ('channels', 'Channels', 'Joined channels: badges, leave, copy invite'),
       ('status', 'Status', 'Hub url, connection state, reconnect'),
     ], initialKey: 'join');
-    switch (action) {
-      case 'join':
-        await _networkJoinPrompt(context, scoped);
-      case 'channels':
-        await _networkChannels(context, scoped);
-      case 'status':
-        await _printStatus(context);
-      case null:
-        return;
-    }
+    final actions = <String, Future<void> Function()>{
+      'join': () => _networkMenuJoin(context, scoped),
+      'channels': () => _networkChannels(context, scoped),
+      'status': () => _printStatus(context),
+    };
+    await actions[action]?.call();
   }
 
-  /// The wizard's paste step: ask for the invite, then the shared join.
-  Future<void> _networkJoinPrompt(
+  Future<void> _printNetworkChannelsStatus(
+    PluginContext context,
+    DapScopedMemberships scoped,
+  ) async {
+    // Headless/line hosts: one-line status, no menus.
+    final effective = await scoped.union().then((union) => union.effective());
+    context.io.writeln(
+      'network: ${effective.length} channel(s): '
+      '${effective.map((m) => '#${m.channelId}').join(', ')}',
+    );
+  }
+
+  Future<void> _networkMenuJoin(
     PluginContext context,
     DapScopedMemberships scoped,
   ) async {
@@ -728,41 +736,45 @@ final class HubPluginHost implements FahPlugin {
       return;
     }
     final invite = bundle.invite;
-    var scope = DapChannelScope.session;
-    final pick = context.pickOption;
-    if (pick != null) {
-      final chosen = await pick('Scope — members can steer this agent', [
-        ('session', 'Session', 'Only this agent session (resume re-joins)'),
-        ('project', 'Project', 'Every fa agent started in this folder'),
-        ('global', 'Global', 'Every fa agent on this machine'),
-      ], initialKey: 'session');
-      if (chosen == null) return;
-      scope = DapChannelScope.values.firstWhere((s) => s.name == chosen);
-    }
+    final scope = await _networkJoinScope(context);
+    if (scope == null) return;
     final outcome = await scoped.join(
       invite,
       scope,
       agentName: bundle.agentName,
       hubClientSecret: bundle.clientSecret,
     );
+    await _connectJoinedChannel(context, bundle);
+    _notifyNetworkJoin(context, bundle, scope, outcome);
+  }
+
+  Future<DapChannelScope?> _networkJoinScope(PluginContext context) async {
+    final pick = context.pickOption;
+    if (pick == null) return DapChannelScope.session;
+    final chosen = await pick('Scope — members can steer this agent', [
+      ('session', 'Session', 'Only this agent session (resume re-joins)'),
+      ('project', 'Project', 'Every fa agent started in this folder'),
+      ('global', 'Global', 'Every fa agent on this machine'),
+    ], initialKey: 'session');
+    if (chosen == null) return null;
+    return DapChannelScope.values.firstWhere((s) => s.name == chosen);
+  }
+
+  Future<void> _connectJoinedChannel(
+    PluginContext context,
+    DapJoinBundle bundle,
+  ) async {
     // Process-local enrolled credential: the vendored client resolves
     // DAP_CLIENT_SECRET / DAP_AGENT_NAME at start, so the (re)start
     // below authenticates with the name-bound secret. Never printed.
-    final joinSecret = bundle.clientSecret;
-    final joinName = bundle.agentName;
-    if (joinSecret != null && joinSecret.isNotEmpty) {
-      _environment['DAP_CLIENT_SECRET'] = joinSecret;
-    }
-    if (joinName != null && joinName.isNotEmpty) {
-      _environment['DAP_AGENT_NAME'] = joinName;
-    }
+    _applyScopedIdentity(bundle.clientSecret, bundle.agentName);
     // AC1/AC9: dial the INVITE hub live (never persisting it over the
     // configured default); a down hub leaves the membership stored and
     // the reconnect path picks it up.
     try {
       await _ensureChannelConnection(bundle.hubUrl);
     } on Object catch (e) {
-      io.writeln(
+      context.io.writeln(
         'network: hub unreachable ($e) — membership stored, auto-join '
         'on reconnect',
       );
@@ -771,13 +783,22 @@ final class HubPluginHost implements FahPlugin {
     await _syncRuntimeMemberships();
     final live = _activeRepository?.client.connected ?? false;
     if (!live) {
-      io.writeln(
+      context.io.writeln(
         'network: membership stored but NOT live — the hub rejected or '
         'is unreachable. On hubs with enrolled agents paste the WHOLE '
         'DAP block (Add an agent → DAP: invite + DAP_CLIENT_SECRET + '
         'DAP_AGENT_NAME), then restart fa.',
       );
     }
+  }
+
+  void _notifyNetworkJoin(
+    PluginContext context,
+    DapJoinBundle bundle,
+    DapChannelScope scope,
+    DapScopedOutcome outcome,
+  ) {
+    final invite = bundle.invite;
     _queueNetworkNotice(
       'You joined DAP channel #${invite.channel} [${scope.name}] @ '
       '${DapScopedMemberships.normalizeHubUrl(invite.hubUrl)}. '
@@ -787,9 +808,9 @@ final class HubPluginHost implements FahPlugin {
       '"#${invite.channel}". The human manages membership via /network.',
     );
     for (final warning in outcome.warnings) {
-      io.writeln(warning);
+      context.io.writeln(warning);
     }
-    io.writeln(
+    context.io.writeln(
       'network: joined #${invite.channel} [${scope.name}] @ '
       '${invite.hubUrl} — members can steer this agent',
     );
@@ -799,38 +820,44 @@ final class HubPluginHost implements FahPlugin {
     PluginContext context,
     DapScopedMemberships scoped,
   ) async {
-    final io = context.io;
     final union = await scoped.union();
     final effective = union.effective();
     if (effective.isEmpty) {
-      io.writeln('network: no channels joined yet — Join channel first');
+      context.io.writeln(
+        'network: no channels joined yet — Join channel first',
+      );
       return;
     }
     final pick = context.pickOption;
     if (pick == null) {
-      _printChannelRows(io, union, effective);
+      _printNetworkChannelList(context, union, effective);
       return;
     }
-    await _channelManageMenu(context, scoped, union, effective, pick);
+    await _pickNetworkChannel(context, scoped, union, effective, pick);
   }
 
-  /// Headless listing: one `#channel [scopes] @ hub` row per channel.
-  void _printChannelRows(
-    PluginIO io,
+  void _printNetworkChannelList(
+    PluginContext context,
     DapMembershipUnion union,
     List<DapChannelMembership> effective,
   ) {
-    for (final m in effective) {
-      io.writeln(
-        '#${m.channelId} [${union.scopesOf(m.hubUrl, m.channelId).map((s) => s.name).join('+')}] '
-        '@ ${m.hubUrl}',
-      );
+    for (final membership in effective) {
+      context.io.writeln(_networkChannelLine(union, membership));
     }
   }
 
-  /// The interactive management loop for one channel: copy invite or
-  /// leave a scope.
-  Future<void> _channelManageMenu(
+  String _networkChannelLine(
+    DapMembershipUnion union,
+    DapChannelMembership membership,
+  ) {
+    final scopes = union
+        .scopesOf(membership.hubUrl, membership.channelId)
+        .map((scope) => scope.name)
+        .join('+');
+    return '#${membership.channelId} [$scopes] @ ${membership.hubUrl}';
+  }
+
+  Future<void> _pickNetworkChannel(
     PluginContext context,
     DapScopedMemberships scoped,
     DapMembershipUnion union,
@@ -838,16 +865,25 @@ final class HubPluginHost implements FahPlugin {
     PluginPickOption pick,
   ) async {
     final chosen = await pick('Channels', [
-      for (final m in effective)
+      for (final membership in effective)
         (
-          m.key,
-          '#${m.channelId} '
-              '[${union.scopesOf(m.hubUrl, m.channelId).map((s) => s.name).join('+')}]',
-          m.hubUrl,
+          membership.key,
+          _networkChannelLine(union, membership).split(' @ ').first,
+          membership.hubUrl,
         ),
     ]);
     if (chosen == null) return;
     final membership = effective.firstWhere((m) => m.key == chosen);
+    await _networkChannelAction(context, scoped, union, membership, pick);
+  }
+
+  Future<void> _networkChannelAction(
+    PluginContext context,
+    DapScopedMemberships scoped,
+    DapMembershipUnion union,
+    DapChannelMembership membership,
+    PluginPickOption pick,
+  ) async {
     final action = await pick('#${membership.channelId}', [
       ('copy', 'Copy invite', 'Export the app-compatible invite string'),
       ('leave', 'Leave', 'Stop delivery at one scope'),
@@ -857,12 +893,10 @@ final class HubPluginHost implements FahPlugin {
       return;
     }
     if (action != 'leave') return;
-    await _channelLeaveFlow(context, scoped, union, membership, pick);
+    await _networkLeaveChannel(context, scoped, union, membership, pick);
   }
 
-  /// The leave flow: one scope leaves directly, multiple scopes ask
-  /// which one (E1: other scopes keep the channel).
-  Future<void> _channelLeaveFlow(
+  Future<void> _networkLeaveChannel(
     PluginContext context,
     DapScopedMemberships scoped,
     DapMembershipUnion union,
@@ -873,13 +907,13 @@ final class HubPluginHost implements FahPlugin {
     final scopeName = scopes.length == 1
         ? scopes.single.name
         : await pick('Leave which scope?', [
-            for (final s in scopes) (s.name, s.name, ''),
+            for (final scope in scopes) (scope.name, scope.name, ''),
           ]);
     if (scopeName == null) return;
     await scoped.leave(
       membership.hubUrl,
       membership.channelId,
-      DapChannelScope.values.firstWhere((s) => s.name == scopeName),
+      DapChannelScope.values.firstWhere((scope) => scope.name == scopeName),
     );
     _runtimeSyncPending = true;
     context.io.writeln(
@@ -895,25 +929,24 @@ final class HubPluginHost implements FahPlugin {
   /// another hub.
   Future<void> _dapSlash(PluginContext context, List<String> args) async {
     final positional = args.where((arg) => arg.isNotEmpty).toList();
-    final pick = context.pickOption;
-    if (positional.isEmpty && pick != null) {
-      await _dapMenu(context, pick);
+    if (positional.isEmpty) {
+      await _dapDefault(context);
       return;
     }
-    await _dapSlashArgs(context, positional);
+    await _dapArgs(context, positional);
   }
 
-  /// `/dap` with args (or on a non-interactive host): a one-line status
-  /// with no args, the one-step start, or a direct host move.
-  Future<void> _dapSlashArgs(
-    PluginContext context,
-    List<String> positional,
-  ) async {
+  Future<void> _dapDefault(PluginContext context) async {
+    final pick = context.pickOption;
+    if (pick == null) {
+      await _printStatus(context);
+      return;
+    }
+    await _dapMenu(context, pick);
+  }
+
+  Future<void> _dapArgs(PluginContext context, List<String> positional) async {
     try {
-      if (positional.isEmpty) {
-        await _printStatus(context);
-        return;
-      }
       if (positional.first == 'start') {
         await _dapStart(context);
         return;
@@ -924,13 +957,13 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
-  /// `/dap <host> [name] [channel]`: persist first (a stale dead config
-  /// makes the boot-time start() churn against the dead URL, and
-  /// connectTo needs the repository up), then move the connection.
   Future<void> _dapConnectArgs(
     PluginContext context,
     List<String> positional,
   ) async {
+    // Persist first (see _dapStart): a stale dead config makes the
+    // boot-time start() churn against the dead URL, and connectTo needs
+    // the repository up.
     try {
       await hub.persistDapConfig(
         url: positional[0],
@@ -942,9 +975,17 @@ final class HubPluginHost implements FahPlugin {
     }
     final connection = await _hub.connectTo(
       positional[0],
-      name: positional.length > 1 ? positional[1] : null,
-      channel: positional.length > 2 ? positional[2] : null,
+      name: _positionalArg(positional, 1),
+      channel: _positionalArg(positional, 2),
     );
+    _printConnection(context, connection);
+  }
+
+  String? _positionalArg(List<String> args, int index) {
+    return args.length > index ? args[index] : null;
+  }
+
+  void _printConnection(PluginContext context, hub.DapConnection connection) {
     context.io.writeln(
       'connected to ${connection.url} as ${connection.agentId} — '
       'channels: ${connection.channels.join(', ')}',
@@ -956,23 +997,20 @@ final class HubPluginHost implements FahPlugin {
   /// zero-config port when none answers `/healthz`, then connects
   /// (persisting the URL, so the next boot is online by itself).
   Future<void> _dapStart(PluginContext context) async {
-    if (!await _dapEnsureSessionSecret(context)) return;
+    if (!_ensureDapSessionSecret(context)) return;
     final stateFile = defaultHubStateFile(
       home: _home,
       environment: _environment,
     );
-    final promptedPassword = await _dapPromptHubPassword(context, stateFile);
-    final port = Uri.parse(_localHubUrl).port;
-    if (!await _dapEnsureLocalHub(context, port)) return;
-    await _dapApplyHubPassword(context, stateFile, promptedPassword);
-    await _dapPersistLocalUrl();
-    await _dapBootAndConnect(context);
+    final promptedPassword = await _promptForHubPassword(context, stateFile);
+    if (!await _ensureLocalHub(context)) return;
+    await _applyHubPassword(context, stateFile, promptedPassword);
+    await _persistLocalHubUrl();
+    await _startLocalConnection(context);
+    await _connectLocalHub(context);
   }
 
-  /// Generates a session master secret when none is set. False means
-  /// the host's environment is read-only — the friendly error is
-  /// printed and the bring-up stops.
-  Future<bool> _dapEnsureSessionSecret(PluginContext context) async {
+  bool _ensureDapSessionSecret(PluginContext context) {
     if (_dapEnabled) return true;
     try {
       _environment[hub.envMasterSecret] = _generateSessionSecret();
@@ -990,33 +1028,36 @@ final class HubPluginHost implements FahPlugin {
     return true;
   }
 
-  /// Hub password prompt (interactive hosts only): asks once, persists
-  /// the answer into the hub state file — the detached `fa hub serve`
-  /// has no terminal, so it reads the password from there (and later
-  /// starts never ask again). Empty answer = stay open and ask again
-  /// next time. Returns the prompted password, or null when there is
-  /// nothing to apply (no prompt / already configured / empty answer).
-  Future<String?> _dapPromptHubPassword(
+  Future<String?> _promptForHubPassword(
     PluginContext context,
     File stateFile,
   ) async {
-    final ask = context.askLine;
-    if (ask == null) return null;
-    final configured =
-        (_environment[envHubSecret] ?? '').isNotEmpty ||
-        await stateFile.exists();
-    if (configured) return null;
-    final entered = await ask(
+    // The one-button bring-up asks once, interactive hosts only. The answer
+    // is persisted for the detached hub; empty keeps the hub open and asks
+    // again next time.
+    if (!await _shouldPromptForHubPassword(context, stateFile)) return null;
+    final entered = await context.askLine!(
       'Set a password for the local hub (empty = keep it open):',
       secret: true,
     );
-    final password = (entered?.trim()) ?? '';
+    final password = entered?.trim() ?? '';
     if (password.isEmpty) return null;
-    await _dapPersistHubPassword(context, stateFile, password);
+    await _persistHubPassword(context, stateFile, password);
     return password;
   }
 
-  Future<void> _dapPersistHubPassword(
+  Future<bool> _shouldPromptForHubPassword(
+    PluginContext context,
+    File stateFile,
+  ) async {
+    if (context.askLine == null) return false;
+    final configured =
+        (_environment[envHubSecret] ?? '').isNotEmpty ||
+        await stateFile.exists();
+    return !configured;
+  }
+
+  Future<void> _persistHubPassword(
     PluginContext context,
     File stateFile,
     String password,
@@ -1035,23 +1076,31 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
-  /// Brings up the local hub when none answers /healthz. False means
-  /// give up (the error is printed).
-  Future<bool> _dapEnsureLocalHub(PluginContext context, int port) async {
+  Future<bool> _ensureLocalHub(PluginContext context) async {
+    final port = Uri.parse(_localHubUrl).port;
     if (await _hubHealthProbe(port)) return true;
     context.io.writeln('starting a local hub on port $port…');
+    if (!await _spawnLocalHub(context, port)) return false;
+    return _waitForLocalHub(context, port);
+  }
+
+  Future<bool> _spawnLocalHub(PluginContext context, int port) async {
     try {
       await _hubSpawner(port);
+      return true;
     } on Object catch (error) {
       context.io.writeln('[hub] could not start a local hub: $error');
       return false;
     }
-    if (await _dapWaitForHub(port)) return true;
+  }
+
+  Future<bool> _waitForLocalHub(PluginContext context, int port) async {
+    if (await _pollLocalHub(port)) return true;
     context.io.writeln('[hub] the local hub did not come up on port $port');
     return false;
   }
 
-  Future<bool> _dapWaitForHub(int port) async {
+  Future<bool> _pollLocalHub(int port) async {
     final deadline = DateTime.now().add(const Duration(seconds: 8));
     while (DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 150));
@@ -1060,26 +1109,35 @@ final class HubPluginHost implements FahPlugin {
     return false;
   }
 
-  /// Applies the hub password to this session's client: prompted now
-  /// wins over the state file (a previously saved password — /dap start
-  /// on a later session reuses it). The password doubles as a master
-  /// credential, so it both dials directly and enrolls; persisting it
-  /// as clientSecret also retires any stale client secret left in the
-  /// config by an older hub (which would otherwise win the resolution
-  /// precedence and 401 forever).
-  Future<void> _dapApplyHubPassword(
+  Future<void> _applyHubPassword(
     PluginContext context,
     File stateFile,
     String? promptedPassword,
   ) async {
-    final hubPassword = promptedPassword ?? _readStateSecretQuietly(stateFile);
+    // The client must hold the HUB's password, not the generated session
+    // secret. Prompted now wins over a previously saved state password.
+    final hubPassword = promptedPassword ?? _readHubPassword(stateFile);
     if (hubPassword == null || hubPassword.isEmpty) return;
-    _setEnv(hub.envMasterSecret, hubPassword);
+    _environment[hub.envMasterSecret] = hubPassword;
+    await _persistHubPasswordConfig(context, hubPassword);
+  }
+
+  String? _readHubPassword(File stateFile) {
     try {
-      final dialSecret = hubPassword;
+      return readHubStateSecret(stateFile);
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> _persistHubPasswordConfig(
+    PluginContext context,
+    String hubPassword,
+  ) async {
+    try {
       await hub.persistDapConfig(
         url: _localHubUrl,
-        clientSecret: dialSecret,
+        clientSecret: hubPassword,
         file: hub.defaultDapConfigFile(_home, _environment),
       );
       context.io.writeln(
@@ -1091,20 +1149,10 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
-  String? _readStateSecretQuietly(File stateFile) {
-    try {
-      return readHubStateSecret(stateFile);
-    } on Object {
-      return null;
-    }
-  }
-
-  /// Points the resolution at the live hub BEFORE start(): with a stale
-  /// config (the dead-port case this command exists to fix) start()
-  /// would otherwise resolve — and churn against — the dead URL, and
-  /// connectTo would dead-end on "plugin not started". connectTo below
-  /// persists the same URL again; this write just orders it first.
-  Future<void> _dapPersistLocalUrl() async {
+  Future<void> _persistLocalHubUrl() async {
+    // Point resolution at the live hub BEFORE start(), so a stale dead
+    // config cannot make start() churn against the old URL. connectTo
+    // persists the same URL again; this write just orders it first.
     try {
       await hub.persistDapConfig(
         url: _localHubUrl,
@@ -1115,20 +1163,19 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
-  /// Starts (no-op once started) and connects. SHORT wait on purpose:
-  /// an in-flight boot start against a dead stale hub hangs on its
-  /// reconnect backoff, and the retarget in connectTo below is exactly
-  /// what un-wedges it — waiting long here would just make /dap start
-  /// feel stuck.
-  Future<void> _dapBootAndConnect(PluginContext context) async {
+  Future<void> _startLocalConnection(PluginContext context) async {
+    // SHORT wait on purpose: connectTo below un-wedges an in-flight boot
+    // start against a dead stale hub; waiting longer only stalls /dap start.
     try {
       await _startHub().timeout(const Duration(seconds: 2));
     } on TimeoutException {
-      // The in-flight boot start churns against a dead stale hub — the
-      // retarget in connectTo below un-wedges it.
+      // The retarget in connectTo below un-wedges the boot start.
     } on Object catch (error) {
       context.io.writeln('[hub] start: $error');
     }
+  }
+
+  Future<void> _connectLocalHub(PluginContext context) async {
     try {
       final connection = await _hub.connectTo(_localHubUrl);
       context.io.writeln(
@@ -1219,14 +1266,13 @@ final class HubPluginHost implements FahPlugin {
   /// The one-line status, friendly when DAP is disabled.
   Future<void> _printStatus(PluginContext context) async {
     if (!_dapEnabled) {
-      _printStatusDisabled(context);
+      _printDisabledStatus(context);
       return;
     }
     _printHubStatus(context, await _hub.status());
   }
 
-  /// The friendly one-liner when DAP has no master secret.
-  void _printStatusDisabled(PluginContext context) {
+  void _printDisabledStatus(PluginContext context) {
     context.io.writeln(
       'DAP disabled — no master secret. '
       'Run /dap start (it generates one and brings up a local hub), '
@@ -1236,19 +1282,22 @@ final class HubPluginHost implements FahPlugin {
 
   void _printHubStatus(PluginContext context, hub.HubStatus status) {
     if (!status.connected) {
-      // A disconnected status still carries the configured url (often a
-      // stale loopback port from an old session) — say what to do next
-      // instead of leaving the user staring at a dead address.
-      context.io.writeln(
-        'hub disconnected${status.url != null ? ' — ${status.url}' : ''}\n'
-        'Run /dap start — it launches a local hub and connects in one step.',
-      );
+      _printDisconnectedStatus(context, status);
       return;
     }
     context.io.writeln(
       'hub connected — '
       'agentId: ${status.agentId ?? '-'}, name: ${status.name ?? '-'}, '
       'url: ${status.url ?? '-'}',
+    );
+  }
+
+  void _printDisconnectedStatus(PluginContext context, hub.HubStatus status) {
+    // A disconnected status still carries the configured url (often a stale
+    // loopback port from an old session) — say what to do next.
+    context.io.writeln(
+      'hub disconnected${status.url != null ? ' — ${status.url}' : ''}\n'
+      'Run /dap start — it launches a local hub and connects in one step.',
     );
   }
 
@@ -1262,34 +1311,20 @@ final class HubPluginHost implements FahPlugin {
     final port = Uri.parse(_localHubUrl).port;
     final hubRunning = await _hubHealthProbe(port);
     final choice = await pick(
-      _dapMenuTitle(hubRunning),
-      dapMenuOptions(hubRunning: hubRunning),
-    );
-    await _runDapMenuChoice(context, choice);
-  }
-
-  String _dapMenuTitle(bool hubRunning) =>
       'DAP — Distributed Agents Platform: end-to-end-encrypted '
       'messaging between agents over a local hub'
-      '${hubRunning ? ' — local hub RUNNING' : ''}';
-
-  Future<void> _runDapMenuChoice(PluginContext context, String? choice) async {
-    switch (choice) {
-      case 'start':
-        await _dapStart(context);
-      case 'stop':
-        await _dapStop(context);
-      case 'status':
-        await _printStatus(context);
-      case 'connect':
-        await _menuConnect(context);
-      case 'secret':
-        await _menuSetSecret(context);
-      case 'about':
-        context.io.writeln(_aboutText);
-      case null:
-        break; // cancelled — stay quiet
-    }
+      '${hubRunning ? ' — local hub RUNNING' : ''}',
+      dapMenuOptions(hubRunning: hubRunning),
+    );
+    final actions = <String, Future<void> Function()>{
+      'start': () => _dapStart(context),
+      'stop': () => _dapStop(context),
+      'status': () => _printStatus(context),
+      'connect': () => _menuConnect(context),
+      'secret': () => _menuSetSecret(context),
+      'about': () async => context.io.writeln(_aboutText),
+    };
+    await actions[choice]?.call(); // null choice: cancelled, stay quiet
   }
 
   /// `/dap stop` — the graceful local-hub stop (issue #304 AC2/E4): the
@@ -1319,88 +1354,99 @@ final class HubPluginHost implements FahPlugin {
 
   /// Connect…: interactive host (+ optional name / channel) prompts.
   Future<void> _menuConnect(PluginContext context) async {
-    if (!await _menuConnectPreflight(context)) return;
-    final ask = context.askLine!;
-    final currentUrl = (await _hub.status()).url;
-    final host = await _menuPromptHost(ask, currentUrl);
-    if (host == null || host.isEmpty) return;
-    final name = await ask('display name (leave empty for the default): ');
-    final channel = await ask('channel (leave empty for the default room): ');
-    await _menuDial(context, host, name, channel);
-  }
-
-  /// The Connect… preconditions: a master secret must be set first, an
-  /// interactive ask-line must exist, and the repository must be up.
-  /// False means the caller stays quiet (the hint is printed).
-  Future<bool> _menuConnectPreflight(PluginContext context) async {
     if (!_dapEnabled) {
       context.io.writeln(
         'DAP needs a master secret first — pick '
         '"Set master secret…" in the /dap menu.',
       );
-      return false;
+      return;
     }
-    if (context.askLine == null) return false;
-    // Beat the boot race: the plugin connects in the background at
-    // register time, so an immediate /dap connect can land before the
-    // repository exists. start() is a no-op once started; a dead initial
-    // hub must not wedge the menu, hence the timeout — the connect below
-    // reports the real error either way.
+    if (context.askLine == null) return;
+    // Beat the boot race: a dead initial hub must not wedge the menu; the
+    // connect below reports the real error after this bounded start.
+    await _startHubForMenu();
+    await _menuConnectPrompted(context);
+  }
+
+  Future<void> _startHubForMenu() async {
     try {
       await _startHub().timeout(const Duration(seconds: 8));
     } on Object {
       // The connect below reports the real error.
     }
-    return true;
   }
 
-  /// Pre-fills the current hub url (the `(empty = …)` convention makes
-  /// the TUI prompt show it as the default): reconnecting to the
-  /// configured hub is an Enter away, and a stale port is easy to edit
-  /// in place. Null = cancelled.
-  Future<String?> _menuPromptHost(PluginAskLine ask, String? currentUrl) async {
-    final hostInput = await ask(
-      currentUrl != null
-          ? 'hub host (empty = $currentUrl): '
-          : 'hub host (host:port or ws(s):// URL): ',
-    );
-    if (hostInput == null) return null; // cancelled
-    // The guided-flow convention: an empty answer keeps the default (the
-    // TUI pre-fills it; line mode treats empty as "keep" too — Esc/Ctrl-C
-    // is the cancel path, not an empty line).
-    final host = hostInput.trim();
-    return host.isEmpty ? currentUrl : host;
+  Future<void> _menuConnectPrompted(PluginContext context) async {
+    final input = await _promptMenuConnection(context);
+    if (input == null) return;
+    await _prepareMenuConnection(input.host);
+    await _connectMenuInput(context, input);
   }
 
-  /// Persists the chosen host, (re)starts against it and connects.
-  Future<void> _menuDial(
+  Future<({String host, String? name, String? channel})?> _promptMenuConnection(
     PluginContext context,
-    String host,
-    String? name,
-    String? channel,
   ) async {
-    // Persist first (see _dapStart): with a stale dead config the
-    // earlier start() resolved the dead URL — a second start() after
-    // this write resolves the host the user just chose.
+    final ask = context.askLine!;
+    // Pre-fill the current hub url: reconnecting is an Enter away, and a
+    // stale port is easy to edit in place.
+    final currentUrl = (await _hub.status()).url;
+    final host = await _promptMenuHost(ask, currentUrl);
+    if (host == null) return null;
+    // Do not use `(empty = X)` for these prompts: Enter means default, not
+    // a literal display name or channel named "default".
+    final name = await ask('display name (leave empty for the default): ');
+    final channel = await ask('channel (leave empty for the default room): ');
+    return (host: host, name: name, channel: channel);
+  }
+
+  Future<String?> _promptMenuHost(PluginAskLine ask, String? currentUrl) async {
+    final hostInput = await ask(_menuHostQuestion(currentUrl));
+    if (hostInput == null) return null; // cancelled
+    return _defaultMenuHost(hostInput, currentUrl);
+  }
+
+  String _menuHostQuestion(String? currentUrl) {
+    return currentUrl != null
+        ? 'hub host (empty = $currentUrl): '
+        : 'hub host (host:port or ws(s):// URL): ';
+  }
+
+  String? _defaultMenuHost(String hostInput, String? currentUrl) {
+    final trimmed = hostInput.trim();
+    // Empty keeps the configured default in both TUI and line mode.
+    return _nonEmptyOrNull(trimmed.isEmpty ? currentUrl : trimmed);
+  }
+
+  String? _nonEmptyOrNull(String? value) {
+    if (value == null || value.isEmpty) return null;
+    return value;
+  }
+
+  Future<void> _prepareMenuConnection(String host) async {
     try {
+      // Persist first: the second start resolves the host the user chose,
+      // rather than a stale dead URL from the earlier boot start.
       await hub.persistDapConfig(
         url: host,
         file: hub.defaultDapConfigFile(_home, _environment),
       );
-      await _startHub().timeout(const Duration(seconds: 8));
+      await _startHubForMenu();
     } on Object {
       // The connect below reports the real error.
     }
+  }
+
+  Future<void> _connectMenuInput(
+    PluginContext context,
+    ({String host, String? name, String? channel}) input,
+  ) async {
     try {
       final connection = await _hub.connectTo(
-        host,
-        name: name == null || name.isEmpty ? null : name,
-        channel: channel == null || channel.isEmpty ? null : channel,
+        input.host,
+        name: _nonEmptyOrNull(input.name),
+        channel: _nonEmptyOrNull(input.channel),
       );
-      context.io.writeln(
-        'connected to ${connection.url} as ${connection.agentId} — '
-        'channels: ${connection.channels.join(', ')}',
-      );
+      _printConnection(context, connection);
     } on Object catch (error) {
       context.io.writeln('[hub] $error');
     }
@@ -1409,29 +1455,27 @@ final class HubPluginHost implements FahPlugin {
   /// Set master secret: masked input, session-only enable, then
   /// the zero-config start (default hub) so the agent comes online.
   Future<void> _menuSetSecret(PluginContext context) async {
-    final ask = context.askLine;
-    if (ask == null) return;
-    final secret = await ask(
-      'DAP master secret (session only): ',
-      secret: true,
-    );
-    if (secret == null || secret.isEmpty) return;
-    if (!await _applySessionSecret(context, secret)) return;
+    final secret = await _promptMasterSecret(context);
+    if (secret == null) return;
+    if (!_setSessionMasterSecret(context, secret)) return;
     context.io.writeln(
       'master secret set for this session — '
       'export DAP_MASTER_SECRET to make it permanent',
     );
-    try {
-      await _startHub();
-      await _printStatus(context);
-    } on Object catch (error) {
-      context.io.writeln('[hub] secret set; connect failed: $error');
-    }
+    await _startAfterSettingSecret(context);
   }
 
-  /// Writes the session-only master secret. False means the host's
-  /// environment is read-only — the friendly error is printed.
-  Future<bool> _applySessionSecret(PluginContext context, String secret) async {
+  Future<String?> _promptMasterSecret(PluginContext context) async {
+    final ask = context.askLine;
+    if (ask == null) return null;
+    final secret = await ask(
+      'DAP master secret (session only): ',
+      secret: true,
+    );
+    return _nonEmptyOrNull(secret);
+  }
+
+  bool _setSessionMasterSecret(PluginContext context, String secret) {
     try {
       _environment[hub.envMasterSecret] = secret;
       return true;
@@ -1441,6 +1485,15 @@ final class HubPluginHost implements FahPlugin {
         'DAP_MASTER_SECRET before launching instead',
       );
       return false;
+    }
+  }
+
+  Future<void> _startAfterSettingSecret(PluginContext context) async {
+    try {
+      await _startHub();
+      await _printStatus(context);
+    } on Object catch (error) {
+      context.io.writeln('[hub] secret set; connect failed: $error');
     }
   }
 
@@ -1461,55 +1514,85 @@ final class HubPluginHost implements FahPlugin {
   /// mapping surprises, keeping the never-throw steering contract.
   Future<List<AgentMessage>> _drainHubMail() async {
     try {
-      // Session-scope replay lands here (the session JSONL is loaded
-      // after plugin registration): the first drain joins everything
-      // the boot overlay could not see yet (AC3).
+      // Session-scope replay lands here (the session JSONL is loaded after
+      // registration): the first drain joins what boot could not see (AC3).
       await _syncRuntimeMemberships();
-      final scoped = _scoped;
-      final hubUrl = _connectedHubUrl;
       final repository = _activeRepository;
       final selfId = repository?.client.agentId;
-      final inbound = repository != null
-          ? [
-              ...await repository.drain(selfId ?? ''),
-              for (final channel in await joinedChannelsFor(_hub))
-                ...await repository.drain('#$channel'),
-            ]
-          : await _hub.externalSteeringSource();
-      return [
-        for (final message in inbound)
-          if (await _deliverable(scoped, hubUrl, selfId, message))
-            AgentMessage(
-              id: message.id,
-              fromId: message.fromId,
-              toId: message.toId,
-              text: message.text,
-              sentAt: message.sentAt,
-              hops: message.hops,
-            ),
-      ];
+      final hubUrl = _connectedHubUrl;
+      final inbound = await _inboundHubMail(repository, selfId);
+      final accepted = await _filterHubMail(inbound, selfId, hubUrl);
+      return _mapHubMail(accepted);
     } on Object {
       return const [];
     }
   }
 
-  /// The live LEAVE filter (AC4): a channel left at every scope stops
-  /// delivering immediately; one scope left keeps the rest. Own outbound
-  /// channel copies never echo back as steering either.
-  Future<bool> _deliverable(
-    DapScopedMemberships? scoped,
-    String? hubUrl,
+  Future<List<hub.AgentMessage>> _inboundHubMail(
+    hub.HubMessagingRepository? repository,
     String? selfId,
-    hub.AgentMessage message,
   ) async {
-    if (message.fromId == selfId && message.toId.startsWith('#')) {
-      return false;
+    if (repository == null) return _hub.externalSteeringSource();
+    return [
+      ...await repository.drain(selfId ?? ''),
+      for (final channel in await joinedChannelsFor(_hub))
+        ...await repository.drain('#$channel'),
+    ];
+  }
+
+  Future<List<hub.AgentMessage>> _filterHubMail(
+    List<hub.AgentMessage> inbound,
+    String? selfId,
+    String? hubUrl,
+  ) async {
+    final accepted = <hub.AgentMessage>[];
+    for (final message in inbound) {
+      if (await _acceptHubMail(message, selfId, hubUrl)) {
+        accepted.add(message);
+      }
     }
+    return accepted;
+  }
+
+  Future<bool> _acceptHubMail(
+    hub.AgentMessage message,
+    String? selfId,
+    String? hubUrl,
+  ) async {
+    if (_isOwnChannelMessage(message, selfId)) return false;
+    return _acceptsRemoteHubMail(message, hubUrl);
+  }
+
+  bool _isOwnChannelMessage(hub.AgentMessage message, String? selfId) {
+    return message.fromId == selfId && message.toId.startsWith('#');
+  }
+
+  Future<bool> _acceptsRemoteHubMail(
+    hub.AgentMessage message,
+    String? hubUrl,
+  ) async {
+    // Live LEAVE filter (AC4): leaving every scope stops delivery at once;
+    // leaving one scope keeps the others. Non-channel mail always passes.
+    final scoped = _scoped;
     if (scoped == null || !message.toId.startsWith('#')) return true;
     return scoped.acceptsChannel(
       hubUrl ?? scoped.defaultHubUrl,
       message.toId.substring(1),
     );
+  }
+
+  List<AgentMessage> _mapHubMail(List<hub.AgentMessage> inbound) {
+    return [
+      for (final message in inbound)
+        AgentMessage(
+          id: message.id,
+          fromId: message.fromId,
+          toId: message.toId,
+          text: message.text,
+          sentAt: message.sentAt,
+          hops: message.hops,
+        ),
+    ];
   }
 
   /// Non-draining probe: unread mail in our own hub inbox AND every
@@ -1521,23 +1604,34 @@ final class HubPluginHost implements FahPlugin {
     final agentId = repository?.client.agentId;
     // No agentId yet (pre-welcome): peek the '' mailbox would report the
     // frames parked there forever and churn the wake loop — report empty.
-    if (repository == null) return false;
-    if (agentId == null) return false;
-    return _peekAnyPending(repository, agentId);
+    if (repository == null || agentId == null) return false;
+    return _peekPendingHubMail(repository, agentId);
   }
 
-  /// True when our own inbox OR any joined `#channel` inbox holds mail.
-  Future<bool> _peekAnyPending(
+  Future<bool> _peekPendingHubMail(
     hub.HubMessagingRepository repository,
     String agentId,
   ) async {
     try {
-      if ((await repository.peek(agentId)).isNotEmpty) return true;
-      for (final channel in await joinedChannelsFor(_hub)) {
-        if ((await repository.peek('#$channel')).isNotEmpty) return true;
-      }
+      return await _repositoryHasPendingMail(repository, agentId);
     } on Object {
       return false;
+    }
+  }
+
+  Future<bool> _repositoryHasPendingMail(
+    hub.HubMessagingRepository repository,
+    String agentId,
+  ) async {
+    if ((await repository.peek(agentId)).isNotEmpty) return true;
+    return _anyChannelHasPendingMail(repository);
+  }
+
+  Future<bool> _anyChannelHasPendingMail(
+    hub.HubMessagingRepository repository,
+  ) async {
+    for (final channel in await joinedChannelsFor(_hub)) {
+      if ((await repository.peek('#$channel')).isNotEmpty) return true;
     }
     return false;
   }
@@ -1545,222 +1639,258 @@ final class HubPluginHost implements FahPlugin {
   /// The `dap_*` tools: status/peers are read-only; dm/invite/connect
   /// reach the network and are gated at the exec tier (like MCP tools).
   List<AgentTool> _dapTools() => [
-    _dapStatusTool(),
-    _dapPeersTool(),
-    _dapDmTool(),
-    _dapInviteTool(),
-    _dapConnectTool(),
+    AgentTool(
+      name: 'dap_status',
+      label: 'dap_status',
+      tier: ApprovalTier.read,
+      description:
+          'Show the DAP hub connection: our agent id, display name, hub '
+          'url, connected state, joined channels, and hello/welcome '
+          'handshake counters.',
+      parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
+      execute: _executeDapStatus,
+    ),
+    AgentTool(
+      name: 'dap_peers',
+      label: 'dap_peers',
+      tier: ApprovalTier.read,
+      description:
+          'List ONLINE peers known to the DAP hub. Your own entry is '
+          'included and flagged self — do not DM yourself. Use the ids '
+          'from this list as dap_dm recipients.',
+      parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
+      execute: _executeDapPeers,
+    ),
+    AgentTool(
+      name: 'dap_dm',
+      label: 'dap_dm',
+      tier: ApprovalTier.exec,
+      description:
+          'Send an end-to-end encrypted direct message to a hub peer. '
+          '`to` is the 16-hex agent id or a display name (run dap_peers '
+          'first). Prefer agent_message for peers listed in '
+          'agent_directory (issue #304: hub peers are first-class inbox '
+          'agents) — use dap_dm only when the fabric is off or the peer '
+          'is absent from the directory.',
+      parameters: const {
+        'type': 'object',
+        'properties': {
+          'to': {
+            'type': 'string',
+            'description': 'Recipient: 16-hex agent id or display name',
+          },
+          'text': {'type': 'string', 'description': 'Message body'},
+        },
+        'required': ['to', 'text'],
+      },
+      execute: _executeDapDm,
+    ),
+    AgentTool(
+      name: 'dap_invite',
+      label: 'dap_invite',
+      tier: ApprovalTier.exec,
+      description:
+          'Invite a peer into a channel: DMs them the channel keypair '
+          '(their membership). An offline or unknown name arms a pending '
+          'invite that is delivered automatically when they come online.',
+      parameters: const {
+        'type': 'object',
+        'properties': {
+          'nameOrId': {
+            'type': 'string',
+            'description': 'Peer display name or 16-hex agent id',
+          },
+          'channel': {
+            'type': 'string',
+            'description': 'Channel to invite into (default: the current room)',
+          },
+        },
+        'required': ['nameOrId'],
+      },
+      execute: _executeDapInvite,
+    ),
+    AgentTool(
+      name: 'dap_connect',
+      label: 'dap_connect',
+      tier: ApprovalTier.exec,
+      description:
+          'Connect the agent to any DAP hub at runtime. `host` is a bare '
+          'host, host:port, or ws(s):// URL; an optional `name` is the '
+          'display name AND identity (a new name is a new agentId); an '
+          'optional `channel` is the default room joined after connecting.',
+      parameters: const {
+        'type': 'object',
+        'properties': {
+          'host': {
+            'type': 'string',
+            'description': 'Hub host, host:port, or ws(s):// URL',
+          },
+          'name': {
+            'type': 'string',
+            'description': 'Display name AND identity (new name = new agentId)',
+          },
+          'channel': {
+            'type': 'string',
+            'description': 'Default room to join after connecting',
+          },
+        },
+        'required': ['host'],
+      },
+      execute: _executeDapConnect,
+    ),
   ];
 
-  AgentTool _dapStatusTool() => AgentTool(
-    name: 'dap_status',
-    label: 'dap_status',
-    tier: ApprovalTier.read,
-    description:
-        'Show the DAP hub connection: our agent id, display name, hub '
-        'url, connected state, joined channels, and hello/welcome '
-        'handshake counters.',
-    parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
-    execute: (arguments, cancelToken, onUpdate) async {
-      final status = await _hub.status();
-      return ToolExecutionResult(
-        content: [
-          TextContent(
-            text:
-                'agentId: ${status.agentId ?? '-'}\n'
-                'name: ${status.name ?? '-'}\n'
-                'url: ${status.url ?? '-'}\n'
-                'connected: ${status.connected}\n'
-                'channels: '
-                '${status.channels.isEmpty ? '-' : status.channels.join(', ')}\n'
-                'handshakes: ${status.hellos} hello(s), '
-                '${status.welcomes} welcome(s)',
-          ),
-        ],
-      );
-    },
-  );
-  AgentTool _dapPeersTool() => AgentTool(
-    name: 'dap_peers',
-    label: 'dap_peers',
-    tier: ApprovalTier.read,
-    description:
-        'List ONLINE peers known to the DAP hub. Your own entry is '
-        'included and flagged self — do not DM yourself. Use the ids '
-        'from this list as dap_dm recipients.',
-    parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
-    execute: (arguments, cancelToken, onUpdate) async {
-      final peers = await _hub.peers();
-      final text = peers.isEmpty
-          ? 'no peers on the hub'
-          : [
-              for (final peer in peers)
-                '${peer.agentId} ${peer.name ?? '-'}'
-                    '${peer.self ? ' (self)' : ''}',
-            ].join('\n');
-      return ToolExecutionResult(content: [TextContent(text: text)]);
-    },
-  );
-
-  AgentTool _dapDmTool() => AgentTool(
-    name: 'dap_dm',
-    label: 'dap_dm',
-    tier: ApprovalTier.exec,
-    description:
-        'Send an end-to-end encrypted direct message to a hub peer. '
-        '`to` is the 16-hex agent id or a display name (run dap_peers '
-        'first). Prefer agent_message for peers listed in '
-        'agent_directory (issue #304: hub peers are first-class inbox '
-        'agents) — use dap_dm only when the fabric is off or the peer '
-        'is absent from the directory.',
-    parameters: const {
-      'type': 'object',
-      'properties': {
-        'to': {
-          'type': 'string',
-          'description': 'Recipient: 16-hex agent id or display name',
-        },
-        'text': {'type': 'string', 'description': 'Message body'},
-      },
-      'required': ['to', 'text'],
-    },
-    execute: (arguments, cancelToken, onUpdate) async {
-      final to = arguments['to'] as String;
-      final target = await _resolvePeer(to);
-      final repository = _hub.repository;
-      final agentId = _hub.agentId;
-      if (repository == null || agentId == null) {
-        throw StateError('not connected to a hub — run /dap to connect');
-      }
-      await repository.send(
-        hub.AgentMessage(
-          id: newMessageId(),
-          fromId: agentId,
-          toId: target,
-          text: arguments['text'] as String,
-          sentAt: DateTime.now().toUtc().toIso8601String(),
+  Future<ToolExecutionResult> _executeDapStatus(
+    Map<String, dynamic> arguments,
+    CancelToken? cancelToken,
+    ToolUpdateCallback? onUpdate,
+  ) async {
+    final status = await _hub.status();
+    return ToolExecutionResult(
+      content: [
+        TextContent(
+          text:
+              'agentId: ${status.agentId ?? '-'}\n'
+              'name: ${status.name ?? '-'}\n'
+              'url: ${status.url ?? '-'}\n'
+              'connected: ${status.connected}\n'
+              'channels: '
+              '${status.channels.isEmpty ? '-' : status.channels.join(', ')}\n'
+              'handshakes: ${status.hellos} hello(s), '
+              '${status.welcomes} welcome(s)',
         ),
-      );
-      return ToolExecutionResult(
-        content: [TextContent(text: 'DM sent to $target')],
-      );
-    },
-  );
+      ],
+    );
+  }
 
-  AgentTool _dapInviteTool() => AgentTool(
-    name: 'dap_invite',
-    label: 'dap_invite',
-    tier: ApprovalTier.exec,
-    description:
-        'Invite a peer into a channel: DMs them the channel keypair '
-        '(their membership). An offline or unknown name arms a pending '
-        'invite that is delivered automatically when they come online.',
-    parameters: const {
-      'type': 'object',
-      'properties': {
-        'nameOrId': {
-          'type': 'string',
-          'description': 'Peer display name or 16-hex agent id',
-        },
-        'channel': {
-          'type': 'string',
-          'description': 'Channel to invite into (default: the current room)',
-        },
-      },
-      'required': ['nameOrId'],
-    },
-    execute: (arguments, cancelToken, onUpdate) async {
-      final result = await _hub.inviteTo(
-        arguments['nameOrId'] as String,
-        channel: arguments['channel'] as String?,
-      );
-      if (!result.ok) {
-        throw StateError('invite failed: ${result.error}');
-      }
-      return ToolExecutionResult(
-        content: [
-          TextContent(
-            text: result.pending
-                ? 'invite armed for ${result.to} on ${result.channel} — '
-                      'delivered when they come online'
-                : 'invite sent to ${result.to} on ${result.channel}',
-          ),
-        ],
-      );
-    },
-  );
+  Future<ToolExecutionResult> _executeDapPeers(
+    Map<String, dynamic> arguments,
+    CancelToken? cancelToken,
+    ToolUpdateCallback? onUpdate,
+  ) async {
+    final peers = await _hub.peers();
+    final text = peers.isEmpty
+        ? 'no peers on the hub'
+        : [
+            for (final peer in peers)
+              '${peer.agentId} ${peer.name ?? '-'}'
+                  '${peer.self ? ' (self)' : ''}',
+          ].join('\n');
+    return ToolExecutionResult(content: [TextContent(text: text)]);
+  }
 
-  AgentTool _dapConnectTool() => AgentTool(
-    name: 'dap_connect',
-    label: 'dap_connect',
-    tier: ApprovalTier.exec,
-    description:
-        'Connect the agent to any DAP hub at runtime. `host` is a bare '
-        'host, host:port, or ws(s):// URL; an optional `name` is the '
-        'display name AND identity (a new name is a new agentId); an '
-        'optional `channel` is the default room joined after connecting.',
-    parameters: const {
-      'type': 'object',
-      'properties': {
-        'host': {
-          'type': 'string',
-          'description': 'Hub host, host:port, or ws(s):// URL',
-        },
-        'name': {
-          'type': 'string',
-          'description': 'Display name AND identity (new name = new agentId)',
-        },
-        'channel': {
-          'type': 'string',
-          'description': 'Default room to join after connecting',
-        },
-      },
-      'required': ['host'],
-    },
-    execute: (arguments, cancelToken, onUpdate) async {
-      final connection = await _hub.connectTo(
-        arguments['host'] as String,
-        name: arguments['name'] as String?,
-        channel: arguments['channel'] as String?,
-      );
-      return ToolExecutionResult(
-        content: [
-          TextContent(
-            text:
-                'connected to ${connection.url} as ${connection.agentId} — '
-                'channels: ${connection.channels.join(', ')}',
-          ),
-        ],
-      );
-    },
-  );
+  Future<ToolExecutionResult> _executeDapDm(
+    Map<String, dynamic> arguments,
+    CancelToken? cancelToken,
+    ToolUpdateCallback? onUpdate,
+  ) async {
+    final target = await _resolvePeer(arguments['to'] as String);
+    final repository = _hub.repository;
+    final agentId = _hub.agentId;
+    if (repository == null || agentId == null) {
+      throw StateError('not connected to a hub — run /dap to connect');
+    }
+    await repository.send(
+      hub.AgentMessage(
+        id: newMessageId(),
+        fromId: agentId,
+        toId: target,
+        text: arguments['text'] as String,
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
+    return ToolExecutionResult(
+      content: [TextContent(text: 'DM sent to $target')],
+    );
+  }
+
+  Future<ToolExecutionResult> _executeDapInvite(
+    Map<String, dynamic> arguments,
+    CancelToken? cancelToken,
+    ToolUpdateCallback? onUpdate,
+  ) async {
+    final result = await _hub.inviteTo(
+      arguments['nameOrId'] as String,
+      channel: arguments['channel'] as String?,
+    );
+    if (!result.ok) {
+      throw StateError('invite failed: ${result.error}');
+    }
+    return ToolExecutionResult(
+      content: [
+        TextContent(
+          text: result.pending
+              ? 'invite armed for ${result.to} on ${result.channel} — '
+                    'delivered when they come online'
+              : 'invite sent to ${result.to} on ${result.channel}',
+        ),
+      ],
+    );
+  }
+
+  Future<ToolExecutionResult> _executeDapConnect(
+    Map<String, dynamic> arguments,
+    CancelToken? cancelToken,
+    ToolUpdateCallback? onUpdate,
+  ) async {
+    final connection = await _hub.connectTo(
+      arguments['host'] as String,
+      name: arguments['name'] as String?,
+      channel: arguments['channel'] as String?,
+    );
+    return ToolExecutionResult(
+      content: [
+        TextContent(
+          text:
+              'connected to ${connection.url} as ${connection.agentId} — '
+              'channels: ${connection.channels.join(', ')}',
+        ),
+      ],
+    );
+  }
 
   /// Resolves [to] to a peer agent id: an exact id wins, otherwise the
   /// display name must match exactly one online peer. Ambiguity and
   /// no-match errors list the online peers so the model can retry.
   Future<String> _resolvePeer(String to) async {
     final peers = await _hub.peers();
-    for (final peer in peers) {
-      if (peer.agentId == to) return to;
-    }
-    final byName = peers.where((peer) => peer.name == to).toList();
-    if (byName.length == 1) return byName.single.agentId;
-    throw StateError(_peerNotFoundMessage(to, byName.isEmpty, peers));
+    final exact = _peerById(peers, to);
+    if (exact != null) return to;
+    return _resolvePeerName(to, peers);
   }
 
-  String _peerNotFoundMessage(
+  hub.AgentInfo? _peerById(List<hub.AgentInfo> peers, String agentId) {
+    for (final peer in peers) {
+      if (peer.agentId == agentId) return peer;
+    }
+    return null;
+  }
+
+  String _resolvePeerName(String to, List<hub.AgentInfo> peers) {
+    final byName = peers.where((peer) => peer.name == to).toList();
+    if (byName.length == 1) return byName.single.agentId;
+    throw _peerResolutionError(to, peers, byName);
+  }
+
+  StateError _peerResolutionError(
     String to,
-    bool noMatch,
     List<hub.AgentInfo> peers,
+    List<hub.AgentInfo> byName,
   ) {
-    final online = [
+    final online = _onlinePeerList(peers);
+    return StateError(
+      byName.isEmpty
+          ? 'no online peer matches "$to" — online peers:\n$online'
+          : 'peer name "$to" is ambiguous — online peers:\n$online',
+    );
+  }
+
+  String _onlinePeerList(List<hub.AgentInfo> peers) {
+    return [
       for (final peer in peers)
         '${peer.agentId} ${peer.name ?? '-'}'
             '${peer.online ? '' : ' (offline)'}',
     ].join('\n');
-    return noMatch
-        ? 'no online peer matches "$to" — online peers:\n$online'
-        : 'peer name "$to" is ambiguous — online peers:\n$online';
   }
 }
 

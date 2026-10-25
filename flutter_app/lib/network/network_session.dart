@@ -429,86 +429,84 @@ final class NetworkSession extends ChangeNotifier {
       case WsConnected():
         _onWsConnected();
       case RosterSnapshot(:final members):
-        roster
-          ..clear()
-          ..addEntries(members.map((m) => MapEntry(m.id, m)));
-        _logRoster('snapshot', members);
-        notifyListeners();
+        _onRosterSnapshot(members);
       case EnvelopeReceived(:final envelope):
         unawaited(_onEnvelope(envelope));
-      case PresenceChanged(
-        :final memberId,
-        :final presence,
-        :final displayName,
-        :final memberClass,
-        :final access,
-      ):
-        _applyPresenceChange(
-          memberId,
-          presence,
-          displayName,
-          memberClass,
-          access,
-        );
+      case PresenceChanged():
+        _onPresenceChanged(event);
       case NetworkOffline():
-        networkOffline = true;
-        notifyListeners();
+        _onNetworkOffline();
       case NetworkDrain():
-        networkOffline = false;
-        notifyListeners();
-        unawaited(_refreshAfterReconnect());
+        _onNetworkDrain();
       case WakeupDispatched():
         break;
       case WsError(:final message):
-        error = message;
-        notifyListeners();
+        _onWsError(message);
     }
   }
 
-  /// The greet sends network.offline only when the hub is DOWN. If
-  /// recovery happened while this socket was away, no drain is
-  /// replayed to it — clear the sticky flag on every fresh socket
-  /// and let a real offline greet reassert it when needed.
   void _onWsConnected() {
+    // The greet sends network.offline only when the hub is DOWN. If recovery
+    // happened while this socket was away, no drain is replayed to it — clear
+    // the sticky flag on every fresh socket and let a real offline greet
+    // reassert it when needed.
     if (networkOffline) {
       networkOffline = false;
       notifyListeners();
     }
   }
 
-  /// Applies a presence frame to the roster: an existing member is
-  /// updated in place (legacy frames carry no access, so the snapshot's
-  /// metadata is retained); a hub agent that came online AFTER the
-  /// snapshot is inserted from the frame's displayName/class so online
-  /// counts do not stay at 0.
-  void _applyPresenceChange(
-    String memberId,
-    Presence presence,
-    String displayName,
-    MemberClass? memberClass,
-    MemberAccess? access,
-  ) {
-    final member = roster[memberId];
+  void _onRosterSnapshot(List<Member> members) {
+    roster
+      ..clear()
+      ..addEntries(members.map((m) => MapEntry(m.id, m)));
+    _logRoster('snapshot', members);
+    notifyListeners();
+  }
+
+  void _onPresenceChanged(PresenceChanged event) {
+    final member = roster[event.memberId];
     if (member != null) {
-      roster[memberId] = Member(
+      roster[event.memberId] = Member(
         id: member.id,
         memberClass: member.memberClass,
         displayName: member.displayName,
-        presence: presence,
-        access: access ?? member.access,
+        presence: event.presence,
+        // Legacy presence frames carry no access: retain the snapshot's
+        // metadata instead of erasing it on every presence flip.
+        access: event.access ?? member.access,
       );
       notifyListeners();
-    } else if (memberId.isNotEmpty &&
-        (displayName.isNotEmpty || memberClass != null)) {
-      roster[memberId] = Member(
-        id: memberId,
-        memberClass: memberClass ?? MemberClass.unknown,
-        displayName: displayName,
-        presence: presence,
-        access: access,
+    } else if (event.memberId.isNotEmpty &&
+        (event.displayName.isNotEmpty || event.memberClass != null)) {
+      // A hub agent that came online AFTER the snapshot: the server includes
+      // displayName/class precisely so clients can insert it instead of
+      // dropping the event (online stayed 0).
+      roster[event.memberId] = Member(
+        id: event.memberId,
+        memberClass: event.memberClass ?? MemberClass.unknown,
+        displayName: event.displayName,
+        presence: event.presence,
+        access: event.access,
       );
       notifyListeners();
     }
+  }
+
+  void _onNetworkOffline() {
+    networkOffline = true;
+    notifyListeners();
+  }
+
+  void _onNetworkDrain() {
+    networkOffline = false;
+    notifyListeners();
+    unawaited(_refreshAfterReconnect());
+  }
+
+  void _onWsError(String message) {
+    error = message;
+    notifyListeners();
   }
 
   Future<void> _onEnvelope(Envelope envelope) async {

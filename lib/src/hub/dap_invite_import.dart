@@ -98,6 +98,10 @@ String _keyParam(Map<String, String> params, String name) {
   return value;
 }
 
+final _dapImportCommandPattern = RegExp(r'^fa\s+dap\s+import\s+');
+final _dapInviteWhitespacePattern = RegExp(r'\s');
+final _dapBareChannelPattern = RegExp(r'^[A-Za-z0-9_-]+$');
+
 /// The `/network` join wizard input (issue #1825 AC1): one parser for every
 /// reasonable paste form, on top of the strict [parseDapInviteImport]:
 ///
@@ -112,48 +116,57 @@ String _keyParam(Map<String, String> params, String name) {
 /// Garbage is rejected with a [FormatException]; nothing is partially
 /// accepted, so the caller can parse-then-store with no cleanup path.
 DapInviteImport parseDapInviteFlexible(String raw, {String? defaultHubUrl}) {
-  var text = raw.trim();
-  if (text.isEmpty) throw const FormatException('empty invite');
-  text = _unwrapImportCommand(text);
-  if (!text.contains('://')) {
-    return _parseBareChannelId(text, defaultHubUrl);
-  }
+  final text = _unwrapDapInviteText(raw);
   // Form 1: the strict URL parser (scheme/host/channel/key validation).
-  return parseDapInviteImport(text);
+  if (text.contains('://')) return parseDapInviteImport(text);
+  // Form 2: the bare channel id (no scheme, no whitespace).
+  return _parseBareDapInvite(text, defaultHubUrl);
 }
 
-/// Form 3: the copied command line. Only the exact `fa dap import <one
-/// arg>` shape unwraps — anything else falls through unchanged (and to
-/// the other forms' own errors).
-String _unwrapImportCommand(String text) {
-  final command = RegExp(r'^fa\s+dap\s+import\s+').firstMatch(text);
+String _unwrapDapInviteText(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) throw const FormatException('empty invite');
+
+  // Form 3: the copied command line. Only the exact `fa dap import <one
+  // arg>` shape unwraps — anything else falls through to the other forms
+  // (and their own errors).
+  final command = _dapImportCommandPattern.firstMatch(text);
   if (command == null) return text;
-  var unwrapped = text.substring(command.end).trim();
-  if (unwrapped.length >= 2) {
-    final quote = unwrapped[0];
-    if ((quote == "'" || quote == '"') && unwrapped.endsWith(quote)) {
-      unwrapped = unwrapped.substring(1, unwrapped.length - 1);
-    }
-  }
-  if (unwrapped.isEmpty || unwrapped.contains(RegExp(r'\s'))) {
+  return _parseDapImportArgument(text.substring(command.end));
+}
+
+String _parseDapImportArgument(String raw) {
+  final text = _stripDapInviteQuotes(raw.trim());
+  if (text.isEmpty || _dapInviteWhitespacePattern.hasMatch(text)) {
     throw const FormatException(
       'expected exactly one invite after `fa dap import`',
     );
   }
-  return unwrapped;
+  return text;
 }
 
-/// Form 2: the bare channel id (no scheme, no whitespace) — joins on
-/// [defaultHubUrl]; without one this is a clear error, never a silent
-/// guess.
-DapInviteImport _parseBareChannelId(String text, String? defaultHubUrl) {
-  if (text.contains(RegExp(r'\s'))) {
+String _stripDapInviteQuotes(String text) {
+  if (text.length < 2) return text;
+  final quote = text[0];
+  if ((quote != "'" && quote != '"') || !text.endsWith(quote)) return text;
+  return text.substring(1, text.length - 1);
+}
+
+DapInviteImport _parseBareDapInvite(String text, String? defaultHubUrl) {
+  if (_dapInviteWhitespacePattern.hasMatch(text)) {
     throw const FormatException('not an invite or channel id');
   }
   final channel = text.startsWith('#') ? text.substring(1) : text;
-  if (!RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(channel)) {
+  if (!_dapBareChannelPattern.hasMatch(channel)) {
     throw const FormatException('not an invite or channel id');
   }
+  return DapInviteImport(
+    hubUrl: _requireBareInviteHub(defaultHubUrl),
+    channel: channel,
+  );
+}
+
+String _requireBareInviteHub(String? defaultHubUrl) {
   final hub = defaultHubUrl?.trim() ?? '';
   if (hub.isEmpty) {
     throw const FormatException(
@@ -161,5 +174,5 @@ DapInviteImport _parseBareChannelId(String text, String? defaultHubUrl) {
       '(set DAP_HUB_URL or paste the full invite)',
     );
   }
-  return DapInviteImport(hubUrl: hub, channel: channel);
+  return hub;
 }

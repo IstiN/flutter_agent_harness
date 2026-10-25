@@ -133,24 +133,7 @@ class _ChannelRailState extends State<ChannelRail> {
     final session = _session;
     if (session == null) return;
     final label = channelDisplayLabel(channel.id, channel.name);
-    final confirmed = await _confirmDeleteChannel(channel, label);
-    if (confirmed != true || !mounted) return;
-    try {
-      await session.deleteChannel(channel.id);
-      if (!mounted) return;
-      await _navigateAfterDelete(session, channel);
-      if (mounted) {
-        showFahSnack(context, context.l10n.networkChannelDeleted);
-      }
-    } on FaNetworkException catch (e) {
-      if (mounted) showFahErrorSnack(context, e.message);
-    } on Object catch (e) {
-      if (mounted) showFahErrorSnack(context, '$e');
-    }
-  }
-
-  Future<bool> _confirmDeleteChannel(Channel channel, String label) {
-    return showDialog<bool>(
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(dialogContext.l10n.networkDeleteChannelTitle),
@@ -172,16 +155,25 @@ class _ChannelRailState extends State<ChannelRail> {
           ),
         ],
       ),
-    ).then((value) => value ?? false);
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await session.deleteChannel(channel.id);
+      if (!mounted) return;
+      if (widget.controller.channelId == channel.id) {
+        await _selectChannelAfterDelete(session);
+      }
+      if (mounted) {
+        showFahSnack(context, context.l10n.networkChannelDeleted);
+      }
+    } on FaNetworkException catch (e) {
+      if (mounted) showFahErrorSnack(context, e.message);
+    } on Object catch (e) {
+      if (mounted) showFahErrorSnack(context, '$e');
+    }
   }
 
-  /// After a successful delete, leave the page when the deleted channel
-  /// was open: back to the list when none remain, else the first one.
-  Future<void> _navigateAfterDelete(
-    NetworkSession session,
-    Channel channel,
-  ) async {
-    if (widget.controller.channelId != channel.id) return;
+  Future<void> _selectChannelAfterDelete(NetworkSession session) async {
     final remaining = session.channels;
     if (remaining.isEmpty) {
       await widget.controller.backToChannels();
@@ -518,29 +510,17 @@ class _RosterMemberTile extends StatelessWidget {
   final String? channelId;
   final VoidCallback? onDrop;
 
+  static const _memberIcons = <MemberClass, IconData>{
+    MemberClass.agent: Icons.smart_toy_outlined,
+    MemberClass.owner: Icons.star_outline,
+    MemberClass.admin: Icons.admin_panel_settings_outlined,
+    MemberClass.guest: Icons.person_outline,
+    MemberClass.member: Icons.person,
+    MemberClass.unknown: Icons.help_outline,
+  };
+
   @override
   Widget build(BuildContext context) {
-    final name = member.displayName.isEmpty ? member.id : member.displayName;
-    return ListTile(
-      key: ValueKey('networkRosterMember:${member.id}'),
-      dense: true,
-      leading: Icon(switch (member.memberClass) {
-        MemberClass.agent => Icons.smart_toy_outlined,
-        MemberClass.owner => Icons.star_outline,
-        MemberClass.admin => Icons.admin_panel_settings_outlined,
-        MemberClass.guest => Icons.person_outline,
-        MemberClass.member => Icons.person,
-        MemberClass.unknown => Icons.help_outline,
-      }, color: FahColors.of(context).dim),
-      title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(_memberClassLabel(context, member.memberClass)),
-      trailing: _trailing(context),
-    );
-  }
-
-  /// The trailing row: optional access-scope badge, presence dot and
-  /// label, and the drop-agent action when the current channel allows it.
-  Widget _trailing(BuildContext context) {
     final colors = FahColors.of(context);
     final online = member.presence == Presence.live;
     final presenceColor = switch (member.presence) {
@@ -548,55 +528,71 @@ class _RosterMemberTile extends StatelessWidget {
       Presence.busy => colors.pending,
       _ => colors.dim,
     };
-    final accessLabel = _accessLabel(context);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (accessLabel != null) ...[
+    final name = member.displayName.isEmpty ? member.id : member.displayName;
+    return ListTile(
+      key: ValueKey('networkRosterMember:${member.id}'),
+      dense: true,
+      leading: Icon(
+        _memberIcons[member.memberClass] ?? Icons.help_outline,
+        color: colors.dim,
+      ),
+      title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(_memberClassLabel(context, member.memberClass)),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ..._accessBadge(context, colors),
           Container(
-            key: ValueKey('networkRosterAccess:${member.id}'),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            width: 8,
+            height: 8,
             decoration: BoxDecoration(
-              border: Border.all(color: colors.border),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              accessLabel,
-              maxLines: 1,
-              style: TextStyle(fontSize: 11, color: colors.dim),
+              color: presenceColor,
+              shape: BoxShape.circle,
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 6),
+          Text(
+            _presenceLabel(context, member.presence),
+            style: TextStyle(
+              fontSize: 12,
+              color: online ? colors.teal : colors.dim,
+            ),
+          ),
+          if (onDrop != null)
+            IconButton(
+              key: ValueKey('dropAgent:${member.id}'),
+              onPressed: onDrop,
+              icon: const Icon(Icons.person_remove_outlined, size: 19),
+              color: Theme.of(context).colorScheme.error,
+              tooltip: context.l10n.networkDropAgent,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.only(left: 6),
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
         ],
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: presenceColor,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          _presenceLabel(context, member.presence),
-          style: TextStyle(
-            fontSize: 12,
-            color: online ? colors.teal : colors.dim,
-          ),
-        ),
-        if (onDrop != null)
-          IconButton(
-            key: ValueKey('dropAgent:${member.id}'),
-            onPressed: onDrop,
-            icon: const Icon(Icons.person_remove_outlined, size: 19),
-            color: Theme.of(context).colorScheme.error,
-            tooltip: context.l10n.networkDropAgent,
-            visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.only(left: 6),
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-      ],
+      ),
     );
+  }
+
+  List<Widget> _accessBadge(BuildContext context, FahColors colors) {
+    final accessLabel = _accessLabel(context);
+    if (accessLabel == null) return const <Widget>[];
+    return [
+      Container(
+        key: ValueKey('networkRosterAccess:${member.id}'),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          border: Border.all(color: colors.border),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          accessLabel,
+          maxLines: 1,
+          style: TextStyle(fontSize: 11, color: colors.dim),
+        ),
+      ),
+      const SizedBox(width: 10),
+    ];
   }
 
   String? _accessLabel(BuildContext context) {

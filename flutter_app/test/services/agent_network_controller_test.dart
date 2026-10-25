@@ -11,6 +11,7 @@ library;
 import 'dart:async';
 
 import 'package:fa/services/agent_network_controller.dart';
+import 'package:fa/services/dap_enrollment_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -133,5 +134,109 @@ void main() {
     expect(controller.state, isNull);
     expect(controller.agentId, isNull);
     expect(await controller.peers(), isEmpty);
+  });
+
+  test(
+    'saveConnection clears enrollment and saves a disabled connection',
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/app-sandbox');
+      final file = fileLayer(env);
+      const enrolled = DapJoinBundle(
+        invite: DapInviteImport(
+          hubUrl: 'wss://old-hub.example/ws',
+          channel: 'old-channel',
+        ),
+        hubUrl: 'wss://old-hub.example/ws',
+      );
+      final enrollments = DapEnrollmentStore.inMemory(enrolled);
+      final controller = AgentNetworkController(
+        env: env,
+        fileLayer: file,
+        fileFabric: SwappableMessagingRepository(file),
+        transport: const IoHubTransport(),
+        loadIdentity: (_, _) async => null,
+        enrollmentStore: enrollments,
+      );
+      addTearDown(controller.dispose);
+      var notifications = 0;
+      controller.addListener(() => notifications++);
+
+      await controller.saveConnection(
+        url: '  $url  ',
+        token: 'pairing-token',
+        name: '  renamed-agent  ',
+      );
+
+      expect(controller.store.url, url.toString());
+      expect(controller.store.token, 'pairing-token');
+      expect(controller.store.name, 'renamed-agent');
+      expect(enrollments.enrollment, isNull);
+      expect(controller.store.enabled, isFalse);
+      expect(controller.state, isNull);
+      expect(notifications, 1);
+    },
+  );
+
+  test(
+    'saveConnection restarts an enabled link onto the new settings',
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/app-sandbox');
+      final file = fileLayer(env);
+      var identityLoads = 0;
+      final controller = AgentNetworkController(
+        env: env,
+        fileLayer: file,
+        fileFabric: SwappableMessagingRepository(file),
+        transport: const IoHubTransport(),
+        loadIdentity: (_, _) async {
+          identityLoads++;
+          return null;
+        },
+        enrollmentStore: DapEnrollmentStore.inMemory(),
+      );
+      addTearDown(controller.dispose);
+      await controller.store.setConnection(url: url.toString());
+      await controller.setEnabled(true);
+      await waitUntil(() => controller.state == HubLinkState.connected);
+      final previousAgentId = controller.agentId;
+
+      await controller.saveConnection(url: url.toString(), name: 'new-name');
+      await waitUntil(
+        () =>
+            controller.state == HubLinkState.connected &&
+            controller.agentId != previousAgentId,
+      );
+
+      expect(identityLoads, 2);
+      expect(controller.store.name, 'new-name');
+      expect(controller.agentId, isNot(previousAgentId));
+    },
+  );
+
+  test('saveConnection after dispose neither rejoins nor notifies', () async {
+    final env = MemoryExecutionEnv(cwd: '/app-sandbox');
+    final file = fileLayer(env);
+    var identityLoads = 0;
+    final controller = AgentNetworkController(
+      env: env,
+      fileLayer: file,
+      fileFabric: SwappableMessagingRepository(file),
+      transport: const IoHubTransport(),
+      loadIdentity: (_, _) async {
+        identityLoads++;
+        return null;
+      },
+      enrollmentStore: DapEnrollmentStore.inMemory(),
+    );
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+    controller.dispose();
+
+    await controller.saveConnection(url: url.toString(), name: 'saved');
+
+    expect(controller.store.url, url.toString());
+    expect(controller.store.name, 'saved');
+    expect(identityLoads, 0);
+    expect(notifications, 0);
   });
 }
