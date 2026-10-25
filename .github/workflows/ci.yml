@@ -407,12 +407,13 @@ jobs:
           # macOS — the hole #1309 escaped through (gh-1307). The issue's
           # packages/js_widget_runtime/** is an EXTERNAL repo now, so its
           # bumps arrive via the flutter_app/pubspec.yaml pin.
-          # gh-1863: the JS-engine media bridge resolves its endpoints in
-          # flutter_app/lib/services/ (media_tools, video_tool) over the
-          # fa_ui media store — a semantic break there skips every test
-          # that exercises it on ubuntu, so those paths gate the leg too.
+          # gh-1863: the JS-engine media bridge resolves its endpoints
+          # through three seams — flutter_app/lib/services/media_tools.dart,
+          # video_tool.dart, and the fa_ui media store — a semantic break in
+          # any of them skips every test that exercises it on ubuntu, so
+          # they gate the leg too (the #1849 break rode exactly this hole).
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
-              grep -qE '(^flutter_app/lib/apps/|^lib/src/js_ext/|^flutter_app/test/apps/|^flutter_app/test/native_test_guard\.dart$|^flutter_app/pubspec\.yaml$|^flutter_app/lib/services/|^packages/fa_ui/)'; then
+              grep -qE '(^flutter_app/lib/apps/|^lib/src/js_ext/|^flutter_app/test/apps/|^flutter_app/test/native_test_guard\.dart$|^flutter_app/pubspec\.yaml$|^flutter_app/lib/services/media_tools\.dart$|^flutter_app/lib/services/video_tool\.dart$|^packages/fa_ui/lib/src/stores/media_models_store\.dart$)'; then
             echo "exzone=true" >> "$GITHUB_OUTPUT"
           fi
           # Issue #1267 N2 (AC2): the lockfile-refresh vector — resolution
