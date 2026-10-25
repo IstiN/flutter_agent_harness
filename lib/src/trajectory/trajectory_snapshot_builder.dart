@@ -1047,6 +1047,14 @@ final class TrajectorySnapshotBuilder {
     _incTurn = turn;
     _incStep = step;
     _incPrevWasUser = previousWasUser;
+    // The fold state now provably describes the chain ending at [record]
+    // (the walk covered its appended ancestors), so [record] becomes the
+    // tracked tip: the next append parented here folds in O(1). Without
+    // this, a live tail that starts mid-chain (session opened earlier —
+    // the bootstrap root is never re-appended) never chains, and every
+    // append pays the full O(n) walk: 100M hops / ~1.4 GB of chain-list
+    // churn over a 20k-record live tail (issue #1850 AC2).
+    _incTipId = record.id;
     return (turn: turn, step: step, previousWasUser: previousWasUserBefore);
   }
 
