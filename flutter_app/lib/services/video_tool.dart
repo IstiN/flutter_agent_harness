@@ -140,8 +140,10 @@ final class VideoReader {
   }
 
   /// The `vision` slot endpoint: the override when configured (trusted as
-  /// configured), otherwise the main connection — gated on image support so
-  /// a text-only chat model never gets a blind image request.
+  /// configured), or the main connection when the slot explicitly opted in
+  /// via `useMainConnection: true` (gh-1844 — never an implicit fallback) —
+  /// gated on image support so a text-only chat model never gets a blind
+  /// image request.
   Future<MediaEndpoint> _requireVisionEndpoint() async {
     final endpoint = await _gateway.endpointFor(MediaSlot.vision);
     if (endpoint == null) {

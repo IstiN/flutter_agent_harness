@@ -168,6 +168,7 @@ extension AgentCliTools on AgentCli {
       'rewind': on,
       'generate_image': on,
       'generate_video': on,
+      'decide': on,
       'inspect_image': config.visionConfig != null
           ? on
           : const ToolCapability.absent('no vision model configured'),

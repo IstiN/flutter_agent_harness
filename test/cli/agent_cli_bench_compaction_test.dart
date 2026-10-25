@@ -2,7 +2,7 @@
 // CLI gates (AC2/AC3 mechanism layer).
 //
 // `FAH_COMPACT_TRIGGER_TOKENS` fires the auto-compaction at an absolute
-// context size (here 24000 on a 200k window, where the default formula
+// context size (here 32000 on a 200k window, where the default formula
 // fires only at 183616) once the run's context crosses it — mirroring a
 // bench trial that grows past the trigger mid-run. The compaction event
 // lands in the session JSONL, the summarization prompt carries the task
@@ -19,7 +19,7 @@ const _window = 200000;
 // CompactionSettings.forWindow(200000): reserve 16384 → the DEFAULT
 // trigger is 183616 estimated tokens. The bench trigger sits far below.
 final _defaultTrigger = _window - 16384;
-const _benchTriggerTokens = 24000;
+const _benchTriggerTokens = 32000;
 
 Model get _model => const Model(
   id: 'test-model',

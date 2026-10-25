@@ -134,8 +134,9 @@ AgentTool transcriptionTool(
     description:
         'Transcribe a local audio file to text using a Whisper-compatible '
         'transcription endpoint (the configured transcription slot, or the '
-        'connected provider when it is OpenAI-compatible). Returns the '
-        'transcript; the audio itself does not enter the chat context. '
+        'slot opted into the connected provider explicitly via '
+        'useMainConnection: true). Returns the transcript; the audio itself '
+        'does not enter the chat context. '
         'Supported formats: WAV, MP3, M4A, OGG, WebM, FLAC. Maximum file '
         'size: 25MB.',
     parameters: const {

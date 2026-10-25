@@ -26,6 +26,22 @@ void main() {
   Future<String?> slotKeyResolver(String name) async =>
       name.endsWith('_KEY') ? 'sk-slot' : null;
 
+  /// gh-1844: the main connection serves a slot only through the explicit
+  /// per-slot opt-in — tests exercising the main-connection path opt in.
+  Future<MediaModelsStore> optedInStore(String slot) async {
+    final store = MediaModelsStore.inMemory();
+    await store.setOverride(
+      slot,
+      const MediaSlotOverride(
+        providerKind: '',
+        baseUrl: '',
+        modelId: '',
+        useMainConnection: true,
+      ),
+    );
+    return store;
+  }
+
   MediaGateway gateway(
     MemoryExecutionEnv env,
     http.Client client, {
@@ -56,7 +72,9 @@ void main() {
           200,
         );
       });
-      final tool = generateImageTool(gateway(env, client));
+      final tool = generateImageTool(
+        gateway(env, client, store: await optedInStore(MediaSlot.imageGeneration)),
+      );
       expect(tool.tier, ApprovalTier.write);
 
       final result = await tool.execute(
@@ -100,7 +118,9 @@ void main() {
         expect(request.url.toString(), 'https://cdn.test/img.png');
         return http.Response.bytes(Uint8List.fromList([9, 9]), 200);
       });
-      final tool = generateImageTool(gateway(env, client));
+      final tool = generateImageTool(
+        gateway(env, client, store: await optedInStore(MediaSlot.imageGeneration)),
+      );
 
       final result = await tool.execute(const {'prompt': 'x'}, null, null);
       expect(textOf(result), contains('2 bytes'));
@@ -139,7 +159,9 @@ void main() {
       final client = http_testing.MockClient(
         (request) async => http.Response('quota exceeded', 429),
       );
-      final tool = generateImageTool(gateway(env, client));
+      final tool = generateImageTool(
+        gateway(env, client, store: await optedInStore(MediaSlot.imageGeneration)),
+      );
 
       final result = await tool.execute(const {'prompt': 'x'}, null, null);
       expect(textOf(result), contains('HTTP 429'));
@@ -158,7 +180,9 @@ void main() {
           200,
         );
       });
-      final tool = speakTool(gateway(env, client));
+      final tool = speakTool(
+        gateway(env, client, store: await optedInStore(MediaSlot.audioTts)),
+      );
 
       final result = await tool.execute(
         const {'text': 'hello world', 'voice': 'nova'},
@@ -188,7 +212,9 @@ void main() {
         seen = request;
         return http.Response.bytes(Uint8List.fromList([1]), 200);
       });
-      final tool = speakTool(gateway(env, client));
+      final tool = speakTool(
+        gateway(env, client, store: await optedInStore(MediaSlot.audioTts)),
+      );
 
       await tool.execute(const {'text': 'hi'}, null, null);
       expect(

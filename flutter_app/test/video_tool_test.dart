@@ -82,6 +82,22 @@ MediaGateway _gateway(
 String _textOf(ToolExecutionResult result) =>
     result.content.whereType<TextContent>().map((b) => b.text).join();
 
+/// gh-1844: the main connection serves a slot only through the explicit
+/// per-slot opt-in — these tests exercise the opted-in vision path.
+Future<MediaModelsStore> _visionOptedInStore() async {
+  final store = MediaModelsStore.inMemory();
+  await store.setOverride(
+    MediaSlot.vision,
+    const MediaSlotOverride(
+      providerKind: '',
+      baseUrl: '',
+      modelId: '',
+      useMainConnection: true,
+    ),
+  );
+  return store;
+}
+
 void main() {
   group('videoFramesCount', () {
     test('clamps to 1..12 with a default of 6', () {
@@ -116,7 +132,7 @@ void main() {
         env,
         VideoReader(
           video: video,
-          gateway: _gateway(env, MediaModelsStore.inMemory()),
+          gateway: _gateway(env, await _visionOptedInStore()),
           httpClient: client,
         ),
       );
@@ -201,7 +217,7 @@ void main() {
           video: FakeVideoApi(),
           gateway: _gateway(
             env,
-            MediaModelsStore.inMemory(),
+            await _visionOptedInStore(),
             modelId: 'gpt-3.5-turbo',
           ),
           httpClient: client,
@@ -228,7 +244,7 @@ void main() {
             video: FakeVideoApi(),
             gateway: _gateway(
               env,
-              MediaModelsStore.inMemory(),
+              await _visionOptedInStore(),
               modelId: 'custom-text-id',
             ),
             mainSupportsImages: () => true,
