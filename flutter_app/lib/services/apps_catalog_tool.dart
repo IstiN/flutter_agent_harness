@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:fa/apps/app_storage.dart';
 import 'package:fa/apps/apps_store.dart';
@@ -247,34 +248,11 @@ Future<ToolExecutionResult> _mutate(
 ) async {
   final id = (arguments['id'] ?? '').toString().trim();
   if (id.isEmpty) return ToolExecutionResult.text('Provide a widget "id".');
-  if (action == 'remove') {
-    // gh-1614 rework 2 (I1/AC4): the id is agent-supplied — validate it
-    // against the app namespace BEFORE touching storage. A traversal id
-    // would otherwise steer removeWidget's recursive delete outside
-    // `apps/` on hosts whose env normalizes `..`.
-    if (AppStorage.tryAppDir(id) == null) {
-      return ToolExecutionResult.text(
-        '"$id" is not a valid app id — it must be a single plain segment '
-        'under apps/ (no "..", no "/", no absolute form). Nothing removed.',
-      );
-    }
-    final removed = await store.removeWidget(id);
-    return ToolExecutionResult.text(
-      removed
-          ? 'Removed $id (user data in apps/$id/storage.json kept).'
-          : 'Nothing catalog-installed under "$id".',
-    );
-  }
+  if (action == 'remove') return _removeMutate(store, id);
 
   CatalogEntry? entry;
   try {
-    final result = await service.fetchCatalog();
-    for (final candidate in result.entries) {
-      if (candidate.id == id) {
-        entry = candidate;
-        break;
-      }
-    }
+    entry = await _findCatalogEntry(service, id);
   } on CatalogError catch (error) {
     return ToolExecutionResult.text('Catalog unavailable: $error');
   }
@@ -287,17 +265,7 @@ Future<ToolExecutionResult> _mutate(
   try {
     final files = await service.downloadWidgetHealing(entry);
     if (action == 'get-source') {
-      for (final file in files.entries) {
-        await env.writeFile(
-          '$widgetSourcesDir/${entry.id}/${file.key}',
-          utf8.decode(file.value, allowMalformed: true),
-        );
-      }
-      return ToolExecutionResult.text(
-        'Reference sources for ${entry.id} v${entry.version} written to '
-        '$widgetSourcesDir/${entry.id}/ (${files.length} files). Read them '
-        'with the read tool before authoring a similar widget.',
-      );
+      return await _sourceFilesResult(env, entry, files);
     }
     await store.installWidget(
       id: entry.id,
@@ -310,4 +278,55 @@ Future<ToolExecutionResult> _mutate(
   } on CatalogError catch (error) {
     return ToolExecutionResult.text('Failed: $error');
   }
+}
+
+/// `remove`: gh-1614 rework 2 (I1/AC4) — the id is agent-supplied, so it
+/// is validated against the app namespace BEFORE touching storage. A
+/// traversal id would otherwise steer removeWidget's recursive delete
+/// outside `apps/` on hosts whose env normalizes `..` (gh-1848 split).
+Future<ToolExecutionResult> _removeMutate(AppsStore store, String id) async {
+  if (AppStorage.tryAppDir(id) == null) {
+    return ToolExecutionResult.text(
+      '"$id" is not a valid app id — it must be a single plain segment '
+      'under apps/ (no "..", no "/", no absolute form). Nothing removed.',
+    );
+  }
+  final removed = await store.removeWidget(id);
+  return ToolExecutionResult.text(
+    removed
+        ? 'Removed $id (user data in apps/$id/storage.json kept).'
+        : 'Nothing catalog-installed under "$id".',
+  );
+}
+
+/// The catalog entry matching [id], or null when absent (gh-1848 split).
+Future<CatalogEntry?> _findCatalogEntry(
+  CatalogService service,
+  String id,
+) async {
+  final result = await service.fetchCatalog();
+  for (final candidate in result.entries) {
+    if (candidate.id == id) return candidate;
+  }
+  return null;
+}
+
+/// `get-source` outcome: the reference files written under
+/// [widgetSourcesDir] plus the pointer text (gh-1848 split).
+Future<ToolExecutionResult> _sourceFilesResult(
+  ExecutionEnv env,
+  CatalogEntry entry,
+  Map<String, Uint8List> files,
+) async {
+  for (final file in files.entries) {
+    await env.writeFile(
+      '$widgetSourcesDir/${entry.id}/${file.key}',
+      utf8.decode(file.value, allowMalformed: true),
+    );
+  }
+  return ToolExecutionResult.text(
+    'Reference sources for ${entry.id} v${entry.version} written to '
+    '$widgetSourcesDir/${entry.id}/ (${files.length} files). Read them '
+    'with the read tool before authoring a similar widget.',
+  );
 }
