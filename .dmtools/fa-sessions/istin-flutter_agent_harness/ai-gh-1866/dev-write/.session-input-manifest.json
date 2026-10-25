@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-25T07:27:32.342Z",
+  "ticketKey": "pr-1867",
+  "headSha": "8b24e8946b1f4fbd680d9f9c20edd091160c91d8",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:a4acd3ee862d0438",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:5076a41ed895a36c",
+      "size": 10505
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:f92f0c8877b0f24e",
+      "size": 4998
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:8b295c217717ab1b",
+      "size": 2777
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:0e168345d8f6d788",
+      "size": 1265
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:fe33ae52c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:1446ea2bca69f54f",
+      "size": 2515
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:43602ee436b9278e",
+      "size": 2441
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6v_JlS",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/keychain_searchlist_add.sh:2",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `gh-186` looks like a typo for `gh-1866` everywhere in this PR**\n\nAll new comments and test names reference `gh-186` (`gh-186 — the single allowed writer`, `gh-186: publish the search list ADDITIVELY`, …), but the issue this PR closes is **#1866** (PR title `gh-1866`, branch `ai/gh-1866`, \"Closes #1866\", and the corrected serialization-guard note in this same diff says `gh-186`). No historical `gh-186` reference exists in the repo (changelog/archives clean), and `#186` would be an ancient issue unrelated to keychain publishing.\n\nThese incident-forensics comments are exactly what a future autopsy greps for — a wrong pointer sends it to the wrong issue. Affected spots:\n\n- `scripts/keychain_searchlist_add.sh` (header line 2, `::error::` line 67)\n- `.github/workflows/build-macos.yml` (both new comment blocks)\n- `.github/workflows/build-mobile.yml` (new comment block)\n- `flutter_app/fastlane/Fastfile` (lane comment)\n- `test/ci_keychain_searchlist_union_guard_test.dart` (file header + all 3 test names/reasons)\n- `test/ci_macos_keychain_serialization_guard_test.dart` (new note)\n\nSuggest a mechanical `s/gh-186\\b/gh-1866/` over the touched files."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v_Jl5",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/keychain_searchlist_add.sh:59",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: survival check uses regex matching — use `grep -qFx`**\n\n```bash\nif list_user_keychains | grep -qx \"$KC\"; then\n```\n\n`grep -x` anchors the match to the whole line, but the pattern is still a **regular expression**: the literal `.` characters in the keychain path match any character. If the list ever contains a same-length sibling entry that differs only at a `.` position, the survival verify false-positives and the exact silent-eviction failure this PR fixes (codesign death 10 minutes later) recurs undetected.\n\nPractical risk on the fa-m5 paths is near zero (sibling keychains differ structurally, not by one char), but the verify is the *sole* defense and the fix is free:\n\n```bash\nif list_user_keychains | grep -qFx -- \"$KC\"; then\n```\n\n(The guard test's regex `grep\\s+(-q|--quiet|-qx|-qF)\\b` already accepts `-qF`.)"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v_JmY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/ci_keychain_searchlist_union_guard_test.dart:73",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: AC1 guard only audits 3 hardcoded files — future workflows bypass it**\n\nThe test's stated goal is \"no fixed-list `security list-keychains -d user -s` writer **outside the additive helper**\", but `_searchListSurfaces` lists exactly the 3 files converted in this PR. The moment someone adds a new workflow (or a new script under `scripts/`) that publishes a keychain with a fixed-list write, this never-again guard stays green while the gh-1866 race comes back.\n\nCheap hardening — enumerate instead of hardcode:\n\n```dart\nfinal surfaces = <String>[\n  ...Directory('.github/workflows')\n      .listSync()\n      .where((f) => f.path.endsWith('.yml'))\n      .map((f) => f.path),\n  'flutter_app/fastlane/Fastfile',\n];\n```\n\n(The `stripComments` helper already handles the `#`-comment false positives, and truncating Fastfile lines at `#{` still leaves the `list-keychains -d user -s` prefix matchable, so this stays robust.)"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6v_Jm-",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/keychain_searchlist_add.sh:56",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: write failure exits without retry or `::error::` — only eviction is retried**\n\n```bash\nsecurity list-keychains -d user -s $(cat \"$TMP_LIST\")\n```\n\nUnder `set -euo pipefail`, if this write itself fails non-zero (transient `security` error, keychain file momentarily unavailable), the script exits immediately with `security`'s raw exit code: no retry, no `::error::` annotation, no \"gh-1866\" breadcrumb in the log. The retry/verify machinery only covers the *write succeeded but was clobbered* case.\n\nOptional hardening — treat a failed write like an eviction and spend one of the 5 attempts on it:\n\n```bash\nif ! security list-keychains -d user -s $(cat \"$TMP_LIST\"); then\n  echo \"keychain search list: write failed (attempt $attempt/5)\" >&2\n  sleep $((attempt * 2)); continue\nfi\n```\n\nLow likelihood on the fa-m5 runners; fine to defer if you prefer the simpler script."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-25:332f7382",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `gh-186` looks like a typo for `gh-1866` everywhere in this PR**\n\nAll new comments and test names reference `gh-186` (`gh-186 — the single allowed writer`, `gh-186: publish the search list ADDITIVELY`, …), but the issue this PR closes is **#1866** (PR title `gh-1866`, branch `ai/gh-1866`, \"Closes #1866\", and the corrected serialization-guard note in this same diff says `gh-186`). No historical `gh-186` reference exists in the repo (changelog/archives clean), and `#186` would be an ancient issue unrelated to keychain publishing.\n\nThese incident-forensics comments are exactly what a future autopsy greps for — a wrong pointer sends it to the wrong issue. Affected spots:\n\n- `scripts/keychain_searchlist_add.sh` (header line 2, `::error::` line 67)\n- `.github/workflows/build-macos.yml` (both new comment blocks)\n- `.github/workflows/build-mobile.yml` (new comment block)\n- `flutter_app/fastlane/Fastfile` (lane comment)\n- `test/ci_keychain_searchlist_union_guard_test.dart` (file header + all 3 test names/reasons)\n- `test/ci_macos_keychain_serialization_guard_test.dart` (new note)\n\nSuggest a mechanical `s/gh-186\\b/gh-1866/` over the touched files."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-25:132d3d7f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: survival check uses regex matching — use `grep -qFx`**\n\n```bash\nif list_user_keychains | grep -qx \"$KC\"; then\n```\n\n`grep -x` anchors the match to the whole line, but the pattern is still a **regular expression**: the literal `.` characters in the keychain path match any character. If the list ever contains a same-length sibling entry that differs only at a `.` position, the survival verify false-positives and the exact silent-eviction failure this PR fixes (codesign death 10 minutes later) recurs undetected.\n\nPractical risk on the fa-m5 paths is near zero (sibling keychains differ structurally, not by one char), but the verify is the *sole* defense and the fix is free:\n\n```bash\nif list_user_keychains | grep -qFx -- \"$KC\"; then\n```\n\n(The guard test's regex `grep\\s+(-q|--quiet|-qx|-qF)\\b` already accepts `-qF`.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-25:3dce8df4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: AC1 guard only audits 3 hardcoded files — future workflows bypass it**\n\nThe test's stated goal is \"no fixed-list `security list-keychains -d user -s` writer **outside the additive helper**\", but `_searchListSurfaces` lists exactly the 3 files converted in this PR. The moment someone adds a new workflow (or a new script under `scripts/`) that publishes a keychain with a fixed-list write, this never-again guard stays green while the gh-1866 race comes back.\n\nCheap hardening — enumerate instead of hardcode:\n\n```dart\nfinal surfaces = <String>[\n  ...Directory('.github/workflows')\n      .listSync()\n      .where((f) => f.path.endsWith('.yml'))\n      .map((f) => f.path),\n  'flutter_app/fastlane/Fastfile',\n];\n```\n\n(The `stripComments` helper already handles the `#`-comment false positives, and truncating Fastfile lines at `#{` still leaves the `list-keychains -d user -s` prefix matchable, so this stays robust.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-25:00a8bc72",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: write failure exits without retry or `::error::` — only eviction is retried**\n\n```bash\nsecurity list-keychains -d user -s $(cat \"$TMP_LIST\")\n```\n\nUnder `set -euo pipefail`, if this write itself fails non-zero (transient `security` error, keychain file momentarily unavailable), the script exits immediately with `security`'s raw exit code: no retry, no `::error::` annotation, no \"gh-1866\" breadcrumb in the log. The retry/verify machinery only covers the *write succeeded but was clobbered* case.\n\nOptional hardening — treat a failed write like an eviction and spend one of the 5 attempts on it:\n\n```bash\nif ! security list-keychains -d user -s $(cat \"$TMP_LIST\"); then\n  echo \"keychain search list: write failed (attempt $attempt/5)\" >&2\n  sleep $((attempt * 2)); continue\nfi\n```\n\nLow likelihood on the fa-m5 runners; fine to defer if you prefer the simpler script."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-25:79cee3fb",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The additive, self-verifying keychain search-list helper correctly fixes the cross-workflow eviction race (gh-1866) — independently smoke-tested here with a mocked `security`: two concurrent writers converge with all keychains present, a persistent stomper triggers the bounded retry, and all related guard suites pass (3/3 union-guard, 2/2 serialization-guard, 82 workflow/fastlane tests). Verified: no remaining fixed-list writer outside the helper, script is executable with a valid shebang, and both call sites in `build-macos.yml`, the `build-mobile.yml` import step, and both Fastfile branches resolve the script path correctly from their working directories.\n\n**Key Issues**: Four non-blocking suggestions — (1) every new comment/test name says `gh-186` instead of `gh-1866`, which will mislead future incident forensics; (2) the survival verify uses regex `grep -qx` instead of `grep -qFx`; (3) the AC1 guard audits only 3 hardcoded files rather than all workflows; (4) a failed (non-clobbered) `security list-keychains -s` write bypasses the retry/`::error::` path. One behavioral note: the job keychain is now appended last in the search list (previously first) — benign here since identities are distinct and `default-keychain` is set separately, but worth being aware of.\n\n**Next Steps**:\n1. Optional: fix `gh-186` → `gh-1866` in the new comments/test names (mechanical sed)\n2. Optional: `grep -qFx --`, enumerate workflows in AC1, retry on write failure\n3. Merge as-is is safe — none of the findings affect the shipped behavior"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-25:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
