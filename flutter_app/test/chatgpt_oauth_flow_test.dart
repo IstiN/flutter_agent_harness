@@ -938,4 +938,95 @@ void main() {
       expect(recordedCalls.map((c) => c.method), contains('cancel'));
     });
   });
+
+  // ── _acquireCredentials tails (gh-1848): the two branches the suites
+  // above never reach — an injected flow that THROWS (the error must
+  // propagate; the caller decides what to show), and the sessionUnavailable
+  // bail when the flow's root-navigator anchor went away mid-hop (the
+  // issue #586 transcript-rebuild scenario). The embeddedWebView arm and
+  // the systemBrowserLoopback tail are not unit-reachable (kIsWeb is a
+  // const false in the VM; the CLI tail binds a real loopback server and
+  // launches the system browser).
+  group('the acquire tails', () {
+    testWidgets('a thrown injected flow propagates and saves nothing', (
+      tester,
+    ) async {
+      final registry = ProviderRegistry.inMemory();
+      final service = _RecordingService(MemoryExecutionEnv());
+      Future<bool>? done;
+      Object? thrown;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () {
+                  done = runChatGptOAuthFlow(
+                    context: context,
+                    registry: registry,
+                    service: service,
+                    lastConnectionStore: LastConnectionStore.inMemory(),
+                    sessionKeysStore: SessionKeysStore.inMemory(),
+                    platformSupportedFn: () => true,
+                    chatGptOAuthFlowFn: () async {
+                      throw StateError('idp down');
+                    },
+                  );
+                  // Pre-attach the catcher INSIDE onPressed: the flow's
+                  // error lands on the future within microtasks of the call
+                  // (`_acquireCredentials` returns the injected flow's
+                  // future directly), long before the test body could attach
+                  // expectLater — and an unlistened error would fail the
+                  // zone. The capture asserts the propagation; the save
+                  // assertions below prove nothing was persisted.
+                  // ignore: unawaited_futures
+                  done!.catchError((Object e) {
+                    thrown = e;
+                    return false;
+                  });
+                },
+                child: const Text('go'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('go'));
+      await tester.pumpAndSettle();
+
+      expect(
+        thrown,
+        isA<StateError>().having((e) => e.message, 'message', 'idp down'),
+      );
+      expect(registry.providers, isEmpty);
+      expect(service.reconfigured, isNull);
+    });
+
+    testWidgets('sessionUnavailable with a defunct flow context bails '
+        'without the WebView fallback', (tester) async {
+      final gate =
+          Completer<
+            ({ChatGptOAuthCredentials? credentials, bool sessionUnavailable})
+          >();
+      var webViewPushes = 0;
+      final (done, service, registry) = await _launch(
+        tester,
+        iosFn: () => true,
+        systemSessionFn: ({exchangeFn, onExchangeError}) => gate.future,
+        pushWebView: (context, url, state) async {
+          webViewPushes++;
+          return null;
+        },
+      );
+      // The flow anchored on the ROOT navigator (issue #586); tearing the
+      // whole tree down makes that context defunct while the hop pends.
+      await tester.pumpWidget(const SizedBox.shrink());
+      gate.complete((credentials: null, sessionUnavailable: true));
+
+      expect(await done, isFalse);
+      expect(webViewPushes, 0);
+      expect(registry.providers, isEmpty);
+      expect(service.reconfigured, isNull);
+    });
+  });
 }

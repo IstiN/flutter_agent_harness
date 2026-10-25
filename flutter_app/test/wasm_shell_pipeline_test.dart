@@ -15,8 +15,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 
 import 'package:fa/sandbox/wasm_shell.dart';
-import 'package:fa/sandbox/wasm_shell_builtins.dart'
-    show applyCatNumbering;
+import 'package:fa/sandbox/wasm_shell_builtins.dart' show applyCatNumbering;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wasm_run/wasm_run.dart';
@@ -1119,16 +1118,19 @@ void main() {
       },
     );
 
-    test('the builtin:// URI is a direct cat operand on the WASI shell too',
-        () async {
-      final r = await run('cat builtin://skills/create-goal/SKILL.md');
-      expect(r.exitCode, 0);
-      expect(r.stdout, builtinSkillTextAt(
-        'builtin://skills/create-goal/SKILL.md',
-      ));
-      // No WASM stage was launched for the builtin operand.
-      expect(rec.configs, isEmpty);
-    });
+    test(
+      'the builtin:// URI is a direct cat operand on the WASI shell too',
+      () async {
+        final r = await run('cat builtin://skills/create-goal/SKILL.md');
+        expect(r.exitCode, 0);
+        expect(
+          r.stdout,
+          builtinSkillTextAt('builtin://skills/create-goal/SKILL.md'),
+        );
+        // No WASM stage was launched for the builtin operand.
+        expect(rec.configs, isEmpty);
+      },
+    );
 
     test('an unknown builtin:// operand is a plain ENOENT', () async {
       final r = await run('cat builtin://skills/nope/SKILL.md');
@@ -1136,8 +1138,7 @@ void main() {
       expect(r.stderr, contains('No such file or directory'));
     });
 
-    test('cat -n numbers a seamed skill body like the applet would',
-        () async {
+    test('cat -n numbers a seamed skill body like the applet would', () async {
       seedPointer('create-goal');
       final r = await run('cat -n .fah/skills/create-goal/SKILL.md');
       expect(r.exitCode, 0);
@@ -1154,8 +1155,7 @@ void main() {
       );
     });
 
-    test('a missing operand beside a seam errors GNU-shaped, exit 1',
-        () async {
+    test('a missing operand beside a seam errors GNU-shaped, exit 1', () async {
       seedPointer('create-goal');
       final r = await run('cat .fah/skills/create-goal/SKILL.md /nope.txt');
       expect(r.exitCode, 1);
@@ -1167,4 +1167,119 @@ void main() {
       );
     });
   });
+
+  group(
+    'stale pipe-dir sweep at construction (issue #1156 review, gh-1848)',
+    () {
+      io.Directory tmpDir() => io.Directory('${sandbox.path}/.fah/tmp');
+
+      io.Directory pipeDir(String name) =>
+          io.Directory('${tmpDir().path}/$name')..createSync(recursive: true);
+
+      /// Ages a path's mtime to 2000-01-01, i.e. before any sweep cutoff
+      /// (dart:io cannot age a directory: setLastModifiedSync throws
+      /// EISDIR, so the tests shell out to touch, like git_test shells to
+      /// tar).
+      Future<void> age(String path) async {
+        final proc = await io.Process.run('touch', [
+          '-t',
+          '200001010000',
+          path,
+        ]);
+        expect(proc.exitCode, 0, reason: 'touch $path: ${proc.stderr}');
+      }
+
+      WasiSandboxShell shellWithRoot(String? hostPath) => WasiSandboxShell(
+        coreutils: _SlotModule(rec),
+        rg: _SlotModule(rec),
+        find: _SlotModule(rec),
+        sed: _SlotModule(rec),
+        awk: _SlotModule(rec),
+        tar: _SlotModule(rec),
+        gzip: _SlotModule(rec),
+        zip: _SlotModule(rec),
+        python: _SlotModule(rec),
+        qjs: _SlotModule(rec),
+        sqlite3: _SlotModule(rec),
+        lua: _SlotModule(rec),
+        sandboxHostPath: hostPath,
+      );
+
+      test('a null sandbox root sweeps nothing and never throws', () {
+        expect(shellWithRoot(null).sandboxHostPath, isNull);
+      });
+
+      test('an empty sandbox root sweeps nothing and never throws', () {
+        expect(shellWithRoot('').sandboxHostPath, isEmpty);
+      });
+
+      test('a missing .fah/tmp is left missing by the sweep', () {
+        shellWithRoot(sandbox.path);
+        expect(tmpDir().existsSync(), isFalse);
+      });
+
+      test(
+        'fresh pipe dirs, wrongly named dirs and pipe named files survive',
+        () async {
+          final fresh = pipeDir('pipe-9001-0');
+          final wrongName = pipeDir('notpipe-9002-0');
+          final pipeNamedFile = io.File('${tmpDir().path}/pipe-9003-0');
+          pipeNamedFile.createSync(recursive: true);
+          await age(wrongName.path);
+          await age(pipeNamedFile.path);
+
+          shellWithRoot(sandbox.path);
+
+          expect(fresh.existsSync(), isTrue);
+          expect(wrongName.existsSync(), isTrue);
+          expect(pipeNamedFile.existsSync(), isTrue);
+        },
+      );
+
+      test(
+        'stale pipe dirs are deleted recursively, fresh ones kept',
+        () async {
+          final stale = pipeDir('pipe-9001-0');
+          io.File('${stale.path}/pipe_0').writeAsStringSync('leftover');
+          final fresh = pipeDir('pipe-9002-1');
+          await age(stale.path);
+
+          shellWithRoot(sandbox.path);
+
+          expect(stale.existsSync(), isFalse);
+          expect(
+            io.FileSystemEntity.typeSync('${tmpDir().path}/pipe-9001-0'),
+            io.FileSystemEntityType.notFound,
+          );
+          expect(fresh.existsSync(), isTrue);
+        },
+      );
+
+      test(
+        'a sweep failure never blocks construction (the catch arm)',
+        () async {
+          // The trigger cannot be `.fah/tmp` as a file (Directory.existsSync
+          // is false for a file — the sweep early-returns), nor a bad entry
+          // (links are skipped before stat). It is the DELETE: tmp chmod'd
+          // r-x lists fine, stat fine, and deleteSync of the aged pipe dir
+          // throws PathAccessException, which the constructor must swallow.
+          final tmp = tmpDir();
+          final stale = pipeDir('pipe-9001-0');
+          await age(stale.path);
+          final locked = await io.Process.run('chmod', ['500', tmp.path]);
+          expect(locked.exitCode, 0);
+          addTearDown(() async {
+            // Restore before the sandbox teardown (LIFO: this runs first).
+            await io.Process.run('chmod', ['755', tmp.path]);
+          });
+
+          final shell = shellWithRoot(sandbox.path);
+
+          expect(shell.sandboxHostPath, sandbox.path);
+          // The delete failed; the stale dir survived and the shell stands.
+          expect(stale.existsSync(), isTrue);
+        },
+      );
+    },
+  );
 }
