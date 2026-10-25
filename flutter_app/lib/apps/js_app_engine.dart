@@ -552,9 +552,7 @@ class JsAppEngine {
     // A disposed engine's notifiers throw on read — check liveness first.
     if (!identical(_engine, armed)) return;
     if (tree.value != null) return;
-    final waited = uiTreeWarnAfter.inSeconds >= 1
-        ? '${uiTreeWarnAfter.inSeconds}s'
-        : '${uiTreeWarnAfter.inMilliseconds}ms';
+    final waited = _uiTreeWaitLabel(uiTreeWarnAfter);
     // gh-1831 AC4: when the assembler left "file not found" markers (a
     // torn/partial install — the web catalog path used to drop a
     // multi-file widget's siblings), the card must name WHAT is missing
@@ -572,6 +570,12 @@ class JsAppEngine {
           'engine start — eval failed before the first render',
     );
   }
+
+  /// The human delay for the watchdog card: whole seconds from one
+  /// second up, milliseconds below that.
+  static String _uiTreeWaitLabel(Duration waited) => waited.inSeconds >= 1
+      ? '${waited.inSeconds}s'
+      : '${waited.inMilliseconds}ms';
 
   /// The `/* … file not found: <path> */` markers the entry assembler
   /// (js_widget_runtime `WidgetManifest.readJs`) leaves for every relative

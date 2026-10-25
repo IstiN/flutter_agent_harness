@@ -1348,60 +1348,84 @@ final class GitSandboxCommands {
     if (args.length < 2) {
       return _gitError('usage: git cat-file (-p|-t) <object>');
     }
-    final flag = args[0];
-    final spec = args[1];
-    try {
-      GitObject? obj;
-      final colonIdx = spec.indexOf(':');
-      if (colonIdx != -1) {
-        final commitish = spec.substring(0, colonIdx);
-        final pathSpec = spec.substring(colonIdx + 1);
-        final commit = _gitResolveCommit(repo, commitish);
-        final tree = repo.objStorage.readTree(commit.treeHash);
-        final entry = repo.objStorage.refSpec(tree, pathSpec);
-        obj = repo.objStorage.read(entry.hash);
-      } else {
-        GitHash hash;
-        if (spec == 'HEAD') {
-          hash = repo.headHash();
-        } else if (repo.branches().contains(spec)) {
-          hash = repo.resolveReferenceName(ReferenceName.branch(spec))!.hash;
-        } else {
-          hash = GitHash(spec);
-        }
-        obj = repo.objStorage.read(hash);
-      }
-      if (obj == null) throw Exception('object not found');
+    return _gitCatFileGuarded(repo, args[0], args[1]);
+  }
 
-      if (flag == '-t') {
-        return Ok(
-          StageResult(
-            stdout: utf8.encode('${obj.formatStr()}\n'),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      if (flag == '-p') {
-        if (obj is GitBlob) {
-          return Ok(
-            StageResult(stdout: obj.blobData, stderr: const [], exitCode: 0),
-          );
-        }
-        return Ok(
-          StageResult(
-            stdout: utf8.encode(
-              '${utf8.decode(obj.serializeData(), allowMalformed: true)}\n',
-            ),
-            stderr: const [],
-            exitCode: 0,
-          ),
-        );
-      }
-      return _gitError('git cat-file: unsupported flag $flag');
+  /// Runs `git cat-file` over a resolved invocation, mapping any object
+  /// failure to `fatal:`.
+  Result<StageResult, ExecutionError> _gitCatFileGuarded(
+    dart_git.GitRepository repo,
+    String flag,
+    String spec,
+  ) {
+    try {
+      final obj = _gitCatFileObject(repo, spec);
+      if (obj == null) throw Exception('object not found');
+      return _gitCatFileRender(obj, flag);
     } catch (e) {
       return _gitError('fatal: $e');
     }
+  }
+
+  /// Reads the object `git cat-file` targets: a `<commitish>:<path>` spec
+  /// resolves through the commit tree, anything else through the object
+  /// store.
+  GitObject? _gitCatFileObject(dart_git.GitRepository repo, String spec) {
+    final colonIdx = spec.indexOf(':');
+    if (colonIdx != -1) {
+      final commitish = spec.substring(0, colonIdx);
+      final pathSpec = spec.substring(colonIdx + 1);
+      final commit = _gitResolveCommit(repo, commitish);
+      final tree = repo.objStorage.readTree(commit.treeHash);
+      final entry = repo.objStorage.refSpec(tree, pathSpec);
+      return repo.objStorage.read(entry.hash);
+    }
+    return repo.objStorage.read(_gitCatFileHash(repo, spec));
+  }
+
+  /// The hash `git cat-file` resolves [spec] to: HEAD, a branch name, or
+  /// a full object hash.
+  GitHash _gitCatFileHash(dart_git.GitRepository repo, String spec) {
+    if (spec == 'HEAD') {
+      return repo.headHash();
+    } else if (repo.branches().contains(spec)) {
+      return repo.resolveReferenceName(ReferenceName.branch(spec))!.hash;
+    }
+    return GitHash(spec);
+  }
+
+  /// The `-t`/`-p` payload for [obj]: `-t` prints the type name, `-p`
+  /// prints blobs verbatim and other objects as text.
+  Result<StageResult, ExecutionError> _gitCatFileRender(
+    GitObject obj,
+    String flag,
+  ) {
+    if (flag == '-t') {
+      return Ok(
+        StageResult(
+          stdout: utf8.encode('${obj.formatStr()}\n'),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
+    if (flag == '-p') {
+      if (obj is GitBlob) {
+        return Ok(
+          StageResult(stdout: obj.blobData, stderr: const [], exitCode: 0),
+        );
+      }
+      return Ok(
+        StageResult(
+          stdout: utf8.encode(
+            '${utf8.decode(obj.serializeData(), allowMalformed: true)}\n',
+          ),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
+    return _gitError('git cat-file: unsupported flag $flag');
   }
 
   Result<StageResult, ExecutionError> _gitHashObject(

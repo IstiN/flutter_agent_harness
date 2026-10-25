@@ -170,31 +170,64 @@ bool modelPresetMatches(
   if (service.providerKind != 'openai-completions') return false;
   if (service.modelId != preset.chatModelId) return false;
   if (service.activeBaseUrl != preset.target.baseUrl) return false;
+  if (!_mediaSlotsMatchPreset(preset, store)) return false;
+  return _taskSlotsMatchPresetOrDefault(preset, taskStore);
+}
+
+/// Every mapped media slot carries the preset's override, every unmapped
+/// one has NO override (stays on the main connection).
+bool _mediaSlotsMatchPreset(ModelPreset preset, MediaModelsStore store) {
   for (final slot in MediaSlot.all) {
-    final modelId = preset.mediaSlots[slot];
-    final override = store.overrideFor(slot);
-    if (modelId == null) {
-      if (override != null) return false;
-    } else if (override == null ||
-        override.modelId != modelId ||
-        override.baseUrl != preset.target.baseUrl) {
+    if (!_mediaSlotMatchesPreset(
+      preset.mediaSlots[slot],
+      store.overrideFor(slot),
+      preset.target.baseUrl,
+    )) {
       return false;
     }
   }
-  if (taskStore != null) {
-    for (final role in TaskRole.all) {
-      final modelId = preset.taskSlots[role];
-      final override = taskStore.overrideFor(role);
-      if (modelId == null) {
-        if (override != null) return false;
-      } else if (override == null ||
-          override.modelId != modelId ||
-          override.baseUrl != preset.target.baseUrl) {
-        return false;
-      }
+  return true;
+}
+
+/// Same shape as [_mediaSlotsMatchPreset] over the task roles; no task
+/// store (pre-connection) counts as matching (nothing to diverge).
+bool _taskSlotsMatchPresetOrDefault(
+  ModelPreset preset,
+  TaskModelsStore? taskStore,
+) {
+  if (taskStore == null) return true;
+  for (final role in TaskRole.all) {
+    if (!_taskSlotMatchesPreset(
+      preset.taskSlots[role],
+      taskStore.overrideFor(role),
+      preset.target.baseUrl,
+    )) {
+      return false;
     }
   }
   return true;
+}
+
+bool _mediaSlotMatchesPreset(
+  String? modelId,
+  MediaSlotOverride? override,
+  String baseUrl,
+) {
+  if (modelId == null) return override == null;
+  return override != null &&
+      override.modelId == modelId &&
+      override.baseUrl == baseUrl;
+}
+
+bool _taskSlotMatchesPreset(
+  String? modelId,
+  TaskRoleConfig? override,
+  String baseUrl,
+) {
+  if (modelId == null) return override == null;
+  return override != null &&
+      override.modelId == modelId &&
+      override.baseUrl == baseUrl;
 }
 
 /// Applies [preset] in one shot: every mapped media slot gets an

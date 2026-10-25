@@ -42,6 +42,14 @@ extension _WasiShellCat on WasiSandboxShell {
     return false;
   }
 
+  /// The `cat` operand list: the parsed files, or stdin's `-` when no
+  /// operand was given but input is piped.
+  static List<String> _catOperands(CatInvocation parsed, String? inputSource) {
+    final files = [...parsed.files];
+    if (files.isEmpty && inputSource != null) files.add(inputSource);
+    return files;
+  }
+
   /// The `cat` builtin (gh-1444 C1): reads operands through the shell's
   Future<Result<StageResult, ExecutionError>> _catBuiltin(
     Stage stage,
@@ -58,64 +66,17 @@ extension _WasiShellCat on WasiSandboxShell {
         ),
       );
     }
-    final files = [...parsed.files];
-    if (files.isEmpty && inputSource != null) files.add(inputSource);
+    final files = _catOperands(parsed, inputSource);
     final cwd = _effectiveCwd(options);
     final stdinText = await _stdinFromSource(stage, inputSource);
     final out = BytesBuilder(copy: false);
     final err = StringBuffer();
     var exitCode = 0;
     for (final file in files) {
-      if (file == '-') {
-        out.add(utf8.encode(stdinText ?? ''));
-        continue;
-      }
-      // A builtin:// URI is its own operand namespace (C1: fs paths and
-      // builtin URIs are equivalent for reads) — it must NEVER ride the
-      // sandbox path resolver, which would mangle it into a guest path.
-      if (file.startsWith(builtinSkillPathPrefix)) {
-        final embedded = builtinSkillTextAt(file);
-        if (embedded == null) {
-          err.write('cat: $file: No such file or directory\n');
-          exitCode = 1;
-          continue;
-        }
-        out.add(utf8.encode(_catNumbered(embedded, parsed)));
-        continue;
-      }
-      final path = _resolveSandboxPath(file, cwd);
-      // Byte-first: an existing operand is delivered verbatim (the
-      // coreutils applet was binary-safe; the seam must not regress that —
-      // tarballs/PNGs ride cat). Only a MISSING operand consults pointer
-      // machinery, and pointer files are harness-authored text.
-      final bytes = await _readSandboxBytes(path);
-      if (bytes != null) {
-        if (parsed.number || parsed.numberNonBlank) {
-          // GNU cat -n/-b on binary is a mangled best effort; decode
-          // lossily rather than throwing the operand out of exec().
-          out.add(
-            utf8.encode(
-              applyCatNumbering(
-                utf8.decode(bytes, allowMalformed: true),
-                nonBlankOnly: parsed.numberNonBlank,
-              ),
-            ),
-          );
-        } else {
-          out.add(bytes);
-        }
-        continue;
-      }
-      final followed = await followSkillPointer(path, _readSandboxText);
-      switch (followed) {
-        case SkillPointerResolved(:final text):
-          out.add(utf8.encode(_catNumbered(text, parsed)));
-        case SkillPointerRefused(:final reason):
-          err.write('cat: $file: skill pointer refused: $reason\n');
-          exitCode = 1;
-        case SkillPointerAbsent():
-          err.write('cat: $file: No such file or directory\n');
-          exitCode = 1;
+      final error = await _catSingle(file, parsed, stdinText, cwd, out);
+      if (error != null) {
+        err.write(error);
+        exitCode = 1;
       }
     }
     return Ok(
@@ -125,6 +86,94 @@ extension _WasiShellCat on WasiSandboxShell {
         exitCode: exitCode,
       ),
     );
+  }
+
+  /// Consumes one `cat` operand into [out]. Returns the error line when
+  /// the operand cannot be read, else null.
+  Future<String?> _catSingle(
+    String file,
+    CatInvocation parsed,
+    String? stdinText,
+    String cwd,
+    BytesBuilder out,
+  ) async {
+    if (file == '-') {
+      out.add(utf8.encode(stdinText ?? ''));
+      return null;
+    }
+    // A builtin:// URI is its own operand namespace (C1: fs paths and
+    // builtin URIs are equivalent for reads) — it must NEVER ride the
+    // sandbox path resolver, which would mangle it into a guest path.
+    if (file.startsWith(builtinSkillPathPrefix)) {
+      final embedded = builtinSkillTextAt(file);
+      if (embedded == null) {
+        return 'cat: $file: No such file or directory\n';
+      }
+      out.add(utf8.encode(_catNumbered(embedded, parsed)));
+      return null;
+    }
+    return _catPath(file, _resolveSandboxPath(file, cwd), parsed, out);
+  }
+
+  /// Reads one filesystem operand: byte-first when it exists (the
+  /// coreutils applet was binary-safe; the seam must not regress that —
+  /// tarballs/PNGs ride cat), then pointer machinery for a MISSING
+  /// operand. Returns the error line, or null on success.
+  Future<String?> _catPath(
+    String file,
+    String path,
+    CatInvocation parsed,
+    BytesBuilder out,
+  ) async {
+    final bytes = await _readSandboxBytes(path);
+    if (bytes != null) {
+      _catNumberedBytes(bytes, parsed, out);
+      return null;
+    }
+    return _catPointer(path, file, parsed, out);
+  }
+
+  /// Adds [bytes] to [out], applying `cat -n`/`-b` numbering when the
+  /// invocation asked for it (GNU cat on binary is a mangled best
+  /// effort; decode lossily rather than throwing the operand out of
+  /// exec()).
+  static void _catNumberedBytes(
+    List<int> bytes,
+    CatInvocation parsed,
+    BytesBuilder out,
+  ) {
+    if (parsed.number || parsed.numberNonBlank) {
+      out.add(
+        utf8.encode(
+          applyCatNumbering(
+            utf8.decode(bytes, allowMalformed: true),
+            nonBlankOnly: parsed.numberNonBlank,
+          ),
+        ),
+      );
+    } else {
+      out.add(bytes);
+    }
+  }
+
+  /// The pointer fallback for a missing operand (gh-1444 C1). Returns
+  /// the error line, or null after the resolved text was written.
+  Future<String?> _catPointer(
+    String path,
+    String file,
+    CatInvocation parsed,
+    BytesBuilder out,
+  ) async {
+    final followed = await followSkillPointer(path, _readSandboxText);
+    switch (followed) {
+      case SkillPointerResolved(:final text):
+        out.add(utf8.encode(_catNumbered(text, parsed)));
+        return null;
+      case SkillPointerRefused(:final reason):
+        return 'cat: $file: skill pointer refused: $reason\n';
+      case SkillPointerAbsent():
+        return 'cat: $file: No such file or directory\n';
+    }
   }
 
   /// Applies `cat` numbering only when the invocation asked for it.

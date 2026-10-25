@@ -829,20 +829,36 @@ final class MemoryShell implements Shell, BackgroundShell {
     return argIndex;
   }
 
+  /// The printf format escape carried by a `\` + letter (`\n`, `\t`,
+  /// `\r`), or null when the letter is not one.
+  static String? _printfLetterEscape(String ch) => switch (ch) {
+    'n' => '\n',
+    't' => '\t',
+    'r' => '\r',
+    _ => null,
+  };
+
+  /// The printf format escape carried by `\` + [ch], or null when printf
+  /// writes the pair literally.
+  static String? _printfEscape(String ch) {
+    final letter = _printfLetterEscape(ch);
+    if (letter != null) return letter;
+    if (ch == '0') return '\x00';
+    if (ch == '\\') return '\\';
+    return null;
+  }
+
+  /// Whether [i] opens a backslash escape pair in [input].
+  static bool _atEscapePair(String input, int i) =>
+      input[i] == '\\' && i + 1 < input.length;
+
   /// Interprets the backslash escapes printf understands in its format
   /// string (`\n`, `\t`, `\r`, `\\`, `\0`).
   String _unescapePrintf(String input) {
     final buffer = StringBuffer();
     for (var i = 0; i < input.length; i++) {
-      if (input[i] == '\\' && i + 1 < input.length) {
-        final escape = switch (input[i + 1]) {
-          'n' => '\n',
-          't' => '\t',
-          'r' => '\r',
-          '0' => '\x00',
-          '\\' => '\\',
-          _ => null,
-        };
+      if (_atEscapePair(input, i)) {
+        final escape = _printfEscape(input[i + 1]);
         if (escape != null) {
           buffer.write(escape);
           i++;
@@ -1477,33 +1493,93 @@ final class MemoryShell implements Shell, BackgroundShell {
     final destArg = split.paths.last;
     final sources = split.paths.sublist(0, split.paths.length - 1);
     final destResolved = resolveSandboxPath(destArg, ctx.cwd);
-    final destInfo = await _fs.fileInfo(destResolved);
-    final destIsDir =
-        destInfo.isOk && destInfo.valueOrNull!.kind == FileKind.directory;
-    if (sources.length > 1 && !destIsDir) {
-      return _error('cp: target $destArg: Not a directory\n');
-    }
-    for (final srcArg in sources) {
-      final srcResolved = resolveSandboxPath(srcArg, ctx.cwd);
-      final srcInfo = await _fs.fileInfo(srcResolved);
-      if (srcInfo.isErr) {
-        return _error('cp: cannot stat $srcArg: No such file or directory\n');
-      }
-      final target = destIsDir
-          ? normalizeSandboxPath('$destResolved/${srcInfo.valueOrNull!.name}')
-          : destResolved;
-      final copyError = await _copyRecursive(
-        srcResolved,
-        target,
-        srcInfo.valueOrNull!,
-        recursive,
-        srcArg,
-      );
-      if (copyError != null) return _error(copyError);
-    }
+    final destIsDir = await _targetIsDir(destResolved);
+    final targetError = _cpTargetError(sources, destIsDir, destArg);
+    if (targetError != null) return targetError;
+    final copyError = await _cpSources(
+      ctx,
+      sources,
+      destResolved,
+      destIsDir,
+      recursive,
+    );
+    if (copyError != null) return copyError;
     return _ok;
   }
 
+  /// Whether the cp/mv destination exists as a directory.
+  Future<bool> _targetIsDir(String destResolved) async {
+    final destInfo = await _fs.fileInfo(destResolved);
+    return destInfo.isOk && destInfo.valueOrNull!.kind == FileKind.directory;
+  }
+
+  /// The cp usage error for a multi-source copy onto a non-directory, if
+  /// any.
+  _StageResult? _cpTargetError(
+    List<String> sources,
+    bool destIsDir,
+    String destArg,
+  ) {
+    if (sources.length > 1 && !destIsDir) {
+      return _error('cp: target $destArg: Not a directory\n');
+    }
+    return null;
+  }
+
+  /// Copies every source operand onto [destResolved]; the first failure
+  /// (as an error result) wins.
+  Future<_StageResult?> _cpSources(
+    _Context ctx,
+    List<String> sources,
+    String destResolved,
+    bool destIsDir,
+    bool recursive,
+  ) async {
+    for (final srcArg in sources) {
+      final copyError = await _cpSource(
+        ctx,
+        srcArg,
+        destResolved,
+        destIsDir,
+        recursive,
+      );
+      if (copyError != null) return _error(copyError);
+    }
+    return null;
+  }
+
+  /// Copies one cp source onto its target. Returns the error line, if any.
+  Future<String?> _cpSource(
+    _Context ctx,
+    String srcArg,
+    String destResolved,
+    bool destIsDir,
+    bool recursive,
+  ) async {
+    final srcResolved = resolveSandboxPath(srcArg, ctx.cwd);
+    final srcInfo = await _fs.fileInfo(srcResolved);
+    if (srcInfo.isErr) {
+      return 'cp: cannot stat $srcArg: No such file or directory\n';
+    }
+    final target = _copyTarget(destResolved, srcInfo.valueOrNull!, destIsDir);
+    return _copyRecursive(
+      srcResolved,
+      target,
+      srcInfo.valueOrNull!,
+      recursive,
+      srcArg,
+    );
+  }
+
+  /// The copy destination for one source: the source's name joined under
+  /// a directory target, else the target itself.
+  String _copyTarget(String destResolved, FileInfo srcInfo, bool destIsDir) =>
+      destIsDir
+      ? normalizeSandboxPath('$destResolved/${srcInfo.name}')
+      : destResolved;
+
+  /// Copies [src] onto [dest]: directories recurse ([-r] required), files
+  /// copy byte-wise. Returns the error line, if any.
   Future<String?> _copyRecursive(
     String src,
     String dest,
@@ -1512,23 +1588,55 @@ final class MemoryShell implements Shell, BackgroundShell {
     String srcArg,
   ) async {
     if (srcInfo.kind == FileKind.directory) {
-      if (!recursive) {
-        return 'cp: -r not specified; omitting directory $srcArg\n';
-      }
-      await _fs.createDir(dest);
-      final entries = await _fs.listDir(src);
-      for (final entry in entries.valueOrNull ?? <FileInfo>[]) {
-        final error = await _copyRecursive(
-          '$src/${entry.name}',
-          '$dest/${entry.name}',
-          entry,
-          recursive,
-          srcArg,
-        );
-        if (error != null) return error;
-      }
-      return null;
+      return _copyDir(src, dest, recursive, srcArg);
     }
+    return _copyFile(src, dest, srcArg);
+  }
+
+  /// Copies the directory [src] into [dest] (-r required).
+  Future<String?> _copyDir(
+    String src,
+    String dest,
+    bool recursive,
+    String srcArg,
+  ) async {
+    if (!recursive) {
+      return 'cp: -r not specified; omitting directory $srcArg\n';
+    }
+    await _fs.createDir(dest);
+    final entries = await _fs.listDir(src);
+    return _copyDirEntries(
+      src,
+      dest,
+      entries.valueOrNull ?? <FileInfo>[],
+      recursive,
+      srcArg,
+    );
+  }
+
+  /// Copies every entry of [src] into [dest]; the first failure wins.
+  Future<String?> _copyDirEntries(
+    String src,
+    String dest,
+    List<FileInfo> entries,
+    bool recursive,
+    String srcArg,
+  ) async {
+    for (final entry in entries) {
+      final error = await _copyRecursive(
+        '$src/${entry.name}',
+        '$dest/${entry.name}',
+        entry,
+        recursive,
+        srcArg,
+      );
+      if (error != null) return error;
+    }
+    return null;
+  }
+
+  /// Copies the file [src] onto [dest].
+  Future<String?> _copyFile(String src, String dest, String srcArg) async {
     final data = await _fs.readBinaryFile(src);
     if (data.isErr) {
       return 'cp: cannot stat $srcArg: No such file or directory\n';
@@ -1677,50 +1785,89 @@ final class MemoryShell implements Shell, BackgroundShell {
     );
   }
 
+  /// Adds one short grep letter to [flags] under the engine's mapping
+  /// (`-a` is a no-op: operands are read as text anyway).
+  static void _addGrepLetter(Set<String> flags, String letter) {
+    switch (letter) {
+      case 'o':
+        flags.add('o');
+      case 'a':
+        break; // text-only engine: operands are read as text anyway
+      default:
+        flags.add(letter);
+    }
+  }
+
+  /// Consumes the `-m` cap token at [i] into [state]; returns the index
+  /// of the last token the flag used.
+  int _grepMaxCountToken(GrepArgs parsed, _GrepEnginePlanState state, int i) {
+    final (count, error, next) = _grepMaxCountAt(parsed.flags, i);
+    if (error != null) {
+      state.error = error;
+      return i;
+    }
+    state.maxCount = count;
+    return next;
+  }
+
+  /// Consumes one short letter token at [i] into [state]; unsupported
+  /// letters stash the exit-2 error. Returns the index of the last token
+  /// used.
+  int _grepLetterToken(GrepArgs parsed, _GrepEnginePlanState state, int i) {
+    final token = parsed.flags.elementAt(i);
+    if (!token.startsWith('-') || token.startsWith('--')) {
+      return i; // long tokens and stray value tokens ride through
+    }
+    final letter = token.substring(1);
+    final unsupported = _unsupportedGrepLetter(letter);
+    if (unsupported != null) {
+      state.error = unsupported;
+      return i;
+    }
+    _addGrepLetter(state.flags, letter);
+    return i;
+  }
+
+  /// Consumes the flag token at [i] into [state], advancing past the
+  /// tokens it used.
+  int _grepEngineToken(GrepArgs parsed, _GrepEnginePlanState state, int i) {
+    final token = parsed.flags.elementAt(i);
+    if (token.startsWith('-') && token.startsWith('-m')) {
+      // `-m5` attached or `-m 5` detached — the count rides the next
+      // token for the detached shape.
+      return _grepMaxCountToken(parsed, state, i);
+    }
+    return _grepLetterToken(parsed, state, i);
+  }
+
+  /// Scans [parsed.flags] into [state]; returns the exit-2 error for the
+  /// first flag the engine cannot honor faithfully, if any.
+  String? _grepEngineFlags(GrepArgs parsed, _GrepEnginePlanState state) {
+    for (var i = 0; i < parsed.flags.length; i++) {
+      i = _grepEngineToken(parsed, state, i);
+      if (state.error != null) return state.error;
+    }
+    return null;
+  }
+
   /// The Dart grep engine's view of the parsed flags: the letter set to
   /// compile, the `-m` cap (null = unlimited), or an exit-2 error message
   /// for a flag the engine cannot honor faithfully (gh-1393 E2).
   _GrepEnginePlan _planGrepEngine(GrepArgs parsed) {
-    final flags = <String>{if (parsed.quiet) 'q'};
-    int? maxCount;
-    for (var i = 0; i < parsed.flags.length; i++) {
-      final token = parsed.flags.elementAt(i);
-      if (token.startsWith('-') && token.startsWith('-m')) {
-        // `-m5` attached or `-m 5` detached — the count rides the next
-        // token for the detached shape.
-        final (count, error, next) = _grepMaxCountAt(parsed.flags, i);
-        if (error != null) {
-          return _GrepEnginePlan.invalid(error);
-        }
-        maxCount = count;
-        i = next;
-        continue;
-      }
-      if (!token.startsWith('-') || token.startsWith('--')) {
-        continue; // long tokens and stray value tokens ride through
-      }
-      final letter = token.substring(1);
-      final unsupported = _unsupportedGrepLetter(letter);
-      if (unsupported != null) {
-        return _GrepEnginePlan.invalid(unsupported);
-      }
-      switch (letter) {
-        case 'o':
-          flags.add('o');
-        case 'a':
-          break; // text-only engine: operands are read as text anyway
-        default:
-          flags.add(letter);
-      }
+    final state = _GrepEnginePlanState();
+    if (parsed.quiet) state.flags.add('q');
+    final error = _grepEngineFlags(parsed, state);
+    if (error != null) {
+      return _GrepEnginePlan.invalid(error);
     }
-    if (flags.contains('v') && flags.contains('o')) {
+    if (state.flags.contains('v') && state.flags.contains('o')) {
       // GNU prints the non-matching segments with `-v -o`; the engine
       // can't honor that faithfully — a loud error, not a divergence.
       return _GrepEnginePlan.invalid(
         'grep: the sandbox grep engine does not support -v with -o\n',
       );
     }
-    return _GrepEnginePlan(flags, maxCount);
+    return _GrepEnginePlan(state.flags, state.maxCount);
   }
 
   /// The `-m` cap carried by the flag token at [i]: `-m5` attached, or
@@ -1863,29 +2010,97 @@ final class MemoryShell implements Shell, BackgroundShell {
     return out;
   }
 
+  /// The display name of the head/tail builtin.
+  static String _headTailName(bool head) => head ? 'head' : 'tail';
+
+  /// Updates the count when [text] parses (a malformed count word keeps
+  /// the current one, like GNU).
+  static void _applyHeadTailCount(_HeadTailArgsState args, String text) {
+    final parsed = int.tryParse(text);
+    if (parsed != null) args.count = parsed;
+  }
+
+  /// Applies the `-n` count word at [i] to [args] (attached `-nN`, or
+  /// detached `-n N`); returns the last token consumed, or null when
+  /// [argv[i]] is not an `-n` form. A bare trailing `-n` parses an empty
+  /// operand and keeps the count.
+  static int? _headTailApplyN(
+    _HeadTailArgsState args,
+    List<String> argv,
+    int i,
+  ) {
+    final arg = argv[i];
+    if (arg == '-n') {
+      if (i + 1 < argv.length) _applyHeadTailCount(args, argv[i + 1]);
+      return i + 1 < argv.length ? i + 1 : i;
+    }
+    if (arg.startsWith('-n')) {
+      _applyHeadTailCount(args, arg.substring(2));
+      return i;
+    }
+    return null;
+  }
+
+  /// Applies the `-N` (digit-run) count word [arg] to [args]; false when
+  /// [arg] is not one.
+  static bool _headTailApplyDigits(_HeadTailArgsState args, String arg) {
+    if (!RegExp(r'^-\d+$').hasMatch(arg)) return false;
+    args.count = int.parse(arg.substring(1));
+    return true;
+  }
+
+  /// Consumes one head/tail argv word at [i] into [args]; returns the
+  /// index of the last token consumed, or -1 on the unrecognized-option
+  /// error.
+  int _headTailConsume(_HeadTailArgsState args, List<String> argv, int i) {
+    final nUsed = _headTailApplyN(args, argv, i);
+    if (nUsed != null) return nUsed;
+    if (_headTailApplyDigits(args, argv[i])) return i;
+    final arg = argv[i];
+    if (arg.startsWith('-') && arg != '-') {
+      return -1;
+    }
+    args.paths.add(arg);
+    return i;
+  }
+
+  /// Drops the empty element a trailing newline produces when splitting.
+  static void _dropTrailingEmpty(List<String> lines) {
+    if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
+  }
+
+  /// The head/tail selection of [lines]: the first [count], or the last
+  /// [count] for tail (a count past the length keeps everything).
+  static List<String> _headTailLines(List<String> lines, int count, bool head) {
+    if (head) return lines.take(count).toList();
+    return lines.skip(lines.length > count ? lines.length - count : 0).toList();
+  }
+
+  /// Line-list output text: the joined lines plus their trailing newline;
+  /// empty stays empty.
+  static String _joinedLines(List<String> lines) {
+    final out = lines.join('\n');
+    return out.isEmpty ? '' : '$out\n';
+  }
+
   Future<_StageResult> _headTail(_Context ctx, {required bool head}) async {
-    final name = head ? 'head' : 'tail';
-    var count = 10;
-    final paths = <String>[];
+    final name = _headTailName(head);
+    final args = _HeadTailArgsState();
     for (var i = 0; i < ctx.args.length; i++) {
-      final arg = ctx.args[i];
-      if (arg == '-n' && i + 1 < ctx.args.length) {
-        count = int.tryParse(ctx.args[++i]) ?? count;
-      } else if (RegExp(r'^-\d+$').hasMatch(arg)) {
-        count = int.parse(arg.substring(1));
-      } else if (arg.startsWith('-n')) {
-        count = int.tryParse(arg.substring(2)) ?? count;
-      } else if (arg.startsWith('-') && arg != '-') {
-        return _error('$name: unrecognized option $arg\n', exitCode: 2);
-      } else {
-        paths.add(arg);
+      final used = _headTailConsume(args, ctx.args, i);
+      if (used < 0) {
+        return _error(
+          '$name: unrecognized option ${ctx.args[i]}\n',
+          exitCode: 2,
+        );
       }
+      i = used;
     }
     String? errorPath;
     final input = await readCommandInput(
       _fs,
       ctx.cwd,
-      paths,
+      args.paths,
       ctx.stdin,
       (path) => errorPath = path,
     );
@@ -1895,12 +2110,8 @@ final class MemoryShell implements Shell, BackgroundShell {
       );
     }
     final lines = input.split('\n');
-    if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
-    final selected = head
-        ? lines.take(count)
-        : lines.skip(lines.length > count ? lines.length - count : 0);
-    final out = selected.join('\n');
-    return _text(out.isEmpty ? '' : '$out\n');
+    _dropTrailingEmpty(lines);
+    return _text(_joinedLines(_headTailLines(lines, args.count, head)));
   }
 
   Future<_StageResult> _wc(_Context ctx) async {
@@ -1961,6 +2172,49 @@ final class MemoryShell implements Shell, BackgroundShell {
     return _text(out.toString());
   }
 
+  /// Numeric-aware comparator: unparseable words sort as 0.
+  static int _numericCompare(String a, String b) {
+    final na = num.tryParse(a.trim()) ?? 0;
+    final nb = num.tryParse(b.trim()) ?? 0;
+    return na.compareTo(nb);
+  }
+
+  /// Reverses [lines] in place.
+  static void _sortReverse(List<String> lines) {
+    final reversed = lines.reversed.toList();
+    lines
+      ..clear()
+      ..addAll(reversed);
+  }
+
+  /// Deduplicates [lines] in place, keeping first occurrences.
+  static void _sortUnique(List<String> lines) {
+    final seen = <String>{};
+    lines.retainWhere(seen.add);
+  }
+
+  /// Applies the -r/-u post-ordering: reversal then first-occurrence
+  /// deduplication, in place.
+  static void _sortPost(
+    List<String> lines, {
+    required bool reverse,
+    required bool unique,
+  }) {
+    if (reverse) _sortReverse(lines);
+    if (unique) _sortUnique(lines);
+  }
+
+  /// Sorts [lines] in place: numeric-aware under [numeric], then -r/-u.
+  static void _sortLines(
+    List<String> lines, {
+    required bool reverse,
+    required bool unique,
+    required bool numeric,
+  }) {
+    lines.sort(numeric ? _numericCompare : null);
+    _sortPost(lines, reverse: reverse, unique: unique);
+  }
+
   Future<_StageResult> _sort(_Context ctx) async {
     final split = splitArgs(ctx.args);
     final reverse = split.flags.any((f) => f.contains('r'));
@@ -1980,72 +2234,129 @@ final class MemoryShell implements Shell, BackgroundShell {
       );
     }
     final lines = input.split('\n');
-    if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
-    if (numeric) {
-      lines.sort((a, b) {
-        final na = num.tryParse(a.trim()) ?? 0;
-        final nb = num.tryParse(b.trim()) ?? 0;
-        return na.compareTo(nb);
-      });
+    _dropTrailingEmpty(lines);
+    _sortLines(lines, reverse: reverse, unique: unique, numeric: numeric);
+    return _text(_joinedLines(lines));
+  }
+
+  /// Consumes one tr argv word into [args]: `-d` toggles delete mode,
+  /// the first free word is SET1, the next SET2.
+  static void _trConsume(_TrArgsState args, String arg) {
+    if (arg == '-d') {
+      args.delete = true;
+    } else if (args.set1 == null) {
+      args.set1 = arg;
     } else {
-      lines.sort();
+      args.set2 ??= arg;
     }
-    if (reverse) {
-      final reversed = lines.reversed.toList();
-      lines
-        ..clear()
-        ..addAll(reversed);
+  }
+
+  /// Parses tr argv: `-d`, then the first free word as SET1 and the next
+  /// as SET2.
+  _TrArgsState _parseTrArgs(List<String> args) {
+    final parsed = _TrArgsState();
+    for (final arg in args) {
+      _trConsume(parsed, arg);
     }
-    if (unique) {
-      final seen = <String>{};
-      lines.retainWhere(seen.add);
+    return parsed;
+  }
+
+  /// The `tr` usage error for these operands, if any: SET1 is required,
+  /// and SET2 is required outside delete mode.
+  _StageResult? _trUsage(_TrArgsState args) {
+    if (args.set1 == null) {
+      return _error('tr: missing operand\n', exitCode: 2);
     }
-    final out = lines.join('\n');
-    return _text(out.isEmpty ? '' : '$out\n');
+    if (!args.delete && args.set2 == null) {
+      return _error('tr: missing operand after "${args.set1}"\n', exitCode: 2);
+    }
+    return null;
+  }
+
+  /// Deletes every character in [chars] from [input].
+  static String _trDelete(String input, Set<String> chars) =>
+      input.split('').where((c) => !chars.contains(c)).join();
+
+  /// The per-character translate map: SET1[i] → SET2[i], the last SET2
+  /// character covering any excess.
+  static Map<String, String> _trMap(List<String> set1, List<String> set2) {
+    final map = <String, String>{};
+    for (var i = 0; i < set1.length; i++) {
+      map[set1[i]] = i < set2.length ? set2[i] : set2.last;
+    }
+    return map;
+  }
+
+  /// Translates [input] through [map]; unmapped characters pass through.
+  static String _trTranslate(String input, Map<String, String> map) =>
+      input.split('').map((c) => map.containsKey(c) ? map[c]! : c).join();
+
+  /// The tr output for stdin [input]: SET2-less deletion or translation.
+  static String _trOutput(
+    String input,
+    List<String> set1,
+    List<String>? set2,
+    bool delete,
+  ) {
+    if (delete) {
+      return _trDelete(input, set1.toSet());
+    }
+    return _trTranslate(input, _trMap(set1, set2!));
   }
 
   _StageResult _tr(_Context ctx) {
-    var delete = false;
-    String? set1;
-    String? set2;
-    for (final arg in ctx.args) {
-      if (arg == '-d') {
-        delete = true;
-      } else if (set1 == null) {
-        set1 = arg;
-      } else {
-        set2 ??= arg;
-      }
-    }
+    final args = _parseTrArgs(ctx.args);
+    final usage = _trUsage(args);
+    if (usage != null) return usage;
+    final expanded1 = _expandTrSet(args.set1!);
+    final expanded2 = args.delete ? null : _expandTrSet(args.set2!);
+    return _text(_trOutput(ctx.stdin ?? '', expanded1, expanded2, args.delete));
+  }
 
-    if (set1 == null) {
-      return _error('tr: missing operand\n', exitCode: 2);
-    }
-    if (!delete && set2 == null) {
-      return _error('tr: missing operand after "$set1"\n', exitCode: 2);
-    }
+  /// POSIX `tr` character classes, in match order.
+  static const _trClasses = <String, String>{
+    '[:lower:]': 'abcdefghijklmnopqrstuvwxyz',
+    '[:upper:]': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    '[:digit:]': '0123456789',
+    '[:alnum:]':
+        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+    '[:space:]': ' \t\n\r\f\v',
+  };
 
-    final input = ctx.stdin ?? '';
-    final expanded1 = _expandTrSet(set1);
-    final expanded2 = delete ? null : _expandTrSet(set2!);
-
-    String output;
-    if (delete) {
-      final chars = expanded1.toSet();
-      output = input.split('').where((c) => !chars.contains(c)).join();
-    } else {
-      final map = <String, String>{};
-      for (var i = 0; i < expanded1.length; i++) {
-        map[expanded1[i]] = i < expanded2!.length
-            ? expanded2[i]
-            : expanded2.last;
-      }
-      output = input
-          .split('')
-          .map((c) => map.containsKey(c) ? map[c]! : c)
-          .join();
+  /// The characters of the POSIX class starting at [i], or null.
+  static String? _trClassAt(String set, int i) {
+    for (final entry in _trClasses.entries) {
+      if (set.startsWith(entry.key, i)) return entry.value;
     }
-    return _text(output);
+    return null;
+  }
+
+  /// Whether the `a-z` range form starts at [i].
+  static bool _trRangeStartsAt(String set, int i) =>
+      i + 2 < set.length && set[i + 1] == '-';
+
+  /// Expands the `a-z` range at [i] into [result]; returns the next index.
+  static int _trRangeAt(String set, int i, List<String> result) {
+    final start = set.codeUnitAt(i);
+    final end = set.codeUnitAt(i + 2);
+    for (var c = start; c <= end; c++) {
+      result.add(String.fromCharCode(c));
+    }
+    return i + 3;
+  }
+
+  /// Expands the class or range form at [i] into [result]; null when [i]
+  /// starts neither (the caller emits the literal character).
+  static int? _trExpandedAt(String set, int i, List<String> result) {
+    final chars = _trClassAt(set, i);
+    if (chars != null) {
+      result.addAll(chars.split(''));
+      return i + 9;
+    }
+    if (_trRangeStartsAt(set, i)) {
+      return _trRangeAt(set, i, result);
+    }
+    return null;
   }
 
   /// Expands POSIX character classes (`[:lower:]`) and ranges (`a-z`) used by
@@ -2054,45 +2365,13 @@ final class MemoryShell implements Shell, BackgroundShell {
     final result = <String>[];
     var i = 0;
     while (i < set.length) {
-      if (set.startsWith('[:lower:]', i)) {
-        result.addAll('abcdefghijklmnopqrstuvwxyz'.split(''));
-        i += 9;
-        continue;
+      final next = _trExpandedAt(set, i, result);
+      if (next != null) {
+        i = next;
+      } else {
+        result.add(set[i]);
+        i++;
       }
-      if (set.startsWith('[:upper:]', i)) {
-        result.addAll('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split(''));
-        i += 9;
-        continue;
-      }
-      if (set.startsWith('[:digit:]', i)) {
-        result.addAll('0123456789'.split(''));
-        i += 9;
-        continue;
-      }
-      if (set.startsWith('[:alnum:]', i)) {
-        result.addAll(
-          'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-              .split(''),
-        );
-        i += 9;
-        continue;
-      }
-      if (set.startsWith('[:space:]', i)) {
-        result.addAll(' \t\n\r\f\v'.split(''));
-        i += 9;
-        continue;
-      }
-      if (i + 2 < set.length && set[i + 1] == '-') {
-        final start = set.codeUnitAt(i);
-        final end = set.codeUnitAt(i + 2);
-        for (var c = start; c <= end; c++) {
-          result.add(String.fromCharCode(c));
-        }
-        i += 3;
-        continue;
-      }
-      result.add(set[i]);
-      i++;
     }
     return result;
   }
@@ -2223,6 +2502,12 @@ final class MemoryShell implements Shell, BackgroundShell {
 /// rework): the letter set for `compileGrepQuery`, the `-m` cap (null =
 /// unlimited), or an exit-2 message for a flag the engine has no faithful
 /// translation for — E2's "never silently divergent".
+final class _GrepEnginePlanState {
+  final flags = <String>{};
+  int? maxCount;
+  String? error;
+}
+
 final class _GrepEnginePlan {
   const _GrepEnginePlan(this.flags, this.maxCount) : error = null;
 
@@ -2235,6 +2520,21 @@ final class _GrepEnginePlan {
 
   /// Non-null when a forwarded flag cannot be honored (exit 2).
   final String? error;
+}
+
+/// `tr` argv operands (see `MemoryShell._tr`): the delete flag plus
+/// SET1/SET2.
+final class _TrArgsState {
+  var delete = false;
+  String? set1;
+  String? set2;
+}
+
+/// Head/tail argv parse state (see `MemoryShell._headTail`): the line
+/// count and operand paths.
+final class _HeadTailArgsState {
+  var count = 10;
+  final paths = <String>[];
 }
 
 /// Per-stage execution context passed to command implementations.

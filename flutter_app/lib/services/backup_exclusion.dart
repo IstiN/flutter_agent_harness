@@ -27,20 +27,20 @@ const MethodChannel _icloudChannel = MethodChannel('fah/icloud');
 @visibleForTesting
 Future<void> Function(String path)? excludePathFromBackupOverride;
 
-/// Marks the file or directory at [path] excluded from cloud backups.
-///
-/// A failure must never break boot — the exclusion is hardening, not a
-/// precondition — so every error path logs and moves on. The kIsWeb check
-/// comes FIRST: on the web `Platform.isIOS` throws at runtime
-/// (web_safety_guard_test), and the correct answer there is a no-op anyway.
-Future<void> excludePathFromBackup(String path) async {
-  final override = excludePathFromBackupOverride;
-  if (override != null) {
-    await override(path);
-    return;
-  }
-  if (kIsWeb) return;
-  if (!Platform.isIOS) return;
+/// Whether backup exclusion applies at all on this platform: iOS only.
+/// Android needs no call (its `app_flutter` documents dir already sits
+/// outside the default Auto Backup domains, per the #329 E4 audit). The
+/// kIsWeb check comes FIRST: on the web `Platform.isIOS` throws at
+/// runtime (web_safety_guard_test), and the correct answer there is a
+/// no-op anyway.
+bool _backupExclusionApplies() {
+  if (kIsWeb) return false;
+  return Platform.isIOS;
+}
+
+/// The native exclusion call; every error path logs and moves on — the
+/// exclusion is hardening, never a boot precondition.
+Future<void> _excludeViaIcloudChannel(String path) async {
   try {
     await _icloudChannel.invokeMethod<void>('excludeFromBackup', {
       'path': path,
@@ -50,4 +50,18 @@ Future<void> excludePathFromBackup(String path) async {
   } on PlatformException catch (e) {
     AppLog.i('sandbox', 'backup exclusion failed for $path: ${e.message}');
   }
+}
+
+/// Marks the file or directory at [path] excluded from cloud backups.
+///
+/// A failure must never break boot — the exclusion is hardening, not a
+/// precondition — so every error path logs and moves on.
+Future<void> excludePathFromBackup(String path) async {
+  final override = excludePathFromBackupOverride;
+  if (override != null) {
+    await override(path);
+    return;
+  }
+  if (!_backupExclusionApplies()) return;
+  await _excludeViaIcloudChannel(path);
 }

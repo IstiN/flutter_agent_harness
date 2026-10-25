@@ -218,21 +218,63 @@ extension AgentServiceSessions on AgentService {
     SessionMetadata metadata, {
     bool allowFullOpenFallback = true,
   }) async {
-    // Generation guard (issue #199 AC5/E3): every await below re-checks —
-    // a newer load owns the state and a stale loader abandons silently.
+    // Generation guard (issue #199 AC5/E3): every stage re-checks — a
+    // newer load owns the state and a stale loader abandons silently.
     final gen = ++_loadGeneration;
     abort();
     await waitForIdle();
-    if (gen != _loadGeneration) return;
-    // Phased open timing (issue #262 AC0): every phase below logs into
-    // the summary line at the end — the 36 s stall names its owner.
+    final opened = await _openSessionSkeleton(
+      metadata,
+      allowFullOpenFallback: allowFullOpenFallback,
+      gen: gen,
+    );
+    if (opened == null) return;
+    final (session, openSw) = opened;
+    final storageMs = openSw.elapsedMilliseconds;
+    final history = await _loadBranchAndContext(
+      session,
+      gen: gen,
+      storageMs: storageMs,
+      openSw: openSw,
+    );
+    if (history == null) return;
+    final (context, contextMessages, branchMs, contextMs) = history;
+    final ledgerMs = await _resumeLoadedSession(
+      metadata,
+      session,
+      context,
+      contextMessages,
+      gen,
+    );
+    if (ledgerMs == null) return;
+    if (!await _replayDynamicMessages(session, contextMessages, gen)) return;
+    // First interactive frame landed (composer + latest window): the
+    // summary line names every phase owner (issue #262 AC0).
+    AppLog.i(
+      'open',
+      '${metadata.id}: storage=${storageMs}ms branch=${branchMs}ms '
+          'context=${contextMs}ms ledger=${ledgerMs}ms total='
+          '${openSw.elapsedMilliseconds}ms '
+          '(${_viewBranch?.length ?? 0} records in view)',
+    );
+    // Background count of the records above the window (newline stream,
+    // no decode): fills in the banner count without blocking the load.
+    unawaited(_refreshHistoryAbove());
+  }
+
+  /// Stage 1 of [loadSession]: the post-idle generation check, the
+  /// skeleton render (issue #199 AC2 — the session shell renders BEFORE
+  /// the history parses, so the composer is live while the open runs),
+  /// and the windowed open. Returns null when a newer load superseded
+  /// this one; the master stopwatch starts here (issue #262 AC0 phase
+  /// timing).
+  Future<(Session, Stopwatch)?> _openSessionSkeleton(
+    SessionMetadata metadata, {
+    required bool allowFullOpenFallback,
+    required int gen,
+  }) async {
+    if (gen != _loadGeneration) return null;
     final openSw = Stopwatch()..start();
-    var storageMs = 0;
-    var branchMs = 0;
-    var contextMs = 0;
-    var ledgerMs = 0;
-    // Skeleton-first (issue #199 AC2): the session shell renders BEFORE
-    // the history parses, so the composer is live while the open runs.
     _sessionId = metadata.id;
     _sessionFile = metadata.path;
     _sessionCwd = metadata.cwd;
@@ -243,34 +285,58 @@ extension AgentServiceSessions on AgentService {
       metadata,
       allowFullOpenFallback: allowFullOpenFallback,
     );
-    if (gen != _loadGeneration) return;
-    storageMs = openSw.elapsedMilliseconds;
+    if (gen != _loadGeneration) return null;
+    return (session, openSw);
+  }
+
+  /// Stage 2 of [loadSession]: the branch read and the provider-context
+  /// build, re-anchored for resume parity (issue #1332 — loaded usage
+  /// anchors are generation-time and phantom-report pre-compaction
+  /// sizes; re-anchoring at chars/4 over the REAL projected context
+  /// lets the first live turn stamp fresh usage). Returns null when a
+  /// newer load superseded this one; phase timings ride the record
+  /// ([openSw] is the load's master stopwatch, issue #262 AC0).
+  Future<(SessionContext, List<Message>, int, int)?> _loadBranchAndContext(
+    Session session, {
+    required int gen,
+    required int storageMs,
+    required Stopwatch openSw,
+  }) async {
     // The count belongs to the session being opened; the background
-    // refresh at the end of this method fills it in.
+    // refresh at the end of the load fills it in.
     _historyAboveCount = null;
     _viewBranch = await session.getBranch();
-    if (gen != _loadGeneration) return;
-    branchMs = openSw.elapsedMilliseconds - storageMs;
+    if (gen != _loadGeneration) return null;
+    final branchMs = openSw.elapsedMilliseconds - storageMs;
     final context = await session.buildContext();
-    if (gen != _loadGeneration) return;
-    contextMs = openSw.elapsedMilliseconds - storageMs - branchMs;
-    if (gen != _loadGeneration) return;
-    // CLI resume parity (session_commands.dart): loaded usage anchors are
-    // generation-time — after a compaction they phantom-report the
-    // pre-compaction request size (issue #1332: a resumed session that fit
-    // its window read ~102% and force-compacted before any new turn).
-    // Re-anchor at chars/4 over the REAL projected context; the first live
-    // turn stamps fresh usage again.
+    if (gen != _loadGeneration) return null;
+    final contextMs = openSw.elapsedMilliseconds - storageMs - branchMs;
+    if (gen != _loadGeneration) return null;
     final contextMessages = resetLoadedUsageAnchors(context.messages);
     _agent.reset();
     _agent.state.messages = contextMessages;
-    // gh-1449 AC6: seed the one-shot orphan-report latch from the persisted
-    // `orphan_report` records — a resumed session never re-reports an
-    // orphan it already reported. Best-effort: a scan failure must not
-    // break the open.
+    return (context, contextMessages, branchMs, contextMs);
+  }
+
+  /// Stage 3 of [loadSession]: seed the orphan-report latch (gh-1449
+  /// AC6), take ownership (mailbox prefix, external-append watch),
+  /// rebuild the ledger, restore the session's own model and system
+  /// prompt. Returns the ledger phase time, or null when a newer load
+  /// superseded this one.
+  Future<int?> _resumeLoadedSession(
+    SessionMetadata metadata,
+    Session session,
+    SessionContext context,
+    List<Message> contextMessages,
+    int gen,
+  ) async {
+    // gh-1449 AC6: seed the one-shot orphan-report latch from the
+    // persisted `orphan_report` records — a resumed session never
+    // re-reports an orphan it already reported. Best-effort: a scan
+    // failure must not break the open.
     //
-    // lastSegmentOnly (gh-1449 rework): this rides the UI OPEN PATH, so it
-    // reads the primary segment only — orphan_report records are
+    // lastSegmentOnly (gh-1449 rework): this rides the UI OPEN PATH, so
+    // it reads the primary segment only — orphan_report records are
     // tail-appended during runs and the primary is rotation-bounded
     // (kSessionSegmentRotateBytes); a record already rotated into a
     // `.part-NN` segment may cost one re-report, the accepted trade
@@ -295,10 +361,10 @@ extension AgentServiceSessions on AgentService {
     // structure than the rebuilt message list).
     final ledgerSw = Stopwatch()..start();
     await _rebuildTrajectory(records: _viewBranch);
-    if (gen != _loadGeneration) return;
-    ledgerMs = ledgerSw.elapsedMilliseconds;
-    // Restore the session's own model: same wire kind → modelId override,
-    // never a hard failure (see [_restoreSessionModel]).
+    if (gen != _loadGeneration) return null;
+    final ledgerMs = ledgerSw.elapsedMilliseconds;
+    // Restore the session's own model: same wire kind → modelId
+    // override, never a hard failure (see [_restoreSessionModel]).
     _restoreSessionModel(context.model);
     // The prompt's messaging section carries the live mailbox address.
     final activeConfig = _config;
@@ -313,16 +379,26 @@ extension AgentServiceSessions on AgentService {
     _persistedCount = contextMessages.length;
     _currentAssistantMessage = null;
     error = null;
-    // Dynamic messages replay (issue #102): materialise the session's
-    // widget definitions and splice their transcript markers back into
-    // position — the branch walk counts message records, so each marker
-    // lands right after the reply that emitted it.
+    return ledgerMs;
+  }
+
+  /// Stage 4 of [loadSession]: dynamic messages replay (issue #102) —
+  /// materialise the session's widget definitions and splice their
+  /// transcript markers back into position (the branch walk counts
+  /// message records, so each marker lands right after the reply that
+  /// emitted it), then swap the transcript. Returns false when a newer
+  /// load superseded this one (the transcript swap must not land).
+  Future<bool> _replayDynamicMessages(
+    Session session,
+    List<Message> contextMessages,
+    int gen,
+  ) async {
     await dynamicMessages.forgetAll();
-    if (gen != _loadGeneration) return;
+    if (gen != _loadGeneration) return false;
     final widgetMarkers = await dynamicMessages.adoptBranch(
       await session.getBranch(),
     );
-    if (gen != _loadGeneration) return;
+    if (gen != _loadGeneration) return false;
     final rebuilt = contextMessages.map(_toChatMessage).toList();
     for (final (index, marker) in widgetMarkers) {
       final at = index > rebuilt.length ? rebuilt.length : index;
@@ -333,18 +409,7 @@ extension AgentServiceSessions on AgentService {
       ..clear()
       ..addAll(rebuilt);
     _notify();
-    // First interactive frame landed (composer + latest window): the
-    // summary line names every phase owner (issue #262 AC0).
-    AppLog.i(
-      'open',
-      '${metadata.id}: storage=${storageMs}ms branch=${branchMs}ms '
-          'context=${contextMs}ms ledger=${ledgerMs}ms total='
-          '${openSw.elapsedMilliseconds}ms '
-          '(${_viewBranch?.length ?? 0} records in view)',
-    );
-    // Background count of the records above the window (newline stream,
-    // no decode): fills in the banner count without blocking the load.
-    unawaited(_refreshHistoryAbove());
+    return true;
   }
 
   /// Windowed open (issue #135): header + newest chunk only; older
@@ -481,43 +546,86 @@ extension AgentServiceSessions on AgentService {
   Future<void> _reloadExternalMessages() async {
     final session = _session;
     if (session == null || isStreaming) return;
-    final gen = _loadGeneration;
+    await _reloadExternalTail(session, _loadGeneration);
+  }
+
+  /// The guarded tail reload ([_reloadExternalMessages] minus the idle
+  /// gate): windowed ingest or fresh re-open; a torn read (the CLI
+  /// mid-append) is ignored — the next poll retries.
+  Future<void> _reloadExternalTail(Session session, int gen) async {
     try {
       if (session.getStorage() case final WindowedSessionStorage windowed) {
-        final ingest = await windowed.ingestAppended();
-        if (gen != _loadGeneration) return;
-        if (ingest.reanchored) {
-          // Truncation/rotation: the view (and the provider context)
-          // reset to the new tail — stale anything is never kept.
-          _viewBranch = ingest.delta;
-          await _applyViewBranch();
-          if (gen != _loadGeneration) return;
-          final context = await session.buildContext();
-          if (gen != _loadGeneration) return;
-          // Same resume parity as [loadSession] (issue #1332): records
-          // reloaded off disk carry generation-time anchors that
-          // phantom-report a pre-compaction request size.
-          _agent.state.messages = resetLoadedUsageAnchors(context.messages);
-          _persistedCount = context.messages.length;
-        } else if (ingest.delta.isNotEmpty) {
-          _viewBranch?.addAll(ingest.delta);
-          await _applyViewBranch();
-          if (gen != _loadGeneration) return;
-          await _growProviderContext(session, ingest.delta);
-          if (gen != _loadGeneration) return;
-        }
-        unawaited(_refreshHistoryAbove());
+        await _ingestExternalWindowed(session, windowed, gen);
         return;
       }
-      final metadata = await session.getMetadata();
-      if (gen != _loadGeneration) return;
-      final fresh = await _repo.open(metadata);
-      if (gen != _loadGeneration) return;
-      _session = fresh;
-      await _reprojectLoadedWindow(fresh);
+      await _reopenExternalSession(session, gen);
     } on Object {
       // A torn read (the CLI mid-append): the next poll retries.
     }
+  }
+
+  /// The windowed external-append ingest: a truncation/rotation
+  /// re-anchors view AND provider context (stale anything is never
+  /// kept), a plain append joins the view and grows the context, and
+  /// the banner count refreshes in the background either way.
+  Future<void> _ingestExternalWindowed(
+    Session session,
+    WindowedSessionStorage windowed,
+    int gen,
+  ) async {
+    final ingest = await windowed.ingestAppended();
+    if (gen != _loadGeneration) return;
+    final ingested = ingest.reanchored
+        ? await _reanchorExternalWindow(session, ingest.delta, gen)
+        : ingest.delta.isEmpty ||
+              await _appendExternalDelta(session, ingest.delta, gen);
+    if (!ingested) return;
+    unawaited(_refreshHistoryAbove());
+  }
+
+  /// Truncation/rotation: the view (and the provider context) reset to
+  /// the new tail. Returns false when a newer load superseded this one.
+  Future<bool> _reanchorExternalWindow(
+    Session session,
+    List<SessionRecord> delta,
+    int gen,
+  ) async {
+    _viewBranch = delta;
+    await _applyViewBranch();
+    if (gen != _loadGeneration) return false;
+    final context = await session.buildContext();
+    if (gen != _loadGeneration) return false;
+    // Same resume parity as [loadSession] (issue #1332): records
+    // reloaded off disk carry generation-time anchors that
+    // phantom-report a pre-compaction request size.
+    _agent.state.messages = resetLoadedUsageAnchors(context.messages);
+    _persistedCount = context.messages.length;
+    return true;
+  }
+
+  /// Plain append: the delta joins the view and grows the provider
+  /// context. Returns false when a newer load superseded this one.
+  Future<bool> _appendExternalDelta(
+    Session session,
+    List<SessionRecord> delta,
+    int gen,
+  ) async {
+    _viewBranch?.addAll(delta);
+    await _applyViewBranch();
+    if (gen != _loadGeneration) return false;
+    await _growProviderContext(session, delta);
+    return gen == _loadGeneration;
+  }
+
+  /// Full-open external reload: a fresh open (cheap: header + tree
+  /// index) and a full reprojection.
+  Future<void> _reopenExternalSession(Session session, int gen) async {
+    final metadata = await session.getMetadata();
+    if (gen != _loadGeneration) return;
+    final fresh = await _repo.open(metadata);
+    if (gen != _loadGeneration) return;
+    _session = fresh;
+    await _reprojectLoadedWindow(fresh);
   }
 
   /// Grows the provider context append-only by the ingested delta

@@ -64,36 +64,97 @@ List<TilePlacement> packTileSpans({
   var cursorRow = 0;
   var cursorCol = 0;
   for (final span in spans) {
-    final w = span.w.clamp(1, crossAxisCount);
-    final h = span.h < 1 ? 1 : span.h;
-    while (true) {
-      while (rows.length < cursorRow + h) {
-        rows.add(List<bool>.filled(crossAxisCount, false));
-      }
-      var fits = cursorCol + w <= crossAxisCount;
-      for (var dr = 0; dr < h && fits; dr++) {
-        for (var dc = 0; dc < w && fits; dc++) {
-          if (rows[cursorRow + dr][cursorCol + dc]) fits = false;
-        }
-      }
-      if (fits) {
-        for (var dr = 0; dr < h; dr++) {
-          for (var dc = 0; dc < w; dc++) {
-            rows[cursorRow + dr][cursorCol + dc] = true;
-          }
-        }
-        placements.add((row: cursorRow, col: cursorCol));
-        cursorCol += w;
-        break;
-      }
-      // Advance along the row; wrap when the span no longer fits.
-      if (++cursorCol + w > crossAxisCount) {
-        cursorRow++;
-        cursorCol = 0;
-      }
-    }
+    (cursorRow, cursorCol) = _packSpan(
+      rows,
+      placements,
+      crossAxisCount: crossAxisCount,
+      span: span,
+      cursorRow: cursorRow,
+      cursorCol: cursorCol,
+    );
   }
   return placements;
+}
+
+/// Places ONE span at the first free WxH block at or after the cursor
+/// (scanning the current row left-to-right, then wrapping), marks it
+/// occupied, records the placement, and returns the advanced cursor.
+(int, int) _packSpan(
+  List<List<bool>> rows,
+  List<TilePlacement> placements, {
+  required int crossAxisCount,
+  required TileSpan span,
+  required int cursorRow,
+  required int cursorCol,
+}) {
+  final w = span.w.clamp(1, crossAxisCount);
+  final h = span.h < 1 ? 1 : span.h;
+  while (true) {
+    _growRows(rows, crossAxisCount: crossAxisCount, rowsNeeded: cursorRow + h);
+    if (_spanFits(
+      rows,
+      crossAxisCount: crossAxisCount,
+      row: cursorRow,
+      col: cursorCol,
+      w: w,
+      h: h,
+    )) {
+      _markSpan(rows, row: cursorRow, col: cursorCol, w: w, h: h);
+      placements.add((row: cursorRow, col: cursorCol));
+      return (cursorRow, cursorCol + w);
+    }
+    // Advance along the row; wrap when the span no longer fits.
+    if (++cursorCol + w > crossAxisCount) {
+      cursorRow++;
+      cursorCol = 0;
+    }
+  }
+}
+
+void _growRows(
+  List<List<bool>> rows, {
+  required int crossAxisCount,
+  required int rowsNeeded,
+}) {
+  while (rows.length < rowsNeeded) {
+    rows.add(List<bool>.filled(crossAxisCount, false));
+  }
+}
+
+bool _spanFits(
+  List<List<bool>> rows, {
+  required int crossAxisCount,
+  required int row,
+  required int col,
+  required int w,
+  required int h,
+}) {
+  if (col + w > crossAxisCount) return false;
+  for (var dr = 0; dr < h; dr++) {
+    if (_rowSegmentOccupied(rows[row + dr], col: col, w: w)) return false;
+  }
+  return true;
+}
+
+bool _rowSegmentOccupied(List<bool> row, {required int col, required int w}) {
+  for (var dc = 0; dc < w; dc++) {
+    if (row[col + dc]) return true;
+  }
+  return false;
+}
+
+void _markSpan(
+  List<List<bool>> rows, {
+  required int row,
+  required int col,
+  required int w,
+  required int h,
+}) {
+  for (var dr = 0; dr < h; dr++) {
+    for (var dc = 0; dc < w; dc++) {
+      rows[row + dr][col + dc] = true;
+    }
+  }
 }
 
 /// The pixel rect (top-left + extent) of one placed tile.

@@ -354,45 +354,51 @@ class _GithubConnectSheetState extends State<GithubConnectSheet>
 
   Future<void> _connectWithToken() async {
     final token = _tokenController.text.trim();
-    if (token.isEmpty || _busy) return;
+    if (!_tokenConnectAllowed(token)) return;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      final client =
-          widget.clientFactory?.call(token) ?? GithubApiClient(token: token);
-      final (user, scopes) = await client.getUserAndScopes();
-      if (_cancelled) return;
-      if (!GithubApiClient.tokenCanCreateRepos(scopes)) {
-        if (mounted) {
-          setState(() {
-            _busy = false;
-            _error = context.l10n.githubTokenNoRepoScope;
-          });
-        }
-        return;
-      }
-      await widget.account.connect(
-        token: token,
-        login: user.login,
-        avatarUrl: user.avatarUrl,
-      );
-      if (mounted) Navigator.of(context).pop(true);
+      await _connectTokenFlow(token);
     } on GithubApiException catch (error) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = error.message;
-        });
-      }
+      _tokenConnectFailed(() => error.message);
     } on Object catch (error) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = error.toString();
-        });
-      }
+      _tokenConnectFailed(() => error.toString());
+    }
+  }
+
+  bool _tokenConnectAllowed(String token) => token.isNotEmpty && !_busy;
+
+  GithubApiClient _tokenClient(String token) =>
+      widget.clientFactory?.call(token) ?? GithubApiClient(token: token);
+
+  Future<void> _connectTokenFlow(String token) async {
+    final client = _tokenClient(token);
+    final (user, scopes) = await client.getUserAndScopes();
+    if (_cancelled) return;
+    if (!GithubApiClient.tokenCanCreateRepos(scopes)) {
+      _tokenConnectFailed(() => context.l10n.githubTokenNoRepoScope);
+      return;
+    }
+    await widget.account.connect(
+      token: token,
+      login: user.login,
+      avatarUrl: user.avatarUrl,
+    );
+    if (mounted) Navigator.of(context).pop(true);
+  }
+
+  /// Drops the sheet back into idle with [message] as the error — the
+  /// shared shape of the PAT flow's failure paths. The message closure is
+  /// only invoked under the [mounted] guard (l10n lookups on a dead
+  /// context throw).
+  void _tokenConnectFailed(String Function() message) {
+    if (mounted) {
+      setState(() {
+        _busy = false;
+        _error = message();
+      });
     }
   }
 
@@ -406,55 +412,69 @@ class _GithubConnectSheetState extends State<GithubConnectSheet>
       _deviceStatus = null;
     });
     try {
-      final grant = await requestCopilotDeviceGrant(
-        clientId: _deviceClientId!,
-        scope: 'public_repo',
-        client: widget.httpClient,
-      );
-      if (_cancelled) return;
-      setState(() => _grant = grant);
-      // Issue #229: NO automatic browser launch here — copy-first UX:
-      // the code is prominent, the copy button and the manual open
-      // button (below) stay the explicit actions. An unconsented launch
-      // also backgrounds the app, which used to kill the poll.
-      final token = await pollCopilotDeviceGrant(
-        grant: grant,
-        clientId: _deviceClientId!,
-        delay: _devicePollDelay,
-        onStatus: (status) {
-          if (_cancelled || !mounted) return;
-          setState(() => _deviceStatus = status);
-        },
-        client: widget.httpClient,
-      );
-      if (_cancelled) return;
-      await _finishConnect(token);
+      await _runDeviceFlow();
     } on CopilotDeviceFlowError catch (error) {
-      if (_cancelled || !mounted) return;
-      if (error.kind == CopilotDeviceFlowErrorKind.endpointDisabled) {
-        // The OAuth App is not registered (or its device flow is off):
-        // fall back to the PAT tab, carrying the explanation.
-        setState(() {
-          _tab = _ConnectTab.token;
-          _busy = false;
-          _error = error.message;
-          _deviceStatus = null;
-        });
-      } else {
-        setState(() {
-          _busy = false;
-          _error = error.message;
-          _deviceStatus = null;
-        });
-      }
+      _deviceFlowFailed(error);
     } on Object catch (error) {
-      if (_cancelled || !mounted) return;
+      _deviceFlowFailedGeneric(error);
+    }
+  }
+
+  Future<void> _runDeviceFlow() async {
+    final grant = await requestCopilotDeviceGrant(
+      clientId: _deviceClientId!,
+      scope: 'public_repo',
+      client: widget.httpClient,
+    );
+    if (_cancelled) return;
+    setState(() => _grant = grant);
+    // Issue #229: NO automatic browser launch here — copy-first UX:
+    // the code is prominent, the copy button and the manual open
+    // button (below) stay the explicit actions. An unconsented launch
+    // also backgrounds the app, which used to kill the poll.
+    final token = await pollCopilotDeviceGrant(
+      grant: grant,
+      clientId: _deviceClientId!,
+      delay: _devicePollDelay,
+      onStatus: _onDeviceStatus,
+      client: widget.httpClient,
+    );
+    if (_cancelled) return;
+    await _finishConnect(token);
+  }
+
+  void _onDeviceStatus(String status) {
+    if (_cancelled || !mounted) return;
+    setState(() => _deviceStatus = status);
+  }
+
+  void _deviceFlowFailed(CopilotDeviceFlowError error) {
+    if (_cancelled || !mounted) return;
+    if (error.kind == CopilotDeviceFlowErrorKind.endpointDisabled) {
+      // The OAuth App is not registered (or its device flow is off):
+      // fall back to the PAT tab, carrying the explanation.
+      setState(() {
+        _tab = _ConnectTab.token;
+        _busy = false;
+        _error = error.message;
+        _deviceStatus = null;
+      });
+    } else {
       setState(() {
         _busy = false;
-        _error = error.toString();
+        _error = error.message;
         _deviceStatus = null;
       });
     }
+  }
+
+  void _deviceFlowFailedGeneric(Object error) {
+    if (_cancelled || !mounted) return;
+    setState(() {
+      _busy = false;
+      _error = error.toString();
+      _deviceStatus = null;
+    });
   }
 
   void _switchTab(_ConnectTab tab) {

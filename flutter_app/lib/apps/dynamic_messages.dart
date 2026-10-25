@@ -623,34 +623,43 @@ class DynamicMessagesService extends ChangeNotifier {
     _pendingMarkers.clear();
     _presentedThisRun.clear();
 
-    final hadState =
-        widgets.isNotEmpty || _engines.isNotEmpty || _bootErrors.isNotEmpty;
-    if (!hadState) {
+    if (!_hasLiveWidgetState) {
       _bootFailed.clear();
       return;
     }
     widgets.clear();
-    for (final timer in _noUiTimers.values) {
-      timer.cancel();
-    }
-    _noUiTimers.clear();
+    _cancelNoUiTimers();
     final engines = List.of(_engines.values);
     _engines.clear();
     _bootFailed.clear();
     _bootErrors.clear();
+    await _disposeEngines(engines);
+    notifyListeners();
+  }
+
+  /// Whether any widget/engine/boot state is live (see [forgetAll]).
+  bool get _hasLiveWidgetState =>
+      widgets.isNotEmpty || _engines.isNotEmpty || _bootErrors.isNotEmpty;
+
+  /// Cancels the no-UI widgets' timers and drops them (shared by
+  /// [forgetAll] and [dispose]).
+  void _cancelNoUiTimers() {
+    for (final timer in _noUiTimers.values) {
+      timer.cancel();
+    }
+    _noUiTimers.clear();
+  }
+
+  Future<void> _disposeEngines(List<JsAppEngine> engines) async {
     for (final engine in engines) {
       await engine.dispose();
     }
-    notifyListeners();
   }
 
   @override
   void dispose() {
     _disposed = true;
-    for (final timer in _noUiTimers.values) {
-      timer.cancel();
-    }
-    _noUiTimers.clear();
+    _cancelNoUiTimers();
     for (final engine in _engines.values) {
       engine.dispose();
     }

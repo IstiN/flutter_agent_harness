@@ -30,37 +30,66 @@ typedef SqliteArgs = ({
 });
 
 SqliteArgs parseSqliteArgs(List<String> args, {required String? stdin}) {
-  if (args.contains('--version') || args.contains('-version')) {
+  if (_sqliteWantsVersion(args)) {
     return (wantVersion: true, dbPath: null, sql: '', error: null);
   }
+  final (positionals, error) = _sqlitePositionals(args);
+  if (error != null) {
+    return (wantVersion: false, dbPath: null, sql: '', error: error);
+  }
+  final dbPath = positionals.isNotEmpty ? positionals[0] : null;
+  final sql = _sqliteSql(positionals, stdin);
+  return (wantVersion: false, dbPath: dbPath, sql: sql, error: null);
+}
 
+/// Whether the invocation asks for the sqlite3 version banner.
+bool _sqliteWantsVersion(List<String> args) =>
+    args.contains('--version') || args.contains('-version');
+
+/// Whether [arg] is `-cmd` with its value operand available (accepted and
+/// skipped, value and all).
+bool _isSqliteCmdFlag(List<String> args, int i, String arg) =>
+    arg == '-cmd' && i + 1 < args.length;
+
+/// Whether [arg] is an accepted output-mode no-op flag.
+bool _isSqliteModeFlag(String arg) =>
+    arg == '-csv' || arg == '-list' || arg == '-readonly';
+
+/// The unsupported-option error for a `-`-prefixed operand, or null.
+({String message, int exitCode})? _sqliteOptionError(String arg) {
+  if (arg.startsWith('-') && arg != '-') {
+    return (message: 'sqlite3: unsupported option $arg\n', exitCode: 1);
+  }
+  return null;
+}
+
+/// Walks [args] collecting positional operands, skipping the accepted
+/// no-op flags (`-cmd value` consumes two slots); scanning stops at the
+/// first unsupported option.
+(List<String>, ({String message, int exitCode})?) _sqlitePositionals(
+  List<String> args,
+) {
   final positionals = <String>[];
   for (var i = 0; i < args.length; i++) {
     final arg = args[i];
-    if (arg == '-cmd' && i + 1 < args.length) {
+    if (_isSqliteCmdFlag(args, i, arg)) {
       // Accepted for parity with the WASM sqlite3; init commands are not
       // needed because the full SQL arrives as one argument or via stdin.
       i++;
-    } else if (arg == '-csv' || arg == '-list' || arg == '-readonly') {
+    } else if (_isSqliteModeFlag(arg)) {
       // Output stays in the default `|`-separated list mode.
-    } else if (arg.startsWith('-') && arg != '-') {
-      return (
-        wantVersion: false,
-        dbPath: null,
-        sql: '',
-        error: (message: 'sqlite3: unsupported option $arg\n', exitCode: 1),
-      );
     } else {
+      final error = _sqliteOptionError(arg);
+      if (error != null) return (positionals, error);
       positionals.add(arg);
     }
   }
-
-  final dbPath = positionals.isNotEmpty ? positionals[0] : null;
-  final sql = positionals.length > 1
-      ? positionals.sublist(1).join(' ')
-      : (stdin ?? '');
-  return (wantVersion: false, dbPath: dbPath, sql: sql, error: null);
+  return (positionals, null);
 }
+
+/// The SQL script: trailing operands joined, else the piped stdin.
+String _sqliteSql(List<String> positionals, String? stdin) =>
+    positionals.length > 1 ? positionals.sublist(1).join(' ') : (stdin ?? '');
 
 /// Reads the database file the invocation names (`:memory:` names no file).
 Future<Uint8List?> _readSqliteDb(

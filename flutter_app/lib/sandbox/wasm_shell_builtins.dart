@@ -831,35 +831,76 @@ final class CatInvocation {
   final String? error;
 }
 
-/// Pure `cat` argument parser. See [CatInvocation].
-CatInvocation parseCatArgs(List<String> args) {
+/// Mutable parse state threaded through [parseCatArgs]'s per-argument
+/// helpers.
+final class _CatParseState {
   var number = false;
   var numberNonBlank = false;
   final files = <String>[];
   var noMoreFlags = false;
-  for (final arg in args) {
-    if (!noMoreFlags && arg == '--') {
-      noMoreFlags = true;
-    } else if (!noMoreFlags && arg.startsWith('-') && arg != '-' && arg != '') {
-      if (arg == '-n' || arg == '--number') {
-        number = true;
-      } else if (arg == '-b' || arg == '--number-nonblank') {
-        numberNonBlank = true;
-      } else {
-        final short = arg.startsWith('--') ? arg : arg.substring(0, 2);
-        return CatInvocation(
-          error: "invalid option -- '${short.replaceAll('-', '')}'",
-        );
-      }
-    } else {
-      files.add(arg);
-    }
-  }
-  return CatInvocation(
+
+  CatInvocation toInvocation() => CatInvocation(
     number: number,
     numberNonBlank: numberNonBlank,
     files: files,
   );
+}
+
+/// Pure `cat` argument parser. See [CatInvocation].
+CatInvocation parseCatArgs(List<String> args) {
+  final s = _CatParseState();
+  for (final arg in args) {
+    final error = _applyCatArg(s, arg);
+    if (error != null) return CatInvocation(error: error);
+  }
+  return s.toInvocation();
+}
+
+/// Applies one `cat` argument to [s]; returns the invalid-option error
+/// message for an unknown flag, or null when handled.
+String? _applyCatArg(_CatParseState s, String arg) {
+  if (s.noMoreFlags) return _catOperand(s, arg);
+  if (arg == '--') {
+    s.noMoreFlags = true;
+    return null;
+  }
+  return _applyCatFlagOrOperand(s, arg);
+}
+
+/// Routes a not-yet-`--` argument: `-`-prefixed operands go to the flag
+/// handler, everything else (including bare `-` and the empty string) is
+/// an operand file.
+String? _applyCatFlagOrOperand(_CatParseState s, String arg) {
+  if (!arg.startsWith('-') || arg == '-' || arg.isEmpty) {
+    return _catOperand(s, arg);
+  }
+  return _applyCatFlag(s, arg);
+}
+
+/// Applies `-n`/`-b`; unknown flags yield the GNU `invalid option` error.
+String? _applyCatFlag(_CatParseState s, String arg) {
+  if (arg == '-n' || arg == '--number') {
+    s.number = true;
+    return null;
+  }
+  if (arg == '-b' || arg == '--number-nonblank') {
+    s.numberNonBlank = true;
+    return null;
+  }
+  return _catUnknownOption(arg);
+}
+
+/// The option name GNU cat reports for an unknown flag (the `-x` short
+/// form, or the long form with its dashes stripped).
+String _catUnknownOption(String arg) {
+  final short = arg.startsWith('--') ? arg : arg.substring(0, 2);
+  return "invalid option -- '${short.replaceAll('-', '')}'";
+}
+
+/// Records an operand file (`-` means stdin).
+String? _catOperand(_CatParseState s, String arg) {
+  s.files.add(arg);
+  return null;
 }
 
 /// Applies `-n`/`-b` numbering to [input] the way GNU cat renders it:

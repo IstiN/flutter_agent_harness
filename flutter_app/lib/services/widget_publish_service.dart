@@ -572,115 +572,189 @@ class WidgetPublishService {
     final token = _account.token!;
     final client = _clientFactory(token);
     final login = _account.login ?? (await client.getUser()).login;
+    final (owner, name, repoCommit) = await _ensureWidgetRepo(
+      app: app,
+      login: login,
+      client: client,
+      repoName: repoName,
+      existing: existing,
+    );
+    return _openCatalogPr(
+      app: app,
+      login: login,
+      client: client,
+      owner: owner,
+      name: name,
+      repoCommit: repoCommit,
+    );
+  }
 
-    final String owner;
-    final String name;
-    final String repoCommit;
-
+  /// The repo step: resolve owner/name (E7 kill-resume reuses the
+  /// recorded repo + commit and continues at the PR step), create or
+  /// validate the repo (E3 provenance guard), snapshot-commit the
+  /// widget sources, and record `stepRepoPushed` BEFORE the PR work so
+  /// an app kill resumes there instead of duplicating the push.
+  Future<(String, String, String)> _ensureWidgetRepo({
+    required JsAppInfo app,
+    required String login,
+    required GithubApiClient client,
+    String? repoName,
+    WidgetPublication? existing,
+  }) async {
+    // E7 kill-resume: sources were already pushed before the app died —
+    // reuse the recorded repo + commit and continue at the PR step.
+    final recorded = existing?.repoFullName;
     if (existing != null &&
         existing.step == WidgetPublication.stepRepoPushed &&
-        existing.repoFullName.contains('/')) {
-      // E7 kill-resume: sources were already pushed before the app died —
-      // reuse the recorded repo + commit and continue at the PR step.
-      final parts = existing.repoFullName.split('/');
-      owner = parts.first;
-      name = parts.last;
-      repoCommit = existing.repoCommit;
-    } else {
-      // Repo step: reuse the ledger-recorded repo when re-publishing. An
-      // optimistic record with an EMPTY repoFullName (a failed first
-      // attempt that never reached the repo step) is not a recorded repo —
-      // recompute, so a retry after a failure is never `GET /repos//`.
-      if (existing != null && existing.repoFullName.contains('/')) {
-        final parts = existing.repoFullName.split('/');
-        owner = parts.first;
-        name = parts.last;
-      } else {
-        owner = login;
-        name = sanitizeRepoName(repoName ?? 'fa-widget-${app.id}');
-      }
+        recorded != null &&
+        recorded.contains('/')) {
+      final parts = recorded.split('/');
+      return (parts.first, parts.last, existing.repoCommit);
+    }
+    final (owner, name) = _publishRepoTarget(app, login, repoName, existing);
+    final repoCommit = await _pushWidgetRepo(
+      app,
+      login,
+      client,
+      owner,
+      name,
+      existing,
+    );
+    return (owner, name, repoCommit);
+  }
 
-      final repo = await client.getRepo(owner, name);
-      if (repo == null) {
-        await client.createRepo(name: name, description: _repoDescription(app));
-      } else if (repo.isPrivate) {
-        throw StateError(
-          'Repository $owner/$name is private — make it public; the '
-          'catalog clones widget repos anonymously.',
-        );
-      }
-      final headSha = await client.getHeadSha(owner, name, 'main');
-      if (repo != null) {
-        // E3: never push into a foreign repo. Provenance holds when the
-        // repo is the ledger-recorded one, carries our description marker,
-        // or is still empty.
-        final ledgerRecorded =
-            existing != null && existing.repoFullName == '$owner/$name';
-        final hasMarker =
-            repo.description?.contains(_provenanceMarker(app.id)) ?? false;
-        if (!ledgerRecorded && !hasMarker && headSha != null) {
-          throw StateError(
-            'Repository $owner/$name already exists and is not a Fa widget '
-            'repo for "${app.id}" — pick a different repo name instead of '
-            'pushing into a foreign repository.',
-          );
-        }
-      }
+  /// The owner/name to publish into: the ledger-recorded repo when
+  /// re-publishing. An optimistic record with an EMPTY repoFullName (a
+  /// failed first attempt that never reached the repo step) is not a
+  /// recorded repo — recompute, so a retry after a failure is never
+  /// `GET /repos//`.
+  (String, String) _publishRepoTarget(
+    JsAppInfo app,
+    String login,
+    String? repoName,
+    WidgetPublication? existing,
+  ) {
+    final recorded = existing?.repoFullName;
+    if (recorded != null && recorded.contains('/')) {
+      final parts = recorded.split('/');
+      return (parts.first, parts.last);
+    }
+    return (login, sanitizeRepoName(repoName ?? 'fa-widget-${app.id}'));
+  }
 
-      // The git data API (blobs/trees/commits) answers 409 "Git
-      // Repository is empty." on a repo with zero commits — bootstrap it
-      // with a Contents-API commit first (the only write endpoint that
-      // works there); it also creates refs/heads/main for the follow-up
-      // updateRef.
-      var parentSha = headSha;
-      parentSha ??= await client.putFile(
-        owner,
-        name,
-        'README.md',
-        message: 'Initialize Fa widget repo',
-        content: _repoReadme(app),
-      );
-
-      // Commit the widget sources (flat repo root = widget root). The
-      // tree is a FULL SNAPSHOT (no base_tree): the repo root must be
-      // exactly the widget sources + README — carrying a base over would
-      // keep any earlier garbage alive forever.
-      final files = await _collectWidgetFiles(app);
-      final readmeBlob = await client.createBlob(owner, name, _repoReadme(app));
-      final entries = <GithubTreeEntry>[
-        GithubTreeEntry.file('README.md', readmeBlob),
-        for (final path in (files.keys.toList()..sort()))
-          GithubTreeEntry.file(
-            path,
-            await client.createBlob(owner, name, files[path]!),
-          ),
-      ];
-      final treeSha = await client.createTree(owner, name, entries);
-      repoCommit = await client.createCommit(
-        owner,
-        name,
-        treeSha: treeSha,
-        message: 'Publish ${app.id} ${app.version}',
-        parentSha: parentSha,
-      );
-      await client.updateRef(owner, name, 'main', repoCommit);
-      // E7: record the reached step BEFORE the PR work so an app kill
-      // resumes here instead of duplicating the push.
-      await _ledger.record(
-        WidgetPublication(
-          widgetId: app.id,
-          version: app.version,
-          repoFullName: '$owner/$name',
-          repoCommit: repoCommit,
-          step: WidgetPublication.stepRepoPushed,
-          submittedAt: _clock().toUtc(),
-          prNumber: existing?.prNumber,
-          prHtmlUrl: existing?.prHtmlUrl,
-        ),
+  /// Creates the repo when missing, refuses private ones (the catalog
+  /// clones widget repos anonymously), and snapshot-commits the widget
+  /// sources onto `main`. Answers the pushed commit sha.
+  Future<String> _pushWidgetRepo(
+    JsAppInfo app,
+    String login,
+    GithubApiClient client,
+    String owner,
+    String name,
+    WidgetPublication? existing,
+  ) async {
+    final repo = await client.getRepo(owner, name);
+    if (repo == null) {
+      await client.createRepo(name: name, description: _repoDescription(app));
+    } else if (repo.isPrivate) {
+      throw StateError(
+        'Repository $owner/$name is private — make it public; the '
+        'catalog clones widget repos anonymously.',
       );
     }
+    final headSha = await client.getHeadSha(owner, name, 'main');
+    if (repo != null) {
+      _checkRepoProvenance(app, repo, owner, name, headSha, existing);
+    }
 
-    // PR step: fork → branch + overlay (source pin only) → open/reuse the PR.
+    // The git data API (blobs/trees/commits) answers 409 "Git
+    // Repository is empty." on a repo with zero commits — bootstrap it
+    // with a Contents-API commit first (the only write endpoint that
+    // works there); it also creates refs/heads/main for the follow-up
+    // updateRef.
+    var parentSha = headSha;
+    parentSha ??= await client.putFile(
+      owner,
+      name,
+      'README.md',
+      message: 'Initialize Fa widget repo',
+      content: _repoReadme(app),
+    );
+
+    // Commit the widget sources (flat repo root = widget root). The
+    // tree is a FULL SNAPSHOT (no base_tree): the repo root must be
+    // exactly the widget sources + README — carrying a base over would
+    // keep any earlier garbage alive forever.
+    final files = await _collectWidgetFiles(app);
+    final readmeBlob = await client.createBlob(owner, name, _repoReadme(app));
+    final entries = <GithubTreeEntry>[
+      GithubTreeEntry.file('README.md', readmeBlob),
+      for (final path in (files.keys.toList()..sort()))
+        GithubTreeEntry.file(
+          path,
+          await client.createBlob(owner, name, files[path]!),
+        ),
+    ];
+    final treeSha = await client.createTree(owner, name, entries);
+    final repoCommit = await client.createCommit(
+      owner,
+      name,
+      treeSha: treeSha,
+      message: 'Publish ${app.id} ${app.version}',
+      parentSha: parentSha,
+    );
+    await client.updateRef(owner, name, 'main', repoCommit);
+    // E7: record the reached step BEFORE the PR work so an app kill
+    // resumes here instead of duplicating the push.
+    await _ledger.record(
+      WidgetPublication(
+        widgetId: app.id,
+        version: app.version,
+        repoFullName: '$owner/$name',
+        repoCommit: repoCommit,
+        step: WidgetPublication.stepRepoPushed,
+        submittedAt: _clock().toUtc(),
+        prNumber: existing?.prNumber,
+        prHtmlUrl: existing?.prHtmlUrl,
+      ),
+    );
+    return repoCommit;
+  }
+
+  /// E3: never push into a foreign repo. Provenance holds when the repo
+  /// is the ledger-recorded one, carries our description marker, or is
+  /// still empty.
+  void _checkRepoProvenance(
+    JsAppInfo app,
+    GithubRepo repo,
+    String owner,
+    String name,
+    String? headSha,
+    WidgetPublication? existing,
+  ) {
+    final ledgerRecorded =
+        existing != null && existing.repoFullName == '$owner/$name';
+    final hasMarker =
+        repo.description?.contains(_provenanceMarker(app.id)) ?? false;
+    if (!ledgerRecorded && !hasMarker && headSha != null) {
+      throw StateError(
+        'Repository $owner/$name already exists and is not a Fa widget '
+        'repo for "${app.id}" — pick a different repo name instead of '
+        'pushing into a foreign repository.',
+      );
+    }
+  }
+
+  /// The PR step: fork → branch + overlay (source pin only) → open or
+  /// reuse the catalog PR, then record `stepPrOpened`.
+  Future<WidgetPublishResult> _openCatalogPr({
+    required JsAppInfo app,
+    required String login,
+    required GithubApiClient client,
+    required String owner,
+    required String name,
+    required String repoCommit,
+  }) async {
     final fork = await client.ensureFork(
       owner: GithubApiClient.catalogOwner,
       repo: GithubApiClient.catalogRepo,

@@ -121,8 +121,10 @@ crap:
   # ≤CC7 pieces; the CI-0% CC4 family into ≤CC3 pieces so CRAP ≤ 12 at
   # 0% cov — the engine suite skips on ubuntu, so coverage can never land
   # there) or, for the four remaining >18 outliers, the same split. The
-  # threshold follows the tier line 24.0 → 18.0. Only down.
-  threshold: 18.0
+  # threshold follows the tier line 24.0 → 18.0 → 12.0 (tier 4 swept the
+  # whole 12-18 band: 105 methods, pieces ≤CC5 at ≥85% cov, ≤CC4 at
+  # 50-84%, ≤CC3 below). Only down.
+  threshold: 12.0
 
 coverage:
   # The CI app-crap-gate job merges the two flutter-tests shard reports
