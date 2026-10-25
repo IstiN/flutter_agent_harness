@@ -4,6 +4,12 @@ import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 
 TrajectoryRequestDetail detailWith(int messageCount, {int blockChars = 0}) {
+  // One shared immutable text for every block: the scale under test is
+  // still messageCount × blockChars of payload; distinct string instances
+  // per message only added ~64 MB of fixture garbage per call
+  // (issue #1850 AC3 — the cap test's old-space growth was the fixture,
+  // not the cap).
+  final blockText = blockChars == 0 ? null : 'b' * blockChars;
   return TrajectoryRequestDetail(
     messageCount: messageCount,
     systemPromptChars: 1200,
@@ -15,13 +21,13 @@ TrajectoryRequestDetail detailWith(int messageCount, {int blockChars = 0}) {
           role: i.isEven ? 'user' : 'assistant',
           chars: 500 + i,
           preview: 'message $i preview',
-          blocks: blockChars == 0
+          blocks: blockText == null
               ? const []
               : [
                   TrajectoryRequestMessageBlock(
                     type: 'text',
                     chars: blockChars * 4,
-                    text: 'b' * blockChars,
+                    text: blockText,
                   ),
                 ],
         ),
