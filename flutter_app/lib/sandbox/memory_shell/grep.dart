@@ -163,7 +163,9 @@ void _reportFilesOnly(GrepQuery q, String? label, GrepAccumulator acc) {
     acc.anyMatch = true;
     emitted++;
     if (q.quiet) return (true, emitted);
-    _emitLine(match[0], label, lineIndex + 1, q.lineNumber, acc);
+    // Group 0 always exists on a successful Match — the `!` only satisfies
+    // the `String?` API type of `operator []`.
+    _emitLine(match[0]!, label, lineIndex + 1, q.lineNumber, acc);
   }
   return (false, emitted);
 }
