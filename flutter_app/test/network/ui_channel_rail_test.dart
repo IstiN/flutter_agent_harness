@@ -435,7 +435,38 @@ void main() {
       await rig.session.close();
     });
 
-    testWidgets('non-agent and self rows have no drop action', (tester) async {
+    testWidgets('owner drops a guest through the member route', (tester) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      rig.session.roster['guest-1'] = const Member(
+        id: 'guest-1',
+        memberClass: MemberClass.guest,
+        displayName: 'Guest',
+        presence: Presence.offline,
+      );
+      rig.session.notifyListeners();
+      rig.httpClient.respond(204);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('networkRosterButton')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('dropAgent:guest-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirmDropAgent')));
+      await tester.pumpAndSettle();
+
+      final delete = rig.httpClient.requests.singleWhere(
+        (request) => request.method == 'DELETE',
+      );
+      expect(delete.url.path, '/api/networks/net1/members/guest-1');
+      expect(rig.session.roster.containsKey('guest-1'), isFalse);
+      expect(
+        find.byKey(const ValueKey('networkRosterMember:guest-1')),
+        findsNothing,
+      );
+      await rig.session.close();
+    });
+
+    testWidgets('owner/admin and self rows have no drop action', (tester) async {
       final rig = await _rig(tester, memberClass: 'owner');
       rig.session.roster['me-1'] = const Member(
         id: 'me-1',
@@ -473,9 +504,9 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('dropAgent:me-1')), findsNothing);
-      expect(find.byKey(const ValueKey('dropAgent:other-1')), findsNothing);
+      expect(find.byKey(const ValueKey('dropAgent:other-1')), findsOneWidget);
       expect(find.byKey(const ValueKey('dropAgent:owner-1')), findsNothing);
-      expect(find.byKey(const ValueKey('dropAgent:guest-1')), findsNothing);
+      expect(find.byKey(const ValueKey('dropAgent:guest-1')), findsOneWidget);
       await rig.session.close();
     });
 

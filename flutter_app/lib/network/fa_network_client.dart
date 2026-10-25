@@ -418,6 +418,17 @@ class FaNetworkClient {
     expected: {204},
   ).then((_) {});
 
+  /// `DELETE /api/networks/{id}/members/{memberId}` (owner/admin).
+  ///
+  /// Removes a STORE member (guest/member/agent-class), revokes its
+  /// sessions and pushes a fresh roster.snapshot. 204 is idempotent.
+  Future<void> deleteMember(String networkId, String memberId) => _request(
+    'DELETE',
+    '/api/networks/$networkId/members/$memberId',
+    management: true,
+    expected: {204},
+  ).then((_) {});
+
   // --------------------------------------------------------------- wakeups
 
   /// `GET /api/networks/{id}/agents/{agentId}/wakeups` (owner/admin).

@@ -17,7 +17,9 @@ block a release again.
   network vs N channels, decoded additively from Member.access in
   snapshots and presence.changed) and owner/admins can drop an agent
   (DELETE /api/networks/{id}/agents/{agentId} with confirmation; the
-  server tombstone keeps it out of future snapshots).
+  server tombstone keeps it out of future snapshots). Guests and store
+  members are removable too via DELETE /api/networks/{id}/members/{id}
+  (sessions revoked server-side); owner/admin/self rows stay protected.
 
 - feat(gh-1825): channel/network management in the app — rename a channel
   (PATCH), delete a channel or an owned network (REST DELETE with

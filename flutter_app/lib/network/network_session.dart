@@ -205,6 +205,15 @@ final class NetworkSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Removes a store member (guest/member) after the owner/admin route
+  /// accepts the deletion; the server revokes its sessions and pushes a
+  /// fresh roster.snapshot to everyone else.
+  Future<void> deleteMember(String memberId) async {
+    await _client.deleteMember(networkId, memberId);
+    roster.remove(memberId);
+    notifyListeners();
+  }
+
   /// Opens a channel: first history page + socket subscription.
   ///
   /// The history load yields to the event loop before notifying: callers

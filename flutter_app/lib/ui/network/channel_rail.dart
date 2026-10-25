@@ -203,7 +203,14 @@ class _ChannelRailState extends State<ChannelRail> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      await session.deleteAgent(member.id);
+      // Pure-DAP agents go through the hub-agent route; store members
+      // (guests and other non-agent classes) through the member route,
+      // which also revokes their sessions.
+      if (member.memberClass == MemberClass.agent) {
+        await session.deleteAgent(member.id);
+      } else {
+        await session.deleteMember(member.id);
+      }
     } on FaNetworkException catch (e) {
       if (mounted) showFahErrorSnack(context, e.message);
     } on Object catch (e) {
@@ -456,7 +463,8 @@ class _NetworkRosterSheet extends StatelessWidget {
                     final canDrop =
                         canDropAgents &&
                         onDropAgent != null &&
-                        member.memberClass == MemberClass.agent &&
+                        member.memberClass != MemberClass.owner &&
+                        member.memberClass != MemberClass.admin &&
                         member.id != session.identity.id;
                     return _RosterMemberTile(
                       member: member,
