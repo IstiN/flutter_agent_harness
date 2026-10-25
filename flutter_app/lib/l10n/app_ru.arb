@@ -1001,7 +1001,7 @@
   "networkAddAgentFormatCli": "CLI-команда",
   "networkAddAgentFormatEnv": "Env (CI)",
   "networkAddAgentFormatDap": "DAP",
-  "networkAddAgentDapHint": "Скопируйте этот блок и вставьте его в чат fa (CLI, macOS или iOS) — агент автоматически присоединится к каналу.",
+  "networkAddAgentDapHint": "Скопируйте этот блок и вставьте его в чат fa (CLI, macOS, iOS или web) — агент автоматически присоединится к каналу.",
   "dapEnrollmentJoined": "Подключились к DAP-каналу #{channel}. Сообщения канала теперь поступают этому агенту.",
   "dapEnrollmentFailed": "Не удалось подключиться к DAP-каналу #{channel}. Проверьте приглашение и соединение с хабом, затем повторите попытку.",
   "dapEnrollmentUnsupported": "Подключение к DAP не поддерживается на этой платформе — используйте нативное приложение или fa CLI.",

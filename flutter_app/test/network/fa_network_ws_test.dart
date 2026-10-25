@@ -160,6 +160,38 @@ void main() {
       expect(e.members.last.presence, Presence.offline);
     });
 
+    test('roster.snapshot parses the PRODUCTION object payload', () async {
+      // fa_network sends wsFrame{payload: rosterSnapshotWire{members}} —
+      // an object, not a bare list. The list-only parser silently emitted
+      // an empty roster (live "0 online" despite seeded hub agents).
+      channel().incoming.add(
+        jsonEncode({
+          'type': 'roster.snapshot',
+          'payload': {
+            'members': [
+              {
+                'id': 'm1',
+                'class': 'owner',
+                'displayName': 'A',
+                'presence': 'live',
+              },
+              {
+                'id': 'a1',
+                'class': 'agent',
+                'displayName': 'kb-agent',
+                'presence': 'live',
+              },
+            ],
+          },
+        }),
+      );
+      await pump();
+      final e = events.single as RosterSnapshot;
+      expect(e.members, hasLength(2));
+      expect(e.members.last.memberClass, MemberClass.agent);
+      expect(e.members.last.presence, Presence.live);
+    });
+
     test('envelope parses an Envelope', () async {
       channel().incoming.add(
         jsonEncode({

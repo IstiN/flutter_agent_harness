@@ -13,6 +13,13 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1825): the app's network roster no longer reads as permanently
+  empty ("0 online"): fa_network sends roster.snapshot with an OBJECT
+  payload ({members: [...]}) and the app only accepted a bare list, so
+  every snapshot silently decoded to zero members. Both shapes are now
+  accepted, with a production-shape regression test. The DAP paste hint
+  names web alongside CLI/macOS/iOS (plain-web join is supported).
+
 - fix(gh-1825): resumed CLI sessions rejoin their DAP channels and
   receive channel mail again — session replay now re-arms membership
   synchronization (plugin session-ready listeners on boot/resume and

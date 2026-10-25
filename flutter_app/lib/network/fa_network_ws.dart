@@ -302,8 +302,12 @@ class FaNetworkWs {
       switch (decoded['type']) {
         case 'roster.snapshot':
           final payload = decoded['payload'];
-          final members = payload is List
-              ? payload
+          // Production fa_network frames wrap the roster in an OBJECT
+          // (rosterSnapshotWire{members}); tolerate the legacy bare-list
+          // shape too. Reading only the list silently emptied the roster.
+          final wire = payload is Map ? payload['members'] : payload;
+          final members = wire is List
+              ? wire
                     .whereType<Map>()
                     .map((m) => Member.fromJson(m.cast<String, Object?>()))
                     .toList()
