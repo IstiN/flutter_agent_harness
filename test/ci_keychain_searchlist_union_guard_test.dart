@@ -69,12 +69,24 @@ String stripComments(String content) => content
     })
     .join('\n');
 
-/// Files that historically wrote the user-global keychain search list.
-final _searchListSurfaces = <String>[
-  '.github/workflows/build-macos.yml',
-  '.github/workflows/build-mobile.yml',
-  'flutter_app/fastlane/Fastfile',
-];
+/// Every surface that can write the user-global keychain search list,
+/// ENUMERATED rather than hardcoded (gh-1866 review: a hardcoded 3-file
+/// list goes green the moment a NEW workflow/script publishes a keychain
+/// with a fixed-list write, and the gh-1866 race is back). The additive
+/// helper is the sole allowed writer and is therefore excluded from the
+/// audit.
+List<String> get _searchListSurfaces => <String>[
+      ...Directory('.github/workflows')
+          .listSync()
+          .where((f) => f is File && f.path.endsWith('.yml'))
+          .map((f) => f.path),
+      'flutter_app/fastlane/Fastfile',
+      ...Directory('scripts')
+          .listSync()
+          .where((f) => f is File && f.path.endsWith('.sh'))
+          .map((f) => f.path)
+          .where((p) => p != 'scripts/keychain_searchlist_add.sh'),
+    ];
 
 void main() {
   test('AC1 — no fixed-list `security list-keychains -d user -s` writer '
@@ -135,11 +147,16 @@ void main() {
     // of a silent codesign death 10 minutes later.
     expect(
       content,
-      contains(RegExp(r'grep\s+(-q|--quiet|-qx|-qF)\b')),
+      contains(RegExp(r'grep\s+(-qFx|-qF)\b')),
       reason:
-          '$helper must verify its keychain survived the write (grep on '
-          'the re-read list) and retry on eviction — the gh-186 failure '
-          'was silent until codesign, 10 minutes later.',
+          '$helper must verify its keychain survived the write with a '
+          'FIXED-STRING whole-line match (grep -qFx) — the re-read list '
+          'entries are literal keychain paths containing `.` chars, and '
+          'a regex match would treat those as wildcards (gh-1866 review '
+          'thread: the verify is the sole defense against a silent '
+          'eviction, so it must not be able to false-positive). It must '
+          'also retry on eviction — the gh-1866 failure was silent '
+          'until codesign, 10 minutes later.',
     );
     expect(
       content,
@@ -185,5 +202,34 @@ void main() {
           'build_only lane (both branches replaced the user search '
           'list, gh-186).',
     );
+  });
+
+  test('AC4 — incident-forensics breadcrumbs point at gh-1866, not the '
+      'nonexistent gh-186 (gh-1866 review thread 1)', () {
+    // These comments/test names are exactly what a future autopsy greps
+    // for — a `gh-186` pointer (no such issue; #186 is ancient and
+    // unrelated) sends it to the wrong issue. `\b` after `gh-186` keeps
+    // legitimate `gh-1866` / `gh-1852` / `gh-1798` references matching.
+    final typo = RegExp(r'\bgh-186\b');
+    final surfaces = <String>[
+      'scripts/keychain_searchlist_add.sh',
+      'flutter_app/fastlane/Fastfile',
+      'test/ci_keychain_searchlist_union_guard_test.dart',
+      'test/ci_macos_keychain_serialization_guard_test.dart',
+      ..._searchListSurfaces,
+    ].toSet();
+    for (final path in surfaces) {
+      final content = read(path);
+      expect(
+        typo.allMatches(content),
+        isEmpty,
+        reason:
+            '$path references `gh-186` — a typo for `gh-1866` (the issue '
+            'this fix closes). Incident-forensics comments are grepped by '
+            'issue number during future autopsies; a wrong pointer sends '
+            'the autopsy to the wrong issue. Use `gh-1866` (word-boundary '
+            'regex keeps `gh-1866`/`gh-1852`/`gh-1798` references legal).',
+      );
+    }
   });
 }
