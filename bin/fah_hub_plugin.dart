@@ -380,10 +380,17 @@ final class HubPluginHost implements FahPlugin {
                 DapScopedMemberships.normalizeHubUrl(preferred.hubUrl));
     if (needsDial) {
       final notBefore = _runtimeConnectNotBefore;
-      if (notBefore != null && DateTime.now().isBefore(notBefore)) return;
-      _runtimeConnectNotBefore = DateTime.now().add(
-        const Duration(seconds: 10),
-      );
+      // Throttling suppresses ONLY the re-dial: channel joins (and the
+      // key accept they carry) must still run on the current client —
+      // otherwise a fresh invite sits unaccepted for seconds and the
+      // first outbound frame auto-keygens a pair nobody can read.
+      final throttled =
+          notBefore != null && DateTime.now().isBefore(notBefore);
+      if (!throttled) {
+        _runtimeConnectNotBefore = DateTime.now().add(
+          const Duration(seconds: 10),
+        );
+      }
       final secret = preferred.hubClientSecret;
       final name = preferred.agentName;
       if (secret != null && secret.isNotEmpty) {
@@ -392,7 +399,9 @@ final class HubPluginHost implements FahPlugin {
       if (name != null && name.isNotEmpty) {
         _environment['DAP_AGENT_NAME'] = name;
       }
-      await _ensureChannelConnection(preferred.hubUrl);
+      if (!throttled) {
+        await _ensureChannelConnection(preferred.hubUrl);
+      }
     }
     final client = _activeRepository?.client;
     // No live client yet (hub down / still connecting): RETRY on the
