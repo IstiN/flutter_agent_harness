@@ -296,27 +296,11 @@ final class HubPluginHost implements FahPlugin {
         // The invite hub, not the zero-config local default — dial it
         // directly (process env only, ~/.dap/config.json untouched),
         // with the enrolled name-bound credential when one is stored.
-        _environment['DAP_HUB_URL'] = preferred.hubUrl;
-        final bootSecret = preferred.hubClientSecret;
-        final bootName = preferred.agentName;
-        if (bootSecret != null && bootSecret.isNotEmpty) {
-          _environment['DAP_CLIENT_SECRET'] = bootSecret;
-        }
-        if (bootName != null && bootName.isNotEmpty) {
-          _environment['DAP_AGENT_NAME'] = bootName;
-        }
+        _applyBootMembershipEnv(preferred);
         _connectedHubUrl = preferred.hubUrl;
       }
       await scoped?.seedOverlay();
-      if (preferred?.hubClientSecret != null) {
-        try {
-          await _ensureChannelConnection(preferred!.hubUrl);
-        } on Object catch (e) {
-          _pluginIo?.writeln('[hub] scoped boot connect failed: $e');
-        }
-      } else {
-        await _startHub();
-      }
+      await _connectBootTarget(preferred);
       _connectedHubUrl ??= scoped?.defaultHubUrl;
     } on Object catch (error) {
       if (_hub.isDefaultUrl) {
@@ -324,6 +308,35 @@ final class HubPluginHost implements FahPlugin {
         return;
       }
       context.io.writeln('[hub] connect failed: $error');
+    }
+  }
+
+  /// Process-env view of a boot membership: the invite hub wins over
+  /// the zero-config default, with the enrolled name-bound credential
+  /// when one is stored.
+  void _applyBootMembershipEnv(DapChannelMembership preferred) {
+    _setEnv('DAP_HUB_URL', preferred.hubUrl);
+    final bootSecret = preferred.hubClientSecret;
+    if (bootSecret != null && bootSecret.isNotEmpty) {
+      _setEnv('DAP_CLIENT_SECRET', bootSecret);
+    }
+    final bootName = preferred.agentName;
+    if (bootName != null && bootName.isNotEmpty) {
+      _setEnv('DAP_AGENT_NAME', bootName);
+    }
+  }
+
+  /// Dials the boot target: the scoped (enrolled-credential) connection
+  /// when the membership carries one, otherwise the regular start.
+  Future<void> _connectBootTarget(DapChannelMembership? preferred) async {
+    if (preferred?.hubClientSecret != null) {
+      try {
+        await _ensureChannelConnection(preferred!.hubUrl);
+      } on Object catch (e) {
+        _pluginIo?.writeln('[hub] scoped boot connect failed: $e');
+      }
+    } else {
+      await _startHub();
     }
   }
 
@@ -366,6 +379,18 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
+  /// Sets a process-env override; silently skips read-only environment
+  /// maps (const maps in tests, unmodifiable embedder environments).
+  /// Writes whose FAILURE is user-facing (the master-secret enablement
+  /// checks) stay direct so they can report the read-only state.
+  void _setEnv(String key, String value) {
+    try {
+      _environment[key] = value;
+    } on UnsupportedError {
+      // Read-only environment — nothing else can observe the value.
+    }
+  }
+
   /// Joins every effective membership on the LIVE client (AC1: no
   /// restart). Idempotent: re-joins are cheap and reconnect-safe.
   Future<void> _syncRuntimeMemberships() async {
@@ -378,45 +403,66 @@ final class HubPluginHost implements FahPlugin {
     // default hub with nothing listening. Once replay lands, dial the hub
     // the membership actually belongs to BEFORE joining channels on the
     // active client — otherwise resume "joins" a dead local client and
-    // channel mail never flows. Throttled: a rejected dial must not be
-    // retried on every inbox probe.
-    final preferred = await scoped.preferredBootMembership();
-    final needsDial = preferred != null &&
-        (_activeRepository?.client.connected != true ||
-            _connectedHubUrl !=
-                DapScopedMemberships.normalizeHubUrl(preferred.hubUrl));
-    if (needsDial) {
-      final notBefore = _runtimeConnectNotBefore;
-      // Throttling suppresses ONLY the re-dial: channel joins (and the
-      // key accept they carry) must still run on the current client —
-      // otherwise a fresh invite sits unaccepted for seconds and the
-      // first outbound frame auto-keygens a pair nobody can read.
-      final throttled =
-          notBefore != null && DateTime.now().isBefore(notBefore);
-      if (!throttled) {
-        _runtimeConnectNotBefore = DateTime.now().add(
-          const Duration(seconds: 10),
-        );
-      }
-      final secret = preferred.hubClientSecret;
-      final name = preferred.agentName;
-      if (secret != null && secret.isNotEmpty) {
-        _environment['DAP_CLIENT_SECRET'] = secret;
-      }
-      if (name != null && name.isNotEmpty) {
-        _environment['DAP_AGENT_NAME'] = name;
-      }
-      if (!throttled) {
-        await _ensureChannelConnection(preferred.hubUrl);
-      }
-    }
+    // channel mail never flows.
+    await _syncDial(await scoped.preferredBootMembership());
     final client = _activeRepository?.client;
     // No live client yet (hub down / still connecting): RETRY on the
     // next drain instead of consuming the one-shot sync.
     if (client == null) return;
     _runtimeSyncPending = false;
+    await _joinEffectiveChannels(client, await scoped.runtimeEffective());
+  }
+
+  /// Dials the membership's OWN hub (throttled to one attempt per 10 s)
+  /// whenever the active client is down or on a different hub. Channel
+  /// joins still run on the current client when the dial is throttled —
+  /// a fresh invite must not sit unaccepted for seconds.
+  Future<void> _syncDial(DapChannelMembership? preferred) async {
+    if (preferred == null) return;
+    final needsDial =
+        _activeRepository?.client.connected != true ||
+        _connectedHubUrl !=
+            DapScopedMemberships.normalizeHubUrl(preferred.hubUrl);
+    if (!needsDial) return;
+    final throttled = _throttleRuntimeDial();
+    _applyDialEnv(preferred);
+    if (!throttled) {
+      await _ensureChannelConnection(preferred.hubUrl);
+    }
+  }
+
+  /// Arms the 10 s dial throttle; true while a re-dial is still
+  /// suppressed.
+  bool _throttleRuntimeDial() {
+    final notBefore = _runtimeConnectNotBefore;
+    if (notBefore != null && DateTime.now().isBefore(notBefore)) return true;
+    _runtimeConnectNotBefore = DateTime.now().add(
+      const Duration(seconds: 10),
+    );
+    return false;
+  }
+
+  /// Process-env view of the dial target: the enrolled name-bound
+  /// credential the (re)start below authenticates with.
+  void _applyDialEnv(DapChannelMembership preferred) {
+    final secret = preferred.hubClientSecret;
+    if (secret != null && secret.isNotEmpty) {
+      _setEnv('DAP_CLIENT_SECRET', secret);
+    }
+    final name = preferred.agentName;
+    if (name != null && name.isNotEmpty) {
+      _setEnv('DAP_AGENT_NAME', name);
+    }
+  }
+
+  /// Accepts and joins every effective membership on the LIVE client.
+  /// Idempotent: re-joins are cheap and reconnect-safe.
+  Future<void> _joinEffectiveChannels(
+    hub.HubClient client,
+    List<DapChannelMembership> memberships,
+  ) async {
     final store = client.channelStore;
-    for (final m in await scoped.runtimeEffective()) {
+    for (final m in memberships) {
       try {
         final priv = m.priv;
         if (m.pub == null || priv == null) {
@@ -593,26 +639,45 @@ final class HubPluginHost implements FahPlugin {
   Future<void> _networkSlash(PluginContext context, List<String> args) async {
     final scoped = _scoped;
     if (scoped == null) return;
-    final io = context.io;
     final positional = args.where((a) => a.isNotEmpty).toList();
-    if (positional.isNotEmpty && positional.first == 'join') {
-      final invite = positional.sublist(1).join(' ').trim();
-      if (invite.isEmpty) {
-        io.writeln('usage: /network join <invite|channel-id>');
-        return;
-      }
-      await _networkJoin(context, scoped, invite);
+    if (positional.isNotEmpty) {
+      await _networkArgs(context, scoped, positional);
       return;
     }
-    if (positional.isNotEmpty && positional.first != 'join') {
+    await _networkMenu(context, scoped);
+  }
+
+  /// `/network <args>` — only `join` exists today; everything else gets
+  /// the one-line usage (E4: inline validation, nothing stored).
+  Future<void> _networkArgs(
+    PluginContext context,
+    DapScopedMemberships scoped,
+    List<String> positional,
+  ) async {
+    final io = context.io;
+    if (positional.first != 'join') {
       io.writeln('usage: /network [join <invite|channel-id>]');
       return;
     }
+    final invite = positional.sublist(1).join(' ').trim();
+    if (invite.isEmpty) {
+      io.writeln('usage: /network join <invite|channel-id>');
+      return;
+    }
+    await _networkJoin(context, scoped, invite);
+  }
+
+  /// Bare `/network`: the wizard on interactive hosts, a one-line
+  /// status on headless/line hosts.
+  Future<void> _networkMenu(
+    PluginContext context,
+    DapScopedMemberships scoped,
+  ) async {
     final pick = context.pickOption;
     if (pick == null) {
       // Headless/line hosts: one-line status, no menus.
       final effective = await scoped.union().then((u) => u.effective());
-      io.writeln(
+      context.io.writeln(
         'network: ${effective.length} channel(s): '
         '${effective.map((m) => '#${m.channelId}').join(', ')}',
       );
@@ -625,12 +690,7 @@ final class HubPluginHost implements FahPlugin {
     ], initialKey: 'join');
     switch (action) {
       case 'join':
-        final invite = await context.askLine?.call(
-          'Paste the channel invite (url, url#keys, channel id, or '
-          'fa dap import …)',
-        );
-        if (invite == null || invite.trim().isEmpty) return;
-        await _networkJoin(context, scoped, invite.trim());
+        await _networkJoinPrompt(context, scoped);
       case 'channels':
         await _networkChannels(context, scoped);
       case 'status':
@@ -638,6 +698,19 @@ final class HubPluginHost implements FahPlugin {
       case null:
         return;
     }
+  }
+
+  /// The wizard's paste step: ask for the invite, then the shared join.
+  Future<void> _networkJoinPrompt(
+    PluginContext context,
+    DapScopedMemberships scoped,
+  ) async {
+    final invite = await context.askLine?.call(
+      'Paste the channel invite (url, url#keys, channel id, or '
+      'fa dap import …)',
+    );
+    if (invite == null || invite.trim().isEmpty) return;
+    await _networkJoin(context, scoped, invite.trim());
   }
 
   Future<void> _networkJoin(
@@ -738,14 +811,35 @@ final class HubPluginHost implements FahPlugin {
     }
     final pick = context.pickOption;
     if (pick == null) {
-      for (final m in effective) {
-        io.writeln(
-          '#${m.channelId} [${union.scopesOf(m.hubUrl, m.channelId).map((s) => s.name).join('+')}] '
-          '@ ${m.hubUrl}',
-        );
-      }
+      _printChannelRows(io, union, effective);
       return;
     }
+    await _channelManageMenu(context, scoped, union, effective, pick);
+  }
+
+  /// Headless listing: one `#channel [scopes] @ hub` row per channel.
+  void _printChannelRows(
+    PluginIO io,
+    DapMembershipUnion union,
+    List<DapChannelMembership> effective,
+  ) {
+    for (final m in effective) {
+      io.writeln(
+        '#${m.channelId} [${union.scopesOf(m.hubUrl, m.channelId).map((s) => s.name).join('+')}] '
+        '@ ${m.hubUrl}',
+      );
+    }
+  }
+
+  /// The interactive management loop for one channel: copy invite or
+  /// leave a scope.
+  Future<void> _channelManageMenu(
+    PluginContext context,
+    DapScopedMemberships scoped,
+    DapMembershipUnion union,
+    List<DapChannelMembership> effective,
+    PluginPickOption pick,
+  ) async {
     final chosen = await pick('Channels', [
       for (final m in effective)
         (
@@ -762,10 +856,22 @@ final class HubPluginHost implements FahPlugin {
       ('leave', 'Leave', 'Stop delivery at one scope'),
     ]);
     if (action == 'copy') {
-      io.writeln(await scoped.copyInvite(membership));
+      context.io.writeln(await scoped.copyInvite(membership));
       return;
     }
     if (action != 'leave') return;
+    await _channelLeaveFlow(context, scoped, union, membership, pick);
+  }
+
+  /// The leave flow: one scope leaves directly, multiple scopes ask
+  /// which one (E1: other scopes keep the channel).
+  Future<void> _channelLeaveFlow(
+    PluginContext context,
+    DapScopedMemberships scoped,
+    DapMembershipUnion union,
+    DapChannelMembership membership,
+    PluginPickOption pick,
+  ) async {
     final scopes = union.scopesOf(membership.hubUrl, membership.channelId);
     final scopeName = scopes.length == 1
         ? scopes.single.name
@@ -779,7 +885,7 @@ final class HubPluginHost implements FahPlugin {
       DapChannelScope.values.firstWhere((s) => s.name == scopeName),
     );
     _runtimeSyncPending = true;
-    io.writeln(
+    context.io.writeln(
       'network: left #${membership.channelId} [$scopeName] — '
       'other scopes keep the channel',
     );
