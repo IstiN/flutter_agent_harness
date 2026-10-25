@@ -196,23 +196,35 @@ final class SessionRetentionConfig {
   }
 }
 
-/// The `sessions:` config section (gh-1746). Today it carries only
-/// [retention]; unknown members are noted, never fatal.
+/// The `sessions:` config section (gh-1746). Carries [retention] and the
+/// issue #1882 AC2 [vacuumLedgers] opt-in; unknown members are noted,
+/// never fatal.
 final class SessionsConfig {
-  /// Creates a configuration; see [retention].
+  /// Creates a configuration; see [retention] and [vacuumLedgers].
   const SessionsConfig({
     this.retention = const SessionRetentionConfig(),
+    this.vacuumLedgers = false,
     this.notes = const [],
   });
 
   /// The `retention:` block — defaults mean no retention at all.
   final SessionRetentionConfig retention;
 
+  /// `sessions.vacuumLedgers: true` (issue #1882 AC2): at session open,
+  /// drop the resumed session's superseded `shell_job_registry` /
+  /// `subagent_registry` / `obligations_ledger` snapshots through the
+  /// same keep-latest surgery `fa session repair` performs. Explicit
+  /// opt-in — the default (false) never rewrites a session file; a live
+  /// presence row (another instance holds the session) skips the vacuum;
+  /// the pre-vacuum bytes stay at `<path>.bak`.
+  final bool vacuumLedgers;
+
   /// Tolerant-parse notes for the wrapper level (`sessions.<key>`).
   final List<String> notes;
 
   /// Whether the whole section is at its defaults (nothing persisted).
-  bool get isEmpty => !retention.hasExplicitValues && notes.isEmpty;
+  bool get isEmpty =>
+      !retention.hasExplicitValues && !vacuumLedgers && notes.isEmpty;
 
   /// Parses the `sessions:` map. Tolerant: never throws.
   factory SessionsConfig.fromYaml(Object? node) {
@@ -224,16 +236,24 @@ final class SessionsConfig {
     }
     final notes = <String>[];
     var retention = const SessionRetentionConfig();
+    var vacuumLedgers = false;
     node.forEach((key, value) {
       switch ('$key') {
         case 'retention':
           retention = SessionRetentionConfig.fromYaml(value);
+        case 'vacuumLedgers':
+          if (value is bool) {
+            vacuumLedgers = value;
+          } else {
+            notes.add('sessions.vacuumLedgers: not a bool, ignored');
+          }
         default:
           notes.add('sessions.$key: unknown key (ignored)');
       }
     });
     return SessionsConfig(
       retention: retention,
+      vacuumLedgers: vacuumLedgers,
       notes: List.unmodifiable(notes),
     );
   }
@@ -247,8 +267,12 @@ final class SessionsConfig {
       // backstop keep the raw block (the gh-1572 convention).
       return '';
     }
-    if (!retention.hasExplicitValues) return '';
-    return 'sessions:\n${retention.toYaml()}';
+    if (!retention.hasExplicitValues && !vacuumLedgers) return '';
+    final buffer = StringBuffer('sessions:');
+    if (vacuumLedgers) buffer.write('\n  vacuumLedgers: true');
+    final retentionYaml = retention.toYaml();
+    if (retentionYaml.isNotEmpty) buffer.write('\n$retentionYaml');
+    return buffer.toString();
   }
 }
 
