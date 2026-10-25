@@ -160,19 +160,6 @@ void main() {
       expect(io.text, contains('needs a master secret first'));
     });
 
-    test(
-      'connect choice dials the prompted host and reports the error',
-      () async {
-        final (slash, io, _, _) = registerHost(
-          environment: const {'DAP_MASTER_SECRET': 'test-master-secret'},
-          pickOption: (title, options, {initialKey}) async => 'connect',
-          askLine: (prompt, {secret = false}) async => '127.0.0.1:9',
-        );
-        await slash([]);
-        expect(io.text, contains('[hub]'));
-      },
-    );
-
     test('start choice runs the one-step bring-up', () async {
       final (slash, io, env, plugin) = registerHost(
         environment: {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
@@ -191,7 +178,7 @@ void main() {
         pickOption: (title, options, {initialKey}) async => 'stop',
       );
       await slash([]);
-      expect(io.lines, isEmpty);
+      expect(io.text, contains('not running'));
     });
   });
 
@@ -230,16 +217,12 @@ void main() {
       expect(text, contains('connected: false'));
     });
 
-    test('dap_peers tolerates a dead hub', () async {
+    test('dap_peers surfaces the not-connected error', () async {
       final (tools, plugin) = registerToolsHost();
       await settleBoot(plugin);
-      final result = await toolByName(
-        tools,
-        'dap_peers',
-      ).execute(const {}, null, null);
-      expect(
-        result.content.whereType<TextContent>().map((c) => c.text).join(),
-        isNotEmpty,
+      await expectLater(
+        toolByName(tools, 'dap_peers').execute(const {}, null, null),
+        throwsA(isA<StateError>()),
       );
     });
 

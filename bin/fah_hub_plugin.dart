@@ -1488,7 +1488,9 @@ final class HubPluginHost implements FahPlugin {
 
   Future<void> _startAfterSettingSecret(PluginContext context) async {
     try {
-      await _startHub();
+      // Bounded like _startHubForMenu: a dead hub must not wedge the
+      // menu; the status below reports the state either way.
+      await _startHub().timeout(const Duration(seconds: 8));
       await _printStatus(context);
     } on Object catch (error) {
       context.io.writeln('[hub] secret set; connect failed: $error');
