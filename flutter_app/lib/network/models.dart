@@ -117,6 +117,46 @@ class JoinCredentials {
       );
 }
 
+/// The network/channel scope advertised for a roster member.
+enum MemberAccessScope {
+  network,
+  channels,
+
+  /// Forward-compatible fallback: an unrecognized scope makes no UI claim.
+  unknown;
+
+  static MemberAccessScope parse(Object? value) => switch (value) {
+    'network' => MemberAccessScope.network,
+    'channels' => MemberAccessScope.channels,
+    _ => MemberAccessScope.unknown,
+  };
+}
+
+/// Additive access metadata carried by roster and presence frames.
+///
+/// This is display metadata, not an authorization decision. An empty channel
+/// list is network-wide by the fa_network contract.
+final class MemberAccess {
+  const MemberAccess({required this.scope, this.channelIds = const []});
+
+  final MemberAccessScope scope;
+  final List<String> channelIds;
+
+  bool get isNetworkWide =>
+      scope == MemberAccessScope.network ||
+      (scope == MemberAccessScope.channels && channelIds.isEmpty);
+
+  factory MemberAccess.fromJson(Map<String, Object?> json) => MemberAccess(
+    scope: MemberAccessScope.parse(json['scope']),
+    channelIds: _strList(json['channelIds']) ?? const [],
+  );
+
+  /// Absent or malformed additive metadata decodes as unknown ([null]).
+  static MemberAccess? parse(Object? value) => value is Map
+      ? MemberAccess.fromJson(value.cast<String, Object?>())
+      : null;
+}
+
 /// A roster member (person or agent).
 class Member {
   const Member({
@@ -124,18 +164,21 @@ class Member {
     required this.memberClass,
     required this.displayName,
     required this.presence,
+    this.access,
   });
 
   final String id;
   final MemberClass memberClass;
   final String displayName;
   final Presence presence;
+  final MemberAccess? access;
 
   factory Member.fromJson(Map<String, Object?> json) => Member(
     id: _str(json['id']),
     memberClass: MemberClass.parse(json['class']),
     displayName: _str(json['displayName']),
     presence: Presence.parse(json['presence']),
+    access: MemberAccess.parse(json['access']),
   );
 }
 

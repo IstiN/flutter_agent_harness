@@ -1284,6 +1284,62 @@
   "@networkMemberUnknown": {
     "description": "Roster fallback for an unrecognized member class"
   },
+  "networkAccessWholeNetwork": "Whole network",
+  "@networkAccessWholeNetwork": {
+    "description": "Roster access badge for network-wide access"
+  },
+  "networkAccessChannels": "{count, plural, =1{1 channel} other{{count} channels}}",
+  "@networkAccessChannels": {
+    "description": "Roster access badge for a channel-scoped member outside channel context",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "networkAccessThisChannelOnly": "This channel only",
+  "@networkAccessThisChannelOnly": {
+    "description": "Roster access badge when only the currently open channel is accessible"
+  },
+  "networkAccessThisChannelAndOthers": "{count, plural, =1{This channel + 1 other channel} other{This channel + {count} other channels}}",
+  "@networkAccessThisChannelAndOthers": {
+    "description": "Roster access badge when the open channel and other channels are accessible",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "networkAccessOtherChannels": "{count, plural, =1{1 other channel} other{{count} other channels}}",
+  "@networkAccessOtherChannels": {
+    "description": "Roster access badge when accessible channels exclude the open channel",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "networkDropAgent": "Drop agent…",
+  "@networkDropAgent": {
+    "description": "Roster action that removes an agent from the network"
+  },
+  "networkDropAgentTitle": "Drop this agent?",
+  "@networkDropAgentTitle": {
+    "description": "Drop-agent confirmation title"
+  },
+  "networkDropAgentBody": "\"{displayName}\" will be removed from this network and lose access. This cannot be undone.",
+  "@networkDropAgentBody": {
+    "description": "Drop-agent confirmation body naming the selected agent",
+    "placeholders": {
+      "displayName": {
+        "type": "String"
+      }
+    }
+  },
+  "networkDropAgentConfirm": "Drop agent",
+  "@networkDropAgentConfirm": {
+    "description": "Destructive drop-agent confirmation button"
+  },
   "networkChannelsSection": "Channels",
   "@networkChannelsSection": {
     "description": "Channel rail section header: regular (private) channels"

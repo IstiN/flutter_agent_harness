@@ -2484,6 +2484,65 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkMemberUnknown => 'Неизвестно';
 
   @override
+  String get networkAccessWholeNetwork => 'Вся сеть';
+
+  @override
+  String networkAccessChannels(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count канала',
+      many: '$count каналов',
+      few: '$count канала',
+      one: '$count канал',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get networkAccessThisChannelOnly => 'Только этот канал';
+
+  @override
+  String networkAccessThisChannelAndOthers(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Этот канал + ещё $count канала',
+      many: 'Этот канал + ещё $count каналов',
+      few: 'Этот канал + ещё $count канала',
+      one: 'Этот канал + ещё $count канал',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String networkAccessOtherChannels(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count других канала',
+      many: '$count других каналов',
+      few: '$count других канала',
+      one: '$count другой канал',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get networkDropAgent => 'Удалить агента…';
+
+  @override
+  String get networkDropAgentTitle => 'Удалить этого агента?';
+
+  @override
+  String networkDropAgentBody(String displayName) {
+    return '\"$displayName\" будет удалён из сети и потеряет доступ. Это действие нельзя отменить.';
+  }
+
+  @override
+  String get networkDropAgentConfirm => 'Удалить агента';
+
+  @override
   String get networkChannelsSection => 'Каналы';
 
   @override

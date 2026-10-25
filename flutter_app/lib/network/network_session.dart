@@ -196,6 +196,15 @@ final class NetworkSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Removes an agent after the owner/admin route accepts the deletion.
+  /// The 204 is authoritative; only a subsequent server push can add the
+  /// agent back to the roster.
+  Future<void> deleteAgent(String agentId) async {
+    await _client.deleteAgent(networkId, agentId);
+    roster.remove(agentId);
+    notifyListeners();
+  }
+
   /// Opens a channel: first history page + socket subscription.
   ///
   /// The history load yields to the event loop before notifying: callers
@@ -406,6 +415,7 @@ final class NetworkSession extends ChangeNotifier {
         :final presence,
         :final displayName,
         :final memberClass,
+        :final access,
       ):
         final member = roster[memberId];
         if (member != null) {
@@ -414,6 +424,9 @@ final class NetworkSession extends ChangeNotifier {
             memberClass: member.memberClass,
             displayName: member.displayName,
             presence: presence,
+            // Legacy presence frames carry no access: retain the snapshot's
+            // metadata instead of erasing it on every presence flip.
+            access: access ?? member.access,
           );
           notifyListeners();
         } else if (memberId.isNotEmpty &&
@@ -426,6 +439,7 @@ final class NetworkSession extends ChangeNotifier {
             memberClass: memberClass ?? MemberClass.unknown,
             displayName: displayName,
             presence: presence,
+            access: access,
           );
           notifyListeners();
         }

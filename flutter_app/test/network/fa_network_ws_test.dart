@@ -180,6 +180,10 @@ void main() {
                 'class': 'agent',
                 'displayName': 'kb-agent',
                 'presence': 'live',
+                'access': {
+                  'scope': 'channels',
+                  'channelIds': ['c1', 'c2'],
+                },
               },
             ],
           },
@@ -190,6 +194,9 @@ void main() {
       expect(e.members, hasLength(2));
       expect(e.members.last.memberClass, MemberClass.agent);
       expect(e.members.last.presence, Presence.live);
+      expect(e.members.first.access, isNull); // legacy additive-field absence
+      expect(e.members.last.access?.scope, MemberAccessScope.channels);
+      expect(e.members.last.access?.channelIds, ['c1', 'c2']);
     });
 
     test('envelope parses an Envelope', () async {
@@ -223,6 +230,7 @@ void main() {
       final e = events.single as PresenceChanged;
       expect(e.memberId, 'm1');
       expect(e.presence, Presence.busy);
+      expect(e.access, isNull);
     });
 
     test('presence.changed parses hub-agent displayName + class', () async {
@@ -234,6 +242,10 @@ void main() {
             'presence': 'live',
             'displayName': 'public-agent',
             'class': 'agent',
+            'access': {
+              'scope': 'channels',
+              'channelIds': ['c1'],
+            },
           },
         }),
       );
@@ -243,6 +255,8 @@ void main() {
       expect(e.presence, Presence.live);
       expect(e.displayName, 'public-agent');
       expect(e.memberClass, MemberClass.agent);
+      expect(e.access?.scope, MemberAccessScope.channels);
+      expect(e.access?.channelIds, ['c1']);
     });
 
     test('network.offline / network.drain / wakeup.dispatched', () async {

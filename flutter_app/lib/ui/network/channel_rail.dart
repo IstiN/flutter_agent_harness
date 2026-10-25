@@ -42,9 +42,9 @@ class _ChannelRailState extends State<ChannelRail> {
   NetworkSession? get _session =>
       widget.manager.sessions[widget.controller.networkId];
 
-  /// Channel management is owner/admin only (the wallet entry carries the
-  /// member class recorded at join).
-  bool get _canManageChannels {
+  /// Channel and agent management is owner/admin only (the wallet entry
+  /// carries the member class recorded at join).
+  bool get _canManageNetwork {
     final networkId = widget.controller.networkId;
     final memberClass = widget.manager.wallet.networks[networkId]?.memberClass;
     return memberClass == 'owner' || memberClass == 'admin';
@@ -62,6 +62,7 @@ class _ChannelRailState extends State<ChannelRail> {
   }
 
   Future<void> _showRoster(NetworkSession? session) {
+    final channelId = widget.controller.channelId;
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -69,7 +70,12 @@ class _ChannelRailState extends State<ChannelRail> {
         if (session == null) return const _NetworkRosterSheet(session: null);
         return ListenableBuilder(
           listenable: session,
-          builder: (context, _) => _NetworkRosterSheet(session: session),
+          builder: (context, _) => _NetworkRosterSheet(
+            session: session,
+            channelId: channelId,
+            canDropAgents: _canManageNetwork,
+            onDropAgent: (member) => unawaited(_dropAgent(session, member)),
+          ),
         );
       },
     );
@@ -172,6 +178,39 @@ class _ChannelRailState extends State<ChannelRail> {
     }
   }
 
+  Future<void> _dropAgent(NetworkSession session, Member member) async {
+    final name = member.displayName.isEmpty ? member.id : member.displayName;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.l10n.networkDropAgentTitle),
+        content: Text(dialogContext.l10n.networkDropAgentBody(name)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(dialogContext.l10n.commonCancel),
+          ),
+          FilledButton(
+            key: const ValueKey('confirmDropAgent'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(dialogContext.l10n.networkDropAgentConfirm),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await session.deleteAgent(member.id);
+    } on FaNetworkException catch (e) {
+      if (mounted) showFahErrorSnack(context, e.message);
+    } on Object catch (e) {
+      if (mounted) showFahErrorSnack(context, '$e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = _session;
@@ -240,7 +279,7 @@ class _ChannelRailState extends State<ChannelRail> {
                     ),
                   ),
                 ),
-              if (_canManageChannels)
+              if (_canManageNetwork)
                 IconButton(
                   key: const ValueKey('createChannelButton'),
                   icon: const Icon(Icons.add, size: 20),
@@ -323,10 +362,10 @@ class _ChannelRailState extends State<ChannelRail> {
                       selected: widget.controller.channelId == channel.id,
                       manager: widget.manager,
                       onTap: () => unawaited(_openChannel(channel.id)),
-                      onRename: _canManageChannels
+                      onRename: _canManageNetwork
                           ? () => unawaited(_renameChannel(channel))
                           : null,
-                      onDelete: _canManageChannels
+                      onDelete: _canManageNetwork
                           ? () => unawaited(_deleteChannel(channel))
                           : null,
                     );
@@ -341,9 +380,17 @@ class _ChannelRailState extends State<ChannelRail> {
 /// Live roster behind the presence counter. Names are shown verbatim so a
 /// member can be addressed with the same `@displayName` in the composer.
 class _NetworkRosterSheet extends StatelessWidget {
-  const _NetworkRosterSheet({required this.session});
+  const _NetworkRosterSheet({
+    required this.session,
+    this.channelId,
+    this.canDropAgents = false,
+    this.onDropAgent,
+  });
 
   final NetworkSession? session;
+  final String? channelId;
+  final bool canDropAgents;
+  final ValueChanged<Member>? onDropAgent;
 
   @override
   Widget build(BuildContext context) {
@@ -404,8 +451,19 @@ class _NetworkRosterSheet extends StatelessWidget {
                   shrinkWrap: true,
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   itemCount: members.length,
-                  itemBuilder: (context, index) =>
-                      _RosterMemberTile(member: members[index]),
+                  itemBuilder: (context, index) {
+                    final member = members[index];
+                    final canDrop =
+                        canDropAgents &&
+                        onDropAgent != null &&
+                        member.memberClass == MemberClass.agent &&
+                        member.id != session.identity.id;
+                    return _RosterMemberTile(
+                      member: member,
+                      channelId: channelId,
+                      onDrop: canDrop ? () => onDropAgent!(member) : null,
+                    );
+                  },
                 ),
               ),
           ],
@@ -434,9 +492,11 @@ class _NetworkRosterSheet extends StatelessWidget {
 }
 
 class _RosterMemberTile extends StatelessWidget {
-  const _RosterMemberTile({required this.member});
+  const _RosterMemberTile({required this.member, this.channelId, this.onDrop});
 
   final Member member;
+  final String? channelId;
+  final VoidCallback? onDrop;
 
   @override
   Widget build(BuildContext context) {
@@ -448,6 +508,7 @@ class _RosterMemberTile extends StatelessWidget {
       _ => colors.dim,
     };
     final name = member.displayName.isEmpty ? member.id : member.displayName;
+    final accessLabel = _accessLabel(context);
     return ListTile(
       key: ValueKey('networkRosterMember:${member.id}'),
       dense: true,
@@ -464,6 +525,22 @@ class _RosterMemberTile extends StatelessWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (accessLabel != null) ...[
+            Container(
+              key: ValueKey('networkRosterAccess:${member.id}'),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                border: Border.all(color: colors.border),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                accessLabel,
+                maxLines: 1,
+                style: TextStyle(fontSize: 11, color: colors.dim),
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
           Container(
             width: 8,
             height: 8,
@@ -480,9 +557,36 @@ class _RosterMemberTile extends StatelessWidget {
               color: online ? colors.teal : colors.dim,
             ),
           ),
+          if (onDrop != null)
+            IconButton(
+              key: ValueKey('dropAgent:${member.id}'),
+              onPressed: onDrop,
+              icon: const Icon(Icons.person_remove_outlined, size: 19),
+              color: Theme.of(context).colorScheme.error,
+              tooltip: context.l10n.networkDropAgent,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.only(left: 6),
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
         ],
       ),
     );
+  }
+
+  String? _accessLabel(BuildContext context) {
+    final access = member.access;
+    if (access == null) return null;
+    final l10n = context.l10n;
+    if (access.isNetworkWide) return l10n.networkAccessWholeNetwork;
+    if (access.scope != MemberAccessScope.channels) return null;
+    final ids = access.channelIds;
+    final currentChannel = channelId;
+    if (currentChannel == null) return l10n.networkAccessChannels(ids.length);
+    if (ids.contains(currentChannel)) {
+      if (ids.length == 1) return l10n.networkAccessThisChannelOnly;
+      return l10n.networkAccessThisChannelAndOthers(ids.length - 1);
+    }
+    return l10n.networkAccessOtherChannels(ids.length);
   }
 
   static String _presenceLabel(BuildContext context, Presence presence) {

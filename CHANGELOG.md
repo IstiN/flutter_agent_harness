@@ -13,6 +13,12 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1825): the roster sheet shows access-scope badges (whole
+  network vs N channels, decoded additively from Member.access in
+  snapshots and presence.changed) and owner/admins can drop an agent
+  (DELETE /api/networks/{id}/agents/{agentId} with confirmation; the
+  server tombstone keeps it out of future snapshots).
+
 - feat(gh-1825): channel/network management in the app — rename a channel
   (PATCH), delete a channel or an owned network (REST DELETE with
   confirmation and state/navigation cleanup), and unnamed CLI/hub-created

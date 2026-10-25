@@ -112,6 +112,44 @@ void main() {
       },
     );
 
+    test(
+      'deleteAgent waits for 204, removes the roster entry and notifies',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody)
+          ..respond(204);
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: FakeWsConnector(),
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+          jwtToken: 'jwt-1',
+        );
+        addTearDown(session.close);
+        await session.start();
+        session.roster['agent-1'] = const Member(
+          id: 'agent-1',
+          memberClass: MemberClass.agent,
+          displayName: 'Helper',
+          presence: Presence.live,
+        );
+        var notifications = 0;
+        session.addListener(() => notifications++);
+
+        await session.deleteAgent('agent-1');
+
+        expect(session.roster.containsKey('agent-1'), isFalse);
+        expect(notifications, 1);
+        final delete = httpClient.requests.last;
+        expect(delete.method, 'DELETE');
+        expect(delete.url.path, '/api/networks/net1/agents/agent-1');
+        expect(delete.headers['authorization'], 'Bearer jwt-1');
+      },
+    );
+
     test('openChannel decrypts history oldest-first and dedupes', () async {
       final wallet = await walletWithChannel(
         channelPub: channelKeys.pub,
@@ -349,55 +387,74 @@ void main() {
       connector.channels.single.serverEvent('presence.changed', {
         'memberId': 'other-1',
         'presence': 'live',
+        'access': {
+          'scope': 'channels',
+          'channelIds': ['c1'],
+        },
       });
       await pumpEventQueue();
       expect(session.roster['other-1']?.presence, Presence.live);
-    });
+      expect(session.roster['other-1']?.access?.channelIds, ['c1']);
 
-    test('presence.changed inserts a hub agent missing from the snapshot', () async {
-      final httpClient = FakeHttpClient()
-        ..respond(200, body: channelsBody)
-        ..respond(200, body: membersBody);
-      final connector = FakeWsConnector();
-      final session = buildSession(
-        httpClient: httpClient,
-        connector: connector,
-        wallet: await walletWithChannel(
-          channelPub: channelKeys.pub,
-          channelPriv: channelKeys.priv,
-        ),
-      );
-      addTearDown(session.close);
-
-      await session.start();
-      await pumpEventQueue();
-      expect(session.roster.containsKey('dap-1'), isFalse);
-
+      // An older server's later frame must not erase known access metadata.
       connector.channels.single.serverEvent('presence.changed', {
-        'memberId': 'dap-1',
-        'presence': 'live',
-        'displayName': 'public-agent',
-        'class': 'agent',
+        'memberId': 'other-1',
+        'presence': 'busy',
       });
       await pumpEventQueue();
-      final agent = session.roster['dap-1'];
-      expect(agent?.displayName, 'public-agent');
-      expect(agent?.memberClass, MemberClass.agent);
-      expect(agent?.presence, Presence.live);
-      expect(
-        session.roster.values.where((m) => m.presence == Presence.live),
-        isNotEmpty,
-      );
-
-      // Legacy frames without the additive fields must not create
-      // blank phantom members.
-      connector.channels.single.serverEvent('presence.changed', {
-        'memberId': 'ghost',
-        'presence': 'live',
-      });
-      await pumpEventQueue();
-      expect(session.roster.containsKey('ghost'), isFalse);
+      expect(session.roster['other-1']?.presence, Presence.busy);
+      expect(session.roster['other-1']?.access?.channelIds, ['c1']);
     });
+
+    test(
+      'presence.changed inserts a hub agent missing from the snapshot',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody);
+        final connector = FakeWsConnector();
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: connector,
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+        );
+        addTearDown(session.close);
+
+        await session.start();
+        await pumpEventQueue();
+        expect(session.roster.containsKey('dap-1'), isFalse);
+
+        connector.channels.single.serverEvent('presence.changed', {
+          'memberId': 'dap-1',
+          'presence': 'live',
+          'displayName': 'public-agent',
+          'class': 'agent',
+          'access': {'scope': 'network'},
+        });
+        await pumpEventQueue();
+        final agent = session.roster['dap-1'];
+        expect(agent?.displayName, 'public-agent');
+        expect(agent?.memberClass, MemberClass.agent);
+        expect(agent?.presence, Presence.live);
+        expect(agent?.access?.scope, MemberAccessScope.network);
+        expect(
+          session.roster.values.where((m) => m.presence == Presence.live),
+          isNotEmpty,
+        );
+
+        // Legacy frames without the additive fields must not create
+        // blank phantom members.
+        connector.channels.single.serverEvent('presence.changed', {
+          'memberId': 'ghost',
+          'presence': 'live',
+        });
+        await pumpEventQueue();
+        expect(session.roster.containsKey('ghost'), isFalse);
+      },
+    );
 
     test('public showcase channels bypass E2E both ways', () async {
       final wallet = await walletWithChannel(

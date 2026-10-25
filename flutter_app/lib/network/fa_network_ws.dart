@@ -40,6 +40,7 @@ final class PresenceChanged extends WsEvent {
     this.presence, {
     this.displayName = '',
     this.memberClass,
+    this.access,
   });
 
   final String memberId;
@@ -49,6 +50,9 @@ final class PresenceChanged extends WsEvent {
   /// clients can insert members missing from the roster snapshot.
   final String displayName;
   final MemberClass? memberClass;
+
+  /// Additive access metadata; null on frames from older servers.
+  final MemberAccess? access;
 }
 
 /// `network.offline` — the dap hub is unreachable; the server queues
@@ -333,6 +337,7 @@ class FaNetworkWs {
                 memberClass: payload.containsKey('class')
                     ? MemberClass.parse(payload['class'])
                     : null,
+                access: MemberAccess.parse(payload['access']),
               ),
             );
           }

@@ -2455,6 +2455,59 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkMemberUnknown => 'Unknown';
 
   @override
+  String get networkAccessWholeNetwork => 'Whole network';
+
+  @override
+  String networkAccessChannels(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count channels',
+      one: '1 channel',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get networkAccessThisChannelOnly => 'This channel only';
+
+  @override
+  String networkAccessThisChannelAndOthers(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'This channel + $count other channels',
+      one: 'This channel + 1 other channel',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String networkAccessOtherChannels(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count other channels',
+      one: '1 other channel',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get networkDropAgent => 'Drop agent…';
+
+  @override
+  String get networkDropAgentTitle => 'Drop this agent?';
+
+  @override
+  String networkDropAgentBody(String displayName) {
+    return '\"$displayName\" will be removed from this network and lose access. This cannot be undone.';
+  }
+
+  @override
+  String get networkDropAgentConfirm => 'Drop agent';
+
+  @override
   String get networkChannelsSection => 'Channels';
 
   @override

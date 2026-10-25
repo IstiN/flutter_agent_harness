@@ -155,6 +155,120 @@ void main() {
       await rig.session.close();
     });
 
+    testWidgets(
+      'roster badges show network/channel scope and hide unknown access',
+      (tester) async {
+        final rig = await _rig(tester);
+        rig.session.roster.addAll({
+          'agent-network': const Member(
+            id: 'agent-network',
+            memberClass: MemberClass.agent,
+            displayName: 'Network bot',
+            presence: Presence.live,
+            access: MemberAccess(scope: MemberAccessScope.network),
+          ),
+          'agent-scoped': const Member(
+            id: 'agent-scoped',
+            memberClass: MemberClass.agent,
+            displayName: 'Scoped bot',
+            presence: Presence.offline,
+            access: MemberAccess(
+              scope: MemberAccessScope.channels,
+              channelIds: ['c1', 'c2'],
+            ),
+          ),
+          'agent-empty-acl': const Member(
+            id: 'agent-empty-acl',
+            memberClass: MemberClass.agent,
+            displayName: 'Empty ACL bot',
+            presence: Presence.offline,
+            access: MemberAccess(scope: MemberAccessScope.channels),
+          ),
+          'agent-future': const Member(
+            id: 'agent-future',
+            memberClass: MemberClass.agent,
+            displayName: 'Future bot',
+            presence: Presence.offline,
+            access: MemberAccess(scope: MemberAccessScope.unknown),
+          ),
+        });
+        rig.session.notifyListeners();
+        await tester.pump();
+
+        await tester.tap(find.byKey(const ValueKey('networkRosterButton')));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Whole network'), findsNWidgets(2));
+        expect(find.text('2 channels'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('networkRosterAccess:agent-network')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('networkRosterAccess:agent-scoped')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('networkRosterAccess:agent-future')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('networkRosterAccess:me-1')),
+          findsNothing,
+        );
+        await rig.session.close();
+      },
+    );
+
+    testWidgets('channel-open roster badges explain this and other channels', (
+      tester,
+    ) async {
+      final rig = await _rig(tester);
+      rig.session.roster.addAll({
+        'agent-only': const Member(
+          id: 'agent-only',
+          memberClass: MemberClass.agent,
+          displayName: 'Only bot',
+          presence: Presence.live,
+          access: MemberAccess(
+            scope: MemberAccessScope.channels,
+            channelIds: ['c1'],
+          ),
+        ),
+        'agent-mixed': const Member(
+          id: 'agent-mixed',
+          memberClass: MemberClass.agent,
+          displayName: 'Mixed bot',
+          presence: Presence.live,
+          access: MemberAccess(
+            scope: MemberAccessScope.channels,
+            channelIds: ['c1', 'c2'],
+          ),
+        ),
+        'agent-other': const Member(
+          id: 'agent-other',
+          memberClass: MemberClass.agent,
+          displayName: 'Other bot',
+          presence: Presence.live,
+          access: MemberAccess(
+            scope: MemberAccessScope.channels,
+            channelIds: ['c2'],
+          ),
+        ),
+      });
+      await rig.controller.selectChannel('c1');
+      rig.session.notifyListeners();
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('networkRosterButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('This channel only'), findsOneWidget);
+      expect(find.text('This channel + 1 other channel'), findsOneWidget);
+      expect(find.text('1 other channel'), findsOneWidget);
+      await rig.session.close();
+    });
+
     testWidgets('the roster sheet handles an empty roster politely', (
       tester,
     ) async {
@@ -267,6 +381,154 @@ void main() {
         await rig.session.close();
       },
     );
+  });
+
+  group('ChannelRail roster agent management', () {
+    testWidgets('owner drops an agent after a named destructive confirmation', (
+      tester,
+    ) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      rig.session.roster['agent-1'] = const Member(
+        id: 'agent-1',
+        memberClass: MemberClass.agent,
+        displayName: 'Helper',
+        presence: Presence.live,
+      );
+      rig.session.notifyListeners();
+      rig.httpClient.respond(204);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('networkRosterButton')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('dropAgent:agent-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('Drop this agent?'), findsOneWidget);
+      expect(
+        find.text(
+          '"Helper" will be removed from this network and lose access. '
+          'This cannot be undone.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('confirmDropAgent')));
+      await tester.pumpAndSettle();
+
+      final delete = rig.httpClient.requests.singleWhere(
+        (request) => request.method == 'DELETE',
+      );
+      expect(delete.url.path, '/api/networks/net1/agents/agent-1');
+      expect(rig.session.roster.containsKey('agent-1'), isFalse);
+      expect(
+        find.byKey(const ValueKey('networkRosterMember:agent-1')),
+        findsNothing,
+      );
+      expect(find.text('Helper'), findsNothing);
+
+      // Rebuilding from local state cannot resurrect the removed row.
+      rig.session.notifyListeners();
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('networkRosterMember:agent-1')),
+        findsNothing,
+      );
+      await rig.session.close();
+    });
+
+    testWidgets('non-agent and self rows have no drop action', (tester) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      rig.session.roster['me-1'] = const Member(
+        id: 'me-1',
+        memberClass: MemberClass.agent,
+        displayName: 'Self agent',
+        presence: Presence.live,
+      );
+      rig.session.roster.addAll({
+        'agent-other': const Member(
+          id: 'agent-other',
+          memberClass: MemberClass.agent,
+          displayName: 'Other agent',
+          presence: Presence.live,
+        ),
+        'owner-1': const Member(
+          id: 'owner-1',
+          memberClass: MemberClass.owner,
+          displayName: 'Owner',
+          presence: Presence.live,
+        ),
+        'guest-1': const Member(
+          id: 'guest-1',
+          memberClass: MemberClass.guest,
+          displayName: 'Guest',
+          presence: Presence.live,
+        ),
+      });
+      rig.session.notifyListeners();
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('networkRosterButton')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('dropAgent:agent-other')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('dropAgent:me-1')), findsNothing);
+      expect(find.byKey(const ValueKey('dropAgent:other-1')), findsNothing);
+      expect(find.byKey(const ValueKey('dropAgent:owner-1')), findsNothing);
+      expect(find.byKey(const ValueKey('dropAgent:guest-1')), findsNothing);
+      await rig.session.close();
+    });
+
+    testWidgets('members do not see the drop-agent affordance', (tester) async {
+      final rig = await _rig(tester);
+      rig.session.roster['agent-1'] = const Member(
+        id: 'agent-1',
+        memberClass: MemberClass.agent,
+        displayName: 'Helper',
+        presence: Presence.live,
+      );
+      rig.session.notifyListeners();
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('networkRosterButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('dropAgent:agent-1')), findsNothing);
+      await rig.session.close();
+    });
+
+    testWidgets('a 403 keeps the agent and surfaces the server error', (
+      tester,
+    ) async {
+      final rig = await _rig(tester, memberClass: 'owner');
+      rig.session.roster['agent-1'] = const Member(
+        id: 'agent-1',
+        memberClass: MemberClass.agent,
+        displayName: 'Helper',
+        presence: Presence.live,
+      );
+      rig.session.notifyListeners();
+      rig.httpClient.respond(
+        403,
+        body:
+            '{"error":{"code":"forbidden_by_class",'
+            '"message":"owner or admin required"}}',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('networkRosterButton')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('dropAgent:agent-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirmDropAgent')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('owner or admin required'), findsOneWidget);
+      expect(rig.session.roster.containsKey('agent-1'), isTrue);
+      expect(
+        find.byKey(const ValueKey('networkRosterMember:agent-1')),
+        findsOneWidget,
+      );
+      await rig.session.close();
+    });
   });
 
   group('ChannelRail channel management', () {
