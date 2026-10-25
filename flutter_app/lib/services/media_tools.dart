@@ -906,9 +906,10 @@ AgentTool generateImageTool(MediaGateway gateway) {
     label: generateImageToolName,
     tier: ApprovalTier.write,
     description:
-        'Generate an image from a text prompt. Uses the configured '
-        'imageGeneration endpoint (media_models.json override, or the '
-        'connected provider when it is OpenAI-compatible). Saves a PNG into '
+        'Generate an image from a text prompt. Requires the configured '
+        'imageGeneration endpoint (a media_models.json override, or '
+        'useMainConnection: true to opt the slot into the connected '
+        'provider explicitly). Saves a PNG into '
         'the sandbox generated/ folder and returns its path — reference it '
         'in your reply as ![alt](<path>) to display it inline in the chat, '
         'or from a JS app.',
@@ -956,12 +957,12 @@ AgentTool speakTool(MediaGateway gateway) {
     label: speakToolName,
     tier: ApprovalTier.write,
     description:
-        'Convert text to speech. Uses the configured audioTts endpoint '
-        '(media_models.json override, or the connected provider when it is '
-        'OpenAI-compatible; a Google generativelanguage endpoint is called '
-        'with the native Gemini TTS protocol). Saves the audio (mp3, wav on '
-        'the Google provider) into the sandbox generated/ folder and '
-        'returns its path.',
+        'Convert text to speech. Requires the configured audioTts '
+        'endpoint (a media_models.json override, or useMainConnection: true '
+        'to opt the slot into the connected provider explicitly; a Google '
+        'generativelanguage endpoint is called with the native Gemini TTS '
+        'protocol). Saves the audio (mp3, wav on the Google provider) into '
+        'the sandbox generated/ folder and returns its path.',
     parameters: const {
       'type': 'object',
       'properties': {

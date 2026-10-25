@@ -41,7 +41,7 @@ void main() {
       expect(find.text('Video generation'), findsOneWidget);
       expect(find.text('Vision (image reading)'), findsOneWidget);
       expect(find.text('Transcription'), findsOneWidget);
-      expect(find.text('Same as main connection'), findsNWidgets(6));
+      expect(find.text('Not configured'), findsNWidgets(6));
     });
 
     testWidgets('the flow saves an override and fires the host hooks', (
@@ -151,8 +151,11 @@ void main() {
       await tester.tap(find.text('Main connection'));
       await tester.pumpAndSettle();
 
-      expect(store.overrideFor(MediaSlot.imageGeneration), isNull);
-      expect(find.text('Same as main connection'), findsNWidgets(6));
+      final saved = store.overrideFor(MediaSlot.imageGeneration);
+      expect(saved, isNotNull);
+      expect(saved!.useMainConnection, isTrue);
+      expect(find.text('Not configured'), findsNWidgets(5));
+      expect(find.text('Same as main connection'), findsOneWidget);
     });
   });
 }

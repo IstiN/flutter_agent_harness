@@ -67,7 +67,9 @@ void main() {
       expect(find.text('Video generation'), findsOneWidget);
       expect(find.text('Vision (image reading)'), findsOneWidget);
       expect(find.text('Transcription'), findsOneWidget);
-      expect(find.text('Same as main connection'), findsNWidgets(6));
+      // gh-1844: without an override a slot is UNCONFIGURED — the row
+      // never advertises an inherited main endpoint.
+      expect(find.text('Not configured'), findsNWidgets(6));
     });
 
     testWidgets('the flow saves an override and the row updates', (
@@ -87,8 +89,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
       expect(find.text('Edit Image generation'), findsOneWidget);
-      // No override yet → the main connection row is checked.
-      expect(find.byIcon(Icons.check), findsOneWidget);
+      // gh-1844: without an override the main connection row is NOT
+      // checked — it is the explicit opt-in, not the implicit fallback.
+      expect(find.byIcon(Icons.check), findsNothing);
 
       await tester.tap(find.text('OpenRouter'));
       await tester.pumpAndSettle();
@@ -110,7 +113,9 @@ void main() {
       expect(saved.apiKeyName, 'OPENROUTER_API_KEY');
       // …but the row summarizes with the provider name, never the URL.
       expect(find.text('gpt-image-1 · OpenRouter'), findsOneWidget);
-      expect(find.text('Same as main connection'), findsNWidgets(5));
+      // gh-1844: the other five slots stay UNCONFIGURED — never an
+      // inherited "Same as main connection" fallback.
+      expect(find.text('Not configured'), findsNWidgets(5));
     });
 
     testWidgets('a custom provider is picked by name and saved as its URL', (
@@ -244,7 +249,9 @@ void main() {
       );
     });
 
-    testWidgets('the main connection row clears the override', (tester) async {
+    testWidgets('the main connection row saves the gh-1844 opt-in', (
+      tester,
+    ) async {
       final store = MediaModelsStore.inMemory();
       await store.setOverride(MediaSlot.imageGeneration, _override());
       await _pump(
@@ -260,8 +267,14 @@ void main() {
       await tester.tap(find.text('Main connection'));
       await tester.pumpAndSettle();
 
-      expect(store.overrideFor(MediaSlot.imageGeneration), isNull);
-      expect(find.text('Same as main connection'), findsNWidgets(6));
+      // gh-1844: "Same as main connection" is the EXPLICIT per-slot
+      // opt-in — persisted as an override carrying useMainConnection,
+      // never a silent fallback and never a slot clear.
+      final saved = store.overrideFor(MediaSlot.imageGeneration);
+      expect(saved, isNotNull);
+      expect(saved!.useMainConnection, isTrue);
+      expect(find.text('Not configured'), findsNWidgets(5));
+      expect(find.text('Same as main connection'), findsOneWidget);
     });
 
     testWidgets('the row summary shows model + provider name, never the key '

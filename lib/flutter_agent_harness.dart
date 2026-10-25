@@ -323,3 +323,5 @@ export 'src/wire/wire_serve.dart';
 export 'src/web_search/web_search.dart';
 // ── viewport ──
 export 'src/viewport/follow_mode.dart';
+// ── decisions ──
+export 'src/decisions/decisions.dart';

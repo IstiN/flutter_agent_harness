@@ -36,7 +36,8 @@ final class MediaSlotEditorResult {
 }
 
 /// Step (a) of the media slot flow: pick a provider — "Same as main
-/// connection" (clears the override), a hosted [ProviderPreset], or a saved
+/// connection" (the explicit gh-1844 opt-in, saved as an override), a
+/// hosted [ProviderPreset], or a saved
 /// [CustomProvider] (check icon on the one backing [initial]) — or add a
 /// new one. Endpoint providers continue to [MediaSlotModelPage]; a non-null
 /// result from it pops the picker with the same result, so the settings
@@ -135,10 +136,33 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                     subtitle: mainBaseUrl.isEmpty
                         ? null
                         : providerHostOf(mainBaseUrl),
-                    checked: initial == null,
-                    onTap: () => Navigator.of(
-                      context,
-                    ).pop(const MediaSlotEditorResult.clear()),
+                    // gh-1844: for an actual media slot the row is the
+                    // explicit per-slot opt-in (checked when the saved
+                    // override carries useMainConnection); the generic
+                    // role flow (slot == null) has no opt-in — the row
+                    // means "follow the main connection", i.e. no
+                    // override, so it is checked only without one.
+                    checked: slot == null
+                        ? initial == null
+                        : (initial?.useMainConnection ?? false),
+                    onTap: () => Navigator.of(context).pop(
+                      slot == null
+                          ? const MediaSlotEditorResult.clear()
+                          // gh-1844: "Same as main connection" is the
+                          // EXPLICIT per-slot opt-in — saved as an
+                          // override, never an implicit fallback. The
+                          // slot == null consumers (task model roles)
+                          // read a save result as a real override, so
+                          // they get a clear instead.
+                          : const MediaSlotEditorResult.save(
+                              MediaSlotOverride(
+                                providerKind: '',
+                                baseUrl: '',
+                                modelId: '',
+                                useMainConnection: true,
+                              ),
+                            ),
+                    ),
                   ),
                 // Dedupe: a saved custom provider on a hosted preset's
                 // endpoint covers it (the CodeMie/ChatGPT/OpenRouter flows
