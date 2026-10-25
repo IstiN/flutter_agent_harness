@@ -69,7 +69,8 @@ void main() {
     expect(
       index.substring(start + startMarker.length, end).trim(),
       rendered.trim(),
-      reason: 'site/index.html placement drifted — run '
+      reason:
+          'site/index.html placement drifted — run '
           '`dart run scripts/regen_site_store_block.dart`',
     );
   }
@@ -100,18 +101,19 @@ void main() {
     // The hand-edit scan guard: every store link in the page must come
     // from a generated block. A hand-edited placement rots the moment a
     // default changes — the regen script is the only writer.
-    final spans = [
-      (appStoreHeaderStartMarker, appStoreHeaderEndMarker),
-      (appStoreHeroStartMarker, appStoreHeroEndMarker),
-      (appStoreBlockStartMarker, appStoreBlockEndMarker),
-    ].map((s) {
-      final start = index.indexOf(s.$1);
-      final end = index.indexOf(s.$2);
-      expect(start, greaterThan(0), reason: '${s.$1} missing');
-      expect(end, greaterThan(start));
-      return (start, end);
-    }).toList()
-      ..sort((a, b) => a.$1.compareTo(b.$1));
+    final spans =
+        [
+            (appStoreHeaderStartMarker, appStoreHeaderEndMarker),
+            (appStoreHeroStartMarker, appStoreHeroEndMarker),
+            (appStoreBlockStartMarker, appStoreBlockEndMarker),
+          ].map((s) {
+            final start = index.indexOf(s.$1);
+            final end = index.indexOf(s.$2);
+            expect(start, greaterThan(0), reason: '${s.$1} missing');
+            expect(end, greaterThan(start));
+            return (start, end);
+          }).toList()
+          ..sort((a, b) => a.$1.compareTo(b.$1));
     final strays = RegExp('apps\\.apple\\.com')
         .allMatches(index)
         .where((m) => !spans.any((s) => m.start > s.$1 && m.end < s.$2))
@@ -120,7 +122,8 @@ void main() {
     expect(
       strays,
       isEmpty,
-      reason: 'hand-edited apps.apple.com outside the generated markers — '
+      reason:
+          'hand-edited apps.apple.com outside the generated markers — '
           'add the placement to scripts/regen_site_store_block.dart instead',
     );
   });
@@ -128,7 +131,9 @@ void main() {
   test('the frames page links the default store URLs (AC2)', () {
     expect(framesPage, contains('href="$defaultAppStoreUrl"'));
     expect(framesPage, contains('href="$defaultTestFlightUrl"'));
-    expect(framesPage, contains('coming soon'));
+    expect(framesPage, contains('href="$defaultApkGodUrl"'));
+    expect(framesPage, contains('href="$defaultApkStandardUrl"'));
+    expect(framesPage, isNot(contains('coming soon')));
     expect(framesPage, isNot(contains('play.google.com')));
   });
 
