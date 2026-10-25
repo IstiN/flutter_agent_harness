@@ -129,16 +129,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-1544": [
-    {
-      "leg": "rework",
-      "at": "2026-10-11T12:01:02Z",
-      "prompt": 33828,
-      "completion": 7786,
-      "total": 41614,
-      "model": ""
-    }
-  ],
   "issue-1551": [
     {
       "leg": "dev",
@@ -4473,6 +4463,17 @@
       "completion": 13425,
       "total": 64006,
       "cacheRead": 1144832,
+      "model": "kimi-for-coding"
+    }
+  ],
+  "pr-1878": [
+    {
+      "leg": "review",
+      "at": "2026-10-25T12:23:24Z",
+      "prompt": 78560,
+      "completion": 22148,
+      "total": 100708,
+      "cacheRead": 5215900,
       "model": "kimi-for-coding"
     }
   ]
