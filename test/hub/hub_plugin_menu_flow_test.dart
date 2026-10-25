@@ -181,6 +181,8 @@ void main() {
       );
       await settleBoot(plugin);
       await slash([]);
+      // ignore: avoid_print
+      print('DEBUG io: ${io.text}');
       expect(env['DAP_MASTER_SECRET'], isNotNull);
       expect(io.text, contains('master secret generated'));
     });
