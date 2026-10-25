@@ -40,7 +40,7 @@
 //        must declare `max-parallel: 1`. Cross-workflow stomping is NOT
 //        covered by serialization — it is fixed separately: every
 //        user-search-list write is additive via
-//        scripts/keychain_searchlist_add.sh (gh-186: the concurrent
+//        scripts/keychain_searchlist_add.sh (gh-1866: the concurrent
 //        build-mobile iOS job on another fa-m5 registration of the same
 //        host/user evicted build-arm64.keychain 75 s after import, run
 //        40165498619), pinned by

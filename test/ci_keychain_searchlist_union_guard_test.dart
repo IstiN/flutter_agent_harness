@@ -1,4 +1,4 @@
-// gh-186 — the daily-publish cli leg failed (run 40165498619, 2026-10-25):
+// gh-1866 — the daily-publish cli leg failed (run 40165498619, 2026-10-25):
 // build-macos arm64's "Build macOS release" step died with
 // `Runner.xcodeproj: error: No certificate for team 'YP9HC3USZ3' matching
 // '***' found` despite `1 identity imported.` 10 minutes earlier. The
@@ -69,19 +69,29 @@ String stripComments(String content) => content
     })
     .join('\n');
 
-/// Files that historically wrote the user-global keychain search list.
-final _searchListSurfaces = <String>[
-  '.github/workflows/build-macos.yml',
-  '.github/workflows/build-mobile.yml',
+/// Every surface that can write the user-global keychain search list,
+/// ENUMERATED rather than hardcoded (gh-1866 review: a hardcoded 3-file
+/// list goes green the moment a NEW workflow/script publishes a keychain
+/// with a fixed-list write, and the gh-1866 race is back). The additive
+/// helper is the sole allowed writer and is therefore excluded from the
+/// audit.
+List<String> get _searchListSurfaces => <String>[
+  ...Directory('.github/workflows')
+      .listSync()
+      .where((f) => f is File && f.path.endsWith('.yml'))
+      .map((f) => f.path),
   'flutter_app/fastlane/Fastfile',
+  ...Directory('scripts')
+      .listSync()
+      .where((f) => f is File && f.path.endsWith('.sh'))
+      .map((f) => f.path)
+      .where((p) => p != 'scripts/keychain_searchlist_add.sh'),
 ];
 
 void main() {
   test('AC1 — no fixed-list `security list-keychains -d user -s` writer '
-      'outside the additive helper (gh-186)', () {
-    final fixedListWrite = RegExp(
-      r'list-keychains\s+-d\s+user\s+-s',
-    );
+      'outside the additive helper (gh-1866)', () {
+    final fixedListWrite = RegExp(r'list-keychains\s+-d\s+user\s+-s');
     for (final path in _searchListSurfaces) {
       final content = stripComments(read(path));
       final matches = fixedListWrite.allMatches(content);
@@ -92,7 +102,7 @@ void main() {
             '$path still REPLACES the per-user keychain search list with '
             '`security list-keychains -d user -s ...`. A fixed-list write '
             'evicts every other signing job\'s keychain on the shared '
-            'fa-m5 host/user (gh-186: the concurrent build-mobile iOS '
+            'fa-m5 host/user (gh-1866: the concurrent build-mobile iOS '
             'job evicted build-arm64.keychain 75 s after import → '
             '"No certificate for team YP9HC3USZ3 matching ... found"). '
             'Route the write through '
@@ -103,7 +113,7 @@ void main() {
   });
 
   test('AC2 — the helper is the single writer and is additive + '
-      'self-verifying (gh-186)', () {
+      'self-verifying (gh-1866)', () {
     const helper = 'scripts/keychain_searchlist_add.sh';
     final content = read(helper);
 
@@ -126,7 +136,7 @@ void main() {
       reason:
           '$helper must read the CURRENT search list back '
           '(list_user_keychains) and union with it — a literal fixed '
-          'list would re-introduce the gh-186 eviction.',
+          'list would re-introduce the gh-1866 eviction.',
     );
 
     // …and self-verifying: after the write it re-reads and confirms the
@@ -135,11 +145,16 @@ void main() {
     // of a silent codesign death 10 minutes later.
     expect(
       content,
-      contains(RegExp(r'grep\s+(-q|--quiet|-qx|-qF)\b')),
+      contains(RegExp(r'grep\s+(-qFx|-qF)\b')),
       reason:
-          '$helper must verify its keychain survived the write (grep on '
-          'the re-read list) and retry on eviction — the gh-186 failure '
-          'was silent until codesign, 10 minutes later.',
+          '$helper must verify its keychain survived the write with a '
+          'FIXED-STRING whole-line match (grep -qFx) — the re-read list '
+          'entries are literal keychain paths containing `.` chars, and '
+          'a regex match would treat those as wildcards (gh-1866 review '
+          'thread: the verify is the sole defense against a silent '
+          'eviction, so it must not be able to false-positive). It must '
+          'also retry on eviction — the gh-1866 failure was silent '
+          'until codesign, 10 minutes later.',
     );
     expect(
       content,
@@ -151,7 +166,7 @@ void main() {
   });
 
   test('AC3 — every former fixed-list site still maintains the search '
-      'list through the helper (gh-186)', () {
+      'list through the helper (gh-1866)', () {
     // build-macos.yml: import step + TestFlight-PKG re-assert.
     final macos = read('.github/workflows/build-macos.yml');
     expect(
@@ -160,7 +175,7 @@ void main() {
       reason:
           'build-macos.yml must call scripts/keychain_searchlist_add.sh '
           'in BOTH the signing-import step and the TestFlight-PKG '
-          're-assert block (gh-186 AC3 — the guard must not be satisfied '
+          're-assert block (gh-1866 AC3 — the guard must not be satisfied '
           'by deleting search-list maintenance).',
     );
     // build-mobile.yml: iOS import step.
@@ -171,7 +186,7 @@ void main() {
       reason:
           'build-mobile.yml iOS import step must call '
           'scripts/keychain_searchlist_add.sh (it was the evicting '
-          'writer in the gh-186 autopsy — run 40165497544, 05:29:52Z).',
+          'writer in the gh-1866 autopsy — run 40165497544, 05:29:52Z).',
     );
     // Fastfile: lane start, both branches.
     final fastfile = read('flutter_app/fastlane/Fastfile');
@@ -183,7 +198,45 @@ void main() {
           'scripts/keychain_searchlist_add.sh in BOTH the '
           'build.keychain-present and the absent branch of the '
           'build_only lane (both branches replaced the user search '
-          'list, gh-186).',
+          'list, gh-1866).',
     );
+  });
+
+  test('AC4 — incident-forensics breadcrumbs point at gh-1866, not the '
+      'truncated issue number missing its final digit (gh-1866 review '
+      'thread 1)', () {
+    // These comments/test names are exactly what a future autopsy greps
+    // for — a reference to the issue number missing its final digit
+    // (no such issue; #186 is ancient and unrelated to keychain
+    // publishing) sends it to the wrong issue. The pattern is built by
+    // concatenation and this file's prose avoids the contiguous token
+    // on purpose: AC4 scans THIS test file too, and a literal would
+    // self-match. The trailing \b keeps legitimate gh-1866 / gh-1852 /
+    // gh-1798 references legal.
+    final typo = RegExp(
+      'gh-18'
+      r'6\b',
+    );
+    final surfaces = <String>{
+      'scripts/keychain_searchlist_add.sh',
+      'flutter_app/fastlane/Fastfile',
+      'test/ci_keychain_searchlist_union_guard_test.dart',
+      'test/ci_macos_keychain_serialization_guard_test.dart',
+      ..._searchListSurfaces,
+    };
+    for (final path in surfaces) {
+      final content = read(path);
+      expect(
+        typo.allMatches(content),
+        isEmpty,
+        reason:
+            '$path references the issue number missing its final digit '
+            '(gh-18${'6'} — a typo for gh-1866, the issue this fix '
+            'closes). Incident-forensics comments are grepped by issue '
+            'number during future autopsies; a wrong pointer sends the '
+            'autopsy to the wrong issue. Use gh-1866 (the word-boundary '
+            'regex keeps gh-1866/gh-1852/gh-1798 references legal).',
+      );
+    }
   });
 }
