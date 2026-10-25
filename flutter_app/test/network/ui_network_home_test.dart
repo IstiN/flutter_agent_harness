@@ -26,9 +26,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
 
-const _resumeRejectedBody =
-    '{"error":{"code":"http_5xx","message":"resume rejected"}}';
-
 Future<KeyWallet> _walletWithPassword() async {
   final wallet = await KeyWallet.load(MemoryWalletBackend());
   await wallet.createIfMissing(displayName: 'Me');
@@ -171,7 +168,7 @@ void main() {
   testWidgets('a controller change re-runs the silent resume', (tester) async {
     final wallet = await _walletWithPassword();
     final httpClient = FakeHttpClient()
-      ..respond(500, body: _resumeRejectedBody); // every join fails 5xx
+      ..respond(500, body: resumeRejectedBody); // every join fails 5xx
     final manager = NetworkSessionManager(
       baseUrl: testBase,
       wallet: wallet,

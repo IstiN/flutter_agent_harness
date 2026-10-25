@@ -30,9 +30,6 @@ const _twoChannelsBody =
 
 /// A 5xx join whose body the client maps into the FaNetworkException's
 /// message — the text the silent-resume snack renders (gh-1848).
-const _resumeRejectedBody =
-    '{"error":{"code":"http_5xx","message":"resume rejected"}}';
-
 /// Pumps the wide [faHomeScreen] (1280×800) wired for network mode.
 Future<void> _pumpWideHome(
   WidgetTester tester, {
@@ -268,7 +265,7 @@ void main() {
         networkId: 'net1',
       );
       final httpClient = FakeHttpClient()
-        ..respond(500, body: _resumeRejectedBody); // every join fails 5xx
+        ..respond(500, body: resumeRejectedBody); // every join fails 5xx
       final manager = NetworkSessionManager(
         baseUrl: testBase,
         wallet: wallet,

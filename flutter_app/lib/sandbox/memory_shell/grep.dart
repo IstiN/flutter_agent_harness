@@ -92,14 +92,13 @@ void grepText(String content, String? label, GrepQuery q, GrepAccumulator acc) {
   final lines = _contentLines(content);
   var count = 0;
   var selected = 0;
-  var reportedFile = false;
   final capped = q.maxCount != null;
   lineLoop:
   for (var i = 0; i < lines.length; i++) {
     final found = q.regex.hasMatch(lines[i]);
     if (q.invert ? found : !found) continue;
     if (q.filesOnly) {
-      _reportFilesOnly(q, label, acc, reportedFile);
+      _reportFilesOnly(q, label, acc);
       return;
     }
     if (q.onlyMatching && !q.invert) {
@@ -137,17 +136,11 @@ List<String> _contentLines(String content) {
 }
 
 /// The `-l` arm: the first match marks the block and stops everything.
-void _reportFilesOnly(
-  GrepQuery q,
-  String? label,
-  GrepAccumulator acc,
-  bool reportedFile,
-) {
+void _reportFilesOnly(GrepQuery q, String? label, GrepAccumulator acc) {
   acc.anyMatch = true;
   if (q.quiet) return;
-  if (label != null && !reportedFile) {
+  if (label != null) {
     acc.buffer.writeln(label);
-    reportedFile = true;
   }
 }
 
@@ -170,7 +163,7 @@ void _reportFilesOnly(
     acc.anyMatch = true;
     emitted++;
     if (q.quiet) return (true, emitted);
-    _emitLine(match.group(0), label, lineIndex + 1, q.lineNumber, acc);
+    _emitLine(match[0], label, lineIndex + 1, q.lineNumber, acc);
   }
   return (false, emitted);
 }

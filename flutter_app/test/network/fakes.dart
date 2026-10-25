@@ -193,6 +193,11 @@ class ExplodingHttpClient extends http.BaseClient {
       throw Exception('disk on fire');
 }
 
+/// The scripted 5xx join body the silent-resume failure tests assert on
+/// (gh-1848): the widget surfaces the body's `error.message` in the snack.
+const resumeRejectedBody =
+    '{"error":{"code":"http_5xx","message":"resume rejected"}}';
+
 /// The shared codec (key generation, encrypt-as-a-sender).
 const testCodec = EnvelopeCodec();
 

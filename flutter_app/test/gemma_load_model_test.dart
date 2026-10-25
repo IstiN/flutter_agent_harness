@@ -4,7 +4,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_gemma/flutter_gemma.dart'
-    show InferenceModel, Message, MessageType;
+    show InferenceModel, MessageType;
 
 import 'package:fa/gemma/gemma_service_plugin.dart';
 import 'package:fa/gemma/gemma_types.dart';
