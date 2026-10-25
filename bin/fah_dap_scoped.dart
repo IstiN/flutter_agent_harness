@@ -11,6 +11,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:fa_hub_client/fa_hub_client.dart' as client;
@@ -89,6 +90,10 @@ typedef DapPassphrasePrompt =
       String hubUrl,
       String channelId,
     );
+
+const _dapPassphraseRecovery =
+    're-paste the original invite / fa dap import block to re-encrypt '
+    'with a fresh passphrase, or set DAP_KEY_PASSPHRASE';
 
 /// One join/leave operation's human-facing outcome.
 final class DapScopedOutcome {
@@ -316,19 +321,45 @@ final class DapScopedMemberships {
   /// interactive prompt (save-to-Keychain default). Headless without env
   /// and Keychain returns null — the caller proceeds with a loud warning
   /// and never prompts.
-  Future<String?> _resolvePassphrase(String hubUrl, String channelId) async {
+  ///
+  /// Imports alone set [autoProvision]: with no env passphrase or stored
+  /// item, a usable Keychain receives a generated passphrase before the
+  /// prompt fallback. Decryption NEVER auto-provisions; a fresh passphrase
+  /// cannot open envelopes imported from another machine.
+  Future<String?> _resolvePassphrase(
+    String hubUrl,
+    String channelId, {
+    bool autoProvision = false,
+  }) async {
     final env = _envPassphrase;
     if (env != null) return env;
     final item = dapChannelKeychainItem(hubUrl, channelId);
-    final stored = await keychain?.read(item);
+    final store = keychain;
+    final stored = await store?.read(item);
     if (stored != null && stored.isNotEmpty) return stored;
+    if (autoProvision && store != null) {
+      final random = Random.secure();
+      final generated = base64UrlEncode(
+        List<int>.generate(32, (_) => random.nextInt(256)),
+      ).replaceAll('=', '');
+      try {
+        await store.write(item, generated);
+        return generated;
+      } on Object {
+        // An unavailable/unwritable store is equivalent to no Keychain:
+        // discard the unrecoverable generated value and use the fallback.
+        loadWarnings.add(
+          'dap: could not save an auto-generated passphrase to Keychain',
+        );
+      }
+    }
     final prompt = passphrasePrompt;
     if (prompt == null) return null;
     final answer = await prompt(hubUrl, channelId);
     if (answer == null || answer.passphrase.isEmpty) return null;
-    if (answer.save && keychain != null) {
+    if (answer.save && store != null) {
       try {
-        await keychain!.write(item, answer.passphrase);
+        await store.write(item, answer.passphrase);
       } on Object {
         loadWarnings.add('dap: could not save the passphrase to Keychain');
       }
@@ -350,14 +381,16 @@ final class DapScopedMemberships {
     if (passphrase == null) {
       loadWarnings.add(
         'dap: #${m.channelId} key is encrypted but no passphrase is '
-        'available (DAP_KEY_PASSPHRASE / Keychain) — joined without keys',
+        'available — joined without keys; $_dapPassphraseRecovery',
       );
       return null;
     }
     try {
       return await decryptChannelPriv(priv, passphrase);
     } on FormatException catch (e) {
-      loadWarnings.add('dap: #${m.channelId}: ${e.message}');
+      loadWarnings.add(
+        'dap: #${m.channelId}: ${e.message}; $_dapPassphraseRecovery',
+      );
       return null;
     }
   }
@@ -497,12 +530,14 @@ final class DapScopedMemberships {
         final passphrase = await _resolvePassphrase(
           invite.hubUrl,
           invite.channel,
+          autoProvision: true,
         );
         if (passphrase == null) {
           if (storedPriv != null) {
             warnings.add(
               'dap: no passphrase (DAP_KEY_PASSPHRASE / Keychain / prompt) — '
-              '#${invite.channel} key is kept in memory only this run',
+              '#${invite.channel} key is kept in memory only this run; '
+              '$_dapPassphraseRecovery',
             );
             _memoryOnlyKeys[membership.key] = invite.priv!;
             storedPriv = null;
@@ -510,7 +545,8 @@ final class DapScopedMemberships {
           if (storedSecret != null) {
             warnings.add(
               'dap: no passphrase — the hub credential for '
-              '#${invite.channel} is kept in memory only this run',
+              '#${invite.channel} is kept in memory only this run; '
+              '$_dapPassphraseRecovery',
             );
             _memoryOnlySecrets[membership.key] = storedSecret;
             storedSecret = null;

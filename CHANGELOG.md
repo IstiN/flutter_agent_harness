@@ -13,6 +13,13 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1825): pasting a DAP invite no longer demands a passphrase on
+  macOS — importing NEW channel secrets auto-provisions a random
+  passphrase into the per-channel Keychain item (decryption of existing
+  envelopes never auto-generates; env/prompt/headless behavior unchanged),
+  and passphrase warnings now name the concrete recovery (re-paste the
+  invite to re-encrypt, or set DAP_KEY_PASSPHRASE).
+
 - feat(gh-1825): the network online counter opens a live-first roster
   sheet (names, member class, presence), and the channel composer offers
   roster-filtered @-mention autocomplete — the draft keeps the literal

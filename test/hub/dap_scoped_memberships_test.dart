@@ -44,13 +44,14 @@ void main() {
     Map<String, String>? env,
     DapPassphrasePrompt? prompt,
     String? project,
+    bool useKeychain = true,
   }) => DapScopedMemberships(
     globalConfigFile: globalConfig,
     globalChannelsFile: globalChannels,
     overlayChannelsFile: overlay,
     projectFile: project ?? projectFile,
     environment: env ?? const {},
-    keychain: keychain,
+    keychain: useKeychain ? keychain : null,
     passphrasePrompt: prompt,
     appendSessionRecord: (type, data) async {
       sessionRecords.add(Map<String, Object?>.from(data));
@@ -210,15 +211,24 @@ void main() {
       return (passphrase: pass, save: true);
     }
 
-    final first = service(prompt: prompt);
-    await first.join(invite(), DapChannelScope.session);
-    expect(prompts, 1);
-    expect(keychain.writes, 1);
-    expect(keychain.items.keys.single, 'fa.dap.channel-key.hub.fa1.dev.team');
+    // Seed the envelope with the env path. Resolving an EXISTING envelope
+    // may prompt and save, but must never auto-provision a new passphrase.
+    await service(
+      env: {'DAP_KEY_PASSPHRASE': pass},
+    ).join(invite(), DapChannelScope.session);
+    expect(prompts, 0);
+    expect(keychain.writes, 0);
 
     final second = service(prompt: prompt);
     final runtime = await second.runtimeEffective();
     expect(runtime.single.priv, priv);
+    expect(prompts, 1);
+    expect(keychain.writes, 1);
+    expect(keychain.items.keys.single, 'fa.dap.channel-key.hub.fa1.dev.team');
+
+    final third = service(prompt: prompt);
+    final resumed = await third.runtimeEffective();
+    expect(resumed.single.priv, priv);
     expect(prompts, 1, reason: 'Keychain hit must skip the prompt');
   });
 
@@ -236,7 +246,7 @@ void main() {
 
   test('headless join without any passphrase keeps the key in memory '
       'only — nothing plaintext at rest', () async {
-    final s = service(); // no env, no prompt, empty keychain
+    final s = service(useKeychain: false); // no env, prompt, or Keychain
     final outcome = await s.join(invite(), DapChannelScope.session);
     expect(outcome.warnings.join('\n'), contains('memory only'));
     expect(sessionRecords.single.containsKey('priv'), isFalse);
@@ -343,7 +353,7 @@ void main() {
 
   test('headless without a passphrase: the credential stays in memory, '
       'never plaintext in the session record', () async {
-    final s = service(env: {});
+    final s = service(env: {}, useKeychain: false);
     final outcome = await s.join(
       invite(),
       DapChannelScope.session,
