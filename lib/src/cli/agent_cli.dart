@@ -225,6 +225,8 @@ import '../tools/load_modes.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/session_search_tool.dart';
+import '../session/session_chunk_reader.dart'
+    show heavyScanGuardIfHeavy, heavyScanGuardLines, sessionSizeIfHeavy;
 import '../session/session_search.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';
@@ -1688,6 +1690,11 @@ class AgentCli {
   /// gh-1745 request-blob store (the session's spill dir + rotation
   /// policy); built lazily on the first spilled capture.
   TrajectoryRequestBlobStore? _requestBlobStore;
+
+  /// Issue #1882 AC3: the heavy-scan guard prints ONCE per process — the
+  /// `trajectory tail` poll re-evaluates the snapshot every interval and
+  /// must not re-warn each time.
+  bool _heavyScanGuardShown = false;
 
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass

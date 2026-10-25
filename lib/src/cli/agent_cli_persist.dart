@@ -178,21 +178,56 @@ extension AgentCliPersist on AgentCli {
     final session = _session;
     final repo = _repo;
     if (session == null || repo is! JsonlSessionRepo) {
-      // The honest graceful-null degradation: the archive was NOT
-      // searched (there is nothing to search) — the formatter prints
-      // this verbatim instead of a completed-but-empty scan, which
-      // would read as "no records match" (the dishonest rendering the
-      // rework pass called out).
-      return const SessionSearchOutcome(
-        hits: [],
-        recordsExamined: 0,
-        recordsTotal: 0,
-        truncated: false,
-        unavailableReason:
-            'no session file backs this host — nothing was searched',
-      );
+      return _unsearchableOutcome();
     }
-    return repo.searchArchive(await session.getMetadata(), query);
+    final metadata = await session.getMetadata();
+    // Issue #1882 AC3: a scan over a heavy session file names the cost —
+    // the guard line rides the result so the agent (and the transcript)
+    // see the exact size plus the hygiene escapes.
+    final sizeNote = await _searchSizeNote(metadata.path);
+    final outcome = await repo.searchArchive(metadata, query);
+    return _withSizeNote(outcome, sizeNote);
+  }
+
+  /// The honest graceful-null degradation: the archive was NOT searched
+  /// (there is nothing to search) — the formatter prints this verbatim
+  /// instead of a completed-but-empty scan, which would read as "no
+  /// records match" (the dishonest rendering the rework pass called
+  /// out).
+  SessionSearchOutcome _unsearchableOutcome() => const SessionSearchOutcome(
+    hits: [],
+    recordsExamined: 0,
+    recordsTotal: 0,
+    truncated: false,
+    unavailableReason: 'no session file backs this host — nothing was searched',
+  );
+
+  /// The heavy-file guard line for the searched session, or '' when the
+  /// file is under the warn bound (issue #1882 AC3).
+  Future<String> _searchSizeNote(String path) async {
+    final heavyScan = await sessionSizeIfHeavy(_env, path);
+    if (heavyScan == null) return '';
+    return heavyScanGuardLines(heavyScan, path).first;
+  }
+
+  /// Copies [outcome] with the guard note attached (empty note = the
+  /// outcome unchanged — small files scan silently).
+  SessionSearchOutcome _withSizeNote(
+    SessionSearchOutcome outcome,
+    String sizeNote,
+  ) {
+    if (sizeNote.isEmpty) return outcome;
+    return SessionSearchOutcome(
+      hits: outcome.hits,
+      recordsExamined: outcome.recordsExamined,
+      recordsTotal: outcome.recordsTotal,
+      truncated: outcome.truncated,
+      nextContinuation: outcome.nextContinuation,
+      map: outcome.map,
+      truncationReason: outcome.truncationReason,
+      unavailableReason: outcome.unavailableReason,
+      sizeNote: sizeNote,
+    );
   }
 
   /// The pending-wait write path (issue #1380 AC5): a successful

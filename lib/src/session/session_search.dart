@@ -483,6 +483,7 @@ final class SessionSearchOutcome {
     this.map,
     this.truncationReason = '',
     this.unavailableReason = '',
+    this.sizeNote = '',
   });
 
   final List<SessionSearchHit> hits;
@@ -515,6 +516,12 @@ final class SessionSearchOutcome {
   /// rendering a completed-but-empty scan, which would dishonestly claim
   /// the archive was searched and holds nothing.
   final String unavailableReason;
+
+  /// Issue #1882 AC3: one-line heavy-file guard (exact size + the
+  /// hygiene escapes) set by the host when the session file is over the
+  /// 500 MB warn bound — the scan itself stays streamed/budgeted, the
+  /// note makes the cost visible. Empty when the file is small.
+  final String sizeNote;
 }
 
 /// The clipped single-line preview a hit carries (AC4: never full
