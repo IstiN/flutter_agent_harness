@@ -35,27 +35,30 @@ var _fontsLoaded = false;
 /// so snapshots render real glyphs instead of flutter_test placeholder
 /// boxes. Fonts are loaded once per test process; safe to call from every
 /// `setUpAll`.
+///
+/// HOST-INDEPENDENCE CONTRACT (issue #1856, from #177 E5): every family a
+/// golden can touch is registered HERE, from byte-identical TTFs, so the
+/// engine never consults the test host's fonts. flutter_test runs under
+/// `--use-test-fonts`: a glyph missing from every registered family
+/// resolves to the deterministic test-font box — NOT a host font — and
+/// glyphs missing from the PRIMARY family stay trapped the same way
+/// (per-glyph fallback cannot escape a resolved family). The production
+/// mono fallback stack (FahPalette.monoFallback: SF Mono / Menlo /
+/// Consolas / Roboto Mono / Courier — host system fonts) is therefore
+/// aliased to the same JetBrainsMono bytes: without the aliases a
+/// mono-path glyph JetBrainsMono lacks would resolve to the host's
+/// CoreText/fontconfig substitute and drift per host/OS. Emoji and
+/// symbols (✦, 🍅, ⏳ …) stay deterministic-by-trap for the same reason;
+/// shadows are covered by the test runner's `--skia-deterministic-
+/// rendering` flag. The remaining drift axis is the SDK VERSION, so the
+/// baselines are only valid for the exact pinned SDK (3.47.4) the
+/// nightly golden leg (build-release macOS row) runs — after an SDK
+/// bump, regenerate (`flutter test test/golden --update-goldens`) and
+/// eyeball every changed PNG.
 Future<void> ensureGoldenFonts() async {
   // The kaomoji indicator (issue #1374) picks its face randomly in
   // production — goldens pin it (the CLI's FA_KAOMOJI_FACE seam
   // mirrors this) so every frame is deterministic: `>_o`, everywhere.
-  //
-  // MAC REGEN DONE (PR #1419, issue #1374): the branch swapped the
-  // thinking tile (head-with-gear → KaomojiThinkingIcon) and the status
-  // row (spinner → KaomojiFaceText); the affected snapshots were
-  // regenerated on the host-locked mac (the pin above keeps every
-  // frame byte-stable across the regen), with eyes on each diff:
-  //   chat/run_status_empty_light, chat/run_status_empty_dark,
-  //   chat/run_status_thinking_light, chat/run_status_tool_light,
-  //   chat/run_status_tool_dark                       (status row)
-  //   launcher/sheet_session_streaming_dark            (status row)
-  //   chat_conversation, apps_fa_chat_overlay,
-  //   apps_fa_chat_overlay_light, apps_fa_chat_overlay_streaming,
-  //   apps_fa_chat_overlay_streaming_light            (thinking tiles)
-  // apps_fa_chat_overlay_rich/_rich_ru stayed byte-identical (their
-  // thinking bubble renders collapsed — no icon), and unrelated frames
-  // carry a pre-existing ~0.5% host drift that also fails on main and
-  // waits on a separate host-wide regen pass.
   KaomojiFacePicker.debugPin = 0;
   if (_fontsLoaded) return;
   final inter = FontLoader('Inter')
@@ -63,15 +66,36 @@ Future<void> ensureGoldenFonts() async {
     ..addFont(rootBundle.load('assets/fonts/Inter-Medium.ttf'))
     ..addFont(rootBundle.load('assets/fonts/Inter-SemiBold.ttf'))
     ..addFont(rootBundle.load('assets/fonts/Inter-Bold.ttf'));
-  final mono = FontLoader('JetBrainsMono')
-    ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'))
-    ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Bold.ttf'));
+  final jbm = [
+    rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'),
+    rootBundle.load('assets/fonts/JetBrainsMono-Bold.ttf'),
+  ];
+  // The theme's terminal-ish styles resolve `JetBrainsMono` and fall
+  // back through FahPalette.monoFallback — host system fonts (SF Mono
+  // only exists on macOS, Menlo/Consolas are platform-bound…). Register
+  // the whole stack against the same JetBrainsMono bytes so a mono-path
+  // glyph resolves identically on every host (see the contract above).
+  final monoLoaders = <FontLoader>[
+    for (final family in const [
+      'JetBrainsMono',
+      'SF Mono',
+      'Menlo',
+      'Consolas',
+      'Roboto Mono',
+      'Courier',
+    ])
+      FontLoader(family)
+        ..addFont(jbm[0])
+        ..addFont(jbm[1]),
+  ];
   // Icon fonts are not registered from the test asset bundle either, but
   // `uses-material-design: true` places MaterialIcons under fonts/.
   final icons = FontLoader('MaterialIcons')
     ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
   await inter.load();
-  await mono.load();
+  for (final loader in monoLoaders) {
+    await loader.load();
+  }
   await icons.load();
   _fontsLoaded = true;
 }

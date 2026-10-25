@@ -186,10 +186,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Same pinned SDK as the PR build legs and the release path (#281).
+      # EXACT patch (the PR build legs use the floating '3.47.x'): the
+      # golden baselines (issue #1856 leg below) are pixel-sensitive to
+      # the engine's text stack, so the nightly renders them on the same
+      # SDK they were captured with. Bump this together with a
+      # `flutter test test/golden --update-goldens` regen (eyes on every
+      # changed PNG).
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.x'
+          flutter-version: '3.47.4'
           channel: stable
           cache: true
 
@@ -358,6 +363,22 @@ jobs:
         env:
           WASM_RUN_DART_DYNAMIC_LIBRARY: ${{ github.workspace }}/flutter_app/.dart_tool/wasm_run/libwasm_run_dart.dylib
         run: flutter test test/wasm_sandbox_toolchain_test.dart --tags integration
+
+      # Issue #1856 (from #177 E5): the golden suite's guarding leg — the
+      # first one since gh-1538 retired the nightly full matrix. The
+      # pinned-font golden env (flutter_app/test/golden/
+      # golden_test_helper.dart) renders every glyph from bundled faces —
+      # Inter/JetBrainsMono assets + Noto Sans Symbols 2 / Noto Emoji
+      # coverage + the aliased mono stack — so a golden diff is a real
+      # rendering regression, not a host font/SDK substitution. Runs on
+      # the same pinned SDK the baselines are captured with, before the
+      # (much longer) release build; a red feeds the deduped nightly-red
+      # issue via the auto-issue job below.
+      - name: flutter test goldens (issue #1856)
+        if: matrix.target == 'macos'
+        working-directory: flutter_app
+        shell: bash
+        run: flutter test test/golden
 
       - name: ${{ matrix.cmd }}
         working-directory: flutter_app
