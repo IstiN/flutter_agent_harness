@@ -128,6 +128,12 @@ final class HubFabricRepository
       });
       return;
     }
+    if (toId.startsWith('#')) {
+      // Private fa_network channel: carry senderX in the frame so the app
+      // can open it with the channel key alone (no whois/senderKey lookup).
+      await repo.client.sendChannelFanet1(toId.substring(1), message.text);
+      return;
+    }
     await repo.send(
       hub.AgentMessage(
         id: message.id,

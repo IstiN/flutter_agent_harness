@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1825): DAP private-channel sends now use self-describing
+  `fanet1` frames (sender X25519 key in the frame, channel-bound AAD) via
+  `fa_hub_client` 0.2.11, so fa_network app members decrypt them without
+  a whois/senderKey round-trip. Inbound channel frames open `fanet1`
+  first and fall back to legacy `dap/1` payloads. Verified live in both
+  directions between a headless DAP agent and the Flutter app.
+- feat(gh-1825): the network offline banner now has a **Reconnect now**
+  action which restarts the socket and reloads the channel/member
+  snapshot. Fresh sockets also clear a stale offline flag (the server
+  sends no historical drain to a socket that was away during recovery).
+  `AgentNetworkController.start` stops after disposal instead of
+  notifying a dead controller.
+
 - feat(gh-1825): the roster sheet shows access-scope badges (whole
   network vs N channels, decoded additively from Member.access in
   snapshots and presence.changed) and owner/admins can drop an agent

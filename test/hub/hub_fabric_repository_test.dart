@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:fa_hub_client/fa_hub_client.dart'
     hide AgentMessage, MailboxEntry;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
@@ -143,6 +145,48 @@ void main() {
     expect(drained.single.toId, '#room');
     expect(drained.single.text, 'back at you');
     expect(drained.single.fromId, sender.agentId);
+  }, timeout: timeout);
+
+  test('PRIVATE channel: fabric sends a fanet1 frame, not RAW dap/1', () async {
+    final (adapter, plugin) = await newFabric();
+    const channel = 'private-room';
+    final keys = await newChannelKeypair();
+    final client = plugin.repository!.client;
+    await client.channelStore!.accept(channel, keys);
+    client.join(channel, keys.pub);
+    sender.join(channel, keys.pub);
+
+    final arrived = sender.inbound
+        .firstWhere((message) => message.channel == channel)
+        .timeout(const Duration(seconds: 5));
+    await adapter.send(
+      AgentMessage(
+        id: 'private1',
+        fromId: 'main',
+        toId: '#$channel',
+        text: 'hello private',
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
+    await arrived;
+
+    final wire = hub.relayed.single;
+    final payload = base64Decode(wire['ciphertext'] as String);
+    expect(payload.first, fanet1FrameVersion);
+    expect(payload.sublist(1, 33), client.identity.dhPublicKey.bytes);
+    expect(
+      payload.length,
+      1 + 32 + 12 + 16 + utf8.encode('hello private').length,
+    );
+    final opened = await openFanet1(
+      channelKeyPair: await X25519().newKeyPairFromSeed(
+        base64Decode(keys.priv),
+      ),
+      frameId: wire['id'] as String,
+      channelId: channel,
+      payloadB64: wire['ciphertext'] as String,
+    );
+    expect(opened.plaintext, 'hello private');
   }, timeout: timeout);
 
   test('resolveTarget answers the roster; channels pass through', () async {
