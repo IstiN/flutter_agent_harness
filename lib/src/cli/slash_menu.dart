@@ -187,6 +187,7 @@ const builtinSlashCommands = <String, String>{
   '/rename-session': '<name> — rename the current session',
   '/trajectory': '[view|cost|tail|inspect <n>] — session trajectory ledger',
   '/usage': '[rebuild] — session token-usage ledger (usage.json)',
+  '/images': 'image registry: window, last-request drops, caps, knobs',
   '/approval': '[mode] — show or set tool approval',
   '/settings': '— settings hub: provider, model, approval, keys, MCP',
   '/update': '— check for updates, restart fa (same session)',

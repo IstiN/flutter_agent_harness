@@ -94,7 +94,7 @@ OperativePinConfig operativePinConfig = const OperativePinConfig();
 
 /// Host-visible pin notice (drops, supersedes, repairs — never silent).
 /// Set by hosts that surface them (CLI prints a dim transcript line; the
-/// app logs via AppLog). Same pattern as `imageDropNotice`.
+/// app logs via AppLog). Same pattern as `imageDropReportNotice`.
 void Function(String notice)? operativePinNotice;
 
 /// Where a pinned line came from: the owning skill's name and file path

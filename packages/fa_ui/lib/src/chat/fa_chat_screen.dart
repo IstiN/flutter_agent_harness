@@ -83,6 +83,7 @@ class FaChatScreen extends StatefulWidget {
     this.settingsBuilder,
     this.fileBrowserBuilder,
     this.composerBuilder,
+    this.noticeBanner,
     this.wallpaperBuilder,
     this.avatarBuilder,
     this.onAuthRecovery,
@@ -136,6 +137,12 @@ class FaChatScreen extends StatefulWidget {
   /// Replacement composer; null builds the default [ChatComposer] with
   /// [features].
   final FaChatComposerBuilder? composerBuilder;
+
+  /// A host notice banner docked above the transcript, under the
+  /// auth-expired banner (issue #1889 R5: the aggregated image-drop chip).
+  /// The HOST owns the widget's lifecycle and state — this screen only
+  /// docks whatever is handed in; null docks nothing.
+  final Widget? noticeBanner;
 
   /// Wallpaper layer painted under the transcript (theme packs): when
   /// non-null the chat surface paints transparent so the layer shows
@@ -1456,6 +1463,9 @@ class _FaChatScreenState extends State<FaChatScreen>
       child: Column(
         children: [
           ?_buildErrorBanner(context, strings),
+          // Host notice banner (issue #1889 R5: the aggregated image-drop
+          // chip) — docked above the transcript, under the auth banner.
+          ?widget.noticeBanner,
           ?_buildTopHistoryBanner(strings, historyAbove),
           Expanded(child: _buildTranscript(context)),
           ?_buildWidgetOpenChip(context),

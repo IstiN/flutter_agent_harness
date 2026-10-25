@@ -55,6 +55,8 @@ const _coverage = <String, String>{
   'lib/ui/screens/mobile_consent_screen.dart':
       'test/golden/mobile_consent_golden_test.dart',
   'lib/ui/widgets/chat_composer.dart': 'test/golden/composer_golden_test.dart',
+  'lib/ui/widgets/image_drop_notice_chip.dart':
+      'test/golden/image_drop_golden_test.dart',
   'lib/ui/widgets/subagent_mark.dart': 'test/golden/widgets_golden_test.dart',
   'lib/ui/widgets/media_player.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/fa_mark.dart': 'test/golden/chat_golden_test.dart',

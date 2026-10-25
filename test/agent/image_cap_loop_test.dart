@@ -148,26 +148,26 @@ Future<List<Message>> _run(
 );
 
 void main() {
-  var dropNotices = <(int, String)>[];
+  var dropNotices = <ImageDropEvent>[];
   var learnedNotices = <(String, int)>[];
   ImageRegistryConfig? savedConfig;
-  ImageDropNotice? savedDropNotice;
+  ImageDropReportNotice? savedDropNotice;
   ImageCapLearnedNotice? savedLearnedNotice;
 
   setUp(() {
     savedConfig = imageRegistryConfig;
-    savedDropNotice = imageDropNotice;
+    savedDropNotice = imageDropReportNotice;
     savedLearnedNotice = imageCapLearnedNotice;
     imageRegistryConfig = const ImageRegistryConfig();
     dropNotices = [];
     learnedNotices = [];
-    imageDropNotice = (index, preview) => dropNotices.add((index, preview));
+    imageDropReportNotice = (report) => dropNotices.addAll(report.drops);
     imageCapLearnedNotice = (modelId, cap) =>
         learnedNotices.add((modelId, cap));
   });
   tearDown(() {
     imageRegistryConfig = savedConfig!;
-    imageDropNotice = savedDropNotice;
+    imageDropReportNotice = savedDropNotice;
     imageCapLearnedNotice = savedLearnedNotice;
   });
 
@@ -355,5 +355,86 @@ void main() {
     expect(_uniqueImageCount(fake.contexts.single.messages), 12);
     expect(dropNotices, isEmpty);
     expect(learnedNotices, isEmpty);
+  });
+
+  test('AC1 (#1889): 37 history images, cap 20, 5 consecutive requests ⇒ '
+      'five full per-image reports, ONE aggregated notice', () async {
+    // 4 tool-call rounds + the final text turn = 5 provider requests
+    // inside one run — the yoclip flood shape.
+    List<AssistantMessageEvent> toolRound(String id) {
+      final call = ToolCall(id: id, name: 'snap', arguments: const {});
+      final empty = _assistant();
+      final partial = _assistant(
+        content: [call],
+        stopReason: StopReason.toolUse,
+      );
+      return [
+        StartEvent(partial: empty),
+        ToolCallStartEvent(contentIndex: 0, partial: empty),
+        ToolCallEndEvent(contentIndex: 0, toolCall: call, partial: partial),
+        DoneEvent(reason: StopReason.toolUse, message: partial),
+      ];
+    }
+
+    final fake = _FakeStreamFunction([
+      for (var i = 0; i < 4; i++) toolRound('c$i'),
+      _textTurn('done'),
+    ]);
+    final reports = <ImageDropReport>[];
+    final savedReport = imageDropReportNotice;
+    imageDropReportNotice = reports.add;
+    try {
+      await runAgentLoop(
+        prompts: [UserMessage.text('go')],
+        context: Context(
+          messages: _imageHistory(37),
+          tools: [
+            Tool(name: 'snap', description: 'snap', parameters: const {}),
+          ],
+        ),
+        config: AgentLoopConfig(model: _model('undocumented-vision')),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
+        emit: (_) {},
+      );
+    } finally {
+      imageDropReportNotice = savedReport;
+    }
+
+    expect(fake.calls, 5, reason: 'four tool rounds plus the final turn');
+    // Every request's report keeps the FULL per-image detail — the
+    // debug surface is never silent (5 × 17 drop events).
+    expect(reports, hasLength(5));
+    for (final report in reports) {
+      expect(report.drops, hasLength(17));
+      expect(report.drops.map((d) => d.index), {
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+      });
+      expect(_uniqueImageCount(fake.contexts.last.messages), 20);
+    }
+    // The shared latch collapses the flood: exactly ONE user-facing
+    // notice across all five requests.
+    final ux = ImageDropUx();
+    final notices = [
+      for (final report in reports)
+        if (ux.observe(report) != null) report,
+    ];
+    expect(notices, hasLength(1));
   });
 }

@@ -1750,6 +1750,10 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   // catalog maxImages > the global maxPerRequest) so a request never
   // carries more unique images than the target model accepts.
   if (imageRegistryConfig.enabled) {
+    // Issue #1889: the host-facing seam is the per-request report (one
+    // call per build, zero drops included) — hosts aggregate + latch it
+    // into a single user-facing notice; per-image detail stays on the
+    // debug surface inside the same report.
     final rewritten = rewriteHistoryImages(
       requestContext.messages,
       maxPerRequest:
@@ -1758,7 +1762,8 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
             modelId: config.model.id,
             catalogMaxImages: config.model.maxImages,
           ),
-      onDrop: imageDropNotice,
+      modelId: config.model.id,
+      onReport: imageDropReportNotice,
     );
     if (!identical(rewritten, requestContext.messages)) {
       requestContext = Context(

@@ -32,6 +32,21 @@ StreamFunction _singleTextResponse(String text) {
   };
 }
 
+/// An [ImageDropReport] with [drops] history drops over [registry] window
+/// images at the default cap — the shape the loop's rewrite reports.
+ImageDropReport _dropReport({required int drops, required int registry}) =>
+    ImageDropReport(
+      drops: [
+        for (var i = 0; i < drops; i++)
+          ImageDropEvent(index: i, key: 'k$i', fromCurrentMessage: false),
+      ],
+      cap: 20,
+      modelId: 'test-model',
+      currentImageCount: 0,
+      registryCount: registry,
+      ridingCount: registry - drops,
+    );
+
 /// Issue #1102 repro: one event-loop turn between the model-request-summary
 /// persist window (ModelRequestEvent) and the assistant MessageEnd persist —
 /// the interleave under which the old `_persistRunning` early-return dropped
@@ -771,10 +786,11 @@ void main() {
 
         // The service owns the process-wide drop notice now: a drop must
         // reach the debug log the user can copy, like the CLI's dim line.
-        expect(imageDropNotice, isNotNull);
-        imageDropNotice!(7, 'a1b2c3d4');
-        expect(AppLog.dump(), contains('[Image 7]'));
-        expect(AppLog.dump(), contains('a1b2c3d4'));
+        expect(imageDropReportNotice, isNotNull);
+        imageDropReportNotice!(_dropReport(drops: 1, registry: 21));
+        expect(AppLog.dump(), contains('[Image 0]'));
+        // Issue #1889: the aggregated latch also fed the chat chip.
+        expect(service.chatImageNotice.value, isNotNull);
       },
     );
 
@@ -796,9 +812,9 @@ void main() {
 
         // The config-built constructor is what the real app boots through;
         // its drop notice must be armed as well.
-        expect(imageDropNotice, isNotNull);
-        imageDropNotice!(3, 'deadbeef');
-        expect(AppLog.dump(), contains('[Image 3]'));
+        expect(imageDropReportNotice, isNotNull);
+        imageDropReportNotice!(_dropReport(drops: 1, registry: 21));
+        expect(AppLog.dump(), contains('[Image 0]'));
       },
     );
 
