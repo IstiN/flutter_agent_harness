@@ -140,6 +140,27 @@ void main() {
       expect(out.join('\n'), contains('PARTIAL'));
     });
 
+    test(
+      'an empty target resolves to the most recently updated session',
+      () async {
+        // Two seeds separated by an mtime tick: the resolver picks the
+        // newer one (the empty-`sessionId` default arm).
+        final older = (await seedSession()).id;
+        await Future<void>.delayed(const Duration(milliseconds: 6));
+        final newer = (await seedSession()).id;
+        final code = await runSessionInfoCliCommand(
+          writeln: out.add,
+          env: fs,
+          sessionRoot: '/sessions',
+          sessionId: '',
+        );
+        expect(code, 0);
+        final text = out.join('\n');
+        expect(text, contains('session: $newer'));
+        expect(text, isNot(contains('session: $older')));
+      },
+    );
+
     test('unknown and ambiguous ids fail honestly', () async {
       await seedSession();
       expect(
