@@ -956,6 +956,98 @@ void main() {
       });
     });
 
+    testWidgets('unmapped platform-bridge methods gate on the method prefix', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        // Methods the handler map does not implement fall through to the
+        // platform bridge (`_faPlatform`), whose permission gate keys on
+        // the method prefix — including the default-deny arm for prefixes
+        // no permission exists for.
+        await env.writeFile('apps/demo/widget.js', '''
+  (function() {
+    function probe(method) {
+      return jsr.fa.call(method, {}).then(function(result) {
+        return {
+          method: method,
+          outcome: result && result.__error
+              ? 'denied: ' + result.__error
+              : 'ok',
+        };
+      });
+    }
+    Promise.all([
+      probe('homekit.bogus'),
+      probe('contacts.bogus'),
+      probe('health.bogus'),
+      probe('sensors.read')
+    ]).then(function(results) {
+      jsr.exportState({results: results});
+    });
+    jsr.render({type: 'text', data: 'x'});
+  })();
+  ''');
+
+        // Everything denied: each known prefix answers its own permission
+        // error, unknown prefixes the default-deny one.
+        final denied = JsAppEngine(
+          app: app(),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        try {
+          await denied.start();
+          await waitForState(denied);
+          final log = jsonEncode(denied.exportedState!['results']);
+          expect(log, contains('"method":"homekit.bogus"'));
+          expect(log, contains('homekit permission is disabled'));
+          expect(log, contains('"method":"contacts.bogus"'));
+          expect(log, contains('contacts permission is disabled'));
+          expect(log, contains('"method":"health.bogus"'));
+          expect(log, contains('health permission is disabled'));
+          expect(log, contains('"method":"sensors.read"'));
+          expect(log, contains('sensors permission is disabled'));
+        } finally {
+          await denied.dispose();
+        }
+
+        // Granted: the known prefixes pass the gate and fail later, on the
+        // missing platform backend; an unknown prefix still denies even
+        // with every declared permission granted.
+        final granted = JsAppEngine(
+          app: app(),
+          env: env,
+          permissions: const AppPermissions(
+            homekit: true,
+            contacts: true,
+            health: true,
+          ),
+        );
+        try {
+          await granted.start();
+          await waitForState(granted);
+          final log = jsonEncode(granted.exportedState!['results']);
+          expect(
+            log,
+            contains('homekit bridge is not available on this platform yet'),
+          );
+          expect(
+            log,
+            contains('contacts bridge is not available on this platform yet'),
+          );
+          expect(
+            log,
+            contains('health bridge is not available on this platform yet'),
+          );
+          expect(log, contains('sensors permission is disabled'));
+          expect(log, isNot(contains('sensors bridge is not available')));
+        } finally {
+          await granted.dispose();
+        }
+      });
+    });
+
     testWidgets('granted fa.home writes reach the HomeApi (legacy homekit '
         'form included)', (tester) async {
       await tester.runAsync(() async {

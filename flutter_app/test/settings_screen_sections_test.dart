@@ -12,7 +12,7 @@ import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
-import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
+import 'package:fa_ui/fa_ui.dart' show FahErrorCopyButton, ProviderEditorPage;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Drives the section gating of `SettingsScreen.build` (issue #702): the
@@ -189,6 +189,26 @@ void main() {
       // The provider-queue editor lives on the Models page (issue #693),
       // not at the top level anymore.
       expect(find.byType(ProviderQueueSection), findsNothing);
+    });
+  });
+
+  group('send test crash report (gh-1848)', () {
+    testWidgets('without Firebase the button answers the no-firebase '
+        'error snack', (tester) async {
+      await pumpScreen(tester);
+
+      await tester.tap(find.byTooltip('Send test crash report'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(SnackBar), findsOneWidget);
+      expect(
+        find.text('Crashlytics not initialized on this device'),
+        findsOneWidget,
+      );
+      // The error-snack arm of the ternary carries the copy affordance;
+      // the plain success snack does not.
+      expect(find.byType(FahErrorCopyButton), findsOneWidget);
     });
   });
 

@@ -3,7 +3,8 @@
 // in the LICENSE file.
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_gemma/flutter_gemma.dart' show InferenceModel;
+import 'package:flutter_gemma/flutter_gemma.dart'
+    show InferenceModel, Message, MessageType;
 
 import 'package:fa/gemma/gemma_service_plugin.dart';
 import 'package:fa/gemma/gemma_types.dart';
@@ -215,5 +216,64 @@ void main() {
         expect(cleared, ['clear']);
       },
     );
+  });
+
+  group('GemmaService chat-message mapping (gh-1848)', () {
+    test('assistant history replays as model text', () {
+      final message = GemmaService.toPluginMessageForTest((
+        role: 'assistant',
+        content: 'all done',
+        toolName: null,
+      ));
+      expect(message.text, 'all done');
+      expect(message.isUser, isFalse);
+      expect(message.type, MessageType.text);
+    });
+
+    test('tool_call history replays as a plugin tool call', () {
+      const payload = '{"role":"assistant","tool_calls":[]}';
+      final message = GemmaService.toPluginMessageForTest((
+        role: 'tool_call',
+        content: payload,
+        toolName: null,
+      ));
+      expect(message.text, payload);
+      expect(message.isUser, isFalse);
+      expect(message.type, MessageType.toolCall);
+    });
+
+    test('tool_result history replays as a tool response', () {
+      final message = GemmaService.toPluginMessageForTest((
+        role: 'tool_result',
+        content: '22.5',
+        toolName: 'getTemperature',
+      ));
+      expect(message.toolName, 'getTemperature');
+      expect(message.text, '{"output":"22.5"}');
+      // Tool responses ride the user side of the plugin chat.
+      expect(message.isUser, isTrue);
+      expect(message.type, MessageType.toolResponse);
+    });
+
+    test('tool_result without a tool name falls back to "tool"', () {
+      final message = GemmaService.toPluginMessageForTest((
+        role: 'tool_result',
+        content: 'ok',
+        toolName: null,
+      ));
+      expect(message.toolName, 'tool');
+      expect(message.type, MessageType.toolResponse);
+    });
+
+    test('any other role replays as user text', () {
+      final message = GemmaService.toPluginMessageForTest((
+        role: 'user',
+        content: 'hello',
+        toolName: null,
+      ));
+      expect(message.text, 'hello');
+      expect(message.isUser, isTrue);
+      expect(message.type, MessageType.text);
+    });
   });
 }
