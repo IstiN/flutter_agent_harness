@@ -143,6 +143,14 @@ def _request_known_chars(data) -> int:
                 chars = message.get("chars")
                 if isinstance(chars, int) and not isinstance(chars, bool):
                     total += chars
+    # issue #1882 AC1: stripped records fold older messages into a
+    # {count, chars} aggregate — part of the estimation basis exactly
+    # like the per-message chars.
+    dropped = data.get("droppedMessages")
+    if isinstance(dropped, dict):
+        chars = dropped.get("chars")
+        if isinstance(chars, int) and not isinstance(chars, bool):
+            total += chars
     return total
 
 

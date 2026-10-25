@@ -202,6 +202,11 @@ dependencies:
   stream_channel: ^2.1.0
 
 dev_dependencies:
+  # Settled-memory probe (flutter_app/test/memory_probe.dart, issue #1850):
+  # connects to the test's own VM service to snapshot the per-class live
+  # set after a forced full GC. Transitive via flutter_test; declared for
+  # the depend_on_referenced_packages lint.
+  vm_service: ^15.3.0
   # Mock seam for url_launcher in widget/golden tests.
   url_launcher_platform_interface: ^2.3.2
   flutter_test:

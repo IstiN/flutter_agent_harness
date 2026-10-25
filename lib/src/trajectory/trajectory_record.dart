@@ -186,6 +186,8 @@ final class TrajectoryRequestDetail {
     this.toolManifestHash,
     this.wireDumpHash,
     this.spillFile,
+    this.droppedMessagesCount = 0,
+    this.droppedMessagesChars = 0,
   });
 
   /// Number of messages in the outbound request.
@@ -222,6 +224,16 @@ final class TrajectoryRequestDetail {
   /// record then carries its detail inline as it always did.
   final String? spillFile;
 
+  /// How many OLDER messages the stripped record folded out of [messages]
+  /// into a size aggregate (issue #1882 AC1) — zero when nothing was
+  /// folded (small requests, legacy records).
+  final int droppedMessagesCount;
+
+  /// Σ `chars` of the folded messages: together with [messages]' own Σ
+  /// chars this keeps the usage-estimation basis truthful without
+  /// embedding every stub.
+  final int droppedMessagesChars;
+
   /// Serializes to a JSON map.
   Map<String, dynamic> toJson() => {
     'messageCount': messageCount,
@@ -233,10 +245,16 @@ final class TrajectoryRequestDetail {
     if (toolManifestHash != null) 'toolManifestHash': toolManifestHash,
     if (wireDumpHash != null) 'wireDumpHash': wireDumpHash,
     if (spillFile != null) 'spillFile': spillFile,
+    if (droppedMessagesCount > 0)
+      'droppedMessages': {
+        'count': droppedMessagesCount,
+        'chars': droppedMessagesChars,
+      },
   };
 
   /// Deserializes from a JSON map produced by [toJson].
   factory TrajectoryRequestDetail.fromJson(Map<String, dynamic> json) {
+    final dropped = json['droppedMessages'];
     return TrajectoryRequestDetail(
       messageCount: json['messageCount'] as int? ?? 0,
       systemPromptChars: json['systemPromptChars'] as int? ?? 0,
@@ -255,6 +273,8 @@ final class TrajectoryRequestDetail {
       toolManifestHash: json['toolManifestHash'] as String?,
       wireDumpHash: json['wireDumpHash'] as String?,
       spillFile: json['spillFile'] as String?,
+      droppedMessagesCount: dropped is Map ? dropped['count'] as int? ?? 0 : 0,
+      droppedMessagesChars: dropped is Map ? dropped['chars'] as int? ?? 0 : 0,
     );
   }
 }
@@ -290,10 +310,9 @@ TrajectoryRequestDetail capTrajectoryRequestDetail(
     final message = messages[i];
     final weight =
         message.preview.length +
-        [for (final b in message.blocks) b.text.length].fold<int>(
-          0,
-          (a, b) => a + b,
-        );
+        [
+          for (final b in message.blocks) b.text.length,
+        ].fold<int>(0, (a, b) => a + b);
     if (fullCount >= requestSummaryMaxMessages ||
         fullChars + weight > requestSummaryCharsBudget) {
       break;
@@ -311,6 +330,8 @@ TrajectoryRequestDetail capTrajectoryRequestDetail(
     systemPromptHash: detail.systemPromptHash,
     toolManifestHash: detail.toolManifestHash,
     wireDumpHash: detail.wireDumpHash,
+    droppedMessagesCount: detail.droppedMessagesCount,
+    droppedMessagesChars: detail.droppedMessagesChars,
     messages: [
       for (var i = 0; i < messages.length; i++)
         i < fullFrom
@@ -324,34 +345,64 @@ TrajectoryRequestDetail capTrajectoryRequestDetail(
   );
 }
 
+/// How many role+chars stubs the STRIPPED (gh-1745 spill-path)
+/// `model_request_summary` record keeps (issue #1882 AC1): a stub is
+/// ~45 bytes of JSON, so 300 keep the stub section ≈15 KB and the whole
+/// record ≤ ~20 KB even with full tool metadata — the AC1 bound. Older
+/// messages fold into the `droppedMessages` {count, chars} aggregate (Σ
+/// chars — the usage-estimation basis — stays truthful); the spill blob
+/// carries the full per-message detail for the Request tab.
+const int requestStubMaxMessages = 300;
+
 /// Reduces [detail] to the gh-1745 lightweight in-JSONL shape: per-message
 /// role+chars stubs (no previews, no block texts — the estimation basis Σ
 /// chars stays truthful) plus the [spillFile] pointer to the request blob
 /// carrying the full detail. Counts, sizes, tool names and blob hashes
 /// pass through untouched; [wireDumpHash] overrides the pointer when the
 /// raw wire dump spilled into the same blob.
+///
+/// Issue #1882 AC1: only the newest [requestStubMaxMessages] stubs stay in
+/// the record — older messages fold into `droppedMessages` (their count
+/// and Σ chars), so a 1000+-message request no longer writes a ~50 KB
+/// record. The fold is additive on the wire (legacy readers just miss the
+/// estimate on mega-requests; counts and sizes stay exact).
 TrajectoryRequestDetail stripTrajectoryRequestDetail(
   TrajectoryRequestDetail detail, {
   required String spillFile,
   String? wireDumpHash,
-}) => TrajectoryRequestDetail(
-  messageCount: detail.messageCount,
-  systemPromptChars: detail.systemPromptChars,
-  toolCount: detail.toolCount,
-  toolNames: detail.toolNames,
-  systemPromptHash: detail.systemPromptHash,
-  toolManifestHash: detail.toolManifestHash,
-  wireDumpHash: wireDumpHash ?? detail.wireDumpHash,
-  spillFile: spillFile,
-  messages: [
-    for (final message in detail.messages)
-      TrajectoryRequestMessageSummary(
-        role: message.role,
-        chars: message.chars,
-        preview: '',
-      ),
-  ],
-);
+}) {
+  final messages = detail.messages;
+  final keep = messages.length > requestStubMaxMessages
+      ? requestStubMaxMessages
+      : messages.length;
+  final foldedFrom = messages.length - keep;
+  var droppedCount = detail.droppedMessagesCount;
+  var droppedChars = detail.droppedMessagesChars;
+  for (var i = 0; i < foldedFrom; i++) {
+    droppedCount++;
+    droppedChars += messages[i].chars;
+  }
+  return TrajectoryRequestDetail(
+    messageCount: detail.messageCount,
+    systemPromptChars: detail.systemPromptChars,
+    toolCount: detail.toolCount,
+    toolNames: detail.toolNames,
+    systemPromptHash: detail.systemPromptHash,
+    toolManifestHash: detail.toolManifestHash,
+    wireDumpHash: wireDumpHash ?? detail.wireDumpHash,
+    spillFile: spillFile,
+    droppedMessagesCount: droppedCount,
+    droppedMessagesChars: droppedChars,
+    messages: [
+      for (var i = foldedFrom; i < messages.length; i++)
+        TrajectoryRequestMessageSummary(
+          role: messages[i].role,
+          chars: messages[i].chars,
+          preview: '',
+        ),
+    ],
+  );
+}
 
 /// Base of the trajectory ledger hierarchy.
 ///
