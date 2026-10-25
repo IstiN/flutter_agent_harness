@@ -6,7 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show SocketException;
 
-import 'package:fa_llm/fa_llm.dart' show CopilotAccountType;
+import 'package:fa_llm/fa_llm.dart' show CopilotAccountType, CopilotDeviceCode;
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, debugDefaultTargetPlatformOverride;
@@ -439,6 +439,178 @@ void main() {
     expect(provider, isNull);
     expect(registry.providers, isEmpty);
   });
+
+  testWidgets('connectCopilot runs the device-flow sheet and lands the '
+      'entry with the token and picked model', (tester) async {
+    final registry = ProviderRegistry.inMemory();
+    final sessionKeys = SessionKeysStore.inMemory();
+    CustomProvider? notified;
+    final sso = FaUiSso(
+      registry: registry,
+      sessionKeys: sessionKeys,
+      onConnected: (provider) => notified = provider,
+      copilotCallbacks: CopilotConnectCallbacks(
+        requestDeviceCode: () async => const CopilotDeviceCode(
+          deviceCode: 'device-code-1',
+          userCode: 'ABCD-1234',
+          verificationUri: 'https://github.com/login/device',
+          expiresIn: 900,
+          interval: Duration(seconds: 5),
+        ),
+        pollAccessToken: (deviceCode) async {
+          expect(deviceCode.deviceCode, 'device-code-1');
+          return 'gho_token';
+        },
+        fetchLogin: (token) async {
+          expect(token, 'gho_token');
+          return 'octo';
+        },
+        fetchModels: (token, baseUrl) async => const ['gpt-5', 'gpt-4.1'],
+      ),
+    );
+    final connected = await _runCopilotFlow(
+      tester,
+      (context) => sso.connectCopilot(context),
+    );
+
+    expect(connected, isTrue);
+    expect(registry.providers, hasLength(1));
+    final provider = registry.providers.single;
+    expect(provider.name, 'copilot-octo');
+    expect(provider.modelId, 'gpt-5');
+    expect(provider.kind, 'copilot');
+    expect(registry.keyFor(provider.id), 'gho_token');
+    // The entry-scoped token slot persisted through the saved-keys
+    // fallback (the keychain mock reports unavailable).
+    expect(
+      sessionKeys.valueOf(
+        CustomProviderRegistry.copilotEntryKeyName('copilot-octo'),
+      ),
+      'gho_token',
+    );
+    expect(notified!.id, provider.id);
+    await _pumpUntilFound(tester, find.text('Copilot connected'));
+  });
+
+  testWidgets('connectCopilot with a cancelled sign-in adds nothing', (
+    tester,
+  ) async {
+    final registry = ProviderRegistry.inMemory();
+    // The device-code request never returns: the user bails mid-wait.
+    final sso = FaUiSso(
+      registry: registry,
+      copilotCallbacks: CopilotConnectCallbacks(
+        requestDeviceCode: () => Completer<CopilotDeviceCode>().future,
+        pollAccessToken: (deviceCode) async => '',
+        fetchLogin: (token) async => '',
+        fetchModels: (token, baseUrl) async => const [],
+      ),
+    );
+    final connected = await _runCopilotFlow(
+      tester,
+      (context) => sso.connectCopilot(context),
+      cancelDuringWait: true,
+    );
+
+    expect(connected, isFalse);
+    expect(registry.providers, isEmpty);
+  });
+
+  testWidgets('connectCopilot surfaces a landing failure as an error snack', (
+    tester,
+  ) async {
+    final registry = _ExplodingRegistry();
+    final sso = FaUiSso(
+      registry: registry,
+      copilotCallbacks: CopilotConnectCallbacks(
+        requestDeviceCode: () async => const CopilotDeviceCode(
+          deviceCode: 'device-code-1',
+          userCode: 'ABCD-1234',
+          verificationUri: 'https://github.com/login/device',
+          expiresIn: 900,
+          interval: Duration(seconds: 5),
+        ),
+        pollAccessToken: (deviceCode) async => 'gho_token',
+        fetchLogin: (token) async => 'octo',
+        fetchModels: (token, baseUrl) async => const ['gpt-5'],
+      ),
+    );
+    final connected = await _runCopilotFlow(
+      tester,
+      (context) => sso.connectCopilot(context),
+    );
+
+    expect(connected, isFalse);
+    expect(registry.providers, isEmpty);
+    await _pumpUntilFound(
+      tester,
+      find.textContaining('Copilot connect failed'),
+    );
+  });
+}
+
+/// Drives [flow] through the Copilot sheet: taps `go`, signs in (the
+/// injected callbacks resolve immediately), accepts the prefilled entry
+/// name, keeps the first fetched model, and finishes. With
+/// [cancelDuringWait], taps the waiting step's Cancel instead — the sheet
+/// pops with no result.
+Future<bool> _runCopilotFlow(
+  WidgetTester tester,
+  Future<bool> Function(BuildContext) flow, {
+  bool cancelDuringWait = false,
+}) async {
+  var result = false;
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async => result = await flow(context),
+            child: const Text('go'),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('go'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400)); // sheet entrance
+
+  await tester.tap(find.text('Sign in with GitHub'));
+  // Bounded pumps (the waiting step pins spinners on screen): the fake
+  // chain requestDeviceCode → pollAccessToken → fetchLogin drains in
+  // microtasks and lands the form step.
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100));
+
+  if (cancelDuringWait) {
+    await tester.tap(find.text('Cancel'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400)); // sheet exit
+    return result;
+  }
+
+  await tester.tap(find.text('Connect Copilot')); // form → model fetch
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100)); // fetchModels lands
+  await tester.tap(find.text('Connect Copilot')); // finish with gpt-5
+  await tester.pump();
+  await tester.pump(const Duration(seconds: 1)); // landing + snack
+  return result;
+}
+
+/// A registry whose `add` fails — the landing-error branch of the Copilot
+/// connect flow.
+class _ExplodingRegistry extends ProviderRegistry {
+  _ExplodingRegistry() : super.inMemory();
+
+  @override
+  Future<CustomProvider> add({
+    required String name,
+    required String baseUrl,
+    required String modelId,
+    String? kind,
+  }) async => throw StateError('registry refused');
 }
 
 /// Pumps frames until [finder] matches (snack queues rotate on frame

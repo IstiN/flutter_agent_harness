@@ -38,6 +38,7 @@ import 'package:flutter_agent_harness/src/cli/jsr_cli.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/session_repair_command.dart';
 import 'package:flutter_agent_harness/src/cli/session_clean_command.dart';
+import 'package:flutter_agent_harness/src/cli/session_info_command.dart';
 import 'package:flutter_agent_harness/src/cli/tui_key_hints.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
 import 'package:flutter_agent_harness/src/import/harness_adapter.dart';

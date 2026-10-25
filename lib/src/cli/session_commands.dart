@@ -733,17 +733,23 @@ extension on AgentCli {
   /// The opt-in keep-latest vacuum at session open (issue #1882 AC2):
   /// with `sessions.vacuumLedgers: true`, drop the resumed session's
   /// superseded `shell_job_registry` / `subagent_registry` /
-  /// `obligations_ledger` snapshots through the SAME
-  /// [repairSessionLedgers] surgery `fa session repair` performs (keep
-  /// the newest snapshot per ledger, everything else byte-verbatim,
-  /// pre-vacuum bytes preserved at `<path>.bak`, atomic swap). Never a
-  /// silent default: the config flag is the explicit opt-in, the report
-  /// lands as a dim line plus a `[vacuum]` fa.log entry. Guards: a live
-  /// presence row means another instance holds the session — skip (this
-  /// process registers its own row only after the load); a filesystem
-  /// without the ranged-read/atomic-rename surface, or any failure,
-  /// logs and leaves the file untouched. Runs before the warm-switch
-  /// fingerprint so the cache keys the post-vacuum bytes.
+  /// `obligations_ledger` snapshots. The surgery is the SAME
+  /// [repairSessionLedgers] `fa session repair` performs — MINUS the
+  /// full-drop ledger types (`model_request_summary`, the trajectory
+  /// blobs): a resume-time vacuum reclaims dead SNAPSHOTS only; dropping
+  /// request summaries is the explicit `fa session repair` deep clean,
+  /// never an automatic side effect (issue #1882 review coherence — PR1
+  /// bounded those records at ≤ 20 KB, and the Request tab plus the
+  /// usage-estimation basis live in them). Everything else matches the
+  /// verb: newest snapshot per ledger kept, everything else byte-
+  /// verbatim, pre-vacuum bytes preserved at `<path>.bak`, atomic swap.
+  /// Never a silent default: the config flag is the explicit opt-in, the
+  /// report lands as a dim line plus a `[vacuum]` fa.log entry. Guards:
+  /// a live presence row means another instance holds the session — skip
+  /// (this process registers its own row only after the load); a
+  /// filesystem without the ranged-read/atomic-rename surface, or any
+  /// failure, logs and leaves the file untouched. Runs before the
+  /// warm-switch fingerprint so the cache keys the post-vacuum bytes.
   Future<void> _vacuumLedgersAtOpen(SessionMetadata metadata) async {
     final sessions = config.sessionsRetention;
     if (sessions == null || !sessions.vacuumLedgers) return;
@@ -757,7 +763,11 @@ extension on AgentCli {
     }
     SessionRepairReport report;
     try {
-      report = await repairSessionLedgers(_env, metadata.path);
+      report = await repairSessionLedgers(
+        _env,
+        metadata.path,
+        dropTypes: const {},
+      );
     } on Object catch (error) {
       _logDiagnostic('[vacuum] failed for ${metadata.id}: $error');
       return;
@@ -832,6 +842,15 @@ extension on AgentCli {
     // warm-switch cache keys the post-vacuum bytes. Best-effort: a failed
     // vacuum logs and the resume proceeds on the untouched file.
     await _vacuumLedgersAtOpen(metadata);
+    // Issue #1882 AC3: no silent GB-scale operations — a resume over a
+    // heavy session file says so (exact size + the hygiene escapes).
+    final heavyScan = await sessionSizeIfHeavy(_env, metadata.path);
+    if (heavyScan != null) {
+      for (final line in heavyScanGuardLines(heavyScan, metadata.path)) {
+        io.writeln(_style.dim(line));
+      }
+      _logDiagnostic('[heavy-scan] resume over $heavyScan bytes');
+    }
     final fpBefore = await _sessionFileFingerprint(metadata);
     // The resume budget bounds how much history the walk keeps resident —
     // two different budgets legitimately build different context slices,
