@@ -13,6 +13,11 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1825): channel/network management in the app — rename a channel
+  (PATCH), delete a channel or an owned network (REST DELETE with
+  confirmation and state/navigation cleanup), and unnamed CLI/hub-created
+  channels show a short friendly label instead of the raw 64-char id.
+
 - feat(gh-1825): pasting a DAP invite no longer demands a passphrase on
   macOS — importing NEW channel secrets auto-provisions a random
   passphrase into the per-channel Keychain item (decryption of existing
