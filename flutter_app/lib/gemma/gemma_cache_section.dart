@@ -64,58 +64,84 @@ class _GemmaCacheSectionState extends State<GemmaCacheSection> {
   Future<List<ModelCacheRow>> _scan() async {
     final installed = await _engine.installedModels();
     if (installed.isEmpty) return const [];
-    final rows = <ModelCacheRow>[];
-    for (final preset in gemmaModelPresets) {
-      final filename = preset.filenameFor(isWeb: _isWeb);
-      final sizeLabel = preset.sizeLabelFor(isWeb: _isWeb);
-      GemmaInstalledModel? match;
-      for (final model in installed) {
-        if (model.filename == filename) match = model;
-      }
-      final bytes = match?.sizeBytes;
-      final sizeText = bytes != null ? formatCacheBytes(bytes) : sizeLabel;
-      rows.add(
-        ModelCacheRow(
-          title: preset.displayName,
-          subtitle: (context) => match == null
-              ? 'Not downloaded · $sizeLabel'
-              : bytes != null
-              ? '$sizeLabel · ${formatCacheBytes(bytes)} cached'
-              : '$sizeLabel · installed',
-          confirmContent: (dialogContext) => dialogContext.l10n
-              .gemmaCacheDeleteWeights(sizeText, _storageFrom(dialogContext)),
-          delete: () => _engine.uninstall(filename),
-          wasLoaded: () => _engine.loadedModelId == preset.id,
-          deletable: match != null,
-        ),
-      );
-    }
+    return [..._presetRows(installed), ..._orphanRows(installed)];
+  }
+
+  /// One row per preset: the installed size when the preset's file is in
+  /// the repository, the catalog size label otherwise.
+  List<ModelCacheRow> _presetRows(List<GemmaInstalledModel> installed) {
+    return [
+      for (final preset in gemmaModelPresets) _presetRow(preset, installed),
+    ];
+  }
+
+  ModelCacheRow _presetRow(
+    GemmaModelPreset preset,
+    List<GemmaInstalledModel> installed,
+  ) {
+    final filename = preset.filenameFor(isWeb: _isWeb);
+    final sizeLabel = preset.sizeLabelFor(isWeb: _isWeb);
+    GemmaInstalledModel? match;
     for (final model in installed) {
-      final isPreset = gemmaModelPresets.any(
-        (preset) => preset.filenameFor(isWeb: _isWeb) == model.filename,
-      );
-      if (isPreset) continue;
-      final isStaleMobileBuild = gemmaModelPresets.any(
-        (preset) => preset.filename == model.filename,
-      );
-      final size = model.sizeBytes != null
-          ? formatCacheBytes(model.sizeBytes!)
-          : 'unknown size';
-      rows.add(
-        ModelCacheRow(
-          title: model.filename,
-          subtitle: (context) => isStaleMobileBuild
-              ? 'Leftover mobile build — not used on web · $size'
-              : 'Unrecognized model file · $size',
-          confirmContent: (dialogContext) => dialogContext.l10n
-              .gemmaCacheDeleteOrphan(size, _storageFrom(dialogContext)),
-          delete: () => _engine.uninstall(model.filename),
-          wasLoaded: () => false,
-        ),
-      );
+      if (model.filename == filename) match = model;
+    }
+    final bytes = match?.sizeBytes;
+    final sizeText = bytes != null ? formatCacheBytes(bytes) : sizeLabel;
+    return ModelCacheRow(
+      title: preset.displayName,
+      subtitle: (context) => _presetSubtitle(sizeLabel, match),
+      confirmContent: (dialogContext) => dialogContext.l10n
+          .gemmaCacheDeleteWeights(sizeText, _storageFrom(dialogContext)),
+      delete: () => _engine.uninstall(filename),
+      wasLoaded: () => _engine.loadedModelId == preset.id,
+      deletable: match != null,
+    );
+  }
+
+  static String _presetSubtitle(String sizeLabel, GemmaInstalledModel? match) {
+    final bytes = match?.sizeBytes;
+    return match == null
+        ? 'Not downloaded · $sizeLabel'
+        : bytes != null
+        ? '$sizeLabel · ${formatCacheBytes(bytes)} cached'
+        : '$sizeLabel · installed';
+  }
+
+  /// One row per repository entry no preset installs under this platform.
+  List<ModelCacheRow> _orphanRows(List<GemmaInstalledModel> installed) {
+    final rows = <ModelCacheRow>[];
+    for (final model in installed) {
+      final row = _orphanRow(model);
+      if (row != null) rows.add(row);
     }
     return rows;
   }
+
+  ModelCacheRow? _orphanRow(GemmaInstalledModel model) {
+    final isPreset = gemmaModelPresets.any(
+      (preset) => preset.filenameFor(isWeb: _isWeb) == model.filename,
+    );
+    if (isPreset) return null;
+    final isStaleMobileBuild = gemmaModelPresets.any(
+      (preset) => preset.filename == model.filename,
+    );
+    final size = model.sizeBytes != null
+        ? formatCacheBytes(model.sizeBytes!)
+        : 'unknown size';
+    return ModelCacheRow(
+      title: model.filename,
+      subtitle: (context) => _orphanSubtitle(isStaleMobileBuild, size),
+      confirmContent: (dialogContext) => dialogContext.l10n
+          .gemmaCacheDeleteOrphan(size, _storageFrom(dialogContext)),
+      delete: () => _engine.uninstall(model.filename),
+      wasLoaded: () => false,
+    );
+  }
+
+  static String _orphanSubtitle(bool isStaleMobileBuild, String size) =>
+      isStaleMobileBuild
+      ? 'Leftover mobile build — not used on web · $size'
+      : 'Unrecognized model file · $size';
 
   String _storageFrom(BuildContext context) => _isWeb
       ? context.l10n.gemmaStorageFromBrowser

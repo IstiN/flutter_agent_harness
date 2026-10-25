@@ -626,6 +626,53 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
   return i + 1; // skip closing quote
 }
 
+/// Double-quote scan state: whether the word stays expandable (a `\$`
+/// escape makes it literal).
+final class _DqScan {
+  var expandable = true;
+}
+
+/// Whether the double-quoted span continues at [i]: any character but the
+/// closing quote (and not yet end-of-input).
+bool _dqContinues(String input, int i) => i < input.length && input[i] != '"';
+
+/// Whether [i] opens a backslash escape pair inside a double-quoted span.
+bool _atDqEscape(String input, int i) =>
+    input[i] == '\\' && i + 1 < input.length;
+
+/// POSIX double-quote escapables: `\"` `\\` `\$` `` \` `` `\<newline>`.
+bool _isDqEscapable(String ch) =>
+    ch == '"' || ch == '\\' || ch == '\$' || ch == '`' || ch == '\n';
+
+/// Consumes a double-quote escape pair at [i] into [buffer]; returns the
+/// new index. A `\$` pair marks the word literal ([scan.expandable]);
+/// any other POSIX-escapable char is emitted bare, and a backslash is
+/// literal for any other following character.
+int _dqEscape(String input, int i, StringBuffer buffer, _DqScan scan) {
+  final next = input[i + 1];
+  if (_isDqEscapable(next)) {
+    if (next == '\$') scan.expandable = false;
+    buffer.write(next);
+  } else {
+    buffer.write('\\');
+    buffer.write(next);
+  }
+  return i + 2;
+}
+
+/// True at a raw command-substitution opener inside a double quote: `$(`,
+/// or a backquote.
+bool _atDqSubstitution(String input, int i) =>
+    (input[i] == '\$' && i + 1 < input.length && input[i + 1] == '(') ||
+    input[i] == '`';
+
+/// Consumes a raw command-substitution opener at [i] into [buffer];
+/// returns the index just past the span.
+int _dqSubstitution(String input, int i, StringBuffer buffer) {
+  _rejectArithmeticExpansion(input, i);
+  return _scanSubstitution(input, i, buffer);
+}
+
 /// Consumes a double-quoted span starting just after the opening quote;
 /// returns the index of the closing quote and whether the word stays
 /// expandable (a `\$` escape makes it literal).
@@ -634,37 +681,19 @@ int _scanSingleQuote(String input, int i, StringBuffer buffer) {
 /// quotes is kept as a raw span so inner quotes do not terminate the
 /// quoted section.
 (int, bool) _scanDoubleQuote(String input, int i, StringBuffer buffer) {
-  var expandable = true;
-  while (i < input.length && input[i] != '"') {
-    if (input[i] == '\\' && i + 1 < input.length) {
-      final next = input[i + 1];
-      if (next == '"' ||
-          next == '\\' ||
-          next == '\$' ||
-          next == '`' ||
-          next == '\n') {
-        if (next == '\$') expandable = false;
-        buffer.write(next);
-        i += 2;
-      } else {
-        // Backslash is literal for any other following character.
-        buffer.write('\\');
-        buffer.write(next);
-        i += 2;
-      }
-    } else if ((input[i] == '\$' &&
-            i + 1 < input.length &&
-            input[i + 1] == '(') ||
-        input[i] == '`') {
-      _rejectArithmeticExpansion(input, i);
-      i = _scanSubstitution(input, i, buffer);
+  final scan = _DqScan();
+  while (_dqContinues(input, i)) {
+    if (_atDqEscape(input, i)) {
+      i = _dqEscape(input, i, buffer, scan);
+    } else if (_atDqSubstitution(input, i)) {
+      i = _dqSubstitution(input, i, buffer);
     } else {
       buffer.write(input[i]);
       i++;
     }
   }
   if (i >= input.length) throw const ShellParseException('unmatched "');
-  return (i, expandable);
+  return (i, scan.expandable);
 }
 
 /// Whether [ch] is a shell metacharacter (`|` `&` `;` `>` `<`).
@@ -821,38 +850,57 @@ bool isIdentifier(String value) {
 /// expansion pass (which then keeps the span literal).
 int substitutionSpanEnd(String input, int start) {
   if (input[start] == '`') return _backquoteSpanEnd(input, start);
-  var depth = 1;
-  var i = start + 2;
+  return _substitutionParenEnd(input, start + 2, 1);
+}
+
+/// Scans the `$( ... )` span body from [start] with open-paren [depth],
+/// honoring escapes, nested spans, and nested substitutions; -1 when
+/// unterminated.
+int _substitutionParenEnd(String input, int start, int depth) {
+  var i = start;
   while (i < input.length) {
-    final ch = input[i];
-    if (ch == '\\') {
-      i += 2;
-      continue;
-    }
-    if (ch == "'" || ch == '"') {
-      i = _quotedSpanEnd(input, i, ch);
-      if (i == -1) return -1;
-      continue;
-    }
-    if (ch == '`') {
-      i = _backquoteSpanEnd(input, i);
-      if (i == -1) return -1;
-      continue;
-    }
-    if (ch == '\$' && i + 1 < input.length && input[i + 1] == '(') {
-      depth++;
-      i += 2;
-      continue;
-    }
-    if (ch == ')') {
-      depth--;
+    if (input[i] == ')') {
       i++;
-      if (depth == 0) return i;
+      if (--depth == 0) return i;
       continue;
     }
-    i++;
+    final (next, opened) = _substitutionSkip(input, i);
+    if (next == -1) return -1;
+    i = next;
+    depth += opened;
   }
   return -1;
+}
+
+/// The next scan index after the span-opening character at [i]: a
+/// backslash escape, a quoted span, a backquote pair, or a nested `$(`.
+/// A plain character just advances by one; -1 when a quoted span or
+/// backquote pair opened but never closes. The depth delta is 1 for a
+/// nested `$(` (one open paren), else 0.
+(int, int) _substitutionSkip(String input, int i) {
+  final span = _substitutionQuotedOrBackquote(input, i);
+  if (span != null) return (span, 0);
+  return _substitutionPlainAdvance(input, i);
+}
+
+/// Past a quoted span / backquote pair at [i]; null when [i] starts
+/// neither, -1 when the span is unterminated.
+int? _substitutionQuotedOrBackquote(String input, int i) {
+  final ch = input[i];
+  if (ch == "'" || ch == '"') return _quotedSpanEnd(input, i, ch);
+  if (ch == '`') return _backquoteSpanEnd(input, i);
+  return null;
+}
+
+/// Past a backslash escape or a nested `$(` opener at [i]; a plain
+/// character advances by one.
+(int, int) _substitutionPlainAdvance(String input, int i) {
+  final ch = input[i];
+  if (ch == '\\') return (i + 2, 0);
+  if (ch == '\$' && i + 1 < input.length && input[i + 1] == '(') {
+    return (i + 2, 1);
+  }
+  return (i + 1, 0);
 }
 
 int _backquoteSpanEnd(String input, int start) {

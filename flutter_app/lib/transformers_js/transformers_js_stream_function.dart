@@ -105,16 +105,13 @@ Future<void> _runTransformersJs(
     formatError: _formatTransformersJsError,
     formatUserError: formatTransformersJsErrorForUser,
     beforeErrorEvent: (aborted) async {
-      if (aborted || !engineEngaged) return;
       // A failed generate can leave the ORT session poisoned (the WebGPU
       // invalid-buffer OrtRun error an undecodable image input causes):
       // drop the engine so the NEXT message reloads from the cached
-      // weights instead of inheriting the broken state. Best effort.
-      try {
-        await service.unloadModel();
-      } on Object {
-        // Recovery must never mask the original error.
-      }
+      // weights instead of inheriting the broken state. Best effort —
+      // recovery must never mask the original error.
+      if (!_shouldUnloadEngine(aborted, engineEngaged)) return;
+      await _unloadTransformersJsEngine(service);
     },
   );
 
@@ -123,13 +120,7 @@ Future<void> _runTransformersJs(
       try {
         cancelToken?.throwIfCancelled();
 
-        final preset = findTransformersJsPreset(model.id);
-        if (preset == null) {
-          throw StateError(
-            'Unknown transformers.js model preset: ${model.id}. Pick one '
-            'of: ${transformersJsModelPresets.map((p) => p.id).join(', ')}',
-          );
-        }
+        final preset = _requireTransformersJsPreset(model.id);
 
         // Model download/compile happens here on the very first turn (the
         // settings form pre-loads, so this is normally instant). A cancel
@@ -144,60 +135,41 @@ Future<void> _runTransformersJs(
           turn: turn,
           cancelToken: cancelToken,
           interrupt: service.interrupt,
-          startChat: (call) async {
-            call.cancelJs = await service.chatStream(
-              messages: convertTransformersJsMessages(
-                context,
-                supportsVision: preset.supportsVision,
-              ),
-              maxTokens: model.maxTokens > 0 ? model.maxTokens : null,
-              onChunk: turn.pushTextDelta,
-              onError: (message) {
-                call.streamError = message;
-                call.complete();
-              },
-              onDone: (reason) {
-                call.finishReason = reason;
-                call.complete();
-              },
-            );
-          },
+          startChat: _transformersJsStartChatFn(
+            service,
+            turn,
+            model,
+            context,
+            preset,
+          ),
         );
 
-        if (call.streamError != null) {
-          throw StateError(call.streamError!);
-        }
+        _rethrowTransformersJsStreamError(call);
         cancelToken?.throwIfCancelled();
 
         turn.pushTextEnd();
-        turn.pushDone(
-          call.finishReason == 'length' ? StopReason.length : StopReason.stop,
-        );
+        turn.pushDone(_stopReasonFor(call.finishReason));
         return;
       } catch (error) {
-        final aborted =
-            error is CancelledException || (cancelToken?.isCancelled ?? false);
         // A GPU crash poisons the ORT session (and possibly the WebGPU
         // device): dispose the engine and retry ONCE against a freshly
         // reloaded model before surfacing anything to the user. Only
         // pre-text failures retry — after the first delta the events are
         // already out and a retry would stream the answer twice.
-        if (!aborted &&
-            engineEngaged &&
-            !turn.hasText &&
-            recoveryAttempts < _maxRecoveryAttemptsPerTurn &&
-            isTransformersJsGpuCrash(_formatTransformersJsError(error))) {
+        if (_shouldRetryTransformersJsGpuCrash(
+          aborted: _isAbort(error, cancelToken),
+          engineEngaged: engineEngaged,
+          hasText: turn.hasText,
+          recoveryAttempts: recoveryAttempts,
+          error: error,
+        )) {
           recoveryAttempts++;
           debugPrint(
             'transformers.js: GPU crash — reloading the engine and retrying '
             '($recoveryAttempts/$_maxRecoveryAttemptsPerTurn). '
             'Raw error: ${_formatTransformersJsError(error)}',
           );
-          try {
-            await service.unloadModel();
-          } on Object {
-            // Recovery must never mask the original error.
-          }
+          await _unloadTransformersJsEngine(service);
           continue;
         }
         await turn.fail(error, cancelToken: cancelToken);
@@ -208,6 +180,100 @@ Future<void> _runTransformersJs(
     turn.end();
   }
 }
+
+/// An unloadable engine is a repairable failure: unloaded only when the
+/// turn was NOT a user abort and the engine actually engaged (a config
+/// error never poisons anything).
+bool _shouldUnloadEngine(bool aborted, bool engineEngaged) =>
+    !aborted && engineEngaged;
+
+/// Unloads the engine, swallowing unload failures (recovery must never
+/// mask the original error).
+Future<void> _unloadTransformersJsEngine(
+  TransformersJsEngineApi service,
+) async {
+  try {
+    await service.unloadModel();
+  } on Object {
+    // Recovery must never mask the original error.
+  }
+}
+
+/// The engine preset for [modelId]; an unknown id is a stream error
+/// (never a throw escaping the turn's catch).
+TransformersJsModelPreset _requireTransformersJsPreset(String modelId) {
+  final preset = findTransformersJsPreset(modelId);
+  if (preset == null) {
+    throw StateError(
+      'Unknown transformers.js model preset: $modelId. Pick one of: '
+      '${transformersJsModelPresets.map((p) => p.id).join(', ')}',
+    );
+  }
+  return preset;
+}
+
+/// Opens the engine chat stream and wires the pump callbacks onto it:
+/// chunks stream as text deltas, the terminal callbacks land on the
+/// [OnDeviceChatCall] and complete its done gate.
+Future<void> Function(OnDeviceChatCall call) _transformersJsStartChatFn(
+  TransformersJsEngineApi service,
+  OnDeviceStreamTurn turn,
+  Model model,
+  Context context,
+  TransformersJsModelPreset preset,
+) {
+  return (call) async {
+    call.cancelJs = await service.chatStream(
+      messages: convertTransformersJsMessages(
+        context,
+        supportsVision: preset.supportsVision,
+      ),
+      maxTokens: model.maxTokens > 0 ? model.maxTokens : null,
+      onChunk: turn.pushTextDelta,
+      onError: (message) {
+        call.streamError = message;
+        call.complete();
+      },
+      onDone: (reason) {
+        call.finishReason = reason;
+        call.complete();
+      },
+    );
+  };
+}
+
+/// The harness stop reason for the engine's finish reason — `length` is
+/// the only truncation signal, everything else is a natural stop.
+StopReason _stopReasonFor(String? finishReason) =>
+    finishReason == 'length' ? StopReason.length : StopReason.stop;
+
+/// The engine's own stream failure rides the call, not the exception
+/// channel — surface it as the turn's failure.
+void _rethrowTransformersJsStreamError(OnDeviceChatCall call) {
+  if (call.streamError != null) throw StateError(call.streamError!);
+}
+
+/// A CancelledException throw or a fired cancel token — both are the
+/// user's abort, not an engine failure.
+bool _isAbort(Object error, CancelToken? cancelToken) =>
+    error is CancelledException || (cancelToken?.isCancelled ?? false);
+
+/// Whether [error] is a recoverable GPU crash worth one engine reload:
+/// not an abort, the engine actually engaged, no text has streamed yet
+/// (a retry after the first delta would stream the answer twice),
+/// budget left, and the message matches the GPU-crash class.
+bool _shouldRetryTransformersJsGpuCrash({
+  required bool aborted,
+  required bool engineEngaged,
+  required bool hasText,
+  required int recoveryAttempts,
+  required Object error,
+}) =>
+    !aborted &&
+    engineEngaged &&
+    !hasText &&
+    recoveryAttempts < _maxRecoveryAttemptsPerTurn &&
+    isTransformersJsGpuCrash(_formatTransformersJsError(error));
 
 /// The transformers.js projection quirks: a system message (carrying
 /// [transformersJsNoToolsNote] when the context has no tools — with tools

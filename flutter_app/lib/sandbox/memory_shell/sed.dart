@@ -176,6 +176,42 @@ final class SedCommand {
     return true;
   }
 
+  /// Whether a start address is present at all (the command is
+  /// unconditional when not).
+  bool get _hasStart => startLine != null || startLast || startRegex != null;
+
+  /// Whether an end address bounds the range.
+  bool get _hasEnd => endLine != null || endLast || endRegex != null;
+
+  bool _startMatches(int lineNo, bool isLast, String text) =>
+      _addressMatches(startLine, startLast, startRegex, lineNo, isLast, text);
+
+  bool _endMatches(int lineNo, bool isLast, String text) =>
+      _addressMatches(endLine, endLast, endRegex, lineNo, isLast, text);
+
+  /// Opens the address range on a matching start line, closing it again
+  /// immediately when the end address matches the same line (`2,2`).
+  void _openRange(
+    int lineNo,
+    bool isLast,
+    String text,
+    Map<SedCommand, bool> ranges,
+  ) {
+    ranges[this] = true;
+    // A same-line end (e.g. `2,2`) closes the range immediately.
+    if (_endMatches(lineNo, isLast, text)) ranges[this] = false;
+  }
+
+  /// Closes an open range when its end address matches this line.
+  void _closeRange(
+    int lineNo,
+    bool isLast,
+    String text,
+    Map<SedCommand, bool> ranges,
+  ) {
+    if (_endMatches(lineNo, isLast, text)) ranges[this] = false;
+  }
+
   /// Whether this command applies to [lineNo]; [ranges] tracks open address
   /// ranges across lines.
   bool select(
@@ -184,10 +220,8 @@ final class SedCommand {
     String text,
     Map<SedCommand, bool> ranges,
   ) {
-    final hasStart = startLine != null || startLast || startRegex != null;
-    final hasEnd = endLine != null || endLast || endRegex != null;
-    if (!hasStart) return true;
-    if (!hasEnd) {
+    if (!_hasStart) return true;
+    if (!_hasEnd) {
       return _addressMatches(
         startLine,
         startLast,
@@ -198,27 +232,12 @@ final class SedCommand {
       );
     }
     var active = ranges[this] ?? false;
-    if (!active &&
-        _addressMatches(
-          startLine,
-          startLast,
-          startRegex,
-          lineNo,
-          isLast,
-          text,
-        )) {
-      active = true;
-      ranges[this] = true;
-      // A same-line end (e.g. `2,2`) closes the range immediately.
-      if (_addressMatches(endLine, endLast, endRegex, lineNo, isLast, text)) {
-        ranges[this] = false;
-      }
+    if (active) {
+      _closeRange(lineNo, isLast, text, ranges);
       return true;
     }
-    if (active) {
-      if (_addressMatches(endLine, endLast, endRegex, lineNo, isLast, text)) {
-        ranges[this] = false;
-      }
+    if (_startMatches(lineNo, isLast, text)) {
+      _openRange(lineNo, isLast, text, ranges);
       return true;
     }
     return false;

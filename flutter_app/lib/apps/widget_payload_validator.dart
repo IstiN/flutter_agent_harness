@@ -357,16 +357,26 @@ class WidgetPayloadValidator {
     return Map<String, Object?>.from(decoded);
   }
 
-  /// Runs the catalog engine's schema parser and the id rule. The parser
-  /// errors are surfaced verbatim (issue #1045's one-ruleset invariant).
-  ///
+  void _checkSchema(
+    Map<String, Object?> manifest,
+    List<WidgetPayloadError> errors,
+    List<WidgetPayloadWarning> warnings,
+  ) {
+    final stamped = _schemaStampedManifest(manifest, warnings);
+    _checkSchemaIdRule(stamped, errors);
+    _checkParsedManifest(stamped, manifest, errors, warnings);
+  }
+
   /// Like the publish pre-flight ([WidgetPublishService.stampedManifest]),
   /// a missing/empty `minRuntime` is stamped with the catalog floor
   /// BEFORE parsing — dev worktrees routinely omit it, and the value is a
   /// catalog-compat declaration, not a runtime requirement.
-  void _checkSchema(
+  ///
+  /// A missing version is a dev-worktree shape, not a broken one: stamp
+  /// the placeholder (the app's own default) with a warning — the catalog
+  /// gate still refuses it at publish time.
+  Map<String, Object?> _schemaStampedManifest(
     Map<String, Object?> manifest,
-    List<WidgetPayloadError> errors,
     List<WidgetPayloadWarning> warnings,
   ) {
     final existingRuntime = manifest['minRuntime'];
@@ -374,9 +384,6 @@ class WidgetPayloadValidator {
     if (existingRuntime is! String || existingRuntime.trim().isEmpty) {
       stamped['minRuntime'] = catalogFloorRuntime;
     }
-    // A missing version is a dev-worktree shape, not a broken one: stamp
-    // the placeholder (the app's own default) with a warning — the catalog
-    // gate still refuses it at publish time.
     final existingVersion = manifest['version'];
     if (existingVersion is! String || existingVersion.trim().isEmpty) {
       stamped['version'] = '0.0.0';
@@ -388,10 +395,17 @@ class WidgetPayloadValidator {
         ),
       );
     }
-    // The id rule runs against the RAW manifest FIRST: a structurally
-    // broken manifest (a missing version, say) must still name its bad id
-    // in the same pass — the user fixes the folder in one round, not one
-    // error per retry.
+    return stamped;
+  }
+
+  /// The id rule runs against the RAW manifest FIRST: a structurally
+  /// broken manifest (a missing version, say) must still name its bad id
+  /// in the same pass — the user fixes the folder in one round, not one
+  /// error per retry.
+  void _checkSchemaIdRule(
+    Map<String, Object?> stamped,
+    List<WidgetPayloadError> errors,
+  ) {
     final rawId = stamped['id'];
     if (rawId is String && rawId.trim().isNotEmpty) {
       // A padded id is refused, not silently trimmed: the picked folder
@@ -413,6 +427,18 @@ class WidgetPayloadValidator {
       }
       _checkId(rawId.trim(), errors);
     }
+  }
+
+  /// The catalog engine's schema parse over the stamped manifest: the
+  /// parser errors are surfaced verbatim (issue #1045's one-ruleset
+  /// invariant), strict semver is a warning (unpacked loads tolerate it),
+  /// and unknown keys are forward-compat warnings.
+  void _checkParsedManifest(
+    Map<String, Object?> stamped,
+    Map<String, Object?> manifest,
+    List<WidgetPayloadError> errors,
+    List<WidgetPayloadWarning> warnings,
+  ) {
     try {
       final parsed = WidgetManifest.fromJson(stamped);
       _checkId(parsed.id, errors);
@@ -425,20 +451,27 @@ class WidgetPayloadValidator {
           ),
         );
       }
-      for (final key in manifest.keys) {
-        if (!knownManifestKeys.contains(key)) {
-          warnings.add(
-            WidgetPayloadWarning(
-              'unknown_manifest_key',
-              "unknown manifest key '$key' (forward-compat: ignored)",
-            ),
-          );
-        }
-      }
+      _warnUnknownManifestKeys(manifest, warnings);
     } on ManifestException catch (e) {
       for (final message in e.errors) {
         errors.add(
           WidgetPayloadError('manifest_invalid', 'manifest.json: $message'),
+        );
+      }
+    }
+  }
+
+  void _warnUnknownManifestKeys(
+    Map<String, Object?> manifest,
+    List<WidgetPayloadWarning> warnings,
+  ) {
+    for (final key in manifest.keys) {
+      if (!knownManifestKeys.contains(key)) {
+        warnings.add(
+          WidgetPayloadWarning(
+            'unknown_manifest_key',
+            "unknown manifest key '$key' (forward-compat: ignored)",
+          ),
         );
       }
     }

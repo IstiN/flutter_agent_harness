@@ -68,28 +68,60 @@ Future<List<String>?> pollCodeMieSignIn({
   final deadline = DateTime.now().add(timeout);
   var loginAsked = false;
   while (true) {
-    try {
-      final result = await probe();
-      final models = codeMieModelIdsFromJson(result.body);
-      if (result.status >= 200 && result.status < 300 && models != null) {
-        return models;
-      }
-      // Logged-out shows up two ways: a bare 401/403, OR a 200 carrying
-      // the SPA's login HTML (the transparent SSO redirect). Both mean
-      // "open the login tab once" — without the HTML branch the poll
-      // would spin to the timeout without ever opening the tab.
-      final loggedOutHtml =
-          result.status >= 200 && result.status < 300 && models == null;
-      if ((result.status == 401 || result.status == 403 || loggedOutHtml) &&
-          !loginAsked) {
-        loginAsked = true;
-        openLoginPage();
-      }
-    } on Object {
-      // Transient (SW waking up, offline blip) — keep polling.
+    final (models, openLogin) = await _probeCodeMieSignIn(
+      probe,
+      loginAsked: loginAsked,
+    );
+    if (models != null) return models;
+    if (openLogin) {
+      loginAsked = true;
+      openLoginPage();
     }
-    if (cancelled?.call() ?? false) return null;
-    if (DateTime.now().isAfter(deadline)) return null;
+    if (_pollAbandoned(cancelled, deadline)) return null;
     await Future<void>.delayed(interval);
   }
 }
+
+/// One probe of the CodeMie API. Answers the model ids when the jar
+/// holds a live session (a 2xx whose body parses as the models list),
+/// else whether this probe is the FIRST logged-out signal. A throwing
+/// probe is transient (SW waking up, offline blip) — it keeps polling.
+Future<(List<String>?, bool)> _probeCodeMieSignIn(
+  CodeMieProbe probe, {
+  required bool loginAsked,
+}) async {
+  final int status;
+  final List<String>? models;
+  try {
+    final result = await probe();
+    status = result.status;
+    models = codeMieModelIdsFromJson(result.body);
+  } on Object {
+    return (null, false);
+  }
+  if (_isSignedInProbe(status, models)) return (models, false);
+  return (null, _shouldOpenLoginPage(status, loginAsked, models));
+}
+
+/// The signed-in signal: a 2xx probe whose body parses as the models
+/// list.
+bool _isSignedInProbe(int status, List<String>? models) =>
+    _is2xx(status) && models != null;
+
+/// Whether [status] is an HTTP 2xx.
+bool _is2xx(int status) => status >= 200 && status < 300;
+
+/// Whether this probe is the FIRST logged-out signal: a bare 401/403,
+/// OR a 200 carrying the SPA's login HTML (the transparent SSO
+/// redirect). Both mean "open the login tab once" — without the HTML
+/// branch the poll would spin to the timeout without ever opening the
+/// tab.
+bool _shouldOpenLoginPage(int status, bool loginAsked, List<String>? models) {
+  if (loginAsked) return false;
+  return status == 401 || status == 403 || (_is2xx(status) && models == null);
+}
+
+/// The poll's stop conditions: an external cancel, or the deadline
+/// passed.
+bool _pollAbandoned(bool Function()? cancelled, DateTime deadline) =>
+    (cancelled?.call() ?? false) || DateTime.now().isAfter(deadline);

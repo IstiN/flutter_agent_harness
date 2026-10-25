@@ -931,11 +931,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         source: 'launcher',
       );
     } on Object catch (error) {
-      // Never a silent dead tile: log + show why the app did not open.
-      AppLog.i('apps', 'open app FAILED: ${app.id} — $error');
-      if (!mounted) return;
-      showFahErrorSnack(context, context.l10n.launcherOpenAppError('$error'));
+      _reportLaunchFailure(app, error);
     }
+  }
+
+  /// Never a silent dead tile: log + show why the app did not open.
+  void _reportLaunchFailure(JsAppInfo app, Object error) {
+    AppLog.i('apps', 'open app FAILED: ${app.id} — $error');
+    if (!mounted) return;
+    showFahErrorSnack(context, context.l10n.launcherOpenAppError('$error'));
   }
 
   Future<void> _openSettings() async {

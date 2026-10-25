@@ -15,6 +15,7 @@ import 'package:yaml/yaml.dart' as yaml;
 import 'bridge_errors.dart';
 
 part 'sandbox_builtins_filetype.dart';
+part 'sandbox_builtins_args.dart';
 part 'sandbox_builtins_patch.dart';
 
 /// Reads a text file from the shell's filesystem. Returns `null` when the
@@ -591,44 +592,15 @@ final class SandboxBuiltins {
     required Uri url,
     required int bodyLength,
   }) {
-    final variables = <String, String>{
-      'http_code': '$statusCode',
-      'size_download': '$bodyLength',
-      'size_upload': '0',
-      'content_type': headers['content-type'] ?? '',
-      'url_effective': url.toString(),
-      'response_code': '$statusCode',
-    };
+    final variables = _curlWriteOutVariables(
+      statusCode: statusCode,
+      headers: headers,
+      url: url,
+      bodyLength: bodyLength,
+    );
     final out = StringBuffer();
     for (var i = 0; i < template.length; i++) {
-      final c = template[i];
-      if (c == '%' && i + 1 < template.length) {
-        final n = template[i + 1];
-        if (n == '%') {
-          out.write('%');
-          i++;
-          continue;
-        }
-        if (n == '{') {
-          final close = template.indexOf('}', i + 2);
-          if (close != -1) {
-            out.write(variables[template.substring(i + 2, close)] ?? '');
-            i = close;
-            continue;
-          }
-        }
-      }
-      if (c == r'\' && i + 1 < template.length) {
-        out.write(switch (template[i + 1]) {
-          'n' => '\n',
-          'r' => '\r',
-          't' => '\t',
-          final other => other,
-        });
-        i++;
-        continue;
-      }
-      out.write(c);
+      i += _curlWriteOutToken(out, template, i, variables);
     }
     return out.toString();
   }
@@ -641,35 +613,7 @@ final class SandboxBuiltins {
   static List<String> curlArgsFromWget(List<String> args) {
     final curlArgs = <String>[];
     for (var i = 0; i < args.length; i++) {
-      final arg = args[i];
-      if (arg == '-O' || arg == '--output-document') {
-        if (i + 1 < args.length) {
-          curlArgs.addAll(['-o', args[++i]]);
-        }
-      } else if (arg.startsWith('--output-document=')) {
-        curlArgs.addAll(['-o', arg.substring('--output-document='.length)]);
-      } else if (arg == '-q' || arg == '--quiet') {
-        curlArgs.add('-s');
-      } else if (arg == '--no-check-certificate') {
-        // Ignored: TLS verification is not configurable in the curl builtin.
-      } else if (arg == '-w' ||
-          arg == '--wait' ||
-          arg.startsWith('--wait=') ||
-          arg.startsWith('--waitretry')) {
-        // wget wait flags: not curl flags — drop them (with the separate
-        // seconds value of `-w`/`--wait`/`--waitretry`) instead of leaking
-        // into curl's parser, where `-w` means --write-out (issue #1156
-        // review).
-        final takesSeparateValue =
-            arg == '-w' || arg == '--wait' || arg == '--waitretry';
-        if (takesSeparateValue &&
-            i + 1 < args.length &&
-            !args[i + 1].startsWith('-')) {
-          i++;
-        }
-      } else {
-        curlArgs.add(arg);
-      }
+      i += _wgetApplyArg(curlArgs, args, i);
     }
     return curlArgs;
   }
@@ -816,30 +760,17 @@ final class SandboxBuiltins {
       if (expand && (value == '-' || value == '@-') && stdinBytes != null) {
         segments.add(stdinBytes);
       } else if (expand && value.startsWith('@')) {
-        final path = value.substring(1);
-        final List<int>? data;
-        try {
-          data = await readBinaryFile?.call(path);
-        } on Object catch (e) {
-          return (null, 'curl: $path: $e\n');
-        }
-        if (data == null) {
-          return (null, 'curl: $path: No such file or directory\n');
-        }
-        segments.add(data);
+        final error = await _curlBodyFileSegment(
+          segments,
+          value.substring(1),
+          readBinaryFile,
+        );
+        if (error != null) return (null, error);
       } else {
         segments.add(utf8.encode(value));
       }
     }
-    final bytes = segments.toBytes();
-    if (bytes.length > maxCurlBodyBytes) {
-      return (
-        null,
-        'curl: body exceeds the 1 MiB sandbox limit '
-            '(${bytes.length} bytes); split the request or shrink the body\n',
-      );
-    }
-    return (bytes, null);
+    return _curlBodyCapped(segments.toBytes());
   }
 
   // ---------------------------------------------------------------------------
@@ -899,36 +830,19 @@ final class SandboxBuiltins {
     if (filter == null) {
       return _error('$name: missing filter\n', 2);
     }
-
-    final String? content;
-    if (inputFile != null) {
-      content = await readTextFile(inputFile);
-      if (content == null) {
-        return _error('$name: $inputFile: No such file or directory\n', 2);
-      }
-    } else {
-      content = stdin;
-      if (content == null) {
-        return _error('$name: missing input\n', 2);
-      }
-    }
-
-    final doc = parse(content);
+    final (content, inputError) = await _jsonFilterInput(
+      name,
+      inputFile,
+      stdin,
+      readTextFile,
+    );
+    if (inputError != null) return inputError;
+    final doc = parse(content!);
     if (doc.error != null) {
       return _error(doc.error!, 5);
     }
-
     final results = applyJqFilter(doc.value, filter);
-    final encoder = parsed.compact
-        ? JsonEncoder()
-        : const JsonEncoder.withIndent('  ');
-    final output = results
-        .map(
-          (value) => parsed.rawOutput && value is String
-              ? value
-              : encoder.convert(value),
-        )
-        .join('\n');
+    final output = _renderJsonFilterOutput(results, parsed);
     return _ok(utf8.encode(output.isNotEmpty ? '$output\n' : ''));
   }
 
@@ -1369,44 +1283,22 @@ final class SandboxBuiltins {
     ({int strip, String? patchFile, String? target})?,
   )
   parsePatchArgs(List<String> args) {
-    var strip = 0;
-    String? patchFile;
-    final positional = <String>[];
-    var noMoreFlags = false;
+    final state = _PatchParseState();
     var i = 0;
-    while (i < args.length) {
-      final arg = args[i];
-      if (!noMoreFlags && arg == '--') {
-        noMoreFlags = true;
-      } else if (!noMoreFlags &&
-          (arg.startsWith('-p') || arg.startsWith('--strip'))) {
-        final (value, error, extra) = _patchStripFlag(args, i);
-        if (error != null) return (error, null);
-        strip = value!;
-        i += extra;
-      } else if (!noMoreFlags &&
-          (arg.startsWith('-i') || arg.startsWith('--input'))) {
-        final (value, error, extra) = _patchInputFlag(args, i);
-        if (error != null) return (error, null);
-        patchFile = value;
-        i += extra;
-      } else if (!noMoreFlags && arg.startsWith('-') && arg != '-') {
-        return (_error("patch: unrecognized option '$arg'\n", 2), null);
-      } else {
-        positional.add(arg);
-      }
-      i++;
+    while (i < args.length && state.error == null) {
+      i += 1 + _patchApplyArg(state, args, i);
     }
-    if (positional.length > 2) {
+    if (state.error != null) return (state.error, null);
+    if (state.positional.length > 2) {
       return (_error('patch: too many file arguments\n', 2), null);
     }
-    if (positional.length > 1) patchFile ??= positional[1];
+    if (state.positional.length > 1) state.patchFile ??= state.positional[1];
     return (
       null,
       (
-        strip: strip,
-        patchFile: patchFile,
-        target: positional.isNotEmpty ? positional[0] : null,
+        strip: state.strip,
+        patchFile: state.patchFile,
+        target: state.positional.isNotEmpty ? state.positional[0] : null,
       ),
     );
   }
@@ -1746,16 +1638,7 @@ final class SandboxBuiltins {
       'name': name,
       'type': type,
     });
-    final http.Response response;
-    try {
-      response = await client
-          .get(uri, headers: {'Accept': 'application/dns-json'})
-          .timeout(timeout ?? const Duration(seconds: 15));
-    } on TimeoutException {
-      throw const FormatException(
-        'DNS-over-HTTPS query to cloudflare-dns.com timed out',
-      );
-    }
+    final response = await _dohFetch(client, uri, timeout);
     if (response.statusCode != 200) {
       throw FormatException(
         'DNS-over-HTTPS query failed: HTTP ${response.statusCode}',
@@ -1765,28 +1648,7 @@ final class SandboxBuiltins {
     if (doc is! Map<String, dynamic>) {
       throw const FormatException('malformed DNS-over-HTTPS response');
     }
-    final answers = <SandboxDnsRecord>[];
-    final answerSection = doc['Answer'];
-    if (answerSection is List) {
-      for (final record in answerSection) {
-        if (record is! Map<String, dynamic>) continue;
-        final recordName = record['name'];
-        final recordType = record['type'];
-        final ttl = record['TTL'];
-        final data = record['data'];
-        if (recordName is! String || recordType is! int || data is! String) {
-          continue;
-        }
-        answers.add(
-          SandboxDnsRecord(
-            name: recordName,
-            type: recordType,
-            ttl: ttl is int ? ttl : 0,
-            data: data,
-          ),
-        );
-      }
-    }
+    final answers = _dohAnswers(doc['Answer']);
     final status = doc['Status'];
     return SandboxDnsResult(
       status: status is int ? status : 0,
@@ -1952,19 +1814,8 @@ final class SandboxBuiltins {
 
   /// Extracts the display name (`fn`) from an RDAP entity's vCard, falling
   /// back to the entity handle.
-  static String? _rdapEntityName(Map<String, dynamic> entity) {
-    final vcard = entity['vcardArray'];
-    if (vcard is List && vcard.length > 1 && vcard[1] is List) {
-      for (final property in vcard[1] as List) {
-        if (property is List && property.length > 3 && property[0] == 'fn') {
-          final value = property[3];
-          if (value is String && value.isNotEmpty) return value;
-        }
-      }
-    }
-    final handle = entity['handle'];
-    return handle is String && handle.isNotEmpty ? handle : null;
-  }
+  static String? _rdapEntityName(Map<String, dynamic> entity) =>
+      _rdapVcardName(entity) ?? _rdapEntityHandle(entity);
 
   static String _rdapRoleName(Object? role) {
     const names = {
@@ -2404,11 +2255,11 @@ final class SandboxBuiltins {
     var toStdout = false;
     final files = <String>[];
     for (final arg in args) {
-      if (arg == '-d' || arg == '--decompress' || arg == '--uncompress') {
+      if (_isDecompressUnpackFlag(arg)) {
         unpack = true;
-      } else if (arg == '-k' || arg == '--keep') {
+      } else if (_isDecompressKeepFlag(arg)) {
         keep = true;
-      } else if (arg == '-c' || arg == '--stdout' || arg == '--to-stdout') {
+      } else if (_isDecompressStdoutFlag(arg)) {
         toStdout = true;
       } else if (arg.startsWith('-') && arg != '-') {
         // Bundled short flags (-dc, -dk, ...).
@@ -2474,22 +2325,19 @@ final class SandboxBuiltins {
       if (!toStdout && !arg.endsWith(suffix)) {
         return _error('$name: $arg: unknown suffix -- ignored\n', 1);
       }
-      final List<int> decoded;
-      try {
-        decoded = decode(read);
-      } on Object {
-        return _error('$name: $arg: not in $name format\n', 1);
-      }
-      if (toStdout) {
-        stdout.addAll(decoded);
-        continue;
-      }
-      await writeBinaryFile(
-        arg.substring(0, arg.length - suffix.length),
-        decoded,
+      final error = await _decompressEmit(
+        name,
+        read,
+        arg,
+        suffix: suffix,
+        decode: decode,
+        toStdout: toStdout,
+        stdout: stdout,
+        writeBinaryFile: writeBinaryFile,
+        keep: keep,
+        removeFile: removeFile,
       );
-      final remover = removeFile;
-      if (!keep && remover != null) await remover(arg);
+      if (error != null) return error;
     }
     return _ok(stdout);
   }
@@ -2518,37 +2366,8 @@ final class SandboxBuiltins {
   static Base64Args parseBase64Args(List<String> args) {
     final b = Base64Args();
     for (var i = 0; i < args.length; i++) {
-      final arg = args[i];
-      final wrap = _base64WrapFlag(arg);
-      if (arg == '-d' || arg == '--decode') {
-        b.decode = true;
-      } else if (wrap != null) {
-        final (columns, consumed) = wrap;
-        if (columns == null) {
-          if (i + 1 >= args.length) {
-            b.error = _error("base64: option requires an argument -- 'w'\n", 2);
-            return b;
-          }
-          b.wrap = _base64WrapValue(args[++i], b);
-          if (b.error != null) return b;
-        } else {
-          b.wrap = _base64WrapValue(columns, b);
-          if (b.error != null) return b;
-        }
-        // The bare flag form consumed its value above via ++i.
-        if (!consumed) continue;
-      } else if (arg.startsWith('-') && arg != '-') {
-        b.error = _error(
-          "base64: invalid option -- '${arg.substring(1)}'\n",
-          2,
-        );
-        return b;
-      } else if (b.inputFile == null) {
-        b.inputFile = arg;
-      } else {
-        b.error = _error("base64: extra operand '$arg'\n", 2);
-        return b;
-      }
+      i += _base64ApplyArg(b, args, i);
+      if (b.error != null) return b;
     }
     return b;
   }

@@ -233,46 +233,68 @@ final class _BracketClass {
   final bool negated;
 }
 
+/// Whether the bracket expression opening at [i] starts with a `!`/`^`
+/// negation; returns the index of the first member and the flag.
+(int, bool) _bracketNegation(String segment, int i) {
+  if (i < segment.length && (segment[i] == '!' || segment[i] == '^')) {
+    return (i + 1, true);
+  }
+  return (i, false);
+}
+
+/// The compiled regex class body: a `^` prefix and a `/` exclusion when
+/// negated (segments never cross `/`).
+String _bracketRegex(String body, bool negated) =>
+    '[${negated ? '^' : ''}$body${negated ? '/' : ''}]';
+
+/// Whether [i] opens a backslash escape pair in [segment].
+bool _bracketEscaped(String segment, int i) =>
+    segment[i] == r'\' && i + 1 < segment.length;
+
+/// Appends one bracket-class member at [i] to [body]: an escaped char
+/// joins the class literally (bash fnmatch rule), `x-y` spans a range,
+/// anything else is escaped verbatim. Returns the next index.
+int _bracketMember(String segment, int i, StringBuffer body) {
+  final char = segment[i];
+  if (_bracketEscaped(segment, i)) {
+    body.write(RegExp.escape(segment[i + 1]));
+    return i + 2;
+  }
+  if (i + 2 < segment.length &&
+      segment[i + 1] == '-' &&
+      segment[i + 2] != ']') {
+    body
+      ..write(RegExp.escape(char))
+      ..write('-')
+      ..write(RegExp.escape(segment[i + 2]));
+    return i + 3;
+  }
+  body.write(RegExp.escape(char));
+  return i + 1;
+}
+
 /// Compiles the bracket expression whose `[` sits at [start] in
 /// [segment], or `null` when it never closes (the caller emits a literal
 /// `[`). Bash rules: a leading `!`/`^` negates; a `]` in first position
 /// is a literal class member; `x-y` spans a range; an unterminated
 /// expression is not a class at all.
 _BracketClass? _bracketClass(String segment, int start) {
-  var i = start + 1;
-  var negated = false;
-  if (i < segment.length && (segment[i] == '!' || segment[i] == '^')) {
-    negated = true;
-    i++;
-  }
+  final (i, negated) = _bracketNegation(segment, start + 1);
   final body = StringBuffer();
   var first = true;
-  while (i < segment.length) {
-    final char = segment[i];
+  var j = i;
+  while (j < segment.length) {
+    final char = segment[j];
     if (char == ']' && !first) {
       // A negated class must not match `/` either.
-      final regex = '[${negated ? '^' : ''}$body${negated ? '/' : ''}]';
-      return _BracketClass(regex, i + 1, negated: negated);
+      return _BracketClass(
+        _bracketRegex('$body', negated),
+        j + 1,
+        negated: negated,
+      );
     }
     first = false;
-    if (char == r'\' && i + 1 < segment.length) {
-      // An escaped char joins the class literally (bash fnmatch rule).
-      body.write(RegExp.escape(segment[i + 1]));
-      i += 2;
-      continue;
-    }
-    if (i + 2 < segment.length &&
-        segment[i + 1] == '-' &&
-        segment[i + 2] != ']') {
-      body
-        ..write(RegExp.escape(char))
-        ..write('-')
-        ..write(RegExp.escape(segment[i + 2]));
-      i += 3;
-      continue;
-    }
-    body.write(RegExp.escape(char));
-    i++;
+    j = _bracketMember(segment, j, body);
   }
   return null;
 }

@@ -112,22 +112,37 @@ class _AppsPanelState extends State<AppsPanel> {
 
   Future<void> _loadCalendar() async {
     try {
-      final calendar = createCalendarService();
-      if (!await calendar.isAvailable) {
-        if (mounted) setState(() => _calendarLoaded = true);
-        return;
-      }
-      final now = DateTime.now();
-      final endOfDay = DateTime(now.year, now.month, now.day, 23, 59, 59);
-      final events = await calendar.events(start: now, end: endOfDay);
-      if (mounted) {
-        setState(() {
-          _upcomingEvents = events.take(3).toList();
-          _calendarLoaded = true;
-        });
-      }
+      await _refreshUpcomingEvents();
     } on Object {
       if (mounted) setState(() => _calendarLoaded = true);
+    }
+  }
+
+  /// Fetches today's remaining events into [_upcomingEvents]; an
+  /// unavailable service marks the widget loaded with nothing scheduled.
+  Future<void> _refreshUpcomingEvents() async {
+    final calendar = createCalendarService();
+    if (!await _calendarReady(calendar)) return;
+    await _fetchUpcomingEvents(calendar);
+  }
+
+  /// Marks the widget loaded when the calendar service is unavailable —
+  /// the "Up next" tile just stays empty.
+  Future<bool> _calendarReady(calendar) async {
+    if (await calendar.isAvailable) return true;
+    if (mounted) setState(() => _calendarLoaded = true);
+    return false;
+  }
+
+  Future<void> _fetchUpcomingEvents(calendar) async {
+    final now = DateTime.now();
+    final endOfDay = DateTime(now.year, now.month, now.day, 23, 59, 59);
+    final events = await calendar.events(start: now, end: endOfDay);
+    if (mounted) {
+      setState(() {
+        _upcomingEvents = events.take(3).toList();
+        _calendarLoaded = true;
+      });
     }
   }
 
