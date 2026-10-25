@@ -232,7 +232,6 @@ void main() {
         io: _CapturingIo(),
       );
       host.register(context);
-      await settleBoot(plugin);
       final tools = context.tools;
       expect(tools.length, 5);
       return (tools, plugin);
