@@ -30,6 +30,39 @@ final class _CapturingIo implements PluginIO {
   String get text => lines.join('\n');
 }
 
+/// Deterministic disconnected hub: no sockets, retries, or wall-clock waits.
+final class _DeadHubPlugin extends hub.HubPlugin {
+  _DeadHubPlugin({
+    required Map<String, String> environment,
+    required String home,
+  }) : super(environment: environment, home: home);
+
+  @override
+  Future<void> start({hub.HubIdentity? identity}) async {}
+
+  @override
+  Future<hub.HubStatus> status() async => const hub.HubStatus(
+    connected: false,
+    agentId: null,
+    name: null,
+    url: 'ws://127.0.0.1:9/ws',
+    channels: [],
+    welcomes: 0,
+    hellos: 0,
+  );
+
+  @override
+  Future<List<hub.AgentInfo>> peers() async =>
+      throw StateError('test hub is disconnected');
+
+  @override
+  Future<hub.DapConnection> connectTo(
+    String host, {
+    String? name,
+    String? channel,
+  }) async => throw StateError('test hub is disconnected');
+}
+
 void main() {
   late Directory tempHome;
 
@@ -46,9 +79,12 @@ void main() {
     PluginPickOption? pickOption,
     PluginAskLine? askLine,
     Map<String, String>? environment,
+    bool deadHub = false,
   }) {
     final env = environment ?? <String, String>{};
-    final plugin = hub.HubPlugin(environment: env, home: tempHome.path);
+    final plugin = deadHub
+        ? _DeadHubPlugin(environment: env, home: tempHome.path)
+        : hub.HubPlugin(environment: env, home: tempHome.path);
     final host = HubPluginHost(plugin, environment: env, home: tempHome.path);
     final io = _CapturingIo();
     final context = PluginContext(
@@ -142,6 +178,7 @@ void main() {
       final (slash, io, env, plugin) = registerHost(
         environment: {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
         pickOption: (title, options, {initialKey}) async => 'secret',
+        deadHub: true,
         askLine: (prompt, {secret = false}) async => 'picked-secret',
       );
       await settleBoot(plugin);
@@ -188,13 +225,14 @@ void main() {
         'DAP_MASTER_SECRET': 'test-master-secret',
         'DAP_HUB_URL': 'ws://127.0.0.1:9/ws',
       };
-      final plugin = hub.HubPlugin(environment: env, home: tempHome.path);
+      final plugin = _DeadHubPlugin(environment: env, home: tempHome.path);
       final host = HubPluginHost(plugin, environment: env, home: tempHome.path);
       final context = PluginContext(
         env: MemoryExecutionEnv(cwd: '/work'),
         io: _CapturingIo(),
       );
       host.register(context);
+      await settleBoot(plugin);
       final tools = context.tools;
       expect(tools.length, 5);
       return (tools, plugin);
