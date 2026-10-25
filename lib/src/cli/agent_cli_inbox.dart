@@ -39,6 +39,7 @@ extension AgentCliMessagingFlow on AgentCli {
     // The btw panels: each drained fabric message lands as a bordered
     // panel block at delivery time (issue #277).
     _hubPanelsForInbox(queued);
+    final ownDapName = _ownDapDisplayName;
     messages.addAll([
       for (final message in queued)
         _steeringLine(
@@ -46,6 +47,7 @@ extension AgentCliMessagingFlow on AgentCli {
           message.text,
           userInput: message.isUserInput,
           channel: message.toId,
+          ownDapName: ownDapName,
         ),
     ]);
     // Plugin inboxes (e.g. the hub) join the same steering flow, after
@@ -79,10 +81,22 @@ extension AgentCliMessagingFlow on AgentCli {
             message.text,
             userInput: message.kind == AgentMessageKind.user,
             channel: message.toId,
+            ownDapName: ownDapName,
           ),
       ]);
     }
     return messages;
+  }
+
+  /// Current DAP name, isolated from transport failures like every other
+  /// inbox probe. A missing name simply disables mention decoration.
+  String? get _ownDapDisplayName {
+    try {
+      final name = config.dapDisplayNameResolver?.call()?.trim();
+      return name == null || name.isEmpty ? null : name;
+    } on Object {
+      return null;
+    }
   }
 
   /// Sender-attributed steering line for one inbox message: user input
@@ -93,6 +107,7 @@ extension AgentCliMessagingFlow on AgentCli {
     String text, {
     required bool userInput,
     String? channel,
+    String? ownDapName,
   }) {
     // Channel mail names its channel AND the reply route: without the
     // explicit hint agents tend to DM the sender (a dead end for app
@@ -102,9 +117,23 @@ extension AgentCliMessagingFlow on AgentCli {
     final hint = isChannel
         ? '\n[reply into this channel with agent_message to: "$channel"]'
         : '';
+    final body = text.trim();
+    var mention = '';
+    final name = ownDapName?.trim();
+    if (isChannel && name != null && name.isNotEmpty) {
+      // The left check rejects email-shaped x@name; the right check keeps
+      // @name2 distinct. Punctuation and case variants remain mentions.
+      final pattern = RegExp(
+        '(?:^|[^A-Za-z0-9_])@${RegExp.escape(name)}(?![A-Za-z0-9_])',
+        caseSensitive: false,
+      );
+      if (pattern.hasMatch(body)) {
+        mention = ' [mentions you — you are @$name]';
+      }
+    }
     return userInput
-        ? UserMessage.text('[from $fromId$where] ${text.trim()}$hint')
-        : UserMessage.text('from $fromId$where: ${text.trim()}$hint');
+        ? UserMessage.text('[from $fromId$where] $body$mention$hint')
+        : UserMessage.text('from $fromId$where: $body$mention$hint');
   }
 
   /// The steering probe: fabric mail pending, or any plugin inbox

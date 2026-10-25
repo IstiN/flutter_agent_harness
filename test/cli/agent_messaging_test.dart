@@ -6,6 +6,29 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
+final class _SingleMessagePlugin implements FahPlugin {
+  _SingleMessagePlugin(this.message);
+
+  final AgentMessage message;
+
+  @override
+  String get name => 'single-message-test';
+
+  @override
+  void register(PluginContext context) {
+    var pending = true;
+    context.registerExternalInbox(
+      ExternalInbox(
+        drain: () async {
+          if (!pending) return const <AgentMessage>[];
+          pending = false;
+          return [message];
+        },
+      ),
+    );
+  }
+}
+
 /// Cross-instance messaging: two Fa CLIs (two "terminals") sharing one
 /// session repo exchange messages through the file messaging fabric.
 void main() {
@@ -194,4 +217,90 @@ void main() {
     await run;
     await io.close();
   });
+
+  Future<String> deliver(
+    String ownName,
+    String text, {
+    String toId = '#kb',
+  }) async {
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: MemoryExecutionEnv(cwd: '/work'),
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        dapDisplayNameResolver: () => ownName,
+        plugins: [
+          _SingleMessagePlugin(
+            AgentMessage(
+              id: 'channel-message',
+              fromId: 'human-app',
+              toId: toId,
+              text: text,
+              sentAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+          ),
+        ],
+      ),
+      io: FakeCliIO(),
+    );
+    final steering = cli.agent.externalSteeringSource;
+    expect(steering, isNotNull);
+    final messages = await steering!();
+    expect(messages, hasLength(1));
+    return (messages.single as UserMessage).content as String;
+  }
+
+  test(
+    'a channel @-mention is marked only for the addressed DAP name',
+    () async {
+      final mentioned = await deliver(
+        'kb-agent',
+        'Please review this, @kb-agent.',
+      );
+      expect(
+        mentioned,
+        contains(
+          'from human-app in #kb: Please review this, @kb-agent. '
+          '[mentions you — you are @kb-agent]',
+        ),
+      );
+      expect(
+        mentioned,
+        contains('[reply into this channel with agent_message to: "#kb"]'),
+      );
+
+      final otherAgent = await deliver(
+        'research-agent',
+        'Please review this, @kb-agent.',
+      );
+      expect(otherAgent, isNot(contains('mentions you')));
+    },
+  );
+
+  test(
+    'channel mention matching is case-insensitive and word-bounded',
+    () async {
+      final upperCase = await deliver('kb-agent', '@KB-AGENT please review');
+      expect(upperCase, contains('[mentions you — you are @kb-agent]'));
+
+      for (final text in ['@kb-agent2 is a different agent', 'x@kb-agent']) {
+        final delivered = await deliver('kb-agent', text);
+        expect(delivered, isNot(contains('mentions you')), reason: text);
+      }
+    },
+  );
+
+  test(
+    'a direct message containing the own name is not channel-marked',
+    () async {
+      final delivered = await deliver(
+        'kb-agent',
+        '@kb-agent this is a DM',
+        toId: '0123456789abcdef',
+      );
+      expect(delivered, isNot(contains('mentions you')));
+    },
+  );
 }

@@ -141,6 +141,16 @@ final class HubPluginHost implements FahPlugin {
     hub.HubPlugin plugin,
   ) => _byPlugin[plugin]?._activeRepository;
 
+  /// The live display name used to recognize @-mentions in channel mail.
+  /// Reads the ACTIVE client so a scoped join or reconnect never leaves the
+  /// CLI with a stale identity; the IO dependency stays behind this seam.
+  static String? dapDisplayNameFor(hub.HubPlugin plugin) {
+    final client =
+        _byPlugin[plugin]?._activeRepository?.client ??
+        plugin.repository?.client;
+    return client?.config.name;
+  }
+
   /// Whether [channel] is a keyless (PUBLIC showcase) membership on the
   /// host's active hub — public channels use the raw-payload contract,
   /// not chankey E2E.
@@ -506,6 +516,16 @@ final class HubPluginHost implements FahPlugin {
     );
   }
 
+  /// One concise identity clause for the existing membership notice.
+  String get _dapIdentityNotice {
+    final client = _activeRepository?.client;
+    if (client == null) return '';
+    final name = client.config.name?.trim();
+    if (name == null || name.isEmpty) return '';
+    final agentId = client.agentId ?? client.identity.agentId;
+    return 'Your DAP identity is $name (agentId $agentId). ';
+  }
+
   /// The always-on inbox: live membership sync, the boot channel notice
   /// (so the agent knows its channels from the first turn), and queued
   /// join notices — in BOTH delivery modes.
@@ -519,6 +539,7 @@ final class HubPluginHost implements FahPlugin {
           final effective = await scoped.runtimeEffective();
           if (effective.isNotEmpty) {
             _queueNetworkNotice(
+              '$_dapIdentityNotice'
               'You are a member of DAP channel(s): '
               '${effective.map((m) => '#${m.channelId} [${m.scope.name}]').join(', ')}. '
               'Any channel member can steer you; inbound frames arrive '

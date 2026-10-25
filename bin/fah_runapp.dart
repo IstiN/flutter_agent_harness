@@ -1640,6 +1640,8 @@ Future<void> _runApp(List<String> args) async {
         plugins: resolved.plugins,
         pluginConfig: resolved.config,
         hubFabric: resolved.hubFabric,
+        dapDisplayNameResolver: () =>
+            HubPluginHost.dapDisplayNameFor(hubPlugin),
         // Fabric discovery (issue #27 phase 2): capabilities from the
         // `fabric:` config section; the OS hostname enables `name@machine`
         // addressing (null when the platform cannot name the host).

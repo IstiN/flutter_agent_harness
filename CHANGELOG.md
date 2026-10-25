@@ -17,7 +17,10 @@ block a release again.
   sheet (names, member class, presence), and the channel composer offers
   roster-filtered @-mention autocomplete — the draft keeps the literal
   @displayName for DAP agents and the envelope carries the resolved
-  member ids.
+  member ids. On the CLI side the DAP channel notice names the agent's
+  own identity (display name + agentId), and inbound channel mail that
+  @-mentions that name (case-insensitive, word-boundary — no email or
+  @name2 false positives) is marked "[mentions you — you are @name]".
 
 - fix(gh-1825): the app's network roster no longer reads as permanently
   empty ("0 online"): fa_network sends roster.snapshot with an OBJECT
