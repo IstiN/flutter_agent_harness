@@ -441,7 +441,7 @@ platform :ios do
   desc "Build iOS IPA only (for CI split build/submit pattern)"
   lane :build_only do
     # The CI workflow creates and unlocks build.keychain before calling this
-    # lane. gh-186: both branches publish the keychain search list
+    # lane. gh-1866: both branches publish the keychain search list
     # ADDITIVELY via scripts/keychain_searchlist_add.sh — the old
     # fixed-list `security list-keychains -d user -s ...` writes REPLACED
     # the per-user list and evicted the concurrent build-macos leg's

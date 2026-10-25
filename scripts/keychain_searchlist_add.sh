@@ -1,5 +1,5 @@
 #!/bin/bash
-# gh-186 — the single allowed writer of the per-user macOS keychain
+# gh-1866 — the single allowed writer of the per-user macOS keychain
 # search list.
 #
 # The fa-m5 pool is ONE host under ONE user account with several runner
@@ -53,16 +53,25 @@ for attempt in 1 2 3 4 5; do
     printf '%s\n' "$KC" "$LOGIN_KC"
   } | awk '!seen[$0]++' > "$TMP_LIST"
   # shellcheck disable=SC2046
-  security list-keychains -d user -s $(cat "$TMP_LIST")
+  if ! security list-keychains -d user -s $(cat "$TMP_LIST"); then
+    # A failed WRITE (transient `security` error, keychain momentarily
+    # unavailable) is treated like an eviction: spend one of the
+    # bounded attempts on it instead of dying under `set -e` with
+    # `security`'s raw exit code and no log annotation (gh-1866).
+    rm -f "$TMP_LIST"
+    echo "keychain search list: write failed — will re-read and retry (attempt $attempt/5)" >&2
+    sleep "${KSLA_RETRY_DELAY:-$((attempt * 2))}"
+    continue
+  fi
   rm -f "$TMP_LIST"
 
-  if list_user_keychains | grep -qx "$KC"; then
+  if list_user_keychains | grep -qFx -- "$KC"; then
     echo "keychain search list: $KC present (attempt $attempt)"
     exit 0
   fi
   echo "keychain search list: $KC evicted by a concurrent writer — re-adding (attempt $attempt/5)" >&2
-  sleep $((attempt * 2))
+  sleep "${KSLA_RETRY_DELAY:-$((attempt * 2))}"
 done
 
-echo "::error::$KC could not be kept in the user keychain search list after 5 attempts — a concurrent job keeps replacing the list (gh-186)" >&2
+echo "::error::$KC could not be kept in the user keychain search list after 5 attempts — a concurrent job keeps replacing the list, or the write keeps failing (gh-1866)" >&2
 exit 1
