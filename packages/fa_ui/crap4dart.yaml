@@ -1,0 +1,39 @@
+# crap4dart configuration for the fa_ui package.
+# https://github.com/IstiN/crap4dart
+#
+# RATCHET (issue #1848): the threshold is pinned at the CURRENT worst score
+# measured by the SAME pipeline the card mandates — the fa_ui flutter test
+# shard lcov (scripts/faui_test_shards.json, merged by faui-coverage).
+# Pushes may only make the codebase BETTER, never worse; lower the
+# threshold whenever the top offenders are fixed. Only down.
+
+sources: [lib]
+
+exclude:
+  - '**.g.dart'
+  - '**.freezed.dart'
+  - '**.mocks.dart'
+  - 'build/**'
+
+crap:
+  enabled: true
+  # Bootstrap (issue #1848, AC3, fa_ui tier 1 of 132->48->24->12): measured
+  # max was 132.0 over 1509 methods with SIXTEEN 0%-cov methods above the 48
+  # line (_stopMic/_toggleMic/_handleSmartPaste/_pasteClipboardText/
+  # _isSafeInlinePaste chat_composer, chatClampHint chat_strings, build x2 +
+  # sandboxMediaKind media_player, _load task_models_store, build/
+  # agentStatusEmoji/_send agents_section, _ruPlural trajectory_strings,
+  # _editPreset providers_section, _connectCopilot sso_flows) — all covered
+  # by real branch tests in this tier (tests only, zero lib/ changes). The
+  # NEW measured worst is 42.00 — _togglePreview (voice_presets.dart) and
+  # _resolveUser (fa_chat_screen.dart), CC 6 @ 0%; the threshold is pinned
+  # there. Tier 2 (48->24) and tier 3 (24->12) carry the rest. Only down.
+  threshold: 42.0
+
+coverage:
+  # run_tests: false — the merged shard lcov (faui-coverage artifact /
+  # scripts/merge_lcov.py) is the source; never re-run the suite here.
+  run_tests: false
+  lcov_path: coverage/lcov.info
+  required: true
+  branch_coverage: true
