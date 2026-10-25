@@ -120,22 +120,6 @@
   ],
   "pr-1547": [
     {
-      "leg": "review",
-      "at": "2026-10-11T11:00:40Z",
-      "prompt": 49825,
-      "completion": 14402,
-      "total": 64227,
-      "model": ""
-    },
-    {
-      "leg": "review",
-      "at": "2026-10-11T11:10:17Z",
-      "prompt": 66398,
-      "completion": 2831,
-      "total": 69229,
-      "model": ""
-    },
-    {
       "leg": "rework",
       "at": "2026-10-14T16:05:21Z",
       "prompt": 68102,
@@ -146,14 +130,6 @@
     }
   ],
   "pr-1544": [
-    {
-      "leg": "review",
-      "at": "2026-10-11T11:18:01Z",
-      "prompt": 28180,
-      "completion": 5331,
-      "total": 33511,
-      "model": ""
-    },
     {
       "leg": "rework",
       "at": "2026-10-11T12:01:02Z",
@@ -4486,6 +4462,17 @@
       "completion": 2005,
       "total": 27655,
       "cacheRead": 255488,
+      "model": "kimi-for-coding"
+    }
+  ],
+  "pr-1877": [
+    {
+      "leg": "review",
+      "at": "2026-10-25T11:53:55Z",
+      "prompt": 50581,
+      "completion": 13425,
+      "total": 64006,
+      "cacheRead": 1144832,
       "model": "kimi-for-coding"
     }
   ]
