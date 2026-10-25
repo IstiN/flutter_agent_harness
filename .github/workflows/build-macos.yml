@@ -93,7 +93,17 @@ jobs:
     # unique registration label — the generic [self-hosted, macOS, ARM64]
     # list also matched the Linux self-hosted box's labels (same routing
     # bug that sent the build-mobile iOS jobs to Linux, gh-1600).
-    runs-on: [self-hosted, macos-m5]
+    # gh-1865: the pin is now the runner-NAME label fa-m5-1, same as the
+    # iOS legs. This job's signing step mutates the PER-USER GLOBAL
+    # keychain search list, and the fa-m5 pool is ONE host under ONE user
+    # account — a signing job on ANY other pool runner (e.g. a build-mobile
+    # iOS job) stomps an in-flight build-macos codesign (run 40165498619:
+    # the iOS job on fa-m5-3 replaced the search list 84s after the arm64
+    # leg's import → "No certificate for team YP9HC3USZ3 ... found"). One
+    # runner = one job at a time = the only race-free arrangement.
+    # Pinned by test/workflow_selfhosted_legs_test.dart (AC1) and
+    # test/ci_macos_keychain_serialization_guard_test.dart (AC3).
+    runs-on: [self-hosted, macos-m5, fa-m5-1]
     # Issue #239: TestFlight submit now waits for Apple processing (bounded,
     # default 90 min) + a ~1-min one-shot appearance probe AFTER the
     # build/notarize work (gh-1041: the blocking distribution wait moved to

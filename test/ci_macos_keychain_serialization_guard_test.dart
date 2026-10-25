@@ -37,9 +37,16 @@
 //   AC2  audit: ANY job whose steps run `security default-keychain -s` or
 //        `security list-keychains -d user -s` (user-global keychain
 //        mutations) while its matrix can fan out to more than one leg
-//        must declare `max-parallel: 1`. Cross-workflow stomping is out
-//        of scope here (build-mobile's iOS legs resolve to fa-m5-1 BY
-//        NAME, concurrency 1 by construction, gh-1692).
+//        must declare `max-parallel: 1`.
+//   AC3  audit (gh-1865): any SELF-HOSTED job that mutates the user-
+//        global keychain state must pin exactly ONE runner by name
+//        (a `fa-m5-<n>` runner-name label). The fa-m5 pool is ONE host
+//        under ONE user account: `security list-keychains -d user -s` /
+//        `default-keychain -s` from a job on ANY pool runner stomps an
+//        in-flight signing job on EVERY other pool runner. Serializing
+//        all signing legs through one runner's one-job-at-a-time queue
+//        is the only race-free arrangement; a pool-wide pin plus
+//        per-leg keychains cannot work on a shared user account.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -134,6 +141,44 @@ void main() {
               'loser\'s codesign finds no signing identity '
               '(gh-1852: "No certificate for team ... found", 6/7 red '
               'runs). Declare `strategy.max-parallel: 1`.',
+        );
+      }
+    }
+  });
+
+  test('AC3 — audit: every self-hosted job that mutates the user-global '
+      'keychain state pins exactly ONE runner by name (gh-1865)', () {
+    final workflows = Directory('.github/workflows')
+        .listSync()
+        .where((f) => f.path.endsWith('.yml'))
+        .toList();
+    expect(workflows, isNotEmpty);
+    for (final f in workflows) {
+      final jobs = jobsOf(f.path);
+      for (final e in jobs.entries) {
+        final job = e.value as YamlMap;
+        if (!mutatesUserGlobalKeychainState(job)) continue;
+        final runsOn = job['runs-on']?.toString() ?? '';
+        if (!runsOn.contains('self-hosted')) continue;
+        expect(
+          RegExp(r'\bfa-m5-\d+\b').hasMatch(runsOn),
+          isTrue,
+          reason:
+              '${f.path} job "${e.key}" mutates the PER-USER GLOBAL '
+              'keychain search list (`security default-keychain -s` / '
+              '`list-keychains -d user -s`) but pins "${runsOn}" — a '
+              'label set any pool runner satisfies. The fa-m5 pool is '
+              'ONE host under ONE user account, so a signing job on any '
+              'pool runner stomps an in-flight signing job on every '
+              'other pool runner (gh-1865 autopsy, run 40165498619: a '
+              'build-mobile iOS job on fa-m5-3 replaced the search list '
+              '84s after the macOS arm64 leg\'s import → arm64 codesign '
+              'died with "No certificate for team ... found"). Pin '
+              'exactly one runner by name (`fa-m5-1`) so ALL signing '
+              'legs serialize through that runner\'s queue. Note '
+              '(gh-1865): manually adding the `fa-m5-1` NAME LABEL to '
+              'other registrations silently defeats this pin — keep the '
+              'label exclusive to the fa-m5-1 registration.',
         );
       }
     }

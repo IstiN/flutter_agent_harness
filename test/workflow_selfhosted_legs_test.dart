@@ -59,15 +59,23 @@ String checkoutScriptOf(String workflowPath, String job, String stepName) {
 /// `macos-m5` alone also matches fa-m5-2, whose archive/signing
 /// environment is unverified (the 10-17/10-18 `** ARCHIVE FAILED **`
 /// runs), so a label-set pin without the runner name is a coin flip.
-/// build-macos stays on the shared `macos-m5` pool (mac builds are not
-/// the broken TestFlight path — gh-1692 scopes the name pin to iOS).
+/// gh-1865 EXTENDS the name pin to build-macos: its signing step mutates
+/// the PER-USER GLOBAL keychain search list, and the fa-m5 pool is ONE
+/// host under ONE user account — any signing job landing on another
+/// runner of the pool stomps an in-flight build-macos codesign (run
+/// 40165498619 autopsy: a build-mobile iOS job on fa-m5-3 replaced the
+/// search list 84s after the macOS arm64 leg's import, its codesign died
+/// 10 min later with "No certificate for team ... found"). Pinning ALL
+/// signing legs (build-ios, submit-ios, build-macos) to the ONE runner
+/// fa-m5-1 serializes them through that runner's one-job-at-a-time
+/// queue — the only race-free arrangement on a shared user account.
 const mobileMacosLegs = <String, Map<String, List<String>>>{
   '.github/workflows/build-mobile.yml': {
     'build-ios': ['self-hosted', 'macos-m5', 'fa-m5-1'],
     'submit-ios': ['self-hosted', 'macos-m5', 'fa-m5-1'],
   },
   '.github/workflows/build-macos.yml': {
-    'build-macos': ['self-hosted', 'macos-m5'],
+    'build-macos': ['self-hosted', 'macos-m5', 'fa-m5-1'],
   },
 };
 
