@@ -396,6 +396,45 @@ void main() {
       },
     );
 
+    test('roster.snapshot replaces the roster on a live socket', () async {
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody);
+      final connector = FakeWsConnector();
+      final session = buildSession(
+        httpClient: httpClient,
+        connector: connector,
+        wallet: await walletWithChannel(
+          channelPub: channelKeys.pub,
+          channelPriv: channelKeys.priv,
+        ),
+      );
+      addTearDown(session.close);
+
+      await session.start();
+      await pumpEventQueue();
+      expect(session.roster['other-1']?.presence, Presence.offline);
+
+      connector.channels.single.serverEvent('roster.snapshot', [
+        {
+          'id': 'other-1',
+          'displayName': 'Olya',
+          'class': 'member',
+          'presence': 'live',
+        },
+        {
+          'id': 'agent-9',
+          'displayName': 'Hub Agent',
+          'class': 'agent',
+          'presence': 'busy',
+        },
+      ]);
+      await pumpEventQueue();
+      expect(session.roster, hasLength(2));
+      expect(session.roster['other-1']?.presence, Presence.live);
+      expect(session.roster['agent-9']?.memberClass, MemberClass.agent);
+    });
+
     test('presence.changed updates the roster', () async {
       final httpClient = FakeHttpClient()
         ..respond(200, body: channelsBody)
