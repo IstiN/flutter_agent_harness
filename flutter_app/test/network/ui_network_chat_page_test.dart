@@ -431,6 +431,9 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
       }
       expect(rig.httpClient.requests, hasLength(before + 2));
+      // A healthy fresh socket clears the sticky flag even though the
+      // server replays no historical drain to this new connection.
+      expect(find.textContaining('Reconnecting'), findsNothing);
       await rig.session.close();
     });
 

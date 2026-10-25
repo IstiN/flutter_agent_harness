@@ -120,18 +120,29 @@ void main() {
     late _FakeConnector connector;
     late FaNetworkWs ws;
     late List<WsEvent> events;
+    late List<WsConnected> connections;
 
     setUp(() async {
       connector = _FakeConnector();
       ws = build(connector);
       events = [];
-      ws.events.listen(events.add);
+      connections = [];
+      ws.events.where((event) => event is! WsConnected).listen(events.add);
+      ws.events
+          .where((event) => event is WsConnected)
+          .cast<WsConnected>()
+          .listen(connections.add);
       await ws.connect();
     });
 
     tearDown(() => ws.dispose());
 
     _FakeChannel channel() => connector.channels.single;
+
+    test('a fresh socket announces WsConnected', () async {
+      await pumpEventQueue();
+      expect(connections, hasLength(1));
+    });
 
     test('roster.snapshot parses members', () async {
       channel().incoming.add(

@@ -19,6 +19,13 @@ sealed class WsEvent {
   const WsEvent();
 }
 
+/// The socket just connected (initial connect or reconnect). The server
+/// asserts `network.offline` on its greet only while the hub is down, so
+/// a fresh connection is also the client's stale-offline reset point.
+final class WsConnected extends WsEvent {
+  const WsConnected();
+}
+
 /// `roster.snapshot` — full roster on connect and on roster change.
 final class RosterSnapshot extends WsEvent {
   const RosterSnapshot(this.members);
@@ -268,6 +275,7 @@ class FaNetworkWs {
       onDone: _onChannelClosed,
     );
     _startHeartbeat();
+    _emit(const WsConnected());
     // Resubscribe first so flushed envelopes have a destination.
     for (final channelId in _subscriptions) {
       _sendNow({'type': 'subscribe', 'channelId': channelId});

@@ -426,6 +426,15 @@ final class NetworkSession extends ChangeNotifier {
 
   void _onWsEvent(WsEvent event) {
     switch (event) {
+      case WsConnected():
+        // The greet sends network.offline only when the hub is DOWN. If
+        // recovery happened while this socket was away, no drain is
+        // replayed to it — clear the sticky flag on every fresh socket
+        // and let a real offline greet reassert it when needed.
+        if (networkOffline) {
+          networkOffline = false;
+          notifyListeners();
+        }
       case RosterSnapshot(:final members):
         roster
           ..clear()
