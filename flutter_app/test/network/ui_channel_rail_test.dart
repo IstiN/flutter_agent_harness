@@ -4,6 +4,7 @@
 
 import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/key_wallet.dart';
+import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
@@ -105,6 +106,50 @@ void main() {
       expect(find.byIcon(Icons.public), findsOneWidget);
       // Presence header: one live member (Me) from the roster snapshot.
       expect(find.text('1 online'), findsOneWidget);
+      await rig.session.close();
+    });
+
+    testWidgets('the online counter opens a live-first roster sheet', (
+      tester,
+    ) async {
+      final rig = await _rig(tester);
+      rig.session.roster['agent-kb'] = const Member(
+        id: 'agent-kb',
+        memberClass: MemberClass.agent,
+        displayName: 'kb-agent',
+        presence: Presence.live,
+      );
+      rig.session.notifyListeners();
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('networkRosterButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Members'), findsOneWidget);
+      expect(find.text('kb-agent'), findsOneWidget);
+      expect(find.text('Agent'), findsOneWidget);
+      expect(find.text('Online'), findsNWidgets(2));
+      expect(find.text('Offline'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('kb-agent')).dy,
+        lessThan(tester.getTopLeft(find.text('Olya')).dy),
+      );
+      await rig.session.close();
+    });
+
+    testWidgets('the roster sheet handles an empty roster politely', (
+      tester,
+    ) async {
+      final rig = await _rig(tester);
+      rig.session.roster.clear();
+      rig.session.notifyListeners();
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('networkRosterButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('0 online'), findsOneWidget);
+      expect(find.text('No members yet.'), findsOneWidget);
       await rig.session.close();
     });
 

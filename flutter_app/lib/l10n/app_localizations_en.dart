@@ -2419,6 +2419,42 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get networkRosterTitle => 'Members';
+
+  @override
+  String get networkRosterLoading => 'Loading members…';
+
+  @override
+  String get networkRosterEmpty => 'No members yet.';
+
+  @override
+  String get networkPresenceOnline => 'Online';
+
+  @override
+  String get networkPresenceOffline => 'Offline';
+
+  @override
+  String get networkPresenceBusy => 'Busy';
+
+  @override
+  String get networkMemberOwner => 'Owner';
+
+  @override
+  String get networkMemberAdmin => 'Admin';
+
+  @override
+  String get networkMemberMember => 'Member';
+
+  @override
+  String get networkMemberGuest => 'Guest';
+
+  @override
+  String get networkMemberAgent => 'Agent';
+
+  @override
+  String get networkMemberUnknown => 'Unknown';
+
+  @override
   String get networkChannelsSection => 'Channels';
 
   @override

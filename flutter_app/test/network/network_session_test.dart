@@ -566,6 +566,33 @@ void main() {
       },
     );
 
+    test(
+      'sendText resolves exact roster mentions and preserves literal text',
+      () async {
+        final rig = await buildChat();
+        addTearDown(rig.session.close);
+        rig.session.roster['agent-kb'] = const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        );
+
+        await rig.chat.sendText(
+          '@kb-agent ping @Olya, ignore x@kb-agent and @nobody @kb-agent',
+        );
+
+        expect(
+          rig.session.channelStates['c1']!.messages.last.text,
+          '@kb-agent ping @Olya, ignore x@kb-agent and @nobody @kb-agent',
+        );
+        final frame = rig.connector.channels.single.sentFrames.lastWhere(
+          (f) => f['type'] == 'envelope.send',
+        );
+        expect(frame['mentions'], unorderedEquals(['agent-kb', 'other-1']));
+      },
+    );
+
     test('history plumbing proxies the channel state', () async {
       final rig = await buildChat();
       addTearDown(rig.session.close);

@@ -13,6 +13,12 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1825): the network online counter opens a live-first roster
+  sheet (names, member class, presence), and the channel composer offers
+  roster-filtered @-mention autocomplete — the draft keeps the literal
+  @displayName for DAP agents and the envelope carries the resolved
+  member ids.
+
 - fix(gh-1825): the app's network roster no longer reads as permanently
   empty ("0 online"): fa_network sends roster.snapshot with an OBJECT
   payload ({members: [...]}) and the app only accepted a bare list, so

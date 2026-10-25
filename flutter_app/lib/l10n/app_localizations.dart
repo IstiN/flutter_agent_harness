@@ -4280,6 +4280,78 @@ abstract class AppLocalizations {
   /// **'{count} online'**
   String networkOnlineCount(Object count);
 
+  /// Roster bottom-sheet title and online-counter tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Members'**
+  String get networkRosterTitle;
+
+  /// Roster sheet state before the network session is ready
+  ///
+  /// In en, this message translates to:
+  /// **'Loading members…'**
+  String get networkRosterLoading;
+
+  /// Roster sheet empty state
+  ///
+  /// In en, this message translates to:
+  /// **'No members yet.'**
+  String get networkRosterEmpty;
+
+  /// Roster presence label for a live member
+  ///
+  /// In en, this message translates to:
+  /// **'Online'**
+  String get networkPresenceOnline;
+
+  /// Roster presence label for an offline member
+  ///
+  /// In en, this message translates to:
+  /// **'Offline'**
+  String get networkPresenceOffline;
+
+  /// Roster presence label for a busy member
+  ///
+  /// In en, this message translates to:
+  /// **'Busy'**
+  String get networkPresenceBusy;
+
+  /// Roster member class: owner
+  ///
+  /// In en, this message translates to:
+  /// **'Owner'**
+  String get networkMemberOwner;
+
+  /// Roster member class: admin
+  ///
+  /// In en, this message translates to:
+  /// **'Admin'**
+  String get networkMemberAdmin;
+
+  /// Roster member class: regular member
+  ///
+  /// In en, this message translates to:
+  /// **'Member'**
+  String get networkMemberMember;
+
+  /// Roster member class: guest
+  ///
+  /// In en, this message translates to:
+  /// **'Guest'**
+  String get networkMemberGuest;
+
+  /// Roster member class: agent
+  ///
+  /// In en, this message translates to:
+  /// **'Agent'**
+  String get networkMemberAgent;
+
+  /// Roster fallback for an unrecognized member class
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown'**
+  String get networkMemberUnknown;
+
   /// Channel rail section header: regular (private) channels
   ///
   /// In en, this message translates to:

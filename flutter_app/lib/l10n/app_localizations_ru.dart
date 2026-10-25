@@ -2448,6 +2448,42 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get networkRosterTitle => 'Участники';
+
+  @override
+  String get networkRosterLoading => 'Загрузка участников…';
+
+  @override
+  String get networkRosterEmpty => 'Пока нет участников.';
+
+  @override
+  String get networkPresenceOnline => 'В сети';
+
+  @override
+  String get networkPresenceOffline => 'Не в сети';
+
+  @override
+  String get networkPresenceBusy => 'Занят';
+
+  @override
+  String get networkMemberOwner => 'Владелец';
+
+  @override
+  String get networkMemberAdmin => 'Администратор';
+
+  @override
+  String get networkMemberMember => 'Участник';
+
+  @override
+  String get networkMemberGuest => 'Гость';
+
+  @override
+  String get networkMemberAgent => 'Агент';
+
+  @override
+  String get networkMemberUnknown => 'Неизвестно';
+
+  @override
   String get networkChannelsSection => 'Каналы';
 
   @override

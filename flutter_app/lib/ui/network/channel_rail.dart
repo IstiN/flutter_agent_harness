@@ -61,6 +61,20 @@ class _ChannelRailState extends State<ChannelRail> {
     }
   }
 
+  Future<void> _showRoster(NetworkSession? session) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        if (session == null) return const _NetworkRosterSheet(session: null);
+        return ListenableBuilder(
+          listenable: session,
+          builder: (context, _) => _NetworkRosterSheet(session: session),
+        );
+      },
+    );
+  }
+
   Future<void> _createChannel() async {
     final networkId = widget.controller.networkId;
     if (networkId == null) return;
@@ -171,25 +185,39 @@ class _ChannelRailState extends State<ChannelRail> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-          child: Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: session != null && !session.networkOffline
-                      ? colors.teal
-                      : colors.dim,
-                  shape: BoxShape.circle,
+          padding: const EdgeInsets.fromLTRB(12, 0, 16, 4),
+          child: Tooltip(
+            message: context.l10n.networkRosterTitle,
+            child: InkWell(
+              key: const ValueKey('networkRosterButton'),
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => unawaited(_showRoster(session)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: session != null && !session.networkOffline
+                            ? colors.teal
+                            : colors.dim,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      context.l10n.networkOnlineCount(live),
+                      style: TextStyle(fontSize: 12, color: colors.dim),
+                    ),
+                    const SizedBox(width: 2),
+                    Icon(Icons.expand_more, size: 16, color: colors.dim),
+                  ],
                 ),
               ),
-              const SizedBox(width: 6),
-              Text(
-                context.l10n.networkOnlineCount(live),
-                style: TextStyle(fontSize: 12, color: colors.dim),
-              ),
-            ],
+            ),
           ),
         ),
         Expanded(
@@ -235,6 +263,178 @@ class _ChannelRailState extends State<ChannelRail> {
         ),
       ],
     );
+  }
+}
+
+/// Live roster behind the presence counter. Names are shown verbatim so a
+/// member can be addressed with the same `@displayName` in the composer.
+class _NetworkRosterSheet extends StatelessWidget {
+  const _NetworkRosterSheet({required this.session});
+
+  final NetworkSession? session;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final session = this.session;
+    final members =
+        session == null ? const <Member>[] : session.roster.values.toList()
+          ..sort(_compareMembers);
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 480),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+              child: Row(
+                children: [
+                  Icon(Icons.group_outlined, size: 20, color: colors.dim),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      context.l10n.networkRosterTitle,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: colors.border),
+            if (session == null)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(child: Text(context.l10n.networkRosterLoading)),
+                  ],
+                ),
+              )
+            else if (members.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  context.l10n.networkRosterEmpty,
+                  style: TextStyle(color: colors.dim),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  itemCount: members.length,
+                  itemBuilder: (context, index) =>
+                      _RosterMemberTile(member: members[index]),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static int _compareMembers(Member a, Member b) {
+    final byPresence = _presenceRank(
+      a.presence,
+    ).compareTo(_presenceRank(b.presence));
+    if (byPresence != 0) return byPresence;
+    final byName = a.displayName.toLowerCase().compareTo(
+      b.displayName.toLowerCase(),
+    );
+    return byName != 0 ? byName : a.id.compareTo(b.id);
+  }
+
+  static int _presenceRank(Presence presence) => switch (presence) {
+    Presence.live => 0,
+    Presence.busy => 1,
+    Presence.offline => 2,
+    Presence.unknown => 3,
+  };
+}
+
+class _RosterMemberTile extends StatelessWidget {
+  const _RosterMemberTile({required this.member});
+
+  final Member member;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final online = member.presence == Presence.live;
+    final presenceColor = switch (member.presence) {
+      Presence.live => colors.teal,
+      Presence.busy => colors.pending,
+      _ => colors.dim,
+    };
+    final name = member.displayName.isEmpty ? member.id : member.displayName;
+    return ListTile(
+      key: ValueKey('networkRosterMember:${member.id}'),
+      dense: true,
+      leading: Icon(switch (member.memberClass) {
+        MemberClass.agent => Icons.smart_toy_outlined,
+        MemberClass.owner => Icons.star_outline,
+        MemberClass.admin => Icons.admin_panel_settings_outlined,
+        MemberClass.guest => Icons.person_outline,
+        MemberClass.member => Icons.person,
+        MemberClass.unknown => Icons.help_outline,
+      }, color: colors.dim),
+      title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(_memberClassLabel(context, member.memberClass)),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: presenceColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            _presenceLabel(context, member.presence),
+            style: TextStyle(
+              fontSize: 12,
+              color: online ? colors.teal : colors.dim,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _presenceLabel(BuildContext context, Presence presence) {
+    final l10n = context.l10n;
+    return switch (presence) {
+      Presence.live => l10n.networkPresenceOnline,
+      Presence.busy => l10n.networkPresenceBusy,
+      Presence.offline || Presence.unknown => l10n.networkPresenceOffline,
+    };
+  }
+
+  static String _memberClassLabel(
+    BuildContext context,
+    MemberClass memberClass,
+  ) {
+    final l10n = context.l10n;
+    return switch (memberClass) {
+      MemberClass.owner => l10n.networkMemberOwner,
+      MemberClass.admin => l10n.networkMemberAdmin,
+      MemberClass.member => l10n.networkMemberMember,
+      MemberClass.guest => l10n.networkMemberGuest,
+      MemberClass.agent => l10n.networkMemberAgent,
+      MemberClass.unknown => l10n.networkMemberUnknown,
+    };
   }
 }
 

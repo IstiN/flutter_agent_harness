@@ -15,6 +15,7 @@ import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
 
 import 'add_agent_dialog.dart';
+import 'channel_composer.dart';
 
 /// The channel chat surface (issue #955): the shared [FaChatScreen] over a
 /// [ChannelChatService] with `FaChatFeatures.minimal()` — plain text
@@ -149,15 +150,15 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   features: const FaChatFeatures.minimal(),
                   title: label,
                   showAppBar: false,
-                  // Writable channels get the DEFAULT composer — the same
-                  // ChatComposer chrome as the session surface (single
-                  // style across the app). The showcase read-only note
-                  // replaces it only for members browsing a public
-                  // showcase channel.
+                  // Writable channels keep the shared composer chrome, with
+                  // roster-backed @-completion added for DAP agents. The
+                  // showcase read-only note replaces it only for members
+                  // browsing a public showcase channel.
                   composerBuilder: _isReadOnlyShowcase(session, chatFor.$2)
                       ? (context, service, drop) =>
                             const _ShowcaseReadOnlyNote()
-                      : null,
+                      : (context, service, drop) =>
+                            ChannelChatComposer(service: chat),
                 ),
               ),
             ),

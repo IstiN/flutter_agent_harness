@@ -1236,6 +1236,54 @@
       "count": {}
     }
   },
+  "networkRosterTitle": "Members",
+  "@networkRosterTitle": {
+    "description": "Roster bottom-sheet title and online-counter tooltip"
+  },
+  "networkRosterLoading": "Loading members…",
+  "@networkRosterLoading": {
+    "description": "Roster sheet state before the network session is ready"
+  },
+  "networkRosterEmpty": "No members yet.",
+  "@networkRosterEmpty": {
+    "description": "Roster sheet empty state"
+  },
+  "networkPresenceOnline": "Online",
+  "@networkPresenceOnline": {
+    "description": "Roster presence label for a live member"
+  },
+  "networkPresenceOffline": "Offline",
+  "@networkPresenceOffline": {
+    "description": "Roster presence label for an offline member"
+  },
+  "networkPresenceBusy": "Busy",
+  "@networkPresenceBusy": {
+    "description": "Roster presence label for a busy member"
+  },
+  "networkMemberOwner": "Owner",
+  "@networkMemberOwner": {
+    "description": "Roster member class: owner"
+  },
+  "networkMemberAdmin": "Admin",
+  "@networkMemberAdmin": {
+    "description": "Roster member class: admin"
+  },
+  "networkMemberMember": "Member",
+  "@networkMemberMember": {
+    "description": "Roster member class: regular member"
+  },
+  "networkMemberGuest": "Guest",
+  "@networkMemberGuest": {
+    "description": "Roster member class: guest"
+  },
+  "networkMemberAgent": "Agent",
+  "@networkMemberAgent": {
+    "description": "Roster member class: agent"
+  },
+  "networkMemberUnknown": "Unknown",
+  "@networkMemberUnknown": {
+    "description": "Roster fallback for an unrecognized member class"
+  },
   "networkChannelsSection": "Channels",
   "@networkChannelsSection": {
     "description": "Channel rail section header: regular (private) channels"

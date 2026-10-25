@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/network/envelope_codec.dart';
+import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
@@ -181,6 +182,73 @@ void main() {
       );
       expect(frame['channelId'], 'c1');
       expect(frame['payload']! as String, isNot(contains('hello channel')));
+      await rig.session.close();
+    });
+
+    testWidgets('mention autocomplete filters, inserts the literal name, and '
+        'resolves its member id on send', (tester) async {
+      final rig = await pumpChat(tester);
+      rig.session.roster.addAll({
+        'agent-kb': const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        ),
+        'agent-helper': const Member(
+          id: 'agent-helper',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-helper',
+          presence: Presence.offline,
+        ),
+        'agent-other': const Member(
+          id: 'agent-other',
+          memberClass: MemberClass.agent,
+          displayName: 'other-agent',
+          presence: Presence.live,
+        ),
+      });
+      rig.session.notifyListeners();
+      await tester.pump();
+
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, 'hello @kb');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(
+        find.byKey(const ValueKey('mentionOption:agent-kb')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('mentionOption:agent-helper')),
+        findsOneWidget,
+      );
+      expect(find.text('other-agent'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('mentionOption:agent-kb')));
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(field).controller!.text,
+        'hello @kb-agent ',
+      );
+
+      await tester.enterText(field, 'hello @kb-agent please review');
+      await tester.tap(find.byTooltip('Send'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(
+        rig.session.channelStates['c1']!.messages.last.text,
+        'hello @kb-agent please review',
+      );
+      final frame = rig.channel.sentFrames.lastWhere(
+        (f) => f['type'] == 'envelope.send',
+      );
+      expect(frame['mentions'], equals(['agent-kb']));
       await rig.session.close();
     });
 
