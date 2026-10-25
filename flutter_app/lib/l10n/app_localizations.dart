@@ -4409,7 +4409,7 @@ abstract class AppLocalizations {
   /// Snack bar for a recognized DAP enrollment paste on an unsupported platform
   ///
   /// In en, this message translates to:
-  /// **'DAP join is not supported in the web build yet — use the macOS/iOS app or the fa CLI.'**
+  /// **'DAP join is not supported on this platform — use a native app or the fa CLI.'**
   String get dapEnrollmentUnsupported;
 
   /// Agent invite: button that enrolls the typed agent name against the fa_network backend (DAP format)

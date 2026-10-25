@@ -17,7 +17,13 @@ block a release again.
   receive channel mail again — session replay now re-arms membership
   synchronization (plugin session-ready listeners on boot/resume and
   in-process switches) and idle channel probes complete deferred joins
-  before inbox peek/drain. App channel history no longer flashes raw
+  before inbox peek/drain. The post-replay sync also dials the
+  membership's OWN hub with its enrolled credential before joining:
+  a resumed session-scoped agent used to stay on the zero-config local
+  URL forever, and because a disconnected fabric probe short-circuits
+  before the sync, the remote dial never happened — the session-ready
+  listener now drives it directly (throttled to one attempt per 10 s).
+  App channel history no longer flashes raw
   payloads on first open: decoding waits for startup's channel listing
   instead of caching an undecoded guess until a manual switch.
 

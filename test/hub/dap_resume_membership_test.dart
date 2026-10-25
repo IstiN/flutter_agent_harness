@@ -26,9 +26,18 @@ void main() {
       timeout: const Timeout(Duration(seconds: 30)),
     );
   }
+  test(
+    'resumed session membership dials its own hub when boot had no '
+    'DAP_HUB_URL',
+    () => _verifyResume(DapChannelScope.session, bootHubUrl: false),
+    timeout: const Timeout(Duration(seconds: 30)),
+  );
 }
 
-Future<void> _verifyResume(DapChannelScope scope) async {
+Future<void> _verifyResume(
+  DapChannelScope scope, {
+  bool bootHubUrl = true,
+}) async {
   final tmp = await Directory.systemTemp.createTemp('dap-resume-test');
   final fakeHub = FakeHub();
   await fakeHub.start();
@@ -50,6 +59,9 @@ Future<void> _verifyResume(DapChannelScope scope) async {
       channelId: channel,
       scope: scope,
       joinedAt: DateTime.utc(2026, 10, 24),
+      // Without a boot hub URL the resumed membership itself must supply
+      // the enrolled credential for the scoped dial.
+      hubClientSecret: bootHubUrl ? null : 'resume-client-secret',
     );
     final env = MemoryExecutionEnv(cwd: tmp.path, shell: FakeShell());
     await env.writeFile('${tmp.path}/.fah/memory/.last_maintenance', '');
@@ -77,7 +89,7 @@ Future<void> _verifyResume(DapChannelScope scope) async {
 
     final dapEnvironment = <String, String>{
       'DAP_MASTER_SECRET': 'test-master',
-      'DAP_HUB_URL': fakeHub.url.toString(),
+      if (bootHubUrl) 'DAP_HUB_URL': fakeHub.url.toString(),
     };
     plugin = hub.HubPlugin(environment: dapEnvironment, home: tmp.path);
     final host = HubPluginHost(
@@ -111,7 +123,7 @@ Future<void> _verifyResume(DapChannelScope scope) async {
       io: io,
       streamFunction: stream.call,
     );
-    if (scope == DapChannelScope.session) {
+    if (scope == DapChannelScope.session && bootHubUrl) {
       // Consume the one-shot boot sync while _session is still null. Replay
       // must invalidate this empty view instead of leaving the channel
       // unjoined forever.
@@ -123,6 +135,14 @@ Future<void> _verifyResume(DapChannelScope scope) async {
       for (final inbox in capturing.context.externalInboxes) {
         await inbox.drain();
       }
+    }
+    if (!bootHubUrl) {
+      // Deterministic boot-before-replay ordering: _connect reads its
+      // (empty) membership view BEFORE seedOverlay() writes the runtime
+      // overlay, so the overlay's existence proves the boot cannot see
+      // the resumed session record any more.
+      final overlay = File('${tmp.path}/.dap/runtime/channels-$pid.json');
+      await waitForIt(overlay.exists);
     }
     run = cli.run();
     cliRunning = true;

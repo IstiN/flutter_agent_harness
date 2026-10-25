@@ -106,6 +106,9 @@ final class HubPluginHost implements FahPlugin {
   /// at boot, after a session replay becomes visible, after join/leave.
   bool _runtimeSyncPending = true;
 
+  /// Rate limit for the post-replay remote dial (10 s between attempts).
+  DateTime? _runtimeConnectNotBefore;
+
   /// The connected hub url for the channel-leave delivery filter.
   String? _connectedHubUrl;
 
@@ -211,6 +214,11 @@ final class HubPluginHost implements FahPlugin {
       // session-scoped records become visible now, so the next inbox drain
       // or idle probe must rebuild and join the effective membership set.
       _runtimeSyncPending = true;
+      // Do not wait for an inbox probe: with no connected hub the fabric
+      // probe short-circuits to "empty" BEFORE the membership sync, so
+      // the remote dial would never happen (deadlock found live on
+      // resumed ai_kb/ai_conf). Drive the dial + joins right here.
+      unawaited(_syncRuntimeMemberships().catchError((Object _) {}));
     });
     unawaited(
       _connect(context).catchError((Object e, StackTrace s) {
@@ -346,12 +354,41 @@ final class HubPluginHost implements FahPlugin {
   Future<void> _syncRuntimeMemberships() async {
     if (!_runtimeSyncPending) return;
     final scoped = _scoped;
+    if (scoped == null) return;
+    scoped.invalidateCache();
+    // Session-scoped memberships are invisible to boot (the JSONL is
+    // replayed later): the boot dial may have targeted the zero-config
+    // default hub with nothing listening. Once replay lands, dial the hub
+    // the membership actually belongs to BEFORE joining channels on the
+    // active client — otherwise resume "joins" a dead local client and
+    // channel mail never flows. Throttled: a rejected dial must not be
+    // retried on every inbox probe.
+    final preferred = await scoped.preferredBootMembership();
+    final needsDial = preferred != null &&
+        (_activeRepository?.client.connected != true ||
+            _connectedHubUrl !=
+                DapScopedMemberships.normalizeHubUrl(preferred.hubUrl));
+    if (needsDial) {
+      final notBefore = _runtimeConnectNotBefore;
+      if (notBefore != null && DateTime.now().isBefore(notBefore)) return;
+      _runtimeConnectNotBefore = DateTime.now().add(
+        const Duration(seconds: 10),
+      );
+      final secret = preferred.hubClientSecret;
+      final name = preferred.agentName;
+      if (secret != null && secret.isNotEmpty) {
+        _environment['DAP_CLIENT_SECRET'] = secret;
+      }
+      if (name != null && name.isNotEmpty) {
+        _environment['DAP_AGENT_NAME'] = name;
+      }
+      await _ensureChannelConnection(preferred.hubUrl);
+    }
     final client = _activeRepository?.client;
     // No live client yet (hub down / still connecting): RETRY on the
     // next drain instead of consuming the one-shot sync.
-    if (scoped == null || client == null) return;
+    if (client == null) return;
     _runtimeSyncPending = false;
-    scoped.invalidateCache();
     final store = client.channelStore;
     for (final m in await scoped.runtimeEffective()) {
       try {
