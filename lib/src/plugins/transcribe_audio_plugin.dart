@@ -46,27 +46,28 @@ const _allowedKeys = {
   'providerKind',
 };
 
-TranscriptionResponseFormat _parseResponseFormat(Object? value) {
-  if (value is! String) {
+/// One parser shared by every enum-shaped yaml key: fails loudly with the
+/// key name and the allowed literals on a mistyped or unknown value.
+T _parseEnum<T extends Enum>(
+  String key,
+  Object? value,
+  Map<String, T> allowed,
+) {
+  if (value is! String || !allowed.containsKey(value)) {
     throw ArgumentError(
-      'transcribe_audio: responseFormat must be a string '
-      '(text|json|verbose), got: $value',
+      'transcribe_audio: $key must be a string, one of '
+      '${allowed.keys.toList()..sort()}, got: $value',
     );
   }
-  switch (value) {
-    case 'text':
-      return TranscriptionResponseFormat.text;
-    case 'json':
-      return TranscriptionResponseFormat.json;
-    case 'verbose':
-      return TranscriptionResponseFormat.verbose;
-    default:
-      throw ArgumentError(
-        'transcribe_audio: unknown responseFormat "$value" '
-        '(allowed: text, json, verbose)',
-      );
-  }
+  return allowed[value]!;
 }
+
+TranscriptionResponseFormat _parseResponseFormat(Object? value) =>
+    _parseEnum('responseFormat', value, {
+      'text': TranscriptionResponseFormat.text,
+      'json': TranscriptionResponseFormat.json,
+      'verbose': TranscriptionResponseFormat.verbose,
+    });
 
 Set<TranscriptionGranularity> _parseGranularities(Object? value) {
   if (value is! List) {
@@ -77,81 +78,42 @@ Set<TranscriptionGranularity> _parseGranularities(Object? value) {
   }
   return {
     for (final entry in value)
-      switch (entry) {
-        'segment' => TranscriptionGranularity.segment,
-        'word' => TranscriptionGranularity.word,
-        _ => throw ArgumentError(
-          'transcribe_audio: unknown granularity "$entry" '
-          '(allowed: segment, word)',
-        ),
-      },
+      _parseEnum('granularities entry', entry, {
+        'segment': TranscriptionGranularity.segment,
+        'word': TranscriptionGranularity.word,
+      }),
   };
 }
 
-TranscriptionRequirement _parseRequire(Object? value) {
-  if (value is! String) {
-    throw ArgumentError(
-      'transcribe_audio: require must be a string '
-      '(none|segment|word), got: $value',
-    );
-  }
-  switch (value) {
-    case 'none':
-      return TranscriptionRequirement.none;
-    case 'segment':
-      return TranscriptionRequirement.segment;
-    case 'word':
-      return TranscriptionRequirement.word;
-    default:
-      throw ArgumentError(
-        'transcribe_audio: unknown require "$value" '
-        '(allowed: none, segment, word)',
-      );
-  }
-}
+TranscriptionRequirement _parseRequire(Object? value) =>
+    _parseEnum('require', value, {
+      'none': TranscriptionRequirement.none,
+      'segment': TranscriptionRequirement.segment,
+      'word': TranscriptionRequirement.word,
+    });
 
-TranscriptionOutputMode _parseOutput(Object? value) {
-  if (value is! String) {
-    throw ArgumentError(
-      'transcribe_audio: output must be a string '
-      '(inline|sidecar|auto), got: $value',
-    );
-  }
-  switch (value) {
-    case 'inline':
-      return TranscriptionOutputMode.inline;
-    case 'sidecar':
-      return TranscriptionOutputMode.sidecar;
-    case 'auto':
-      return TranscriptionOutputMode.auto;
-    default:
-      throw ArgumentError(
-        'transcribe_audio: unknown output "$value" '
-        '(allowed: inline, sidecar, auto)',
-      );
-  }
-}
+TranscriptionOutputMode _parseOutput(Object? value) =>
+    _parseEnum('output', value, {
+      'inline': TranscriptionOutputMode.inline,
+      'sidecar': TranscriptionOutputMode.sidecar,
+      'auto': TranscriptionOutputMode.auto,
+    });
 
-TranscriptionProviderKind _parseProviderKind(Object? value) {
-  if (value is! String) {
+TranscriptionProviderKind _parseProviderKind(Object? value) =>
+    _parseEnum('providerKind', value, {
+      'openai': TranscriptionProviderKind.openai,
+      'groq': TranscriptionProviderKind.groq,
+      'custom': TranscriptionProviderKind.custom,
+    });
+
+int _parseMaxInlineBytes(Object? value) {
+  if (value is! int || value <= 0) {
     throw ArgumentError(
-      'transcribe_audio: providerKind must be a string '
-      '(openai|groq|custom), got: $value',
+      'transcribe_audio: maxInlineBytes must be a positive integer, '
+      'got: $value',
     );
   }
-  switch (value) {
-    case 'openai':
-      return TranscriptionProviderKind.openai;
-    case 'groq':
-      return TranscriptionProviderKind.groq;
-    case 'custom':
-      return TranscriptionProviderKind.custom;
-    default:
-      throw ArgumentError(
-        'transcribe_audio: unknown providerKind "$value" '
-        '(allowed: openai, groq, custom)',
-      );
-  }
+  return value;
 }
 
 /// Plugin that contributes the `transcribe_audio` tool.
@@ -190,7 +152,7 @@ final class TranscribeAudioPlugin implements FahPlugin {
         ? _parseRequire(config['require'])
         : TranscriptionRequirement.none;
     final maxInlineBytes = config.containsKey('maxInlineBytes')
-        ? config['maxInlineBytes'] as int
+        ? _parseMaxInlineBytes(config['maxInlineBytes'])
         : defaultTranscribeMaxInlineBytes;
     final transcribeConfig = TranscribeAudioConfig(
       modelId: config['model'] as String? ?? 'whisper-1',

@@ -70,7 +70,19 @@ void main() {
           isA<ArgumentError>().having(
             (e) => e.message,
             'message',
-            contains('text, json, verbose'),
+            allOf(contains('responseFormat'), contains('verbose')),
+          ),
+        ),
+      );
+      expect(
+        () => plugin.register(
+          context({'apiKey': 'k', 'maxInlineBytes': '20000'}),
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('maxInlineBytes'), contains('positive integer')),
           ),
         ),
       );

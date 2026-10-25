@@ -304,6 +304,72 @@ void main() {
       );
       expect(s.requests, hasLength(1)); // no downgrade retry
     });
+
+    test(
+      'a silent 200 WITHOUT word timings is also a hard error (AC5)',
+      () async {
+        await env.writeBinaryFile('/work/clip.wav', _fakeWav());
+        final s = _scripted([
+          // Endpoint silently ignores the granularity fields and answers a
+          // segment-only verbose payload — a downgrade, so strict mode must
+          // fail, not return a warning-carrying document.
+          _verboseOk(
+            segments: [
+              {'id': 0, 'start': 0.0, 'end': 2.0, 'text': 'Hello world.'},
+            ],
+          ),
+        ]);
+        await expectLater(
+          run(
+            TranscribeAudioConfig(
+              apiKey: 'k',
+              httpClient: s.client,
+              granularities: const {
+                TranscriptionGranularity.segment,
+                TranscriptionGranularity.word,
+              },
+              require: TranscriptionRequirement.word,
+            ),
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('require: word'),
+                contains('without any word-level timestamps'),
+                contains('silently ignored'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('require: segment fails on a 200 without segments', () async {
+      await env.writeBinaryFile('/work/clip.wav', _fakeWav());
+      final s = _scripted([_verboseOk(segments: const [])]);
+      await expectLater(
+        run(
+          TranscribeAudioConfig(
+            apiKey: 'k',
+            httpClient: s.client,
+            responseFormat: TranscriptionResponseFormat.verbose,
+            require: TranscriptionRequirement.segment,
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('require: segment'),
+              contains('without any segments'),
+            ),
+          ),
+        ),
+      );
+    });
   });
 
   group('IT-04/AC6: Groq-style probe-and-degrade', () {
@@ -461,6 +527,36 @@ void main() {
           jsonDecode((sidecar.valueOrNull!)) as Map<String, dynamic>;
       expect(document['text'], longText);
       expect(document['schemaVersion'], 1);
+    });
+
+    test('a host-wired session id scopes the sidecar to the session spill '
+        'bucket (review: AC8 retention)', () async {
+      await env.writeBinaryFile('/work/clip.wav', _fakeWav());
+      final s = _scripted([_verboseOk()]);
+      final tool = transcribeAudioTool(
+        env,
+        TranscribeAudioConfig(
+          apiKey: 'k',
+          httpClient: s.client,
+          responseFormat: TranscriptionResponseFormat.verbose,
+          output: TranscriptionOutputMode.sidecar,
+        ),
+        sessionId: () => 'sess-abc123',
+      );
+      final result = await tool.execute({'path': '/work/clip.wav'}, null, null);
+      expect(
+        _resultText(result),
+        contains('.fah/spills/sess-abc123/transcript-1.json'),
+      );
+      expect(
+        await _fileExists(env, '.fah/spills/sess-abc123/transcript-1.json'),
+        isTrue,
+      );
+      // And nothing leaked into the sessionless bucket.
+      expect(
+        await _fileExists(env, '.fah/spills/sessionless/transcript-1.json'),
+        isFalse,
+      );
     });
 
     test(

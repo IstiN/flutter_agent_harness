@@ -550,6 +550,7 @@ class AgentCli {
         isUnattended: () => _approval.mode == ApprovalMode.unattended,
         vision: config.visionConfig,
         transcribe: config.transcribeConfig,
+        transcribeSessionId: () => _session?.cachedId,
         media: MediaToolServices(
           modelsConfig: config.modelsConfig,
           mainApiKey: () => _apiKey,
