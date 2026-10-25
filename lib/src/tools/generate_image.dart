@@ -1,12 +1,15 @@
 /// Image generation tool (`generate_image`) for [AgentCli].
 ///
 /// A pure-Dart image-generation client that saves the PNG into the sandbox
-/// `generated/` dir. Two dialects are supported:
+/// `generated/` dir. Dialects:
+/// - OpenRouter `POST {base}/images` (`input_references` for reference
+///   images, `data[].b64_json` + `media_type`) — detected by the
+///   `openrouter.ai` host (gh-1844).
 /// - OpenAI-compatible `POST {base}/images/generations` (`size`,
-///   `data[0].b64_json`/`url`) — the default for every endpoint.
+///   `data[0].b64_json`/`url`) — the default for every other endpoint.
+/// - DIAL `POST {base}/openai/deployments/{model}/chat/completions`.
 /// - MiniMax `POST {base}/image_generation` (`aspect_ratio`, `image-01`,
-///   `response_format: base64`, `data.image_base64[]`) — detected by the
-///   `minimax` baseUrl marker.
+///   `response_format: base64`, `data.image_base64[]`).
 ///
 /// The image bytes never enter the main chat context — the saved path and a
 /// base64-staged [ImageContent] are returned. Web-safe.
@@ -25,6 +28,7 @@ import '../env/execution_env.dart';
 import '../model_roles/media_model_slots.dart';
 import '../model_roles/models_config.dart';
 import '../types.dart';
+import 'media_reference_images.dart';
 
 final Random _mediaNameRandom = Random.secure();
 
@@ -70,9 +74,13 @@ final class MediaEndpoint {
 
 /// Resolves the `imageGeneration` slot endpoint for the CLI.
 ///
-/// Mirrors the app's `MediaModelsStore.resolve`: a `models.slots.imageGeneration`
-/// override wins; otherwise the main connection's endpoint is used. The slot's
-/// `apiKeyName` (or the main key) is resolved via [resolveKey].
+/// Mirrors the app's `MediaModelsStore.resolve` (gh-1844): a
+/// `models.slots.imageGeneration` override wins; WITHOUT one the slot is
+/// UNCONFIGURED (null) — the main connection is never an implicit
+/// fallback (sending the chat model id to a media API was the worst
+/// case). The main connection serves the slot only through the EXPLICIT
+/// per-slot opt-in (`useMainConnection: true`). The slot's `apiKeyName`
+/// (or the main key, same-host only) is resolved via [resolveKey].
 Future<MediaEndpoint?> resolveImageGenerationEndpoint(
   ModelsConfig? modelsConfig, {
   required String mainBaseUrl,
@@ -81,17 +89,16 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
   MediaKeyResolver? resolveKey,
 }) async {
   final override = modelsConfig?.slots['imageGeneration'];
-  if (override == null) {
-    if (mainBaseUrl.isNotEmpty && mainModelId.isNotEmpty) {
-      return MediaEndpoint(
-        baseUrl: mainBaseUrl,
-        modelId: mainModelId,
-        apiKey: mainApiKey,
-      );
-    }
-    return null;
+  if (override == null) return null;
+  if (override.useMainConnection) {
+    if (mainBaseUrl.isEmpty || mainModelId.isEmpty) return null;
+    return MediaEndpoint(
+      baseUrl: mainBaseUrl,
+      modelId: mainModelId,
+      apiKey: mainApiKey,
+    );
   }
-  final key = await _resolveSlotKey(
+  final key = await resolveMediaSlotKey(
     override,
     mainBaseUrl: mainBaseUrl,
     mainApiKey: mainApiKey,
@@ -99,12 +106,13 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
   );
   if (key.isEmpty) {
     final keyName = override.apiKeyName;
-    final named =
-        (keyName == null || keyName.isEmpty) ? '' : ' (named "$keyName")';
+    final named = (keyName == null || keyName.isEmpty)
+        ? ''
+        : ' (named "$keyName")';
     throw MediaException(
       'the imageGeneration slot has no resolvable API key$named '
-      '— a slot override never uses the main provider key; set '
-      'models.slots.imageGeneration.apiKeyName to a stored key name '
+      '— a slot override never uses the main provider key across hosts; '
+      'set models.slots.imageGeneration.apiKeyName to a stored key name '
       '(/key set <name>) or an environment variable',
     );
   }
@@ -115,13 +123,13 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
   );
 }
 
-bool _isSameHost(String a, String b) {
-  final hostA = Uri.tryParse(a)?.host.toLowerCase();
-  final hostB = Uri.tryParse(b)?.host.toLowerCase();
-  return hostA != null && hostA.isNotEmpty && hostA == hostB;
-}
-
-Future<String> _resolveSlotKey(
+/// Resolves a slot override's API key: the named key ([resolveKey]) wins;
+/// otherwise the MAIN connection's key is reused when the override's
+/// endpoint is on the SAME HOST only (gh-1844 review: shared by the
+/// image and video resolvers — one rule, both CLI tools). Returns ''
+/// when nothing resolves (the callers throw the actionable
+/// "no resolvable API key" error).
+Future<String> resolveMediaSlotKey(
   MediaSlotModelConfig override, {
   required String mainBaseUrl,
   required String mainApiKey,
@@ -137,12 +145,23 @@ Future<String> _resolveSlotKey(
   return '';
 }
 
+bool _isSameHost(String a, String b) {
+  final hostA = Uri.tryParse(a)?.host.toLowerCase();
+  final hostB = Uri.tryParse(b)?.host.toLowerCase();
+  return hostA != null && hostA.isNotEmpty && hostA == hostB;
+}
+
 /// One image-generation dialect (its own URL shape, body schema, and
 /// response parsing). Adding a provider = one new class + one entry in
 /// [imageGenerationDialects]; the dispatcher below never changes.
 abstract final class ImageDialect {
   /// Whether this dialect handles [endpoint].
   bool matches(MediaEndpoint endpoint);
+
+  /// Whether this dialect can carry [images] (reference images) — only
+  /// the OpenRouter dialect does (gh-1844); every other dialect rejects
+  /// them before any network call.
+  bool get supportsReferenceImages => false;
 
   /// Generates an image on the given endpoint.
   Future<({String path, Uint8List bytes, String detail})> generate({
@@ -151,16 +170,121 @@ abstract final class ImageDialect {
     required String prompt,
     String? size,
     String? quality,
+    List<ResolvedMediaImage> images = const [],
     required http.Client client,
   });
 }
 
-/// Registered image dialects, in precedence order.
+/// Registered image dialects, in precedence order — the MOST SPECIFIC
+/// matcher first (OpenRouter before the OpenAI-compatible fallback, which
+/// matches everything).
 final List<ImageDialect> imageGenerationDialects = [
   DialImageDialect(),
   MiniMaxImageDialect(),
+  OpenRouterImageDialect(),
   OpenAiImageDialect(), // default fallback — must stay last
 ];
+
+/// OpenRouter dedicated Image API (gh-1844):
+/// `POST {base}/images` with `{model, prompt, size?, quality?,
+/// input_references?}`, answering `{data: [{b64_json, media_type?}],
+/// usage?}` — detected by the `openrouter.ai` host. Reference images ride
+/// `input_references` (`image_url` entries: http(s) URLs or base64 data
+/// URLs), per the official Image API docs. Wire format pinned from
+/// https://openrouter.ai/docs/guides/overview/multimodal/image-generation.
+final class OpenRouterImageDialect extends ImageDialect {
+  @override
+  bool matches(MediaEndpoint endpoint) => isOpenRouterBaseUrl(endpoint.baseUrl);
+
+  @override
+  bool get supportsReferenceImages => true;
+
+  @override
+  Future<({String path, Uint8List bytes, String detail})> generate({
+    required ExecutionEnv env,
+    required MediaEndpoint endpoint,
+    required String prompt,
+    String? size,
+    String? quality,
+    List<ResolvedMediaImage> images = const [],
+    required http.Client client,
+  }) async {
+    final response = await client.post(
+      Uri.parse('${_trimSlash(endpoint.baseUrl)}/images'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (endpoint.apiKey.isNotEmpty)
+          'Authorization': 'Bearer ${endpoint.apiKey}',
+      },
+      body: jsonEncode({
+        'model': endpoint.modelId,
+        'prompt': prompt,
+        if (size != null && size.isNotEmpty) 'size': size,
+        if (quality != null && quality.isNotEmpty) 'quality': quality,
+        if (images.isNotEmpty)
+          'input_references': [
+            for (final image in images) image.toOpenRouterJson(),
+          ],
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw MediaException(
+        'image generation failed: HTTP ${response.statusCode}: '
+        '${response.body}',
+      );
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final decoded = await _decodeImageResult(data, client);
+    final path = await _save(env, 'images', decoded.ext, decoded.bytes);
+    return (path: path, bytes: decoded.bytes, detail: 'saved to $path');
+  }
+
+  /// The decoded image bytes + saved file extension from an OpenRouter
+  /// `{data: [...]}` response body: `b64_json` inline bytes, or a `url`
+  /// download (extracted from [generate] to keep its complexity in the
+  /// CRAP budget — gh-1844).
+  Future<({String ext, Uint8List bytes})> _decodeImageResult(
+    Map<String, dynamic> data,
+    http.Client client,
+  ) async {
+    final first = data['data'] is List && (data['data'] as List).isNotEmpty
+        ? (data['data'] as List).first
+        : null;
+    if (first is! Map<String, dynamic>) {
+      throw MediaException('image generation: no image in OpenRouter response');
+    }
+    final ext = _extensionForMediaType(first['media_type']?.toString());
+    final b64 = first['b64_json'];
+    if (b64 is String && b64.isNotEmpty) {
+      return (ext: ext, bytes: base64Decode(b64));
+    }
+    final url = first['url'];
+    if (url is String && url.isNotEmpty) {
+      return (ext: ext, bytes: await _download(url, client));
+    }
+    throw MediaException('image generation: no image in OpenRouter response');
+  }
+
+  /// The saved file extension for an OpenRouter `media_type`: structured
+  /// types map to their clean subtype (`image/svg+xml` → `svg` — the raw
+  /// subtype would put a `+` in the filename), known types keep their
+  /// subtype, anything else falls back to `png` (review, gh-1844).
+  String _extensionForMediaType(String? mediaType) {
+    if (mediaType == null || !mediaType.startsWith('image/')) return 'png';
+    var subtype = mediaType.substring('image/'.length);
+    // Structured types: the file extension is the clean base subtype
+    // (`svg+xml` → `svg`), never the raw `+`-carrying parameter.
+    final plus = subtype.indexOf('+');
+    if (plus >= 0) subtype = subtype.substring(0, plus);
+    return switch (subtype) {
+      'png' || 'jpeg' || 'webp' || 'svg' => subtype,
+      _ => 'png',
+    };
+  }
+
+  String _trimSlash(String url) =>
+      url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+}
 
 /// DIAL image generation (`POST {base}/openai/deployments/{model}/chat/completions`,
 /// `Api-Key: {key}`, reading `custom_content.attachments[0].url`,
@@ -181,6 +305,7 @@ final class DialImageDialect extends ImageDialect {
     required String prompt,
     String? size,
     String? quality,
+    List<ResolvedMediaImage> images = const [],
     required http.Client client,
   }) async {
     final base = endpoint.baseUrl.endsWith('/')
@@ -271,9 +396,7 @@ final class DialImageDialect extends ImageDialect {
     }
     final imgResp = await client.get(
       Uri.parse(_dialDownloadUrl(relUrl, base)),
-      headers: {
-        if (apiKey.isNotEmpty) 'Api-Key': apiKey,
-      },
+      headers: {if (apiKey.isNotEmpty) 'Api-Key': apiKey},
     );
     if (imgResp.statusCode != 200) {
       throw MediaException(
@@ -298,6 +421,7 @@ final class OpenAiImageDialect extends ImageDialect {
     required String prompt,
     String? size,
     String? quality,
+    List<ResolvedMediaImage> images = const [],
     required http.Client client,
   }) async {
     final response = await client.post(
@@ -366,6 +490,7 @@ final class MiniMaxImageDialect extends ImageDialect {
     required String prompt,
     String? size,
     String? quality,
+    List<ResolvedMediaImage> images = const [],
     required http.Client client,
   }) async {
     final base = endpoint.baseUrl.endsWith('/')
@@ -437,31 +562,65 @@ int _gcd(int a, int b) {
 /// Generates an image on the `imageGeneration` endpoint and saves the PNG
 /// into [generatedMediaDir]. Returns the saved path, bytes, and detail.
 ///
+/// [images] are reference images (gh-1844): they are validated against
+/// the endpoint's CAPABILITIES (declared on the slot or discovered from
+/// OpenRouter model metadata — never model-name checks) BEFORE the
+/// generation call, so an endpoint that does not accept images fails with
+/// an actionable error instead of a provider 400. Only the OpenRouter
+/// dialect can carry them; other dialects refuse them up front.
+///
 /// Dispatches to the first dialect in [imageGenerationDialects] whose
-/// `matches(endpoint)` returns true (MiniMax, then OpenAI-compatible).
+/// `matches(endpoint)` returns true.
 Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
   required ExecutionEnv env,
   required MediaEndpoint endpoint,
   required String prompt,
   String? size,
   String? quality,
+  List<MediaImageInput> images = const [],
+  List<String> declaredInputModalities = const [],
   http.Client? httpClient,
 }) async {
   final client = httpClient ?? http.Client();
   try {
-    for (final dialect in imageGenerationDialects) {
-      if (dialect.matches(endpoint)) {
-        return await dialect.generate(
-          env: env,
-          endpoint: endpoint,
-          prompt: prompt,
-          size: size,
-          quality: quality,
-          client: client,
+    final dialect = imageGenerationDialects
+        .where((d) => d.matches(endpoint))
+        .firstOrNull;
+    if (dialect == null) {
+      throw MediaException('image generation: no matching dialect');
+    }
+    final resolvedImages = images.isEmpty
+        ? const <ResolvedMediaImage>[]
+        : await resolveMediaImageInputs(env, images);
+    if (resolvedImages.isNotEmpty) {
+      if (!dialect.supportsReferenceImages) {
+        throw MediaException(
+          'reference images are only supported by the OpenRouter image '
+          'dialect — point the imageGeneration slot at an OpenRouter '
+          'endpoint (or drop the images argument)',
         );
       }
+      ensureImageInputSupported(
+        slot: 'imageGeneration',
+        modelId: endpoint.modelId,
+        inputModalities: await resolveInputModalities(
+          baseUrl: endpoint.baseUrl,
+          apiKey: endpoint.apiKey,
+          modelId: endpoint.modelId,
+          declared: declaredInputModalities,
+          client: client,
+        ),
+      );
     }
-    throw MediaException('image generation: no matching dialect');
+    return await dialect.generate(
+      env: env,
+      endpoint: endpoint,
+      prompt: prompt,
+      size: size,
+      quality: quality,
+      images: resolvedImages,
+      client: client,
+    );
   } finally {
     client.close();
   }
@@ -506,6 +665,13 @@ Future<Uint8List> _download(String url, http.Client client) async {
 /// Builds the `generate_image` [AgentTool] for the CLI. The endpoint is
 /// resolved lazily per call so a `/models set imageGeneration ...` switch is
 /// picked up without a restart.
+///
+/// gh-1844: without a `models.slots.imageGeneration` override (or the
+/// explicit `useMainConnection: true` opt-in) the tool fails with an
+/// actionable "configure the slot" error — the main connection is never
+/// an implicit fallback. The optional `images` argument carries reference
+/// images (sandbox paths, http(s) URLs, or base64) for multimodal
+/// endpoints.
 AgentTool generateImageTool({
   required ExecutionEnv env,
   required ModelsConfig? modelsConfig,
@@ -520,9 +686,15 @@ AgentTool generateImageTool({
     label: generateImageToolName,
     tier: ApprovalTier.write,
     description:
-        'Generates an image from a text prompt. Returns a path to the saved '
-        'image file. Arguments: prompt (required), size (optional, e.g. '
-        '"1024x1024"), quality (optional).',
+        'Generates an image from a text prompt. Requires the '
+        'imageGeneration slot to be configured (models.slots.'
+        'imageGeneration in ~/.fah/config.yaml, or useMainConnection: '
+        'true to opt into the main connection explicitly). Returns a path '
+        'to the saved image file. Arguments: prompt (required), size '
+        '(optional, e.g. "1024x1024"), quality (optional), images '
+        '(optional, list of reference images: sandbox paths, http(s) URLs, '
+        'or base64 — supported by OpenRouter image endpoints that accept '
+        'image input).',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -535,6 +707,13 @@ AgentTool generateImageTool({
           'type': 'string',
           'description': 'image quality, e.g. standard or high',
         },
+        'images': {
+          'type': 'array',
+          'items': {'type': 'string'},
+          'description':
+              'optional reference images (sandbox path, http(s) URL, or '
+              'base64) for endpoints that accept image input',
+        },
       },
       'required': ['prompt'],
     },
@@ -546,6 +725,7 @@ AgentTool generateImageTool({
       if (prompt.trim().isEmpty) {
         throw MediaException('prompt is required');
       }
+      final override = modelsConfig?.slots['imageGeneration'];
       final endpoint = await resolveImageGenerationEndpoint(
         modelsConfig,
         mainBaseUrl: mainBaseUrl(),
@@ -557,15 +737,26 @@ AgentTool generateImageTool({
       if (endpoint == null) {
         throw MediaException(
           'no endpoint configured for slot imageGeneration; set one in '
-          'models.slots.imageGeneration (~/.fah/config.yaml)',
+          'models.slots.imageGeneration (~/.fah/config.yaml), e.g. via '
+          '/models set imageGeneration <model> <baseUrl>. To serve the '
+          'slot from the main connection explicitly, set '
+          'models.slots.imageGeneration.useMainConnection: true.',
         );
       }
+      final imageArgs = arguments['images'];
+      final images = <MediaImageInput>[
+        if (imageArgs is List)
+          for (final entry in imageArgs)
+            if (entry != null) parseMediaImageInput(entry.toString()),
+      ];
       final file = await generateImageBytes(
         env: env,
         endpoint: endpoint,
         prompt: prompt,
         size: size,
         quality: quality,
+        images: images,
+        declaredInputModalities: override?.inputModalities ?? const [],
         httpClient: httpClient,
       );
       cancelToken?.throwIfCancelled();

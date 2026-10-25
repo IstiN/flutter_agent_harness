@@ -1553,13 +1553,13 @@
       "gate": "similarity",
       "file": "flutter_app/test/media_slot_picker_page_test.dart",
       "line": null,
-      "message": "similar to packages/fa_ui/test/media_slot_picker_page_test.dart — near-duplicate content (jaccard 0.59, containment 0.77); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to packages/fa_ui/test/media_slot_picker_page_test.dart — near-duplicate content (jaccard 0.58, containment 0.76); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "packages/fa_ui/test/media_slot_picker_page_test.dart",
       "line": null,
-      "message": "similar to flutter_app/test/media_slot_picker_page_test.dart — near-duplicate content (jaccard 0.59, containment 0.77); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to flutter_app/test/media_slot_picker_page_test.dart — near-duplicate content (jaccard 0.58, containment 0.76); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
