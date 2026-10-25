@@ -1,0 +1,297 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-25T00:13:48.967Z",
+  "ticketKey": "gh-1844",
+  "headSha": "e7229e0ae37c74f43b52d985da71780627d39cc2",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:c143adecd470e7a3",
+      "size": 119845
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:2dce0ff581a72a7d",
+      "size": 2105514
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:2f4204bc2d3ce6e8",
+      "size": 503
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:a3d50879e3da77e2",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:c702a5848f4227d6",
+      "size": 23734
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:8c26755abe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:246aeeb6bc53e90f",
+      "size": 3743
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:51b72570c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:0d9deaf141cf00dd",
+      "size": 7334
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:fc18865849a9e5d9",
+      "size": 7219
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:352cd730",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 4 — OpenRouter video poll window shorter than real job durations\n\nFixed in `lib/src/tools/generate_video.dart` (`OpenRouterVideoDialect`):\n\n- New budget: `defaultMaxPolls = 30` with a 15→30 s linear backoff\n  (`defaultPollDelay`, ~11 minute worst case) — per the official docs'\n  \"30 seconds to several minutes\" job durations and the ~30 s polling\n  recommendation. The MiniMax dialects' ~2-minute window is untouched.\n- The budget/backoff are instance fields (`maxPolls`, `pollDelay`,\n  injectable for tests) so the exhaustion path is testable without real\n  minutes of backoff.\n\nNew tests in `test/tools/generate_video_test.dart`: the budget constants\nare pinned against the review's bounds (≥30 polls, 15–30 s interval), and a\nnever-completing job provably exhausts the window (exactly `maxPolls`\npolls, zero injected delay) with the\n\"did not finish within the polling window\" error."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:3b17f260",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: analyzer warnings fail the static gates (`dart analyze --fatal-infos --fatal-warnings`)**\n\nCI static gates fail with 4 warnings, all in this new test file:\n\n```\nwarning - test/decisions/decisions_test.dart:74:25 - Unnecessary cast - unnecessary_cast\nwarning - test/decisions/decisions_test.dart:219:64 - The '!' will have no effect ... - unnecessary_non_null_assertion\nwarning - test/decisions/decisions_test.dart:242:64 - The '!' will have no effect ... - unnecessary_non_null_assertion\nwarning - test/decisions/decisions_test.dart:267:64 - The '!' will have no effect ... - unnecessary_non_null_assertion\n```\n\n- line 74: `seenRequest = request as http.Request;` — `MockClient`'s callback already receives an `http.Request`.\n- lines 219/242/267: `(result.content.first as TextContent).text!` — `TextContent.text` is non-nullable, so drop the `!`.\n\nTrivial fixes, but they gate the whole PR."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:88c86905",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the Decisions API's bool discriminator is `noul`, not `bool` — requests and parsing both fail against the real API**\n\nVerified against the official OpenRouter docs during this review:\n\n- The Decisions API OpenAPI spec (`https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request.md`) defines the question discriminator as `mapping: {box, choice, noul, score}` — a yes/no question is `{\"type\": \"noul\", \"instructions\": ..., \"criteria\": {\"true\": ..., \"false\": ...}}` and its answer is `{\"type\": \"noul\", \"noul\": 0.96}`.\n- The System One docs (`https://openrouter.ai/docs/guides/community/typesafe-sdk.md`, `POST /api/v1/systemone`) confirm the same: `refund: { type: 'noul', instructions: '...' }` → answers `refund: { type: 'noul', noul: 0.98 }`.\n\nWith `type => 'bool'` this adapter will:\n\n1. **Send** `\"type\": \"bool\"` — the API discriminates on `noul`/`choice`/`score`/`box`, so every yes/no question is rejected (400) before reaching the model;\n2. **Parse** real responses with `_parseAnswer`'s `case 'bool'` — a genuine `{\"type\": \"noul\", \"noul\": 0.96}` answer falls to `default: return null`, so even a successful call is reported as `decisions answer \"...\" had an unknown or malformed shape`.\n\nNote the OpenAPI example in the spec itself shows `type: noul` for the `is_bug` bool question. The fix is a rename of the wire discriminator and answer key to `noul` (keeping `bool` as an additional accepted alias in `_parseAnswer` would be a reasonable tolerance). The `DecisionBoolQuestion`/`DecisionBoolAnswer` public class names can stay — only the wire form changes. The tests in `test/decisions/decisions_test.dart` assert the wrong discriminator too, which is why this slipped through."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:5c6fe278",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the OpenRouter video poll window (~2 min) is shorter than real job durations**\n\nPer the official docs read during this review (`https://openrouter.ai/docs/guides/overview/multimodal/video-generation.md`): video generation is asynchronous and \"typically takes 30 seconds to several minutes depending on the model and parameters\"; the docs recommend a ~30 s polling interval.\n\nThis dialect copies the MiniMax budget — 20 polls with a 3→10 s linear backoff, i.e. a ~2 minute worst-case window. A routine Veo-class job that runs 3–5 minutes will exhaust the polls and throw `video job <id> did not finish within the polling window`, leaving the user with a billed-but-unretrievable job and no resume path (re-invoking the tool submits a NEW job).\n\nSuggest a larger budget for this dialect (e.g. 30–40 polls at a 15–30 s interval, 10–20 min ceiling) — the MiniMax comment about \"~2 minutes worst case\" does not transfer to OpenRouter's job durations."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:8c628c8a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: video slot key resolution diverges from the image resolver and the new docs — silent empty-Authorization calls**\n\n`resolveVideoGenerationEndpoint` requires `apiKeyName` and otherwise resolves to `''`, with two consequences for a plain override (no `useMainConnection`, no `apiKeyName`):\n\n1. Unlike `resolveImageGenerationEndpoint` (`_resolveSlotKey` → `_isSameHost`), there is **no same-host reuse** of the main connection's key — yet `docs/media-models.md:31` (added in this PR) states the rule as \"same-host reuse only, matching the CLI rule\".\n2. Unlike the image path, an empty key does **not** throw the actionable `MediaException` (\"the imageGeneration slot has no resolvable API key …\") — the video dialects just omit the `Authorization` header and the call fails later at the provider with a bare 401.\n\nSince gh-1844 already rewrote this function's contract, please align it with the image resolver: same-host reuse plus a named, actionable error when no key resolves. If the divergence is intentional, the docs and the two resolvers' doc comments need to say so explicitly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:00a69e3a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: self-contradictory key-inheritance rule across docs / CLI / app**\n\nThis line says an override \"never inherits the main provider's API key\" **and** \"(same-host reuse only, matching the CLI rule)\" in the same sentence — those are two different policies, and the codebase now implements both:\n\n- CLI image (`generate_image.dart` `_resolveSlotKey`): same-host reuse allowed.\n- CLI video (`generate_video.dart`): no reuse, silent empty key.\n- App store (`media_models_store.dart` `resolve`): \"it NEVER inherits the main connection key\" (its own comment).\n\nSo the docs assert a \"CLI rule\" that only one of the two CLI resolvers follows, and that the app deliberately does not. Please pick one policy per surface, make all three implementations agree, and rewrite this bullet to state it unambiguously (e.g. \"the CLI allows same-host reuse of the main key; the app never inherits it — overrides there must name apiKeyName\"). As written, users cannot tell which behavior to expect."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:3fe2aa8c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: sanitize the file extension derived from `media_type`**\n\n`ext` is `mediaType.substring('image/'.length)`, so a response with `media_type: \"image/svg+xml\"` (a real OpenRouter case, e.g. Recraft vector models — see the official image-generation docs) saves `generated/images/….svg+xml`. The bytes are fine, but the filename carries a `+`. Consider mapping known types (`png`, `jpeg`, `webp`, `svg`) and falling back to `png` otherwise."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:606ac96b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `decide` is registered under the media facility bundle, though it has nothing to do with media**\n\nThe tool only needs the live main-connection accessors (`mainBaseUrl`/`mainProviderKind`/`mainApiKey`) — it ignores `modelsConfig`/`resolveKey`. Gating it on `services.media != null` means any host that wires no `MediaToolServices` (which exists for generate_image/generate_video) silently loses the `decide` tool, despite `agent_cli_tools.dart` declaring `'decide': on` unconditionally. Consider a small `DecisionsServices`-style bundle (or reusing a broader \"main connection\" seam) so the tool's availability doesn't depend on the media facility."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:bc8a3933",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — shared picker's \"Same as main connection\" tile breaks `slot: null` flows\n\nFixed in `packages/fa_ui/lib/src/providers/media_slot_picker_page.dart`: the\nmain-connection tile is now flow-aware.\n\n- `onTap` pops `MediaSlotEditorResult.clear()` when `slot == null` (task\n  model roles / generic provider→model flow) and the gh-1844\n  `useMainConnection: true` opt-in save only for actual media slots\n  (`slot != null`).\n- `checked:` mirrors the same condition:\n  `slot == null ? initial == null : (initial?.useMainConnection ?? false)`.\n\n`packages/fa_ui/test/task_models_section_test.dart:130` (\"Main connection\"\nclears the override) passes again — verified locally with\n`flutter test test/task_models_section_test.dart` (was failing before the\nfix, RED→GREEN).\n\nThe fallout in `flutter_app/test` asserted the pre-gh-1844 behavior and was\nupdated to the new contract (same assertions as the fa_ui suite):\n\n- `media_models_section_test.dart`: rows without overrides now render\n  **Not configured** (gh-1844 AC), and tapping \"Main connection\" for a\n  media slot persists the `useMainConnection` opt-in override instead of\n  clearing (the \"clears the override\" test is renamed and asserts\n  `saved.useMainConnection == true` plus 5× \"Not configured\" + 1×\n  \"Same as main connection\" summary).\n- `media_slot_picker_page_test.dart`: the picker pops a\n  **save** result with `useMainConnection: true` for a real media slot\n  (`cleared == isFalse`), matching the fa_ui picker test."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:38df7dab",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — analyzer warnings fail the static gates\n\nAll four warnings in `test/decisions/decisions_test.dart` fixed:\n\n- `:74` dropped the unnecessary cast — the `MockClient` callback receives\n  an `http.Request` already (`seenRequest = request;`).\n- `:219`, `:242`, `:267` dropped the no-op `!` on the non-nullable\n  `TextContent.text`.\n\n`dart analyze --fatal-infos --fatal-warnings` reports no issues in the file\n(whole-core delta clean; the only remaining repo-wide analyze noise is the\npre-existing `office_addin/dart` package-resolution errors that exist\nidentically on the PR base — pub-get artifact, not part of the static gate\non CI)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:f0a18933",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — Decisions API bool discriminator is `noul`, not `bool`\n\nFixed in `lib/src/decisions/decisions.dart` (wire form only — public class\nnames unchanged):\n\n- `DecisionBoolQuestion.type` now sends `'noul'`.\n- `DecisionBoolAnswer.type` is `'noul'` and `toJson()` emits\n  `{'type': 'noul', 'noul': <probability>}`.\n- `_parseAnswer` accepts `noul` and keeps `bool` as a tolerated alias for\n  pre-noul payloads; the probability reads either `noul` or `bool` under\n  either discriminator (tolerance test added).\n- `lib/src/tools/decide_tool.dart`: the tool-argument parser accepts both\n  `bool` (user-facing alias) and `noul`; the tool description documents the\n  wire type.\n\n`test/decisions/decisions_test.dart` now asserts the real wire shape\n(question serialization, request fixtures, parsed answers, and the tool's\nstructured payload all use `noul`) and adds an explicit legacy-alias parse\ntest. Full file: 9 tests green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:1e5b2bae",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the shared picker's \"Same as main connection\" tile breaks `slot: null` flows — fa_ui shard 2 CI failure**\n\n`MediaSlotProviderPickerPage` is shared by three flows: media slots (`slot: 'imageGeneration'` etc., via `media_models_section.dart`), task model roles (`slot: null`, via `task_models_section.dart`), and (with `allowMainConnection: false`) the default-chat flow. This change makes the tile unconditionally pop `MediaSlotEditorResult.save(MediaSlotOverride(useMainConnection: true))`.\n\nFor task model roles, `task_models_section.dart` treats a save result as a real override and persists `TaskRoleConfig(providerKind: '', baseUrl: '', modelId: '')` — the \"Main connection\" pick no longer clears the override. That is exactly the failing CI test (`task_models_section_test.dart:130`, \"Main connection\" clears the override — Expected: null, Actual: `TaskRoleConfig(, , )`).\n\nFix: only emit the opt-in save for actual media slots, e.g.\n\n```dart\nonTap: () => Navigator.of(context).pop(\n  slot == null\n      ? const MediaSlotEditorResult.clear()\n      : const MediaSlotEditorResult.save(\n          MediaSlotOverride(\n            providerKind: '',\n            baseUrl: '',\n            modelId: '',\n            useMainConnection: true,\n          ),\n        ),\n),\n```\n\nand mirror the same `slot == null` condition in the `checked:` expression (`slot == null ? initial == null : (initial?.useMainConnection ?? false)`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:75059320",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 5 — video slot key resolution diverges from the image resolver\n\n`resolveVideoGenerationEndpoint` now matches the image resolver exactly\n(gh-1844 review):\n\n- The shared helper `resolveMediaSlotKey` (exposed from\n  `lib/src/tools/generate_image.dart`, previously library-private\n  `_resolveSlotKey`) resolves the override's named `apiKeyName` via\n  `resolveKey`, else reuses the MAIN connection's key **same-host only**.\n- An override whose key resolves to nothing throws the actionable\n  `MediaException` (\"the videoGeneration slot has no resolvable API key\n  (named \"…\") …\") **before any provider call** — no more silent\n  empty-Authorization 401s.\n\n`test/tools/generate_video_test.dart` was rewritten for the new contract\n(TDD: RED first): same-host reuse returns the main key, cross-host/no-name\nthrows the named error, and a named-but-unresolvable key throws exactly\nlike the image slot (a named key wins — no silent fallback). 45 tests green.\n\nThe docs bullet (thread 6) now states this one CLI rule explicitly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:d74a3bbd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 6 — self-contradictory key-inheritance rule across docs / CLI / app\n\nPicked ONE policy per surface and made all implementations agree:\n\n- **CLI** (`generate_image` + `generate_video`): same-host reuse of the\n  main connection's key; a named-but-unresolvable or cross-host key throws\n  the actionable \"no resolvable API key\" error before any provider call.\n  Both resolvers now share the one helper (`resolveMediaSlotKey`), so the\n  rule cannot drift again (thread 5's fix).\n- **app** (`MediaModelsStore.resolve`): an override NEVER inherits the\n  main connection's key — overrides must name `apiKeyName` (unchanged,\n  matching the ticket's migration rule).\n\n`docs/media-models.md` bullet rewritten unambiguously: the old \"never\ninherits … (same-host reuse only, matching the CLI rule)\" single bullet is\nreplaced by an explicit per-surface list stating the CLI rule and the app\nrule separately. Both resolvers' doc comments state the rule, and the app\nstore's comment already documented its no-inheritance policy."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:02363ad1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 7 — sanitize the file extension derived from `media_type`\n\nFixed in `lib/src/tools/generate_image.dart`\n(`OpenRouterImageDialect._extensionForMediaType`):\n\n- Structured types map to the clean base subtype: `image/svg+xml` →\n  `svg` (the raw subtype would put a `+` in the filename).\n- Known types keep their subtype: `png`, `jpeg`, `webp`, `svg`.\n- Unknown (`image/x-…`) or missing `media_type` falls back to `png`.\n\nNew tests in `test/tools/generate_image_test.dart` (TDD: RED first) cover\nthe Recraft `svg+xml` case, the known-type map, and both fallback paths via\nthe dialect's real `generate` (mocked HTTP, `MemoryExecutionEnv`). 24 tests\ngreen in the file."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:3f987838",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 8 — `decide` registered under the media facility bundle\n\nFixed in `lib/src/hosts/host_agent_wiring.dart`:\n\n- New `DecisionsServices` facility bundle — it carries only the live\n  main-connection key accessor (`mainApiKey`), which is all the `decide`\n  tool needs; the base URL / provider kind continue to ride\n  `currentAgent()!.state.model` exactly like the media tools' main\n  connection.\n- `AgentCoreServices` gained a `decisions` field; `decideTool` is now\n  registered under `services.decisions != null` instead of piggy-backing\n  on `services.media`, so a host wiring no `MediaToolServices` still\n  surfaces `decide` (matching `agent_cli_tools.dart`, which declares\n  `'decide': on` unconditionally).\n- The CLI wires `decisions: DecisionsServices(mainApiKey: () => _apiKey)`\n  in `lib/src/cli/agent_cli.dart`.\n\nNew tests in `test/hosts/host_agent_wiring_test.dart`: `decide` registers\nwith the bundle and NO media facility, and no bundle → no `decide`. 28\ntests green in the file."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:f0b921c3",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1844 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 1fdf34bb32ccd76d2287ab9940d6c1032214e4b4 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:0c3035dd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: Two CI failures block merge: the shared `MediaSlotProviderPickerPage` \"Same as main connection\" tile now saves a `useMainConnection` opt-in for ALL flows including `slot: null` consumers, breaking the task-models \"Main connection clears the override\" behavior (fa_ui shard 2), and `dart analyze --fatal-warnings` flags 4 issues in the new `test/decisions/decisions_test.dart`. Additionally the Decisions adapter's bool question uses wire type `bool`, while the official Decisions/SystemOne API discriminates on `noul` — real API calls would 400 and real answers would fail parsing.\n\n**Key Issues**:\n- 🚨 Shared picker tile breaks `slot: null` flows (task model roles) — red CI\n- 🚨 4 analyzer warnings in the new decisions test — red static gates\n- 🚨 Decisions bool wire type mismatch vs official API (`noul`)\n- ⚠️ OpenRouter video poll window (~2 min) shorter than real job durations; CLI video resolver key handling inconsistent with the image resolver and the new docs\n\n**Next Steps**:\n1. In `media_slot_picker_page.dart`, emit the `useMainConnection` save only when `slot != null`; keep `MediaSlotEditorResult.clear()` for `slot: null` flows (or pass an explicit flag from media slots)\n2. Fix the 4 analyzer warnings in `test/decisions/decisions_test.dart`\n3. Rename the bool question wire type/answer key to `noul` (keep `bool` as an accepted alias on parse if desired)\n4. Bump the OpenRouter video poll budget / interval; align the video resolver's key rules (same-host reuse + actionable missing-key error) with the image resolver and the docs"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-25:b0842f77",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1844 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40144367929\n🔴 red head e7229e0ae37c74f43b52d985da71780627d39cc2 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:1ebf3c54",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1844 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40132844093\n🔴 red head 060e33a2fb80ac99c96fc2277de7f9821b664f5e — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:b2fc9a52",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1844 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40136871223\n🔴 red head 5f9f9cdfc26d1090c08f48f747b0e0d8d53653cb — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-24:2e1285e8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: All 8 threads from the previous review round are verified fixed in the rework: the picker's \"Same as main connection\" tile is now flow-aware (`slot == null` → `MediaSlotEditorResult.clear()`, restoring the task-models behavior — the previously failing fa_ui shard-2 test passes), the 4 analyzer warnings in `test/decisions/decisions_test.dart` are gone, the Decisions adapter sends/parses the official `noul` discriminator (with `bool` kept as a tolerated parse alias), the OpenRouter video poll budget is raised to 30 polls × 15–30 s (~11 min) and injectable, both CLI resolvers now share one `resolveMediaSlotKey` rule (same-host reuse + actionable missing-key error) with the docs rewritten unambiguously per surface, image file extensions are sanitized (`svg+xml` → `svg`, `png` fallback), and `decide` rides its own `DecisionsServices` bundle independent of the media facility.\n\n**Verification**: `dart analyze` clean for all PR-touched code (only pre-existing `office_addin/dart` resolution noise remains, untouched by this PR); root `dart test` on the PR's suites — 161 passed (decisions, media_reference_images, media_model_slots, generate_image, generate_video, host_agent_wiring); `fa_ui` flutter tests — 43 passed (incl. `task_models_section_test.dart:130`); `flutter_app` tests — 57 passed. New tests are behavioral (wire shapes, error paths, poll exhaustion, key-resolution matrix) rather than string-only. No new issues surfaced in the exhaustive pass over the rework delta. Note: factory validation on the merge head 0061453407 was still `in_progress` at review time (guard + gate green) — the earlier red legs belonged to superseded heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-24:0ee42581",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-24",
+      "updatedAt": "2026-10-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel ef4434f25219c19a7d1e61880813bc901e1f8df3 — stale base at 2026-10-24T23:44:21.581Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
