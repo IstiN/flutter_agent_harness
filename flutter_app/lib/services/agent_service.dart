@@ -296,7 +296,12 @@ class AgentService extends ChangeNotifier
   /// details panel render it). Armed from every constructor (public,
   /// `_withEnv`, relay base delegates here).
   void _wireImageDropNotice() {
-    imageDropReportNotice = (report) {
+    // The global seam is process-wide; the closure self-identifies so
+    // dispose can disarm it ONLY when it is still ours — a later
+    // service's arming never gets clobbered by an earlier dispose, and
+    // a disposed service never keeps reporting into a dead notifier
+    // (review round 1, PR #1891).
+    _armedImageDropReporter = (report) {
       for (final drop in report.drops) {
         AppLog.i(
           'images',
@@ -310,6 +315,7 @@ class AgentService extends ChangeNotifier
       // null never clears the chip — only the user's dismiss does.
       if (view != null) chatImageNotice.value = view;
     };
+    imageDropReportNotice = _armedImageDropReporter;
   }
 
   /// gh-1409 P4/P5/P6: pin notices (budget drops, lifecycle
@@ -1920,8 +1926,14 @@ class AgentService extends ChangeNotifier
   /// The latest aggregated image-drop notice for the chat chip (R5):
   /// a new meaningful change replaces it; an all-clear updates it;
   /// the user dismisses it. Null = nothing to show.
-  final ValueNotifier<ImageDropNoticeView?> chatImageNotice =
-      ValueNotifier(null);
+  final ValueNotifier<ImageDropNoticeView?> chatImageNotice = ValueNotifier(
+    null,
+  );
+
+  /// The closure this service armed on the process-wide
+  /// [imageDropReportNotice] seam — dispose disarms the global ONLY when
+  /// it still points at ours (a newer service's arming wins).
+  void Function(ImageDropReport report)? _armedImageDropReporter;
 
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending

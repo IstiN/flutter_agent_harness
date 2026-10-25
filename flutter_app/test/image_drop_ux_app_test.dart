@@ -16,84 +16,115 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ImageDropReport _cappedTurnReport() => ImageDropReport(
-      // Two consecutive capped turns drop the SAME 17 history images of
-      // a 37-image window (the yoclip flood shape).
-      drops: [
-        for (var i = 0; i < 17; i++)
-          ImageDropEvent(index: i, key: 'content-00$i', fromCurrentMessage: false),
-      ],
-      cap: 20,
-      modelId: 'test-model',
-      currentImageCount: 0,
-      registryCount: 37,
-      ridingCount: 20,
-    );
-
-AgentService _service() {
-  final service = AgentService(
-    agent: Agent(
-      model: Model(
-        id: 'test-model',
-        api: 'test-api',
-        provider: 'test',
-        baseUrl: 'https://example.com',
-        contextWindow: 100000,
-        maxTokens: 4096,
-      ),
-      systemPrompt: 'You are Fa.',
-      streamFunction: (model, context, {cancelToken}) {
-        final stream = AssistantMessageEventStream();
-        stream.end();
-        return stream;
-      },
-      toolRegistry: ToolRegistry(const []),
-    ),
-    watchExternalSessions: false,
-    env: MemoryExecutionEnv(),
-    sessionsRoot: '/sessions',
-    config: AgentConfig(
-      providerKind: 'test',
-      modelId: 'test-model',
-      baseUrl: 'https://example.com',
-      apiKey: '',
-    ),
-  );
-  addTearDown(service.dispose);
-  return service;
-}
+  // Two consecutive capped turns drop the SAME 17 history images of
+  // a 37-image window (the yoclip flood shape).
+  drops: [
+    for (var i = 0; i < 17; i++)
+      ImageDropEvent(index: i, key: 'content-00$i', fromCurrentMessage: false),
+  ],
+  cap: 20,
+  modelId: 'test-model',
+  currentImageCount: 0,
+  registryCount: 37,
+  ridingCount: 20,
+);
 
 void main() {
   setUp(AppLog.reset);
 
-  test('two capped turns ⇒ one chip notice; AppLog keeps both requests',
-      () async {
-    final service = _service();
-    await service.initialize();
-    expect(imageDropReportNotice, isNotNull);
+  AgentService _liveService({bool registerTearDown = true}) {
+    final service = AgentService(
+      agent: Agent(
+        model: Model(
+          id: 'test-model',
+          api: 'test-api',
+          provider: 'test',
+          baseUrl: 'https://example.com',
+          contextWindow: 100000,
+          maxTokens: 4096,
+        ),
+        systemPrompt: 'You are Fa.',
+        streamFunction: (model, context, {cancelToken}) {
+          final stream = AssistantMessageEventStream();
+          stream.end();
+          return stream;
+        },
+        toolRegistry: ToolRegistry(const []),
+      ),
+      watchExternalSessions: false,
+      env: MemoryExecutionEnv(),
+      sessionsRoot: '/sessions',
+      config: AgentConfig(
+        providerKind: 'test',
+        modelId: 'test-model',
+        baseUrl: 'https://example.com',
+        apiKey: '',
+      ),
+    );
+    if (registerTearDown) addTearDown(service.dispose);
+    return service;
+  }
 
-    // Turn 1: capped → the chip appears with the aggregated line.
+  AgentService anyService() => _liveService();
+
+  test('dispose disarms the process-wide reporter + the notifier '
+      '(#1891 review round 1)', () async {
+    final stale = _liveService(registerTearDown: false);
+    await stale.initialize();
+    expect(imageDropReportNotice, isNotNull);
     imageDropReportNotice!(_cappedTurnReport());
-    expect(service.chatImageNotice.value, isNotNull);
+    expect(stale.chatImageNotice.value, isNotNull);
+
+    // A later service re-arms; the STALE service's dispose (its arming
+    // is no longer current) must never clobber the newer arming.
+    // Single-dispose contract: `current` is torn down manually here and
+    // never via addTearDown.
+    final current = _liveService(registerTearDown: false);
+    await current.initialize();
+    expect(imageDropReportNotice, isNotNull);
+    stale.dispose();
     expect(
-      service.chatImageNotice.value!.line,
-      contains('17 older images not sent this turn'),
+      imageDropReportNotice,
+      isNotNull,
+      reason: 'the current service keeps the seam armed',
     );
 
-    // Turn 2: the SAME dropped set ⇒ the latch stays silent — still the
-    // ONE notice, never a second.
-    imageDropReportNotice!(_cappedTurnReport());
-    expect(service.chatImageNotice.value, isNotNull);
-
-    // The debug surface never went silent: both requests logged their
-    // full per-image detail (the 8-hex key previews ride along).
-    final log = AppLog.dump();
-    expect(log, contains('[Image 0]'));
-    expect(log, contains('(content-…'));
-    expect('per-request cap reached'.allMatches(log), hasLength(34));
+    // The current service's dispose disarms OUR closure.
+    current.dispose();
+    expect(imageDropReportNotice, isNull, reason: 'our arming was disarmed');
   });
 
+  test(
+    'two capped turns ⇒ one chip notice; AppLog keeps both requests',
+    () async {
+      final service = anyService();
+      await service.initialize();
+      expect(imageDropReportNotice, isNotNull);
+
+      // Turn 1: capped → the chip appears with the aggregated line.
+      imageDropReportNotice!(_cappedTurnReport());
+      expect(service.chatImageNotice.value, isNotNull);
+      expect(
+        service.chatImageNotice.value!.line,
+        contains('17 older images not sent this turn'),
+      );
+
+      // Turn 2: the SAME dropped set ⇒ the latch stays silent — still the
+      // ONE notice, never a second.
+      imageDropReportNotice!(_cappedTurnReport());
+      expect(service.chatImageNotice.value, isNotNull);
+
+      // The debug surface never went silent: both requests logged their
+      // full per-image detail (the 8-hex key previews ride along).
+      final log = AppLog.dump();
+      expect(log, contains('[Image 0]'));
+      expect(log, contains('(content-…'));
+      expect('per-request cap reached'.allMatches(log), hasLength(34));
+    },
+  );
+
   test('a changed dropped set updates the chip; recovery clears it', () async {
-    final service = _service();
+    final service = anyService();
     await service.initialize();
 
     imageDropReportNotice!(_cappedTurnReport());
@@ -211,9 +242,7 @@ void main() {
     expect(find.byIcon(Icons.warning_amber_outlined), findsOneWidget);
   });
 
-  testWidgets('the panel renders the shared projection lines', (
-    tester,
-  ) async {
+  testWidgets('the panel renders the shared projection lines', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(

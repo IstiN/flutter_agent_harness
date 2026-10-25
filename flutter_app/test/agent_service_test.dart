@@ -34,11 +34,18 @@ StreamFunction _singleTextResponse(String text) {
 
 /// An [ImageDropReport] with [drops] history drops over [registry] window
 /// images at the default cap — the shape the loop's rewrite reports.
+/// Keys are realistic 64-hex content keys (production keys are SHA-256;
+/// the debug seam previews their first 8 chars, so short fixtures would
+/// RangeError — review round 1, PR #1891).
 ImageDropReport _dropReport({required int drops, required int registry}) =>
     ImageDropReport(
       drops: [
         for (var i = 0; i < drops; i++)
-          ImageDropEvent(index: i, key: 'k$i', fromCurrentMessage: false),
+          ImageDropEvent(
+            index: i,
+            key: 'deadbeef${i.toString().padLeft(56, '0')}',
+            fromCurrentMessage: false,
+          ),
       ],
       cap: 20,
       modelId: 'test-model',
