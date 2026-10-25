@@ -296,6 +296,7 @@ export 'src/tools/request_secret_tool.dart';
 export 'src/tools/shell_jobs.dart';
 export 'src/tools/sqlite/sqlite_reader.dart';
 export 'src/tools/transcribe_audio.dart';
+export 'src/tools/transcript_document.dart';
 export 'src/prompts/project_context.dart';
 export 'src/ttsr/ttsr.dart';
 export 'src/plugins/plugin.dart';
