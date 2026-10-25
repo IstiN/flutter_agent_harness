@@ -1134,23 +1134,52 @@ final class GitSandboxCommands {
     );
   }
 
+  /// `git fetch [<remote>]`: resolve the remote, run the smart-HTTP fetch
+  /// and render the ref-update report.
+  ///
+  /// gh-1848 tier 3 split: remote resolution ([_gitFetchTarget]), the
+  /// transport exchange ([_gitFetchFrom]) and the stdout report
+  /// ([_gitFetchReport]).
   Future<Result<StageResult, ExecutionError>> _gitFetch(
     dart_git.GitRepository repo,
     List<String> args,
     Map<String, String>? env,
   ) async {
-    final remoteName = args.isEmpty ? 'origin' : args.first;
-    final remote = repo.config.remote(remoteName);
-    if (remote == null) {
-      return _gitError(
-        "fatal: '$remoteName' does not appear to be a git repository",
-      );
-    }
-    final url = remote.url;
+    final (:error, :remoteName, :url) = _gitFetchTarget(repo, args);
+    if (error != null) return _gitError(error);
     if (url.isEmpty) {
       return _gitError('fatal: no URL configured for remote $remoteName');
     }
+    return _gitFetchFrom(repo, url, remoteName, env);
+  }
 
+  /// Resolves the fetch target: the remote name (`origin` when bare) and
+  /// its configured URL. An unknown remote is the fatal error; an empty
+  /// URL (reported separately by the caller) means no URL is configured.
+  ({String? error, String remoteName, String url}) _gitFetchTarget(
+    dart_git.GitRepository repo,
+    List<String> args,
+  ) {
+    final remoteName = args.isEmpty ? 'origin' : args.first;
+    final remote = repo.config.remote(remoteName);
+    if (remote == null) {
+      return (
+        error: "fatal: '$remoteName' does not appear to be a git repository",
+        remoteName: remoteName,
+        url: '',
+      );
+    }
+    return (error: null, remoteName: remoteName, url: remote.url);
+  }
+
+  /// Runs the smart-HTTP fetch of [url] into [remoteName] and renders the
+  /// report. Transport failures surface as `fatal: unable to fetch: …`.
+  Future<Result<StageResult, ExecutionError>> _gitFetchFrom(
+    dart_git.GitRepository repo,
+    String url,
+    String remoteName,
+    Map<String, String>? env,
+  ) async {
     try {
       final moved =
           await GitSmartHttp(
@@ -1158,25 +1187,32 @@ final class GitSandboxCommands {
             transport: _sshTransportFor(url, env),
           ).fetchInto(
             url: url,
-            hostDir: repo.workTree.endsWith('/')
-                ? repo.workTree.substring(0, repo.workTree.length - 1)
-                : repo.workTree,
+            hostDir: stripTrailingSlash(repo.workTree),
             remoteName: remoteName,
           );
-      final lines = <String>['From $url'];
-      for (final branch in moved) {
-        lines.add(' * [new branch] $branch -> $remoteName/$branch');
-      }
-      return Ok(
-        StageResult(
-          stdout: utf8.encode('${lines.join('\n')}\n'),
-          stderr: const [],
-          exitCode: 0,
-        ),
-      );
+      return Ok(_gitFetchReport(url, remoteName, moved));
     } catch (e) {
       return _gitError('fatal: unable to fetch: $e');
     }
+  }
+
+  /// Renders the `git fetch` stdout report: the `From <url>` banner plus
+  /// one ` * [new branch] <branch> -> <remote>/<branch>` line per moved
+  /// remote ref.
+  StageResult _gitFetchReport(
+    String url,
+    String remoteName,
+    List<String> moved,
+  ) {
+    final lines = <String>['From $url'];
+    for (final branch in moved) {
+      lines.add(' * [new branch] $branch -> $remoteName/$branch');
+    }
+    return StageResult(
+      stdout: utf8.encode('${lines.join('\n')}\n'),
+      stderr: const [],
+      exitCode: 0,
+    );
   }
 
   Future<Result<StageResult, ExecutionError>> _gitPush(

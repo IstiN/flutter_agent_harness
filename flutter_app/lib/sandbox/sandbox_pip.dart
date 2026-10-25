@@ -99,7 +99,41 @@ PipPackageSpec? parsePipSpec(String raw) {
 
 /// Parses [args] (everything after `pip`) into a [PipArgs], validating the
 /// operand count and package specs for each subcommand.
+///
+/// gh-1848 tier 3 split: the empty/help/version prelude
+/// ([_pipInitialCommand]), the subcommand keyword lookup
+/// ([_pipSubcommandFor]), operand collection ([_pipOperands]) with the
+/// no-options rule ([_pipOptionError]), the `list` terminal
+/// ([_pipListResult]), the per-subcommand arity rule ([_pipArityError]),
+/// and requirement-spec parsing ([_pipSpecs]).
 PipArgs parsePipArgs(List<String> args) {
+  final initial = _pipInitialCommand(args);
+  if (initial != null) return initial;
+
+  final first = args.first;
+  final subcommand = _pipSubcommandFor(first);
+  if (subcommand == null) {
+    return PipArgs(
+      subcommand: PipSubcommand.help,
+      usageError: 'pip: unknown command "$first"',
+    );
+  }
+  final operands = _pipOperands(args);
+  final optionError = _pipOptionError(subcommand, operands);
+  if (optionError != null) return optionError;
+  if (subcommand == PipSubcommand.list) {
+    return _pipListResult(operands);
+  }
+  final arityError = _pipArityError(first, subcommand, operands);
+  if (arityError != null) return arityError;
+  return _pipSpecs(subcommand, operands);
+}
+
+/// The subcommands that terminate without operands: bare `pip` / help
+/// flags map to help, `--version`/`-V` to version. Returns null when the
+/// first token is a subcommand keyword (or garbage for the caller to
+/// reject).
+PipArgs? _pipInitialCommand(List<String> args) {
   if (args.isEmpty) {
     return const PipArgs(subcommand: PipSubcommand.help);
   }
@@ -110,23 +144,28 @@ PipArgs parsePipArgs(List<String> args) {
   if (first == '--help' || first == '-h' || first == 'help') {
     return const PipArgs(subcommand: PipSubcommand.help);
   }
-  final subcommand = switch (first) {
+  return null;
+}
+
+/// The subcommand keyword table; null for an unknown command.
+PipSubcommand? _pipSubcommandFor(String first) {
+  return switch (first) {
     'install' => PipSubcommand.install,
     'uninstall' => PipSubcommand.uninstall,
     'list' => PipSubcommand.list,
     'show' => PipSubcommand.show,
     _ => null,
   };
-  if (subcommand == null) {
-    return PipArgs(
-      subcommand: PipSubcommand.help,
-      usageError: 'pip: unknown command "$first"',
-    );
-  }
-  final operands = args
-      .sublist(1)
-      .where((a) => a != '-y' && a != '--yes')
-      .toList();
+}
+
+/// Everything after the subcommand keyword, minus the consent flags pip
+/// shares with uninstall (`-y`/`--yes` are consumed silently).
+List<String> _pipOperands(List<String> args) {
+  return args.sublist(1).where((a) => a != '-y' && a != '--yes').toList();
+}
+
+/// No subcommand takes options: the first dash-operand is a usage error.
+PipArgs? _pipOptionError(PipSubcommand subcommand, List<String> operands) {
   for (final operand in operands) {
     if (operand.startsWith('-')) {
       return PipArgs(
@@ -135,15 +174,27 @@ PipArgs parsePipArgs(List<String> args) {
       );
     }
   }
-  if (subcommand == PipSubcommand.list) {
-    if (operands.isNotEmpty) {
-      return const PipArgs(
-        subcommand: PipSubcommand.list,
-        usageError: 'pip: list takes no arguments',
-      );
-    }
-    return const PipArgs(subcommand: PipSubcommand.list);
+  return null;
+}
+
+/// `pip list` takes no arguments; anything else is a usage error.
+PipArgs _pipListResult(List<String> operands) {
+  if (operands.isNotEmpty) {
+    return const PipArgs(
+      subcommand: PipSubcommand.list,
+      usageError: 'pip: list takes no arguments',
+    );
   }
+  return const PipArgs(subcommand: PipSubcommand.list);
+}
+
+/// Every other subcommand needs at least one package, and `show` exactly
+/// one.
+PipArgs? _pipArityError(
+  String first,
+  PipSubcommand subcommand,
+  List<String> operands,
+) {
   if (operands.isEmpty) {
     return PipArgs(
       subcommand: subcommand,
@@ -156,6 +207,12 @@ PipArgs parsePipArgs(List<String> args) {
       usageError: 'pip: show takes exactly one package name',
     );
   }
+  return null;
+}
+
+/// Parses each operand into a [PipPackageSpec]; the first unparseable one
+/// is a usage error.
+PipArgs _pipSpecs(PipSubcommand subcommand, List<String> operands) {
   final specs = <PipPackageSpec>[];
   for (final operand in operands) {
     final spec = parsePipSpec(operand);

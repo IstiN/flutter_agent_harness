@@ -130,11 +130,19 @@ void _exchangeOpenRouterWebRedirect(SessionKeysStore sessionKeys) {
   if (!kIsWeb) return;
   WidgetsBinding.instance.addPostFrameCallback((_) async {
     final key = await completeOpenRouterOAuthFromRedirect();
-    if (key != null && key.isNotEmpty) {
-      await sessionKeys.set('OPENROUTER_API_KEY', key);
-      debugPrint('[Fa] OpenRouter key saved from redirect');
-    }
+    await _saveOpenRouterRedirectKey(sessionKeys, key);
   });
+}
+
+/// Persists a redirect-carried key; blank/absent redirects are ignored
+/// (gh-1848 split).
+Future<void> _saveOpenRouterRedirectKey(
+  SessionKeysStore sessionKeys,
+  String? key,
+) async {
+  if (key == null || key.isEmpty) return;
+  await sessionKeys.set('OPENROUTER_API_KEY', key);
+  debugPrint('[Fa] OpenRouter key saved from redirect');
 }
 
 class MyApp extends StatelessWidget {

@@ -654,132 +654,175 @@ class AppsStore {
     final listing = await _env.listDir(AppStorage.root);
     final entries = listing.valueOrNull;
     if (entries == null) {
-      // A failed listing is NOT an empty workspace (issue #866 review):
-      // serving the last-known models keeps the panel truthful through a
-      // transient IO error, and the install-record prune below must never
-      // run on an empty `seen` — that would wipe `.installed.json`.
-      final sources = await installSources();
-      final cachedApps =
-          _parsedApps.values
-              .where((app) => app.supportsPlatform(platform))
-              .map((app) => app.withInstallSource(sources[app.id]))
-              .toList()
-            ..sort((a, b) => a.name.compareTo(b.name));
-      return cachedApps;
+      return _cachedAppsFallback();
     }
     for (final entry in entries) {
-      if (entry.kind != FileKind.directory) continue;
+      if (!_isListableDir(entry)) continue;
       final id = entry.name;
-      if (id.startsWith('.')) continue;
-      // gh-1614 AC4 (list side): a directory whose name cannot resolve
-      // inside the shared namespace is never listed — it could never boot
-      // through the resolver anyway. Logged so the leftover stays
-      // discoverable.
-      if (!AppStorage.isResolvableId(id)) {
-        AppLog.i(
-          'apps',
-          'skipping non-resolvable app dir "$id" — an app id must be a '
-              'single plain segment (no "..", no "/", no absolute form)',
-        );
-        continue;
-      }
       seen.add(id);
-      final raw = (await _env.readTextFile(
-        AppStorage.manifestPath(id),
-      )).valueOrNull;
-      if (raw == null) continue; // half-created folder — healer's domain
-      final hash = _digest(raw);
-      // gh-1614 I2 (listed ⇒ bootable): probe the exact files the boot
-      // paths check (WidgetManifest.fromStorage's exists probe through the
-      // same resolver; the tile surface through AppTileHost's
-      // tileWidgetPath read). A missing entry renders the explicit
-      // missing-files state naming the root, instead of a tile that dies
-      // with a raw StateError on tap.
-      final missingEntry = await _missingBootEntry(id);
-      final cached = _parsedApps[id];
-      if (cached != null &&
-          _manifestHashes[id] == hash &&
-          missingEntry == null &&
-          await _i18nRefsUnchanged(cached, id)) {
-        // The cached model carries the tile declaration: probe the tile
-        // entry too (gh-1614 I2 — every listed launch surface is
-        // bootability-checked, the cache-hit path included).
-        final tileMissing = await _missingBootEntry(
-          id,
-          tileEntry: cached.tileWidget?.entry,
-        );
-        if (tileMissing == null) {
-          // Unchanged manifest (and i18n ref files) — zero rescans (AC3):
-          // the cached model (i18n contents included) is still the truth.
-          if (cached.supportsPlatform(platform)) apps.add(cached);
-          continue;
-        }
-        // Torn tile entry: fall through to the fresh parse below, which
-        // re-flags the listed copy (the healthy parse stays cached).
+      final listed = await _listAppDir(id);
+      if (listed != null && listed.supportsPlatform(platform)) {
+        apps.add(listed);
       }
-      JsAppInfo app;
-      try {
-        final decoded = jsonDecode(raw);
-        if (decoded is! Map<String, Object?>) {
-          throw const FormatException('manifest must be a JSON object');
-        }
-        app = await _withI18nContents(
-          JsAppInfo.fromManifest(decoded, bundled: false, fallbackId: id),
-          id,
-        );
-      } on Object catch (e) {
-        // The agent edited the manifest into garbage: flag the tile, keep
-        // the app discoverable — never a silent stale/missing row. Both
-        // failure shapes land here: FormatException (JSON syntax / not an
-        // object) and strict-cast TypeErrors ("allowedCommands": 5) — one
-        // flagged entry, one construction site (issue #866 review r2).
-        _refHashes.remove(id);
-        app = JsAppInfo(
-          id: id,
-          name: id,
-          description: '',
-          icon: '📦',
-          declaredPermissions: const AppPermissions(),
-          error: e is FormatException
-              ? 'manifest.json does not parse: ${e.message}'
-              : 'manifest.json is invalid: $e',
-        );
-      }
-      // Cache the HEALTHY parse; the missing-files state attaches to the
-      // listed copy only, so a later scan (entry restored) heals the tile
-      // without a re-parse.
-      _manifestHashes[id] = hash;
-      _parsedApps[id] = app;
-      // The tile declaration only exists once the manifest parsed — probe
-      // the tile surface against the parsed model (gh-1614 I2). A parse
-      // failure already carries its own error; the tile probe is skipped.
-      final tileMissing = app.tileWidget == null
-          ? null
-          : await _missingBootEntry(id, tileEntry: app.tileWidget!.entry);
-      final listedError = missingEntry ?? tileMissing;
-      final listed = listedError == null ? app : app.withError(listedError);
-      if (listed.supportsPlatform(platform)) apps.add(listed);
     }
-    // Directories that vanished since the last scan: forget their cached
-    // parses and prune the stale `.installed.json` records (issue #866 —
-    // no zombie installs after an agent deletes an app dir).
+    await _pruneVanishedApps(seen);
+    return _attachInstallProvenance(apps);
+  }
+
+  /// A failed listing is NOT an empty workspace (issue #866 review):
+  /// serving the last-known models keeps the panel truthful through a
+  /// transient IO error, and the install-record prune must never run on an
+  /// empty `seen` — that would wipe `.installed.json`.
+  Future<List<JsAppInfo>> _cachedAppsFallback() async {
+    final sources = await installSources();
+    final cachedApps =
+        _parsedApps.values
+            .where((app) => app.supportsPlatform(platform))
+            .map((app) => app.withInstallSource(sources[app.id]))
+            .toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
+    return cachedApps;
+  }
+
+  /// The three list-side skips: non-directories, dot-entries, and names
+  /// that cannot resolve inside the shared namespace. gh-1614 AC4 (list
+  /// side): an unresolvable directory could never boot through the
+  /// resolver anyway — logged so the leftover stays discoverable.
+  bool _isListableDir(FileInfo entry) {
+    if (entry.kind != FileKind.directory) return false;
+    final id = entry.name;
+    if (id.startsWith('.')) return false;
+    if (!AppStorage.isResolvableId(id)) {
+      AppLog.i(
+        'apps',
+        'skipping non-resolvable app dir "$id" — an app id must be a '
+            'single plain segment (no "..", no "/", no absolute form)',
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /// One app directory of a scan: returns the listed model (healthy or
+  /// error-flagged), or null when there is nothing to list (missing
+  /// manifest — half-created folder, the healer's domain). Cache-hit
+  /// (unchanged manifest + i18n refs + bootable surfaces) returns the
+  /// cached model with zero re-parses (issue #866 AC3).
+  Future<JsAppInfo?> _listAppDir(String id) async {
+    final raw = (await _env.readTextFile(
+      AppStorage.manifestPath(id),
+    )).valueOrNull;
+    if (raw == null) return null; // half-created folder — healer's domain
+    final hash = _digest(raw);
+    // gh-1614 I2 (listed ⇒ bootable): probe the exact files the boot
+    // paths check (WidgetManifest.fromStorage's exists probe through the
+    // same resolver; the tile surface through AppTileHost's
+    // tileWidgetPath read). A missing entry renders the explicit
+    // missing-files state naming the root, instead of a tile that dies
+    // with a raw StateError on tap.
+    final missingEntry = await _missingBootEntry(id);
+    final cached = _parsedApps[id];
+    if (cached != null &&
+        await _cachedParseFresh(cached, id, hash, missingEntry)) {
+      // The cached model carries the tile declaration: probe the tile
+      // entry too (gh-1614 I2 — every listed launch surface is
+      // bootability-checked, the cache-hit path included).
+      final tileMissing = await _missingBootEntry(
+        id,
+        tileEntry: cached.tileWidget?.entry,
+      );
+      if (tileMissing == null) {
+        // Unchanged manifest (and i18n ref files) — zero rescans (AC3):
+        // the cached model (i18n contents included) is still the truth.
+        return cached;
+      }
+      // Torn tile entry: fall through to the fresh parse below, which
+      // re-flags the listed copy (the healthy parse stays cached).
+    }
+    final app = await _parseManifestEntry(raw, id);
+    // Cache the HEALTHY parse; the missing-files state attaches to the
+    // listed copy only, so a later scan (entry restored) heals the tile
+    // without a re-parse.
+    _manifestHashes[id] = hash;
+    _parsedApps[id] = app;
+    // The tile declaration only exists once the manifest parsed — probe
+    // the tile surface against the parsed model (gh-1614 I2). A parse
+    // failure already carries its own error; the tile probe is skipped.
+    final tileMissing = app.tileWidget == null
+        ? null
+        : await _missingBootEntry(id, tileEntry: app.tileWidget!.entry);
+    final listedError = missingEntry ?? tileMissing;
+    return listedError == null ? app : app.withError(listedError);
+  }
+
+  /// The cache gate: manifest content hash unchanged, no boot-surface
+  /// already missing, and the i18n ref files byte-identical to the cached
+  /// digests.
+  Future<bool> _cachedParseFresh(
+    JsAppInfo cached,
+    String id,
+    String hash,
+    String? missingEntry,
+  ) async {
+    return _manifestHashes[id] == hash &&
+        missingEntry == null &&
+        await _i18nRefsUnchanged(cached, id);
+  }
+
+  /// Parses one manifest: a healthy model with i18n contents attached, or
+  /// (the agent edited the manifest into garbage) a flagged error entry
+  /// that keeps the app discoverable — never a silent stale/missing row.
+  /// Both failure shapes land in the catch: FormatException (JSON syntax /
+  /// not an object) and strict-cast TypeErrors ("allowedCommands": 5) —
+  /// one flagged entry, one construction site (issue #866 review r2).
+  Future<JsAppInfo> _parseManifestEntry(String raw, String id) async {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, Object?>) {
+        throw const FormatException('manifest must be a JSON object');
+      }
+      return await _withI18nContents(
+        JsAppInfo.fromManifest(decoded, bundled: false, fallbackId: id),
+        id,
+      );
+    } on Object catch (e) {
+      _refHashes.remove(id);
+      return JsAppInfo(
+        id: id,
+        name: id,
+        description: '',
+        icon: '📦',
+        declaredPermissions: const AppPermissions(),
+        error: e is FormatException
+            ? 'manifest.json does not parse: ${e.message}'
+            : 'manifest.json is invalid: $e',
+      );
+    }
+  }
+
+  /// Directories that vanished since the last scan: forget their cached
+  /// parses and prune the stale `.installed.json` records (issue #866 —
+  /// no zombie installs after an agent deletes an app dir).
+  Future<void> _pruneVanishedApps(Set<String> seen) async {
     final gone = _manifestHashes.keys
         .where((id) => !seen.contains(id))
         .toList();
-    if (gone.isNotEmpty) {
-      final installed = await _readInstalled();
-      var pruned = false;
-      for (final id in gone) {
-        _manifestHashes.remove(id);
-        _parsedApps.remove(id);
-        _refHashes.remove(id);
-        if (installed.remove(id) != null) pruned = true;
-      }
-      if (pruned) await _writeInstalled(installed);
+    if (gone.isEmpty) return;
+    final installed = await _readInstalled();
+    var pruned = false;
+    for (final id in gone) {
+      _manifestHashes.remove(id);
+      _parsedApps.remove(id);
+      _refHashes.remove(id);
+      if (installed.remove(id) != null) pruned = true;
     }
-    // Provenance (gh-1616 I3): attached AFTER the cache gate — a
-    // re-install flips the recorded origin without touching the manifest,
-    // and the badge must follow the record, not the cached parse.
+    if (pruned) await _writeInstalled(installed);
+  }
+
+  /// Provenance (gh-1616 I3): attached AFTER the cache gate — a re-install
+  /// flips the recorded origin without touching the manifest, and the
+  /// badge must follow the record, not the cached parse.
+  Future<List<JsAppInfo>> _attachInstallProvenance(List<JsAppInfo> apps) async {
     final sources = await installSources();
     final withSource = [
       for (final app in apps) app.withInstallSource(sources[app.id]),
@@ -915,34 +958,7 @@ class AppsStore {
   }) async {
     final ownStore = hashes == null;
     final store = hashes ?? await _readSeedHashes();
-    var changed = false;
-    final manifest = await _readAsset('$bundledAssetRoot/$id/manifest.json');
-    final widget = await _readAsset('$bundledAssetRoot/$id/widget.js');
-    final files = <String, String>{
-      'manifest.json': manifest,
-      'widget.js': widget,
-    };
-    try {
-      final decoded = jsonDecode(manifest);
-      if (decoded is Map<String, Object?>) {
-        final icon = decoded['icon']?.toString() ?? '';
-        if (icon.toLowerCase().endsWith('.svg')) {
-          files[icon] = await _readAsset('$bundledAssetRoot/$id/$icon');
-        }
-        final tile = decoded['widget'];
-        if (tile is Map<String, Object?>) {
-          final entry = JsTileWidgetInfo.fromJson(tile).entry;
-          try {
-            files[entry] = await _readAsset('$bundledAssetRoot/$id/$entry');
-          } on Object {
-            // The manifest declares a tile but no asset ships it — the
-            // tile host will surface the missing file at render time.
-          }
-        }
-      }
-    } on FormatException {
-      // Keep the app even if its manifest doesn't parse.
-    }
+    final files = await _readBundledDemoFiles(id);
     final appHashes = store.putIfAbsent(id, () => {});
     // A broken skeleton is not user content: when the on-disk manifest is
     // present but unparseable (a half-written agent file), ownership
@@ -952,47 +968,161 @@ class AppsStore {
     final currentManifest = (await _env.readTextFile(
       AppStorage.manifestPath(id),
     )).valueOrNull;
-    var skeletonBroken = false;
-    if (currentManifest != null) {
-      try {
-        jsonDecode(currentManifest);
-      } on FormatException {
-        skeletonBroken = true;
-        AppLog.i('apps', 'demo app $id has a broken manifest — re-seeding');
-      }
-    }
-    for (final file in files.entries) {
-      final path = AppStorage.appFile(id, file.key);
-      final bundled = file.value;
-      final newHash = _digest(bundled);
-      final recorded = appHashes[file.key];
-      final current = (await _env.readTextFile(path)).valueOrNull;
-      if (current == bundled) {
-        // Already current — just make sure the hash is recorded.
-        if (recorded != newHash) {
-          appHashes[file.key] = newHash;
-          changed = true;
-        }
-        continue;
-      }
-      final userModified =
-          !skeletonBroken &&
-          current != null &&
-          (recorded == null || _digest(current) != recorded);
-      if (userModified && !force) {
-        // The user (or the agent) owns this file now — never overwrite.
-        continue;
-      }
-      await _env.writeFile(path, bundled);
-      if (recorded != newHash) {
-        appHashes[file.key] = newHash;
-        changed = true;
-      }
-    }
+    final skeletonBroken = await _isBrokenDemoSkeleton(id, currentManifest);
+    final changed = await _syncDemoFiles(
+      id,
+      files,
+      appHashes,
+      skeletonBroken: skeletonBroken,
+      force: force,
+    );
     if (ownStore && changed) {
       await _env.writeFile(demoSeedsFile, jsonEncode(store));
     }
     return changed;
+  }
+
+  /// Reads the demo app's bundled files: the manifest/widget pair plus any
+  /// extra asset the manifest declares (svg icon, tile entry). A manifest
+  /// that does not parse still seeds the base pair.
+  Future<Map<String, String>> _readBundledDemoFiles(String id) async {
+    final manifest = await _readAsset('$bundledAssetRoot/$id/manifest.json');
+    final files = <String, String>{
+      'manifest.json': manifest,
+      'widget.js': await _readAsset('$bundledAssetRoot/$id/widget.js'),
+    };
+    await _addDeclaredDemoAssets(id, manifest, files);
+    return files;
+  }
+
+  /// Adds the files the parsed manifest declares (an `.svg` icon asset, a
+  /// tile entry asset) to [files].
+  Future<void> _addDeclaredDemoAssets(
+    String id,
+    String manifest,
+    Map<String, String> files,
+  ) async {
+    try {
+      final decoded = jsonDecode(manifest);
+      if (decoded is Map<String, Object?>) {
+        await _addDemoIconAsset(id, decoded, files);
+        await _addDemoTileAsset(id, decoded, files);
+      }
+    } on FormatException {
+      // Keep the app even if its manifest doesn't parse.
+    }
+  }
+
+  Future<void> _addDemoIconAsset(
+    String id,
+    Map<String, Object?> decoded,
+    Map<String, String> files,
+  ) async {
+    final icon = decoded['icon']?.toString() ?? '';
+    if (icon.toLowerCase().endsWith('.svg')) {
+      files[icon] = await _readAsset('$bundledAssetRoot/$id/$icon');
+    }
+  }
+
+  Future<void> _addDemoTileAsset(
+    String id,
+    Map<String, Object?> decoded,
+    Map<String, String> files,
+  ) async {
+    final tile = decoded['widget'];
+    if (tile is! Map<String, Object?>) return;
+    final entry = JsTileWidgetInfo.fromJson(tile).entry;
+    try {
+      files[entry] = await _readAsset('$bundledAssetRoot/$id/$entry');
+    } on Object {
+      // The manifest declares a tile but no asset ships it — the
+      // tile host will surface the missing file at render time.
+    }
+  }
+
+  /// Whether the stored manifest is present but unparseable (a
+  /// half-written agent file) — the signal to re-seed the whole app.
+  Future<bool> _isBrokenDemoSkeleton(String id, String? currentManifest) async {
+    if (currentManifest == null) return false;
+    try {
+      jsonDecode(currentManifest);
+    } on FormatException {
+      AppLog.i('apps', 'demo app $id has a broken manifest — re-seeding');
+      return true;
+    }
+    return false;
+  }
+
+  /// Copies every bundled file into app storage, honoring ownership;
+  /// returns true when the recorded hashes changed.
+  Future<bool> _syncDemoFiles(
+    String id,
+    Map<String, String> files,
+    Map<String, String> appHashes, {
+    required bool skeletonBroken,
+    required bool force,
+  }) async {
+    var changed = false;
+    for (final file in files.entries) {
+      if (await _syncDemoFile(
+        id,
+        file,
+        appHashes,
+        skeletonBroken: skeletonBroken,
+        force: force,
+      )) {
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /// Syncs one bundled file. Already-current files only refresh the
+  /// recorded hash; a diverged stored copy is user content and is never
+  /// overwritten ([force] overrides). Returns true when the recorded
+  /// hashes changed.
+  Future<bool> _syncDemoFile(
+    String id,
+    MapEntry<String, String> file,
+    Map<String, String> appHashes, {
+    required bool skeletonBroken,
+    required bool force,
+  }) async {
+    final path = AppStorage.appFile(id, file.key);
+    final bundled = file.value;
+    final newHash = _digest(bundled);
+    final recorded = appHashes[file.key];
+    final current = (await _env.readTextFile(path)).valueOrNull;
+    if (current == bundled) {
+      // Already current — just make sure the hash is recorded.
+      if (recorded != newHash) {
+        appHashes[file.key] = newHash;
+        return true;
+      }
+      return false;
+    }
+    if (_userModifiedDemoFile(current, recorded, skeletonBroken) && !force) {
+      // The user (or the agent) owns this file now — never overwrite.
+      return false;
+    }
+    await _env.writeFile(path, bundled);
+    if (recorded != newHash) {
+      appHashes[file.key] = newHash;
+      return true;
+    }
+    return false;
+  }
+
+  /// True when the stored copy diverges from the last-seeded hash — the
+  /// user or the agent owns the file now.
+  bool _userModifiedDemoFile(
+    String? current,
+    String? recorded,
+    bool skeletonBroken,
+  ) {
+    return !skeletonBroken &&
+        current != null &&
+        (recorded == null || _digest(current) != recorded);
   }
 
   Future<Map<String, Map<String, String>>> _readSeedHashes() async {

@@ -189,23 +189,87 @@ final class WebGitCommands {
     }
     final repo = _repo(root);
 
+    final tracked = await _runTrackedCommand(subcommand, repo, args, cwd, env);
+    if (tracked != null) return tracked;
+    return _error("git: '$subcommand' is not a git command.");
+  }
+
+  /// Dispatches a tracked-repo subcommand to its handler, or null when the
+  /// subcommand is unknown.
+  ///
+  /// gh-1848 tier 3 split: the original 15-way command switch, thirded in
+  /// the original case order — index ops, tree/commit ops, then ref/remote
+  /// ops; the case labels are disjoint so the `??` fallback chain cannot
+  /// change a lookup.
+  Future<({String stdout, String stderr, int exitCode})?> _runTrackedCommand(
+    String subcommand,
+    GitRepository repo,
+    List<String> args,
+    String cwd,
+    Map<String, String>? env,
+  ) async {
+    return await _runIndexCommand(subcommand, repo, args, cwd, env) ??
+        await _runTreeCommand(subcommand, repo, args, cwd, env) ??
+        await _runRefCommand(subcommand, repo, args, cwd, env);
+  }
+
+  /// Index-surface subcommands: add/rm stage paths, commit writes the
+  /// index, log/status read it.
+  Future<({String stdout, String stderr, int exitCode})?> _runIndexCommand(
+    String subcommand,
+    GitRepository repo,
+    List<String> args,
+    String cwd,
+    Map<String, String>? env,
+  ) async {
     return switch (subcommand) {
       'add' => _add(repo, args, cwd),
       'rm' => _rm(repo, args, cwd),
       'commit' => _commit(repo, args, env),
       'log' => _log(repo, args),
       'status' => _status(repo),
+      _ => null,
+    };
+  }
+
+  /// Tree-surface subcommands: branch/checkout move refs, show/cat-file
+  /// read objects, hash-object writes one, ls-tree reads the tree.
+  /// (`_checkout` is async; the await mirrors the original async `_run`
+  /// return that auto-awaited it.)
+  Future<({String stdout, String stderr, int exitCode})?> _runTreeCommand(
+    String subcommand,
+    GitRepository repo,
+    List<String> args,
+    String cwd,
+    Map<String, String>? env,
+  ) async {
+    return await switch (subcommand) {
       'branch' => _branch(repo, args),
       'checkout' => _checkout(repo, args, cwd),
       'show' => _show(repo, args),
       'cat-file' => _catFile(repo, args),
       'hash-object' => _hashObject(repo, args, cwd),
+      _ => null,
+    };
+  }
+
+  /// Ref/remote plumbing: ls-tree/write-tree/merge-base/reset plus the
+  /// `remote` family. (`_reset` is async; the await mirrors the original
+  /// async `_run` return that auto-awaited it.)
+  Future<({String stdout, String stderr, int exitCode})?> _runRefCommand(
+    String subcommand,
+    GitRepository repo,
+    List<String> args,
+    String cwd,
+    Map<String, String>? env,
+  ) async {
+    return await switch (subcommand) {
       'ls-tree' => _lsTree(repo, args),
       'write-tree' => _writeTree(repo),
       'merge-base' => _mergeBase(repo, args),
       'reset' => _reset(repo, args),
       'remote' => _remote(repo, args),
-      _ => _error("git: '$subcommand' is not a git command."),
+      _ => null,
     };
   }
 
@@ -326,12 +390,20 @@ final class WebGitCommands {
   ) {
     if (args.isEmpty) return _error('usage: git rm <pathspec>...');
     try {
-      for (final arg in args.where((a) => !a.startsWith('-'))) {
-        repo.rm(_resolvePath(arg, cwd));
-      }
+      _rmPaths(repo, args, cwd);
       return _ok('');
     } catch (e) {
       return _error('fatal: $e');
+    }
+  }
+
+  /// Removes every non-flag pathspec from the index; paths resolve
+  /// against [cwd] like `git add`.
+  ///
+  /// gh-1848 tier 3 split from [_rm] (0%-covered method held to CC3).
+  void _rmPaths(GitRepository repo, List<String> args, String cwd) {
+    for (final arg in args.where((a) => !a.startsWith('-'))) {
+      repo.rm(_resolvePath(arg, cwd));
     }
   }
 

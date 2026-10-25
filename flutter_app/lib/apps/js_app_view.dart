@@ -273,9 +273,13 @@ class _JsAppViewState extends State<JsAppView> {
     _lastFsRevision = revision;
     // Debounce: agent edits often write manifest + widget.js back to back.
     _reloadDebounce?.cancel();
-    _reloadDebounce = Timer(const Duration(milliseconds: 600), () {
-      if (mounted && !_faSheetOpen) unawaited(_restartIfAppChanged());
-    });
+    _reloadDebounce = Timer(const Duration(milliseconds: 600), _reloadWhenIdle);
+  }
+
+  /// The debounced restart body (gh-1848 split): only a live view with no
+  /// reply sheet open restarts.
+  void _reloadWhenIdle() {
+    if (mounted && !_faSheetOpen) unawaited(_restartIfAppChanged());
   }
 
   /// The content signature of this app's code files (manifest + entry) at
@@ -404,11 +408,20 @@ class _JsAppViewState extends State<JsAppView> {
     String name,
     String reason,
   ) async {
-    final service = widget.agentService;
-    if (service == null || !mounted) return null;
+    final service = _mountedAgentService();
+    if (service == null) return null;
     final result = await showSecretRequestSheet(context, name, reason);
     if (result == null) return null;
     return service.acceptSecretGrant(result);
+  }
+
+  /// The session + mounted guard of the secret-request sheet (gh-1848
+  /// split): no sheet can render without an agent session, and the view
+  /// must still be on screen.
+  AgentService? _mountedAgentService() {
+    final service = widget.agentService;
+    if (service == null || !mounted) return null;
+    return service;
   }
 
   /// The theme bridge for this app's engine: the installed packs + active
