@@ -192,7 +192,28 @@ extension AgentCliPersist on AgentCli {
             'no session file backs this host — nothing was searched',
       );
     }
-    return repo.searchArchive(await session.getMetadata(), query);
+    final metadata = await session.getMetadata();
+    // Issue #1882 AC3: a scan over a heavy session file names the cost —
+    // the guard line rides the result so the agent (and the transcript)
+    // see the exact size plus the hygiene escapes.
+    final heavyScan = await sessionSizeIfHeavy(_env, metadata.path);
+    return repo
+        .searchArchive(metadata, query)
+        .then(
+          (outcome) => SessionSearchOutcome(
+            hits: outcome.hits,
+            recordsExamined: outcome.recordsExamined,
+            recordsTotal: outcome.recordsTotal,
+            truncated: outcome.truncated,
+            nextContinuation: outcome.nextContinuation,
+            map: outcome.map,
+            truncationReason: outcome.truncationReason,
+            unavailableReason: outcome.unavailableReason,
+            sizeNote: heavyScan == null
+                ? ''
+                : heavyScanGuardLines(heavyScan, metadata.path).first,
+          ),
+        );
   }
 
   /// The pending-wait write path (issue #1380 AC5): a successful

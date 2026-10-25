@@ -101,6 +101,7 @@ extension on AgentCli {
       io.writeln('no active session');
       return;
     }
+    await _warnHeavyScanOnce();
     io.writeln(_style.dim('following session records — Ctrl+C to stop'));
     final tailer = TrajectoryTailer(width: _trajectoryWidth);
     final interrupted = io.interrupts.first.then((_) => true);
@@ -128,7 +129,23 @@ extension on AgentCli {
       io.writeln('no active session');
       return null;
     }
+    await _warnHeavyScanOnce();
     return trajectorySnapshotOf(await session.getBranch());
+  }
+
+  /// Issue #1882 AC3: a trajectory read over a heavy session file warns
+  /// once per process (exact size + the hygiene escapes) instead of
+  /// silently scanning gigabytes.
+  Future<void> _warnHeavyScanOnce() async {
+    final session = _session;
+    if (session == null || _heavyScanGuardShown) return;
+    _heavyScanGuardShown = true;
+    final path = (await session.getMetadata()).path;
+    final heavy = await sessionSizeIfHeavy(_coreToolEnv, path);
+    if (heavy == null) return;
+    for (final line in heavyScanGuardLines(heavy, path)) {
+      io.writeln(_style.dim(line));
+    }
   }
 
   /// Persists the outbound-request capture so replayed sessions rebuild the

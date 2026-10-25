@@ -38,6 +38,39 @@ const int defaultParseCacheEntries = 4096;
 /// line lengths stays under this regardless of the entry count.
 const int defaultParseCacheBytes = 32 << 20;
 
+/// Session file size above which the heavy-read surfaces (resume, the
+/// `fa trajectory` verbs, `session_search`, `fa session info`) warn
+/// before scanning (issue #1882 AC3): no silent GB-scale operations. The
+/// warning carries the EXACT size plus the hygiene escapes. Rendered
+/// through the shared [formatSessionBytes] (session_storage.dart).
+const int sessionHeavyScanWarnBytes = 500 << 20;
+
+/// The hygiene guidance lines for a session file of [sizeBytes] over the
+/// [sessionHeavyScanWarnBytes] guard (issue #1882 AC3): the exact size,
+/// why it matters, and the three escapes — vacuum the dead ledger
+/// snapshots, repair/drop the ledger, or start a fresh session / branch.
+List<String> heavyScanGuardLines(int sizeBytes, String path) => [
+  'warning: $path is ${formatSessionBytes(sizeBytes)} (> '
+      '${formatSessionBytes(sessionHeavyScanWarnBytes)}) — reads over it '
+      'scan the whole ledger',
+  '  escapes: `fa session repair <sid> --dry-run` (ledger surgery), '
+      '`sessions.vacuumLedgers: true` (vacuum dead snapshots at resume), '
+      'or start a fresh session / branch',
+];
+
+/// The file's size when it is over the [sessionHeavyScanWarnBytes] guard,
+/// else null (stat miss / small file / fs without [fileInfo]).
+Future<int?> sessionSizeIfHeavy(FileSystem fs, String path) async {
+  try {
+    final info = await fs.fileInfo(path);
+    final file = info.valueOrNull;
+    if (file == null || file.kind != FileKind.file) return null;
+    return file.size > sessionHeavyScanWarnBytes ? file.size : null;
+  } on Object {
+    return null;
+  }
+}
+
 /// One parsed record with the byte range it occupies in the session file.
 ///
 /// [offset] is the byte offset of the record's line start — the anchor the

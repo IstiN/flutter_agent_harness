@@ -212,6 +212,30 @@ Future<void> _runApp(List<String> args) async {
         ),
       );
     }
+    if (sessionList.verb == 'info') {
+      // issue #1882 AC5: the size/records breakdown over one streaming
+      // pass. Progress rides stderr; SIGINT cancels into a partial
+      // report (exit 130) instead of a silent hang.
+      var canceled = false;
+      final subscription = io.interrupts.listen((_) {
+        canceled = true;
+        stderr.writeln('session info: canceled');
+      });
+      final exitCode = await runSessionInfoCliCommand(
+        writeln: io.writeln,
+        env: listEnv,
+        sessionRoot: sessionRoot,
+        sessionId: sessionList.repairTarget,
+        json: sessionList.json,
+        onProgress: (scanned, total) => stderr.writeln(
+          'session info: ${formatSessionBytes(scanned)} / '
+          '${formatSessionBytes(total)} scanned',
+        ),
+        isCanceled: () async => canceled,
+      );
+      await subscription.cancel();
+      exit(exitCode);
+    }
     if (sessionList.verb == 'clean') {
       // gh-1746 AC6: `fa session clean [--dry-run]` — one retention sweep
       // pass, intercepted like repair: no agent boot. The policy comes
