@@ -980,6 +980,7 @@
   "networkJoin": "Присоединиться",
   "networkSelectChannel": "Выберите канал",
   "networkReconnecting": "Переподключение — сообщения будут отправлены после восстановления связи.",
+  "networkReconnectNow": "Переподключиться сейчас",
   "networkMessageHint": "Написать в {channel}",
   "networkNewChannel": "Новый канал",
   "networkOnlineCount": "{count} в сети",

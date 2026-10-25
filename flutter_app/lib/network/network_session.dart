@@ -146,6 +146,13 @@ final class NetworkSession extends ChangeNotifier {
 
   Future<void> _start() async {
     _events = _ws.events.listen(_onWsEvent);
+    await _refreshSnapshot();
+    notifyListeners();
+    unawaited(_ws.connect());
+  }
+
+  /// Fetches the authoritative channels + roster snapshot.
+  Future<void> _refreshSnapshot() async {
     try {
       channels = await _client.listChannels(networkId);
       final members = await _client.listMembers(networkId);
@@ -157,6 +164,14 @@ final class NetworkSession extends ChangeNotifier {
     } on FaNetworkException catch (e) {
       error = e.message;
     }
+  }
+
+  /// Manual recovery for a stuck realtime/offline state: restart the
+  /// socket and reload the snapshot. Subscriptions and the queued outbox
+  /// survive the socket restart (the ws contract keeps both).
+  Future<void> reconnect() async {
+    await _ws.disconnect();
+    await _refreshSnapshot();
     notifyListeners();
     unawaited(_ws.connect());
   }

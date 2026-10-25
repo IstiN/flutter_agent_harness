@@ -43,6 +43,37 @@ void main() {
       expect(connector.channels, isNotEmpty);
     });
 
+    test('reconnect restarts the socket and reloads the snapshot', () async {
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody)
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody);
+      final connector = FakeWsConnector();
+      final session = buildSession(
+        httpClient: httpClient,
+        connector: connector,
+        wallet: await walletWithChannel(
+          channelPub: channelKeys.pub,
+          channelPriv: channelKeys.priv,
+        ),
+      );
+      addTearDown(session.close);
+
+      await session.start();
+      await pumpEventQueue();
+      expect(connector.channels, hasLength(1));
+
+      await session.reconnect();
+      await pumpEventQueue();
+
+      expect(connector.channels, hasLength(2));
+      expect(session.channels.single.id, 'c1');
+      expect(session.roster['other-1']?.displayName, 'Olya');
+      expect(session.error, isNull);
+      expect(httpClient.requests, hasLength(4));
+    });
+
     test(
       'renameChannel PATCHes with JWT auth and updates local metadata',
       () async {

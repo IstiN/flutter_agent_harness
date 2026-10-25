@@ -1218,6 +1218,10 @@
   "@networkReconnecting": {
     "description": "Offline banner above the channel chat"
   },
+  "networkReconnectNow": "Reconnect now",
+  "@networkReconnectNow": {
+    "description": "Tooltip for the manual reconnect button in the offline banner"
+  },
   "networkMessageHint": "Message {channel}",
   "@networkMessageHint": {
     "description": "Channel composer input hint",

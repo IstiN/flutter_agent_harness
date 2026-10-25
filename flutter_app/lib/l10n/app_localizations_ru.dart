@@ -2435,6 +2435,9 @@ class AppLocalizationsRu extends AppLocalizations {
       'Переподключение — сообщения будут отправлены после восстановления связи.';
 
   @override
+  String get networkReconnectNow => 'Переподключиться сейчас';
+
+  @override
   String networkMessageHint(Object channel) {
     return 'Написать в $channel';
   }

@@ -138,7 +138,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
               label: label,
               manager: widget.manager,
             ),
-            if (session.networkOffline) const _OfflineBanner(),
+            if (session.networkOffline) _OfflineBanner(session: session),
             Expanded(
               child: FaChatStringsScope(
                 strings: _ChannelChatStrings(
@@ -172,7 +172,9 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
 /// The offline banner: the socket queues while the relay is unreachable
 /// and flushes once on reconnect (engine contract E1).
 class _OfflineBanner extends StatelessWidget {
-  const _OfflineBanner();
+  const _OfflineBanner({required this.session});
+
+  final NetworkSession session;
 
   @override
   Widget build(BuildContext context) {
@@ -190,6 +192,12 @@ class _OfflineBanner extends StatelessWidget {
               context.l10n.networkReconnecting,
               style: TextStyle(fontSize: 12, color: colors.text),
             ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: context.l10n.networkReconnectNow,
+            onPressed: session.reconnect,
+            icon: Icon(Icons.refresh, size: 18, color: colors.text),
           ),
         ],
       ),

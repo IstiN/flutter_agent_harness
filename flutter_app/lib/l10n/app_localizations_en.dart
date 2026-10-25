@@ -2406,6 +2406,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Reconnecting — messages will send when back.';
 
   @override
+  String get networkReconnectNow => 'Reconnect now';
+
+  @override
   String networkMessageHint(Object channel) {
     return 'Message $channel';
   }

@@ -4262,6 +4262,12 @@ abstract class AppLocalizations {
   /// **'Reconnecting — messages will send when back.'**
   String get networkReconnecting;
 
+  /// Tooltip for the manual reconnect button in the offline banner
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnect now'**
+  String get networkReconnectNow;
+
   /// Channel composer input hint
   ///
   /// In en, this message translates to:

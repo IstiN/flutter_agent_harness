@@ -253,8 +253,9 @@ void main() {
       await rig.session.close();
     });
 
-    testWidgets('mention menu accepts the highlighted option with Tab',
-        (tester) async {
+    testWidgets('mention menu accepts the highlighted option with Tab', (
+      tester,
+    ) async {
       final rig = await pumpChat(tester);
       rig.session.roster.addAll({
         'agent-kb': const Member(
@@ -284,12 +285,16 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
       expect(tester.widget<TextField>(field).controller!.text, '@kb-agent ');
-      expect(find.byKey(const ValueKey('mentionOption:agent-kb')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('mentionOption:agent-kb')),
+        findsNothing,
+      );
       await rig.session.close();
     });
 
-    testWidgets('mention menu navigates with arrows and accepts with Enter',
-        (tester) async {
+    testWidgets('mention menu navigates with arrows and accepts with Enter', (
+      tester,
+    ) async {
       final rig = await pumpChat(tester);
       rig.session.roster.addAll({
         'agent-kb': const Member(
@@ -414,6 +419,18 @@ void main() {
         find.textContaining('Reconnecting — messages will send when back'),
         findsOneWidget,
       );
+
+      // The banner offers manual recovery: it restarts the socket and
+      // reloads the channels + roster snapshot through the session.
+      final before = rig.httpClient.requests.length;
+      rig.httpClient
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody);
+      await tester.tap(find.byTooltip('Reconnect now'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(rig.httpClient.requests, hasLength(before + 2));
       await rig.session.close();
     });
 
