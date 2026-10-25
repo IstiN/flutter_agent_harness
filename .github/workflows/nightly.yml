@@ -330,6 +330,35 @@ jobs:
         shell: bash
         run: bash "$GITHUB_WORKSPACE/scripts/check_lockfiles.sh" pod-sync
 
+      # Issue #1851 AC4: wasm_sandbox_toolchain_test had NO gate at any
+      # commit — it is integration-tagged inside flutter_app/test (so the
+      # flutter-tests PR shards exclude it) and needs the native
+      # libwasm_run_dart.dylib, which cannot be downloaded from inside a
+      # running test (flutter_tester mocks sockets after binding init).
+      # The nightly macOS row owns it: seed the dylib from the pinned
+      # upstream wasm_run-v0.1.0 release, then run the suite. A red here
+      # feeds the deduped nightly-red issue — silent absence is over.
+      - name: Seed libwasm_run_dart.dylib (issue #1851 AC4)
+        if: matrix.target == 'macos'
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .dart_tool/wasm_run temp
+          curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+            -o temp/macos.tar.gz \
+            https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/macos.tar.gz
+          tar xzf temp/macos.tar.gz -C temp
+          cp temp/macos-arm64/libwasm_run_dart.dylib .dart_tool/wasm_run/
+
+      - name: flutter test wasm_sandbox_toolchain (issue #1851 AC4)
+        if: matrix.target == 'macos'
+        working-directory: flutter_app
+        shell: bash
+        env:
+          WASM_RUN_DART_DYNAMIC_LIBRARY: ${{ github.workspace }}/flutter_app/.dart_tool/wasm_run/libwasm_run_dart.dylib
+        run: flutter test test/wasm_sandbox_toolchain_test.dart --tags integration
+
       - name: ${{ matrix.cmd }}
         working-directory: flutter_app
         shell: bash
