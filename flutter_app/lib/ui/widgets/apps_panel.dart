@@ -10,6 +10,7 @@ import 'package:fa/apps/unpacked_load_flow.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -270,6 +271,11 @@ class _AppsPanelState extends State<AppsPanel> {
     }
   }
 
+  /// A blank request or no active agent service — nothing to ask Fa
+  /// (gh-1848 split).
+  static bool _isBlankWidgetRequest(String? text, AgentService? service) =>
+      text == null || text.isEmpty || service == null;
+
   /// "Add widget" tile: the user describes what they want; Fa checks the
   /// catalog for a match (offers to install) or proposes a creation plan.
   Future<void> _showAddWidgetDialog() async {
@@ -302,9 +308,11 @@ class _AppsPanelState extends State<AppsPanel> {
       ),
     );
     final text = request?.trim();
-    if (text == null || text.isEmpty || service == null) return;
+    if (_isBlankWidgetRequest(text, service)) return;
     AppAnalytics.instance.widgetEvent('add_widget_request', params: const {});
-    await service.sendText(
+    // The blank/absent-service guard above proves `service` non-null; the
+    // predicate form just defeats promotion.
+    await service!.sendText(
       'The user wants a new widget: "$text".\n'
       '1. First check the fa_widgets catalog (apps_catalog tool, action '
       '"list") — if a widget already matches this request, tell the user '
@@ -646,21 +654,28 @@ class _UpNextWidget extends StatelessWidget {
     );
   }
 
+  /// 12-hour clock hour: 0 reads as 12 (midnight), >12 wraps into the PM
+  /// half (gh-1848 split).
+  static int _twelveHour(int hour) =>
+      hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+
   static String _formatTime(DateTime dt) {
-    final h = dt.hour == 0 ? 12 : (dt.hour > 12 ? dt.hour - 12 : dt.hour);
+    final h = _twelveHour(dt.hour);
     final m = dt.minute.toString().padLeft(2, '0');
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
     return '$h:$m $ampm';
   }
 
+  /// True when [dt] falls on the device's today (gh-1848 split).
+  static bool _isToday(DateTime dt) {
+    final now = DateTime.now();
+    return dt.year == now.year && dt.month == now.month && dt.day == now.day;
+  }
+
   static String _formatEventTime(CalendarEvent event) {
     final start = _formatTime(event.start);
     final end = _formatTime(event.end);
-    final now = DateTime.now();
-    final isToday =
-        event.start.year == now.year &&
-        event.start.month == now.month &&
-        event.start.day == now.day;
+    final isToday = _isToday(event.start);
     final dayLabel = isToday
         ? 'Today'
         : '${event.start.month}/${event.start.day}';

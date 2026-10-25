@@ -507,22 +507,34 @@ void routeFaChatAnalytics(
 void _wireCrashlyticsBreadcrumbs() {
   if (kIsWeb) return;
   try {
-    if (Firebase.apps.isEmpty) return;
-    final crashlytics = FirebaseCrashlytics.instance;
-    FlutterError.onError = crashlytics.recordFlutterFatalError;
-    PlatformDispatcher.instance.onError = (error, stack) {
-      crashlytics.recordError(error, stack, fatal: true);
-      return true;
-    };
-    final baseDebugPrint = debugPrint;
-    debugPrint = (message, {wrapWidth}) {
-      baseDebugPrint(message, wrapWidth: wrapWidth);
-      if (message != null) crashlytics.log(message);
-    };
-    debugPrint('[fah] crashlytics wired');
+    _wireCrashlytics();
   } on Object catch (error) {
     debugPrint('[fah] crashlytics unavailable, continuing without: $error');
   }
+}
+
+/// Assumes a non-web platform; any Firebase setup error propagates to the
+/// caller's catch (boot continues without crashlytics).
+void _wireCrashlytics() {
+  if (Firebase.apps.isEmpty) return;
+  final crashlytics = FirebaseCrashlytics.instance;
+  FlutterError.onError = crashlytics.recordFlutterFatalError;
+  PlatformDispatcher.instance.onError = (error, stack) {
+    crashlytics.recordError(error, stack, fatal: true);
+    return true;
+  };
+  _teeDebugPrintToCrashlytics(crashlytics);
+  debugPrint('[fah] crashlytics wired');
+}
+
+/// The debugPrint tee (already feeding AppLog) also leaves a trail in the
+/// crash report.
+void _teeDebugPrintToCrashlytics(FirebaseCrashlytics crashlytics) {
+  final baseDebugPrint = debugPrint;
+  debugPrint = (message, {wrapWidth}) {
+    baseDebugPrint(message, wrapWidth: wrapWidth);
+    if (message != null) crashlytics.log(message);
+  };
 }
 
 /// Loads intl date symbols for every supported app locale.

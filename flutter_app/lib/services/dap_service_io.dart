@@ -161,20 +161,37 @@ final class IoDapHubService implements DapHubService {
     for (final root in allSessionRoots(
       defaultSessionsRoot(Directory.current.path),
     )) {
-      try {
-        final repo = JsonlSessionRepo(fs: env, sessionsRoot: root);
-        final metas = await repo.list();
-        for (final meta in metas) {
-          out.add((id: meta.id, title: sessionTitle(meta)));
-        }
-      } on Object {
-        // Unreadable root — other roots still list.
-      }
+      out.addAll(await _sessionsInRoot(env, root));
     }
-    // Dedup by id (a session visible from two roots lists once).
+    return _dedupeBindableSessions(out);
+  }
+
+  /// Every session in one candidate root; an unreadable root lists empty
+  /// so the other roots still contribute.
+  Future<List<DapBindableSession>> _sessionsInRoot(
+    LocalExecutionEnv env,
+    String root,
+  ) async {
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: root);
+    try {
+      final metas = await repo.list();
+      return [
+        for (final meta in metas) (id: meta.id, title: sessionTitle(meta)),
+      ];
+    } on Object {
+      // Unreadable root — other roots still list.
+      return const [];
+    }
+  }
+
+  /// Dedup by id (a session visible from two roots lists once), capped at
+  /// the newest 50.
+  List<DapBindableSession> _dedupeBindableSessions(
+    List<DapBindableSession> sessions,
+  ) {
     final seen = <String>{};
     return [
-      for (final entry in out)
+      for (final entry in sessions)
         if (seen.add(entry.id)) entry,
     ].take(50).toList();
   }

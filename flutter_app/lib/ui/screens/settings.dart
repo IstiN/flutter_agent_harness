@@ -744,7 +744,8 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           apiKey: key,
           // Endpoint-reported limits (the /models quick-select fetch) win
           // over the catalog, the pinned fallback last (gh-1077 AC3).
-          contextWindow: _models.contextWindows[model] ??
+          contextWindow:
+              _models.contextWindows[model] ??
               resolveAppContextWindow(providerKind: 'openai-completions'),
           maxTokens: _models.maxTokens[model] ?? fallbackMaxTokens,
           supportsImages: _vision,
@@ -1970,14 +1971,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final registry = widget.registry;
     if (registry == null) return false;
     if (isAiinBaseUrl(provider.baseUrl)) {
-      return runAiinConnectFlow(
-        context: context,
-        registry: registry,
-        service: service,
-        lastConnectionStore: _fallbackConnectionStore(),
-        reauthenticateFor: provider,
-      );
+      return _reauthenticateAiin(context, registry, service, provider);
     }
+    return _reauthenticateOther(context, registry, service, provider);
+  }
+
+  /// The non-AIIN re-auth dispatch (gh-1848 tier-3 split): the Copilot
+  /// connect flow for Copilot base URLs, the Codemie SSO flow otherwise.
+  Future<bool> _reauthenticateOther(
+    BuildContext context,
+    ProviderRegistry registry,
+    AgentService? service,
+    CustomProvider provider,
+  ) {
     if (isCopilotBaseUrl(provider.baseUrl)) {
       return runCopilotConnectFlow(
         context: context,
@@ -1995,6 +2001,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// AIIN entries re-run the AIIN sign-in flow in re-auth mode
+  /// (gh-1848 split).
+  Future<bool> _reauthenticateAiin(
+    BuildContext context,
+    ProviderRegistry registry,
+    AgentService? service,
+    CustomProvider provider,
+  ) {
+    return runAiinConnectFlow(
+      context: context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: _fallbackConnectionStore(),
+      reauthenticateFor: provider,
+    );
+  }
+
+  /// Runs one connect flow after a registry guard — the shared shape of
+  /// the section's connect callbacks: a null registry renders the
+  /// section but the flows do nothing (gh-1848 split).
+  Future<void> _runConnectFlow(
+    Future<void> Function(ProviderRegistry registry) run,
+  ) async {
+    final registry = widget.registry;
+    if (registry == null) return;
+    await run(registry);
+  }
+
   /// The providers block with every sign-in/connect wiring (issue #702:
   /// extracted from build; the flows themselves live in their services).
   Widget _providersSection(
@@ -2010,46 +2044,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
       openRouterOAuthCallbackUrl:
           OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
       openRouterOAuthCapture: OpenRouterOAuthCoordinator.instance.capture,
-      onCodeMieSso: () async {
-        final registry = widget.registry;
-        if (registry == null) return;
-        await runCodemieSsoFlow(
+      onCodeMieSso: () => _runConnectFlow(
+        (registry) => runCodemieSsoFlow(
           context: context,
           registry: registry,
           service: service,
           lastConnectionStore: _fallbackConnectionStore(),
-        );
-      },
-      onChatGptOAuth: () async {
-        final registry = widget.registry;
-        if (registry == null) return;
-        await runChatGptOAuthFlow(
+        ),
+      ),
+      onChatGptOAuth: () => _runConnectFlow(
+        (registry) => runChatGptOAuthFlow(
           context: context,
           registry: registry,
           service: service,
           lastConnectionStore: _fallbackConnectionStore(),
-        );
-      },
-      onAiinConnect: () async {
-        final registry = widget.registry;
-        if (registry == null) return;
-        await runAiinConnectFlow(
+        ),
+      ),
+      onAiinConnect: () => _runConnectFlow(
+        (registry) => runAiinConnectFlow(
           context: context,
           registry: registry,
           service: service,
           lastConnectionStore: _fallbackConnectionStore(),
-        );
-      },
-      onCopilotConnect: () async {
-        final registry = widget.registry;
-        if (registry == null) return;
-        await runCopilotConnectFlow(
+        ),
+      ),
+      onCopilotConnect: () => _runConnectFlow(
+        (registry) => runCopilotConnectFlow(
           context: context,
           registry: registry,
           service: service,
           lastConnectionStore: _fallbackConnectionStore(),
-        );
-      },
+        ),
+      ),
       onProviderReauthenticate: (ctx, provider) =>
           _reauthenticateProvider(ctx, service, provider),
       onDeviceProviders: buildOnDeviceProviderRoutes(
@@ -2345,7 +2371,29 @@ class ResetAppsSection extends StatelessWidget {
 
   Future<void> _confirmAndReset(BuildContext context) async {
     final l10n = context.l10n;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await _showResetConfirm(context, l10n);
+    if (confirmed != true || !context.mounted) return;
+    await _applyFactoryReset(context, l10n);
+  }
+
+  /// The reset itself plus its done-snack (gh-1848 tier-3 split).
+  Future<void> _applyFactoryReset(
+    BuildContext context,
+    AppLocalizations l10n,
+  ) async {
+    AppAnalytics.instance.widgetEvent('reset_apps');
+    final store = appsStore ?? AppsStore(service.env);
+    final removed = await store.resetToFactory();
+    if (context.mounted) {
+      faui.showFahSnack(context, l10n.settingsResetAppsDone(removed));
+    }
+  }
+
+  /// The factory-reset warning dialog (gh-1848 split). A fixed content
+  /// width: unconstrained, the single-sentence warning stretched the
+  /// dialog to near full window width on desktop.
+  Future<bool?> _showResetConfirm(BuildContext context, AppLocalizations l10n) {
+    return showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         icon: Icon(
@@ -2353,9 +2401,6 @@ class ResetAppsSection extends StatelessWidget {
           color: Theme.of(dialogContext).colorScheme.error,
         ),
         title: Text(l10n.settingsResetAppsConfirmTitle),
-        // A fixed content width: unconstrained, the single-sentence
-        // warning stretched the dialog to near full window width on
-        // desktop.
         content: SizedBox(
           width: 400,
           child: Text(l10n.settingsResetAppsConfirmBody),
@@ -2372,13 +2417,6 @@ class ResetAppsSection extends StatelessWidget {
         ],
       ),
     );
-    if (confirmed != true || !context.mounted) return;
-    AppAnalytics.instance.widgetEvent('reset_apps');
-    final store = appsStore ?? AppsStore(service.env);
-    final removed = await store.resetToFactory();
-    if (context.mounted) {
-      faui.showFahSnack(context, l10n.settingsResetAppsDone(removed));
-    }
   }
 
   @override
