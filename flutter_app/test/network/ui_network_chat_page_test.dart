@@ -351,10 +351,9 @@ void main() {
         (w) => w is TextField && w.decoration?.hintText == 'Message general',
       );
       await tester.enterText(field, 'kept in the composer');
-      await tester.sendKeyEvent(
-        LogicalKeyboardKey.enter,
-        modifiers: ModifierKey.shiftModifier,
-      );
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 20));
       }

@@ -450,32 +450,13 @@ final class NetworkSession extends ChangeNotifier {
         :final memberClass,
         :final access,
       ):
-        final member = roster[memberId];
-        if (member != null) {
-          roster[memberId] = Member(
-            id: member.id,
-            memberClass: member.memberClass,
-            displayName: member.displayName,
-            presence: presence,
-            // Legacy presence frames carry no access: retain the snapshot's
-            // metadata instead of erasing it on every presence flip.
-            access: access ?? member.access,
-          );
-          notifyListeners();
-        } else if (memberId.isNotEmpty &&
-            (displayName.isNotEmpty || memberClass != null)) {
-          // A hub agent that came online AFTER the snapshot: the server
-          // includes displayName/class precisely so clients can insert
-          // it instead of dropping the event (online stayed 0).
-          roster[memberId] = Member(
-            id: memberId,
-            memberClass: memberClass ?? MemberClass.unknown,
-            displayName: displayName,
-            presence: presence,
-            access: access,
-          );
-          notifyListeners();
-        }
+        _applyPresenceChange(
+          memberId,
+          presence,
+          displayName,
+          memberClass,
+          access,
+        );
       case NetworkOffline():
         networkOffline = true;
         notifyListeners();
@@ -488,6 +469,41 @@ final class NetworkSession extends ChangeNotifier {
       case WsError(:final message):
         error = message;
         notifyListeners();
+    }
+  }
+
+  /// Applies a presence frame to the roster: an existing member is
+  /// updated in place (legacy frames carry no access, so the snapshot's
+  /// metadata is retained); a hub agent that came online AFTER the
+  /// snapshot is inserted from the frame's displayName/class so online
+  /// counts do not stay at 0.
+  void _applyPresenceChange(
+    String memberId,
+    Presence presence,
+    String displayName,
+    MemberClass? memberClass,
+    MemberAccess? access,
+  ) {
+    final member = roster[memberId];
+    if (member != null) {
+      roster[memberId] = Member(
+        id: member.id,
+        memberClass: member.memberClass,
+        displayName: member.displayName,
+        presence: presence,
+        access: access ?? member.access,
+      );
+      notifyListeners();
+    } else if (memberId.isNotEmpty &&
+        (displayName.isNotEmpty || memberClass != null)) {
+      roster[memberId] = Member(
+        id: memberId,
+        memberClass: memberClass ?? MemberClass.unknown,
+        displayName: displayName,
+        presence: presence,
+        access: access,
+      );
+      notifyListeners();
     }
   }
 
