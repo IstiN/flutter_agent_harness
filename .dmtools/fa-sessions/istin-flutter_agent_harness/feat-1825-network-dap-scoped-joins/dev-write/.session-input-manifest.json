@@ -1,0 +1,279 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-26T01:15:32.494Z",
+  "ticketKey": "pr-1888",
+  "headSha": "855be0e4d98014e14ff69b3e4fd42b0fd4432305",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:899ea6d356d5e631",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:84eba8701ee754aa",
+      "size": 36773
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:7111aef5b45cde9a",
+      "size": 11265
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:1c8798336ff38675",
+      "size": 2619
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7fe9bd047e50f811",
+      "size": 2062
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:74a4f5d1c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:ac2110db3ccfbf68",
+      "size": 2327
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:14997a4ae3cb050f",
+      "size": 2253
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6wGf8Z",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/fah_hub_plugin.dart:379",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: DAP env secrets are never registered with the redaction pipeline (ticket AC8/AC14)**\n\nThe ticket is explicit: *\"CI test: the env values never appear in any session JSONL/tool result (**redactor registered for them**, the `SessionKeysStore` pattern)\"* (`input/gh-1825/ticket.md`, Security & secrets). This PR adds the env contract (`DAP_CHANNELS_JSON` with **plaintext** `priv`s, `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) but never registers those values anywhere. I grepped the whole diff: no `registerSecret` / `buildSecretRedactor` / redaction-pipeline touch.\n\nConcretely: those variables live in the real process env (CI sets them there), so **every bash child inherits them**. A single `env` / `printenv DAP_CHANNELS_JSON` / `echo $DAP_KEY_PASSPHRASE` tool call puts plaintext channel private keys and hub credentials into the tool result → the session JSONL and the model context, unmasked. The L9 entropy layer is not a substitute: base64 with standard-alphabet `/` splits into tokens below the entropy gate, and human-memorable passphrases / short hub secrets fail Shannon heuristics by construction. There is also no test covering this (the AC8 \"CI test\" does not exist in `test/`).\n\nFix: register `DAP_CHANNELS_JSON`, `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE` (and the decrypted privs / auto-provisioned passphrases held in `_memoryOnlyKeys`/`_memoryOnlySecrets`) into `RedactionPipeline.registerSecret` at startup (same pattern as `buildSecretRedactor` in `lib/src/cli/startup.dart:1054`), plus a byte-scan test that these values never appear in a session JSONL or tool result."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wGf9t",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/messaging/hub_messaging_repository.dart",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the pure-Dart hub repository cannot open `fanet1` frames — the app DAP path drops private-channel mail the CLI fabric now sends**\n\nThe same PR makes the CLI fabric send private channel frames as `fanet1` (`bin/hub_fabric_repository.dart:147` → `client.sendChannelFanet1(...)`), and the CHANGELOG announces *\"Inbound channel frames open `fanet1` first and fall back to legacy `dap/1` payloads\"*. But that inbound open exists only in the vendored `fa_hub_client` 0.2.11 — **not here**. The Flutter app cannot import that package (its barrel pulls `dart:io`, per `flutter_app/lib/network/envelope_codec.dart:19` doc), so its DAP membership rides THIS repository (`flutter_app/lib/services/agent_network_controller.dart:226`), and `_onChannelMsg` (this file, line 532) only understands:\n\n- keyless → `_decodePublicChannelPayload`, or\n- keyed → `hubDecryptPayloadWithKeyPair` expecting the **raw dap1 layout** `base64(nonce(12) || ct || tag)` with the sender key from whois.\n\nA `fanet1` payload is `base64(0x01 || spk(32) || nonce(12) || ct || tag(16))` (`flutter_app/lib/network/envelope_codec.dart:30-36`). Decoding it as dap1 takes `nonce = raw[0..12)` = `0x01 || spk[0..11]` → AEAD tag mismatch → the frame is dropped at line 572 (`dropped undecryptable channel mail`). Result: an app enrolled via the DAP path (`dap_enrollment_service`) never receives private-channel messages from CLI/fabric agents, in exactly the interop scenario this PR headlines. The app's fa_network path handles `fanet1` via `EnvelopeCodec`; this repository needs the equivalent open (detect `data[0] == 1 && data.length >= 61`, extract `spk`, skip the 33-byte header before the AEAD) plus a round-trip test against `EnvelopeCodec.encrypt`."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wGf-6",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/fah_hub_plugin.dart",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: undecryptable private memberships are classified as PUBLIC — the fabric then sends plaintext into a private channel**\n\n`_isPublicMembership` decides the wire format from the **runtime-decrypted** membership: `membership.pub == null || membership.priv == null` → \"public\". But `DapScopedMemberships.runtimeEffective()` (`bin/fah_dap_scoped.dart:465`) yields `priv: null` whenever the stored `dapkey1.` envelope could not be decrypted (missing passphrase — loud warning, \"joined without keys, primary job proceeds\"). For a PRIVATE channel that means: `pub != null`, `priv == null` → this check returns **true** → `HubFabricRepository.send` (`bin/hub_fabric_repository.dart:131`) takes the public-showcase branch and emits `base64({\"text\": …})` — **no encryption at all** — into a channel whose trust model is E2E (\"the hub never sees plaintext\", `_aboutText` in this file).\n\nSo one environment failure (no `DAP_KEY_PASSPHRASE`, no Keychain hit) silently downgrades every outbound channel message from that agent to hub-readable plaintext, and keyed members render \"(unable to decrypt)\". The public/private decision must come from the **stored** membership shape (a truly public channel has `pub == null` at rest; a stored envelope or plaintext `priv` means private), not from runtime decryption success — and when the key genuinely cannot be resolved, the send should refuse/queue with a loud error rather than downgrade."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wGgAB",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/hub/dap_key_envelope.dart:120",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: unbounded PBKDF2 iteration count from the envelope — DoS via committed config or env**\n\n`iterations` is read straight out of the (attacker-influenceable) envelope JSON with no sanity bound, then fed to `Pbkdf2(iterations: …)`. A `.fah/dap.json` committed to a repo someone clones (the ticket's v3 stance is that this file MAY be committed and team-shared), or a `DAP_CHANNELS_JSON` env entry, can carry `\"iter\": 1000000000` — with `DAP_KEY_PASSPHRASE` set (CI always has it), boot pays ~hours of KDF per envelope before the AEAD tag check ever runs. The format stores the count as data specifically so tests can lower it; it needs an upper bound too (e.g. reject `iter > 5_000_000` with the existing `FormatException` path, which already surfaces one clear warning and proceeds with the primary job). Cheap fix, closes a real boot-DoS slot."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wGgAr",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/hub/dap_env_channels.dart",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: wrong-typed `pub`/`priv` in `DAP_CHANNELS_JSON` crashes the parse instead of warn-and-skip**\n\nThe module header promises \"a malformed ENTRY produces a loud warning and is skipped — DAP is never a hard dependency of the agent's primary job\", and the tests cover missing `channel` / non-object entries. But `pub: entry['pub'] as String?` / `priv: entry['priv'] as String?` throw an **uncaught `TypeError`** when the values aren't strings — e.g. `[{\"channel\":\"team\",\"priv\":123}]` or a YAML-ism pasted into the CI secret (verified: `type 'int' is not a subtype of type 'String?'`). That escapes `parseDapEnvChannels` entirely and propagates into `DapScopedMemberships.union()` → `seedOverlay()` / `runtimeEffective()` / `acceptsChannel()`, i.e. every membership-touching path, contrary to the documented contract. Use tolerant reads (`entry['pub'] is String ? … : null` + a skip warning) or wrap the per-entry body in try/catch like `_loadSession` does."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wGgBm",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/fah_dap_scoped.dart:485",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the runtime overlay persists PLAINTEXT channel keys and is never cleaned up**\n\n`seedOverlay()` writes the **decrypted** union keys to `$HOME/.dap/runtime/channels-$pid.json` (060 best-effort). That contradicts the ticket's core secret rule — *\"Plaintext `priv` exists only in memory — and in the pure-env CI path\"* (`input/gh-1825/ticket.md`) — in two ways:\n\n1. It is a third at-rest plaintext-key location nobody accounts for (the threat model covers global/project/session stores only).\n2. Nothing ever deletes it: one file per pid accumulates in `~/.dap/runtime/` forever (grep: no delete/unlink anywhere in `bin/`). Every past run's channel keys stay on disk, and the pid naming guarantees unbounded growth.\n\nPlease delete the overlay on shutdown (plugin dispose / CLI `finally`) or use a single stable name rewritten atomically, and note the overlay explicitly in the secrets table if it must exist."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wGgCW",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/fah_dap_scoped.dart:636",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT (deviation to confirm against the ticket): global-scope join writes PLAINTEXT `priv` to `~/.dap/channels.json`**\n\nThe ticket's v3 secrets table says the global surface holds **encrypted** entries: *\"global | `~/.dap/channels.json` (encrypted entries) | OS Keychain, else one prompt\"* — while session/project/env get the `dapkey1` envelope. This path instead persists the invite's plaintext keypair through the legacy `persistChannelKeys`, so a `/network` global-scope private join leaves readable key material at rest (same as today's `fa dap import`, which is presumably why: REG-* demands byte-equivalence between the old import and the new global join).\n\nIf byte-equivalence with `fa dap import` is the reason, please say so explicitly in `docs/dap.md` and the join warning — right now the CLI advertises \"private channel joined\" while the on-disk posture differs from the ticket's table and from the session/project scopes the wizard just offered. If it is not the reason, route global joins through `encryptChannelPriv` like the other scopes."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wGgDc",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/fah_dap_scoped.dart:291",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_loadProject` silently drops ALL project memberships on one malformed entry**\n\nThe whole read/parse sits in one `try/on Object → return const []`, so a single malformed record (e.g. an older record missing the required `scope` field, which makes `DapChannelMembership.fromJson` throw) discards the entire project store with no `loadWarnings` entry — while `_loadSession` right below adds one warning per bad record and keeps the rest. A half-corrupt `.fah/dap.json` after a bad merge would quietly unjoin every channel for every agent booted from the folder. Iterate per entry like `_loadSession` does."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:095a1841",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: DAP env secrets are never registered with the redaction pipeline (ticket AC8/AC14)**\n\nThe ticket is explicit: *\"CI test: the env values never appear in any session JSONL/tool result (**redactor registered for them**, the `SessionKeysStore` pattern)\"* (`input/gh-1825/ticket.md`, Security & secrets). This PR adds the env contract (`DAP_CHANNELS_JSON` with **plaintext** `priv`s, `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) but never registers those values anywhere. I grepped the whole diff: no `registerSecret` / `buildSecretRedactor` / redaction-pipeline touch.\n\nConcretely: those variables live in the real process env (CI sets them there), so **every bash child inherits them**. A single `env` / `printenv DAP_CHANNELS_JSON` / `echo $DAP_KEY_PASSPHRASE` tool call puts plaintext channel private keys and hub credentials into the tool result → the session JSONL and the model context, unmasked. The L9 entropy layer is not a substitute: base64 with standard-alphabet `/` splits into tokens below the entropy gate, and human-memorable passphrases / short hub secrets fail Shannon heuristics by construction. There is also no test covering this (the AC8 \"CI test\" does not exist in `test/`).\n\nFix: register `DAP_CHANNELS_JSON`, `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE` (and the decrypted privs / auto-provisioned passphrases held in `_memoryOnlyKeys`/`_memoryOnlySecrets`) into `RedactionPipeline.registerSecret` at startup (same pattern as `buildSecretRedactor` in `lib/src/cli/startup.dart:1054`), plus a byte-scan test that these values never appear in a session JSONL or tool result."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:846c22bb",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the pure-Dart hub repository cannot open `fanet1` frames — the app DAP path drops private-channel mail the CLI fabric now sends**\n\nThe same PR makes the CLI fabric send private channel frames as `fanet1` (`bin/hub_fabric_repository.dart:147` → `client.sendChannelFanet1(...)`), and the CHANGELOG announces *\"Inbound channel frames open `fanet1` first and fall back to legacy `dap/1` payloads\"*. But that inbound open exists only in the vendored `fa_hub_client` 0.2.11 — **not here**. The Flutter app cannot import that package (its barrel pulls `dart:io`, per `flutter_app/lib/network/envelope_codec.dart:19` doc), so its DAP membership rides THIS repository (`flutter_app/lib/services/agent_network_controller.dart:226`), and `_onChannelMsg` (this file, line 532) only understands:\n\n- keyless → `_decodePublicChannelPayload`, or\n- keyed → `hubDecryptPayloadWithKeyPair` expecting the **raw dap1 layout** `base64(nonce(12) || ct || tag)` with the sender key from whois.\n\nA `fanet1` payload is `base64(0x01 || spk(32) || nonce(12) || ct || tag(16))` (`flutter_app/lib/network/envelope_codec.dart:30-36`). Decoding it as dap1 takes `nonce = raw[0..12)` = `0x01 || spk[0..11]` → AEAD tag mismatch → the frame is dropped at line 572 (`dropped undecryptable channel mail`). Result: an app enrolled via the DAP path (`dap_enrollment_service`) never receives private-channel messages from CLI/fabric agents, in exactly the interop scenario this PR headlines. The app's fa_network path handles `fanet1` via `EnvelopeCodec`; this repository needs the equivalent open (detect `data[0] == 1 && data.length >= 61`, extract `spk`, skip the 33-byte header before the AEAD) plus a round-trip test against `EnvelopeCodec.encrypt`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:b2fef88d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: undecryptable private memberships are classified as PUBLIC — the fabric then sends plaintext into a private channel**\n\n`_isPublicMembership` decides the wire format from the **runtime-decrypted** membership: `membership.pub == null || membership.priv == null` → \"public\". But `DapScopedMemberships.runtimeEffective()` (`bin/fah_dap_scoped.dart:465`) yields `priv: null` whenever the stored `dapkey1.` envelope could not be decrypted (missing passphrase — loud warning, \"joined without keys, primary job proceeds\"). For a PRIVATE channel that means: `pub != null`, `priv == null` → this check returns **true** → `HubFabricRepository.send` (`bin/hub_fabric_repository.dart:131`) takes the public-showcase branch and emits `base64({\"text\": …})` — **no encryption at all** — into a channel whose trust model is E2E (\"the hub never sees plaintext\", `_aboutText` in this file).\n\nSo one environment failure (no `DAP_KEY_PASSPHRASE`, no Keychain hit) silently downgrades every outbound channel message from that agent to hub-readable plaintext, and keyed members render \"(unable to decrypt)\". The public/private decision must come from the **stored** membership shape (a truly public channel has `pub == null` at rest; a stored envelope or plaintext `priv` means private), not from runtime decryption success — and when the key genuinely cannot be resolved, the send should refuse/queue with a loud error rather than downgrade."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:decd98b3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: unbounded PBKDF2 iteration count from the envelope — DoS via committed config or env**\n\n`iterations` is read straight out of the (attacker-influenceable) envelope JSON with no sanity bound, then fed to `Pbkdf2(iterations: …)`. A `.fah/dap.json` committed to a repo someone clones (the ticket's v3 stance is that this file MAY be committed and team-shared), or a `DAP_CHANNELS_JSON` env entry, can carry `\"iter\": 1000000000` — with `DAP_KEY_PASSPHRASE` set (CI always has it), boot pays ~hours of KDF per envelope before the AEAD tag check ever runs. The format stores the count as data specifically so tests can lower it; it needs an upper bound too (e.g. reject `iter > 5_000_000` with the existing `FormatException` path, which already surfaces one clear warning and proceeds with the primary job). Cheap fix, closes a real boot-DoS slot."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:e8911d34",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: wrong-typed `pub`/`priv` in `DAP_CHANNELS_JSON` crashes the parse instead of warn-and-skip**\n\nThe module header promises \"a malformed ENTRY produces a loud warning and is skipped — DAP is never a hard dependency of the agent's primary job\", and the tests cover missing `channel` / non-object entries. But `pub: entry['pub'] as String?` / `priv: entry['priv'] as String?` throw an **uncaught `TypeError`** when the values aren't strings — e.g. `[{\"channel\":\"team\",\"priv\":123}]` or a YAML-ism pasted into the CI secret (verified: `type 'int' is not a subtype of type 'String?'`). That escapes `parseDapEnvChannels` entirely and propagates into `DapScopedMemberships.union()` → `seedOverlay()` / `runtimeEffective()` / `acceptsChannel()`, i.e. every membership-touching path, contrary to the documented contract. Use tolerant reads (`entry['pub'] is String ? … : null` + a skip warning) or wrap the per-entry body in try/catch like `_loadSession` does."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:fc578298",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the runtime overlay persists PLAINTEXT channel keys and is never cleaned up**\n\n`seedOverlay()` writes the **decrypted** union keys to `$HOME/.dap/runtime/channels-$pid.json` (060 best-effort). That contradicts the ticket's core secret rule — *\"Plaintext `priv` exists only in memory — and in the pure-env CI path\"* (`input/gh-1825/ticket.md`) — in two ways:\n\n1. It is a third at-rest plaintext-key location nobody accounts for (the threat model covers global/project/session stores only).\n2. Nothing ever deletes it: one file per pid accumulates in `~/.dap/runtime/` forever (grep: no delete/unlink anywhere in `bin/`). Every past run's channel keys stay on disk, and the pid naming guarantees unbounded growth.\n\nPlease delete the overlay on shutdown (plugin dispose / CLI `finally`) or use a single stable name rewritten atomically, and note the overlay explicitly in the secrets table if it must exist."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:fb097722",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT (deviation to confirm against the ticket): global-scope join writes PLAINTEXT `priv` to `~/.dap/channels.json`**\n\nThe ticket's v3 secrets table says the global surface holds **encrypted** entries: *\"global | `~/.dap/channels.json` (encrypted entries) | OS Keychain, else one prompt\"* — while session/project/env get the `dapkey1` envelope. This path instead persists the invite's plaintext keypair through the legacy `persistChannelKeys`, so a `/network` global-scope private join leaves readable key material at rest (same as today's `fa dap import`, which is presumably why: REG-* demands byte-equivalence between the old import and the new global join).\n\nIf byte-equivalence with `fa dap import` is the reason, please say so explicitly in `docs/dap.md` and the join warning — right now the CLI advertises \"private channel joined\" while the on-disk posture differs from the ticket's table and from the session/project scopes the wizard just offered. If it is not the reason, route global joins through `encryptChannelPriv` like the other scopes."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:bfa29f55",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_loadProject` silently drops ALL project memberships on one malformed entry**\n\nThe whole read/parse sits in one `try/on Object → return const []`, so a single malformed record (e.g. an older record missing the required `scope` field, which makes `DapChannelMembership.fromJson` throw) discards the entire project store with no `loadWarnings` entry — while `_loadSession` right below adds one warning per bad record and keeps the rest. A half-corrupt `.fah/dap.json` after a bad merge would quietly unjoin every channel for every agent booted from the folder. Iterate per entry like `_loadSession` does."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-25:fd4c6c9c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 7f1f92cfb46f9175b1faf41a7ad1ddd6839a15b1 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-25:1173de23",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 0beeb8321e4aab92b1bdc4570673143b94560aea — zombie 1/3 at 2026-10-25T22:36:33.757Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-25:db92f2aa",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 3a129c31a9f9f1f743534edb1e2c41a32b9f53f1 — stale base at 2026-10-25T22:50:30.797Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-25:7ff80541",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-25",
+      "updatedAt": "2026-10-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — pr-1888\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:53310f1e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — BLOCK\n\n**Summary**: The scoped-join architecture, passphrase chain, and tests are strong, but three security/correctness findings must land before merge: (1) the new `DAP_*` env secrets are never registered with the redaction pipeline, so plaintext channel keys/hub credentials can ride `env` tool results into session JSONL (ticket AC8/AC14 requires the redactor registration explicitly); (2) the pure-Dart `HubMessagingRepository` — the only hub path the Flutter app can use — cannot open `fanet1` frames that this PR's own CLI fabric now sends, so app-side DAP channel mail from CLI agents is silently dropped; (3) a private membership whose key fails to decrypt is misclassified as PUBLIC and the fabric then sends unencrypted payloads into a private channel.\n\n**Key Issues**:\n- 🚨 DAP env secrets (`DAP_CHANNELS_JSON` plaintext privs, `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) absent from `buildSecretRedactor` — no masking, no AC8 byte-scan test (comment1).\n- 🚨 `fanet1` inbound gap in `lib/src/messaging/hub_messaging_repository.dart` (comment2); 🚨 silent E2E→plaintext downgrade via `_isPublicMembership` (comment3).\n- ⚠️ Unbounded PBKDF2 `iter` from envelope (comment4); ⚠️ `parseDapEnvChannels` TypeError on wrong-typed `pub`/`priv` escapes warn-and-skip (comment5); ⚠️ plaintext-key overlay file never cleaned (comment6); ⚠️ global-scope join writes plaintext `priv`, contradicting the ticket's encrypted-global table — confirm vs ticket (comment7).\n- ⚠️ (general, not inline) This repo's `.gitignore` ignores `.fah/*` except a whitelist that omits `dap.json`, so the \"committable `.fah/dap.json`\" path (AC14) and the dogfooded ai-teammate flow (AC12) cannot work in THIS repo — whitelist `!.fah/dap.json` or document the force-add.\n- 💡 `_loadProject` drops all project memberships on one bad record (comment8).\n\n**Next Steps**:\n1. Register the DAP env secrets (and in-memory privs/passphrases) with `RedactionPipeline.registerSecret` + add the AC8 byte-scan test.\n2. Add `fanet1`-first decode (with dap1 fallback) to the pure-Dart repository; round-trip test against `EnvelopeCodec`.\n3. Base the public/private send decision on the stored membership shape; refuse/queue sends when the channel key is unresolvable.\n4. Cap `iter`, make env parsing type-tolerant, clean up the overlay, decide the global-plaintext stance, whitelist `.fah/dap.json`."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:9240a96e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 48d13db733db03a3d0efa624ef5bd236d7a1e452 — zombie 1/3 at 2026-10-26T00:58:47.355Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    }
+  ]
+}
