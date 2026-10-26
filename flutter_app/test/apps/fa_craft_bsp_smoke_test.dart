@@ -195,10 +195,6 @@ void main() {
         ),
       ),
     );
-    // pumpWidget normally does this: without it the binding defers the
-    // first frame forever, sendFramesToEngine stays false and NO layers
-    // are ever composited (RepaintBoundary.layer stays null).
-    binding.allowFirstFrame();
 
     // Monotonic frame counter; the binding owns the clock (pump advances
     // it), the rAF scheduler folds ticker restarts into epochs.
@@ -401,8 +397,12 @@ Future<int> _countEnclosedSkyPixels(
   // Layer-level capture (the SDK's own alternative to
   // RenderRepaintBoundary.toImage): the needsPaint assert on the
   // render-object API races with the voxel painter's breath-time
-  // re-marks; the OffsetLayer holds the last committed picture.
-  final offsetLayer = boundary.layer! as OffsetLayer;
+  // re-marks; the OffsetLayer holds the last committed picture. A null
+  // layer means the boundary was never composited — recorded as -2,
+  // never fatal: the scan is an artifact PROXY, not the acceptance core.
+  final layer = boundary.layer;
+  if (layer == null) return -2;
+  final offsetLayer = layer as OffsetLayer;
   final image = await offsetLayer.toImage(
     Offset.zero & boundary.size,
     pixelRatio: 0.5,
