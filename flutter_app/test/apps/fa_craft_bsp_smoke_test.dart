@@ -196,23 +196,17 @@ void main() {
       ),
     );
 
-    // Monotonic fake clock for the frame driver (the rAF scheduler folds
-    // ticker restarts into epochs, so a plain millisecond counter is
-    // safe).
-    var clockMs = 0;
+    // Monotonic frame counter; the binding owns the clock (pump advances
+    // it), the rAF scheduler folds ticker restarts into epochs.
     final frameMs = <int>[];
 
-    /// Drives one frame through the same binding entry points
-    /// tester.pump uses: begin frame (schedulers/tickers/rAF) then draw
-    /// frame (build/layout/paint), then a real-loop breath for the JS
-    /// engine's pending deliveries.
+    /// Drives one frame through [TestWidgetsFlutterBinding.pump] — the
+    /// same entry point WidgetTester.pump uses — then takes a real-loop
+    /// breath for the JS engine's pending deliveries.
     Future<void> pump([int count = 1]) async {
       for (var i = 0; i < count; i++) {
-        clockMs += 16;
-        binding.scheduleFrame();
         final sw = Stopwatch()..start();
-        binding.handleBeginFrame(Duration(milliseconds: clockMs));
-        binding.handleDrawFrame();
+        await binding.pump(const Duration(milliseconds: 16));
         sw.stop();
         frameMs.add(sw.elapsedMilliseconds);
         await Future<void>.delayed(const Duration(milliseconds: 2));
@@ -222,17 +216,9 @@ void main() {
     // Repaints once WITHOUT the trailing real-loop breath: the breath
     // lets the JS tick deliver a camera/sync update that re-dirts the
     // voxel painter, and RenderRepaintBoundary.toImage refuses a dirty
-    // boundary. Marks made during begin/draw are painted within the same
-    // handleDrawFrame, so the boundary is clean on return. scheduleFrame
-    // is required: TestWidgetsFlutterBinding.handleBeginFrame SKIPS the
-    // draw unless a frame was scheduled, and a paint-only mark (no
-    // setState) never schedules one.
-    void repaintClean() {
-      clockMs += 16;
-      binding.scheduleFrame();
-      binding.handleBeginFrame(Duration(milliseconds: clockMs));
-      binding.handleDrawFrame();
-    }
+    // boundary. Marks made during the pump are painted within the same
+    // draw frame, so the boundary is clean on return.
+    Future<void> repaintClean() => binding.pump(Duration.zero);
 
     // ── Phase 1: boot + native binary lane ────────────────────────────
     // fa-craft probes the runtime, then streams terrain through
@@ -376,10 +362,7 @@ void main() {
         child: const SizedBox.shrink(),
       ),
     );
-    clockMs += 16;
-    binding.scheduleFrame();
-    binding.handleBeginFrame(Duration(milliseconds: clockMs));
-    binding.handleDrawFrame();
+    await binding.pump(const Duration(milliseconds: 16));
     _progress('test-body-done');
   }, skip: _skip);
 }
@@ -406,7 +389,15 @@ Future<int> _countEnclosedSkyPixels(
   final boundary =
       boundaryKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
   if (boundary == null) return -1;
-  final image = await boundary.toImage(pixelRatio: 0.5);
+  // Layer-level capture (the SDK's own alternative to
+  // RenderRepaintBoundary.toImage): the needsPaint assert on the
+  // render-object API races with the voxel painter's breath-time
+  // re-marks; the OffsetLayer holds the last committed picture.
+  final offsetLayer = boundary.layer! as OffsetLayer;
+  final image = await offsetLayer.toImage(
+    Offset.zero & boundary.size,
+    pixelRatio: 0.5,
+  );
   final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
   final w = image.width;
   final h = image.height;
