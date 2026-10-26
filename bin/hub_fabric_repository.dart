@@ -45,6 +45,7 @@ final class HubFabricRepository
     this._plugin, {
     this.repositoryResolver,
     this.publicChannelChecker,
+    this.privateKeyMissingChecker,
     this.channelLister,
   });
 
@@ -62,6 +63,13 @@ final class HubFabricRepository
   /// the app (fa_network showcase contract).
   final Future<bool> Function(hub.HubPlugin plugin, String channel)?
   publicChannelChecker;
+
+  /// True when [channel] is a STORED-private membership whose key could
+  /// not be resolved at runtime (missing passphrase). Sending must then
+  /// REFUSE loudly — never downgrade to a hub-readable payload and never
+  /// auto-keygen a key no other member has (gh-1888 review).
+  final Future<bool> Function(hub.HubPlugin plugin, String channel)?
+  privateKeyMissingChecker;
 
   /// Lists the joined channel ids: their `#channel` inboxes are drained
   /// alongside the agent's own inbox (DM-only draining drops channel
@@ -134,9 +142,21 @@ final class HubFabricRepository
       return;
     }
     if (toId.startsWith('#')) {
+      final channel = toId.substring(1);
+      // A stored-private membership whose key failed to resolve must
+      // never downgrade: refuse loudly so the composition queues/retries
+      // instead of emitting a hub-readable (or wrong-key) frame.
+      if (await (privateKeyMissingChecker?.call(_plugin, channel) ??
+          false)) {
+        throw StateError(
+          'refusing to send to #$channel: the private channel key is '
+          'unavailable (set DAP_KEY_PASSPHRASE or rejoin with the '
+          'invite)',
+        );
+      }
       // Private fa_network channel: carry senderX in the frame so the app
       // can open it with the channel key alone (no whois/senderKey lookup).
-      await repo.client.sendChannelFanet1(toId.substring(1), message.text);
+      await repo.client.sendChannelFanet1(channel, message.text);
       return;
     }
     await repo.send(

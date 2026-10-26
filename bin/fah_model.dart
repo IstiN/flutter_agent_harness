@@ -132,6 +132,7 @@ _resolvePlugins(
           hubPlugin,
           repositoryResolver: HubPluginHost.activeRepositoryFor,
           publicChannelChecker: HubPluginHost.publicChannelFor,
+          privateKeyMissingChecker: HubPluginHost.privateChannelKeyMissing,
           channelLister: HubPluginHost.joinedChannelsFor,
         )
       : null;

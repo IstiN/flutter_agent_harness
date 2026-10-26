@@ -269,6 +269,63 @@ void main() {
   );
 
   test(
+    'the public/private decision comes from the STORED shape: an '
+    'undecryptable private envelope is still PRIVATE, and the missing '
+    'key is reported for a loud send refusal (gh-1888 review)',
+    () async {
+      final environment = <String, String>{
+        // NOTE: no DAP_KEY_PASSPHRASE — the envelope cannot be opened.
+        'DAP_HUB_URL': _hubUrl,
+      };
+      final client = hub.HubClient(
+        config: const hub.HubConfig(url: _hubUrl),
+        identity: await hub.HubIdentity.generate(),
+      )..agentId = _selfId;
+      final plugin = _StubHubPlugin(
+        environment: environment,
+        home: home.path,
+        currentStatus: _connectedStatus,
+        memoryRepository: _MemoryHubRepository(client),
+      );
+      final host = HubPluginHost(
+        plugin,
+        environment: environment,
+        home: home.path,
+        localHubUrl: _hubUrl,
+        hubHealthProbe: (port) async => false,
+        hubSpawner: (port) async {},
+      );
+      final context = PluginContext(
+        env: MemoryExecutionEnv(cwd: home.path),
+        io: _IO(),
+        readSessionRecords: (type) async => [
+          _membership('locked', pub: 'pub', priv: 'dapkey1.undecodable')
+              .toJson(),
+          _membership('open').toJson(),
+        ],
+      );
+      host.register(context);
+
+      // Even though runtimeEffective() yields priv == null for 'locked',
+      // it is NOT public: pub != null at rest means private.
+      expect(await HubPluginHost.publicChannelFor(plugin, 'locked'), isFalse);
+      expect(await HubPluginHost.publicChannelFor(plugin, 'open'), isTrue);
+      expect(
+        await HubPluginHost.privateChannelKeyMissing(plugin, 'locked'),
+        isTrue,
+      );
+      expect(
+        await HubPluginHost.privateChannelKeyMissing(plugin, 'open'),
+        isFalse,
+      );
+      expect(
+        await HubPluginHost.privateChannelKeyMissing(plugin, 'missing'),
+        isFalse,
+      );
+    },
+  );
+
+  test(
     'status and menu connect preserve output and default prompt semantics',
     () async {
       final questions = <String>[];

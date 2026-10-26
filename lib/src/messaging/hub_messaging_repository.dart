@@ -546,29 +546,12 @@ final class HubMessagingRepository
           frame['ciphertext'] as String? ?? '',
         );
       } else {
-        var dhB64 = _dhKeys[from];
-        if (dhB64 == null) {
-          await _whois(from);
-          dhB64 = _dhKeys[from];
-        }
-        if (dhB64 == null) throw StateError('no sender DH key');
-        final channelPub = SimplePublicKey(
-          base64Decode(keys.pub),
-          type: KeyPairType.x25519,
-        );
-        text = await hubDecryptPayloadWithKeyPair(
-          recipientDhKeyPair: SimpleKeyPairData(
-            base64Decode(keys.priv),
-            publicKey: channelPub,
-            type: KeyPairType.x25519,
-          ),
-          senderDhPubkey: SimplePublicKey(
-            base64Decode(dhB64),
-            type: KeyPairType.x25519,
-          ),
-          frameId: id,
-          aadTarget: channel,
-          ciphertextB64: frame['ciphertext'] as String? ?? '',
+        text = await _decryptKeyedChannelMail(
+          keys,
+          channel,
+          from,
+          id,
+          frame['ciphertext'] as String? ?? '',
         );
       }
     } on Object {
@@ -587,6 +570,60 @@ final class HubMessagingRepository
           frame['ts'] as int? ?? 0,
         ).toUtc().toIso8601String(),
       ),
+    );
+  }
+
+  /// Decrypts key-holding channel mail: `fanet1` self-describing frames
+  /// FIRST (the sender X25519 pubkey rides in the frame — the fa_network /
+  /// app envelope contract, and what the CLI fabric now sends), falling
+  /// back to the legacy raw `dap/1` layout (sender key via whois).
+  Future<String> _decryptKeyedChannelMail(
+    HubChannelKeys keys,
+    String channel,
+    String from,
+    String id,
+    String payloadB64,
+  ) async {
+    final channelPub = SimplePublicKey(
+      base64Decode(keys.pub),
+      type: KeyPairType.x25519,
+    );
+    final keyPair = SimpleKeyPairData(
+      base64Decode(keys.priv),
+      publicKey: channelPub,
+      type: KeyPairType.x25519,
+    );
+    final fanet1 = hubTryOpenFanet1(payloadB64);
+    if (fanet1 != null) {
+      try {
+        return await hubDecryptPayloadWithKeyPair(
+          recipientDhKeyPair: keyPair,
+          senderDhPubkey: fanet1.senderPubkey,
+          frameId: id,
+          aadTarget: channel,
+          ciphertextB64: fanet1.ciphertextB64,
+        );
+      } on Object {
+        // Shape detection is not proof: a legacy nonce can start with
+        // 0x01 by chance. A failed fanet1 open falls back to the legacy
+        // layout — the frame is dropped only when BOTH paths fail.
+      }
+    }
+    var dhB64 = _dhKeys[from];
+    if (dhB64 == null) {
+      await _whois(from);
+      dhB64 = _dhKeys[from];
+    }
+    if (dhB64 == null) throw StateError('no sender DH key');
+    return hubDecryptPayloadWithKeyPair(
+      recipientDhKeyPair: keyPair,
+      senderDhPubkey: SimplePublicKey(
+        base64Decode(dhB64),
+        type: KeyPairType.x25519,
+      ),
+      frameId: id,
+      aadTarget: channel,
+      ciphertextB64: payloadB64,
     );
   }
 

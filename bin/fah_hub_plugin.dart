@@ -187,22 +187,51 @@ final class HubPluginHost implements FahPlugin {
     return host._isPublicChannel(channel);
   }
 
-  Future<bool> _isPublicChannel(String channel) async {
-    final scoped = _scoped;
-    if (scoped == null) return false;
+  /// True when [channel] is a STORED-private membership (a keypair at
+  /// rest) whose key could NOT be resolved at runtime (missing
+  /// passphrase / no Keychain hit). The fabric send path MUST refuse in
+  /// that case: a private channel never downgrades to a hub-readable
+  /// payload — the send queues/retries once the key is back.
+  static Future<bool> privateChannelKeyMissing(
+    hub.HubPlugin plugin,
+    String channel,
+  ) async {
+    final host = _byPlugin[plugin];
+    final scoped = host?._scoped;
+    if (host == null || scoped == null) return false;
     try {
-      final effective = await scoped.runtimeEffective();
-      return effective.any(
-        (membership) => _isPublicMembership(membership, channel),
+      final stored = await scoped.union().then((u) => u.effective());
+      final isPrivate = stored.any(
+        (m) => host._membershipMatchesChannel(m, channel) && m.pub != null,
+      );
+      if (!isPrivate) return false;
+      final runtime = await scoped.runtimeEffective();
+      return !runtime.any(
+        (m) => host._membershipMatchesChannel(m, channel) && m.priv != null,
       );
     } on Object {
       return false;
     }
   }
 
-  bool _isPublicMembership(DapChannelMembership membership, String channel) {
-    if (!_membershipMatchesChannel(membership, channel)) return false;
-    return membership.pub == null || membership.priv == null;
+  Future<bool> _isPublicChannel(String channel) async {
+    final scoped = _scoped;
+    if (scoped == null) return false;
+    try {
+      // The public/private decision comes from the STORED membership
+      // shape — a truly public channel has pub == null at rest. Runtime
+      // decryption success must never decide it: an undecryptable
+      // private envelope would otherwise downgrade every outbound frame
+      // to the public plaintext contract (gh-1888 review).
+      final stored = await scoped.union().then((u) => u.effective());
+      return stored.any(
+        (membership) =>
+            _membershipMatchesChannel(membership, channel) &&
+            membership.pub == null,
+      );
+    } on Object {
+      return false;
+    }
   }
 
   bool _membershipMatchesChannel(
