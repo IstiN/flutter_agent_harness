@@ -44,6 +44,7 @@ void main() {
   });
 
   _registerNetworkScopeGroup();
+  _registerNarrowViewportGroup();
   group('AddAgentDialog', () {
     late ({String pub, String priv}) channelKeys;
 
@@ -905,6 +906,223 @@ void _registerNetworkScopeGroup() {
         expect(payload, contains('FA_AGENT_NAME=fa-agent fa'));
         await rig.session.close();
       });
+    });
+  });
+}
+
+void _registerNarrowViewportGroup() {
+  group('AddAgentDialog narrow viewport (issue #1913)', () {
+    late ({String pub, String priv}) channelKeys;
+
+    setUp(() async {
+      channelKeys = await EnvelopeCodec.newX25519KeyPair();
+    });
+
+    /// Opens the dialog the way the app does (showDialog) on a
+    /// [width]×844 lp surface at [textScale].
+    Future<void> pumpDialog(
+      WidgetTester tester, {
+      required double width,
+      double height = 844,
+      double textScale = 1.0,
+      String? networkPassword,
+    }) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(
+        networkId: 'net1',
+        name: 'fa-team',
+        password: networkPassword,
+      );
+      await wallet.addChannelKeys(
+        networkId: 'net1',
+        channel: 'c1',
+        pub: channelKeys.pub,
+        priv: channelKeys.priv,
+      );
+      final manager = await buildManager(wallet: wallet, jwt: 'jwt');
+      tester.view.physicalSize = Size(width, height);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      if (textScale != 1.0) {
+        tester.platformDispatcher.textScaleFactorTestValue = textScale;
+        addTearDown(tester.platformDispatcher.clearAllTestValues);
+      }
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => AddAgentDialog(
+                      wallet: wallet,
+                      manager: manager,
+                      networkId: 'net1',
+                      channel: const Channel(
+                        id: 'c1',
+                        networkId: 'net1',
+                        name: 'general',
+                        isPublic: false,
+                      ),
+                    ),
+                  ),
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+    }
+
+    for (final (width, scale) in const [
+      (320.0, 1.0),
+      (320.0, 1.3),
+      (360.0, 1.0),
+      (360.0, 1.3),
+      (393.0, 1.0),
+      (393.0, 1.3),
+    ]) {
+      testWidgets('no overflow, single-line labels, selectable at $width lp, '
+          '${scale}x text', (tester) async {
+        await pumpDialog(tester, width: width, textScale: scale);
+        expect(tester.takeException(), isNull);
+
+        // Every selector label renders on ONE line — the #1913
+        // per-character wrapping doubles the label height.
+        for (final label in [
+          'This channel',
+          'Whole network',
+          'DAP',
+          'Link (app)',
+          'CLI command',
+          'Env (CI)',
+        ]) {
+          expect(
+            tester.getSize(find.text(label)).height,
+            lessThan(34),
+            reason: "'$label' wrapped at $width lp / ${scale}x text",
+          );
+        }
+        // Chips keep a real tap target (~48 dp at 1.0x).
+        expect(
+          tester.getSize(find.byType(ChoiceChip).first).height,
+          greaterThanOrEqualTo(44),
+        );
+
+        // Every option remains selectable.
+        await tester.tap(find.text('Link (app)'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('inviteDapHint')), findsNothing);
+        await tester.tap(find.text('Whole network'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('inviteNoPassword')), findsOneWidget);
+        await tester.tap(find.text('CLI command'));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('inviteNetworkCliHint')),
+          findsOneWidget,
+        );
+        await tester.tap(find.text('This channel'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Env (CI)'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('inviteEnvHint')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('name field and Enroll agent stack vertically on narrow', (
+      tester,
+    ) async {
+      await pumpDialog(tester, width: 393);
+      final field = tester.getRect(
+        find.byKey(const ValueKey('agentNameField')),
+      );
+      final button = tester.getRect(find.byKey(const ValueKey('enrollAgent')));
+      expect(button.top, greaterThanOrEqualTo(field.bottom));
+      // Full-width button — it spans the same column as the field above
+      // it, not the squeezed shared row.
+      expect(button.width, moreOrLessEquals(field.width, epsilon: 1));
+    });
+
+    testWidgets('wide layout keeps the SegmentedButton selectors', (
+      tester,
+    ) async {
+      await pumpDialog(tester, width: 1280);
+      final formats = tester.widget<SegmentedButton<AgentInviteFormat>>(
+        find.byKey(const ValueKey('inviteFormat')),
+      );
+      expect(formats.segments.map((s) => s.value), [
+        AgentInviteFormat.dap,
+        AgentInviteFormat.link,
+        AgentInviteFormat.cli,
+        AgentInviteFormat.env,
+      ]);
+      expect(find.byType(ChoiceChip), findsNothing);
+      // Desktop presentation: the name field and the button share one
+      // row — vertically aligned centers, horizontally disjoint.
+      final field = tester.getRect(
+        find.byKey(const ValueKey('agentNameField')),
+      );
+      final button = tester.getRect(find.byKey(const ValueKey('enrollAgent')));
+      expect(button.center.dy, moreOrLessEquals(field.center.dy, epsilon: 2));
+      expect(button.left, greaterThan(field.right));
+      expect(find.byKey(const ValueKey('copyInvite')), findsOneWidget);
+    });
+
+    testWidgets('env rows scroll on a short screen; Close/Copy stay put', (
+      tester,
+    ) async {
+      await pumpDialog(
+        tester,
+        width: 320,
+        height: 480,
+        textScale: 1.3,
+        networkPassword: 'pw',
+      );
+      // On the short surface the selectors sit below the fold — bring
+      // each into view first (a missed tap would hit the dismissible
+      // barrier and close the dialog).
+      await tester.ensureVisible(find.text('Whole network'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Whole network'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Env (CI)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Env (CI)'));
+      await tester.pumpAndSettle();
+
+      // The last credential row starts below the fold on the short
+      // surface; scroll it into view.
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('envCopy:FA_AGENT_NAME')),
+        -80,
+        scrollable: find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      // The scrolled row and the pinned actions are both on screen.
+      final row = tester.getRect(
+        find.byKey(const ValueKey('envCopy:FA_AGENT_NAME')),
+      );
+      expect(row.top, greaterThanOrEqualTo(0));
+      expect(row.bottom, lessThanOrEqualTo(480));
+      expect(
+        find.byKey(const ValueKey('envCopy:FA_AGENT_NAME')).hitTestable(),
+        findsOneWidget,
+      );
+      final actions = tester.getRect(find.byKey(const ValueKey('copyInvite')));
+      expect(actions.bottom, lessThanOrEqualTo(480));
+      expect(actions.top, greaterThanOrEqualTo(0));
+      expect(find.byKey(const ValueKey('copyInvite')), findsOneWidget);
     });
   });
 }

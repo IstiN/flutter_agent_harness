@@ -84,6 +84,10 @@ class AddAgentDialog extends StatefulWidget {
 }
 
 class _AddAgentDialogState extends State<AddAgentDialog> {
+  /// Logical-width breakpoint between the wide SegmentedButton selectors
+  /// and the stacked narrow layouts (issue #1913).
+  static const _narrowBreakpoint = 480.0;
+
   late AgentInviteScope _scope;
   AgentInviteFormat _format = AgentInviteFormat.dap;
 
@@ -350,6 +354,10 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
     final l10n = context.l10n;
     final payload = _payload;
     final isPublicChannel = widget.channel?.isPublic ?? false;
+    // Below ~480 lp (iPhone portrait, issue #1913) the icon+text
+    // SegmentedButtons wrap per character and the name/enroll row
+    // squeezes — switch to stacked, wrap-friendly layouts.
+    final narrow = MediaQuery.sizeOf(context).width < _narrowBreakpoint;
     return AlertDialog(
       title: Text(l10n.networkAddAgentTitle),
       content: SingleChildScrollView(
@@ -359,13 +367,13 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
           children: [
             _buildInviteHint(colors, l10n, isPublicChannel),
             const SizedBox(height: 12),
-            if (widget.channel != null) ..._buildScopeSelector(l10n),
-            _buildFormatSelector(l10n),
+            if (widget.channel != null) ..._buildScopeSelector(l10n, narrow),
+            _buildFormatSelector(l10n, narrow),
             ..._buildNoPasswordNote(colors, l10n),
             if (_format == AgentInviteFormat.env)
               ..._buildEnvRows(colors, l10n),
             if (_format == AgentInviteFormat.dap)
-              ..._buildDapRows(colors, l10n),
+              ..._buildDapRows(colors, l10n, narrow),
             ..._buildCliHints(colors, l10n),
             const SizedBox(height: 12),
             _buildPayloadBox(colors, l10n, payload),
@@ -404,55 +412,128 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       ? colors.dim
       : colors.error;
 
-  List<Widget> _buildScopeSelector(AppLocalizations l10n) => [
-    SegmentedButton<AgentInviteScope>(
-      key: const ValueKey('inviteScope'),
-      segments: [
-        ButtonSegment(
-          value: AgentInviteScope.channel,
-          icon: const Icon(Icons.tag, size: 16),
-          label: Text(l10n.networkAddAgentScopeChannel),
-        ),
-        ButtonSegment(
-          value: AgentInviteScope.network,
-          icon: const Icon(Icons.hub, size: 16),
-          label: Text(l10n.networkAddAgentScopeNetwork),
-        ),
-      ],
-      selected: {_scope},
-      onSelectionChanged: (s) => setState(() => _scope = s.first),
-    ),
+  /// One selectable option of the narrow Wrap selectors (issue #1913):
+  /// keeps the label's intrinsic width — no per-character wrapping — and
+  /// a ~48 dp tap target at the default text scale.
+  Widget _selectorChip({
+    required IconData icon,
+    required String label,
+    required bool selected,
+    required VoidCallback onSelected,
+  }) {
+    return ChoiceChip(
+      avatar: Icon(icon, size: 16),
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => onSelected(),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+    );
+  }
+
+  List<Widget> _buildScopeSelector(AppLocalizations l10n, bool narrow) => [
+    if (narrow)
+      Wrap(
+        key: const ValueKey('inviteScope'),
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _selectorChip(
+            icon: Icons.tag,
+            label: l10n.networkAddAgentScopeChannel,
+            selected: _scope == AgentInviteScope.channel,
+            onSelected: () => setState(() => _scope = AgentInviteScope.channel),
+          ),
+          _selectorChip(
+            icon: Icons.hub,
+            label: l10n.networkAddAgentScopeNetwork,
+            selected: _scope == AgentInviteScope.network,
+            onSelected: () => setState(() => _scope = AgentInviteScope.network),
+          ),
+        ],
+      )
+    else
+      SegmentedButton<AgentInviteScope>(
+        key: const ValueKey('inviteScope'),
+        segments: [
+          ButtonSegment(
+            value: AgentInviteScope.channel,
+            icon: const Icon(Icons.tag, size: 16),
+            label: Text(l10n.networkAddAgentScopeChannel),
+          ),
+          ButtonSegment(
+            value: AgentInviteScope.network,
+            icon: const Icon(Icons.hub, size: 16),
+            label: Text(l10n.networkAddAgentScopeNetwork),
+          ),
+        ],
+        selected: {_scope},
+        onSelectionChanged: (s) => setState(() => _scope = s.first),
+      ),
     const SizedBox(height: 8),
   ];
 
-  Widget _buildFormatSelector(AppLocalizations l10n) =>
-      SegmentedButton<AgentInviteFormat>(
+  Widget _buildFormatSelector(AppLocalizations l10n, bool narrow) {
+    if (narrow) {
+      return Wrap(
         key: const ValueKey('inviteFormat'),
-        segments: [
-          ButtonSegment(
-            value: AgentInviteFormat.dap,
-            icon: const Icon(Icons.dns, size: 16),
-            label: Text(l10n.networkAddAgentFormatDap),
-          ),
-          ButtonSegment(
-            value: AgentInviteFormat.link,
-            icon: const Icon(Icons.link, size: 16),
-            label: Text(l10n.networkAddAgentFormatLink),
-          ),
-          ButtonSegment(
-            value: AgentInviteFormat.cli,
-            icon: const Icon(Icons.terminal, size: 16),
-            label: Text(l10n.networkAddAgentFormatCli),
-          ),
-          ButtonSegment(
-            value: AgentInviteFormat.env,
-            icon: const Icon(Icons.settings_ethernet, size: 16),
-            label: Text(l10n.networkAddAgentFormatEnv),
-          ),
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final (format, icon, label) in [
+            (AgentInviteFormat.dap, Icons.dns, l10n.networkAddAgentFormatDap),
+            (
+              AgentInviteFormat.link,
+              Icons.link,
+              l10n.networkAddAgentFormatLink,
+            ),
+            (
+              AgentInviteFormat.cli,
+              Icons.terminal,
+              l10n.networkAddAgentFormatCli,
+            ),
+            (
+              AgentInviteFormat.env,
+              Icons.settings_ethernet,
+              l10n.networkAddAgentFormatEnv,
+            ),
+          ])
+            _selectorChip(
+              icon: icon,
+              label: label,
+              selected: _format == format,
+              onSelected: () => setState(() => _format = format),
+            ),
         ],
-        selected: {_format},
-        onSelectionChanged: (s) => setState(() => _format = s.first),
       );
+    }
+    return SegmentedButton<AgentInviteFormat>(
+      key: const ValueKey('inviteFormat'),
+      segments: [
+        ButtonSegment(
+          value: AgentInviteFormat.dap,
+          icon: const Icon(Icons.dns, size: 16),
+          label: Text(l10n.networkAddAgentFormatDap),
+        ),
+        ButtonSegment(
+          value: AgentInviteFormat.link,
+          icon: const Icon(Icons.link, size: 16),
+          label: Text(l10n.networkAddAgentFormatLink),
+        ),
+        ButtonSegment(
+          value: AgentInviteFormat.cli,
+          icon: const Icon(Icons.terminal, size: 16),
+          label: Text(l10n.networkAddAgentFormatCli),
+        ),
+        ButtonSegment(
+          value: AgentInviteFormat.env,
+          icon: const Icon(Icons.settings_ethernet, size: 16),
+          label: Text(l10n.networkAddAgentFormatEnv),
+        ),
+      ],
+      selected: {_format},
+      onSelectionChanged: (s) => setState(() => _format = s.first),
+    );
+  }
 
   List<Widget> _buildNoPasswordNote(FahColors colors, AppLocalizations l10n) =>
       [
@@ -528,7 +609,11 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       ),
   ];
 
-  List<Widget> _buildDapRows(FahColors colors, AppLocalizations l10n) => [
+  List<Widget> _buildDapRows(
+    FahColors colors,
+    AppLocalizations l10n,
+    bool narrow,
+  ) => [
     const SizedBox(height: 8),
     Text(
       l10n.networkAddAgentDapHint,
@@ -549,47 +634,59 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
         style: TextStyle(color: colors.error, fontSize: 13),
       )
     else ...[
-      ..._enrollForm(colors, l10n),
+      ..._enrollForm(colors, l10n, narrow),
       // The one-time credential panel — another enrollment adds an
       // independent identity instead of rotating same-name credentials.
       if (_enrollment != null) ..._enrollmentRows(l10n),
     ],
   ];
 
-  List<Widget> _enrollForm(FahColors colors, AppLocalizations l10n) => [
-    Row(
-      children: [
-        Expanded(
-          child: TextField(
-            key: const ValueKey('agentNameField'),
-            controller: _agentNameCtrl,
-            onChanged: (_) => setState(() {}),
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            decoration: InputDecoration(
-              isDense: true,
-              errorText: _agentNameValid
-                  ? null
-                  : l10n.networkAddAgentNameInvalid,
-            ),
-          ),
+  List<Widget> _enrollForm(
+    FahColors colors,
+    AppLocalizations l10n,
+    bool narrow,
+  ) {
+    final nameField = TextField(
+      key: const ValueKey('agentNameField'),
+      controller: _agentNameCtrl,
+      onChanged: (_) => setState(() {}),
+      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      decoration: InputDecoration(
+        isDense: true,
+        errorText: _agentNameValid ? null : l10n.networkAddAgentNameInvalid,
+      ),
+    );
+    final enrollButton = FilledButton(
+      key: const ValueKey('enrollAgent'),
+      onPressed: _agentNameValid && !_enrolling ? _enroll : null,
+      child: Text(l10n.networkAddAgentEnroll),
+    );
+    return [
+      // Narrow (issue #1913): the row squeezes the field against the
+      // button — stack them with a full-width button.
+      if (narrow)
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [nameField, const SizedBox(height: 8), enrollButton],
+        )
+      else
+        Row(
+          children: [
+            Expanded(child: nameField),
+            const SizedBox(width: 8),
+            enrollButton,
+          ],
         ),
-        const SizedBox(width: 8),
-        FilledButton(
-          key: const ValueKey('enrollAgent'),
-          onPressed: _agentNameValid && !_enrolling ? _enroll : null,
-          child: Text(l10n.networkAddAgentEnroll),
+      if (_enrollError != null) ...[
+        const SizedBox(height: 8),
+        Text(
+          _enrollError!,
+          key: const ValueKey('enrollError'),
+          style: TextStyle(color: colors.error, fontSize: 12),
         ),
       ],
-    ),
-    if (_enrollError != null) ...[
-      const SizedBox(height: 8),
-      Text(
-        _enrollError!,
-        key: const ValueKey('enrollError'),
-        style: TextStyle(color: colors.error, fontSize: 12),
-      ),
-    ],
-  ];
+    ];
+  }
 
   List<Widget> _enrollmentRows(AppLocalizations l10n) => [
     const SizedBox(height: 8),

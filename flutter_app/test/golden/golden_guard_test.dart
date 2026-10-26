@@ -116,6 +116,8 @@ const _coverage = <String, String>{
       'test/golden/chatgpt_oauth_webview_golden_test.dart',
   'lib/ui/screens/oauth_webview_scaffold.dart':
       'test/golden/chatgpt_oauth_webview_golden_test.dart',
+  'lib/ui/network/add_agent_dialog.dart':
+      'test/golden/add_agent_golden_test.dart',
 };
 
 /// Widget files that legitimately cannot be snapshot-tested on the host.
@@ -123,7 +125,6 @@ const _exempt = <String, String>{
   // #955/#999 fa_network feature widgets merged from main without golden
   // coverage (main's own guard is red for these); goldens belong to the
   // network feature work — waived here so the guard reflects #947 only.
-  'lib/ui/network/add_agent_dialog.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/channel_rail.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/channel_composer.dart':
       'fa_network #955: no goldens yet (#1888 added the composer; goldens '

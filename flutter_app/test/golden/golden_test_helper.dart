@@ -83,6 +83,10 @@ Future<void> ensureGoldenFonts() async {
       'Consolas',
       'Roboto Mono',
       'Courier',
+      // The AddAgentDialog credential rows hardcode the generic engine
+      // family (issue #1913 goldens): alias it to the same bytes so the
+      // mono path never resolves to a host substitute.
+      'monospace',
     ])
       FontLoader(family)
         ..addFont(jbm[0])
