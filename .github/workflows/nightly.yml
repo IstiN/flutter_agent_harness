@@ -388,7 +388,8 @@ jobs:
   # Issue #1850 AC5: the allocation-churn report, nightly-only because a
   # full pass is slow (the card's verification discipline: per-PR checks
   # stay on the targeted files; the suite-wide churn number lives here).
-  # Two legs, one job:
+  # Two legs, two jobs (independent timeouts — run 40264809597 burned the
+  # shared 180m budget on the app leg; hosted-job cap is 360m):
   #   core  — dart engine, churnNewMb (exact reclaimed-new-gen volume),
   #           whole test/ suite; budget = AC4's ≤35,000 MB.
   #   app   — flutter engine via the VM allocation profile (allocatedMb;
@@ -398,12 +399,14 @@ jobs:
   #           flutter_tester). Budget starts at 3,000 MB allocated for
   #           the subset and is re-baselined from the recorded runs —
   #           ratchet down, never up (docs/memory-churn.md).
-  # Both JSONs + badges upload as artifacts; the before/after workflow
-  # that consumes them is docs/memory-churn.md. A red leg feeds the
-  # deduped nightly-red issue via auto-issue (needs: below).
-  memory-churn:
-    name: Memory churn report (issue #1850 AC5)
+  # Each leg uploads its own artifact (memory-churn-report-{core,app});
+  # the before/after workflow that consumes them is docs/memory-churn.md.
+  # A red leg feeds the deduped nightly-red issue via auto-issue
+  # (needs: below).
+  memory-churn-core:
+    name: Memory churn report (issue #1850 AC5) — core suite (dart engine)
     runs-on: ubuntu-latest
+    # first run 2026-10-26 hit 180m mid-measurement (run 40264809597) — that clipped the app leg; the core leg finished well under and keeps 180
     timeout-minutes: 180
     permissions:
       contents: read
@@ -424,6 +427,42 @@ jobs:
             --badge memory-results/core-churn-badge.svg \
             --badge-threshold 35000 \
             test > memory-results/memory-core.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: memory-churn-report-core
+          path: memory-results/
+          retention-days: 90
+      - name: Record core totals in the step summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Memory churn (issue #1850 AC5) — core suite (dart engine)"
+            f=memory-results/memory-core.json
+            if [ -f "$f" ]; then
+              echo "### $f"
+              jq -r '"totalAllocatedMb: \(.totalAllocatedMb // .totalChurnMb // "?") · tests: \(.testCount // "?")"' "$f" || head -c 400 "$f"
+              echo
+            else
+              echo "### $f — missing (leg red)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  memory-churn-app:
+    name: Memory churn report (issue #1850 AC5) — app subset (flutter engine)
+    runs-on: ubuntu-latest
+    # first run 2026-10-26 hit 180m mid-measurement (run 40264809597), app-subset needs ≥3h incl. 2GB fixture gen; 360 = hosted-job cap
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+      - name: Activate crap4dart (>=0.19.0 — VM-service allocation profile on flutter, churnNewMb null by design)
+        run: dart pub global activate crap4dart ">=0.19.0 <0.20.0"
       - name: App subset allocated (flutter engine)
         # Pinned SDK: the app baseline is engine-sensitive (same pin the
         # golden baselines use). Placeholder .env/firebase seed the same
@@ -473,24 +512,23 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: memory-churn-report
+          name: memory-churn-report-app
           path: memory-results/
           retention-days: 90
-      - name: Record totals in the step summary
+      - name: Record app totals in the step summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## Memory churn (issue #1850 AC5)"
-            for f in memory-results/memory-core.json memory-results/memory-app.json; do
-              if [ -f "$f" ]; then
-                echo "### $f"
-                jq -r '"totalAllocatedMb: \(.totalAllocatedMb // .totalChurnMb // "?") · tests: \(.testCount // "?")"' "$f" || head -c 400 "$f"
-                echo
-              else
-                echo "### $f — missing (leg red)"
-              fi
-            done
+            echo "## Memory churn (issue #1850 AC5) — app subset (flutter engine)"
+            f=memory-results/memory-app.json
+            if [ -f "$f" ]; then
+              echo "### $f"
+              jq -r '"totalAllocatedMb: \(.totalAllocatedMb // .totalChurnMb // "?") · tests: \(.testCount // "?")"' "$f" || head -c 400 "$f"
+              echo
+            else
+              echo "### $f — missing (leg red)"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Files ONE deduped issue when the scheduled nightly run goes red: the
@@ -512,7 +550,7 @@ jobs:
   # schedule-event runs preceding this one — dispatch runs never count).
   auto-issue:
     name: File nightly-red issue
-    needs: [pty-integration, build-release, memory-churn]
+    needs: [pty-integration, build-release, memory-churn-core, memory-churn-app]
     if: >-
       always() && !cancelled() &&
       (github.event_name == 'schedule' ||
