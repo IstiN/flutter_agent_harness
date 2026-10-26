@@ -501,6 +501,13 @@ const defaultCompactionSettings = CompactionSettings(
   keepRecentTokens: 20000,
 );
 
+/// Cap for the issue #1914 retry escalation's halved retention budget: a
+/// retry pass must cut deeper than the pass that freed nothing, but it still
+/// retains a viable recent window (mirrors the smallest legacy
+/// `CompactionSettings.forWindow` keep floor). Never INFLATES a configured
+/// keep below this — the floor is `min(this, the configured keep)`.
+const _minRetryKeepRecentTokens = 2048;
+
 /// Whether context usage exceeds the compaction threshold.
 ///
 /// Ported from pi's `shouldCompact`: compacts when
@@ -672,12 +679,25 @@ int _snapBackOverNonMessages(
 /// estimated tokens until the budget is exhausted, then snaps the cut forward
 /// to the next valid cut point (never a tool result) and backwards over
 /// non-message records so configuration entries stay with the kept region.
+///
+/// [minFirstKeptIndex] is the retry-escalation floor (issue #1914): when the
+/// backward walk never reaches [keepRecentTokens] — the estimator's chars/4
+/// tally can stay under the budget across a transcript the provider prices
+/// far higher (dense tokenizers, usage anchors, system/tool overhead the
+/// per-message walk never sees) — the fallback cut lands on the FIRST valid
+/// cut point and keeps essentially the whole branch, so a retry pass with
+/// identical inputs repeats the identical cut and frees nothing again. When
+/// the natural cut lands OLDER than this floor, it advances to the first
+/// valid cut point at/after the floor, guaranteeing a retry cut is strictly
+/// newer than the cut that just failed. A natural cut newer than the floor
+/// is left alone.
 CutPointResult findCutPoint(
   List<SessionRecord> entries,
   int startIndex,
   int endIndex,
-  int keepRecentTokens,
-) {
+  int keepRecentTokens, {
+  int? minFirstKeptIndex,
+}) {
   final cutPoints = _findValidCutPoints(entries, startIndex, endIndex);
 
   if (cutPoints.isEmpty) {
@@ -695,6 +715,13 @@ CutPointResult findCutPoint(
     cutPoints,
   );
   cutIndex = _snapBackOverNonMessages(entries, cutIndex, startIndex);
+  if (minFirstKeptIndex != null && cutIndex < minFirstKeptIndex) {
+    final advanced = cutPoints.firstWhere(
+      (cutPoint) => cutPoint >= minFirstKeptIndex,
+      orElse: () => -1,
+    );
+    if (advanced >= 0) cutIndex = advanced;
+  }
   final cutEntry = entries[cutIndex];
   final isUserMessage =
       cutEntry is MessageRecord && cutEntry.message.role == 'user';
@@ -1215,19 +1242,22 @@ List<Message> _entryToSummarizableMessages(SessionRecord entry) {
 /// negative) into a preparation: its summary for iterative updates, its kept
 /// boundary as the new summarize-region start, and its accumulated file
 /// operations into [fileOps].
-({String? previousSummary, int boundaryStart}) _previousCompactionContext(
+({String? previousSummary, int boundaryStart, int prevKeptIndex})
+_previousCompactionContext(
   List<SessionRecord> pathEntries,
   int prevCompactionIndex,
   FileOperations fileOps,
 ) {
   String? previousSummary;
   var boundaryStart = 0;
+  var prevKeptIndex = -1;
   if (prevCompactionIndex >= 0) {
     final prevCompaction = pathEntries[prevCompactionIndex] as CompactionRecord;
     previousSummary = prevCompaction.summary;
     final firstKeptEntryIndex = pathEntries.indexWhere(
       (entry) => entry.id == prevCompaction.firstKeptEntryId,
     );
+    prevKeptIndex = firstKeptEntryIndex;
     boundaryStart = firstKeptEntryIndex >= 0
         ? firstKeptEntryIndex
         : prevCompactionIndex + 1;
@@ -1245,7 +1275,11 @@ List<Message> _entryToSummarizableMessages(SessionRecord entry) {
       }
     }
   }
-  return (previousSummary: previousSummary, boundaryStart: boundaryStart);
+  return (
+    previousSummary: previousSummary,
+    boundaryStart: boundaryStart,
+    prevKeptIndex: prevKeptIndex,
+  );
 }
 
 /// Index of the last [CompactionRecord] in [pathEntries], or -1 when there
@@ -1275,6 +1309,41 @@ void _accumulateFileOps(List<Message> messages, FileOperations fileOps) {
   for (final message in messages) {
     extractFileOpsFromMessage(message, fileOps);
   }
+}
+
+/// Issue #1914 retry escalation: a retry pass whose cut lands at or older
+/// than the previous fold's kept boundary repeats the identical cut — the
+/// backward chars/4 walk never reached keepRecentTokens over a transcript
+/// the provider prices far higher (dense tokenizers, usage anchors,
+/// system/tool overhead the per-message walk never sees), so the fallback
+/// keeps essentially the whole branch and the retry frees nothing. Detected
+/// directly (not predicted), so a healthy iterative fold — whose natural cut
+/// is always newer than the previous kept boundary — keeps the shipped
+/// parameters byte-for-byte. On a repeat: halve the retention budget (floored
+/// at half the configured keep — a retry still retains a viable recent
+/// window) and advance the cut strictly past the failed boundary, so every
+/// retry makes progress and the chain converges toward a real fold.
+CutPointResult _escalateRepeatedCut({
+  required List<SessionRecord> pathEntries,
+  required int boundaryStart,
+  required int prevCompactionIndex,
+  required int prevKeptIndex,
+  required CompactionSettings settings,
+  required CutPointResult natural,
+}) {
+  if (prevCompactionIndex < 0 || prevKeptIndex < boundaryStart) return natural;
+  if (natural.firstKeptEntryIndex > prevKeptIndex) return natural;
+  final escalatedKeep = max(
+    min(_minRetryKeepRecentTokens, settings.keepRecentTokens),
+    settings.keepRecentTokens >> 1,
+  );
+  return findCutPoint(
+    pathEntries,
+    boundaryStart,
+    pathEntries.length,
+    escalatedKeep,
+    minFirstKeptIndex: prevKeptIndex + 1,
+  );
 }
 
 /// The compaction pipeline over a [Session], mirroring pi's harness-level
@@ -1357,11 +1426,18 @@ final class CompactionManager {
     final previousSummary = prevContext.previousSummary;
     final boundaryStart = prevContext.boundaryStart;
 
-    final cutPoint = findCutPoint(
-      pathEntries,
-      boundaryStart,
-      pathEntries.length,
-      effectiveSettings.keepRecentTokens,
+    final cutPoint = _escalateRepeatedCut(
+      pathEntries: pathEntries,
+      boundaryStart: boundaryStart,
+      prevCompactionIndex: prevCompactionIndex,
+      prevKeptIndex: prevContext.prevKeptIndex,
+      settings: effectiveSettings,
+      natural: findCutPoint(
+        pathEntries,
+        boundaryStart,
+        pathEntries.length,
+        effectiveSettings.keepRecentTokens,
+      ),
     );
     final firstKeptEntryId = pathEntries[cutPoint.firstKeptEntryIndex].id;
 
