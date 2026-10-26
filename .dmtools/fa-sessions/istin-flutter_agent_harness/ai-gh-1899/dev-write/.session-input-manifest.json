@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-26T06:53:18.099Z",
+  "ticketKey": "pr-1900",
+  "headSha": "b76462a76f20ece9d08b0fff72058c982d1ab71f",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:6bc400ec722c629b",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:5f638bf53519bde6",
+      "size": 7270
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:eca2e437b6ec08ea",
+      "size": 3322
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:a0c3ce9a7f3f6ce3",
+      "size": 3348
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:0c6dc6e6fb8dbdd7",
+      "size": 926
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:aa5bedaac9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:2d8247dc63354af6",
+      "size": 3089
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:68ce4ef7fa1bc41c",
+      "size": 3012
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6wKMmZ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/release_attach_or_create.sh:64",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: dedupe failure fails the job *after* the release is already published**\n\n`upload_all` runs under `set -euo pipefail`, so this line propagates any failure of `release_draft_dedupe.sh` — a transient `gh api --paginate` error (rate limit, network) or a single failed `DELETE` — as a non-zero exit from `release_attach_or_create.sh`. At that point the `gh release edit --draft=false --latest` flip has **already succeeded**: the release is published and servable, but the daily leg reports red.\n\nThe same applies at the other call site (ci.yml release-provenance, new step \"Reclaim orphaned draft twins\"): a cleanup-only API blip after the publish flip would fail the provenance job and, because `release-asset-smoke` gates on `needs.release-provenance.result == 'success'`, silently skip the post-publish smoke — losing the verification that catches genuinely broken releases, for a release that is actually fine.\n\nThe 24h sweeper remains a backstop either way, so the blast radius is notification noise + skipped smoke, not data loss — hence IMPORTANT, not blocking. Two options:\n\n1. **Best-effort cleanup** (my preference for a post-publish janitor):\n   ```bash\n   bash \"$(dirname \"$0\")/release_draft_dedupe.sh\" \"$tag\" ||\n     echo \"::warning::gh-1899 twin-draft dedupe failed — the 24h sweeper remains the backstop\"\n   ```\n   and the same `|| echo \"::warning::…\"` on the ci.yml `run:` line.\n2. **Keep fail-loud** if you want a recurring twin (dedupe persistently 403ing, say) to page a human instead of rotting 24h — but then please document that tradeoff in the script header, because \"release published, job red\" is a confusing end state.\n\nEither way, worth pinning with a test: the stub `gh` in `test/release_draft_dedupe_test.dart` currently always exits 0 on DELETE, so neither the fail-loud nor the best-effort behavior is asserted."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wKMnt",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/ci.yml:4528",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: pin the failure-mode intent at the provenance call site**\n\nIf you keep the dedupe fail-loud (option 2 in the `release_attach_or_create.sh` thread), consider a one-line comment here noting the accepted consequence: a red dedupe after a green flip fails release-provenance **after** the release is published and skips `release-asset-smoke`. That makes the \"release published, train red\" end state an explicit design decision rather than a surprise for the next on-call. If you go best-effort instead, `bash scripts/release_draft_dedupe.sh \"${GITHUB_REF_NAME}\" || echo \"::warning::gh-1899 dedupe failed — sweeper backstop\"` here is the whole change.\n\nUnrelated nit: `if: success()` is the default for a step with no `if`, but keeping it explicit is fine — the new wiring test already pins that it must not become `always()`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:793d9026",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: dedupe failure fails the job *after* the release is already published**\n\n`upload_all` runs under `set -euo pipefail`, so this line propagates any failure of `release_draft_dedupe.sh` — a transient `gh api --paginate` error (rate limit, network) or a single failed `DELETE` — as a non-zero exit from `release_attach_or_create.sh`. At that point the `gh release edit --draft=false --latest` flip has **already succeeded**: the release is published and servable, but the daily leg reports red.\n\nThe same applies at the other call site (ci.yml release-provenance, new step \"Reclaim orphaned draft twins\"): a cleanup-only API blip after the publish flip would fail the provenance job and, because `release-asset-smoke` gates on `needs.release-provenance.result == 'success'`, silently skip the post-publish smoke — losing the verification that catches genuinely broken releases, for a release that is actually fine.\n\nThe 24h sweeper remains a backstop either way, so the blast radius is notification noise + skipped smoke, not data loss — hence IMPORTANT, not blocking. Two options:\n\n1. **Best-effort cleanup** (my preference for a post-publish janitor):\n   ```bash\n   bash \"$(dirname \"$0\")/release_draft_dedupe.sh\" \"$tag\" ||\n     echo \"::warning::gh-1899 twin-draft dedupe failed — the 24h sweeper remains the backstop\"\n   ```\n   and the same `|| echo \"::warning::…\"` on the ci.yml `run:` line.\n2. **Keep fail-loud** if you want a recurring twin (dedupe persistently 403ing, say) to page a human instead of rotting 24h — but then please document that tradeoff in the script header, because \"release published, job red\" is a confusing end state.\n\nEither way, worth pinning with a test: the stub `gh` in `test/release_draft_dedupe_test.dart` currently always exits 0 on DELETE, so neither the fail-loud nor the best-effort behavior is asserted."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:c5cc0713",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: pin the failure-mode intent at the provenance call site**\n\nIf you keep the dedupe fail-loud (option 2 in the `release_attach_or_create.sh` thread), consider a one-line comment here noting the accepted consequence: a red dedupe after a green flip fails release-provenance **after** the release is published and skips `release-asset-smoke`. That makes the \"release published, train red\" end state an explicit design decision rather than a surprise for the next on-call. If you go best-effort instead, `bash scripts/release_draft_dedupe.sh \"${GITHUB_REF_NAME}\" || echo \"::warning::gh-1899 dedupe failed — sweeper backstop\"` here is the whole change.\n\nUnrelated nit: `if: success()` is the default for a step with no `if`, but keeping it explicit is fine — the new wiring test already pins that it must not become `always()`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:fd8104c2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Well-scoped gh-1899 fix with strong coverage: the dedupe guard's ownership discipline (run-scoped marker with trailing-slash prefix protection, published-release precondition, delete-by-id) matches the repo's guard/sweeper patterns, and the wiring lints pin the step after the publish flip. Verified locally: 9/9 new tests, 52/52 hygiene, 184/184 release-suite tests pass; ci.yml parses.\n\n**Key Issues**:\n- ⚠️ A transient `gh api` failure in the dedupe fails the leg/job *after* the release is already published — see the inline comment on `release_attach_or_create.sh:64`.\n- 💡 One suggestion on pinning the failure-mode decision at the ci.yml call site.\n\n**Next Steps**:\n1. Decide fail-loud vs best-effort for the dedupe and pin it with a test (inline comment 1).\n2. Optionally note the `release-asset-smoke` skip consequence in the ci.yml step (inline comment 2)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
