@@ -66,48 +66,73 @@ DapEnvChannelsResult parseDapEnvChannels(
   final memberships = <DapChannelMembership>[];
   final warnings = <String>[];
   for (var i = 0; i < decoded.length; i++) {
-    final entry = decoded[i];
-    if (entry is! Map) {
-      warnings.add('DAP_CHANNELS_JSON[$i]: not an object — skipped');
-      continue;
-    }
-    final channel = entry['channel'];
-    final hubUrl = entry['hubUrl'] ?? defaultHubUrl;
-    if (channel is! String || channel.isEmpty) {
-      warnings.add('DAP_CHANNELS_JSON[$i]: missing "channel" — skipped');
-      continue;
-    }
-    if (hubUrl is! String || hubUrl.isEmpty) {
-      warnings.add(
-        'DAP_CHANNELS_JSON[$i]: no hubUrl and no DAP_HUB_URL — skipped '
-        '(#$channel)',
-      );
-      continue;
-    }
-    final pub = entry['pub'];
-    final priv = entry['priv'];
-    if (pub != null && pub is! String) {
-      warnings.add(
-        'DAP_CHANNELS_JSON[$i]: "pub" is not a string — skipped (#$channel)',
-      );
-      continue;
-    }
-    if (priv != null && priv is! String) {
-      warnings.add(
-        'DAP_CHANNELS_JSON[$i]: "priv" is not a string — skipped (#$channel)',
-      );
-      continue;
-    }
-    memberships.add(
-      DapChannelMembership(
-        hubUrl: hubUrl,
-        channelId: channel,
-        scope: DapChannelScope.global,
-        joinedAt: now,
-        pub: pub as String?,
-        priv: priv as String?,
-      ),
+    final result = _parseDapEnvEntry(
+      decoded[i],
+      index: i,
+      defaultHubUrl: defaultHubUrl,
+      joinedAt: now,
     );
+    if (result.warning != null) warnings.add(result.warning!);
+    if (result.membership != null) memberships.add(result.membership!);
   }
   return DapEnvChannelsResult(memberships, warnings);
+}
+
+({DapChannelMembership? membership, String? warning}) _parseDapEnvEntry(
+  Object? entry, {
+  required int index,
+  required String? defaultHubUrl,
+  required DateTime joinedAt,
+}) {
+  if (entry is! Map) {
+    return (
+      membership: null,
+      warning: 'DAP_CHANNELS_JSON[$index]: not an object — skipped',
+    );
+  }
+  final channel = entry['channel'];
+  final hubUrl = entry['hubUrl'] ?? defaultHubUrl;
+  if (channel is! String || channel.isEmpty) {
+    return (
+      membership: null,
+      warning: 'DAP_CHANNELS_JSON[$index]: missing "channel" — skipped',
+    );
+  }
+  if (hubUrl is! String || hubUrl.isEmpty) {
+    return (
+      membership: null,
+      warning:
+          'DAP_CHANNELS_JSON[$index]: no hubUrl and no DAP_HUB_URL — '
+          'skipped (#$channel)',
+    );
+  }
+  final pub = entry['pub'];
+  final priv = entry['priv'];
+  if (pub != null && pub is! String) {
+    return (
+      membership: null,
+      warning:
+          'DAP_CHANNELS_JSON[$index]: "pub" is not a string — '
+          'skipped (#$channel)',
+    );
+  }
+  if (priv != null && priv is! String) {
+    return (
+      membership: null,
+      warning:
+          'DAP_CHANNELS_JSON[$index]: "priv" is not a string — '
+          'skipped (#$channel)',
+    );
+  }
+  return (
+    membership: DapChannelMembership(
+      hubUrl: hubUrl,
+      channelId: channel,
+      scope: DapChannelScope.global,
+      joinedAt: joinedAt,
+      pub: pub as String?,
+      priv: priv as String?,
+    ),
+    warning: null,
+  );
 }
