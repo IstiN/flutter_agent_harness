@@ -104,7 +104,9 @@ void main() {
         expect(digest!, contains('healthy'));
         expect(digest, isNot(contains('[WARN]')));
         expect(digest, contains('${2 * i} requests'));
-        expect(digest, contains('${500 * i} tokens'));
+        // Issue #1924: the figure is labeled LIFETIME (cumulative billed
+        // usage), never bare 'tokens' — it must not be misread as context.
+        expect(digest, contains('${500 * i} lifetime tokens'));
       }
       expect(notices, hasLength(3));
     });
@@ -176,8 +178,9 @@ void main() {
       now = t0.add(const Duration(minutes: 12));
       final digest = heartbeat.tick();
       expect(digest, isNotNull);
-      expect(digest!, contains('4 requests'));
-      expect(digest, contains('1500 tokens'));
+      expect(digest, contains('4 requests'));
+      // Issue #1924: labeled lifetime (see the AC2 note above).
+      expect(digest, contains('1500 lifetime tokens'));
       expect(digest, contains('healthy'));
     });
   });
