@@ -556,39 +556,57 @@ final class DapScopedMemberships {
       if (entity is! File || entity.path == _overlayGuardFile) continue;
       final name = entity.uri.pathSegments.last;
       if (!name.startsWith(prefix) || !name.endsWith('.guard')) continue;
-      try {
-        final guard = _parseOverlayGuard(
-          name.substring(prefix.length, name.length - 6),
-          await entity.readAsString(),
-        );
-        if (guard == null) continue;
-        final (guardPid, guardIdentity) = guard;
-        if (!(await _pidAlive(guardPid))) {
-          await entity.delete();
-          continue;
-        }
-        if (guardIdentity.isEmpty) {
-          keepOverlay = true; // legacy pid-only guard — keep on doubt
-          continue;
-        }
-        final current = await processIdentity(guardPid);
-        if (current == null ||
-            current == guardIdentity ||
-            !_isKnownIdentityShape(current) ||
-            !_isKnownIdentityShape(guardIdentity)) {
-          // Probe failure, same incarnation, or an identity we cannot
-          // interpret (corrupt / future format): keep on doubt — an
-          // unreadable identity must never authorize a reclaim.
-          keepOverlay = true;
-          continue;
-        }
-        await entity.delete(); // recycled pid: writer is gone (issue #1898)
-      } on Object {
-        keepOverlay = true; // keep-on-doubt, same as a live-pid probe
-      }
+      keepOverlay = await _sweepOverlayGuard(entity) || keepOverlay;
     }
     return keepOverlay;
   }
+
+  /// The per-guard verdict: true when [entity] must keep the overlay
+  /// alive. Deletion failures fail closed (keep), like every probe.
+  Future<bool> _sweepOverlayGuard(File entity) async {
+    try {
+      final guard = await _readOverlayGuard(entity);
+      if (guard == null) return false;
+      final (guardPid, guardIdentity) = guard;
+      if (!(await _pidAlive(guardPid))) {
+        await entity.delete();
+        return false;
+      }
+      if (await _isLiveGuardOwner(guardPid, guardIdentity)) return true;
+      await entity.delete(); // recycled pid: writer is gone (issue #1898)
+      return false;
+    } on Object {
+      return true; // keep-on-doubt, same as a live-pid probe
+    }
+  }
+
+  /// Parses a sibling guard file into `(pid, identity)`; null when it is
+  /// not one of ours (foreign name or a non-numeric pid — left for a
+  /// human, like the unparseable names before).
+  Future<(int, String)?> _readOverlayGuard(File entity) async {
+    final name = entity.uri.pathSegments.last;
+    final prefix = '${File(overlayChannelsFile).uri.pathSegments.last}.';
+    if (!name.startsWith(prefix) || !name.endsWith('.guard')) return null;
+    final pidText = name.substring(prefix.length, name.length - 6);
+    return _parseOverlayGuard(pidText, await entity.readAsString());
+  }
+
+  /// True when the live process with [pid] is provably the same
+  /// incarnation that wrote the guard. Every uncertain answer — empty
+  /// legacy token, probe failure, unknown token shape — is a live owner.
+  Future<bool> _isLiveGuardOwner(int pid, String recorded) async {
+    if (recorded.isEmpty) return true; // legacy pid-only guard
+    final current = await processIdentity(pid);
+    if (current == null || current == recorded) return true;
+    return !_isRecycledPidEvidence(recorded, current);
+  }
+
+  /// True only on CERTAIN recycle evidence: both tokens are shapes this
+  /// build mints and they differ. Anything less keeps the overlay.
+  static bool _isRecycledPidEvidence(String recorded, String current) =>
+      _isKnownIdentityShape(recorded) &&
+      _isKnownIdentityShape(current) &&
+      recorded != current;
 
   /// True for an identity token this build mints (`s<ticks>` from
   /// `/proc` or `e<epoch>` from `ps lstart`). Anything else is treated

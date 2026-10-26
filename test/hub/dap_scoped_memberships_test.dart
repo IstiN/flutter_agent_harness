@@ -462,6 +462,11 @@ void main() {
       await s.cleanupOverlay();
     });
 
+    test('cleanupOverlay tolerates a runtime dir that never existed', () async {
+      // No seedOverlay: the sweep's missing-dir early return runs.
+      await service().cleanupOverlay();
+    });
+
     test('cleanupOverlay preserves the shared overlay while another live '
         'agent owns a guard, then removes it after that agent exits', () async {
       final other = await Process.start('sleep', ['30']);
