@@ -67,9 +67,39 @@ void main() {
       return dialog;
     }
 
+    testWidgets('DAP is the first, default format and shows its paste hint', (
+      tester,
+    ) async {
+      await pumpDialog(tester);
+
+      final formats = tester.widget<SegmentedButton<AgentInviteFormat>>(
+        find.byKey(const ValueKey('inviteFormat')),
+      );
+      expect(formats.segments.map((segment) => segment.value), [
+        AgentInviteFormat.dap,
+        AgentInviteFormat.link,
+        AgentInviteFormat.cli,
+        AgentInviteFormat.env,
+      ]);
+      expect(formats.selected, {AgentInviteFormat.dap});
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('inviteDapHint')))
+            .data,
+        'Copy this block and paste it into the fa chat (CLI, macOS, iOS or '
+        'web) — the agent joins the channel automatically.',
+      );
+
+      await tester.tap(find.text('Link (app)'));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('inviteDapHint')), findsNothing);
+    });
+
     testWidgets('shows the invite: channel + pub, priv only inside the '
         'fragment', (tester) async {
       await pumpDialog(tester);
+      await tester.tap(find.text('Link (app)'));
+      await tester.pump();
       final invite = tester
           .widget<Text>(find.byKey(const ValueKey('agentInvite')))
           .data!;
@@ -125,6 +155,8 @@ void main() {
           ),
         ),
       );
+      await tester.tap(find.text('Link (app)'));
+      await tester.pump();
       final invite = tester
           .widget<Text>(find.byKey(const ValueKey('agentInvite')))
           .data!;
@@ -138,6 +170,8 @@ void main() {
     ) async {
       final clipboard = FakeClipboard()..install(tester);
       await pumpDialog(tester);
+      await tester.tap(find.text('Link (app)'));
+      await tester.pump();
       final invite = tester
           .widget<Text>(find.byKey(const ValueKey('agentInvite')))
           .data!;
@@ -207,6 +241,8 @@ void _registerNetworkScopeGroup() {
       await pump(tester, wallet: await buildWallet(password: 'sekret42'));
       await tester.tap(find.text('Whole network'));
       await tester.pump();
+      await tester.tap(find.text('Link (app)'));
+      await tester.pump();
 
       final invite = tester
           .widget<Text>(find.byKey(const ValueKey('agentInvite')))
@@ -221,6 +257,8 @@ void _registerNetworkScopeGroup() {
     ) async {
       await pump(tester, wallet: await buildWallet());
       await tester.tap(find.text('Whole network'));
+      await tester.pump();
+      await tester.tap(find.text('Link (app)'));
       await tester.pump();
 
       final invite = tester
@@ -390,6 +428,8 @@ void _registerNetworkScopeGroup() {
           ),
         ),
       );
+      await tester.pump();
+      await tester.tap(find.text('Link (app)'));
       await tester.pump();
 
       expect(find.byKey(const ValueKey('inviteScope')), findsNothing);

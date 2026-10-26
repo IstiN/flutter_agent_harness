@@ -306,8 +306,7 @@ void _bindV2Surface() {
 /// on the JS arguments.length (call$0 for a 0-arg JS call) and a
 /// required-parameter closure has no call$0 — the seam would throw
 /// "a.$0 is not a function" for bare `bridgeCatalog()`.
-JSPromise<JSAny?> _bridgeCatalogImpl([JSAny? ns]) =>
-    _bridgeCatalog(ns).toJS;
+JSPromise<JSAny?> _bridgeCatalogImpl([JSAny? ns]) => _bridgeCatalog(ns).toJS;
 
 Future<JSAny?> _bridgeCatalog(JSAny? ns) async {
   final chrome = _chromeApi;
@@ -315,7 +314,10 @@ Future<JSAny?> _bridgeCatalog(JSAny? ns) async {
   try {
     final name = ns == null ? null : (ns.dartify() as String?);
     if (name == null || name.isEmpty) {
-      return {'ok': true, 'namespaces': await chrome.bridge.namespaces()}.jsify();
+      return {
+        'ok': true,
+        'namespaces': await chrome.bridge.namespaces(),
+      }.jsify();
     }
     return {
       'ok': true,
@@ -358,8 +360,10 @@ Future<JSAny?> _bridgeCall(JSAny? path, JSAny? args) async {
   }
 }
 
-JSAny? _bridgeErr(String code, String message) =>
-    {'ok': false, 'error': {'code': code, 'message': message}}.jsify();
+JSAny? _bridgeErr(String code, String message) => {
+  'ok': false,
+  'error': {'code': code, 'message': message},
+}.jsify();
 
 /// faAgentV2.schedule(id, prompt, periodMinutes) — registers a persisted
 /// task; the alarm fires `prompt` into the agent (steers mid-run, AC4c).
@@ -845,7 +849,26 @@ DapConfig? _dapFrom(Object? raw) {
       '${raw['sec'
                   'ret'] ?? ''}'
           .trim();
-  print('[dap] config: url=$url name=${name.isEmpty ? '—' : name}');
+  print('[dap] config: name=${name.isEmpty ? '—' : name}');
+  var clientSecret = '';
+  var channel = '';
+  String? channelPub;
+  String? channelPriv;
+  final enrollment = raw['enrollment'];
+  if (enrollment is Map) {
+    final candidateChannel = '${enrollment['channel'] ?? ''}'.trim();
+    final candidatePub = enrollment['pub'] as String?;
+    final candidatePriv = enrollment['priv'] as String?;
+    // A partial/garbled keypair must never downgrade a keyed invite to a
+    // public join. Ignore the enrollment and keep ordinary hub presence.
+    if (candidateChannel.isNotEmpty &&
+        (candidatePub == null) == (candidatePriv == null)) {
+      channel = candidateChannel;
+      channelPub = candidatePub;
+      channelPriv = candidatePriv;
+      clientSecret = enrollment['clientSecret'] as String? ?? '';
+    }
+  }
   final bound = raw['boundSession'];
   final boundMap = bound is Map ? bound : const {};
   final boundId = '${boundMap['sessionId'] ?? ''}'.trim();
@@ -853,6 +876,10 @@ DapConfig? _dapFrom(Object? raw) {
     url: url,
     name: name,
     secret: secret,
+    clientSecret: clientSecret,
+    channel: channel,
+    channelPub: channelPub,
+    channelPriv: channelPriv,
     loadKeyFile: () => _storageGetString('faDapKey'),
     saveKeyFile: (text) => _storageSetString('faDapKey', text),
     // Absent/garbled mode → 'dedicated' (issue #321): inbound mail mints

@@ -15,6 +15,7 @@ import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
 
 import 'add_agent_dialog.dart';
+import 'channel_composer.dart';
 
 /// The channel chat surface (issue #955): the shared [FaChatScreen] over a
 /// [ChannelChatService] with `FaChatFeatures.minimal()` — plain text
@@ -91,7 +92,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   }
 
   String _channelLabel(NetworkSession session, String channelId) {
-    return _channel(session, channelId)?.name ?? channelId;
+    return channelDisplayLabel(channelId, _channel(session, channelId)?.name);
   }
 
   Channel? _channel(NetworkSession session, String channelId) {
@@ -137,11 +138,11 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
       return Center(child: Text(context.l10n.networkSelectChannel));
     }
     final session = chatFor.$1;
-    final label = _channelLabel(session, chatFor.$2);
     return ListenableBuilder(
       listenable: session,
       builder: (context, _) {
         final channel = _channel(session, chatFor.$2);
+        final label = _channelLabel(session, chatFor.$2);
         return Column(
           children: [
             _ChannelHeader(
@@ -149,7 +150,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
               label: label,
               manager: widget.manager,
             ),
-            if (session.networkOffline) const _OfflineBanner(),
+            if (session.networkOffline) _OfflineBanner(session: session),
             Expanded(
               child: FaChatStringsScope(
                 strings: _ChannelChatStrings(
@@ -161,15 +162,15 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   features: const FaChatFeatures.minimal(),
                   title: label,
                   showAppBar: false,
-                  // Writable channels get the DEFAULT composer — the same
-                  // ChatComposer chrome as the session surface (single
-                  // style across the app). The showcase read-only note
-                  // replaces it only for members browsing a public
-                  // showcase channel.
+                  // Writable channels keep the shared composer chrome, with
+                  // roster-backed @-completion added for DAP agents. The
+                  // showcase read-only note replaces it only for members
+                  // browsing a public showcase channel.
                   composerBuilder: _isReadOnlyShowcase(session, chatFor.$2)
                       ? (context, service, drop) =>
                             const _ShowcaseReadOnlyNote()
-                      : null,
+                      : (context, service, drop) =>
+                            ChannelChatComposer(service: chat),
                 ),
               ),
             ),
@@ -183,7 +184,9 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
 /// The offline banner: the socket queues while the relay is unreachable
 /// and flushes once on reconnect (engine contract E1).
 class _OfflineBanner extends StatelessWidget {
-  const _OfflineBanner();
+  const _OfflineBanner({required this.session});
+
+  final NetworkSession session;
 
   @override
   Widget build(BuildContext context) {
@@ -201,6 +204,12 @@ class _OfflineBanner extends StatelessWidget {
               context.l10n.networkReconnecting,
               style: TextStyle(fontSize: 12, color: colors.text),
             ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: context.l10n.networkReconnectNow,
+            onPressed: session.reconnect,
+            icon: Icon(Icons.refresh, size: 18, color: colors.text),
           ),
         ],
       ),

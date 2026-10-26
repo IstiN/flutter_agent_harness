@@ -351,6 +351,7 @@ part 'agent_cli_wire_serve.dart';
 part 'agent_cli_diag_log.dart';
 part 'agent_cli_lifecycle.dart';
 part 'agent_cli_input.dart';
+part 'agent_cli_plugin_records.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
@@ -442,10 +443,13 @@ class AgentCli {
         config: _pluginConfig(plugin.name),
         pickOption: _pickOption,
         askLine: _askLine,
+        appendSessionRecord: _appendPluginSessionRecord,
+        readSessionRecords: _readPluginSessionRecords,
       );
       plugin.register(context);
       pluginTools.addAll(context.tools);
       _pluginInboxes.addAll(context.externalInboxes);
+      _pluginSessionReadyListeners.addAll(context.sessionReadyListeners);
       _pluginSlashCommands.addAll(context.slashCommands);
       _pluginSlashDescriptions.addAll(context.slashCommandDescriptions);
     }
@@ -1779,6 +1783,7 @@ class AgentCli {
   ProviderQuotaService? _quotaService;
   final Map<String, String> _pluginSlashDescriptions = {};
   final List<ExternalInbox> _pluginInboxes = [];
+  final List<void Function()> _pluginSessionReadyListeners = [];
 
   /// JS-extension wiring state (extensions cannot add fields) — the live
   /// host, ext slash commands, and the prompt section. See
@@ -1989,6 +1994,7 @@ class AgentCli {
     // revalidates on the first menu open (stale entries) — no boot HTTP.
     await _loadPersistedModelCache();
     _session = await _initializeSession();
+    _notifyPluginSessionReady();
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
     await _claimSessionLease();
@@ -2202,6 +2208,7 @@ class AgentCli {
     // same cached trees a REPL session would).
     await _cubeBootRestore();
     _session = await _initializeSession();
+    _notifyPluginSessionReady();
     // Ownership lease (#428, E7): a headless run NEVER spawns a second
     // writer over a live lease — it refuses with the banner (exit 3) so
     // wake loops reopen interactively instead of fighting the owner.

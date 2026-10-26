@@ -8,10 +8,9 @@ import 'auth_loopback_stub.dart'
 
 import 'auth_flow.dart';
 
-/// Binds the desktop loopback callback receiver for the OAuth sign-in
-/// (issue #955 iteration 3). The conditional import keeps `lib/network`
-/// web-safe: on web the stub throws [UnsupportedError] (the loopback
-/// listener needs `dart:io`).
+/// Binds the platform callback receiver for OAuth sign-in: an RFC 8252
+/// loopback on desktop, a deep link on mobile, or a popup plus origin
+/// callback on web. The conditional import keeps `lib/network` web-safe.
 Future<OAuthCallbackReceiver> startOAuthCallbackReceiver() =>
     startOAuthCallbackReceiverImpl();
 

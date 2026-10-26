@@ -805,7 +805,7 @@ class _ScriptedAgentNetwork extends AgentNetworkController {
         fileLayer: _memoryFileLayer(),
         fileFabric: SwappableMessagingRepository(_memoryFileLayer()),
         transport: null,
-        loadIdentity: (_) async => null,
+        loadIdentity: (_, _) async => null,
       ) {
     unawaited(store.setEnabled(true));
   }
