@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:collection';
 import 'dart:math' as math;
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/gestures.dart';
@@ -499,6 +500,113 @@ void main() {
         isTrue,
       );
     });
+
+    test('every painter field change repaints', () {
+      TrajectoryTimelinePainter variant({
+        TrajectoryTimelineModel? withModel,
+        List<TrajectoryRecord>? records,
+        TrajectoryTimelineMode? mode,
+        FahColors? colors,
+        List<String>? laneLabels,
+        String? fontFamily,
+        TrajectoryTimelineViewport? viewport,
+        TrajectoryTimeRange? selection,
+        TrajectoryTimeRange? draft,
+        bool dragging = false,
+        int? hoverIndex,
+        double? guideX,
+        Set<int>? searchMatches,
+        int? selectedRecordIndex,
+        List<TrajectoryTimelinePulse> pulses = const [],
+        double pulsePhase = 0,
+      }) => TrajectoryTimelinePainter(
+        model: withModel ?? model,
+        records: records ?? const [],
+        mode: mode ?? TrajectoryTimelineMode.sequence,
+        colors: colors ?? FahColors.dark,
+        laneLabels: laneLabels ?? labels,
+        fontFamily: fontFamily,
+        viewport: viewport,
+        selection: selection,
+        draft: draft,
+        dragging: dragging,
+        hoverIndex: hoverIndex,
+        guideX: guideX,
+        searchMatches: searchMatches,
+        selectedRecordIndex: selectedRecordIndex,
+        pulses: pulses,
+        pulsePhase: pulsePhase,
+      );
+
+      final base = variant();
+      const otherModel = TrajectoryTimelineModel(
+        start: 0,
+        end: 3,
+        spans: [],
+        turnBoundaries: [],
+      );
+      expect(base.shouldRepaint(variant(withModel: otherModel)), isTrue);
+      expect(
+        base.shouldRepaint(
+          variant(
+            records: const [
+              TrajectoryUserRecord(
+                index: 1,
+                recordId: 'r1',
+                text: 'u',
+                opensTurn: true,
+              ),
+            ],
+          ),
+        ),
+        isTrue,
+      );
+      expect(
+        base.shouldRepaint(variant(mode: TrajectoryTimelineMode.duration)),
+        isTrue,
+      );
+      expect(base.shouldRepaint(variant(colors: FahColors.light)), isTrue);
+      expect(
+        base.shouldRepaint(variant(laneLabels: const ['A', 'B', 'C'])),
+        isTrue,
+      );
+      expect(base.shouldRepaint(variant(fontFamily: 'monospace')), isTrue);
+      expect(
+        base.shouldRepaint(
+          variant(
+            viewport: const TrajectoryTimelineViewport(start: 0, duration: 2),
+          ),
+        ),
+        isTrue,
+      );
+      expect(
+        base.shouldRepaint(
+          variant(selection: const TrajectoryTimeRange(start: 0, end: 1)),
+        ),
+        isTrue,
+      );
+      expect(
+        base.shouldRepaint(
+          variant(draft: const TrajectoryTimeRange(start: 0, end: 1)),
+        ),
+        isTrue,
+      );
+      expect(base.shouldRepaint(variant(dragging: true)), isTrue);
+      expect(base.shouldRepaint(variant(hoverIndex: 1)), isTrue);
+      expect(base.shouldRepaint(variant(guideX: 12)), isTrue);
+      expect(base.shouldRepaint(variant(searchMatches: const {1})), isTrue);
+      expect(base.shouldRepaint(variant(selectedRecordIndex: 1)), isTrue);
+      expect(
+        base.shouldRepaint(
+          variant(
+            pulses: const [TrajectoryTimelinePulse(start: 0, end: 1, lane: 1)],
+          ),
+        ),
+        isTrue,
+      );
+      expect(base.shouldRepaint(variant(pulsePhase: 0.5)), isTrue);
+      expect(base.shouldRepaint(variant()), isFalse);
+    });
   });
 
   // -- Widget behavior ----------------------------------------------------
@@ -746,6 +854,95 @@ void main() {
     await mouse.moveTo(const Offset(194.5, 49)); // below the lanes area
     await tester.pump();
     expect(find.text('ASSISTANT'), findsNothing);
+    await mouse.removePointer();
+    controller.dispose();
+  });
+
+  /// Hovers [spot] after leaving the lanes — a visible tooltip covers the
+  /// lanes underneath it (Ahem glyphs are wide), and moving straight to a
+  /// covered point exits the hover region instead of switching spans.
+  Future<void> hoverSpan(
+    WidgetTester tester,
+    TestGesture mouse,
+    Offset spot,
+  ) async {
+    await mouse.moveTo(const Offset(194.5, 49)); // below the lanes area
+    await tester.pump();
+    await mouse.moveTo(spot);
+    await tester.pump(const Duration(milliseconds: 600));
+  }
+
+  testWidgets('tooltips read the wall clock per kind', (tester) async {
+    final controller = timelineFixtureController();
+    await _pump(tester, controller);
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(94, 4));
+    await hoverSpan(tester, mouse, const Offset(94.5, 4)); // user, lane 0
+    expect(find.text('USER'), findsOneWidget);
+    // User messages carry no recorded duration — no end arrow.
+    expect(find.textContaining('→'), findsNothing);
+
+    await hoverSpan(tester, mouse, const Offset(294.5, 32)); // tool, lane 2
+    expect(find.text('TOOL'), findsOneWidget);
+    // The settled tool ran 1s: the row carries a start → end window.
+    expect(find.textContaining(' → '), findsOneWidget);
+    await mouse.removePointer();
+    controller.dispose();
+  });
+
+  testWidgets('untimed context spans show the bare started label', (
+    tester,
+  ) async {
+    final controller = timelineContextOnlyController();
+    await _pump(tester, controller);
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(94, 4));
+    await mouse.moveTo(const Offset(94.5, 4));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('CONTEXT'), findsOneWidget);
+    expect(find.text('Started'), findsOneWidget);
+    await mouse.removePointer();
+    controller.dispose();
+  });
+
+  testWidgets('assistant tooltips split TTFT and decoding', (tester) async {
+    final base = DateTime.utc(2026, 1, 1, 12);
+    final controller = TrajectoryController(
+      initial: TrajectorySnapshot(
+        records: UnmodifiableListView([
+          TrajectoryAssistantRecord(
+            index: 1,
+            recordId: 'ttft/assistant',
+            messageId: 't1',
+            turn: 1,
+            step: 1,
+            isError: false,
+            stepStartTime: base,
+            firstTokenTime: base.add(const Duration(milliseconds: 300)),
+            completedTime: base.add(const Duration(milliseconds: 2500)),
+            timeSeconds: const Duration(milliseconds: 2500),
+          ),
+        ]),
+        requests: UnmodifiableListView(const []),
+        callSchemas: const {},
+        partial: null,
+        runningCalls: UnmodifiableListView(const []),
+        recordLocations: const {},
+        revision: 1,
+      ),
+    );
+    await _pump(tester, controller);
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(94, 18));
+    await mouse.moveTo(const Offset(94.5, 18)); // the model lane span
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('ASSISTANT'), findsOneWidget);
+    expect(find.textContaining(' → '), findsOneWidget);
+    expect(find.textContaining('Total 2,500'), findsOneWidget);
+    expect(find.textContaining('TTFT 300'), findsOneWidget);
     await mouse.removePointer();
     controller.dispose();
   });
