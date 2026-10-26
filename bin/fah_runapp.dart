@@ -1125,8 +1125,17 @@ Future<void> _runApp(List<String> args) async {
   // the same idempotent cleanup as the normal branch finally blocks.
   _fahPluginTeardown = teardownPlugins;
 
+  // gh-1895 review: every _fail that runs AFTER plugin resolution must
+  // remove the runtime plaintext-key overlay before the usage exit — the
+  // next boot's guard sweep would reclaim it eventually, but the overlay
+  // must not linger on disk for the whole gap.
+  Future<Never> failAfterPlugins(String message) async {
+    await teardownPlugins();
+    _fail(message);
+  }
+
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
-    _fail('unknown mode: ${effective.mode}');
+    await failAfterPlugins('unknown mode: ${effective.mode}');
   }
   final promptTemplateDirs = <String>[
     '$cwd/.fah/prompts',
@@ -1153,7 +1162,7 @@ Future<void> _runApp(List<String> args) async {
     try {
       tee = File(path).openSync(mode: FileMode.write);
     } on Object catch (error) {
-      _fail('cannot open --log-file "$path": $error');
+      await failAfterPlugins('cannot open --log-file "$path": $error');
     }
     logTeeFile = tee;
     io = TeeCliIO(terminalIo, tee.writeStringSync);
@@ -1306,7 +1315,7 @@ Future<void> _runApp(List<String> args) async {
         ? flagTools
         : toolsSpecFromEnv(Platform.environment);
   } on ConfigException catch (error) {
-    _fail('invalid --tools/FA_TOOLS spec: ${error.message}');
+    await failAfterPlugins('invalid --tools/FA_TOOLS spec: ${error.message}');
   }
 
   // The tool-load preset (issue #680): `--omp` wins over the
@@ -1321,7 +1330,7 @@ Future<void> _runApp(List<String> args) async {
       configMode: saved.agentLoadMode,
     );
   } on ArgumentError catch (error) {
-    _fail('invalid load mode: ${error.message}');
+    await failAfterPlugins('invalid load mode: ${error.message}');
   }
 
   // Per-folder model memory: mirror the active triple into the folder's
@@ -1388,7 +1397,7 @@ Future<void> _runApp(List<String> args) async {
   for (final attachment in parsed.attachments) {
     final file = File(attachment);
     if (!file.existsSync()) {
-      _fail('--attach: no such file: $attachment');
+      await failAfterPlugins('--attach: no such file: $attachment');
     }
     final bytes = file.readAsBytesSync();
     final mime = _sniffMime(bytes);
@@ -1895,7 +1904,7 @@ Future<void> _runApp(List<String> args) async {
       io: io,
     );
   } on ConfigException catch (error) {
-    _fail(error.message);
+    await failAfterPlugins(error.message);
   }
   if (redactorAttached) attachSecretRedactor(cli.agent, redactor);
 

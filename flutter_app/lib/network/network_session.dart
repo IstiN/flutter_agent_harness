@@ -546,12 +546,16 @@ final class NetworkSession extends ChangeNotifier {
       if (!_isCurrentChannelState(channelId, state, revision)) return;
       if (state.add(message)) notifyListeners();
     });
-    // A failed decode must not prevent later arrivals from being handled.
+    // A failed decode must not prevent later arrivals from being handled,
+    // and the future handed back to the (unawaited) call site must carry
+    // the same containment: returning the raw `operation` would complete
+    // the returned future with the decode error even though the chain
+    // itself already swallowed it (gh-1895 review).
     state._realtimeTail = operation.then<void>(
       (_) {},
       onError: (Object error, StackTrace stackTrace) {},
     );
-    return operation;
+    return state._realtimeTail;
   }
 
   /// After a reconnect the server drains queued envelopes; rebuild the

@@ -662,6 +662,10 @@ void main() {
       tester,
     ) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      // Restore via tearDown, not an end-of-test reset: a failure or
+      // throw before pumpAndSettle would otherwise leak the override
+      // into every later test in the process (gh-1895 review).
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
       final service = _fakeService(
         MemoryExecutionEnv(),
         _singleTextResponse('must not run'),
@@ -682,7 +686,6 @@ void main() {
 
       await _typeAndSend(tester, paste);
       await tester.pumpAndSettle();
-      debugDefaultTargetPlatformOverride = null;
 
       expect(
         find.text(

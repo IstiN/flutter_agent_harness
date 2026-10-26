@@ -400,6 +400,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// UI-layer interception covers native AND relay-backed AgentServices:
   /// the credential-bearing paste never reaches any sendText override.
+  /// The network probes stay lazy: the interceptor runs on EVERY send,
+  /// and an AgentService whose agent network was never initialized
+  /// (widget tests, minimal hosts) must not throw mid-`send` —
+  /// `agentNetwork` is only touched once an enrollment paste is
+  /// actually recognized (gh-1895 review / CI red on file_browser).
   bool _interceptDapSubmit(BuildContext context, String text) =>
       interceptDapEnrollmentSubmit(
         context,
@@ -407,7 +412,8 @@ class _ChatScreenState extends State<ChatScreen> {
         supported: agentNetworkSupported,
         join: (bundle) => widget.service.agentNetwork.joinEnrollment(bundle),
         plaintextStorage:
-            widget.service.agentNetwork.enrollmentUsesPlaintextStorage,
+            () =>
+                widget.service.agentNetwork.enrollmentUsesPlaintextStorage(),
       );
 
   @override

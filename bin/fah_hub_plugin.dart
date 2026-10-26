@@ -117,6 +117,11 @@ final class HubPluginHost implements FahPlugin {
   /// Shared, idempotent clean-shutdown teardown.
   Future<void>? _dispose;
 
+  /// Whether the memoized [_dispose] was a no-op taken while [_scoped]
+  /// was still null: such a no-op re-arms once the scoped memberships
+  /// exist, so an early dispose can never permanently disable cleanup.
+  var _disposeWasNoOp = false;
+
   /// Set whenever the runtime client must (re)join the effective union:
   /// at boot, after a session replay becomes visible, after join/leave.
   bool _runtimeSyncPending = true;
@@ -274,8 +279,26 @@ final class HubPluginHost implements FahPlugin {
 
   /// Clean-shutdown hook called by every CLI exit path. Deletes the
   /// runtime plaintext-key overlay when no sibling agent still uses it.
-  Future<void> dispose() =>
-      _dispose ??= _scoped?.cleanupOverlay() ?? Future<void>.value();
+  ///
+  /// A dispose that runs before `register()` built [_scoped] memoizes a
+  /// no-op — but only until [_scoped] exists: the no-op re-arms so a
+  /// later dispose performs the real cleanup instead of being pinned to
+  /// the no-op forever (gh-1895 review).
+  Future<void> dispose() {
+    final cached = _dispose;
+    if (cached != null) {
+      final scoped = _scoped;
+      if (scoped == null || !_disposeWasNoOp) return cached;
+      _dispose = null; // re-arm: register() ran after the early no-op
+    }
+    final scoped = _scoped;
+    if (scoped == null) {
+      _disposeWasNoOp = true;
+      return _dispose = Future<void>.value();
+    }
+    _disposeWasNoOp = false;
+    return _dispose = scoped.cleanupOverlay();
+  }
 
   @override
   void register(PluginContext context) {
@@ -365,6 +388,11 @@ final class HubPluginHost implements FahPlugin {
   }
 
   Future<void> _connectWithScopedBoot() async {
+    // A host disposed before register() built the scoped memberships must
+    // never seed plaintext keys afterwards — the memoized no-op dispose
+    // re-arms into real cleanup, and cleanup must not find secrets the
+    // dead host wrote after its teardown (gh-1895 review).
+    if (_dispose != null) return;
     // Issue #1825: seed the runtime channel-key overlay with the scoped
     // union BEFORE the vendored client loads its channel store, so boot
     // joins cover project/global/env scopes (session records arrive later

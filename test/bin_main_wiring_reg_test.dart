@@ -143,7 +143,7 @@ without a replacement wiring.
   test('post-resolution _fail paths run plugin teardown before exiting '
       '(gh-1895 review)', () {
     final runapp = File('bin/fah_runapp.dart').readAsStringSync();
-    expect(runapp, contains('Future<Never> _failAfterPlugins'));
+    expect(runapp, contains('Future<Never> failAfterPlugins'));
     final postSeam = runapp
         .split('_fahPluginTeardown = teardownPlugins;')
         .last;
@@ -151,7 +151,7 @@ without a replacement wiring.
     // (usage/config failures remove the plaintext overlay before exit);
     // the only direct _fail left is the wrapper's own inner call.
     expect(RegExp(r'\b_fail\(').allMatches(postSeam).length, 1);
-    expect(postSeam, contains('await _failAfterPlugins('));
+    expect(postSeam, contains('await failAfterPlugins('));
   });
 
   test('REG-preconfig-and-queue: the queue is resolved before '

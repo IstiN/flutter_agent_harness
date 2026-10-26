@@ -98,7 +98,7 @@ final class _StubHubPlugin extends hub.HubPlugin {
       url: host,
       name: name,
       agentId: _selfId,
-      channels: [if (channel != null) channel],
+      channels: [?channel],
     );
   }
 }

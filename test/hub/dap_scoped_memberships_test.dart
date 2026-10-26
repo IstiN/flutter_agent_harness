@@ -515,7 +515,7 @@ void main() {
         final runtimeDir = '${tmp.path}/.dap/runtime';
         await Directory(runtimeDir).create(recursive: true);
         final dead = File('$runtimeDir/channels-999999.json');
-        final alive = File('$runtimeDir/channels-${pid}.json');
+        final alive = File('$runtimeDir/channels-$pid.json');
         final stable = File('$runtimeDir/channels.json');
         await dead.writeAsString('{}');
         await alive.writeAsString('{}');

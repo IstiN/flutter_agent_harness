@@ -424,10 +424,10 @@ void main() {
             'payload': 'opaque',
           });
         }
-        // The only call site is `unawaited(_onEnvelope(envelope))`, so a
-        // rejecting returned future would surface here as an unhandled
-        // async error and fail the test; the swallowing tail must keep
-        // the event loop clean AND preserve arrival order for the rest.
+        // The only call site is `unawaited(_onEnvelope(envelope))`: the
+        // returned future must contain the decode failure (never reject)
+        // and the chain must keep arrival order for the remaining
+        // envelopes — a corrupt frame lands no message and kills nothing.
         await pumpEventQueue();
 
         expect(state.messages.map((message) => message.envelopeId), [
