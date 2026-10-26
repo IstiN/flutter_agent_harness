@@ -45,6 +45,7 @@ void main() {
     DapPassphrasePrompt? prompt,
     String? project,
     bool useKeychain = true,
+    Future<String?> Function(int pid)? processIdentity,
   }) => DapScopedMemberships(
     globalConfigFile: globalConfig,
     globalChannelsFile: globalChannels,
@@ -57,6 +58,7 @@ void main() {
       sessionRecords.add(Map<String, Object?>.from(data));
     },
     readSessionRecords: (type) async => sessionRecords,
+    processIdentity: processIdentity,
   );
 
   DapInviteImport invite({String channel = 'team', bool keys = true}) =>
@@ -460,6 +462,11 @@ void main() {
       await s.cleanupOverlay();
     });
 
+    test('cleanupOverlay tolerates a runtime dir that never existed', () async {
+      // No seedOverlay: the sweep's missing-dir early return runs.
+      await service().cleanupOverlay();
+    });
+
     test('cleanupOverlay preserves the shared overlay while another live '
         'agent owns a guard, then removes it after that agent exits', () async {
       final other = await Process.start('sleep', ['30']);
@@ -508,6 +515,177 @@ void main() {
 
       expect(await oldLiveGuard.exists(), isTrue);
       expect(await File(overlay).exists(), isTrue);
+    });
+
+    test('a live owner past 24h with a matching process-start identity '
+        'keeps the overlay (issue #1898)', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      // The injected resolver stands in for the platform probe so the
+      // ownership decision is deterministic on every host (the real
+      // registration shape is pinned by the guard-format test below).
+      final s = service(processIdentity: (_) async => 'e1700000000');
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      final guardFile =
+          '$runtimeDir/${File(overlay).uri.pathSegments.last}'
+          '.${other.pid}.guard';
+      final guard = File(guardFile);
+      await guard.writeAsString('${other.pid} e1700000000\n');
+      await guard.setLastModified(
+        DateTime.now().subtract(const Duration(hours: 25)),
+      );
+
+      await s.cleanupOverlay();
+
+      expect(await guard.exists(), isTrue, reason: 'live owner is kept');
+      expect(await File(overlay).exists(), isTrue);
+    });
+
+    test('a live pid whose guard identity differs is a recycled pid and '
+        'no longer pins the overlay (issue #1898)', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      // The live pid now runs a DIFFERENT incarnation than the one that
+      // wrote the guard: recorded e111111111, current e999999999.
+      final s = service(processIdentity: (_) async => 'e999999999');
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      final recycledGuard = File(
+        '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+      );
+      await recycledGuard.writeAsString('${other.pid} e111111111\n');
+
+      await s.cleanupOverlay();
+
+      expect(await recycledGuard.exists(), isFalse, reason: 'reclaimed');
+      expect(await File(overlay).exists(), isFalse);
+    });
+
+    test(
+      'an identity probe failure preserves the overlay (keep-on-doubt)',
+      () async {
+        final other = await Process.start('sleep', ['30']);
+        addTearDown(() async {
+          other.kill();
+          await other.exitCode;
+        });
+        final s = service(processIdentity: (_) async => null);
+        await s.seedOverlay();
+        final runtimeDir = File(overlay).parent.path;
+        final guard = File(
+          '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+        );
+        await guard.writeAsString('${other.pid} e111111111\n');
+
+        await s.cleanupOverlay();
+
+        expect(await guard.exists(), isTrue);
+        expect(await File(overlay).exists(), isTrue);
+      },
+    );
+
+    test('an unparseable guard identity shape is kept on doubt, never '
+        'reclaimed (issue #1917 review)', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      // The guard's token is not a shape this build mints (corrupt write
+      // or a future format): the sweep must not treat it as recyclable.
+      final s = service(processIdentity: (_) async => 'e999999999');
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      final guard = File(
+        '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+      );
+      await guard.writeAsString('${other.pid} corrupt-token\n');
+
+      await s.cleanupOverlay();
+
+      expect(await guard.exists(), isTrue, reason: 'unknown shape = doubt');
+      expect(await File(overlay).exists(), isTrue);
+    });
+
+    test('an unparseable CURRENT identity is kept on doubt too '
+        '(issue #1917 review)', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      final s = service(processIdentity: (_) async => 'garbage');
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      final guard = File(
+        '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+      );
+      await guard.writeAsString('${other.pid} e111111111\n');
+
+      await s.cleanupOverlay();
+
+      expect(await guard.exists(), isTrue);
+      expect(await File(overlay).exists(), isTrue);
+    });
+
+    test(
+      'the boot guard records pid + identity token, never key material',
+      () async {
+        final s = service();
+        await s.seedOverlay();
+        final guard = File(
+          '${File(overlay).parent.path}/'
+          '${File(overlay).uri.pathSegments.last}.$pid.guard',
+        );
+        expect(await guard.exists(), isTrue);
+        final content = await guard.readAsString();
+        expect(content, matches(RegExp(r'^\d+ \S*\n$')), reason: content);
+        final parts = content.trim().split(' ');
+        final token = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+        if (token.isNotEmpty) {
+          expect(token, matches(RegExp(r'^[se]\d+$')), reason: content);
+        }
+        expect(content, isNot(contains(priv)));
+      },
+    );
+
+    group('psLstartIdentity (issue #1917 review: real output shape)', () {
+      test('parses real macOS `ps -o lstart=` output', () {
+        expect(
+          DapScopedMemberships.psLstartIdentity('Tue Oct 13 13:35:05 2026'),
+          'e${DateTime(2026, 10, 13, 13, 35, 5).millisecondsSinceEpoch ~/ 1000}',
+        );
+      });
+
+      test('parses space-padded single-digit days', () {
+        expect(
+          DapScopedMemberships.psLstartIdentity('Mon Sep  1 01:02:03 2026'),
+          'e${DateTime(2026, 9, 1, 1, 2, 3).millisecondsSinceEpoch ~/ 1000}',
+        );
+      });
+
+      test('tolerates surrounding whitespace/newline', () {
+        expect(
+          DapScopedMemberships.psLstartIdentity('Wed Dec 31 23:59:59 2026\n'),
+          isNotNull,
+        );
+      });
+
+      test('non-C-locale month names and junk return null (keep-on-doubt)', () {
+        expect(
+          DapScopedMemberships.psLstartIdentity('Tue déc 13 13:35:05 2026'),
+          isNull,
+        );
+        expect(DapScopedMemberships.psLstartIdentity('garbage'), isNull);
+        expect(DapScopedMemberships.psLstartIdentity(''), isNull);
+      });
     });
 
     test(
