@@ -4676,5 +4676,16 @@
       "cacheRead": 2008013,
       "model": "kimi-for-coding"
     }
+  ],
+  "issue-1910": [
+    {
+      "leg": "dev",
+      "at": "2026-10-26T13:35:52Z",
+      "prompt": 21944,
+      "completion": 7930,
+      "total": 29874,
+      "cacheRead": 629760,
+      "model": "kimi-for-coding"
+    }
   ]
 }
