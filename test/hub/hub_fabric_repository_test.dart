@@ -165,7 +165,7 @@ void main() {
         ),
       ),
       throwsA(
-        isA<StateError>().having(
+        isA<ChannelDeliveryException>().having(
           (e) => e.message,
           'message',
           allOf(contains('refusing to send to #locked'), contains('key')),

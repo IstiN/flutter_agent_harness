@@ -78,15 +78,8 @@ final class FallbackMessagingRepository
   Future<void> send(AgentMessage message) async {
     await _flushQueued();
     final target = await _safeResolve(message.toId);
-    if (target != null) {
-      try {
-        await _primary.send(_retarget(message, target));
-        return;
-      } on Object {
-        // Hub delivery failed (whois race, evicted socket) — the file
-        // fallback below keeps the message; the forwarder retries later.
-      }
-    } else if (message.toId.startsWith('#')) {
+    if (target != null && await _sendPrimary(message, target)) return;
+    if (target == null && message.toId.startsWith('#')) {
       // Channels exist only on the hub; a file mailbox nobody polls would
       // be a silent dead drop. Honest failure instead.
       throw StateError(
@@ -95,6 +88,22 @@ final class FallbackMessagingRepository
     }
     await _fallback.send(message);
     _trackForForward(message);
+  }
+
+  /// Attempts the live primary. Terminal channel refusals escape; ordinary
+  /// transport failures return false so the caller can queue file fallback.
+  Future<bool> _sendPrimary(AgentMessage message, String target) async {
+    try {
+      await _primary.send(_retarget(message, target));
+      return true;
+    } on ChannelDeliveryException {
+      // Actionable by the caller, not a transient transport failure. Never
+      // hide it in a file mailbox no channel consumer polls.
+      rethrow;
+    } on Object {
+      // Whois race/evicted socket: the forwarder retries after reconnect.
+      return false;
+    }
   }
 
   /// Rewrites [message]'s recipient to the resolved [target], keeping the

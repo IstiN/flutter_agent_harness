@@ -114,6 +114,9 @@ final class HubPluginHost implements FahPlugin {
   /// Scoped channel membership (issue #1825), built at register time.
   DapScopedMemberships? _scoped;
 
+  /// Shared, idempotent clean-shutdown teardown.
+  Future<void>? _dispose;
+
   /// Set whenever the runtime client must (re)join the effective union:
   /// at boot, after a session replay becomes visible, after join/leave.
   bool _runtimeSyncPending = true;
@@ -198,11 +201,10 @@ final class HubPluginHost implements FahPlugin {
     return host._isPublicChannel(channel);
   }
 
-  /// True when [channel] is a STORED-private membership (a keypair at
-  /// rest) whose key could NOT be resolved at runtime (missing
-  /// passphrase / no Keychain hit). The fabric send path MUST refuse in
-  /// that case: a private channel never downgrades to a hub-readable
-  /// payload — the send queues/retries once the key is back.
+  /// True when [channel] has any stored private-key material but no
+  /// complete runtime keypair (missing passphrase, no Keychain hit, or a
+  /// torn pub/priv record). The fabric send path MUST refuse in that case:
+  /// a private channel never downgrades to plaintext or auto-keygenerates.
   static Future<bool> privateChannelKeyMissing(
     hub.HubPlugin plugin,
     String channel,
@@ -213,12 +215,17 @@ final class HubPluginHost implements FahPlugin {
     try {
       final stored = await scoped.union().then((u) => u.effective());
       final isPrivate = stored.any(
-        (m) => host._membershipMatchesChannel(m, channel) && m.pub != null,
+        (m) =>
+            host._membershipMatchesChannel(m, channel) &&
+            (m.pub != null || m.priv != null),
       );
       if (!isPrivate) return false;
       final runtime = await scoped.runtimeEffective();
       return !runtime.any(
-        (m) => host._membershipMatchesChannel(m, channel) && m.priv != null,
+        (m) =>
+            host._membershipMatchesChannel(m, channel) &&
+            m.pub != null &&
+            m.priv != null,
       );
     } on Object {
       // Fail closed: a store/decryption error means no usable key was
@@ -233,15 +240,16 @@ final class HubPluginHost implements FahPlugin {
     if (scoped == null) return false;
     try {
       // The public/private decision comes from the STORED membership
-      // shape — a truly public channel has pub == null at rest. Runtime
-      // decryption success must never decide it: an undecryptable
-      // private envelope would otherwise downgrade every outbound frame
-      // to the public plaintext contract (gh-1888 review).
+      // shape — a truly public channel has NEITHER key at rest. Runtime
+      // decryption success must never decide it: an undecryptable or torn
+      // private record would otherwise downgrade outbound frames to the
+      // public plaintext contract (gh-1888 review).
       final stored = await scoped.union().then((u) => u.effective());
       return stored.any(
         (membership) =>
             _membershipMatchesChannel(membership, channel) &&
-            membership.pub == null,
+            membership.pub == null &&
+            membership.priv == null,
       );
     } on Object {
       return false;
@@ -263,6 +271,11 @@ final class HubPluginHost implements FahPlugin {
 
   @override
   String get name => _pluginName;
+
+  /// Clean-shutdown hook called by every CLI exit path. Deletes the
+  /// runtime plaintext-key overlay when no sibling agent still uses it.
+  Future<void> dispose() =>
+      _dispose ??= _scoped?.cleanupOverlay() ?? Future<void>.value();
 
   @override
   void register(PluginContext context) {
@@ -360,6 +373,15 @@ final class HubPluginHost implements FahPlugin {
     final preferred = await scoped?.preferredBootMembership();
     _applyBootMembership(preferred);
     await scoped?.seedOverlay();
+    // Boot-time recovery must be visible: malformed stores, wrong-typed
+    // env entries and undecryptable keys are otherwise only recorded in a
+    // public field that nobody reads. Join/leave warnings already use the
+    // same PluginIO channel; print this batch once after the union load.
+    if (scoped != null) {
+      for (final warning in scoped.loadWarnings) {
+        _pluginIo?.writeln('[hub] $warning');
+      }
+    }
     if (preferred?.hubClientSecret != null) {
       await _tryScopedBootConnect(preferred!.hubUrl);
     } else {

@@ -1113,6 +1113,18 @@ Future<void> _runApp(List<String> args) async {
     redactionPipeline: redactionPipeline,
   );
 
+  Future<void> teardownPlugins() async {
+    try {
+      await resolved.hubHost?.dispose();
+    } on Object {
+      // Clean-shutdown hygiene must never replace the intended exit code.
+    }
+  }
+
+  // Signal-driven headless exits live in fah_util.dart; give that seam
+  // the same idempotent cleanup as the normal branch finally blocks.
+  _fahPluginTeardown = teardownPlugins;
+
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
     _fail('unknown mode: ${effective.mode}');
   }
@@ -1253,6 +1265,7 @@ Future<void> _runApp(List<String> args) async {
       mailSink: (envelope) =>
           A2aMailGateway.accept(envelope, fabric: projectFabric),
     );
+    await teardownPlugins();
     exit(0);
   }
   // `fa serve --bridge [--port N] [--token T]` — mount the loopback
@@ -1272,6 +1285,7 @@ Future<void> _runApp(List<String> args) async {
       token: tokenFlag,
       version: packageVersion,
     );
+    await teardownPlugins();
     exit(0);
   }
   // `late` so the onProviderChanged closure can reach the agent (to attach
@@ -2007,6 +2021,7 @@ Future<void> _runApp(List<String> args) async {
       // the in-flight per-line flushes and crashes the exit path.
       await drainStdoutLines();
     } finally {
+      await teardownPlugins();
       exit(130);
     }
   }
@@ -2084,6 +2099,7 @@ Future<void> _runApp(List<String> args) async {
       await sigtermSub.cancel();
       await sigintSub.cancel();
       await drainStdoutLines();
+      await teardownPlugins();
       logTeeFile?.closeSync();
     }
     exit(code);
@@ -2107,6 +2123,7 @@ Future<void> _runApp(List<String> args) async {
     } finally {
       await sigintSub.cancel();
       await drainStdoutLines();
+      await teardownPlugins();
       logTeeFile?.closeSync();
     }
     exit(code);
@@ -2116,6 +2133,7 @@ Future<void> _runApp(List<String> args) async {
     await cli.run();
   } finally {
     await sigintSub.cancel();
+    await teardownPlugins();
     logTeeFile?.closeSync();
   }
 
