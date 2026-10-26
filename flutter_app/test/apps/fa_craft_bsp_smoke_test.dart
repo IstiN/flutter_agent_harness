@@ -112,9 +112,15 @@ void main() {
       final env = MemoryExecutionEnv();
       final engine = _engine(env);
       addTearDown(() async {
+        // Unmount BEFORE disposing the engine (the js_app_view pattern):
+        // the tree still listens to the engine notifiers while mounted.
         await tester.runAsync(() async {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await Future<void>.delayed(const Duration(milliseconds: 100));
           await engine.dispose();
         });
+        await tester.pump();
+        _progress('teardown-done');
       });
 
       // Wide-landscape viewport for the rotation sweep.
