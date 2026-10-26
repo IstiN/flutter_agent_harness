@@ -134,9 +134,7 @@ void main() {
           await tester.pumpWidget(const SizedBox.shrink());
           await Future<void>.delayed(const Duration(milliseconds: 100));
         });
-        _progress('dispose-unmounted');
-        await tester.pump();
-        _progress('dispose-pumped');
+        _progress('dispose-done');
       }
 
       addTearDown(() async {
