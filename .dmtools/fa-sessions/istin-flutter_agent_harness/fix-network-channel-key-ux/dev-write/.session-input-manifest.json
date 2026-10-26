@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-26T13:58:12.792Z",
+  "ticketKey": "pr-1904",
+  "headSha": "477bbfcbcb69240913c8176ad530233a8651e4d6",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:d430e7ce49fa58b8",
+      "size": 12303
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:095b998c947788f2",
+      "size": 11248
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:ce13a22bbe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:cfbf8b34d657279e",
+      "size": 1680
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:f8e67aa7c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:f64530ffc161017f",
+      "size": 1393
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:a9990bd2601794d9",
+      "size": 1324
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:d6e35cad",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: invite hub is not validated — a cross-hub invite is silently accepted**\n\nThe import validates the channel id and the pub/priv consistency, but never checks `invite.hubUri`. An invite generated on a different hub (staging vs. production, or any other fa_network deployment) whose invite happens to use the same channel id passes every check here: the keypair is internally consistent, so it is persisted under `<thisNetwork>/<channelId>`, and `reloadChannel` runs against the real hub.\n\nThe failure mode is silent: history still cannot be decrypted (the key is for another channel on another hub) and — worse — `sendText` will now encrypt outgoing messages with a key no peer on this channel possesses, producing undecryptable outbound traffic with no error surfaced to the sender. That is the same class of problem the wrong-channel check guards against.\n\nThe invite already carries the hub (`AgentInvite.hubUri`), and the codebase already pins the production hub as `AddAgentDialog.hubUrl` (`wss://hub.fa1.dev/ws`). Please compare `invite.hubUri` against the session's hub before persisting and reject with a dedicated message (or reuse the wrong-channel error)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:10c2fa68",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: misleading \"import failed\" when the key was already persisted**\n\n`addChannelKeys` completes and persists the key to the vault, then `reloadChannel` runs. `_loadHistoryPage` catches only `FaNetworkException`; a non-API failure of the history reload — e.g. `MessagePage.fromJson`/`_decodeMap` throwing `FormatException` on a malformed 200 body (see `fa_network_client.dart:750`, `:764`) — propagates into the `on Object` handler below, which shows `networkChannelKeyImportFailed` (\"The channel key could not be imported. Try again.\").\n\nAt that point the key **is** in the wallet (and the composer will switch on the next rebuild), but the dialog tells the user the import failed and invites them to retry/paste again — confusing and, for a security-sensitive flow, erodes trust in the error copy.\n\nTwo options:\n- Split the try blocks: once `addChannelKeys` succeeds, treat a `reloadChannel` failure as non-fatal (log it, still `pop(true)` — the user can re-enter the channel to trigger another history load), or\n- Catch reload errors inside `reloadChannel`/the dialog with a distinct message (\"key imported, but history could not be refreshed\").\n\nThe torn-keypair/wrong-channel validation above correctly rejects before persisting; this path is the only one that can report failure after persistence."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:55a70062",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: use the dialog result to trigger a deterministic rebuild**\n\n`showChannelKeyImportDialog` returns whether the import succeeded, but the result is dropped here. The composer swap from `_MissingChannelKeyComposer` back to `ChannelChatComposer` currently works only indirectly: `reloadChannel` → `_loadHistoryPage` → `session.notifyListeners()` → `ChannelChatService._onSessionChanged` → `FaChatScreen` rebuild → `composerBuilder` re-evaluated. That happens to re-read the wallet today, but the page state itself (`_NetworkChatPageState`) listens only to `controller` and `manager`, and `KeyWallet` is not a `ChangeNotifier`.\n\nConsider consuming the result for a guaranteed rebuild:\n\n```dart\nonPressed: () async {\n  final imported = await showChannelKeyImportDialog(...);\n  if (imported && mounted) setState(() {});\n},\n```\n\nThis keeps the UI correct even if the session-notify relay changes later, and covers the edge where the history reload fails silently (`loadError` set, key present)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:6c913daa",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "The invite hub is now validated before persisting. `parseAgentInvite` already exposes `invite.hubUri`, and the session now exposes its hub via `NetworkSession.hubBaseUrl` (the REST base it connects through). The import dialog rejects any invite whose hub is not the same deployment:\n\n- `isSameHubDeployment()` in `flutter_app/lib/network/invite_codec.dart` — origin-level comparison (ws(s)↔http(s) scheme, host, effective port). One wrinkle the review text did not account for: the session's socket URL is derived from its REST base (`https://network.fa1.dev` → `wss://network.fa1.dev/ws`), while the app pins its agent invites to `wss://hub.fa1.dev/ws` (`AddAgentDialog.hubUrl`) — one deployment under two names. A strict host-equality check would reject every legitimate production import, so the helper folds the `hub.<rest>` invite alias onto the session host.\n- Rejection happens before `addChannelKeys`, with a dedicated message `networkChannelKeyWrongHub` (\"This invite is for a different hub.\" / ru: «Это приглашение относится к другому хабу.», regenerated via `flutter gen-l10n`).\n- A foreign deployment is still rejected: different host (`hub.staging.fa1.dev`, `hub.other-hub.example`), explicit port mismatch (`wss://hub.fa1.dev:8443`), or an insecure `ws://` scheme against an `https` session all fail the check.\n\nRegression coverage: unit tests for `isSameHubDeployment` (same host, both alias directions, foreign hub, port, scheme downgrade) in `test/network/invite_codec_test.dart`, and a widget test asserting a cross-hub invite (same channel id, consistent keypair, foreign hub) shows the new error, does not persist the key, and does not trigger a history reload in `test/network/ui_network_chat_page_test.dart`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:efc8e937",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Fixed by splitting the persist and reload error handling in `_submit` (`flutter_app/lib/ui/network/channel_key_import_dialog.dart`):\n\n- The first try block ends at `addChannelKeys` — a persist failure still shows `networkChannelKeyImportFailed`, and the validation errors (wrong channel, wrong hub, torn keypair) still reject before anything is written.\n- Once the key is in the vault, `reloadChannel` runs in its own try block: any failure (including a non-`FaNetworkException` such as the `FormatException` from `MessagePage.fromJson` on a malformed 200 body) is logged via `AppLog` and the dialog still `pop(true)`s, so the caller reports success. Re-entering the channel triggers another history load, and the composer swap is deterministic (see the thread-3 fix).\n\nRegression coverage: a widget test in `test/network/ui_network_chat_page_test.dart` scripts the exact failure mode called out — the post-import history reload returns a malformed 200 body, `MessagePage.fromJson` throws `FormatException` — and asserts the \"could not be imported\" copy is NOT shown, the key IS persisted in the vault, and the real composer still replaces the missing-key placeholder."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:f434ae6e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Done — the dialog result is now consumed for a deterministic rebuild. `_MissingChannelKeyComposer` takes an `onKeyImported` callback, and the button handler awaits `showChannelKeyImportDialog` and invokes it when the result is true:\n\n```dart\nonPressed: () async {\n  final imported = await showChannelKeyImportDialog(...);\n  if (imported && context.mounted) onKeyImported();\n},\n```\n\nThe page passes `onKeyImported: () { if (mounted) setState(() {}); }`, so `_isMissingPrivateKey` is re-evaluated and the composer swaps immediately, independent of the session-notify relay. This also covers the edge called out in the thread: history reload fails silently after a successful import — the rebuild still happens because it is driven by the dialog result, not by the reload.\n\nCovered by the reload-failure widget test in `test/network/ui_network_chat_page_test.dart` (key persisted, reload threw, composer swapped in) and the existing happy-path import test."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:37efa028",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Well-scoped fix: the guarded channel-key import dialog validates channel id and torn keypairs before persisting, `reloadChannel` correctly reuses the revision-invalidation pattern from `_refreshAfterReconnect`, and the new en/ru copy plus widget/session tests give strong fail-closed coverage (42 targeted tests pass locally, `flutter analyze` clean). No blocking findings; two IMPORTANT items and one SUGGESTION are inline.\n\n**Key Issues**:\n- ⚠️ Invite `hubUri` is never validated — a cross-hub invite with a matching channel id is silently persisted and yields undecryptable outbound sends (comment1).\n- ⚠️ If the key persists but the history reload throws a non-`FaNetworkException`, the dialog reports \"could not be imported\" after the vault already holds the key (comment2).\n- 💡 The dialog's success result is dropped; the composer swap relies on the indirect session-notify relay instead of a deterministic `setState` (comment3).\n\n**Next Steps**:\n1. Validate `invite.hubUri` against the session hub before persisting.\n2. Split persist vs. reload error handling so a reload failure cannot claim the import failed.\n3. (Optional) Consume the dialog result for an explicit rebuild.\n\n**Housekeeping**: the PR description mentions JWT account-label refresh, signing/redaction coverage, and a redacted import-tool argument — none of those appear in this diff (likely landed via the main merge); please trim the description so reviewers and the changelog see the actual scope."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:501c5a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "✅ Rework finished. `pr_approved` is sticky (approved once — never re-reviewed): the new head re-validates and merges directly."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:9460b232",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch ea69c8eb36e7f1088ff8eead2848021729866192 — zombie 1/3 at 2026-10-26T13:27:20.559Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:0200809c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40330700432\n🔴 red head ea69c8eb36e7f1088ff8eead2848021729866192 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    }
+  ]
+}
