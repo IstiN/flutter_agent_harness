@@ -726,9 +726,18 @@ the key material.
 
 Session/project stores hold the channel private key ONLY as a
 `dapkey1.<base64url(json)>` envelope: PBKDF2-HMAC-SHA256 (iteration count
-in the envelope) → ChaCha20-Poly1305, AAD `dapkey1`. Plaintext keys exist
-in memory, in the runtime overlay (`~/.dap/runtime/channels-<pid>.json`,
-0600), and in the pure-env CI path. Passphrase resolution per channel:
+in the envelope, sanity-bounded at 5 000 000 — a hostile `"iter"` is
+rejected before any KDF work) → ChaCha20-Poly1305, AAD `dapkey1`.
+Plaintext keys exist in memory, in the runtime overlay
+(`~/.dap/runtime/channels.json`, 0600 — ONE stable name per `$HOME`,
+rewritten atomically on every re-seed, never per-pid; deleted on clean
+shutdown where the host has a teardown path, and stale per-pid leftovers
+from older builds are swept at boot), and in the pure-env CI path.
+**Global scope is the deliberate exception** (see the table above): it
+persists the invite keypair PLAINTEXT, byte-equivalent with
+`fa dap import` — the REG-* interop tests pin that equivalence, and the
+legacy `~/.dap/channels.json` format has no envelope field. Passphrase
+resolution per channel:
 (1) `DAP_KEY_PASSPHRASE` env; (2) OS Keychain item
 `fa.dap.channel-key.<hubHost>.<channelId>` (macOS `security` CLI);
 (3) ONE interactive prompt, save-to-Keychain by default. Headless with

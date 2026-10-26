@@ -141,7 +141,7 @@ Future<void> _verifyResume(
       // (empty) membership view BEFORE seedOverlay() writes the runtime
       // overlay, so the overlay's existence proves the boot cannot see
       // the resumed session record any more.
-      final overlay = File('${tmp.path}/.dap/runtime/channels-$pid.json');
+      final overlay = File('${tmp.path}/.dap/runtime/channels.json');
       await waitForIt(overlay.exists);
     }
     run = cli.run();

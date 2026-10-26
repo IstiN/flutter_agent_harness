@@ -144,7 +144,10 @@ final class DapScopedMemberships {
   /// The RUNTIME channel-key file the vendored hub client is pointed at
   /// (via `DAP_CHANNELS_FILE`): seeded with the decrypted union at boot,
   /// it absorbs the client's own key writes so scoped joins never leak
-  /// into the legacy global file. 0600, outside the repo.
+  /// into the legacy global file. The name is STABLE per `$HOME`
+  /// (atomically rewritten per seed, 0600, outside the repo) so runs
+  /// never accumulate; [cleanupOverlay] deletes it on shutdown and
+  /// [sweepLegacyOverlays] removes legacy per-pid leftovers.
   final String overlayChannelsFile;
 
   /// `<project>/.fah/dap.json` — MAY be committed (encrypted keys only).
@@ -275,22 +278,33 @@ final class DapScopedMemberships {
   Future<List<DapChannelMembership>> _loadProject() async {
     final file = projectFile;
     if (file == null) return const [];
+    final Object? decoded;
     try {
-      final raw = await File(file).readAsString();
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return const [];
-      final list = decoded['channels'];
-      if (list is! List) return const [];
-      return [
-        for (final entry in list)
-          if (entry is Map)
-            DapChannelMembership.fromJson(
-              entry.cast<String, Object?>(),
-            ).withScope(DapChannelScope.project),
-      ];
+      decoded = jsonDecode(await File(file).readAsString());
     } on Object {
       return const [];
     }
+    if (decoded is! Map) return const [];
+    final list = decoded['channels'];
+    if (list is! List) return const [];
+    // Per-entry resilience, exactly like [_loadSession]: ONE malformed
+    // record (e.g. an older record missing the required `scope` field)
+    // warns loudly and is skipped — a half-corrupt `.fah/dap.json` after
+    // a bad merge must never silently unjoin every channel.
+    final memberships = <DapChannelMembership>[];
+    for (final entry in list) {
+      try {
+        if (entry is! Map) throw const FormatException('not an object');
+        memberships.add(
+          DapChannelMembership.fromJson(
+            entry.cast<String, Object?>(),
+          ).withScope(DapChannelScope.project),
+        );
+      } on Object {
+        loadWarnings.add('dap: skipped a malformed project membership');
+      }
+    }
+    return memberships;
   }
 
   /// Session records fold in order: join adds, `op: leave` tombstones
@@ -456,6 +470,63 @@ final class DapScopedMemberships {
   /// overlay seed — the first drain must re-read them, AC3).
   void invalidateCache() => _union = null;
 
+  /// Best-effort deletes the runtime overlay file. Hosts with a teardown
+  /// path (plugin dispose / CLI `finally`) call this so plaintext channel
+  /// keys never outlive the run; a leftover file is rewritten (0600) on
+  /// the next boot's [seedOverlay], so cleanup failing is never fatal.
+  Future<void> cleanupOverlay() async {
+    try {
+      final file = File(overlayChannelsFile);
+      if (await file.exists()) await file.delete();
+    } on Object {
+      // Best-effort only — see the doc comment.
+    }
+  }
+
+  /// Best-effort removes legacy per-pid overlay files
+  /// (`channels-<pid>.json`, the pre-stable-name shape) left behind by
+  /// crashed or older runs in [runtimeDir]. A file whose pid is still
+  /// alive is kept — it may belong to a concurrently running agent.
+  /// The stable [DapScopedMemberships.overlayChannelsFile] name is never
+  /// touched.
+  static Future<void> sweepLegacyOverlays(String runtimeDir) async {
+    try {
+      final dir = Directory(runtimeDir);
+      if (!await dir.exists()) return;
+      await for (final entity in dir.list()) {
+        if (entity is! File) continue;
+        final name = entity.uri.pathSegments.last;
+        final pidText = _legacyOverlayPid(name);
+        if (pidText == null) continue;
+        if (await _pidAlive(int.tryParse(pidText) ?? -1)) continue;
+        await entity.delete();
+      }
+    } on Object {
+      // Sweeping is hygiene, never a boot blocker.
+    }
+  }
+
+  /// The pid embedded in a legacy `channels-<pid>.json` name, or null for
+  /// any other shape (including the stable `channels.json`).
+  static String? _legacyOverlayPid(String name) {
+    if (!name.startsWith('channels-') || !name.endsWith('.json')) {
+      return null;
+    }
+    final middle = name.substring('channels-'.length, name.length - 5);
+    return int.tryParse(middle) == null ? null : middle;
+  }
+
+  static Future<bool> _pidAlive(int pid) async {
+    if (pid <= 0) return false;
+    if (Platform.isLinux) return Directory('/proc/$pid').exists();
+    try {
+      final result = await Process.run('kill', ['-0', '$pid']);
+      return result.exitCode == 0;
+    } on Object {
+      return true; // unknown — keep the file rather than delete live keys
+    }
+  }
+
   /// The effective union with DECRYPTED key material, for the live
   /// client join loop (plaintext exists only in memory / the runtime
   /// overlay). Undecryptable channels stay joined keyless with a loud
@@ -546,6 +617,15 @@ final class DapScopedMemberships {
         globalChannelsFile,
         invite.channel,
         client.ChannelKeys(pub: invite.pub!, priv: priv),
+      );
+      // The deviation from the v3 encrypted-everywhere stance is
+      // deliberate and now loud: the legacy global file has no envelope
+      // field and REG-* pins byte-equivalence with `fa dap import`.
+      warnings.add(
+        'dap: global scope persists the #${invite.channel} key as '
+        'PLAINTEXT in ~/.dap/channels.json — byte-equivalent with '
+        '`fa dap import` (the legacy store has no envelope field). '
+        'Pick session/project scope for passphrase-encrypted keys.',
       );
     }
     await client.persistDapConfig(

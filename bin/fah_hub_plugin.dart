@@ -16,7 +16,7 @@ library;
 import 'dart:async';
 import 'dart:convert' show jsonEncode;
 import 'dart:io'
-    show File, HttpClient, Platform, Process, ProcessStartMode, pid;
+    show File, HttpClient, Platform, Process, ProcessStartMode;
 import 'dart:math' show Random;
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
@@ -367,7 +367,15 @@ final class HubPluginHost implements FahPlugin {
   /// global `~/.dap/channels.json`.
   void _initScopedMemberships(PluginContext context) {
     final home = _home ?? hub.defaultHome(_environment);
-    final overlay = '$home/.dap/runtime/channels-$pid.json';
+    // STABLE overlay name (not per-pid): one file per $HOME, rewritten
+    // atomically on every (re)seed — the old `channels-$pid.json` shape
+    // accumulated one plaintext-key file per run forever. Legacy pid
+    // files of dead processes are swept here; the overlay is deleted on
+    // clean shutdown where the host has a teardown path (and rewritten
+    // 0600 on the next boot otherwise) — see docs/dap.md §15.3.
+    final runtimeDir = '$home/.dap/runtime';
+    unawaited(DapScopedMemberships.sweepLegacyOverlays(runtimeDir));
+    final overlay = '$runtimeDir/channels.json';
     _scoped = DapScopedMemberships(
       globalConfigFile: hub.defaultDapConfigFile(_home, _environment),
       globalChannelsFile:

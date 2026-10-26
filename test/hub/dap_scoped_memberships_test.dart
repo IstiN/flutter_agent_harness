@@ -200,6 +200,21 @@ void main() {
     expect(configAfter['channels'], isNot(contains('team')));
   });
 
+  test('global-scope plaintext persistence is announced in the join '
+      'warnings (review: deviation from the encrypted-stores table must '
+      'be loud, not silent)', () async {
+    final s = service();
+    final outcome = await s.join(invite(), DapChannelScope.global);
+    expect(outcome.warnings.join('\n'), contains('PLAINTEXT'));
+    expect(outcome.warnings.join('\n'), contains('fa dap import'));
+    // Keyless (public) global joins carry no key material → no warning.
+    final public = await s.join(
+      invite(channel: 'open', keys: false),
+      DapChannelScope.global,
+    );
+    expect(public.warnings.join('\n'), isNot(contains('PLAINTEXT')));
+  });
+
   test('AC13: prompt once with save → later service reads Keychain, no '
       'second prompt; item is per-channel unique', () async {
     var prompts = 0;
@@ -423,6 +438,41 @@ void main() {
       await file.writeAsString('{not json');
       final s = service();
       expect(await s.union().then((u) => u.effective()), isEmpty);
+    });
+  });
+
+  group('runtime overlay hygiene (review: no unbounded plaintext-key '
+      'accumulation)', () {
+    test('cleanupOverlay deletes the overlay file (best-effort)', () async {
+      final s = service();
+      await s.seedOverlay();
+      expect(await File(overlay).exists(), isTrue);
+      await s.cleanupOverlay();
+      expect(await File(overlay).exists(), isFalse);
+      // Double-clean is a no-op, never a throw.
+      await s.cleanupOverlay();
+    });
+
+    test('sweepLegacyOverlays removes pid files of dead processes only',
+        () async {
+      final runtimeDir = '${tmp.path}/.dap/runtime';
+      await Directory(runtimeDir).create(recursive: true);
+      final dead = File('$runtimeDir/channels-999999.json');
+      final alive = File('$runtimeDir/channels-${pid}.json');
+      final stable = File('$runtimeDir/channels.json');
+      await dead.writeAsString('{}');
+      await alive.writeAsString('{}');
+      await stable.writeAsString('{}');
+      await DapScopedMemberships.sweepLegacyOverlays(runtimeDir);
+      expect(await dead.exists(), isFalse);
+      expect(await alive.exists(), isTrue, reason: 'live pid is kept');
+      expect(await stable.exists(), isTrue, reason: 'never our own file');
+    });
+
+    test('sweepLegacyOverlays tolerates a missing runtime dir', () async {
+      await DapScopedMemberships.sweepLegacyOverlays(
+        '${tmp.path}/does-not-exist',
+      );
     });
   });
 }

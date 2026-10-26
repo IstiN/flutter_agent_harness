@@ -159,3 +159,46 @@ Future<String> hubDecryptPayloadWithKeyPair({
   );
   return utf8.decode(clear);
 }
+
+/// A self-describing `fanet1` channel frame, opened for the legacy
+/// decrypt path: the sender X25519 public key rides IN the frame (so
+/// recipients need only the channel private key — no hub whois), and
+/// [ciphertextB64] is the inner raw `dap/1` AEAD payload
+/// `base64(nonce(12) || ct || tag(16))` that
+/// [hubDecryptPayloadWithKeyPair] already understands.
+final class HubFanet1Frame {
+  const HubFanet1Frame({required this.senderPubkey, required this.ciphertextB64});
+
+  /// The sender's X25519 public key, extracted from the frame header.
+  final SimplePublicKey senderPubkey;
+
+  /// The raw `dap/1` AEAD payload (33-byte self-describing header removed).
+  final String ciphertextB64;
+}
+
+/// Opens [payloadB64] as a `fanet1` frame when it matches the
+/// self-describing shape `base64(0x01 || spk(32) || nonce(12) || ct ||
+/// tag(16))` (the fa_network/app envelope contract); returns null for
+/// the legacy raw `dap/1` layout `base64(nonce(12) || ct || tag(16))`.
+///
+/// Detection is SHAPE-ONLY: a legacy nonce can start with `0x01` by
+/// chance and a long-enough legacy payload satisfies the length bound,
+/// so a caller whose fanet1 decrypt then fails MUST fall back to the
+/// legacy layout instead of dropping the frame.
+HubFanet1Frame? hubTryOpenFanet1(String payloadB64) {
+  final List<int> raw;
+  try {
+    raw = base64Decode(payloadB64);
+  } on Object {
+    return null;
+  }
+  const minFrameLength = 1 + 32 + 12 + 16;
+  if (raw.length < minFrameLength || raw[0] != 1) return null;
+  return HubFanet1Frame(
+    senderPubkey: SimplePublicKey(
+      raw.sublist(1, 33),
+      type: KeyPairType.x25519,
+    ),
+    ciphertextB64: base64Encode(raw.sublist(33)),
+  );
+}
