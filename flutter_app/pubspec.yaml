@@ -74,7 +74,7 @@ dependencies:
   # (`voxel.mesh.bin`/`voxel.blocks.bin`), and raises the quickjs_runtime
   # floor to ^0.3.6 (pure-Dart, additive symbol-probed FFI), which forced
   # the transitive quickjs_runtime 0.3.5→0.3.6 bump in flutter_app/pubspec.lock.
-  js_widget_runtime: ^0.4.156
+  js_widget_runtime: ^0.4.190
 
   # The fa_widgets catalog validator — the SAME rule engine the catalog CI
   # runs (issue #1045): publish pre-flight imports it so a manifest that

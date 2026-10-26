@@ -1133,10 +1133,10 @@ packages:
     dependency: "direct main"
     description:
       name: js_widget_runtime
-      sha256: "d8b305fda4d057f64420727ee8d4b85d01b619fd5030460e6150bf7d86c6320e"
+      sha256: "5f3640f06e175dc3eb33f1f17265bf444d71ddb5facf1e88e67f19945426115a"
       url: "https://pub.dev"
     source: hosted
-    version: "0.4.177"
+    version: "0.4.190"
   json_annotation:
     dependency: transitive
     description:
@@ -1517,10 +1517,10 @@ packages:
     dependency: transitive
     description:
       name: quickjs_runtime
-      sha256: "783703b4c83bed7da0fd5daad1baa43b9be42f0c4b4f19290fcd6823fa7e1f11"
+      sha256: "084797193476482e574576dec5c6d28662b14170fc18685df3cdfdc886268dab"
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.6"
+    version: "0.4.8"
   quiver:
     dependency: transitive
     description:
