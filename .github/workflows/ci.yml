@@ -2342,6 +2342,24 @@ jobs:
           # wrapper's bounded-retry shape.
           install_ok=false
           for attempt in 1 2 3; do
+            # The `timeout` below kills the npx wrapper but can orphan its
+            # apt-get child, which keeps /var/lib/dpkg/lock-frontend
+            # (2026-10-26: attempts 2 and 3 died in ~16s on "Could not get
+            # lock ... held by process 4135" — the retry could never
+            # recover from the very kill this loop was built for). Wait,
+            # bounded, for a stale holder: it is doing the same install we
+            # want, so let it finish; kill it only if still wedged; then
+            # clear any half-configured state the kill left.
+            for _ in $(seq 1 24); do
+              pgrep -x apt-get >/dev/null 2>&1 || break
+              sleep 5
+            done
+            if pgrep -x apt-get >/dev/null 2>&1; then
+              echo "::warning::stale apt-get still holds the dpkg lock — stopping it before the retry"
+              sudo pkill -x apt-get || true
+              sleep 3
+            fi
+            sudo dpkg --configure -a || true
             if timeout 600 npx playwright install --with-deps chromium webkit; then
               install_ok=true
               break
