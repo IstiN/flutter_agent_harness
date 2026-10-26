@@ -81,14 +81,6 @@
   "issue-1516": [
     {
       "leg": "rework",
-      "at": "2026-10-12T03:37:35Z",
-      "prompt": 235270,
-      "completion": 5894,
-      "total": 241164,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-13T23:45:38Z",
       "prompt": 110440,
       "completion": 2376,
@@ -4530,6 +4522,17 @@
       "completion": 10627,
       "total": 52221,
       "cacheRead": 1150208,
+      "model": "kimi-for-coding"
+    }
+  ],
+  "pr-1895": [
+    {
+      "leg": "review",
+      "at": "2026-10-26T03:41:20Z",
+      "prompt": 71845,
+      "completion": 15225,
+      "total": 87070,
+      "cacheRead": 1623808,
       "model": "kimi-for-coding"
     }
   ]
