@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-26T11:57:37.251Z",
+  "ticketKey": "pr-1907",
+  "headSha": "62a14b6fa570213633f38e8ba194e8bf4afb558e",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:1fc7eec4fcdf36df",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:d7c0507a4d567f00",
+      "size": 11723
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:6bb550ebfbc80d54",
+      "size": 5049
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:05b6a1c820810bd1",
+      "size": 3302
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7c4da17106dc86ff",
+      "size": 1231
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:1265d9e0c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:7f844bdd1eb6ab21",
+      "size": 3049
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:7b67cb22fea4dd77",
+      "size": 2964
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6wPfK4",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/dispatch_and_watch.sh:204",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the liveness probe is blind to `queued` runs — the \"pool appears IDLE\" warning false-fires on the exact healthy-queue shape gh-1903 is about**\n\nThe probe lists only `--status in_progress` (also `--limit 20`). GitHub run statuses are `queued` / `in_progress` / `completed`, so a sibling leg's freshly-dispatched child that is itself still **queued** for fa-m5-1 is invisible to this probe. In the 2026-10-26 incident shape — the testflight child queued while the cli sibling chain holds/waits on the pool — the early window (siblings dispatched but not yet picked up) makes the probe return **zero** rows, and the script then logs:\n\n```\n::warning:: repo-wide in_progress runs: NONE ... pool appears IDLE (gh-172 zombie signature possible ...)\n```\n\non a perfectly healthy queue. The header comment's claim — \"Only a repo-wide EMPTY in_progress list while the child never started positively establishes pool idleness\" (script line 33) — is therefore false: queued runs are invisible to it. Two smaller distortions ride along:\n\n- `--limit 20` truncates: a repo with >20 busy runs can read \"0\" here while the pool is saturated.\n- The opposite direction: any `in_progress` run on a *hosted* runner (ci on ubuntu-latest, unrelated to fa-m5-1) is logged as \"the queued child is waiting behind these\" — which may not be true either.\n\nNothing cancels (gh-1903 holds — this is diagnostic-only), but a `::warning::` crying \"zombie signature possible\" during the exact healthy scenario this PR exists to protect will train readers to ignore the real warning. Options: (a) also probe `--status queued` (or run the listing unfiltered and bucket by status) before ever claiming idleness; (b) or downgrade the message to \"no in_progress runs observed — queued runs are invisible to this probe; idleness cannot be established\" and reserve the zombie-signature wording for the trap diagnostic."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wPfNI",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/dispatch_and_watch.sh:150",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the orphan-cancel decides from possibly-stale state — an API outage (or a start between the last poll and the TERM) can cancel a child that actually STARTED**\n\nThe trap gates the cancel on `child_started` and `last_state` — both records of the *last successful observation*, which may be minutes old at signal time:\n\n- If polls have been failing (sustained gh/API outage), `child_started` stays 0 and `last_state` is `error/-` even though the child may be mid-build. The trap then cancels a **running** child — exactly what the PR's own invariant forbids (\"A child that ever started — even if it is between jobs right now — is left alone\").\n- Even without an outage, a child picked up by the pool between the final poll and the runner's SIGTERM is cancelled while starting.\n\nThis is the one place \"cannot observe ⇒ cannot judge\" is violated: every other cancel path was deleted for this principle, yet the surviving path judges from a cache. The trap is not latency-sensitive (the leg is already dead, and `gh run cancel` is one call), so a single fresh re-check before cancelling both honors the invariant and shrinks the diagnostic:\n\n```bash\nfresh=\"$(gh run view \"$run_id\" --repo \"$repo\" --json status,jobs \\\n  --jq '\"\\(.status) \" + ([.jobs[] | select(.status == \"in_progress\" or .status == \"queued\")] | length | tostring)' 2>/dev/null)\" || fresh=\"\"\n# cancel only when fresh proves never-started (status in_progress/queued with\n# zero started jobs — or keep the cancel on empty fresh, but say why)\n```\n\nAt minimum, when `last_state` is `error/-` the diagnostic should say the cancel decision was made on stale/unobservable state rather than presenting `NEVER STARTED` as fact."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wPfRZ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/dispatch_watch_test.dart:195",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the stub's `is_jobs` detection block is duplicated — hoist it**\n\nThe `--json ... jobs` argument scan appears twice inside the `view)` handler (the block at line 165 gates `jobs_body` construction; the block at line 195 re-detects the same flag to choose the output format and append to `jobs-served-<id>.log`). Both scan identical args and can never disagree, so the second copy is pure duplication in a fixture whose comments elsewhere go to great lengths to stay precise. Compute `is_jobs` once at the top of the `view)` handler and reuse it in both places."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:eafc3ac3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the liveness probe is blind to `queued` runs — the \"pool appears IDLE\" warning false-fires on the exact healthy-queue shape gh-1903 is about**\n\nThe probe lists only `--status in_progress` (also `--limit 20`). GitHub run statuses are `queued` / `in_progress` / `completed`, so a sibling leg's freshly-dispatched child that is itself still **queued** for fa-m5-1 is invisible to this probe. In the 2026-10-26 incident shape — the testflight child queued while the cli sibling chain holds/waits on the pool — the early window (siblings dispatched but not yet picked up) makes the probe return **zero** rows, and the script then logs:\n\n```\n::warning:: repo-wide in_progress runs: NONE ... pool appears IDLE (gh-172 zombie signature possible ...)\n```\n\non a perfectly healthy queue. The header comment's claim — \"Only a repo-wide EMPTY in_progress list while the child never started positively establishes pool idleness\" (script line 33) — is therefore false: queued runs are invisible to it. Two smaller distortions ride along:\n\n- `--limit 20` truncates: a repo with >20 busy runs can read \"0\" here while the pool is saturated.\n- The opposite direction: any `in_progress` run on a *hosted* runner (ci on ubuntu-latest, unrelated to fa-m5-1) is logged as \"the queued child is waiting behind these\" — which may not be true either.\n\nNothing cancels (gh-1903 holds — this is diagnostic-only), but a `::warning::` crying \"zombie signature possible\" during the exact healthy scenario this PR exists to protect will train readers to ignore the real warning. Options: (a) also probe `--status queued` (or run the listing unfiltered and bucket by status) before ever claiming idleness; (b) or downgrade the message to \"no in_progress runs observed — queued runs are invisible to this probe; idleness cannot be established\" and reserve the zombie-signature wording for the trap diagnostic."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:ebf6642f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the orphan-cancel decides from possibly-stale state — an API outage (or a start between the last poll and the TERM) can cancel a child that actually STARTED**\n\nThe trap gates the cancel on `child_started` and `last_state` — both records of the *last successful observation*, which may be minutes old at signal time:\n\n- If polls have been failing (sustained gh/API outage), `child_started` stays 0 and `last_state` is `error/-` even though the child may be mid-build. The trap then cancels a **running** child — exactly what the PR's own invariant forbids (\"A child that ever started — even if it is between jobs right now — is left alone\").\n- Even without an outage, a child picked up by the pool between the final poll and the runner's SIGTERM is cancelled while starting.\n\nThis is the one place \"cannot observe ⇒ cannot judge\" is violated: every other cancel path was deleted for this principle, yet the surviving path judges from a cache. The trap is not latency-sensitive (the leg is already dead, and `gh run cancel` is one call), so a single fresh re-check before cancelling both honors the invariant and shrinks the diagnostic:\n\n```bash\nfresh=\"$(gh run view \"$run_id\" --repo \"$repo\" --json status,jobs \\\n  --jq '\"\\(.status) \" + ([.jobs[] | select(.status == \"in_progress\" or .status == \"queued\")] | length | tostring)' 2>/dev/null)\" || fresh=\"\"\n# cancel only when fresh proves never-started (status in_progress/queued with\n# zero started jobs — or keep the cancel on empty fresh, but say why)\n```\n\nAt minimum, when `last_state` is `error/-` the diagnostic should say the cancel decision was made on stale/unobservable state rather than presenting `NEVER STARTED` as fact."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:56d87fb7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the stub's `is_jobs` detection block is duplicated — hoist it**\n\nThe `--json ... jobs` argument scan appears twice inside the `view)` handler (the block at line 165 gates `jobs_body` construction; the block at line 195 re-detects the same flag to choose the output format and append to `jobs-served-<id>.log`). Both scan identical args and can never disagree, so the second copy is pure duplication in a fixture whose comments elsewhere go to great lengths to stay precise. Compute `is_jobs` once at the top of the `view)` handler and reuse it in both places."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:ff92307e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The watchdog removal is sound and well-tested — all 25 tests in `test/dispatch_watch_test.dart` pass locally, shellcheck is clean, `--budget-seconds`/`DW_QUEUE_STALL_SECONDS` are gone from workflows and script, legs retain `actions: write` so the one surviving cancel path is permitted, and the gh-1903 invariants (read-only wait, exactly-one orphan-cancel on TERM/INT, no re-dispatch) are each pinned by a dedicated test.\n\n**Key Issues** (none blocking):\n1. ⚠️ The repo-wide liveness probe lists only `--status in_progress` — `queued` sibling runs are invisible, so the \"pool appears IDLE (gh-172 zombie signature)\" `::warning::` false-fires during the exact healthy-queue scenario gh-1903 protects (details in the inline comment).\n2. ⚠️ The orphan-cancel trap decides from last-observed state; an API outage (or a pickup between last poll and TERM) can make it cancel a child that actually started — one fresh `gh run view` re-check in the trap would close this (inline comment).\n3. 💡 `watch_started=0` until the watch loop makes the trap's elapsed diagnostic print ~1.7 billion seconds if TERM lands in the appear window.\n4. 💡 The stub `gh`'s `is_jobs` scan is duplicated in the `view)` handler — hoist it.\n\n**Next Steps**:\n1. Probe `--status queued` too (or stop claiming positive idleness) before emitting the zombie-signature warning.\n2. Re-check the child's live state inside the orphan-cancel trap before cancelling.\n3. Init `watch_started` at script start; hoist the stub's duplicate `is_jobs` detection."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:b6bd7839",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "📍 **`scripts/dispatch_and_watch.sh:138`**\n\n💡 **SUGGESTION: `watch_started=0` makes the trap's elapsed arithmetic explode if TERM lands during dispatch/appear**\n\n`watch_started` is only set when the watch loop begins (line 169). If the leg is cancelled (or its timeout fires) while the script is still in `dispatch`/`wait_for_run` — a 10-minute appear window inside a 150–360m leg, and manual cancels happen — the trap prints `leg terminated by TERM after $((now - 0))s`, i.e. ~1.7 billion seconds, in the very diagnostic this PR touts. Initialize once at script start (e.g. `watch_started=$(date +%s)` before `dispatch`) so \"after Ns\" means leg-elapsed from the runner's perspective in every path."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
