@@ -124,7 +124,6 @@ final class TranscribeAudioConfig {
     this.baseUrl,
     this.language,
     this.httpClient,
-    this.sessionId,
     this.responseFormat = TranscriptionResponseFormat.json,
     this.granularities = const {},
     this.require = TranscriptionRequirement.none,
@@ -152,12 +151,6 @@ final class TranscribeAudioConfig {
 
   /// Optional HTTP client for testing.
   final http.Client? httpClient;
-
-  /// Resolves the current session id for sidecar placement, wired by hosts
-  /// that own a session (the CLI passes `() => session.cachedId`). Null
-  /// keeps the spill store's own `sessionless` fallback bucket — the same
-  /// behavior the spill hooks have before a session exists.
-  final String? Function()? sessionId;
 
   /// Wire response format. `json` (default) keeps today's plain-text path
   /// byte-identically; `verbose` returns a [TranscriptDocument]; `text`
@@ -567,9 +560,16 @@ Map<String, dynamic> _decodeVerbosePayload(String body, String endpointHost) {
   return decoded;
 }
 
-/// Enforces the `require` contract against a 200 payload that silently
-/// lacks the demanded timings (a downgrade is a downgrade even when the
-/// endpoint answers 200 — AC5). Without `require`, the machine-readable
+/// Whether the payload carries a non-empty [field] collection.
+bool _hasPayloadCollection(Map<String, dynamic> payload, String field) {
+  final value = payload[field];
+  return value is List && value.isNotEmpty;
+}
+
+/// Enforces the `require` contract against a 200 payload: the demanded
+/// level must be present in the payload REGARDLESS of what was requested
+/// on the wire — a requirement unmet is a hard, actionable error (AC5),
+/// never success-with-no-warning. Without `require`, the machine-readable
 /// warning records the degradation. Never fabricates timings.
 void _enforceRequirementsOnPayload(
   Map<String, dynamic> payload,
@@ -579,25 +579,16 @@ void _enforceRequirementsOnPayload(
   List<String> warnings,
   String endpointHost,
 ) {
-  final payloadWords = payload['words'];
-  final hasPayloadWords = payloadWords is List && payloadWords.isNotEmpty;
-  final payloadSegments = payload['segments'];
-  final hasPayloadSegments =
-      payloadSegments is List && payloadSegments.isNotEmpty;
-  if (requested.contains(TranscriptionGranularity.word) && !hasPayloadWords) {
-    if (config.require == TranscriptionRequirement.word) {
-      throw StateError(
-        'Transcription: word timings were required (require: word) but the '
-        'endpoint at $endpointHost answered HTTP 200 without any '
-        'word-level timestamps (it silently ignored '
-        'timestamp_granularities[]=word). Configure an endpoint that '
-        'provides word-level granularity (e.g. OpenAI whisper-1), or '
-        'lower the requirement.',
-      );
-    }
-    if (!state.wordsDowngraded) {
-      warnings.add(warningWordTimingsUnsupported);
-    }
+  final hasPayloadWords = _hasPayloadCollection(payload, 'words');
+  final hasPayloadSegments = _hasPayloadCollection(payload, 'segments');
+  if (config.require == TranscriptionRequirement.word && !hasPayloadWords) {
+    throw StateError(
+      'Transcription: word timings were required (require: word) but the '
+      'endpoint at $endpointHost answered HTTP 200 without any word-level '
+      'timestamps (it silently ignored timestamp_granularities[]=word). '
+      'Configure an endpoint that provides word-level granularity (e.g. '
+      'OpenAI whisper-1), or lower the requirement.',
+    );
   }
   if (config.require == TranscriptionRequirement.segment &&
       !hasPayloadSegments) {
@@ -607,6 +598,13 @@ void _enforceRequirementsOnPayload(
       'segments. Configure a Whisper-compatible verbose_json endpoint, or '
       'lower the requirement.',
     );
+  }
+  // Without `require`, an unanswered word request is a marked degradation.
+  if (config.require == TranscriptionRequirement.none &&
+      requested.contains(TranscriptionGranularity.word) &&
+      !state.wordsDowngraded &&
+      !hasPayloadWords) {
+    warnings.add(warningWordTimingsUnsupported);
   }
 }
 
@@ -630,6 +628,25 @@ Future<TranscriptDocument> _transcribePlainFallback(
   );
 }
 
+/// The granularities the ladder asks for: the configured set, plus the
+/// demanded `require` level (a requirement that is never asked for can
+/// never be met — AC5), defaulting to the verbose segment baseline.
+Set<TranscriptionGranularity> _requestedGranularities(
+  TranscribeAudioConfig config,
+) {
+  final requested = Set.of(config.granularities);
+  if (config.require == TranscriptionRequirement.word) {
+    requested.add(TranscriptionGranularity.word);
+  }
+  if (config.require == TranscriptionRequirement.segment) {
+    requested.add(TranscriptionGranularity.segment);
+  }
+  if (requested.isEmpty) {
+    requested.add(TranscriptionGranularity.segment);
+  }
+  return requested;
+}
+
 /// Runs the full verbose ladder: attempt with the requested granularities,
 /// downgrade at most once per step on classified 400s, parse strictly, and
 /// return the final document.
@@ -642,9 +659,7 @@ Future<TranscriptDocument> _transcribeVerbose({
   required TranscriptSource source,
   required String endpointHost,
 }) async {
-  final requested = config.granularities.isEmpty
-      ? const {TranscriptionGranularity.segment}
-      : Set.of(config.granularities);
+  final requested = _requestedGranularities(config);
   final state = _LadderState();
   final warnings = <String>[];
   final client = config.httpClient ?? http.Client();
@@ -789,7 +804,7 @@ AgentTool transcribeAudioTool(
 }) {
   final sidecars = SpillStore(
     env: env,
-    sessionId: sessionId ?? config.sessionId ?? (() => null),
+    sessionId: sessionId ?? (() => null),
     fileName: (counter) => 'transcript-$counter.json',
   );
   return AgentTool(

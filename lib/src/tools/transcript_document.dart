@@ -421,24 +421,50 @@ TranscriptSegment _hostSegmentFor(
   return nearest ?? segments.first;
 }
 
+/// Coerces a payload collection field to a list: null stays null, a real
+/// list passes, any other nested shape degrades to absent WITH a
+/// machine-readable warning (a relay answering `"segments": "..."` must
+/// not crash the parse — same treatment as malformed entries).
+List<Object?>? _asListOrWarn(
+  Object? value,
+  String field,
+  List<String> warnings,
+) {
+  if (value == null) return null;
+  if (value is List<Object?>) return value;
+  if (value is List) return value;
+  warnings.add(
+    '$warningInvalidTimestampDropped: $field field is not a list — ignored',
+  );
+  return null;
+}
+
 /// Parses an OpenAI-family `verbose_json` payload into a document. The
 /// strict parse for the OpenAI/Groq adapter family: known fields, typed
 /// validation through [buildTranscriptDocument]; unknown fields are
-/// ignored, unknown SHAPES (non-map payloads) are the caller's error.
+/// ignored, unknown SHAPES (non-map payloads, non-list collections)
+/// degrade with warnings or actionable errors — never a raw cast crash.
 TranscriptDocument parseVerboseTranscriptionPayload({
   required Map<String, dynamic> payload,
   required TranscriptSource source,
   List<String> warnings = const [],
 }) {
+  // Growable copy: the shape guards below append (the default `const []`
+  // is unmodifiable).
+  final allWarnings = List.of(warnings);
   return buildTranscriptDocument(
     text: payload['text'] is String ? payload['text'] as String : '',
     language: payload['language'] is String
         ? payload['language'] as String
         : null,
     durationSeconds: payload['duration'],
-    rawSegments: payload['segments'] as List<Object?>?,
-    rawWords: payload['words'] as List<Object?>?,
-    warnings: warnings,
+    rawSegments: _asListOrWarn(
+      payload['segments'],
+      'segments',
+      allWarnings,
+    ),
+    rawWords: _asListOrWarn(payload['words'], 'words', allWarnings),
+    warnings: allWarnings,
     source: source,
   );
 }

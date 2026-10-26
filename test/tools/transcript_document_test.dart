@@ -428,6 +428,27 @@ void main() {
   });
 
   group('UT-05: serialization shape (schema v1)', () {
+    test(
+      'non-list segments/words shapes degrade with warnings, not crashes',
+      () {
+        final document = parseVerboseTranscriptionPayload(
+          payload: {
+            'text': 'hi',
+            'segments': 'nope',
+            'words': {'a': 1},
+          },
+          source: _source,
+        );
+        expect(document.text, 'hi');
+        expect(document.segments, isEmpty);
+        expect(document.words, isNull);
+        expect(
+          document.warnings.where((w) => w.contains('is not a list')),
+          hasLength(2),
+        );
+      },
+    );
+
     test('toMap carries schemaVersion, source, and ordered fields', () {
       final document = parseVerboseTranscriptionPayload(
         payload: _openAiVerboseWithWords(),

@@ -370,6 +370,111 @@ void main() {
         ),
       );
     });
+
+    test('require: word with DEFAULT (empty) granularities implies the word '
+        'request on the wire (AC5)', () async {
+      await env.writeBinaryFile('/work/clip.wav', _fakeWav());
+      final s = _scripted([
+        _verboseOk(
+          words: [
+            {'word': 'Hello', 'start': 0.0, 'end': 0.6},
+          ],
+        ),
+      ]);
+      final result = await run(
+        TranscribeAudioConfig(
+          apiKey: 'k',
+          httpClient: s.client,
+          responseFormat: TranscriptionResponseFormat.verbose,
+          require: TranscriptionRequirement.word,
+        ),
+      );
+      // The demanded level rode the wire even though granularities was
+      // unset: exactly one granularity part, value word.
+      expect(
+        'name="timestamp_granularities[]"'.allMatches(s.bodies.single).length,
+        1,
+      );
+      expect(s.bodies.single.contains('\r\nword\r\n'), isTrue);
+      expect(s.bodies.single.contains('\r\nsegment\r\n'), isFalse);
+      // Words ride the document, nested under the returned segments.
+      final document = jsonDecode(_resultText(result)) as Map<String, dynamic>;
+      final nestedWordCount = (document['segments'] as List).fold<int>(0, (
+        n,
+        segment,
+      ) {
+        final words = (segment as Map<String, dynamic>)['words'] as List?;
+        return n + (words?.length ?? 0);
+      });
+      expect(nestedWordCount, 1);
+    });
+
+    test('require: word with DEFAULT granularities hard-fails on a 200 '
+        'without words — never success-with-no-warning (AC5)', () async {
+      await env.writeBinaryFile('/work/clip.wav', _fakeWav());
+      final s = _scripted([
+        _verboseOk(
+          segments: [
+            {'id': 0, 'start': 0.0, 'end': 2.0, 'text': 'Hello world.'},
+          ],
+        ),
+      ]);
+      await expectLater(
+        run(
+          TranscribeAudioConfig(
+            apiKey: 'k',
+            httpClient: s.client,
+            responseFormat: TranscriptionResponseFormat.verbose,
+            require: TranscriptionRequirement.word,
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('require: word'),
+              contains('without any word-level timestamps'),
+              contains('silently ignored'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('thread-7 semantics: require: segment does NOT accept a words-only '
+        'payload — segments are demanded specifically', () async {
+      await env.writeBinaryFile('/work/clip.wav', _fakeWav());
+      final s = _scripted([
+        _verboseOk(
+          segments: const [],
+          words: [
+            {'word': 'Hello', 'start': 0.0, 'end': 0.6},
+          ],
+        ),
+      ]);
+      await expectLater(
+        run(
+          TranscribeAudioConfig(
+            apiKey: 'k',
+            httpClient: s.client,
+            responseFormat: TranscriptionResponseFormat.verbose,
+            granularities: const {TranscriptionGranularity.word},
+            require: TranscriptionRequirement.segment,
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('require: segment'),
+              contains('without any segments'),
+            ),
+          ),
+        ),
+      );
+    });
   });
 
   group('IT-04/AC6: Groq-style probe-and-degrade', () {
