@@ -623,16 +623,17 @@ jobs:
   build-ios:
     name: Build iOS IPA
     needs: version
-    # gh-1600 F-A + gh-1692: pin the ONE self-hosted macOS runner (fa-m5-1)
-    # via its unique registration label PLUS its runner-name label. The old
-    # generic [self-hosted, macOS, ARM64] list also matched the Linux
-    # self-hosted box's labels, and this job ran on Linux (`bundle: command
-    # not found`, exit 127; later steps died on `security: command not
-    # found`). `macos-m5` alone was still a coin flip: it matches BOTH
-    # fa-m5-1 (proven good 10-16) AND fa-m5-2 (10-17/10-18 `** ARCHIVE
-    # FAILED **`, signing env unverified) — the runner-name label `fa-m5-1`
-    # resolves the job to the known-good box until fa-m5-2 is fixed.
-    runs-on: [self-hosted, macos-m5, fa-m5-1]
+    # gh-1906: route to the shared `macos-m5` POOL. The gh-1692 pin of the
+    # ONE known-good box (`fa-m5-1` runner-name label) is dead — no m5
+    # runner carries a runner-name label anymore, so a set containing one
+    # matched ZERO runners and both iOS legs queued forever (live
+    # 2026-10-26, blocked v1.0.648 TestFlight). The gh-1692 fa-m5-2
+    # signing-env concern is retired: fa-m5-2/fa-m5-3 signed desktop green.
+    # The generic [self-hosted, macOS, ARM64] list stays banned (gh-1600
+    # F-A: it also matches the Linux box) — see
+    # test/workflow_selfhosted_legs_test.dart, which audits this exact
+    # label set and bans `fa-m5-*` name labels repo-wide.
+    runs-on: [self-hosted, macos-m5]
     # Issue #344: a wedged self-hosted worker (lost completion report)
     # otherwise holds the slot AND the in_progress status until the 300m
     # daily-publish watcher times out; a job-level timeout lets GitHub
@@ -1217,11 +1218,12 @@ jobs:
   submit-ios:
     name: Submit iOS to TestFlight
     needs: [build-ios]
-    # gh-1600 F-A + gh-1692: same runner-name pin as build-ios above — the
-    # generic [self-hosted, macOS, ARM64] list also matched the Linux box,
-    # and `macos-m5` alone is a coin flip between fa-m5-1 (good) and
-    # fa-m5-2 (broken signing env).
-    runs-on: [self-hosted, macos-m5, fa-m5-1]
+    # gh-1906: same shared `macos-m5` pool as build-ios above — the gh-1692
+    # fa-m5-1 name pin is dead (no runner carries a name label; the set
+    # matched zero runners and queued forever). The generic [self-hosted,
+    # macOS, ARM64] list stays banned (gh-1600 F-A: it also matches the
+    # Linux box).
+    runs-on: [self-hosted, macos-m5]
     # Issue #344 wedge bound + #351 arithmetic: the submit_only lane waits
     # for Apple processing (TESTFLIGHT_WAIT_TIMEOUT_SECONDS, default 5400s
     # = 90m — a healthy slow ASC processing is NOT a wedge); distribution
