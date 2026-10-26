@@ -623,16 +623,15 @@ jobs:
   build-ios:
     name: Build iOS IPA
     needs: version
-    # gh-1600 F-A + gh-1692: pin the ONE self-hosted macOS runner (fa-m5-1)
-    # via its unique registration label PLUS its runner-name label. The old
-    # generic [self-hosted, macOS, ARM64] list also matched the Linux
-    # self-hosted box's labels, and this job ran on Linux (`bundle: command
-    # not found`, exit 127; later steps died on `security: command not
-    # found`). `macos-m5` alone was still a coin flip: it matches BOTH
-    # fa-m5-1 (proven good 10-16) AND fa-m5-2 (10-17/10-18 `** ARCHIVE
-    # FAILED **`, signing env unverified) — the runner-name label `fa-m5-1`
-    # resolves the job to the known-good box until fa-m5-2 is fixed.
-    runs-on: [self-hosted, macos-m5, fa-m5-1]
+    # gh-1600 F-A + gh-1692 (history): these iOS jobs were pinned to the
+    # fa-m5-1 runner-NAME label while fa-m5-2 signing was broken.
+    # 2026-10-26: NO runner carries a runner-name label anymore (only
+    # self-hosted/macOS/ARM64/macos-m5), so the pin matched ZERO runners
+    # and iOS jobs queued forever with all m5 boxes Idle (v1.0.648).
+    # Route to the whole macos-m5 pool: fa-m5-2/fa-m5-3 both signed
+    # desktop releases green today. Never widen to the generic
+    # [self-hosted, macOS, ARM64] list — it also matched the Linux box.
+    runs-on: [self-hosted, macos-m5]
     # Issue #344: a wedged self-hosted worker (lost completion report)
     # otherwise holds the slot AND the in_progress status until the 300m
     # daily-publish watcher times out; a job-level timeout lets GitHub
@@ -1217,11 +1216,15 @@ jobs:
   submit-ios:
     name: Submit iOS to TestFlight
     needs: [build-ios]
-    # gh-1600 F-A + gh-1692: same runner-name pin as build-ios above — the
-    # generic [self-hosted, macOS, ARM64] list also matched the Linux box,
-    # and `macos-m5` alone is a coin flip between fa-m5-1 (good) and
-    # fa-m5-2 (broken signing env).
-    runs-on: [self-hosted, macos-m5, fa-m5-1]
+    # gh-1600 F-A + gh-1692 (history): these iOS jobs were pinned to the
+    # fa-m5-1 runner-NAME label while fa-m5-2 signing was broken.
+    # 2026-10-26: NO runner carries a runner-name label anymore (only
+    # self-hosted/macOS/ARM64/macos-m5), so the pin matched ZERO runners
+    # and iOS jobs queued forever with all m5 boxes Idle (v1.0.648).
+    # Route to the whole macos-m5 pool: fa-m5-2/fa-m5-3 both signed
+    # desktop releases green today. Never widen to the generic
+    # [self-hosted, macOS, ARM64] list — it also matched the Linux box.
+    runs-on: [self-hosted, macos-m5]
     # Issue #344 wedge bound + #351 arithmetic: the submit_only lane waits
     # for Apple processing (TESTFLIGHT_WAIT_TIMEOUT_SECONDS, default 5400s
     # = 90m — a healthy slow ASC processing is NOT a wedge); distribution
