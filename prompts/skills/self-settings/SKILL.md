@@ -284,6 +284,13 @@ Media slot names (exact): `imageGeneration`, `audioTts`, `musicGeneration`,
 `videoGeneration`, `vision`, `transcription`. A slot without an override falls
 back to the main connection.
 
+The `images:` section has no settings-hub editor — the registry is runtime
+state, not a persisted setting: `/images` (CLI) and the app's image-drop
+chip/panel render the shared window/cap/drop projection, and the drop
+notice model is latched (one notice per meaningful change, issue #1889;
+see `docs/images.md`). The three keys above are the whole config surface,
+applied at next boot.
+
 CLI equivalents: `/model <id>` switches the active model (a
 `models.custom.<name>` switches provider+endpoint+model in one step);
 `/models config` displays this section, `/models set <slot> <model>

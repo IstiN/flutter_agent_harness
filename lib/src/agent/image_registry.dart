@@ -87,13 +87,75 @@ final class ImageRegistryConfig {
 /// loop's request build, far from any host config object.
 ImageRegistryConfig imageRegistryConfig = const ImageRegistryConfig();
 
-/// Host-visible drop notice: every image dropped by the per-request cap
-/// is reported with its index and a key preview — never silent.
-typedef ImageDropNotice = void Function(int index, String keyPreview);
+/// One image dropped by the per-request cap (issue #1889): the registry
+/// label index, the full content key (detail surfaces only — default
+/// notice lines carry previews at most), and whether the dropped
+/// occurrence sat in the CURRENT user message (just attached — actionable)
+/// rather than in history (expected long-session degradation).
+final class ImageDropEvent {
+  const ImageDropEvent({
+    required this.index,
+    required this.key,
+    required this.fromCurrentMessage,
+  });
 
-/// Set by hosts that surface drops (the CLI prints a dim transcript line
-/// + logs to fa.log). Same pattern as `transientRetryNotice`.
-ImageDropNotice? imageDropNotice;
+  /// The `[Image N]` index of the dropped image.
+  final int index;
+
+  /// Full content key of the dropped image.
+  final String key;
+
+  /// Whether the dropped occurrence sat in the current user message.
+  final bool fromCurrentMessage;
+
+  /// Short stable preview of the content key.
+  String get keyPreview => imageKeyPreview(key);
+}
+
+/// Everything one request build decided about the image cap (issue
+/// #1889): the per-image drops, the effective cap (post-#1750 learned
+/// overrides included), the model it resolved for, and the window totals.
+/// Fired ONCE per request build — even with zero drops — so hosts can
+/// aggregate, latch, and detect recovery; the stateless registry itself
+/// stays stateless.
+final class ImageDropReport {
+  const ImageDropReport({
+    required this.drops,
+    required this.cap,
+    required this.modelId,
+    required this.currentImageCount,
+    required this.registryCount,
+    required this.ridingCount,
+  });
+
+  /// Every dropped image of the request, in drop order.
+  final List<ImageDropEvent> drops;
+
+  /// The effective per-request cap this request was built under.
+  final int cap;
+
+  /// The model id the cap resolved for (part of the latch identity).
+  final String modelId;
+
+  /// Unique images in the current user message (rode or dropped).
+  final int currentImageCount;
+
+  /// Unique images in the whole window (the registry size).
+  final int registryCount;
+
+  /// Images that rode the request (`registryCount - drops` when the
+  /// current batch fit under the cap; kept explicit for the surface).
+  final int ridingCount;
+}
+
+/// Set by hosts that surface drops (the CLI aggregates + latches into one
+/// transcript notice and logs every per-image detail to fa.log; the app
+/// mirrors that onto AppLog + a chat chip). Fired once per request build.
+/// Same pattern as `transientRetryNotice`.
+typedef ImageDropReportNotice = void Function(ImageDropReport report);
+
+/// The active per-request drop reporter — wired once by the host at boot.
+ImageDropReportNotice? imageDropReportNotice;
 
 /// Host-visible learned-cap notice (issue #1750): fired ONCE when a
 /// provider image-count refusal teaches the loop a smaller cap — names
@@ -195,6 +257,30 @@ String imageContentKey(ImageContent image) => sha256
     .convert(utf8.encode('data:${image.mimeType};base64,${image.data}'))
     .toString();
 
+/// The agent loop's request-payload image rewrite (#171 + #1889): the
+/// kill switch skips it entirely (byte-identical legacy — no rewrite,
+/// no reports), the cap resolves per model (`#1750` learned latch >
+/// `perModel` config > catalog maxImages > the global maxPerRequest),
+/// and the host-facing seam is the per-request [ImageDropReport] (one
+/// call per build, zero drops included). Lives beside the seam it fans
+/// out to so the loop's call site stays one expression.
+List<Message> rewriteRequestImages(
+  List<Message> messages, {
+  required String modelId,
+  required int? catalogMaxImages,
+  required int? capOverride,
+}) {
+  if (!imageRegistryConfig.enabled) return messages;
+  return rewriteHistoryImages(
+    messages,
+    maxPerRequest:
+        capOverride ??
+        resolveImageCap(modelId: modelId, catalogMaxImages: catalogMaxImages),
+    modelId: modelId,
+    onReport: imageDropReportNotice,
+  );
+}
+
 /// A short, stable preview of a content key for drop notices.
 String imageKeyPreview(String key) => key.substring(0, 8);
 
@@ -203,13 +289,20 @@ String imageKeyPreview(String key) => key.substring(0, 8);
 /// the current user message rides in place, and the per-request cap drops
 /// by priority (current > newest > older) reporting every drop.
 ///
+/// [onReport] fires ONCE per call with the request's [ImageDropReport]
+/// (zero drops included, once the rewrite engaged) — the seam the hosts'
+/// aggregation+latch layer consumes (issue #1889). The image-free
+/// fast path (nothing to rewrite) skips it: an image-free session pays
+/// nothing and never registers as a drop-situation change.
+///
 /// Returns the SAME list instance when there is nothing to rewrite (no
 /// images and no `[Image N]` mentions), so image-free sessions pay
 /// nothing.
 List<Message> rewriteHistoryImages(
   List<Message> messages, {
   int? maxPerRequest,
-  void Function(int index, String keyPreview)? onDrop,
+  String? modelId,
+  void Function(ImageDropReport report)? onReport,
 }) {
   var hasImages = false;
   for (final message in messages) {
@@ -245,7 +338,6 @@ List<Message> rewriteHistoryImages(
     occurrences,
     currentIdx,
     cap,
-    onDrop,
   );
   final carriers = _planCarriers(degraded, entryByKey, occurrences, riding);
 
@@ -259,7 +351,20 @@ List<Message> rewriteHistoryImages(
   // history citations were already degraded by the pre-pass; what
   // survives here is generated content-keyed text.
   final ridingIndexes = riding.indexByKey.values.toSet();
-  return [for (final message in out) _resolveMentions(message, ridingIndexes)];
+  final rewritten = [
+    for (final message in out) _resolveMentions(message, ridingIndexes),
+  ];
+  onReport?.call(
+    ImageDropReport(
+      drops: riding.drops,
+      cap: cap,
+      modelId: modelId ?? '',
+      currentImageCount: riding.currentImageCount,
+      registryCount: entryByKey.length,
+      ridingCount: riding.ridingKeys.length,
+    ),
+  );
+  return rewritten;
 }
 
 /// Whether [message] is a projected renumbering boundary: a classic
@@ -309,9 +414,15 @@ int _lastUserMessageIndex(List<Message> messages) {
 
 /// The riding-set selection result.
 final class _RidingSelection {
-  const _RidingSelection(this.currentKeys, this.ridingKeys, this.indexByKey);
+  const _RidingSelection(
+    this.currentKeys,
+    this.ridingKeys,
+    this.indexByKey,
+    this.drops,
+    this.currentImageCount,
+  );
 
-  /// Keys occurring in the current message (always ride, in place).
+  /// Keys occurring in the current message (ride in place, up to the cap).
   final Set<String> currentKeys;
 
   /// Every key riding the request (current + capped history).
@@ -319,27 +430,52 @@ final class _RidingSelection {
 
   /// `{key → [Image N] index}` for riding keys.
   final Map<String, int> indexByKey;
+
+  /// Every cap drop of the request, current-message drops first.
+  final List<ImageDropEvent> drops;
+
+  /// Unique images the current message carried (rode or dropped).
+  final int currentImageCount;
 }
 
-/// Riding set. Current-message keys ALWAYS ride (in place — I3 outranks
-/// the cap); the remaining slots go to the newest history keys, ties by
-/// first-seen order. Every drop is reported — never silent.
+/// Riding set. The cap applies to the whole request (issue #1889 R2): the
+/// current message's images claim slots FIRST — first-seen order within
+/// the message — and a batch bigger than the cap drops its extras as
+/// current-message drops (just attached, immediately capped — the
+/// actionable case). The remaining slots go to the newest history keys,
+/// ties by first-seen order; history overflow drops as history drops.
+/// Every drop is reported — never silent.
 _RidingSelection _selectRiding(
   List<Message> messages,
   Map<String, ImageRegistryEntry> entryByKey,
   Map<String, List<int>> occurrences,
   int currentIdx,
   int cap,
-  void Function(int index, String keyPreview)? onDrop,
 ) {
-  final currentKeys = <String>{
-    if (currentIdx >= 0)
-      for (final image in _imagesOf(messages[currentIdx]))
-        imageContentKey(image),
-  };
+  // Current-message keys in first-seen (document) order, deduped.
+  final currentOrdered = <String>[];
+  if (currentIdx >= 0) {
+    final seen = <String>{};
+    for (final image in _imagesOf(messages[currentIdx])) {
+      final key = imageContentKey(image);
+      if (seen.add(key)) currentOrdered.add(key);
+    }
+  }
+  final currentRide = currentOrdered.take(cap).toSet();
+  final drops = [
+    for (final key in currentOrdered.skip(cap))
+      ImageDropEvent(
+        index: entryByKey[key]!.index,
+        key: key,
+        fromCurrentMessage: true,
+      ),
+  ];
+  final currentDropped = currentOrdered.skip(cap).toSet();
   final historyKeys = [
     for (final entry in entryByKey.values)
-      if (!currentKeys.contains(entry.key)) entry.key,
+      if (!currentRide.contains(entry.key) &&
+          !currentDropped.contains(entry.key))
+        entry.key,
   ];
   int lastSeen(String key) => occurrences[key]!.last;
   historyKeys.sort((a, b) {
@@ -348,15 +484,25 @@ _RidingSelection _selectRiding(
         ? byRecency
         : entryByKey[a]!.index.compareTo(entryByKey[b]!.index);
   });
-  final historySlots = (cap - currentKeys.length).clamp(0, historyKeys.length);
+  final historySlots = (cap - currentRide.length).clamp(0, historyKeys.length);
   for (final key in historyKeys.skip(historySlots)) {
     final entry = entryByKey[key]!;
-    onDrop?.call(entry.index, imageKeyPreview(entry.key));
+    drops.add(
+      ImageDropEvent(
+        index: entry.index,
+        key: entry.key,
+        fromCurrentMessage: false,
+      ),
+    );
   }
-  final ridingKeys = {...currentKeys, ...historyKeys.take(historySlots)};
-  return _RidingSelection(currentKeys, ridingKeys, {
-    for (final key in ridingKeys) key: entryByKey[key]!.index,
-  });
+  final ridingKeys = {...currentRide, ...historyKeys.take(historySlots)};
+  return _RidingSelection(
+    currentRide,
+    ridingKeys,
+    {for (final key in ridingKeys) key: entryByKey[key]!.index},
+    drops,
+    currentOrdered.length,
+  );
 }
 
 /// The carrier insertion plan: index → carriers before/after that message.
@@ -405,8 +551,9 @@ _CarrierPlan _planCarriers(
   return _CarrierPlan(before, after);
 }
 
-/// Emit pass: rewritten history (image blocks → refs/notes), untouched
-/// current message, carriers at their anchors.
+/// Emit pass: rewritten history (image blocks → refs/notes), the current
+/// message with its RIDING images in place (over-cap extras → the note),
+/// carriers at their anchors.
 List<Message> _emitRewritten(
   List<Message> messages,
   int currentIdx,
@@ -418,7 +565,9 @@ List<Message> _emitRewritten(
     out.addAll(carriers.before[i] ?? const <Message>[]);
     final message = messages[i];
     if (i == currentIdx) {
-      out.add(_labelCurrentImages(message, riding.indexByKey));
+      out.add(
+        _labelCurrentImages(message, riding.indexByKey, riding.ridingKeys),
+      );
     } else if (message is UserMessage) {
       final content = message.content;
       out.add(
@@ -436,10 +585,16 @@ List<Message> _emitRewritten(
   return out;
 }
 
-/// F3: the current message's images ride in place AND carry their
+/// F3: the current message's RIDING images stay in place AND carry their
 /// `[Image N]` label as a preceding text block — the model can cite the
 /// image it is looking at with the number the registry will honor.
-Message _labelCurrentImages(Message message, Map<String, int> indexByKey) {
+/// Over-cap current images (issue #1889 R2) resolve to the unavailable
+/// note, exactly like dropped history occurrences.
+Message _labelCurrentImages(
+  Message message,
+  Map<String, int> indexByKey,
+  Set<String> ridingKeys,
+) {
   if (message is! UserMessage) return message;
   final content = message.content;
   if (content is! List<ContentBlock>) return message;
@@ -447,12 +602,15 @@ Message _labelCurrentImages(Message message, Map<String, int> indexByKey) {
   return UserMessage(
     content: [
       for (final block in content)
-        if (block is ImageContent) ...[
+        if (block is ImageContent &&
+            ridingKeys.contains(imageContentKey(block))) ...[
           TextContent(
             text: imageRefLabel(indexByKey[imageContentKey(block)] ?? 0),
           ),
           block,
-        ] else
+        ] else if (block is ImageContent)
+          TextContent(text: unavailableImageNote)
+        else
           block,
     ],
     timestamp: message.timestamp,

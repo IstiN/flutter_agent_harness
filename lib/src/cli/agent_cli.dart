@@ -163,8 +163,9 @@ import '../agent/image_registry.dart'
     show
         ImageRegistryConfig,
         imageCapLearnedNotice,
-        imageDropNotice,
+        imageDropReportNotice,
         imageRegistryConfig;
+import '../agent/image_drop_ux.dart';
 import '../event_stream.dart';
 import '../providers/provider_common.dart'
     show
@@ -1457,6 +1458,13 @@ class AgentCli {
   /// reset + tool binding to the LIVE session.
   late final CompactExpandController _compactExpand;
   TtsrController? _ttsr;
+
+  /// The aggregated image-drop latch (issue #1889): one user-facing notice
+  /// per meaningful drop-situation change; `/images` renders its last
+  /// report. Fresh instance = new-session/resume re-latches once (R4);
+  /// `/reset` clears it explicitly.
+  final ImageDropUx imageDropUx = ImageDropUx();
+
   final _Style _style;
   final bool _useTui;
   final String _version;

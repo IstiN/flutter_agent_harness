@@ -1748,25 +1748,23 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   // kill switch (`images.registry: false`) skips it entirely. Issue
   // #1750: the cap resolves per model (latched > perModel config >
   // catalog maxImages > the global maxPerRequest) so a request never
-  // carries more unique images than the target model accepts.
-  if (imageRegistryConfig.enabled) {
-    final rewritten = rewriteHistoryImages(
-      requestContext.messages,
-      maxPerRequest:
-          imageCapOverride ??
-          resolveImageCap(
-            modelId: config.model.id,
-            catalogMaxImages: config.model.maxImages,
-          ),
-      onDrop: imageDropNotice,
+  // carries more unique images than the target model accepts. #1889:
+  // the host-facing seam is the per-request report (one call per
+  // build, zero drops included) — hosts aggregate + latch it into a
+  // single user-facing notice; per-image detail stays on the debug
+  // surface inside the same report.
+  final rewritten = rewriteRequestImages(
+    requestContext.messages,
+    modelId: config.model.id,
+    catalogMaxImages: config.model.maxImages,
+    capOverride: imageCapOverride,
+  );
+  if (!identical(rewritten, requestContext.messages)) {
+    requestContext = Context(
+      systemPrompt: requestContext.systemPrompt,
+      messages: rewritten,
+      tools: requestContext.tools,
     );
-    if (!identical(rewritten, requestContext.messages)) {
-      requestContext = Context(
-        systemPrompt: requestContext.systemPrompt,
-        messages: rewritten,
-        tools: requestContext.tools,
-      );
-    }
   }
   // gh-1409: compaction-pinned skill operative lines ride every
   // post-boundary request as the verbatim carrier (AC2) — payload-only,

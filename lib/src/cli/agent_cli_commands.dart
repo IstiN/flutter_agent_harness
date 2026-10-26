@@ -30,6 +30,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/trajectory': (cli, rest) async => cli._handleTrajectoryCommand(rest),
   '/import': (cli, rest) async => cli._handleImportCommand(rest),
   '/usage': (cli, rest) async => cli._handleUsageCommand(rest),
+  '/images': (cli, rest) async => cli._printImagesSurface(),
   '/mail': (cli, rest) async => cli.handleMailCommand(rest),
   '/reply': (cli, rest) async => cli.handleReplyCommand(rest),
   '/agents': (cli, rest) async => cli.handleAgentsCommand(rest),
@@ -411,6 +412,18 @@ extension SlashCommandDispatch on AgentCli {
     io.writeln(dump ?? 'no tty available (stty missing or no /dev/tty)');
   }
 
+  /// `/images` (issue #1889 R3): the registry/cap/drop detail surface —
+  /// the shared projection ([imageSurfaceLines]) both hosts render.
+  void _printImagesSurface() {
+    for (final line in imageSurfaceLines(
+      lastReport: imageDropUx.lastReport,
+      config: imageRegistryConfig,
+      modelId: config.model.id,
+    )) {
+      io.writeln(line);
+    }
+  }
+
   /// `/memory [maintain]` — Phase 2 memory surface: stats by default,
   /// `maintain` runs the consolidation pipeline now.
   Future<void> _handleMemoryCommand(String rest) async {
@@ -470,6 +483,9 @@ extension SlashCommandDispatch on AgentCli {
         _agent.reset();
         _checkpoints.clear();
         _ttsr?.reset();
+        // The image-drop latch is run-lifetime state (issue #1889 R4): a
+        // brand-new session re-latches from its first request.
+        imageDropUx.reset();
         _session = await _createSession();
         _notifyPluginSessionReady();
         // /reset is an in-process switch to a brand-new session — herdr

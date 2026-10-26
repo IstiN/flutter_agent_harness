@@ -9,6 +9,8 @@ import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 
 import 'package:fa_ui/fa_ui.dart' as fa_ui;
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show imageRegistryConfig, imageSurfaceLines;
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/apps/apps_store.dart';
@@ -31,6 +33,7 @@ import 'package:fa/services/upload.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
+import 'package:fa/ui/widgets/image_drop_notice_chip.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 
@@ -195,6 +198,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     widget.manager.addListener(_onManagerChanged);
+    widget.service.chatImageNotice.addListener(_onImageNoticeChanged);
     _installAppLauncher();
     _installDynamicHosts();
   }
@@ -202,9 +206,35 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
+    widget.service.chatImageNotice.removeListener(_onImageNoticeChanged);
     _uninstallAppLauncher();
     _uninstallDynamicHosts();
     super.dispose();
+  }
+
+  // The aggregated image-drop chip (issue #1889 R5): the latch updates
+  // per meaningful change; the chip docks the latest notice until the
+  // user dismisses it.
+  void _onImageNoticeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The docked image-drop chip for the CURRENT notice, or null.
+  Widget? get _imageNoticeBanner {
+    final notice = widget.service.chatImageNotice.value;
+    if (notice == null) return null;
+    return ImageDropNoticeChip(
+      notice: notice,
+      onTap: () => showImageDropPanel(
+        context,
+        lines: imageSurfaceLines(
+          lastReport: widget.service.imageDropUx.lastReport,
+          config: imageRegistryConfig,
+          modelId: widget.service.modelId,
+        ),
+      ),
+      onDismiss: () => widget.service.chatImageNotice.value = null,
+    );
   }
 
   void _onManagerChanged() {
@@ -371,6 +401,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return fa_ui.FaChatScreen(
       service: service,
       title: context.l10n.appTitle,
+      noticeBanner: _imageNoticeBanner,
       dynamicWidgetTileBuilder: _buildDynamicTile,
       onOpenWidgetAsApp: _openWidgetAsApp,
       // Issue #207: "High-quality image previews" — the scope notifies on
