@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
+
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -82,9 +84,8 @@ Future<void> _submitDevLogin(
   await tester.pump(const Duration(milliseconds: 300));
 }
 
-/// Runs [body] as a desktop platform (widget tests default to Android,
-/// where the provider buttons are replaced by the mobile note). The
-/// override must be reset before the test body ends — the binding's
+/// Runs [body] as a desktop platform (widget tests default to Android).
+/// The override must be reset before the test body ends — the binding's
 /// invariant check runs before teardowns.
 Future<void> _asDesktop(Future<void> Function() body) async {
   debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
@@ -113,6 +114,8 @@ void main() {
         expect(find.text('Continue with Google'), findsOneWidget);
         expect(find.text('Continue with GitHub'), findsOneWidget);
         expect(find.text('Continue with Apple'), findsNothing);
+        expect(find.byKey(const ValueKey('signInMobileNote')), findsNothing);
+        expect(find.text('Developer (local only)'), findsOneWidget);
       });
     });
 
@@ -157,6 +160,13 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
 
         expect(launched, isTrue);
+        final initiate = httpClient.requests.singleWhere(
+          (request) => request.url.path == '/api/oauth-proxy/initiate',
+        );
+        expect(
+          (jsonDecode(initiate.body) as Map<String, Object?>)['client_type'],
+          kIsWeb ? 'web' : 'desktop',
+        );
         expect(manager.hasJwt, isTrue);
         expect(manager.wallet.account?.login, 'a@b.dev');
         expect(manager.wallet.account?.displayName, 'Alice');

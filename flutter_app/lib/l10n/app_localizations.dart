@@ -4262,6 +4262,12 @@ abstract class AppLocalizations {
   /// **'Reconnecting — messages will send when back.'**
   String get networkReconnecting;
 
+  /// Tooltip for the manual reconnect button in the offline banner
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnect now'**
+  String get networkReconnectNow;
+
   /// Channel composer input hint
   ///
   /// In en, this message translates to:
@@ -4279,6 +4285,132 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count} online'**
   String networkOnlineCount(Object count);
+
+  /// Roster bottom-sheet title and online-counter tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Members'**
+  String get networkRosterTitle;
+
+  /// Roster sheet state before the network session is ready
+  ///
+  /// In en, this message translates to:
+  /// **'Loading members…'**
+  String get networkRosterLoading;
+
+  /// Roster sheet empty state
+  ///
+  /// In en, this message translates to:
+  /// **'No members yet.'**
+  String get networkRosterEmpty;
+
+  /// Roster presence label for a live member
+  ///
+  /// In en, this message translates to:
+  /// **'Online'**
+  String get networkPresenceOnline;
+
+  /// Roster presence label for an offline member
+  ///
+  /// In en, this message translates to:
+  /// **'Offline'**
+  String get networkPresenceOffline;
+
+  /// Roster presence label for a busy member
+  ///
+  /// In en, this message translates to:
+  /// **'Busy'**
+  String get networkPresenceBusy;
+
+  /// Roster member class: owner
+  ///
+  /// In en, this message translates to:
+  /// **'Owner'**
+  String get networkMemberOwner;
+
+  /// Roster member class: admin
+  ///
+  /// In en, this message translates to:
+  /// **'Admin'**
+  String get networkMemberAdmin;
+
+  /// Roster member class: regular member
+  ///
+  /// In en, this message translates to:
+  /// **'Member'**
+  String get networkMemberMember;
+
+  /// Roster member class: guest
+  ///
+  /// In en, this message translates to:
+  /// **'Guest'**
+  String get networkMemberGuest;
+
+  /// Roster member class: agent
+  ///
+  /// In en, this message translates to:
+  /// **'Agent'**
+  String get networkMemberAgent;
+
+  /// Roster fallback for an unrecognized member class
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown'**
+  String get networkMemberUnknown;
+
+  /// Roster access badge for network-wide access
+  ///
+  /// In en, this message translates to:
+  /// **'Whole network'**
+  String get networkAccessWholeNetwork;
+
+  /// Roster access badge for a channel-scoped member outside channel context
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 channel} other{{count} channels}}'**
+  String networkAccessChannels(int count);
+
+  /// Roster access badge when only the currently open channel is accessible
+  ///
+  /// In en, this message translates to:
+  /// **'This channel only'**
+  String get networkAccessThisChannelOnly;
+
+  /// Roster access badge when the open channel and other channels are accessible
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{This channel + 1 other channel} other{This channel + {count} other channels}}'**
+  String networkAccessThisChannelAndOthers(int count);
+
+  /// Roster access badge when accessible channels exclude the open channel
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 other channel} other{{count} other channels}}'**
+  String networkAccessOtherChannels(int count);
+
+  /// Roster action that removes an agent from the network
+  ///
+  /// In en, this message translates to:
+  /// **'Drop agent…'**
+  String get networkDropAgent;
+
+  /// Drop-agent confirmation title
+  ///
+  /// In en, this message translates to:
+  /// **'Drop this agent?'**
+  String get networkDropAgentTitle;
+
+  /// Drop-agent confirmation body naming the selected agent
+  ///
+  /// In en, this message translates to:
+  /// **'\"{displayName}\" will be removed from this network and lose access. This cannot be undone.'**
+  String networkDropAgentBody(String displayName);
+
+  /// Destructive drop-agent confirmation button
+  ///
+  /// In en, this message translates to:
+  /// **'Drop agent'**
+  String get networkDropAgentConfirm;
 
   /// Channel rail section header: regular (private) channels
   ///
@@ -4315,6 +4447,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Channel options'**
   String get networkChannelOptions;
+
+  /// Channel overflow menu item for renaming
+  ///
+  /// In en, this message translates to:
+  /// **'Rename channel…'**
+  String get networkRenameChannel;
+
+  /// Rename-channel dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Rename channel'**
+  String get networkRenameChannelTitle;
+
+  /// Rename-channel dialog confirm button
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get networkRename;
+
+  /// Rename-channel validation error
+  ///
+  /// In en, this message translates to:
+  /// **'Channel name cannot be empty.'**
+  String get networkChannelNameRequired;
+
+  /// Channel overflow menu item for deleting
+  ///
+  /// In en, this message translates to:
+  /// **'Delete channel…'**
+  String get networkDeleteChannel;
+
+  /// Delete-channel confirmation title
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this channel?'**
+  String get networkDeleteChannelTitle;
+
+  /// Delete-channel confirmation body
+  ///
+  /// In en, this message translates to:
+  /// **'The channel and all its messages are deleted for everyone. This cannot be undone.'**
+  String get networkDeleteChannelBody;
+
+  /// Snackbar after a channel was deleted
+  ///
+  /// In en, this message translates to:
+  /// **'Channel deleted'**
+  String get networkChannelDeleted;
 
   /// Channel overflow menu item opening the agent invite
   ///
@@ -4387,6 +4567,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'DAP'**
   String get networkAddAgentFormatDap;
+
+  /// Agent invite helper under the DAP format explaining how to paste the enrollment block into fa chat
+  ///
+  /// In en, this message translates to:
+  /// **'Copy this block and paste it into the fa chat (CLI, macOS, iOS or web) — the agent joins the channel automatically.'**
+  String get networkAddAgentDapHint;
+
+  /// Snack bar after a pasted DAP enrollment joined successfully
+  ///
+  /// In en, this message translates to:
+  /// **'Joined DAP channel #{channel}. Channel mail now reaches this agent.'**
+  String dapEnrollmentJoined(String channel);
+
+  /// Snack bar after a pasted DAP enrollment failed; never includes credential or raw transport error
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t join DAP channel #{channel}. Check the invite and hub connection, then try again.'**
+  String dapEnrollmentFailed(String channel);
+
+  /// Snack bar for a recognized DAP enrollment paste on an unsupported platform
+  ///
+  /// In en, this message translates to:
+  /// **'DAP join is not supported on this platform — use a native app or the fa CLI.'**
+  String get dapEnrollmentUnsupported;
 
   /// Agent invite: button that enrolls the typed agent name against the fa_network backend (DAP format)
   ///

@@ -97,3 +97,82 @@ String _keyParam(Map<String, String> params, String name) {
   }
   return value;
 }
+
+final _dapImportCommandPattern = RegExp(r'^fa\s+dap\s+import\s+');
+final _dapInviteWhitespacePattern = RegExp(r'\s');
+final _dapBareChannelPattern = RegExp(r'^[A-Za-z0-9_-]+$');
+
+/// The `/network` join wizard input (issue #1825 AC1): one parser for every
+/// reasonable paste form, on top of the strict [parseDapInviteImport]:
+///
+/// 1. the full invite URL (with or without the keypair fragment) — the
+///    strict parser handles it unchanged;
+/// 2. a bare `<channel-id>` (optionally `#`-prefixed) — joins on
+///    [defaultHubUrl] (the configured hub); without one this is a clear
+///    error, never a silent guess;
+/// 3. the whole copied `fa dap import '…'` command line — the command
+///    wrapper (and its shell quotes) is stripped, then form 1 applies.
+///
+/// Garbage is rejected with a [FormatException]; nothing is partially
+/// accepted, so the caller can parse-then-store with no cleanup path.
+DapInviteImport parseDapInviteFlexible(String raw, {String? defaultHubUrl}) {
+  final text = _unwrapDapInviteText(raw);
+  // Form 1: the strict URL parser (scheme/host/channel/key validation).
+  if (text.contains('://')) return parseDapInviteImport(text);
+  // Form 2: the bare channel id (no scheme, no whitespace).
+  return _parseBareDapInvite(text, defaultHubUrl);
+}
+
+String _unwrapDapInviteText(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) throw const FormatException('empty invite');
+
+  // Form 3: the copied command line. Only the exact `fa dap import <one
+  // arg>` shape unwraps — anything else falls through to the other forms
+  // (and their own errors).
+  final command = _dapImportCommandPattern.firstMatch(text);
+  if (command == null) return text;
+  return _parseDapImportArgument(text.substring(command.end));
+}
+
+String _parseDapImportArgument(String raw) {
+  final text = _stripDapInviteQuotes(raw.trim());
+  if (text.isEmpty || _dapInviteWhitespacePattern.hasMatch(text)) {
+    throw const FormatException(
+      'expected exactly one invite after `fa dap import`',
+    );
+  }
+  return text;
+}
+
+String _stripDapInviteQuotes(String text) {
+  if (text.length < 2) return text;
+  final quote = text[0];
+  if ((quote != "'" && quote != '"') || !text.endsWith(quote)) return text;
+  return text.substring(1, text.length - 1);
+}
+
+DapInviteImport _parseBareDapInvite(String text, String? defaultHubUrl) {
+  if (_dapInviteWhitespacePattern.hasMatch(text)) {
+    throw const FormatException('not an invite or channel id');
+  }
+  final channel = text.startsWith('#') ? text.substring(1) : text;
+  if (!_dapBareChannelPattern.hasMatch(channel)) {
+    throw const FormatException('not an invite or channel id');
+  }
+  return DapInviteImport(
+    hubUrl: _requireBareInviteHub(defaultHubUrl),
+    channel: channel,
+  );
+}
+
+String _requireBareInviteHub(String? defaultHubUrl) {
+  final hub = defaultHubUrl?.trim() ?? '';
+  if (hub.isEmpty) {
+    throw const FormatException(
+      'a bare channel id needs a configured hub url '
+      '(set DAP_HUB_URL or paste the full invite)',
+    );
+  }
+  return hub;
+}

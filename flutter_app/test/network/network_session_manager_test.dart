@@ -93,8 +93,8 @@ void main() {
       expect(httpClient.requests.where((r) => r.method == 'PATCH'), isEmpty);
     });
 
-    test('deleteNetwork DELETEs on the relay and drops the wallet '
-        'membership', () async {
+    test('deleteNetwork DELETEs on the relay and drops the live session '
+        'plus wallet membership', () async {
       final wallet = await KeyWallet.load(MemoryWalletBackend());
       await wallet.addNetwork(
         networkId: 'net1',
@@ -107,9 +107,15 @@ void main() {
         httpClient: httpClient,
         jwt: 'jwt-1',
       );
+      manager.sessions['net1'] = buildSession(
+        httpClient: FakeHttpClient(),
+        connector: FakeWsConnector(),
+        wallet: wallet,
+      );
 
       await manager.deleteNetwork('net1');
 
+      expect(manager.sessions.containsKey('net1'), isFalse);
       final delete = httpClient.requests.single;
       expect(delete.method, 'DELETE');
       expect(delete.url.path, '/api/networks/net1');

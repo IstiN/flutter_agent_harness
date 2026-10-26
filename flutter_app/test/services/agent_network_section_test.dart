@@ -27,7 +27,7 @@ class _RecordingAgentNetwork extends AgentNetworkController {
         fileLayer: _fileLayer(),
         fileFabric: SwappableMessagingRepository(_fileLayer()),
         transport: null,
-        loadIdentity: (_) async => null,
+        loadIdentity: (_, _) async => null,
       ) {
     if (joined) unawaited(store.setEnabled(true));
   }

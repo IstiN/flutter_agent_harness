@@ -18,9 +18,11 @@ import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/dynamic_widget_graduation.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/agent_network_transport.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
+import 'package:fa/services/dap_enrollment_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/last_connection.dart';
@@ -35,6 +37,41 @@ import 'package:fa/ui/widgets/media_player.dart';
 // The screen itself lives in the fa_ui package; these symbols stay
 // re-exported so existing imports of this path keep working.
 export 'package:fa_ui/fa_ui.dart' show kWideLayoutBreakpoint;
+
+/// Test seam for the UI interception without standing up a real hub.
+@visibleForTesting
+bool interceptDapEnrollmentSubmit(
+  BuildContext context,
+  String text, {
+  required bool supported,
+  required DapEnrollmentJoin join,
+}) {
+  final enrollment = DapEnrollmentService(
+    supported: supported,
+    join: join,
+  ).startPaste(text);
+  if (enrollment == null) return false;
+  unawaited(
+    enrollment.result.then((result) {
+      if (!context.mounted) return;
+      final l10n = context.l10n;
+      switch (result.status) {
+        case DapEnrollmentStatus.joined:
+          fa_ui.showFahSnack(context, l10n.dapEnrollmentJoined(result.channel));
+        case DapEnrollmentStatus.failed:
+          fa_ui.showFahErrorSnack(
+            context,
+            l10n.dapEnrollmentFailed(result.channel),
+          );
+        case DapEnrollmentStatus.unsupported:
+          fa_ui.showFahSnack(context, l10n.dapEnrollmentUnsupported);
+      }
+    }),
+  );
+  // fa_ui clears the composer and any smart-pasted attachment now, before
+  // the join future completes. No message_sent analytics are emitted.
+  return true;
+}
 
 /// A chat UI backed by [FlutterSessionManager], built on top of
 /// `flutter_chat_ui`.
@@ -318,6 +355,16 @@ class _ChatScreenState extends State<ChatScreen> {
     return true;
   }
 
+  /// UI-layer interception covers native AND relay-backed AgentServices:
+  /// the credential-bearing paste never reaches any sendText override.
+  bool _interceptDapSubmit(BuildContext context, String text) =>
+      interceptDapEnrollmentSubmit(
+        context,
+        text,
+        supported: agentNetworkSupported,
+        join: (bundle) => widget.service.agentNetwork.joinEnrollment(bundle),
+      );
+
   @override
   Widget build(BuildContext context) {
     final service = widget.service;
@@ -365,6 +412,7 @@ class _ChatScreenState extends State<ChatScreen> {
         asr: widget.asr,
         asrTranscriber: widget.asrTranscriber,
         dropBridge: drop,
+        onSubmit: _interceptDapSubmit,
       ),
       onPermissionAction: (permission, action) {
         if (action == 'openSettings') {

@@ -120,18 +120,29 @@ void main() {
     late _FakeConnector connector;
     late FaNetworkWs ws;
     late List<WsEvent> events;
+    late List<WsConnected> connections;
 
     setUp(() async {
       connector = _FakeConnector();
       ws = build(connector);
       events = [];
-      ws.events.listen(events.add);
+      connections = [];
+      ws.events.where((event) => event is! WsConnected).listen(events.add);
+      ws.events
+          .where((event) => event is WsConnected)
+          .cast<WsConnected>()
+          .listen(connections.add);
       await ws.connect();
     });
 
     tearDown(() => ws.dispose());
 
     _FakeChannel channel() => connector.channels.single;
+
+    test('a fresh socket announces WsConnected', () async {
+      await pumpEventQueue();
+      expect(connections, hasLength(1));
+    });
 
     test('roster.snapshot parses members', () async {
       channel().incoming.add(
@@ -158,6 +169,45 @@ void main() {
       expect(e.members, hasLength(2));
       expect(e.members.first.memberClass, MemberClass.owner);
       expect(e.members.last.presence, Presence.offline);
+    });
+
+    test('roster.snapshot parses the PRODUCTION object payload', () async {
+      // fa_network sends wsFrame{payload: rosterSnapshotWire{members}} —
+      // an object, not a bare list. The list-only parser silently emitted
+      // an empty roster (live "0 online" despite seeded hub agents).
+      channel().incoming.add(
+        jsonEncode({
+          'type': 'roster.snapshot',
+          'payload': {
+            'members': [
+              {
+                'id': 'm1',
+                'class': 'owner',
+                'displayName': 'A',
+                'presence': 'live',
+              },
+              {
+                'id': 'a1',
+                'class': 'agent',
+                'displayName': 'kb-agent',
+                'presence': 'live',
+                'access': {
+                  'scope': 'channels',
+                  'channelIds': ['c1', 'c2'],
+                },
+              },
+            ],
+          },
+        }),
+      );
+      await pump();
+      final e = events.single as RosterSnapshot;
+      expect(e.members, hasLength(2));
+      expect(e.members.last.memberClass, MemberClass.agent);
+      expect(e.members.last.presence, Presence.live);
+      expect(e.members.first.access, isNull); // legacy additive-field absence
+      expect(e.members.last.access?.scope, MemberAccessScope.channels);
+      expect(e.members.last.access?.channelIds, ['c1', 'c2']);
     });
 
     test('envelope parses an Envelope', () async {
@@ -191,6 +241,33 @@ void main() {
       final e = events.single as PresenceChanged;
       expect(e.memberId, 'm1');
       expect(e.presence, Presence.busy);
+      expect(e.access, isNull);
+    });
+
+    test('presence.changed parses hub-agent displayName + class', () async {
+      channel().incoming.add(
+        jsonEncode({
+          'type': 'presence.changed',
+          'payload': {
+            'memberId': 'dap-1',
+            'presence': 'live',
+            'displayName': 'public-agent',
+            'class': 'agent',
+            'access': {
+              'scope': 'channels',
+              'channelIds': ['c1'],
+            },
+          },
+        }),
+      );
+      await pump();
+      final e = events.single as PresenceChanged;
+      expect(e.memberId, 'dap-1');
+      expect(e.presence, Presence.live);
+      expect(e.displayName, 'public-agent');
+      expect(e.memberClass, MemberClass.agent);
+      expect(e.access?.scope, MemberAccessScope.channels);
+      expect(e.access?.channelIds, ['c1']);
     });
 
     test('network.offline / network.drain / wakeup.dispatched', () async {

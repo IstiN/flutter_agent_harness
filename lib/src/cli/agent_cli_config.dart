@@ -160,6 +160,7 @@ final class AgentCliConfig {
     this.browserBridgeHandle,
     this.browserController,
     this.hubFabric,
+    this.dapDisplayNameResolver,
     this.agentCapabilities = const [],
     this.machineName,
     this.persistAbortedPartials = false,
@@ -978,6 +979,11 @@ final class AgentCliConfig {
   /// implementation is IO-bound (DAP WebSocket) and lives bin-side — hosts
   /// inject it here. Null (default) keeps the pure file fabric.
   final MessagingRepository? hubFabric;
+
+  /// Live DAP display-name lookup for channel @-mention attribution. The
+  /// IO-bound hub owns the identity; this pure callback keeps that layering
+  /// out of the CLI and follows runtime reconnects/name changes.
+  final String? Function()? dapDisplayNameResolver;
 
   /// Capabilities this host announces in the fabric directory (issue #27
   /// phase 2) — from the `fabric.capabilities` config section. Rendered as
