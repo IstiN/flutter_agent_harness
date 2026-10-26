@@ -106,13 +106,20 @@ Future<void> _installSources(MemoryExecutionEnv env, String src) async {
   }
 }
 
-/// Whether [node] (a JSON widget tree) contains a `voxel` node.
+/// Whether [node] (a JSON widget tree) contains a `voxel` node — walks
+/// both `children` lists and singular `child` slots (fa-craft's HUD tree
+/// nests container → center → column via `child`).
 bool _containsVoxelNode(Map<String, dynamic> node) {
   if (node['type'] == 'voxel') return true;
+  final child = node['child'];
+  if (child is Map<String, dynamic> && _containsVoxelNode(child)) {
+    return true;
+  }
   final children = node['children'];
   if (children is List) {
-    for (final child in children) {
-      if (child is Map<String, dynamic> && _containsVoxelNode(child)) {
+    for (final childEntry in children) {
+      if (childEntry is Map<String, dynamic> &&
+          _containsVoxelNode(childEntry)) {
         return true;
       }
     }
@@ -153,7 +160,9 @@ void main() {
 
     final boundaryKey = GlobalKey();
     final builtWidgets = <Widget>[];
-    binding.attachRootWidget(MaterialApp(
+    binding.attachRootWidget(View(
+      view: binding.platformDispatcher.views.first,
+      child: MaterialApp(
       home: Scaffold(
         body: RepaintBoundary(
           key: boundaryKey,
@@ -219,7 +228,8 @@ void main() {
             'stream at least one terrain chunk through the native '
             'binary lane');
     expect(builtWidgets, isNotEmpty,
-        reason: 'the renderer must have built the app tree at least once');
+        reason: 'the renderer must have built the app tree at least once; '
+            'framework errors so far: $frameworkErrors');
     final chunksAfterBoot = engine.voxelWorld!.chunksOf('fa-craft').length;
     expect(chunksAfterBoot, greaterThan(0));
     frameMs.clear();
