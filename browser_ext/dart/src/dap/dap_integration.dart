@@ -25,6 +25,10 @@ final class DapConfig {
     required this.loadKeyFile,
     required this.saveKeyFile,
     this.secret = '',
+    this.clientSecret = '',
+    this.channel = '',
+    this.channelPub,
+    this.channelPriv,
     this.boundSessionMode = kDefaultBoundSessionMode,
     this.boundSessionId,
     this.persistBoundSessionId,
@@ -40,6 +44,15 @@ final class DapConfig {
   /// set headers, and the loopback hub accepts the query form. Empty =
   /// open hub.
   final String secret;
+
+  /// Hub-issued enrollment credential, sent as `?token=` by the worker.
+  final String clientSecret;
+
+  /// The single active enrolled channel. Empty = ordinary hub presence.
+  final String channel;
+  final String? channelPub;
+  final String? channelPriv;
+
   final Future<String?> Function() loadKeyFile;
   final Future<void> Function(String) saveKeyFile;
 
@@ -61,7 +74,13 @@ final class DapConfig {
   /// Stable across reconnects/restarts: same config (url+name) keeps the
   /// live client instead of dropping the connection.
   bool sameTargetAs(DapConfig other) =>
-      url == other.url && name == other.name && secret == other.secret;
+      url == other.url &&
+      name == other.name &&
+      secret == other.secret &&
+      clientSecret == other.clientSecret &&
+      channel == other.channel &&
+      channelPub == other.channelPub &&
+      channelPriv == other.channelPriv;
 }
 
 /// Owns the extension's hub presence for one [DapConfig]. Created by
@@ -138,10 +157,9 @@ final class DapIntegration {
   /// starts the client. Quiet on failure — the status reflects it.
   Future<void> start() async {
     try {
-      print(
-        '[dap] start: url=${config.url} '
-        'name=${config.name.isEmpty ? '—' : config.name}',
-      );
+      // Never print the configured URL: enrollment configurations may carry
+      // credentials in their query, and diagnostics must stay secret-free.
+      print('[dap] start: name=${config.name.isEmpty ? '—' : config.name}');
       final stored = await config.loadKeyFile();
       final identity = stored != null
           ? await DapIdentity.fromKeyFile(stored)
@@ -155,6 +173,10 @@ final class DapIntegration {
         url: config.url,
         name: config.name,
         secret: config.secret,
+        clientSecret: config.clientSecret,
+        channel: config.channel,
+        channelPub: config.channelPub,
+        channelPriv: config.channelPriv,
         onMail: pushMail,
         onStatus: (status) {
           _status = status.toMap();

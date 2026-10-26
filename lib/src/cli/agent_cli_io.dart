@@ -262,20 +262,23 @@ extension AgentCliRunNotices on AgentCli {
     );
   }
 
-  /// Image registry drop visibility (issue #171): when the per-request
-  /// cap drops a history image, say so — a dim transcript line + an
-  /// fa.log entry instead of a silent degradation.
+  /// Image registry drop visibility (issues #171 + #1889): the per-image
+  /// detail lands in fa.log (never silent at the debug surface), while
+  /// the transcript shows ONE latched, aggregated notice per meaningful
+  /// drop-situation change — the same dropped set on later requests is
+  /// silence, a change or a recovery is one updated line.
   void _wireImageDropNotice() {
-    imageDropNotice = (index, keyPreview) {
-      io.writeln(
-        _style.dim(
-          '[images] dropping [Image $index] (key $keyPreview…) '
-          '— per-request cap reached',
-        ),
-      );
-      _logDiagnostic(
-        'image registry drop sid=$_logSid index=$index key=$keyPreview',
-      );
+    imageDropReportNotice = (report) {
+      for (final drop in report.drops) {
+        _logDiagnostic(
+          'image registry drop sid=$_logSid index=${drop.index} '
+          'key=${drop.keyPreview}${drop.fromCurrentMessage ? ' (current)' : ''}',
+        );
+      }
+      final view = imageDropUx.observe(report);
+      if (view == null) return;
+      final line = '[images] ${view.line}';
+      io.writeln(view.prominent ? _style.bold(line) : _style.dim(line));
     };
   }
 

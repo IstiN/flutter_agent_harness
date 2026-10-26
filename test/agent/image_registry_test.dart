@@ -247,11 +247,12 @@ void main() {
         for (var i = 0; i <= 8; i++) _user([_img('img$i')], ms: i),
         _user([_img('img9')], ms: 9),
       ];
-      final drops = <(int, String)>[];
+      final drops = <ImageDropEvent>[];
       final rewritten = rewriteHistoryImages(
         messages,
         maxPerRequest: 4,
-        onDrop: (index, preview) => drops.add((index, preview)),
+        modelId: 'test-model',
+        onReport: (report) => drops.addAll(report.drops),
       );
       // 4 ride: the current one plus the 3 newest history images.
       expect(_imageCount(rewritten), 4);
@@ -263,13 +264,71 @@ void main() {
       for (var i = 0; i <= 5; i++) {
         expect(_occurrences(serialized, 'img$i'), 0);
       }
-      // Every drop is reported with a key preview (never silent).
-      expect(drops.map((d) => d.$1).toSet(), {0, 1, 2, 3, 4, 5});
-      for (final (_, preview) in drops) {
-        expect(preview, matches(r'^[0-9a-f]{8}'));
+      // Every drop is reported with a key preview (never silent), and
+      // all of them are history drops (the current batch rode).
+      expect(drops.map((d) => d.index).toSet(), {0, 1, 2, 3, 4, 5});
+      expect(drops.map((d) => d.fromCurrentMessage), everyElement(isFalse));
+      for (final drop in drops) {
+        expect(drop.keyPreview, matches(r'^[0-9a-f]{8}'));
       }
       // Dropped occurrences resolve to the unavailable note.
       expect(_occurrences(serialized, unavailableImageNote), 6);
+    });
+
+    test('the cap applies to the current batch too (#1889 R2/AC3)', () {
+      // 25 just-attached images in the current message, cap 20: the
+      // first-seen 20 ride in place, the 5 extras drop as CURRENT-message
+      // drops — the actionable case the prominent warning reports.
+      // Payloads are zero-padded: no name is a prefix of another, so the
+      // serialized-occurrence counts below stay exact.
+      String payload(int i) => 'batch${i.toString().padLeft(2, '0')}';
+      final messages = <Message>[
+        _assistantText('send them'),
+        _user([for (var i = 0; i < 25; i++) _img(payload(i))]),
+      ];
+      final reports = <ImageDropReport>[];
+      final rewritten = rewriteHistoryImages(
+        messages,
+        maxPerRequest: 20,
+        onReport: reports.add,
+      );
+      expect(_imageCount(rewritten), 20);
+      final report = reports.single;
+      expect(report.drops, hasLength(5));
+      expect(
+        report.drops.map((d) => d.fromCurrentMessage),
+        everyElement(isTrue),
+      );
+      expect(report.currentImageCount, 25);
+      // First-seen wins inside the batch: batch00..batch19 ride.
+      final serialized = _serialized(rewritten);
+      for (var i = 0; i < 25; i++) {
+        expect(
+          _occurrences(serialized, payload(i)),
+          i < 20 ? 1 : 0,
+          reason: 'payload ${payload(i)}',
+        );
+      }
+      expect(_occurrences(serialized, unavailableImageNote), 5);
+    });
+
+    test('a current-dropped key never also rides from history (#1889)', () {
+      // The same content sits in the over-cap current message AND in an
+      // older history message: the current drop must not silently re-enter
+      // through the history path.
+      final messages = <Message>[
+        _user([_img('dup0'), _img('dup1'), _img('dup2')]),
+        _assistantText('ok'),
+        _user([for (var i = 0; i < 25; i++) _img(i < 3 ? 'dup$i' : 'new$i')]),
+      ];
+      final reports = <ImageDropReport>[];
+      rewriteHistoryImages(messages, maxPerRequest: 20, onReport: reports.add);
+      final report = reports.single;
+      // 5 current drops (dup0, dup1, dup2 among them by first-seen); the
+      // dropped keys never appear on the history side.
+      expect(report.drops.where((d) => d.fromCurrentMessage), hasLength(5));
+      expect(report.drops.where((d) => !d.fromCurrentMessage), isEmpty);
+      expect(report.ridingCount, 20);
     });
 
     test(
@@ -562,7 +621,7 @@ void main() {
       final rewritten = rewriteHistoryImages(
         messages,
         maxPerRequest: cap,
-        onDrop: (index, _) => drops.add(index),
+        onReport: (report) => drops.addAll(report.drops.map((d) => d.index)),
       );
       expect(_imageCount(rewritten), 3);
       expect(drops, hasLength(3));

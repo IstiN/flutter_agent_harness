@@ -12,6 +12,7 @@ export 'src/agent/agent_tool.dart';
 export 'src/agent/empty_completion.dart';
 export 'src/agent/misuse_breaker.dart';
 export 'src/agent/image_registry.dart';
+export 'src/agent/image_drop_ux.dart';
 export 'src/agent/message_cap.dart';
 export 'src/agent/stuck_tool.dart';
 export 'src/agent/foreground_call_budget.dart';
@@ -332,3 +333,6 @@ export 'src/web_search/web_search.dart';
 export 'src/viewport/follow_mode.dart';
 // ── decisions ──
 export 'src/decisions/decisions.dart';
+// ── dap ──
+export 'src/hub/dap_invite_import.dart';
+export 'src/hub/dap_join_bundle.dart';

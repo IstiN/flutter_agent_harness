@@ -289,17 +289,33 @@ class AgentService extends ChangeNotifier
     );
   }
 
-  /// F4: cap drops must never be silent — same rule as the CLI's dim
-  /// line, surfaced through the app debug log (logs/app.log). Armed from
-  /// every constructor (public, `_withEnv`, relay base delegates here).
-  static void _wireImageDropNotice() {
-    imageDropNotice = (index, keyPreview) {
-      AppLog.i(
-        'images',
-        'dropping [Image $index] (key $keyPreview…) '
-            '— per-request cap reached',
-      );
+  /// F4 + issue #1889: cap drops are never silent — the app's debug log
+  /// (logs/app.log) keeps every per-image drop event of every request,
+  /// while the CHAT surface gets one latched, aggregated notice per
+  /// meaningful drop-situation change ([chatImageNotice]; the chip + the
+  /// details panel render it). Armed from every constructor (public,
+  /// `_withEnv`, relay base delegates here).
+  void _wireImageDropNotice() {
+    // The global seam is process-wide; the closure self-identifies so
+    // dispose can disarm it ONLY when it is still ours — a later
+    // service's arming never gets clobbered by an earlier dispose, and
+    // a disposed service never keeps reporting into a dead notifier
+    // (review round 1, PR #1891).
+    _armedImageDropReporter = (report) {
+      for (final drop in report.drops) {
+        AppLog.i(
+          'images',
+          'dropping [Image ${drop.index}] (${drop.keyPreview}…) '
+              '${drop.fromCurrentMessage ? '(current message) ' : ''}'
+              '— per-request cap reached',
+        );
+      }
+      final view = imageDropUx.observe(report);
+      // Silence (same situation) keeps the previous notice displayed;
+      // null never clears the chip — only the user's dismiss does.
+      if (view != null) chatImageNotice.value = view;
     };
+    imageDropReportNotice = _armedImageDropReporter;
   }
 
   /// gh-1409 P4/P5/P6: pin notices (budget drops, lifecycle
@@ -1902,6 +1918,22 @@ class AgentService extends ChangeNotifier
   /// machinery behind the `dynamic_message` tool. UI reads it for the
   /// ✦ list, the inline widget tiles, and save-as-app.
   late final DynamicMessagesService dynamicMessages;
+
+  /// The aggregated image-drop latch (issue #1889) — the same shared
+  /// core the CLI uses; the details panel renders its projection.
+  final ImageDropUx imageDropUx = ImageDropUx();
+
+  /// The latest aggregated image-drop notice for the chat chip (R5):
+  /// a new meaningful change replaces it; an all-clear updates it;
+  /// the user dismisses it. Null = nothing to show.
+  final ValueNotifier<ImageDropNoticeView?> chatImageNotice = ValueNotifier(
+    null,
+  );
+
+  /// The closure this service armed on the process-wide
+  /// [imageDropReportNotice] seam — dispose disarms the global ONLY when
+  /// it still points at ours (a newer service's arming wins).
+  void Function(ImageDropReport report)? _armedImageDropReporter;
 
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending

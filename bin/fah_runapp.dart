@@ -1089,6 +1089,18 @@ Future<void> _runApp(List<String> args) async {
     dapConfig: readDapConfig(defaultDapConfigFile(null, dapEnvironment)),
   );
   final hubPlugin = HubPlugin(environment: dapEnvironment);
+  // gh-1888 review (AC8/AC14): the DAP env contract carries secrets
+  // (plaintext channel privs in DAP_CHANNELS_JSON, the hub credential,
+  // the key passphrase) and every bash child inherits them — register
+  // them with BOTH masking systems BEFORE any tool runs, exactly like
+  // the API keys above. The hub plugin additionally hooks every
+  // runtime-resolved secret (decrypted privs, auto-provisioned
+  // passphrases) into the same registration.
+  registerDapEnvSecrets(
+    dapEnvironment,
+    redactor: redactor,
+    redactionPipeline: redactionPipeline,
+  );
   final resolved = await _resolvePlugins(
     effective,
     cliEnv,
@@ -1097,6 +1109,8 @@ Future<void> _runApp(List<String> args) async {
     // `fabric.hub: false` (issue #304 E6) — the legacy kill switch: no
     // hub primary in the messaging fabric, byte-identical directory.
     fabricHubAllowed: saved.fabric?.hub ?? true,
+    secretRedactor: redactor,
+    redactionPipeline: redactionPipeline,
   );
 
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
@@ -1653,6 +1667,8 @@ Future<void> _runApp(List<String> args) async {
         plugins: resolved.plugins,
         pluginConfig: resolved.config,
         hubFabric: resolved.hubFabric,
+        dapDisplayNameResolver: () =>
+            HubPluginHost.dapDisplayNameFor(hubPlugin),
         // Fabric discovery (issue #27 phase 2): capabilities from the
         // `fabric:` config section; the OS hostname enables `name@machine`
         // addressing (null when the platform cannot name the host).

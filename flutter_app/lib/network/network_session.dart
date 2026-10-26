@@ -16,6 +16,7 @@ import 'fa_network_ws.dart';
 import 'key_wallet.dart';
 import 'models.dart';
 import 'showcase_viewer.dart';
+import '../services/app_log.dart';
 
 /// One decrypted channel message, ready for the chat UI.
 final class ChannelMessage {
@@ -117,6 +118,7 @@ final class NetworkSession extends ChangeNotifier {
   final Uuid _uuid;
 
   StreamSubscription<WsEvent>? _events;
+  Future<void>? _startup;
 
   /// The member roster by id, presence included (roster.snapshot +
   /// presence.changed folded in).
@@ -136,19 +138,40 @@ final class NetworkSession extends ChangeNotifier {
   String? error;
 
   /// Fetches channels + roster and connects the socket. Idempotent.
-  Future<void> start() async {
-    if (_events != null) return;
+  ///
+  /// The manager publishes this session before startup completes, so the
+  /// shared future is also the decoder-readiness barrier for an early
+  /// channel open or realtime envelope.
+  Future<void> start() => _startup ??= _start();
+
+  Future<void> _start() async {
     _events = _ws.events.listen(_onWsEvent);
+    await _refreshSnapshot();
+    notifyListeners();
+    unawaited(_ws.connect());
+  }
+
+  /// Fetches the authoritative channels + roster snapshot.
+  Future<void> _refreshSnapshot() async {
     try {
       channels = await _client.listChannels(networkId);
       final members = await _client.listMembers(networkId);
       roster
         ..clear()
         ..addEntries(members.map((m) => MapEntry(m.id, m)));
+      _logRoster('rest', members);
       error = null;
     } on FaNetworkException catch (e) {
       error = e.message;
     }
+  }
+
+  /// Manual recovery for a stuck realtime/offline state: restart the
+  /// socket and reload the snapshot. Subscriptions and the queued outbox
+  /// survive the socket restart (the ws contract keeps both).
+  Future<void> reconnect() async {
+    await _ws.disconnect();
+    await _refreshSnapshot();
     notifyListeners();
     unawaited(_ws.connect());
   }
@@ -158,6 +181,51 @@ final class NetworkSession extends ChangeNotifier {
   void addChannel(Channel channel) {
     if (channels.any((c) => c.id == channel.id)) return;
     channels = [...channels, channel];
+    notifyListeners();
+  }
+
+  /// Renames a channel through the owner/admin management route and replaces
+  /// its local metadata only after the server accepts the change.
+  Future<Channel> renameChannel(String channelId, String name) async {
+    final normalized = name.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(name, 'name', 'must not be empty');
+    }
+    final updated = await _client.updateChannel(channelId, name: normalized);
+    channels = [
+      for (final channel in channels)
+        if (channel.id == channelId) updated else channel,
+    ];
+    notifyListeners();
+    return updated;
+  }
+
+  /// Deletes a channel through the owner/admin management route, then drops
+  /// its local list entry, message state and realtime subscription. There is
+  /// no delete frame on the socket; the 204 response is the source of truth.
+  Future<void> deleteChannel(String channelId) async {
+    await _client.deleteChannel(channelId);
+    channels = channels.where((c) => c.id != channelId).toList();
+    channelStates.remove(channelId);
+    _ws.unsubscribe(channelId);
+    notifyListeners();
+  }
+
+  /// Removes an agent after the owner/admin route accepts the deletion.
+  /// The 204 is authoritative; only a subsequent server push can add the
+  /// agent back to the roster.
+  Future<void> deleteAgent(String agentId) async {
+    await _client.deleteAgent(networkId, agentId);
+    roster.remove(agentId);
+    notifyListeners();
+  }
+
+  /// Removes a store member (guest/member) after the owner/admin route
+  /// accepts the deletion; the server revokes its sessions and pushes a
+  /// fresh roster.snapshot to everyone else.
+  Future<void> deleteMember(String memberId) async {
+    await _client.deleteMember(networkId, memberId);
+    roster.remove(memberId);
     notifyListeners();
   }
 
@@ -279,6 +347,12 @@ final class NetworkSession extends ChangeNotifier {
   }
 
   Future<ChannelMessage> _decode(Envelope envelope) async {
+    // Never guess that an unknown channel is private: on first open the
+    // history response can win the race with start()'s channel listing.
+    // Waiting here keeps the envelope out of the decoded-message cache
+    // until the public/private decoder is known; the history/realtime
+    // completion notification then rebuilds the chat with plaintext.
+    await _startup;
     final isOwn = envelope.senderId == identity.id;
     final known = channels.where((c) => c.id == envelope.channelId);
     // Public showcase channels have no chankey at all: the payload is
@@ -340,39 +414,99 @@ final class NetworkSession extends ChangeNotifier {
     }
   }
 
+  /// Presence diagnostics (fa_network#4): the online count is derived
+  /// from this roster — log exactly what the server sent so a 0-online
+  /// report can be attributed to server vs client in one shot.
+  void _logRoster(String source, Iterable<Member> members) {
+    AppLog.i(
+      'fa_network',
+      'roster.$source: ${members.map((m) => '${m.id}:${m.displayName}:${m.memberClass.name}:${m.presence.name}').join(', ')}',
+    );
+  }
+
   void _onWsEvent(WsEvent event) {
     switch (event) {
+      case WsConnected():
+        _onWsConnected();
       case RosterSnapshot(:final members):
-        roster
-          ..clear()
-          ..addEntries(members.map((m) => MapEntry(m.id, m)));
-        notifyListeners();
+        _onRosterSnapshot(members);
       case EnvelopeReceived(:final envelope):
         unawaited(_onEnvelope(envelope));
-      case PresenceChanged(:final memberId, :final presence):
-        final member = roster[memberId];
-        if (member != null) {
-          roster[memberId] = Member(
-            id: member.id,
-            memberClass: member.memberClass,
-            displayName: member.displayName,
-            presence: presence,
-          );
-          notifyListeners();
-        }
+      case PresenceChanged():
+        _onPresenceChanged(event);
       case NetworkOffline():
-        networkOffline = true;
-        notifyListeners();
+        _onNetworkOffline();
       case NetworkDrain():
-        networkOffline = false;
-        notifyListeners();
-        unawaited(_refreshAfterReconnect());
+        _onNetworkDrain();
       case WakeupDispatched():
         break;
       case WsError(:final message):
-        error = message;
-        notifyListeners();
+        _onWsError(message);
     }
+  }
+
+  void _onWsConnected() {
+    // The greet sends network.offline only when the hub is DOWN. If recovery
+    // happened while this socket was away, no drain is replayed to it — clear
+    // the sticky flag on every fresh socket and let a real offline greet
+    // reassert it when needed.
+    if (networkOffline) {
+      networkOffline = false;
+      notifyListeners();
+    }
+  }
+
+  void _onRosterSnapshot(List<Member> members) {
+    roster
+      ..clear()
+      ..addEntries(members.map((m) => MapEntry(m.id, m)));
+    _logRoster('snapshot', members);
+    notifyListeners();
+  }
+
+  void _onPresenceChanged(PresenceChanged event) {
+    final member = roster[event.memberId];
+    if (member != null) {
+      roster[event.memberId] = Member(
+        id: member.id,
+        memberClass: member.memberClass,
+        displayName: member.displayName,
+        presence: event.presence,
+        // Legacy presence frames carry no access: retain the snapshot's
+        // metadata instead of erasing it on every presence flip.
+        access: event.access ?? member.access,
+      );
+      notifyListeners();
+    } else if (event.memberId.isNotEmpty &&
+        (event.displayName.isNotEmpty || event.memberClass != null)) {
+      // A hub agent that came online AFTER the snapshot: the server includes
+      // displayName/class precisely so clients can insert it instead of
+      // dropping the event (online stayed 0).
+      roster[event.memberId] = Member(
+        id: event.memberId,
+        memberClass: event.memberClass ?? MemberClass.unknown,
+        displayName: event.displayName,
+        presence: event.presence,
+        access: event.access,
+      );
+      notifyListeners();
+    }
+  }
+
+  void _onNetworkOffline() {
+    networkOffline = true;
+    notifyListeners();
+  }
+
+  void _onNetworkDrain() {
+    networkOffline = false;
+    notifyListeners();
+    unawaited(_refreshAfterReconnect());
+  }
+
+  void _onWsError(String message) {
+    error = message;
+    notifyListeners();
   }
 
   Future<void> _onEnvelope(Envelope envelope) async {

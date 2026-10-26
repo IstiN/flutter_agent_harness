@@ -175,5 +175,13 @@ extension AgentServiceLifecycle on AgentService {
     externalSessionRevision.dispose();
     _trajectory.dispose();
     dynamicMessages.dispose();
+    // Issue #1889 lifecycle: a disposed service must not keep feeding a
+    // dead notifier from the process-wide seam — disarm OUR closure only
+    // (a newer service's arming stays armed), then drop the notifier.
+    if (identical(imageDropReportNotice, _armedImageDropReporter)) {
+      imageDropReportNotice = null;
+    }
+    _armedImageDropReporter = null;
+    chatImageNotice.dispose();
   }
 }

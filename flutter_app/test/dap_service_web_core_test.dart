@@ -5,6 +5,7 @@
 import 'package:fa/services/dap_service.dart'
     show DapInboundMode, DapSavedConnection;
 import 'package:fa/services/dap_service_web_core.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Behavioral tests for the extension-hosted DAP hub service core: the
@@ -131,6 +132,53 @@ void main() {
       throwsStateError,
     );
   });
+
+  test(
+    'enrollment join is one worker op with the imported channel keys',
+    () async {
+      final h = harness(onMessage: (_) => {'ok': true});
+      const channel = 'public-channel';
+      await h.service.joinEnrollment(
+        parseDapJoinBundle(
+          "fa dap import 'wss://hub.fa1.dev/ws?channel=$channel' && "
+          'DAP_HUB_URL=wss://hub.fa1.dev/ws '
+          "DAP_CLIENT_SECRET='test-extension-credential' "
+          'DAP_AGENT_NAME=extension-agent fa',
+        ),
+      );
+      expect(h.sent.single['type'], 'hub.join');
+      expect(h.sent.single['url'], 'wss://hub.fa1.dev/ws');
+      expect(h.sent.single['channel'], channel);
+      expect(h.sent.single['clientSecret'], 'test-extension-credential');
+      expect(h.sent.single['name'], 'extension-agent');
+      expect(h.sent.single.containsKey('pub'), isFalse);
+      expect(h.sent.single.containsKey('priv'), isFalse);
+    },
+  );
+
+  test(
+    'worker join failures do not relay a credentialed server error',
+    () async {
+      final h = harness(
+        onMessage: (_) => {
+          'ok': false,
+          'error': 'wss://hub.fa1.dev/ws?token=do-not-relay',
+        },
+      );
+      final bundle = parseDapJoinBundle(
+        'wss://hub.fa1.dev/ws?channel=public-channel',
+      );
+      final error = await h.service
+          .joinEnrollment(bundle)
+          .then<Object?>((_) {
+            return null;
+          })
+          .catchError((Object error) => error);
+      expect(error, isA<StateError>());
+      expect(error.toString(), 'Bad state: hub.join failed');
+      expect(error.toString().contains('do-not-relay'), isFalse);
+    },
+  );
 
   test(
     'probe waits out a transient phase and reports the settled state',

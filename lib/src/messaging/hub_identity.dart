@@ -92,3 +92,35 @@ final class HubIdentity {
     );
   }
 }
+
+/// Serializes [identity] in the CLI-compatible hub key-file format.
+///
+/// This pure-Dart boundary is shared by file and browser [ExecutionEnv]-style
+/// stores; persistence and its durability guarantees remain host concerns.
+Future<String> hubIdentityToKeyFile(HubIdentity identity) async {
+  final signingSeed = await identity.signingKeyPair.extractPrivateKeyBytes();
+  final dhPriv = await identity.dhKeyPair.extractPrivateKeyBytes();
+  return 'ed25519:${base64Encode(signingSeed)}\n'
+      'x25519:${base64Encode(dhPriv)}\n'
+      'x25519pub:${identity.dhPubkeyB64}\n';
+}
+
+/// Restores an identity from [hubIdentityToKeyFile] output (or a CLI key
+/// file). The informational public-key line is never trusted: both public
+/// keys and the agent id are re-derived from the private scalars.
+Future<HubIdentity> hubIdentityFromKeyFile(String contents) async {
+  final fields = <String, String>{};
+  for (final line in contents.split('\n')) {
+    final idx = line.indexOf(':');
+    if (idx > 0) fields[line.substring(0, idx)] = line.substring(idx + 1);
+  }
+  final seed = fields['ed25519'];
+  final dhPriv = fields['x25519'];
+  if (seed == null || dhPriv == null) {
+    throw const FormatException('hub identity is missing private keys');
+  }
+  return HubIdentity.fromSeeds(
+    ed25519Seed: base64Decode(seed),
+    x25519Private: base64Decode(dhPriv),
+  );
+}

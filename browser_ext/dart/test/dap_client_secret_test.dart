@@ -30,6 +30,35 @@ void main() {
     });
   });
 
+  group('dapWsUrlWithEnrollmentSecret', () {
+    test('the agent client secret is appended as token', () {
+      final uri = Uri.parse(
+        dapWsUrlWithEnrollmentSecret(
+          dapWsUrlWithToken('wss://hub.fa1.dev/ws?foo=bar', 'hub-pw'),
+          's3cr et+&',
+        ),
+      );
+      expect(uri.queryParameters['foo'], 'bar');
+      expect(uri.queryParameters['dap_token'], 'hub-pw');
+      expect(uri.queryParameters['token'], 's3cr et+&');
+    });
+
+    test('empty enrollment secret leaves the url untouched', () {
+      const url = 'wss://hub.fa1.dev/ws';
+      expect(dapWsUrlWithEnrollmentSecret(url, ''), url);
+    });
+  });
+
+  group('decodeDapPublicChannelPayload', () {
+    test('decodes JSON text and tolerates raw UTF-8', () {
+      expect(
+        decodeDapPublicChannelPayload('eyJ0ZXh0IjoiaGVsbG8ifQ=='),
+        'hello',
+      );
+      expect(decodeDapPublicChannelPayload('aGVsbG8='), 'hello');
+    });
+  });
+
   group('looksLikeCredentialRejection', () {
     test('holds only with a credential and a 3-fast-close streak', () {
       expect(looksLikeCredentialRejection(0, hasCredential: true), isFalse);
