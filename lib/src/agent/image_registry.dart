@@ -257,6 +257,30 @@ String imageContentKey(ImageContent image) => sha256
     .convert(utf8.encode('data:${image.mimeType};base64,${image.data}'))
     .toString();
 
+/// The agent loop's request-payload image rewrite (#171 + #1889): the
+/// kill switch skips it entirely (byte-identical legacy — no rewrite,
+/// no reports), the cap resolves per model (`#1750` learned latch >
+/// `perModel` config > catalog maxImages > the global maxPerRequest),
+/// and the host-facing seam is the per-request [ImageDropReport] (one
+/// call per build, zero drops included). Lives beside the seam it fans
+/// out to so the loop's call site stays one expression.
+List<Message> rewriteRequestImages(
+  List<Message> messages, {
+  required String modelId,
+  required int? catalogMaxImages,
+  required int? capOverride,
+}) {
+  if (!imageRegistryConfig.enabled) return messages;
+  return rewriteHistoryImages(
+    messages,
+    maxPerRequest:
+        capOverride ??
+        resolveImageCap(modelId: modelId, catalogMaxImages: catalogMaxImages),
+    modelId: modelId,
+    onReport: imageDropReportNotice,
+  );
+}
+
 /// A short, stable preview of a content key for drop notices.
 String imageKeyPreview(String key) => key.substring(0, 8);
 
