@@ -13,6 +13,7 @@ import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/add_agent_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
@@ -191,6 +192,220 @@ void main() {
       expect(clipboard.text, invite);
     });
   });
+  _registerResponsiveLayoutGroup();
+}
+
+void _registerResponsiveLayoutGroup() {
+  group('AddAgentDialog responsive layout (issue #1913)', () {
+    late ({String pub, String priv}) channelKeys;
+
+    setUp(() async {
+      channelKeys = await EnvelopeCodec.newX25519KeyPair();
+    });
+
+    Future<void> pumpResponsiveDialog(
+      WidgetTester tester, {
+      required double width,
+      required double textScale,
+      required FakeHttpClient httpClient,
+    }) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = Size(width, 844);
+      addTearDown(tester.view.reset);
+      final wallet = await walletWithChannel(
+        channelPub: channelKeys.pub,
+        channelPriv: channelKeys.priv,
+      );
+      final manager = await buildManager(
+        wallet: wallet,
+        httpClient: httpClient,
+        jwt: 'jwt-1',
+      );
+      const channel = Channel(
+        id: 'c1',
+        networkId: 'net1',
+        name: 'general',
+        isPublic: false,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => AddAgentDialog(
+                      wallet: wallet,
+                      manager: manager,
+                      networkId: 'net1',
+                      channel: channel,
+                    ),
+                  ),
+                  child: const Text('Open add-agent dialog'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open add-agent dialog'));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> tapOption(WidgetTester tester, String label) async {
+      final option = find.text(label);
+      await tester.ensureVisible(option);
+      await tester.pumpAndSettle();
+      await tester.tap(option);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
+
+    for (final (width, textScale) in <(double, double)>[
+      (320, 1.0),
+      (320, 1.3),
+      (360, 1.0),
+      (360, 1.3),
+      (393, 1.0),
+      (393, 1.3),
+    ]) {
+      testWidgets('${width.round()} px at ${textScale}x keeps every control '
+          'readable, selectable, and reachable', (tester) async {
+        final http = FakeHttpClient()
+          ..respond(
+            201,
+            body:
+                '{"name":"mobile-agent",'
+                '"hubUrl":"wss://hub.fa1.dev/ws",'
+                '"clientSecret":"sk_enroll_mobile",'
+                '"enrolledAt":"2026-02-03T04:05:06Z"}',
+          );
+        await pumpResponsiveDialog(
+          tester,
+          width: width,
+          textScale: textScale,
+          httpClient: http,
+        );
+
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: 'No RenderFlex overflow at $width px / ${textScale}x',
+        );
+        _expectReadableOptionLabels(tester, textScale);
+
+        final content = find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(SingleChildScrollView),
+        );
+        expect(content, findsOneWidget);
+        final scrollable = tester.state<ScrollableState>(
+          find
+              .descendant(
+                of: find.byType(AlertDialog),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
+        if (scrollable.position.maxScrollExtent > 0) {
+          await tester.drag(content, const Offset(0, -180));
+          await tester.pumpAndSettle();
+          expect(scrollable.position.pixels, greaterThan(0));
+        }
+
+        await tapOption(tester, 'Whole network');
+        expect(find.byKey(const ValueKey('inviteScopeHint')), findsOneWidget);
+        await tapOption(tester, 'This channel');
+        expect(find.byKey(const ValueKey('inviteHint')), findsOneWidget);
+
+        await tapOption(tester, 'Link (app)');
+        expect(
+          tester.widget<Text>(find.byKey(const ValueKey('agentInvite'))).data,
+          startsWith('wss://hub.fa1.dev/ws'),
+        );
+        await tapOption(tester, 'CLI command');
+        expect(find.byKey(const ValueKey('inviteCliHint')), findsOneWidget);
+        await tapOption(tester, 'Env (CI)');
+        expect(find.byKey(const ValueKey('inviteEnvHint')), findsOneWidget);
+        await tapOption(tester, 'DAP');
+        expect(find.byKey(const ValueKey('inviteDapHint')), findsOneWidget);
+
+        final field = find.byKey(const ValueKey('agentNameField'));
+        await tester.ensureVisible(field);
+        await tester.pumpAndSettle();
+        await tester.enterText(field, 'mobile-agent');
+        await tester.pumpAndSettle();
+        expect(tester.getSize(field).width, greaterThanOrEqualTo(120));
+        final enroll = find.byKey(const ValueKey('enrollAgent'));
+        expect(tester.widget<FilledButton>(enroll).onPressed, isNotNull);
+        expect(tester.getSize(enroll).width, greaterThanOrEqualTo(100));
+        await tester.ensureVisible(enroll);
+        await tester.pumpAndSettle();
+        await tester.tap(enroll);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(
+          find.byKey(const ValueKey('envRow:DAP_CLIENT_SECRET')),
+          findsOneWidget,
+        );
+
+        _expectOnScreen(tester, find.text('Close'), width);
+        _expectOnScreen(
+          tester,
+          find.byKey(const ValueKey('copyInvite')),
+          width,
+        );
+        await tester.tap(find.text('Close'));
+        await tester.pumpAndSettle();
+        expect(find.byType(AddAgentDialog), findsNothing);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
+}
+
+void _expectReadableOptionLabels(WidgetTester tester, double textScale) {
+  for (final label in [
+    'This channel',
+    'Whole network',
+    'DAP',
+    'Link (app)',
+    'CLI command',
+    'Env (CI)',
+  ]) {
+    final finder = find.text(label);
+    expect(finder, findsOneWidget);
+    final paragraph = tester.renderObject<RenderParagraph>(finder);
+    final probe = TextPainter(
+      text: TextSpan(text: 'Ag', style: paragraph.text.style),
+      textDirection: paragraph.textDirection,
+      textScaler: TextScaler.linear(textScale),
+    )..layout();
+    final oneLineHeight = probe.height;
+    probe.dispose();
+    expect(
+      paragraph.size.height,
+      lessThanOrEqualTo(oneLineHeight * 2.2),
+      reason: '$label must wrap by word, not one character per line',
+    );
+  }
+}
+
+void _expectOnScreen(WidgetTester tester, Finder finder, double width) {
+  expect(finder, findsOneWidget);
+  final rect = tester.getRect(finder);
+  expect(rect.left, greaterThanOrEqualTo(0));
+  expect(rect.right, lessThanOrEqualTo(width));
+  expect(rect.top, greaterThanOrEqualTo(0));
+  expect(rect.bottom, lessThanOrEqualTo(844));
 }
 
 void _registerNetworkScopeGroup() {
@@ -647,6 +862,50 @@ void _registerNetworkScopeGroup() {
           .widget<Text>(find.byKey(const ValueKey('enrollError')))
           .data!;
       expect(error, contains('owner or admin only'));
+      expect(
+        find.byKey(const ValueKey('envRow:DAP_CLIENT_SECRET')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('a retired hub shows upgrade guidance without a legacy retry', (
+      tester,
+    ) async {
+      final wallet = await buildWallet();
+      final http = FakeHttpClient();
+      http.respond(
+        503,
+        body:
+            '{"error":{"code":"hub_unavailable",'
+            '"message":"hub rejected enroll_create: bad_frame unknown op '
+            'enroll_create: dap: unknown enrollment operation"}}',
+      );
+      final manager = await buildManager(
+        wallet: wallet,
+        httpClient: http,
+        jwt: 'jwt-1',
+      );
+      await pumpDap(tester, wallet: wallet, manager: manager);
+
+      final enroll = find.byKey(const ValueKey('enrollAgent'));
+      await tester.ensureVisible(enroll);
+      await tester.pumpAndSettle();
+      await tester.tap(enroll);
+      await tester.pumpAndSettle();
+
+      final error = tester
+          .widget<Text>(find.byKey(const ValueKey('enrollError')))
+          .data!;
+      expect(error, contains('does not support independent agent enrollment'));
+      expect(error, contains('Update the DAP hub'));
+      expect(error, contains('existing agent credentials were not changed'));
+      expect(error, isNot(contains('bad_frame')));
+      expect(error, isNot(contains('unknown op')));
+      expect(http.requests, hasLength(1));
+      expect(
+        http.requests.single.url.path,
+        '/api/networks/net1/agents/enrollments',
+      );
       expect(
         find.byKey(const ValueKey('envRow:DAP_CLIENT_SECRET')),
         findsNothing,

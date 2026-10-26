@@ -595,6 +595,63 @@ void main() {
       );
     });
 
+    test('createAgentCredential explains an old hub enroll_create rejection '
+        'without retrying or rotating', () async {
+      client = build(jwtToken: 'jwt-1');
+      httpClient.respond(
+        503,
+        body:
+            '{"error":{"code":"hub_unavailable",'
+            '"message":"hub rejected enroll_create: bad_frame unknown op '
+            'enroll_create: dap: unknown enrollment operation"}}',
+        headers: {'retry-after': '7'},
+      );
+
+      await expectLater(
+        client.createAgentCredential('net1', name: 'ops-bot'),
+        throwsA(
+          isA<FaNetworkException>()
+              .having((e) => e.statusCode, 'statusCode', 503)
+              .having((e) => e.code, 'code', 'enrollment_unsupported')
+              .having(
+                (e) => e.message,
+                'message',
+                allOf(
+                  contains('Update the DAP hub'),
+                  contains('existing agent credentials were not changed'),
+                  isNot(contains('bad_frame')),
+                ),
+              )
+              .having((e) => e.retryAfterSeconds, 'retryAfterSeconds', 7),
+        ),
+      );
+      expect(httpClient.requests, hasLength(1));
+      expect(
+        httpClient.requests.single.url.path,
+        '/api/networks/net1/agents/enrollments',
+      );
+    });
+
+    test('createAgentCredential preserves unrelated hub failures', () async {
+      client = build(jwtToken: 'jwt-1');
+      httpClient.respond(
+        503,
+        body:
+            '{"error":{"code":"hub_unavailable",'
+            '"message":"hub offline"}}',
+      );
+
+      await expectLater(
+        client.createAgentCredential('net1', name: 'ops-bot'),
+        throwsA(
+          isA<FaNetworkException>()
+              .having((e) => e.code, 'code', 'hub_unavailable')
+              .having((e) => e.message, 'message', 'hub offline'),
+        ),
+      );
+      expect(httpClient.requests, hasLength(1));
+    });
+
     test('getWakeup parses the registration', () async {
       httpClient.respond(
         200,

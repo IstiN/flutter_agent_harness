@@ -23,6 +23,17 @@ block a release again.
   repeated identical-payload stalls fire ONE actionable /compact +
   image-budget advice. TUI stall banner + docs/images.md carry the
   image-heavy playbook.
+- fix(gh-1912): Add an agent → DAP now turns a retired hub's unknown
+  `enroll_create` response into an actionable upgrade message instead of
+  exposing `bad_frame`. Independent enrollment never falls back to the
+  legacy same-name credential rotation endpoint, and existing credentials
+  remain untouched on failure.
+
+- fix(gh-1913): Add an agent is usable on narrow phone screens: scope and
+  format choices wrap without per-character labels, enrollment controls
+  stack at full width, and actions remain reachable by scrolling. Desktop
+  keeps the segmented layout; phone/desktop light/dark goldens guard both.
+
 - fix(gh-1825): DAP agent enrollments carry a stable, independent
   `agentInstance` through app/CLI bundles, persistence, direct boot and
   reconnect. Independent same-name agents keep distinct identities and stay
