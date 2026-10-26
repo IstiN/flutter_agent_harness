@@ -17,9 +17,15 @@
 ///   its images in place, never as references (I3) — the model must see
 ///   what the user just sent; each in-place image carries its `[Image N]`
 ///   label so the model can cite it back (F3).
-/// - A per-request cap on unique images drops by priority (current >
-///   newest history > older history); every drop is reported through the
-///   drop notice — never silent.
+/// - A per-request cap on unique images and a per-request byte budget on
+///   image payloads (`images.maxPerRequest` + `images.maxBytesPerRequest`,
+///   issue #1916) drop by priority (current > newest history > older
+///   history); every drop is reported through the drop notice — never
+///   silent, with the reason (count or bytes) named.
+/// - History text that carries a whole image as an inline `data:image/…`
+///   URL (legacy shapes — issue #1916 AC2) is folded into a real image
+///   block first, so those bytes ride the same once-only registry path
+///   instead of replaying raw forever.
 /// - No dangling refs (I4): an `[Image N]` mention whose original is not
 ///   in the request (compacted away, outside the window, or dropped by
 ///   the cap) resolves to the plain-text note [unavailableImageNote].
@@ -41,6 +47,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import '../context.dart';
+import '../providers/payload_stall.dart' show noteOutboundEstimate;
 import '../skills/operative_pins.dart' show isPinRenumberingBoundary;
 import '../types.dart';
 
@@ -49,6 +56,13 @@ import '../types.dart';
 /// threads stay flat instead of growing linearly. ~20 inline images is
 /// well inside every current vision model's budget.
 const defaultMaxImagesPerRequest = 20;
+
+/// Default per-request byte budget on image payloads
+/// (`images.maxBytesPerRequest`, issue #1916): ~8MB of base64 — sane for
+/// slow uplinks, where a max-count batch of screenshots (~26MB) blew the
+/// stall watchdogs and livelocked the submit. Base64 chars are wire bytes
+/// 1:1, so the budget IS the upload size.
+const int defaultMaxImageBytesPerRequest = 8 * 1024 * 1024;
 
 /// The note replacing image refs whose original is not in the request
 /// (compaction interplay / cap drops — never a dangling ref).
@@ -65,6 +79,7 @@ final class ImageRegistryConfig {
   const ImageRegistryConfig({
     this.enabled = true,
     this.maxPerRequest = defaultMaxImagesPerRequest,
+    this.maxBytesPerRequest = defaultMaxImageBytesPerRequest,
     this.perModel = const {},
   });
 
@@ -74,6 +89,11 @@ final class ImageRegistryConfig {
 
   /// Per-request cap on unique images (`images.maxPerRequest`).
   final int maxPerRequest;
+
+  /// Per-request byte budget on image payloads
+  /// (`images.maxBytesPerRequest`, issue #1916) — layered onto
+  /// [maxPerRequest]: whichever limit binds first drops the image.
+  final int maxBytesPerRequest;
 
   /// Per-model cap overrides (`images.perModel.<modelId>`, issue #1750):
   /// user truth beats the catalog and the global default; a
@@ -87,6 +107,17 @@ final class ImageRegistryConfig {
 /// loop's request build, far from any host config object.
 ImageRegistryConfig imageRegistryConfig = const ImageRegistryConfig();
 
+/// Why a request dropped an image (issue #1916 AC1): the count cap
+/// (`images.maxPerRequest`) or the byte budget
+/// (`images.maxBytesPerRequest`) — surfaces name which.
+enum ImageDropReason {
+  /// The per-request unique-image count cap bound first.
+  count,
+
+  /// The per-request base64 byte budget bound first.
+  bytes,
+}
+
 /// One image dropped by the per-request cap (issue #1889): the registry
 /// label index, the full content key (detail surfaces only — default
 /// notice lines carry previews at most), and whether the dropped
@@ -97,6 +128,7 @@ final class ImageDropEvent {
     required this.index,
     required this.key,
     required this.fromCurrentMessage,
+    this.reason = ImageDropReason.count,
   });
 
   /// The `[Image N]` index of the dropped image.
@@ -107,6 +139,9 @@ final class ImageDropEvent {
 
   /// Whether the dropped occurrence sat in the current user message.
   final bool fromCurrentMessage;
+
+  /// Which limit bound first (#1916 AC1).
+  final ImageDropReason reason;
 
   /// Short stable preview of the content key.
   String get keyPreview => imageKeyPreview(key);
@@ -126,6 +161,7 @@ final class ImageDropReport {
     required this.currentImageCount,
     required this.registryCount,
     required this.ridingCount,
+    this.maxBytes = 0,
   });
 
   /// Every dropped image of the request, in drop order.
@@ -146,6 +182,10 @@ final class ImageDropReport {
   /// Images that rode the request (`registryCount - drops` when the
   /// current batch fit under the cap; kept explicit for the surface).
   final int ridingCount;
+
+  /// The byte budget the request was built under (#1916 AC1); 0 = no
+  /// budget info (legacy constructors) — surfaces omit byte mentions.
+  final int maxBytes;
 }
 
 /// Set by hosts that surface drops (the CLI aggregates + latches into one
@@ -257,19 +297,24 @@ String imageContentKey(ImageContent image) => sha256
     .convert(utf8.encode('data:${image.mimeType};base64,${image.data}'))
     .toString();
 
-/// The agent loop's request-payload image rewrite (#171 + #1889): the
-/// kill switch skips it entirely (byte-identical legacy — no rewrite,
+/// The agent loop's request-payload image rewrite (#171 + #1889 + #1916):
+/// the kill switch skips it entirely (byte-identical legacy — no rewrite,
 /// no reports), the cap resolves per model (`#1750` learned latch >
 /// `perModel` config > catalog maxImages > the global maxPerRequest),
-/// and the host-facing seam is the per-request [ImageDropReport] (one
-/// call per build, zero drops included). Lives beside the seam it fans
-/// out to so the loop's call site stays one expression.
+/// the byte budget rides the global `images.maxBytesPerRequest`, and the
+/// host-facing seam is the per-request [ImageDropReport] (one call per
+/// build, zero drops included). Also publishes the outbound-size estimate
+/// for the payload-aware stall watchdogs ([noteOutboundEstimate] — every
+/// provider call funnels through here, so the estimate never goes stale).
+/// Lives beside the seam it fans out to so the loop's call site stays one
+/// expression.
 List<Message> rewriteRequestImages(
   List<Message> messages, {
   required String modelId,
   required int? catalogMaxImages,
   required int? capOverride,
 }) {
+  noteOutboundEstimate(messages);
   if (!imageRegistryConfig.enabled) return messages;
   return rewriteHistoryImages(
     messages,
@@ -284,9 +329,24 @@ List<Message> rewriteRequestImages(
 /// A short, stable preview of a content key for drop notices.
 String imageKeyPreview(String key) => key.substring(0, 8);
 
+/// The text-embedded image shape (issue #1916 AC2): legacy session
+/// records, pre-#171 transcripts and hosts that paste screenshots as
+/// markdown carry screenshots INSIDE TextContent as a `data:image/…`
+/// URL — invisible to the ImageContent scan, so the raw bytes replayed
+/// on every request forever (the #1916 evidence: 9 history user
+/// messages, 14.2MB, 1 registered image block).
+final RegExp _embeddedImagePattern = RegExp(
+  r'data:image/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/=]+)',
+);
+
+/// Text data-URL payloads smaller than this are left as text: icons and
+/// separators are legitimate inline content; the MB-scale screenshot
+/// blobs are what must never replay.
+const int embeddedImageMinChars = 64 * 1024;
+
 /// Rewrites the OUTGOING request payload (never the transcript): image
 /// blocks become `[Image N]` refs, unique originals ride once as carriers,
-/// the current user message rides in place, and the per-request cap drops
+/// the current user message rides in place, and the per-request caps drop
 /// by priority (current > newest > older) reporting every drop.
 ///
 /// [onReport] fires ONCE per call with the request's [ImageDropReport]
@@ -301,33 +361,56 @@ String imageKeyPreview(String key) => key.substring(0, 8);
 List<Message> rewriteHistoryImages(
   List<Message> messages, {
   int? maxPerRequest,
+  int? maxBytesPerRequest,
   String? modelId,
   void Function(ImageDropReport report)? onReport,
 }) {
+  final currentIdx0 = _lastUserMessageIndex(messages);
+  // #1916 AC2 pre-pass: fold text-embedded data-URL images into real
+  // ImageContent blocks on HISTORY messages — the scan, dedup, caps and
+  // refs below then treat them exactly like pasted images, and legacy
+  // shapes can never replay raw bytes again. The current message keeps
+  // its text verbatim (I3) — it degrades on the NEXT turn.
+  var normalized = messages;
+  for (var i = 0; i < messages.length; i++) {
+    if (i == currentIdx0) continue;
+    final (folded, changed) = _extractEmbeddedImages(messages[i]);
+    if (!changed) continue;
+    if (identical(normalized, messages)) normalized = List.of(messages);
+    normalized[i] = folded;
+  }
   var hasImages = false;
-  for (final message in messages) {
+  for (final message in normalized) {
     if (_imagesOf(message).isNotEmpty) {
       hasImages = true;
       break;
     }
   }
-  if (!hasImages && !messages.any(_mentionsImageRef)) return messages;
+  if (!hasImages && !normalized.any(_mentionsImageRef)) {
+    // Nothing to rewrite: return the CALLER'S list instance (the
+    // image-free fast-path guarantee) even when the fold pre-pass ran.
+    return messages;
+  }
 
   // F2 pre-pass: when the window carries a renumbering boundary, history
   // citations may name a different image than their number does now —
   // degrade AUTHORED text mentions before assembly. Block rewrites,
   // carrier labels and the current message are generated content-keyed
   // (or provably fresh) and must survive.
-  final currentIdx0 = _lastUserMessageIndex(messages);
-  final degraded = messages.any(_isRenumberingBoundary)
+  final degraded = normalized.any(_isRenumberingBoundary)
       ? [
-          for (var i = 0; i < messages.length; i++)
+          for (var i = 0; i < normalized.length; i++)
             i == currentIdx0
-                ? messages[i]
-                : _resolveMentions(messages[i], const <int>{}, trusted: false),
+                ? normalized[i]
+                : _resolveMentions(
+                    normalized[i],
+                    const <int>{},
+                    trusted: false,
+                  ),
         ]
-      : messages;
+      : normalized;
   final cap = maxPerRequest ?? imageRegistryConfig.maxPerRequest;
+  final maxBytes = maxBytesPerRequest ?? imageRegistryConfig.maxBytesPerRequest;
   final entryByKey = <String, ImageRegistryEntry>{};
   final occurrences = <String, List<int>>{};
   _scanImages(degraded, entryByKey, occurrences);
@@ -338,6 +421,7 @@ List<Message> rewriteHistoryImages(
     occurrences,
     currentIdx,
     cap,
+    maxBytes,
   );
   final carriers = _planCarriers(degraded, entryByKey, occurrences, riding);
 
@@ -362,9 +446,88 @@ List<Message> rewriteHistoryImages(
       currentImageCount: riding.currentImageCount,
       registryCount: entryByKey.length,
       ridingCount: riding.ridingKeys.length,
+      maxBytes: maxBytes,
     ),
   );
   return rewritten;
+}
+
+/// The #1916 AC2 fold: every TextContent data-URL payload at or above
+/// [embeddedImageMinChars] becomes an [ImageContent] block (text around
+/// the URL is kept, split at the URL edges). Returns the original message
+/// untouched when nothing folded — the common case pays one
+/// `contains('data:image/')` scan per text block.
+(Message, bool) _extractEmbeddedImages(Message message) {
+  (List<ContentBlock>, bool)? foldBlocks(List<ContentBlock> blocks) {
+    var changed = false;
+    final out = <ContentBlock>[];
+    for (final block in blocks) {
+      if (block is! TextContent || !block.text.contains('data:image/')) {
+        out.add(block);
+        continue;
+      }
+      final text = block.text;
+      var cursor = 0;
+      var localChanged = false;
+      for (final match in _embeddedImagePattern.allMatches(text)) {
+        final payload = match.group(2)!;
+        if (payload.length < embeddedImageMinChars) continue;
+        final mime = match.group(1)! == 'jpg'
+            ? 'image/jpeg'
+            : 'image/${match.group(1)!}';
+        if (match.start > cursor) {
+          out.add(TextContent(text: text.substring(cursor, match.start)));
+        }
+        out.add(ImageContent(data: payload, mimeType: mime));
+        cursor = match.end;
+        localChanged = true;
+      }
+      if (!localChanged) {
+        out.add(block);
+        continue;
+      }
+      if (cursor < text.length) {
+        out.add(TextContent(text: text.substring(cursor)));
+      }
+      changed = true;
+    }
+    return changed ? (out, true) : null;
+  }
+
+  switch (message) {
+    case UserMessage(:final content, :final timestamp):
+      if (content is String) {
+        if (!content.contains('data:image/')) return (message, false);
+        final folded = foldBlocks([TextContent(text: content)]);
+        if (folded == null) return (message, false);
+        return (UserMessage(content: folded.$1, timestamp: timestamp), true);
+      }
+      final folded = foldBlocks(content as List<ContentBlock>);
+      return folded == null
+          ? (message, false)
+          : (UserMessage(content: folded.$1, timestamp: timestamp), true);
+    case ToolResultMessage():
+      final folded = foldBlocks(message.content);
+      return folded == null
+          ? (message, false)
+          : (
+              ToolResultMessage(
+                toolCallId: message.toolCallId,
+                toolName: message.toolName,
+                content: folded.$1,
+                isError: message.isError,
+                timestamp: message.timestamp,
+              ),
+              true,
+            );
+    case AssistantMessage():
+      final folded = foldBlocks(message.content);
+      return folded == null
+          ? (message, false)
+          : (message.copyWith(content: folded.$1), true);
+    default:
+      return (message, false);
+  }
 }
 
 /// Whether [message] is a projected renumbering boundary: a classic
@@ -438,12 +601,15 @@ final class _RidingSelection {
   final int currentImageCount;
 }
 
-/// Riding set. The cap applies to the whole request (issue #1889 R2): the
-/// current message's images claim slots FIRST — first-seen order within
-/// the message — and a batch bigger than the cap drops its extras as
-/// current-message drops (just attached, immediately capped — the
-/// actionable case). The remaining slots go to the newest history keys,
-/// ties by first-seen order; history overflow drops as history drops.
+/// Riding set. The caps apply to the whole request (#1889 R2 + #1916
+/// AC1): the current message's images claim slots FIRST — first-seen
+/// order within the message — and a batch bigger than the count cap or
+/// the byte budget drops its extras as current-message drops (just
+/// attached, immediately capped — the actionable case). The remaining
+/// slots go to the newest history keys, ties by first-seen order;
+/// history overflow drops as history drops. Both limits ride the same
+/// greedy pass — whichever binds first names the drop's reason; a
+/// byte-drop never stops the scan (a smaller older image still fits).
 /// Every drop is reported — never silent.
 _RidingSelection _selectRiding(
   List<Message> messages,
@@ -451,6 +617,7 @@ _RidingSelection _selectRiding(
   Map<String, List<int>> occurrences,
   int currentIdx,
   int cap,
+  int maxBytes,
 ) {
   // Current-message keys in first-seen (document) order, deduped.
   final currentOrdered = <String>[];
@@ -461,16 +628,31 @@ _RidingSelection _selectRiding(
       if (seen.add(key)) currentOrdered.add(key);
     }
   }
-  final currentRide = currentOrdered.take(cap).toSet();
-  final drops = [
-    for (final key in currentOrdered.skip(cap))
-      ImageDropEvent(
-        index: entryByKey[key]!.index,
-        key: key,
-        fromCurrentMessage: true,
-      ),
-  ];
-  final currentDropped = currentOrdered.skip(cap).toSet();
+  final currentRide = <String>{};
+  var remainingBytes = maxBytes;
+  final drops = <ImageDropEvent>[];
+  for (final key in currentOrdered) {
+    final size = entryByKey[key]!.data.length;
+    final overCount = currentRide.length >= cap;
+    final overBytes = maxBytes > 0 && size > remainingBytes;
+    if (overCount || overBytes) {
+      drops.add(
+        ImageDropEvent(
+          index: entryByKey[key]!.index,
+          key: key,
+          fromCurrentMessage: true,
+          reason: overCount ? ImageDropReason.count : ImageDropReason.bytes,
+        ),
+      );
+      continue;
+    }
+    currentRide.add(key);
+    if (maxBytes > 0) remainingBytes -= size;
+  }
+  final currentDropped = {
+    for (final drop in drops)
+      if (drop.fromCurrentMessage) drop.key,
+  };
   final historyKeys = [
     for (final entry in entryByKey.values)
       if (!currentRide.contains(entry.key) &&
@@ -485,17 +667,27 @@ _RidingSelection _selectRiding(
         : entryByKey[a]!.index.compareTo(entryByKey[b]!.index);
   });
   final historySlots = (cap - currentRide.length).clamp(0, historyKeys.length);
-  for (final key in historyKeys.skip(historySlots)) {
+  var taken = 0;
+  final ridingKeys = <String>{...currentRide};
+  for (final key in historyKeys) {
     final entry = entryByKey[key]!;
-    drops.add(
-      ImageDropEvent(
-        index: entry.index,
-        key: entry.key,
-        fromCurrentMessage: false,
-      ),
-    );
+    final overCount = taken >= historySlots;
+    final overBytes = maxBytes > 0 && entry.data.length > remainingBytes;
+    if (overCount || overBytes) {
+      drops.add(
+        ImageDropEvent(
+          index: entry.index,
+          key: entry.key,
+          fromCurrentMessage: false,
+          reason: overCount ? ImageDropReason.count : ImageDropReason.bytes,
+        ),
+      );
+      continue;
+    }
+    ridingKeys.add(key);
+    taken++;
+    remainingBytes -= entry.data.length;
   }
-  final ridingKeys = {...currentRide, ...historyKeys.take(historySlots)};
   return _RidingSelection(
     currentRide,
     ridingKeys,

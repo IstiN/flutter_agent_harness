@@ -27,6 +27,8 @@ import '../context.dart';
 import '../model.dart';
 import '../skills/skills.dart' show Skill;
 import '../types.dart';
+import '../providers/payload_stall.dart'
+    show lastOutboundEstimateBytes, payloadStallScaleFor;
 import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
 import 'message_cap.dart' show MessageCapPolicy;
@@ -915,11 +917,22 @@ class Agent {
   /// `global`), `raised` is true when a config governs (window > floor).
   /// Hosts render this on the stall surfaces so a wide configured window
   /// never reads as a hang.
+  ///
+  /// Issue #1916 AC3: the resolved window then scales for the outbound
+  /// payload size ([lastOutboundEstimateBytes]) — a multi-MB image upload
+  /// legitimately needs more first-token patience than a text request,
+  /// and starving it produced the submit livelock. Capped at 2x; no
+  /// request build yet (or a text-sized request) keeps the window
+  /// byte-for-byte.
   ({Duration window, String source, bool raised}) get runIdleWindow {
     final explicit = explicitStreamIdleForModel(_state.model);
-    final window = runIdleWatchdogWindow(
+    final resolved = runIdleWatchdogWindow(
       floor: runIdleTimeout,
       explicitIdle: explicit?.$1,
+    );
+    final scale = payloadStallScaleFor(lastOutboundEstimateBytes);
+    final window = Duration(
+      milliseconds: (resolved.inMilliseconds * scale).round(),
     );
     return (
       window: window,

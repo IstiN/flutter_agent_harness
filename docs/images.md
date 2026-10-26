@@ -11,21 +11,34 @@ the message window: every unique image rides a provider request exactly
 once as a carrier; later occurrences become `[Image N]` text refs. The
 **current** (last) user message always rides its images in place.
 
-The per-request cap (`images.maxPerRequest`, default **20**) applies to
-the whole request: the current message's images claim slots first
-(first-seen order inside the batch), the remaining slots go to the newest
-history images, and every overflow image is **dropped** — replaced by
-`(image no longer available)` on the wire. The transcript (session JSONL)
-is never touched; only the outgoing payload is rewritten.
+The per-request cap (`images.maxPerRequest`, default **20**) and the
+per-request byte budget (`images.maxBytesPerRequest`, default **8MB** of
+base64 — issue #1916) apply to the whole request: the current message's
+images claim slots first (first-seen order inside the batch), the
+remaining slots go to the newest history images, and every overflow image
+is **dropped** — replaced by `(image no longer available)` on the wire.
+Whichever limit binds first names the drop reason (count or bytes); a
+byte drop never stops the scan — a smaller older image still fits.
+The transcript (session JSONL) is never touched; only the outgoing
+payload is rewritten.
 
 ```yaml
 # ~/.fah/config.yaml (or .fah/config.yaml)
 images:
   maxPerRequest: 20        # per-request cap on unique images
+  maxBytesPerRequest: 8388608  # per-request image budget (~8MB of base64)
   registry: true           # kill switch: false = byte-identical legacy behavior
   perModel:                # per-model ceiling overrides (#1750)
     gemini-4-argon: 10
 ```
+
+History text that carries a whole image as an inline `data:image/…;base64,…`
+URL (legacy session records, pre-#171 transcripts, hosts that paste
+screenshots as markdown) folds into a real image block on history
+messages before the registry scan — those bytes ride the same once-only
+path instead of replaying raw on every request forever (#1916 AC2; the
+current message keeps its text verbatim and degrades on the next turn).
+Data-URL payloads under 64KB stay text (icons, separators).
 
 Cap resolution per request: `images.perModel.<modelId>` > the model
 catalog's `maxImages` > `images.maxPerRequest`. A provider image-count
@@ -72,9 +85,9 @@ Both hosts render the **same shared projection** (`imageSurfaceLines` in
 images: 37 in the window, 20 sent, 17 not sent last request
   dropped [Image 0] 03d21f2a… (older history — cap 20)
   …
-cap: 20 per request for gemini-4-argon (images.perModel override)
+cap: 20 per request for gemini-4-argon (images.perModel override) · ~8MB image budget
 cap was learned from a provider refusal (#1750) — it applies for the rest of the run
-knobs: images.maxPerRequest in ~/.fah/config.yaml; images.registry: false sends everything unrewritten (no notices)
+knobs: images.maxPerRequest and images.maxBytesPerRequest in ~/.fah/config.yaml; images.registry: false sends everything unrewritten (no notices)
 ```
 
 - CLI: type `/images`.
@@ -82,7 +95,47 @@ knobs: images.maxPerRequest in ~/.fah/config.yaml; images.registry: false sends 
   for the details panel; `×` dismisses the chip (the situation itself
   only changes on the next capped request).
 
-## Non-goals (unchanged by #1889)
+## Payload-aware stalls and the image-heavy playbook (#1916)
+
+A submit carrying many megabytes of images needs more first-token
+patience than a text session; without accounting, the stall watchdogs
+abandon the attempt, drop the late answer, and retry the SAME multi-MB
+payload — a livelock. Three defenses, all automatic:
+
+- **Scaled windows**: the connect-stall window and the run-idle window
+  widen linearly with the outbound payload size (1MB free, 2x at 16MB,
+  capped). A user-declared `providerTimeouts.connectTimeoutMs` stays an
+  absolute clamp and is never scaled. A payload-scaled stall line names
+  the request size (`window scaled for a ~20MB request`).
+- **Late-answer adoption**: a response that arrives from an abandoned
+  attempt DURING the retry backoff is adopted (announced as `adopting
+  the late response`) instead of detached — the billed generation is
+  used. Once a later attempt owns the send, late answers detach as
+  before (`response detached, generation dropped`).
+- **One actionable warning**: repeated stalls of the SAME payload fire
+  exactly ONE `[net]` advice line — `/compact` to drop image data,
+  lower `images.maxBytesPerRequest` (see `/images`), `/restart` as a
+  last resort — instead of endless silent re-uploads.
+
+### Playbook: an image-heavy session stalls on submit
+
+Symptoms: `connect stall: no response bytes` (attempts 2/3, 3/3),
+`abandoned connect attempt … answered late`, `run-idle watchdog replay
+of zero-byte request`, a busy row stuck at `Stalled… · submit` — while
+the same model works fine in text-only sessions.
+
+1. **`/compact`** — compaction rewrites history to summaries; image data
+   leaves the kept window, so the next submit carries far fewer bytes.
+2. **Lower the image budget** — `images.maxBytesPerRequest` (default
+   8MB) in `~/.fah/config.yaml` or via `/settings → Images`; `/images`
+   shows what the last request actually sent and dropped.
+3. **Check the payload, not the token bar** — the token display counts
+   images at a flat heuristic (~120 tokens); a "98% full" session can
+   still be re-uploading 20MB per submit.
+4. **`/restart`** — last resort; the stall advice and the stall banner
+   both list it last.
+
+## Non-goals (unchanged by #1889/#1916)
 
 - The registry's stateless per-request rebuild (#171).
 - Image selection policy: current first, then newest history (#171 I3).

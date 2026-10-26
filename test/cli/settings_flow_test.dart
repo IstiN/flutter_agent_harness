@@ -2512,12 +2512,15 @@ memory:
         await run;
 
         final output = io.out.toString();
-        expect(output, contains('images: off · legacy request shape · cap 7'));
+        expect(
+          output,
+          contains('images: off · legacy request shape · cap 7 · ~8MB'),
+        );
         final row = cli.settingsHubItems().firstWhere(
           (item) => item.key == 'images',
         );
         expect(row.label, 'Images');
-        expect(row.description, 'off · legacy request shape · cap 7');
+        expect(row.description, 'off · legacy request shape · cap 7 · ~8MB');
         expect(
           cli.settingsPickerHandlerKeysForTest(),
           contains('images'),
@@ -2553,7 +2556,16 @@ memory:
         await waitForIt(
           () => io.out.toString().contains('images.maxPerRequest = 5'),
         );
-        io.sendLine('3'); // done
+        io.sendLine('3'); // the byte budget (#1916)
+        await waitForIt(
+          () => io.out.toString().contains('per-request image budget'),
+        );
+        io.sendLine('1048576');
+        await waitForIt(
+          () =>
+              io.out.toString().contains('images.maxBytesPerRequest = 1048576'),
+        );
+        io.sendLine('4'); // done
         await flow;
         io.sendLine('/exit');
         await run;
@@ -2576,9 +2588,11 @@ memory:
           reason: 'the toggle flipped it',
         );
         expect(parsed.images!.maxPerRequest, 5);
+        expect(parsed.images!.maxBytesPerRequest, 1048576);
         // Reload-after-write: the global the request build consults.
         expect(imageRegistryConfig.enabled, isFalse);
         expect(imageRegistryConfig.maxPerRequest, 5);
+        expect(imageRegistryConfig.maxBytesPerRequest, 1048576);
         expect(fake.calls, 0);
       },
     );
@@ -2598,7 +2612,7 @@ memory:
           () =>
               io.out.toString().contains('(applies to the next request build'),
         );
-        io.sendLine('3'); // done
+        io.sendLine('4'); // done
         await flow;
         io.sendLine('/exit');
         await run;
@@ -2645,7 +2659,7 @@ memory:
             promptsBefore,
       );
       io.sendLine(''); // empty keeps
-      io.sendLine('3'); // done
+      io.sendLine('4'); // done
       await flow;
       io.sendLine('/exit');
       await run;
@@ -2679,7 +2693,7 @@ memory:
         await waitForIt(
           () => io.out.toString().contains('images.registry = false'),
         );
-        io.sendLine('3'); // done
+        io.sendLine('4'); // done
         await flow;
         io.sendLine('/exit');
         await run;
@@ -2708,7 +2722,7 @@ memory:
         () =>
             io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
       );
-      io.sendLine('3'); // done
+      io.sendLine('4'); // done
       await flow;
       io.sendLine('/exit');
       await run;
@@ -2726,7 +2740,7 @@ memory:
       await waitForIt(
         () => io.out.toString().contains('no user config on this host'),
       );
-      io.sendLine('3'); // done
+      io.sendLine('4'); // done
       await flow;
       io.sendLine('/exit');
       await run;
@@ -2755,7 +2769,7 @@ memory:
       await waitForIt(
         () => io.out.toString().contains('images.maxPerRequest = 9'),
       );
-      io.sendLine('3'); // done
+      io.sendLine('4'); // done
       await flow;
       io.sendLine('/exit');
       await run;

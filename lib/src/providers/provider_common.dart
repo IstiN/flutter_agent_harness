@@ -24,6 +24,8 @@ import '../rate_limit_info.dart';
 import '../sse_decoder.dart';
 import '../types.dart';
 import 'conn_trace.dart' show connTraceWrapProviderClient;
+import 'payload_stall.dart'
+    show payloadStallFreeBytes, payloadStallLatch, scaleStallWindowForPayload;
 import 'provider_tuning.dart'
     show providerConnectTimeoutForUrl, providerStreamIdleTimeoutForUrl;
 import 'stall_sentinel.dart'
@@ -593,6 +595,20 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
   Duration? connectTimeout,
   String? timeoutSource,
 }) async {
+  // Issue #1916 AC3: every stall of this payload feeds the latch — two
+  // stalls of the SAME request fire one actionable warning (the advice
+  // suggests /compact + a lower image budget) instead of an endless
+  // silent re-upload loop. Fingerprint: endpoint + payload size — two
+  // different bodies of one size share a fingerprint, and the only
+  // cost is one extra advice line; no hashing 20MB on the stall path.
+  final fingerprint =
+      '${redactProviderUrl(request.url)}|${request.bodyBytes.length}';
+  // Issue #1916 AC3: responses abandoned by the connect watchdog may
+  // still deliver headers while the backoff sleep runs — adoptable in
+  // that gap instead of detached. Single ownership: a listed future is
+  // either adopted (removed here, returned to the caller) or handed to
+  // the detach janitor exactly once — never both.
+  final abandoned = <(int, Future<http.StreamedResponse>)>[];
   for (var attempt = 0; ; attempt++) {
     // A sent `http.Request` is finalized by the client and cannot be sent
     // again — every attempt after the first rides a fresh clone (the
@@ -601,15 +617,21 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
         ? request
         : _reissue(request, request.url, 0);
     try {
-      return await _sendWatchedOnce(
+      final response = await _sendWatchedOnce(
         httpClient,
         attemptRequest,
         cancelToken,
         attempt,
         connectTimeout: connectTimeout,
         timeoutSource: timeoutSource,
+        onAbandon: (late) => abandoned.add((attempt, late)),
       );
+      // A later attempt answered first: the older abandoned generations
+      // are orphans now — detach them (announce + release) exactly once.
+      _detachAbandoned(abandoned, 'superseded');
+      return response;
     } on TimeoutException {
+      payloadStallLatch.noteStall(fingerprint, request.bodyBytes.length);
       // The connect watchdog fired (issue #1121). `httpClient.send`
       // completes only when the response HEADERS arrive, so a timeout in
       // THIS layer means zero response bytes — the provider never started
@@ -623,7 +645,10 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
       // Mid-stream silence never re-enters here — the idle watchdog fires
       // downstream in createSseIterator — so only the never-started request
       // ever retries.
-      if (attempt >= providerConnectRetries) rethrow;
+      if (attempt >= providerConnectRetries) {
+        _detachAbandoned(abandoned, 'exhausted');
+        rethrow;
+      }
       final delay = providerConnectRetryBackoff * (1 << attempt);
       // Observable on the EXISTING retry surface: the CLI host prints a dim
       // `[net]` line + fa.log entry; hosts leaving the hook null stay
@@ -641,8 +666,24 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
         delaySec: delay.inMicroseconds / 1e6,
         reason: 'connect stall: no response bytes',
       );
+      // Issue #1916 AC3: the backoff gap is where an abandoned attempt's
+      // late answer may land — adopt it (the generation was billed and is
+      // perfectly good) instead of re-uploading the identical payload.
+      // The race consumes the backoff sleep itself: an adopted response
+      // returns directly, otherwise the full delay elapsed and the loop
+      // continues to the next attempt (a cancel propagates from inside).
+      if (abandoned.isNotEmpty) {
+        final adopted = await _adoptAbandonedResponse(
+          abandoned,
+          delay,
+          cancelToken,
+        );
+        if (adopted != null) return adopted;
+        continue;
+      }
       final survived = await transientRetrySleeper(delay, cancelToken);
       if (!survived) {
+        _detachAbandoned(abandoned, 'cancelled');
         cancelToken?.throwIfCancelled(); // the abort propagates
         rethrow;
       }
@@ -650,10 +691,77 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
   }
 }
 
+/// Hands every still-listed abandoned response future to the detach
+/// janitor (issue #1916): when it eventually lands, announce on the
+/// existing `[net]`/fa.log retry surface and release the connection at
+/// once — nobody will read that generation. [phase] names why adoption
+/// is no longer possible (`exhausted` / `superseded` / `cancelled`).
+void _detachAbandoned(
+  List<(int, Future<http.StreamedResponse>)> abandoned,
+  String phase,
+) {
+  for (final (attempt, late) in List.of(abandoned)) {
+    abandoned.remove((attempt, late));
+    unawaited(
+      late.then<Object?>((response) {
+        transientRetryNotice?.call(
+          0,
+          providerConnectRetries + 1,
+          Duration.zero,
+          'abandoned connect attempt ${attempt + 1} answered late '
+          '($phase) — response detached, generation dropped',
+        );
+        return response.stream
+            .listen((_) {}, onError: (Object _) {}, cancelOnError: true)
+            .cancel();
+      }, onError: (Object _) {}),
+    );
+  }
+}
+
+/// Races the retry backoff sleep against the abandoned attempts' late
+/// responses (issue #1916 AC3): the first late headers to arrive are
+/// adopted and returned (announced once on the `[net]` surface); when the
+/// sleep wins, the full delay has elapsed and null returns — the still-
+/// pending late futures stay listed (adoptable in a later gap, detached
+/// by [_detachAbandoned] when no gap remains). A cancelled wait detaches
+/// everything and propagates the abort.
+Future<http.StreamedResponse?> _adoptAbandonedResponse(
+  List<(int, Future<http.StreamedResponse>)> abandoned,
+  Duration delay,
+  CancelToken? cancelToken,
+) async {
+  final slept = transientRetrySleeper(delay, cancelToken);
+  final winner = await Future.any<Object?>([
+    slept.then<Object?>((_) => null),
+    for (final (attempt, late) in List.of(abandoned))
+      late.then<Object?>((response) => (attempt, late, response)),
+  ]);
+  if (winner is (int, Future<http.StreamedResponse>, http.StreamedResponse)) {
+    abandoned.remove((winner.$1, winner.$2)); // single ownership
+    transientRetryNotice?.call(
+      0,
+      providerConnectRetries + 1,
+      Duration.zero,
+      'an abandoned connect attempt answered during the retry wait — '
+      'adopting the late response',
+    );
+    return winner.$3;
+  }
+  if (!await slept) {
+    _detachAbandoned(abandoned, 'cancelled');
+    cancelToken?.throwIfCancelled(); // the abort propagates
+  }
+  return null;
+}
+
 /// One connect-watched send attempt: no retry. [attempt] (0-based) only
 /// labels the orphan janitor's notice. [connectTimeout]/[timeoutSource]
 /// carry the request-scoped override (issue #1554); null resolves the
 /// per-provider table by URL, then the global effective value.
+/// [onAbandon] (issue #1916 AC3) receives an abandoned attempt's response
+/// future so the retry loop can adopt it during the backoff gap; null
+/// keeps the built-in detach janitor.
 Future<http.StreamedResponse> _sendWatchedOnce(
   http.Client httpClient,
   http.Request request,
@@ -661,13 +769,26 @@ Future<http.StreamedResponse> _sendWatchedOnce(
   int attempt, {
   Duration? connectTimeout,
   String? timeoutSource,
+  void Function(Future<http.StreamedResponse> late)? onAbandon,
 }) async {
   // Issue #1398: the per-provider connect watchdog — a tuning-table read
   // by request URL, falling through to the global effective value. One
   // additive value read; the watchdog mechanics below are untouched.
   // Issue #1554: an explicit request-scoped override wins over both.
+  // Issue #1916 AC3: a table-resolved window then scales for the outbound
+  // payload — a multi-MB image upload needs real upload+ingestion time
+  // before the first token. An explicit override is a user-declared clamp
+  // (gh-1617 AC4) and is never scaled.
   final effectiveConnect =
-      connectTimeout ?? providerConnectTimeoutForUrl(request.url);
+      connectTimeout ??
+      scaleStallWindowForPayload(
+        providerConnectTimeoutForUrl(request.url),
+        request.bodyBytes.length,
+      );
+  final scaledNote =
+      connectTimeout == null && request.bodyBytes.length > payloadStallFreeBytes
+      ? ' (window scaled for a ~${(request.bodyBytes.length / (1024 * 1024)).toStringAsFixed(0)}MB request)'
+      : '';
   // Re-pin the runtime type parameter BEFORE the watchdog: IOClient.send's
   // future is reified as package:http's internal IOStreamedResponse, and
   // `.timeout` runtime-checks its value-returning onTimeout closure against
@@ -707,27 +828,32 @@ Future<http.StreamedResponse> _sendWatchedOnce(
       timeoutSec: effectiveConnect.inMicroseconds / 1e6,
       attempt: attempt,
     );
-    unawaited(
-      responseFuture.then<Object?>((late) {
-        transientRetryNotice?.call(
-          0,
-          providerConnectRetries + 1,
-          Duration.zero,
-          'abandoned connect attempt ${attempt + 1} answered late — '
-          'response detached, generation dropped',
-        );
-        return late.stream
-            .listen((_) {}, onError: (Object _) {}, cancelOnError: true)
-            .cancel();
-      }, onError: (Object _) {}),
-    );
+    if (onAbandon != null) {
+      onAbandon(responseFuture);
+    } else {
+      unawaited(
+        responseFuture.then<Object?>((late) {
+          transientRetryNotice?.call(
+            0,
+            providerConnectRetries + 1,
+            Duration.zero,
+            'abandoned connect attempt ${attempt + 1} answered late — '
+            'response detached, generation dropped',
+          );
+          return late.stream
+              .listen((_) {}, onError: (Object _) {}, cancelOnError: true)
+              .cancel();
+        }, onError: (Object _) {}),
+      );
+    }
     // Issue #1554: a request-scoped override names itself on the stall
     // line so a widened (or narrowed) connect window never reads as the
-    // default misbehaving.
+    // default misbehaving. #1916: a payload-scaled window names the
+    // payload so the patience never reads as a hang.
     final scopedNote = timeoutSource == null ? '' : ' ($timeoutSource)';
     throw TimeoutException(
       'provider stream request to ${redactProviderUrl(request.url)} timed out: '
-      'no response headers within ${effectiveConnect.inSeconds}s$scopedNote '
+      'no response headers within ${effectiveConnect.inSeconds}s$scaledNote$scopedNote '
       // The classifier consumes [connectWatchdogTag] (transient_retry_
       // stream.dart): one constant keeps the wording and the retry
       // classification pinned together (issue #1121, review r1).

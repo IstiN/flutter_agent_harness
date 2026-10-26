@@ -166,6 +166,7 @@ extension AgentCliRunNotices on AgentCli {
     _wireImageDropNotice();
     _wireImageCapLearnedNotice();
     _wireTextOnlyImageDropNotice();
+    _wirePayloadStallAdvice();
     _wireDeliverySloNotice();
     _wireOperativePinNotice();
   }
@@ -279,6 +280,19 @@ extension AgentCliRunNotices on AgentCli {
       if (view == null) return;
       final line = '[images] ${view.line}';
       io.writeln(view.prominent ? _style.bold(line) : _style.dim(line));
+    };
+  }
+
+  /// Repeated identical-payload stalls (issue #1916 AC3): ONE actionable
+  /// advice line per stalled payload instead of endless silent retries —
+  /// the dim `[net]` transcript line + fa.log entry, same as the other
+  /// net notices.
+  void _wirePayloadStallAdvice() {
+    payloadStallAdvice = (bytes, fingerprint) {
+      io.writeln(_style.dim('[net] ${payloadStallAdviceLine(bytes)}'));
+      _logDiagnostic(
+        'payload stall advice sid=$_logSid bytes=$bytes fp=$fingerprint',
+      );
     };
   }
 

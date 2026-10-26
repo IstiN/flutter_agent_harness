@@ -1533,6 +1533,8 @@ void _validateImagesEntry(String key, Object? value) {
       }
     case 'maxPerRequest':
       _validateImagesPositiveInt('"images.maxPerRequest"', value);
+    case 'maxBytesPerRequest':
+      _validateImagesPositiveInt('"images.maxBytesPerRequest"', value);
     case 'perModel':
       _validateImagesPerModel(value);
     default:

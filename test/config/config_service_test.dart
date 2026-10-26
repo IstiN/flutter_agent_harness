@@ -804,6 +804,11 @@ void main() {
         (await service.check()).errors.single.message,
         contains('"images.registry" must be a boolean'),
       );
+      await env.writeFile(_globalConfig, 'images:\n  maxBytesPerRequest: 0\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('"images.maxBytesPerRequest" must be a positive integer'),
+      );
       await env.writeFile(_globalConfig, 'images:\n  maxPerRequest: 0\n');
       expect(
         (await service.check()).errors.single.message,

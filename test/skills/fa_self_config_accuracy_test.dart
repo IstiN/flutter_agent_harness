@@ -86,6 +86,7 @@ const _nestedKeySources = <String, String>{
   'providerTimeouts.streamIdleTimeoutMs': 'lib/src/cli/cli_config.dart',
   'images.registry': 'lib/src/cli/cli_config.dart',
   'images.maxPerRequest': 'lib/src/cli/cli_config.dart',
+  'images.maxBytesPerRequest': 'lib/src/cli/cli_config.dart',
   'skills.access': 'lib/src/cli/cli_config.dart',
   'skills.disableShellExecution': 'lib/src/cli/cli_config.dart',
   'redact.enabled': 'lib/src/cli/cli_config.dart',
