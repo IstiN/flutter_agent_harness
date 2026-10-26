@@ -125,6 +125,9 @@ const _exempt = <String, String>{
   // network feature work — waived here so the guard reflects #947 only.
   'lib/ui/network/add_agent_dialog.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/channel_rail.dart': 'fa_network #955: no goldens yet',
+  'lib/ui/network/channel_composer.dart':
+      'fa_network #955: no goldens yet (#1888 added the composer; goldens '
+      'belong to the network feature work like its rail/dialog siblings)',
   'lib/ui/network/create_network_dialog.dart':
       'fa_network #955: no goldens yet',
   'lib/ui/network/join_sheet.dart': 'fa_network #955: no goldens yet',
