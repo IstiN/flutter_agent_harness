@@ -245,7 +245,11 @@ extension on AgentCli {
     String key,
   ) async {
     if (baseUrl.contains('/code-assistant-api/')) {
-      return fetchCodeMieModels(baseUrl, key, client: config.modelsHttpClient);
+      return fetchCodeMieModels(
+        baseUrl,
+        key,
+        client: modelFetchClient(providerName),
+      );
     }
     if (providerName == 'dial') {
       return _fetchDialModelsAndFeatures(baseUrl, apiKey: key);
@@ -257,14 +261,20 @@ extension on AgentCli {
         baseUrl,
         apiKey: key,
         provider: 'chatgpt',
+        client: modelFetchClient('chatgpt'),
       );
       return ids;
     }
     if (providerName == 'copilot') {
       return _fetchCopilotModelsAndLimits(baseUrl, apiKey: key);
     }
-    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-    return fetch(baseUrl, apiKey: key);
+    final override = config.modelsFetcher;
+    if (override != null) return override(baseUrl, apiKey: key);
+    return _fetchOpenAiCompatibleModels(
+      baseUrl,
+      apiKey: key,
+      client: modelFetchClient(providerName),
+    );
   }
 
   /// Applies a completed wizard: writes/updates the registry entry (and the
@@ -844,7 +854,7 @@ extension on AgentCli {
       try {
         await fetchCopilotApiToken(
           githubToken: githubToken,
-          client: config.modelsHttpClient,
+          client: modelFetchClient('copilot'),
         );
       } on CopilotAuthException catch (error) {
         io.writeln('warning: ${error.message}');
@@ -1592,9 +1602,19 @@ extension on AgentCli {
   /// manual cache markers on the endpoint-reported `features.cache` set
   /// (unknown models keep the optimistic marker + fallback).
   ///
+  /// [providerName] keys the `providers:` `network:` proxy binding (issue
+  /// #1921): a named block rides its proxy fail-closed, everything else
+  /// stays byte-identical direct. The saved custom entry's own name wins
+  /// over the catalog spec name (the config keys the entry name, e.g.
+  /// `kimi_me`).
+  ///
   /// G2 (gh-178): the result is wrapped in the request-build gate — see
   /// [_gateCatalogStream] in `provider_model_coherence.dart`.
-  StreamFunction _catalogStreamFunction(String kind, String key) {
+  StreamFunction _catalogStreamFunction(
+    String kind,
+    String key, {
+    String? providerName,
+  }) {
     final inner =
         config.catalogStreamOverride?.call(kind, key) ??
         providerStreamFunction(
@@ -1608,6 +1628,11 @@ extension on AgentCli {
           onChatGptCredentialsRefreshed: kind == 'chatgpt-codex'
               ? _persistChatGptCredentials
               : null,
+          httpClient: proxiedProviderClient(
+            providerName ??
+                _activeCustomName ??
+                resolveCliProviderSpec(kind)?.name,
+          ),
         );
     return _gateCatalogStream(inner);
   }
@@ -1839,7 +1864,7 @@ extension on AgentCli {
         await fetchCodeMieModels(
           '$apiBase/v1',
           cookie,
-          client: config.modelsHttpClient,
+          client: modelFetchClient('codemie'),
         ).catchError((e) {
           return const <String>[];
         });

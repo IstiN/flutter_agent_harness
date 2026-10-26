@@ -553,8 +553,13 @@ extension on AgentCli {
     String cookieOrKey,
   ) async {
     if (entry.spec.api != 'openai-completions') return const [];
-    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-    return fetch(entry.baseUrl, apiKey: cookieOrKey);
+    final override = config.modelsFetcher;
+    if (override != null) return override(entry.baseUrl, apiKey: cookieOrKey);
+    return _fetchOpenAiCompatibleModels(
+      entry.baseUrl,
+      apiKey: cookieOrKey,
+      client: modelFetchClient(entry.name),
+    );
   }
 
   /// Returns cross-provider model candidates as `(providerName, modelId)`
@@ -879,7 +884,7 @@ extension on AgentCli {
     final (ids, cacheSupported, windows, maxTokens) = await fetchDialModelsInfo(
       baseUrl,
       apiKey ?? _apiKey,
-      client: config.modelsHttpClient,
+      client: modelFetchClient('dial'),
     );
     if (cacheSupported.isNotEmpty) _dialCacheModels = cacheSupported;
     if (windows.isNotEmpty) _modelContextWindows = windows;
@@ -900,7 +905,7 @@ extension on AgentCli {
       baseUrl,
       apiKey: apiKey ?? _apiKey,
       provider: 'copilot',
-      client: config.modelsHttpClient,
+      client: modelFetchClient('copilot'),
     );
     if (windows.isNotEmpty) _modelContextWindows = windows;
     if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
@@ -910,15 +915,19 @@ extension on AgentCli {
   Future<List<String>> _fetchOpenAiCompatibleModels(
     String baseUrl, {
     required String apiKey,
+    http.Client? client,
   }) async {
     final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$normalized/models');
     final headers = <String, String>{'Accept': 'application/json'};
     if (apiKey.isNotEmpty) headers['Authorization'] = 'Bearer $apiKey';
     try {
-      final response = await http
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 15));
+      final request = http.Request('GET', uri)..headers.addAll(headers);
+      final response =
+          await (client == null
+                  ? http.get(uri, headers: headers)
+                  : client.send(request).then(http.Response.fromStream))
+              .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) return const [];
       final (ids, windows, maxTokens) = parseModelsResponse(response.body);
       _modelContextWindows = windows;
@@ -1268,7 +1277,13 @@ extension on AgentCli {
       _providerKind = spec.kind;
       _apiKey = key;
       _explicitToken = false;
-      _streamFunction = _catalogStreamFunction(spec.kind, key);
+      // The catalog identity binds the proxy gate — the PREVIOUSLY active
+      // custom entry's name must not leak into this lookup.
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        key,
+        providerName: spec.name,
+      );
       _agent.streamFunction = _streamFunction;
       final built = buildCatalogModel(
         spec.name,

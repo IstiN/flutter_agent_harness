@@ -227,7 +227,7 @@ extension on AgentCli {
         await fetchCodeMieModelsWithJwt(
           '$apiBase/v1',
           jwtToken,
-          client: config.modelsHttpClient,
+          client: modelFetchClient('codemie'),
         ).catchError((_) {
           return const <String>[];
         });
@@ -535,12 +535,12 @@ extension on AgentCli {
           ? await fetchCodeMieProjectsWithJwt(
               apiBase,
               jwtToken,
-              client: config.modelsHttpClient,
+              client: modelFetchClient('codemie'),
             )
           : await fetchCodeMieProjects(
               apiBase,
               cookie!,
-              client: config.modelsHttpClient,
+              client: modelFetchClient('codemie'),
             );
     } catch (e) {
       io.writeln(

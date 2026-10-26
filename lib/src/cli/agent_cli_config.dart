@@ -41,6 +41,7 @@ final class AgentCliConfig {
     this.herdrSpawn,
     this.modelsFetcher,
     this.modelsHttpClient,
+    this.providerNetworks = const {},
     this.tuiMouseCapture = true,
     this.tuiSyncOutput,
     this.tuiClassic = false,
@@ -839,6 +840,10 @@ final class AgentCliConfig {
   /// [modelsFetcher] only covers the OpenAI shape. Null (production) lets
   /// the fetchers create their own client; tests inject a `MockClient`.
   final http.Client? modelsHttpClient;
+
+  /// Per-provider proxy bindings (`providers:` → `network:`, issue #1921),
+  /// carried from the loaded [CliConfig]. Empty = every provider direct.
+  final Map<String, ProviderNetworkConfig> providerNetworks;
 
   /// Whether the TUI captures the mouse for wheel scrolling. Default true:
   /// the session renders in the alternate screen, where the terminal has no
