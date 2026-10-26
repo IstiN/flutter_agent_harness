@@ -480,6 +480,36 @@ void main() {
     });
 
     test(
+      'cleanupOverlay reclaims a stale guard whose alive pid was '
+      'recycled by an unrelated process (gh-1895 review)',
+      () async {
+        final other = await Process.start('sleep', ['30']);
+        addTearDown(() async {
+          other.kill();
+          await other.exitCode;
+        });
+        final s = service();
+        await s.seedOverlay();
+        final runtimeDir = File(overlay).parent.path;
+        // The classic recycled-pid shape: the owning agent crashed and an
+        // unrelated long-lived process took the pid. The pid answers
+        // alive, but the guard has not been re-written (every boot
+        // rewrites it) for longer than the generous age bound.
+        final staleGuard = File(
+          '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+        );
+        await staleGuard.writeAsString('${other.pid}\n');
+        await staleGuard.setLastModified(
+          DateTime.now().subtract(const Duration(hours: 25)),
+        );
+
+        await s.cleanupOverlay();
+        expect(await staleGuard.exists(), isFalse);
+        expect(await File(overlay).exists(), isFalse);
+      },
+    );
+
+    test(
       'sweepLegacyOverlays removes pid files of dead processes only',
       () async {
         final runtimeDir = '${tmp.path}/.dap/runtime';

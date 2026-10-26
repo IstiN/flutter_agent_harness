@@ -383,6 +383,60 @@ void main() {
     });
 
     test(
+      'a failed realtime decode never escapes unhandled and later '
+      'arrivals still append (gh-1895 review)',
+      () async {
+        Future<ChannelMessage> decoder(Envelope envelope) {
+          if (envelope.id == 'e-corrupt') {
+            return Future<ChannelMessage>.error(
+              StateError('undecryptable frame'),
+            );
+          }
+          return Future.value(_decodedMessage(envelope));
+        }
+
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody)
+          ..respond(200, body: '{"items":[],"nextCursor":""}');
+        final connector = FakeWsConnector();
+        final session = _buildDecodingSession(
+          httpClient: httpClient,
+          connector: connector,
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+          decoder: decoder,
+        );
+        addTearDown(session.close);
+        await session.start();
+        await session.openChannel('c1');
+        await pumpEventQueue();
+        final state = session.channelStates['c1']!;
+        final channel = connector.channels.single;
+
+        for (final id in ['e-corrupt', 'e-good']) {
+          channel.serverEvent('envelope', {
+            'id': id,
+            'channelId': 'c1',
+            'senderId': 'other-1',
+            'payload': 'opaque',
+          });
+        }
+        // The only call site is `unawaited(_onEnvelope(envelope))`, so a
+        // rejecting returned future would surface here as an unhandled
+        // async error and fail the test; the swallowing tail must keep
+        // the event loop clean AND preserve arrival order for the rest.
+        await pumpEventQueue();
+
+        expect(state.messages.map((message) => message.envelopeId), [
+          'e-good',
+        ]);
+      },
+    );
+
+    test(
       'refresh rebuild invalidates in-flight realtime and history decodes',
       () async {
         final historyDecode = Completer<ChannelMessage>();

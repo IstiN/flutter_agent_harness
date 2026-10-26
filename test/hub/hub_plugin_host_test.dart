@@ -329,6 +329,59 @@ void main() {
     await fixture.host.dispose(); // idempotent teardown
   });
 
+  test('dispose() before register() never lets the host seed plaintext '
+      'keys and does not permanently disable cleanup (gh-1895 review)', () async {
+    final environment = <String, String>{
+      hub.envMasterSecret: 'test-master',
+      'DAP_HUB_URL': _hubUrl,
+      'DAP_KEY_PASSPHRASE': 'pass',
+    };
+    final client = hub.HubClient(
+      config: const hub.HubConfig(url: _hubUrl),
+      identity: await hub.HubIdentity.generate(),
+    )..agentId = _selfId;
+    final plugin = _StubHubPlugin(
+      environment: environment,
+      home: home.path,
+      currentStatus: _connectedStatus,
+      memoryRepository: _MemoryHubRepository(client),
+    );
+    final host = HubPluginHost(
+      plugin,
+      environment: environment,
+      home: home.path,
+      localHubUrl: _hubUrl,
+      hubHealthProbe: (port) async => false,
+      hubSpawner: (port) async {},
+    );
+
+    // Teardown before register(): _scoped does not exist yet, so the
+    // memoized dispose is a no-op — it must not become permanent.
+    await host.dispose();
+
+    // A later register() on the same host (embedded-host lifecycle) must
+    // NOT reseed the plaintext overlay for an already-disposed host.
+    host.register(
+      PluginContext(
+        env: MemoryExecutionEnv(cwd: home.path),
+        io: _IO(),
+        readSessionRecords: (type) async => [
+          _membership('private', pub: 'pub', priv: 'priv').toJson(),
+        ],
+      ),
+    );
+    await _waitUntil(() async => plugin.startCalls > 0);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    final overlay = File('${home.path}/.dap/runtime/channels.json');
+    expect(await overlay.exists(), isFalse);
+
+    // The early no-op dispose must have re-armed: a later dispose runs
+    // the real cleanup path and completes without throwing.
+    await host.dispose();
+    expect(await overlay.exists(), isFalse);
+  });
+
   test('the public/private decision comes from the STORED shape: an '
       'undecryptable private envelope is still PRIVATE, and the missing '
       'key is reported for a loud send refusal (gh-1888 review)', () async {
