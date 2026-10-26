@@ -48,6 +48,7 @@ void main() {
       );
 
       expect(controller.state, HubLinkState.connected);
+      expect(await controller.enrollmentUsesPlaintextStorage(), isFalse);
       expect(transport.acceptedCredential, isTrue);
       expect(transport.unauthenticatedDials, 0);
       final socket = transport.sockets.single;
@@ -124,6 +125,105 @@ void main() {
     );
     expect(join['chanPubkey'], pub);
     expect(transport.unauthenticatedDials, 1);
+  });
+
+  test('concurrent enables create only one hub runtime', () async {
+    final env = MemoryExecutionEnv(cwd: '/app');
+    final file = _fileLayer(env);
+    final transport = _FakeTransport();
+    final identityGate = Completer<void>();
+    var identityLoads = 0;
+    final controller = AgentNetworkController(
+      env: env,
+      fileLayer: file,
+      fileFabric: SwappableMessagingRepository(file),
+      transport: transport,
+      loadIdentity: (_, _) async {
+        identityLoads++;
+        await identityGate.future;
+        return HubIdentity.generate();
+      },
+      enrollmentStore: DapEnrollmentStore.inMemory(),
+    );
+    addTearDown(controller.dispose);
+    await controller.store.setConnection(url: 'wss://hub.fa1.dev/ws');
+
+    final first = controller.setEnabled(true);
+    final second = controller.setEnabled(true);
+    await _waitUntil(() => identityLoads > 0);
+    // Give an unserialized second join every opportunity to pass the _hub
+    // check while the first identity load is deterministically blocked.
+    await Future<void>.delayed(Duration.zero);
+    identityGate.complete();
+    await Future.wait([first, second]);
+    await _waitUntil(() => controller.state == HubLinkState.connected);
+
+    expect(identityLoads, 1);
+    expect(transport.sockets, hasLength(1));
+    expect(transport.sockets.single.isOpen, isTrue);
+    expect(controller.state, HubLinkState.connected);
+  });
+
+  test('disable cannot be overtaken by an in-flight join', () async {
+    final env = MemoryExecutionEnv(cwd: '/app');
+    final file = _fileLayer(env);
+    final transport = _FakeTransport();
+    final identityGate = Completer<void>();
+    var identityLoads = 0;
+    final controller = AgentNetworkController(
+      env: env,
+      fileLayer: file,
+      fileFabric: SwappableMessagingRepository(file),
+      transport: transport,
+      loadIdentity: (_, _) async {
+        identityLoads++;
+        await identityGate.future;
+        return HubIdentity.generate();
+      },
+      enrollmentStore: DapEnrollmentStore.inMemory(),
+    );
+    addTearDown(controller.dispose);
+
+    final joining = controller.joinEnrollment(parseDapJoinBundle(invite));
+    await _waitUntil(() => identityLoads == 1);
+    final disabling = controller.setEnabled(false);
+    await Future<void>.delayed(Duration.zero);
+    identityGate.complete();
+    await Future.wait([joining, disabling]);
+
+    expect(controller.store.enabled, isFalse);
+    expect(controller.state, isNull);
+    expect(transport.sockets.every((socket) => !socket.isOpen), isTrue);
+  });
+
+  test('dispose during identity load cannot finish a stale join', () async {
+    final env = MemoryExecutionEnv(cwd: '/app');
+    final file = _fileLayer(env);
+    final transport = _FakeTransport();
+    final identityGate = Completer<void>();
+    var identityLoads = 0;
+    final controller = AgentNetworkController(
+      env: env,
+      fileLayer: file,
+      fileFabric: SwappableMessagingRepository(file),
+      transport: transport,
+      loadIdentity: (_, _) async {
+        identityLoads++;
+        await identityGate.future;
+        return HubIdentity.generate();
+      },
+      enrollmentStore: DapEnrollmentStore.inMemory(),
+    );
+    await controller.store.setConnection(url: 'wss://hub.fa1.dev/ws');
+
+    final joining = controller.setEnabled(true);
+    await _waitUntil(() => identityLoads == 1);
+    controller.dispose();
+    identityGate.complete();
+    await joining;
+
+    expect(controller.state, isNull);
+    expect(transport.sockets, isEmpty);
   });
 
   test(

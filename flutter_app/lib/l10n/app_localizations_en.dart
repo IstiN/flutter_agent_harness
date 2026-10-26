@@ -2603,6 +2603,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String dapEnrollmentJoinedPlaintext(String channel) {
+    return 'Joined DAP channel #$channel. Channel mail now reaches this agent. Storage warning: the invite private key and hub credential are stored UNENCRYPTED (plaintext) in this app\'s sandbox (IndexedDB on web).';
+  }
+
+  @override
   String dapEnrollmentFailed(String channel) {
     return 'Couldn\'t join DAP channel #$channel. Check the invite and hub connection, then try again.';
   }

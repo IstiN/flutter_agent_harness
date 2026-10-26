@@ -1461,6 +1461,15 @@
       }
     }
   },
+  "dapEnrollmentJoinedPlaintext": "Joined DAP channel #{channel}. Channel mail now reaches this agent. Storage warning: the invite private key and hub credential are stored UNENCRYPTED (plaintext) in this app's sandbox (IndexedDB on web).",
+  "@dapEnrollmentJoinedPlaintext": {
+    "description": "Snack bar after a pasted DAP enrollment joined on a platform without Keychain/Keystore; discloses the unencrypted fallback",
+    "placeholders": {
+      "channel": {
+        "type": "String"
+      }
+    }
+  },
   "dapEnrollmentFailed": "Couldn't join DAP channel #{channel}. Check the invite and hub connection, then try again.",
   "@dapEnrollmentFailed": {
     "description": "Snack bar after a pasted DAP enrollment failed; never includes credential or raw transport error",
