@@ -586,6 +586,50 @@ void main() {
       },
     );
 
+    test('an unparseable guard identity shape is kept on doubt, never '
+        'reclaimed (issue #1917 review)', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      // The guard's token is not a shape this build mints (corrupt write
+      // or a future format): the sweep must not treat it as recyclable.
+      final s = service(processIdentity: (_) async => 'e999999999');
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      final guard = File(
+        '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+      );
+      await guard.writeAsString('${other.pid} corrupt-token\n');
+
+      await s.cleanupOverlay();
+
+      expect(await guard.exists(), isTrue, reason: 'unknown shape = doubt');
+      expect(await File(overlay).exists(), isTrue);
+    });
+
+    test('an unparseable CURRENT identity is kept on doubt too '
+        '(issue #1917 review)', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      final s = service(processIdentity: (_) async => 'garbage');
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      final guard = File(
+        '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+      );
+      await guard.writeAsString('${other.pid} e111111111\n');
+
+      await s.cleanupOverlay();
+
+      expect(await guard.exists(), isTrue);
+      expect(await File(overlay).exists(), isTrue);
+    });
+
     test(
       'the boot guard records pid + identity token, never key material',
       () async {
@@ -598,9 +642,46 @@ void main() {
         expect(await guard.exists(), isTrue);
         final content = await guard.readAsString();
         expect(content, matches(RegExp(r'^\d+ \S*\n$')), reason: content);
+        final parts = content.trim().split(' ');
+        final token = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+        if (token.isNotEmpty) {
+          expect(token, matches(RegExp(r'^[se]\d+$')), reason: content);
+        }
         expect(content, isNot(contains(priv)));
       },
     );
+
+    group('psLstartIdentity (issue #1917 review: real output shape)', () {
+      test('parses real macOS `ps -o lstart=` output', () {
+        expect(
+          DapScopedMemberships.psLstartIdentity('Tue Oct 13 13:35:05 2026'),
+          'e${DateTime(2026, 10, 13, 13, 35, 5).millisecondsSinceEpoch ~/ 1000}',
+        );
+      });
+
+      test('parses space-padded single-digit days', () {
+        expect(
+          DapScopedMemberships.psLstartIdentity('Mon Sep  1 01:02:03 2026'),
+          'e${DateTime(2026, 9, 1, 1, 2, 3).millisecondsSinceEpoch ~/ 1000}',
+        );
+      });
+
+      test('tolerates surrounding whitespace/newline', () {
+        expect(
+          DapScopedMemberships.psLstartIdentity('Wed Dec 31 23:59:59 2026\n'),
+          isNotNull,
+        );
+      });
+
+      test('non-C-locale month names and junk return null (keep-on-doubt)', () {
+        expect(
+          DapScopedMemberships.psLstartIdentity('Tue déc 13 13:35:05 2026'),
+          isNull,
+        );
+        expect(DapScopedMemberships.psLstartIdentity('garbage'), isNull);
+        expect(DapScopedMemberships.psLstartIdentity(''), isNull);
+      });
+    });
 
     test(
       'sweepLegacyOverlays removes pid files of dead processes only',

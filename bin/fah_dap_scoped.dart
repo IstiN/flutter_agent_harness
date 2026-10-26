@@ -572,8 +572,14 @@ final class DapScopedMemberships {
           continue;
         }
         final current = await processIdentity(guardPid);
-        if (current == null || current == guardIdentity) {
-          keepOverlay = true; // probe failure or same incarnation
+        if (current == null ||
+            current == guardIdentity ||
+            !_isKnownIdentityShape(current) ||
+            !_isKnownIdentityShape(guardIdentity)) {
+          // Probe failure, same incarnation, or an identity we cannot
+          // interpret (corrupt / future format): keep on doubt — an
+          // unreadable identity must never authorize a reclaim.
+          keepOverlay = true;
           continue;
         }
         await entity.delete(); // recycled pid: writer is gone (issue #1898)
@@ -583,6 +589,12 @@ final class DapScopedMemberships {
     }
     return keepOverlay;
   }
+
+  /// True for an identity token this build mints (`s<ticks>` from
+  /// `/proc` or `e<epoch>` from `ps lstart`). Anything else is treated
+  /// as unknown-format evidence and kept on doubt.
+  static bool _isKnownIdentityShape(String token) =>
+      RegExp(r'^[se]\d+$').hasMatch(token);
 
   /// Parses a guard file into `(pid, identity)`; null when the pid is not
   /// a number (left for a human, like the unparseable names before).
@@ -651,7 +663,7 @@ final class DapScopedMemberships {
     try {
       final result = await Process.run('ps', ['-p', '$pid', '-o', 'lstart=']);
       if (result.exitCode != 0) return null;
-      return _psLstartIdentity(result.stdout as String);
+      return psLstartIdentity(result.stdout as String);
     } on Object {
       return null;
     }
@@ -673,10 +685,12 @@ final class DapScopedMemberships {
   }
 
   /// macOS (and any `ps` with `lstart`): the absolute start time rendered
-  /// in the current locale. Parsing it into an epoch second makes the
-  /// token immune to timezone/DST shifts between guard write and sweep;
-  /// an unparseable (non-C locale) output returns null — keep-on-doubt.
-  static String? _psLstartIdentity(String lstart) {
+  /// in the C locale as `Tue Oct 13 13:35:05 2026` (weekday month day
+  /// time year; single-digit days are space-padded). Parsing it into an
+  /// epoch second makes the token immune to timezone/DST shifts between
+  /// guard write and sweep; an unparseable (non-C locale) output returns
+  /// null — keep-on-doubt.
+  static String? psLstartIdentity(String lstart) {
     const months = {
       'Jan': 1,
       'Feb': 2,
@@ -692,7 +706,7 @@ final class DapScopedMemberships {
       'Dec': 12,
     };
     final m = RegExp(
-      r'^(\w{3}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$',
+      r'^\w{3} (\w{3}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$',
     ).firstMatch(lstart.trim());
     final month = m == null ? null : months[m.group(1)];
     if (month == null) return null;
