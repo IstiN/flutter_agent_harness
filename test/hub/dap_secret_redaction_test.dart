@@ -55,16 +55,27 @@ void main() {
     expect(redacted, isNot(contains(passphrase)));
     expect(redacted, contains('DAP_HUB_URL=wss://hub.fa1.dev/ws'));
     expect(redacted.split('***').length - 1, greaterThanOrEqualTo(3));
+    // Masking only the whole JSON value is insufficient: a shell command
+    // can decode it and print just the private key.
+    expect(
+      redactor.redact('PLAINTEXT_CHANNEL_PRIV'),
+      isNot(contains('PLAINTEXT_CHANNEL_PRIV')),
+    );
   });
 
   test('the layered pipeline receives the same values (issue #24 parity)', () {
-    final pipeline = buildRedactionPipeline(null);
+    final pipeline = buildRedactionPipeline(null)!;
     registerDapEnvSecrets(env, redactionPipeline: pipeline);
 
     for (final value in [channelsJson, clientSecret, passphrase]) {
-      expect(pipeline!.registeredSecrets, contains(value));
+      expect(pipeline.registeredSecrets, contains(value));
     }
-    expect(pipeline!.registeredSecrets, isNot(contains('wss://hub.fa1.dev')));
+    expect(
+      pipeline.registeredSecrets,
+      contains('PLAINTEXT_CHANNEL_PRIV'),
+      reason: 'an extracted env private key must be masked on its own',
+    );
+    expect(pipeline.registeredSecrets, isNot(contains('wss://hub.fa1.dev')));
   });
 
   test('runtime-resolved secrets (decrypted privs, auto-provisioned '

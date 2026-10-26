@@ -221,7 +221,10 @@ final class HubPluginHost implements FahPlugin {
         (m) => host._membershipMatchesChannel(m, channel) && m.priv != null,
       );
     } on Object {
-      return false;
+      // Fail closed: a store/decryption error means no usable key was
+      // proven. Returning false would let the vendored sender auto-keygen
+      // (or otherwise write) when the channel may be stored-private.
+      return true;
     }
   }
 

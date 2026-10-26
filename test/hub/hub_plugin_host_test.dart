@@ -324,6 +324,49 @@ void main() {
   });
 
   test(
+    'private key lookup fails closed when the membership store errors',
+    () async {
+      final environment = <String, String>{'DAP_HUB_URL': _hubUrl};
+      await Directory('${home.path}/.dap').create(recursive: true);
+      await File(
+        '${home.path}/.dap/config.json',
+      ).writeAsString('{"channels":"not-a-list"}');
+      final client = hub.HubClient(
+        config: const hub.HubConfig(url: _hubUrl),
+        identity: await hub.HubIdentity.generate(),
+      )..agentId = _selfId;
+      final plugin = _StubHubPlugin(
+        environment: environment,
+        home: home.path,
+        currentStatus: _connectedStatus,
+        memoryRepository: _MemoryHubRepository(client),
+      );
+      final host = HubPluginHost(
+        plugin,
+        environment: environment,
+        home: home.path,
+        localHubUrl: _hubUrl,
+        hubHealthProbe: (port) async => false,
+        hubSpawner: (port) async {},
+      );
+      host.register(
+        PluginContext(
+          env: MemoryExecutionEnv(cwd: home.path),
+          io: _IO(),
+        ),
+      );
+
+      // A store error means the key cannot be proven available. Returning
+      // false here would let sendChannelFanet1 auto-generate an unreadable
+      // keypair; true makes the fabric refuse before any wire write.
+      expect(
+        await HubPluginHost.privateChannelKeyMissing(plugin, 'unknown'),
+        isTrue,
+      );
+    },
+  );
+
+  test(
     'AC8/AC14: the DAP env secrets AND runtime-resolved in-memory keys '
     'are registered with both masking systems at plugin register time',
     () async {

@@ -18,6 +18,8 @@
 /// `buildSecretRedactor` performs for API keys.
 library;
 
+import 'dart:convert';
+
 import '../redact/redaction_pipeline.dart';
 import '../secrets/secret_redactor.dart';
 
@@ -42,6 +44,26 @@ void registerDapEnvSecrets(
     if (value == null || value.isEmpty) continue;
     redactor?.register(name, value);
     redactionPipeline?.registerSecret(value);
+  }
+  // The whole JSON value is not enough: `env | jq` or a tool that decodes
+  // the provisioning payload can print one private key on its own. Mask
+  // every entry's priv synchronously at startup, before runtime joins (or
+  // any tool call) can happen. Invalid JSON is already handled loudly by
+  // parseDapEnvChannels; redaction registration stays best-effort.
+  final rawChannels = env['DAP_CHANNELS_JSON'];
+  if (rawChannels == null || rawChannels.isEmpty) return;
+  try {
+    final decoded = jsonDecode(rawChannels);
+    if (decoded is! List) return;
+    for (final entry in decoded) {
+      if (entry is! Map) continue;
+      final priv = entry['priv'];
+      if (priv is! String || priv.isEmpty) continue;
+      registerDapSecret(priv, redactor: redactor, pipeline: redactionPipeline);
+    }
+  } on Object {
+    // The complete raw value registered above is still masked; the parser
+    // owns the user-facing malformed-env warning.
   }
 }
 
