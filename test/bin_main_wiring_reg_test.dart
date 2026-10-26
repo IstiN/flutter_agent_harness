@@ -128,6 +128,30 @@ without a replacement wiring.
     );
   });
 
+  test('runtime overlay cleanup is wired into every CLI shutdown path', () {
+    final runapp = File('bin/fah_runapp.dart').readAsStringSync();
+    final util = File('bin/fah_util.dart').readAsStringSync();
+    final model = File('bin/fah_model.dart').readAsStringSync();
+    // A2A, bridge, interactive Ctrl+C, wire-serve, headless, REPL, and
+    // the post-resolution _fail wrapper.
+    expect(RegExp(r'await teardownPlugins\(\);').allMatches(runapp).length, 7);
+    expect(runapp, contains('_fahPluginTeardown = teardownPlugins'));
+    expect(util, contains('await _fahPluginTeardown?.call()'));
+    expect(model, contains('hubHost = plugin'));
+  });
+
+  test('post-resolution _fail paths run plugin teardown before exiting '
+      '(gh-1895 review)', () {
+    final runapp = File('bin/fah_runapp.dart').readAsStringSync();
+    expect(runapp, contains('Future<Never> failAfterPlugins'));
+    final postSeam = runapp.split('_fahPluginTeardown = teardownPlugins;').last;
+    // Every _fail after the teardown seam must route through the wrapper
+    // (usage/config failures remove the plaintext overlay before exit);
+    // the only direct _fail left is the wrapper's own inner call.
+    expect(RegExp(r'\b_fail\(').allMatches(postSeam).length, 1);
+    expect(postSeam, contains('await failAfterPlugins('));
+  });
+
   test('REG-preconfig-and-queue: the queue is resolved before '
       'keyCache.preload and the key gate (gh-1781 AC1/AC3)', () {
     // Boot order: the queue scope resolution precedes BOTH the preload and

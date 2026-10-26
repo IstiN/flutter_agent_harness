@@ -98,17 +98,18 @@ final class _StubHubPlugin extends hub.HubPlugin {
       url: host,
       name: name,
       agentId: _selfId,
-      channels: [if (channel != null) channel],
+      channels: [?channel],
     );
   }
 }
 
 final class _HostFixture {
-  _HostFixture(this.plugin, this.context, this.io);
+  _HostFixture(this.plugin, this.context, this.io, this.host);
 
   final _StubHubPlugin plugin;
   final PluginContext context;
   final _IO io;
+  final HubPluginHost host;
 
   _MemoryHubRepository get repository => plugin.memoryRepository;
 
@@ -221,7 +222,7 @@ Future<_HostFixture> _fixture(
   host.register(context);
   await _waitUntil(() async => plugin.startCalls > 0);
   await Future<void>.delayed(Duration.zero);
-  return _HostFixture(plugin, context, io);
+  return _HostFixture(plugin, context, io, host);
 }
 
 void main() {
@@ -232,7 +233,19 @@ void main() {
   });
 
   tearDown(() async {
-    if (await home.exists()) await home.delete(recursive: true);
+    if (!await home.exists()) return;
+    // Boot seeding is intentionally fire-and-forget. Give an in-flight
+    // atomic overlay rename a bounded chance to settle before recursively
+    // deleting the fixture, rather than failing on transient ENOTEMPTY.
+    for (var attempt = 0; attempt < 10; attempt++) {
+      try {
+        await home.delete(recursive: true);
+        return;
+      } on FileSystemException {
+        if (attempt == 9 || !await home.exists()) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    }
   });
 
   test(
@@ -267,6 +280,113 @@ void main() {
         await HubPluginHost.publicChannelFor(hub.HubPlugin(), 'public'),
         isFalse,
       );
+    },
+  );
+
+  test('a torn priv-without-pub membership is never public and fails '
+      'closed instead of auto-keygen (gh-1888 review)', () async {
+    final fixture = await _fixture(
+      home,
+      memberships: [_membership('torn', priv: 'private-key')],
+    );
+
+    expect(
+      await HubPluginHost.publicChannelFor(fixture.plugin, 'torn'),
+      isFalse,
+    );
+    expect(
+      await HubPluginHost.privateChannelKeyMissing(fixture.plugin, 'torn'),
+      isTrue,
+    );
+  });
+
+  test(
+    'boot surfaces malformed scoped-membership warnings to the user',
+    () async {
+      final dir = Directory('${home.path}/.fah')..createSync();
+      File(
+        '${dir.path}/dap.json',
+      ).writeAsStringSync('{"channels":[{"channelId":"broken"}]}');
+
+      final fixture = await _fixture(home);
+      expect(
+        fixture.io.text,
+        contains('skipped a malformed project membership'),
+      );
+    },
+  );
+
+  test('plugin dispose removes the runtime plaintext-key overlay', () async {
+    final fixture = await _fixture(
+      home,
+      memberships: [_membership('private', pub: 'pub', priv: 'priv')],
+    );
+    final overlay = File('${home.path}/.dap/runtime/channels.json');
+    expect(await overlay.exists(), isTrue);
+
+    await fixture.host.dispose();
+    expect(await overlay.exists(), isFalse);
+    await fixture.host.dispose(); // idempotent teardown
+  });
+
+  test(
+    'dispose() before register() never lets the host seed plaintext '
+    'keys and does not permanently disable cleanup (gh-1895 review)',
+    () async {
+      final environment = <String, String>{
+        hub.envMasterSecret: 'test-master',
+        'DAP_HUB_URL': _hubUrl,
+        'DAP_KEY_PASSPHRASE': 'pass',
+      };
+      final client = hub.HubClient(
+        config: const hub.HubConfig(url: _hubUrl),
+        identity: await hub.HubIdentity.generate(),
+      )..agentId = _selfId;
+      final plugin = _StubHubPlugin(
+        environment: environment,
+        home: home.path,
+        currentStatus: _connectedStatus,
+        memoryRepository: _MemoryHubRepository(client),
+      );
+      final host = HubPluginHost(
+        plugin,
+        environment: environment,
+        home: home.path,
+        localHubUrl: _hubUrl,
+        hubHealthProbe: (port) async => false,
+        hubSpawner: (port) async {},
+      );
+
+      // Teardown before register(): _scoped does not exist yet, so the
+      // memoized dispose is a no-op — it must not become permanent.
+      await host.dispose();
+
+      // A later register() on the same host (embedded-host lifecycle) must
+      // NOT reseed the plaintext overlay for an already-disposed host. The
+      // guard short-circuits the whole boot, so the overlay must not appear
+      // even after a bounded window (pre-fix it was seeded within ms).
+      host.register(
+        PluginContext(
+          env: MemoryExecutionEnv(cwd: home.path),
+          io: _IO(),
+          readSessionRecords: (type) async => [
+            _membership('private', pub: 'pub', priv: 'priv').toJson(),
+          ],
+        ),
+      );
+      final overlay = File('${home.path}/.dap/runtime/channels.json');
+      var overlayAppeared = true;
+      try {
+        await _waitUntil(() async => overlay.exists());
+      } on StateError {
+        overlayAppeared = false; // bounded window elapsed without a seed
+      }
+      expect(overlayAppeared, isFalse);
+
+      // The early no-op dispose must have re-armed: a later dispose runs
+      // the real cleanup path and completes without throwing.
+      await host.dispose();
+      expect(await overlay.exists(), isFalse);
     },
   );
 

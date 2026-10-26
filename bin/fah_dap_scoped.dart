@@ -482,6 +482,15 @@ final class DapScopedMemberships {
         keys[m.channelId] = {'pub': pub, 'priv': priv};
       }
     }
+    // The overlay is shared by all agents under one $HOME. A tiny pid
+    // guard (no secret content) lets clean shutdown remove it only when
+    // no other live agent still depends on it.
+    await _registerOverlayGuard();
+    try {
+      await _sweepStaleOverlayGuards();
+    } on Object {
+      // Hygiene is best-effort; seeding the current keys still proceeds.
+    }
     await _writeJsonAtomic(overlayChannelsFile, keys, mode0600: true);
     return effective;
   }
@@ -490,16 +499,85 @@ final class DapScopedMemberships {
   /// overlay seed — the first drain must re-read them, AC3).
   void invalidateCache() => _union = null;
 
-  /// Best-effort deletes the runtime overlay file. Hosts with a teardown
-  /// path (plugin dispose / CLI `finally`) call this so plaintext channel
-  /// keys never outlive the run; a leftover file is rewritten (0600) on
-  /// the next boot's [seedOverlay], so cleanup failing is never fatal.
+  /// Best-effort deletes the runtime overlay file on clean host teardown.
+  /// A live guard belonging to another agent keeps the shared file in
+  /// place; dead guards are reclaimed. Any listing/probe failure fails
+  /// closed (the overlay stays and is rewritten 0600 on the next boot).
   Future<void> cleanupOverlay() async {
     try {
+      final ownGuard = File(_overlayGuardFile);
+      if (await ownGuard.exists()) await ownGuard.delete();
+      if (await _sweepStaleOverlayGuards()) return;
       final file = File(overlayChannelsFile);
       if (await file.exists()) await file.delete();
     } on Object {
       // Best-effort only — see the doc comment.
+    }
+  }
+
+  String get _overlayGuardFile => '$overlayChannelsFile.$pid.guard';
+
+  /// Guards older than this are reclaimed even when their pid still
+  /// answers alive: after a crash the pid can be recycled by an
+  /// unrelated long-lived process, and a recycled pid would otherwise
+  /// pin the shared plaintext overlay forever (gh-1895 review). Every
+  /// boot rewrites the guard, so mtime tracks the owning agent's last
+  /// boot — a genuinely live guard is always fresh.
+  static const _overlayGuardMaxAge = Duration(hours: 24);
+
+  Future<void> _registerOverlayGuard() async {
+    try {
+      final guard = File(_overlayGuardFile);
+      await guard.parent.create(recursive: true);
+      await guard.writeAsString('$pid\n', flush: true);
+    } on Object {
+      // A missing guard must never block channel boot. Other guards still
+      // protect cleanup, and the next successful boot retries registration.
+    }
+  }
+
+  /// Removes dead sibling guards and returns true when a LIVE sibling (or
+  /// a guard whose deletion failed) requires the overlay to be preserved.
+  Future<bool> _sweepStaleOverlayGuards() async {
+    final dir = File(overlayChannelsFile).parent;
+    if (!await dir.exists()) return false;
+    final prefix = '${File(overlayChannelsFile).uri.pathSegments.last}.';
+    var keepOverlay = false;
+    await for (final entity in dir.list()) {
+      if (entity is! File || entity.path == _overlayGuardFile) continue;
+      final name = entity.uri.pathSegments.last;
+      if (!name.startsWith(prefix) || !name.endsWith('.guard')) continue;
+      final pidText = name.substring(prefix.length, name.length - 6);
+      final guardPid = int.tryParse(pidText);
+      if (guardPid == null) continue;
+      if (await _pidAlive(guardPid)) {
+        if (await _guardIsFresh(entity)) {
+          keepOverlay = true;
+          continue;
+        }
+        // The pid answers alive but the guard has not been re-written
+        // for over [_overlayGuardMaxAge]: the classic recycled-pid
+        // shape (crashed agent, pid taken by an unrelated process).
+        // Fall through and reclaim the stale guard.
+      }
+      try {
+        await entity.delete();
+      } on Object {
+        keepOverlay = true; // keep-on-doubt, same as a live-pid probe
+      }
+    }
+    return keepOverlay;
+  }
+
+  /// A guard counts as fresh when its mtime is within
+  /// [_overlayGuardMaxAge]; a probe failure fails conservative and
+  /// treats the guard as fresh (keep-on-doubt).
+  Future<bool> _guardIsFresh(File entity) async {
+    try {
+      final modified = await entity.lastModified();
+      return DateTime.now().difference(modified) <= _overlayGuardMaxAge;
+    } on Object {
+      return true;
     }
   }
 

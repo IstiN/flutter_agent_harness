@@ -453,13 +453,66 @@ void main() {
       await s.cleanupOverlay();
     });
 
+    test('cleanupOverlay preserves the shared overlay while another live '
+        'agent owns a guard, then removes it after that agent exits', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      final s = service();
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      final otherGuard = File(
+        '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+      );
+      await otherGuard.writeAsString('${other.pid}\n');
+
+      await s.cleanupOverlay();
+      expect(await File(overlay).exists(), isTrue);
+      expect(await otherGuard.exists(), isTrue);
+
+      other.kill();
+      await other.exitCode;
+      await s.cleanupOverlay();
+      expect(await otherGuard.exists(), isFalse);
+      expect(await File(overlay).exists(), isFalse);
+    });
+
+    test('cleanupOverlay reclaims a stale guard whose alive pid was '
+        'recycled by an unrelated process (gh-1895 review)', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      final s = service();
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      // The classic recycled-pid shape: the owning agent crashed and an
+      // unrelated long-lived process took the pid. The pid answers
+      // alive, but the guard has not been re-written (every boot
+      // rewrites it) for longer than the generous age bound.
+      final staleGuard = File(
+        '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+      );
+      await staleGuard.writeAsString('${other.pid}\n');
+      await staleGuard.setLastModified(
+        DateTime.now().subtract(const Duration(hours: 25)),
+      );
+
+      await s.cleanupOverlay();
+      expect(await staleGuard.exists(), isFalse);
+      expect(await File(overlay).exists(), isFalse);
+    });
+
     test(
       'sweepLegacyOverlays removes pid files of dead processes only',
       () async {
         final runtimeDir = '${tmp.path}/.dap/runtime';
         await Directory(runtimeDir).create(recursive: true);
         final dead = File('$runtimeDir/channels-999999.json');
-        final alive = File('$runtimeDir/channels-${pid}.json');
+        final alive = File('$runtimeDir/channels-$pid.json');
         final stable = File('$runtimeDir/channels.json');
         await dead.writeAsString('{}');
         await alive.writeAsString('{}');

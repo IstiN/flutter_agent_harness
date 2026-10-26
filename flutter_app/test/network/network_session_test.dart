@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/network/channel_chat_service.dart';
 import 'package:fa/network/envelope_codec.dart';
+import 'package:fa/network/fa_network_client.dart';
+import 'package:fa/network/fa_network_ws.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_session.dart';
@@ -9,6 +12,45 @@ import 'package:fa/network/network_session_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
+NetworkSession _buildDecodingSession({
+  required FakeHttpClient httpClient,
+  required FakeWsConnector connector,
+  required KeyWallet wallet,
+  required Future<ChannelMessage> Function(Envelope envelope) decoder,
+}) {
+  final client = FaNetworkClient(
+    baseUrl: testBase,
+    httpClient: httpClient,
+    sessionToken: 'st-1',
+  );
+  final ws = FaNetworkWs(
+    baseUrl: testBase,
+    connector: connector,
+    sessionToken: () => 'st-1',
+  );
+  return NetworkSession(
+    networkId: 'net1',
+    identity: const JoinedIdentity(
+      id: 'me-1',
+      memberClass: MemberClass.guest,
+      displayName: 'Me',
+    ),
+    client: client,
+    ws: ws,
+    wallet: wallet,
+    envelopeDecoder: decoder,
+  );
+}
+
+ChannelMessage _decodedMessage(Envelope envelope) => ChannelMessage(
+  envelopeId: envelope.id,
+  senderId: envelope.senderId,
+  senderPub: '',
+  text: 'decoded ${envelope.id}',
+  isOwn: false,
+  createdAt: envelope.createdAt,
+);
 
 void main() {
   late ({String pub, String priv}) channelKeys;
@@ -285,6 +327,201 @@ void main() {
       expect(message.text, isNull);
       expect(message.senderId, 'other-1');
     });
+
+    test('realtime decodes append in arrival order and dedupe', () async {
+      final firstDecode = Completer<ChannelMessage>();
+      Future<ChannelMessage> decoder(Envelope envelope) {
+        if (envelope.id == 'e-first') return firstDecode.future;
+        return Future.value(_decodedMessage(envelope));
+      }
+
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody)
+        ..respond(200, body: '{"items":[],"nextCursor":""}');
+      final connector = FakeWsConnector();
+      final session = _buildDecodingSession(
+        httpClient: httpClient,
+        connector: connector,
+        wallet: await walletWithChannel(
+          channelPub: channelKeys.pub,
+          channelPriv: channelKeys.priv,
+        ),
+        decoder: decoder,
+      );
+      addTearDown(session.close);
+      await session.start();
+      await session.openChannel('c1');
+      await pumpEventQueue();
+      final state = session.channelStates['c1']!;
+      final channel = connector.channels.single;
+
+      for (final id in ['e-first', 'e-second', 'e-second']) {
+        channel.serverEvent('envelope', {
+          'id': id,
+          'channelId': 'c1',
+          'senderId': 'other-1',
+          'payload': 'opaque',
+        });
+      }
+      await pumpEventQueue();
+      firstDecode.complete(
+        const ChannelMessage(
+          envelopeId: 'e-first',
+          senderId: 'other-1',
+          senderPub: '',
+          text: 'decoded e-first',
+          isOwn: false,
+        ),
+      );
+      await pumpEventQueue();
+
+      expect(state.messages.map((message) => message.envelopeId), [
+        'e-first',
+        'e-second',
+      ]);
+    });
+
+    test('a failed realtime decode never escapes unhandled and later '
+        'arrivals still append (gh-1895 review)', () async {
+      Future<ChannelMessage> decoder(Envelope envelope) {
+        if (envelope.id == 'e-corrupt') {
+          return Future<ChannelMessage>.error(
+            StateError('undecryptable frame'),
+          );
+        }
+        return Future.value(_decodedMessage(envelope));
+      }
+
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody)
+        ..respond(200, body: '{"items":[],"nextCursor":""}');
+      final connector = FakeWsConnector();
+      final session = _buildDecodingSession(
+        httpClient: httpClient,
+        connector: connector,
+        wallet: await walletWithChannel(
+          channelPub: channelKeys.pub,
+          channelPriv: channelKeys.priv,
+        ),
+        decoder: decoder,
+      );
+      addTearDown(session.close);
+      await session.start();
+      await session.openChannel('c1');
+      await pumpEventQueue();
+      final state = session.channelStates['c1']!;
+      final channel = connector.channels.single;
+
+      for (final id in ['e-corrupt', 'e-good']) {
+        channel.serverEvent('envelope', {
+          'id': id,
+          'channelId': 'c1',
+          'senderId': 'other-1',
+          'payload': 'opaque',
+        });
+      }
+      // The only call site is `unawaited(_onEnvelope(envelope))`: the
+      // returned future must contain the decode failure (never reject)
+      // and the chain must keep arrival order for the remaining
+      // envelopes — a corrupt frame lands no message and kills nothing.
+      await pumpEventQueue();
+
+      expect(state.messages.map((message) => message.envelopeId), ['e-good']);
+    });
+
+    test(
+      'refresh rebuild invalidates in-flight realtime and history decodes',
+      () async {
+        final historyDecode = Completer<ChannelMessage>();
+        final realtimeDecode = Completer<ChannelMessage>();
+        var sharedDecodeCount = 0;
+        Future<ChannelMessage> decoder(Envelope envelope) {
+          if (envelope.id != 'e-shared') {
+            return Future.value(_decodedMessage(envelope));
+          }
+          sharedDecodeCount++;
+          return sharedDecodeCount == 1
+              ? historyDecode.future
+              : realtimeDecode.future;
+        }
+
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody)
+          ..respond(
+            200,
+            body: jsonEncode({
+              'items': [
+                {
+                  'id': 'e-shared',
+                  'channelId': 'c1',
+                  'senderId': 'other-1',
+                  'payload': 'opaque',
+                },
+              ],
+              'nextCursor': '',
+            }),
+          )
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: '{"items":[],"nextCursor":""}');
+        final connector = FakeWsConnector();
+        final session = _buildDecodingSession(
+          httpClient: httpClient,
+          connector: connector,
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+          decoder: decoder,
+        );
+        addTearDown(session.close);
+        await session.start();
+        await pumpEventQueue();
+
+        final opening = session.openChannel('c1');
+        await pumpEventQueue();
+        expect(sharedDecodeCount, 1);
+        final channel = connector.channels.single;
+        channel.serverEvent('envelope', {
+          'id': 'e-shared',
+          'channelId': 'c1',
+          'senderId': 'other-1',
+          'payload': 'opaque',
+        });
+        await pumpEventQueue();
+        expect(sharedDecodeCount, 2);
+
+        channel.serverEvent('network.drain', {'count': 1});
+        await pumpEventQueue();
+        realtimeDecode.complete(
+          const ChannelMessage(
+            envelopeId: 'e-shared',
+            senderId: 'other-1',
+            senderPub: '',
+            text: 'stale realtime',
+            isOwn: false,
+          ),
+        );
+        await pumpEventQueue();
+        historyDecode.complete(
+          const ChannelMessage(
+            envelopeId: 'e-shared',
+            senderId: 'other-1',
+            senderPub: '',
+            text: 'stale history',
+            isOwn: false,
+          ),
+        );
+        await opening;
+        await pumpEventQueue();
+
+        final state = session.channelStates['c1']!;
+        expect(state.messages, isEmpty);
+        expect(state.seen, isEmpty);
+      },
+    );
 
     test('sendText encrypts, appends optimistically, echoes dedupe', () async {
       final wallet = await walletWithChannel(
@@ -807,6 +1044,32 @@ void main() {
           (f) => f['type'] == 'envelope.send',
         );
         expect(frame['mentions'], unorderedEquals(['agent-kb', 'other-1']));
+      },
+    );
+
+    test(
+      'apostrophes do not terminate mentions but punctuation does',
+      () async {
+        final rig = await buildChat();
+        addTearDown(rig.session.close);
+        rig.session.roster['agent-al'] = const Member(
+          id: 'agent-al',
+          memberClass: MemberClass.agent,
+          displayName: 'al',
+          presence: Presence.live,
+        );
+
+        await rig.chat.sendText("@al's");
+        var frame = rig.connector.channels.single.sentFrames.lastWhere(
+          (f) => f['type'] == 'envelope.send',
+        );
+        expect(frame['mentions'], isNull);
+
+        await rig.chat.sendText('(@al) @al!');
+        frame = rig.connector.channels.single.sentFrames.lastWhere(
+          (f) => f['type'] == 'envelope.send',
+        );
+        expect(frame['mentions'], ['agent-al']);
       },
     );
 

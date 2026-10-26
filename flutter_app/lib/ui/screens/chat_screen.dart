@@ -48,10 +48,12 @@ bool interceptDapEnrollmentSubmit(
   String text, {
   required bool supported,
   required DapEnrollmentJoin join,
+  DapEnrollmentStorageProbe? plaintextStorage,
 }) {
   final enrollment = DapEnrollmentService(
     supported: supported,
     join: join,
+    plaintextStorage: plaintextStorage,
   ).startPaste(text);
   if (enrollment == null) return false;
   unawaited(
@@ -60,7 +62,18 @@ bool interceptDapEnrollmentSubmit(
       final l10n = context.l10n;
       switch (result.status) {
         case DapEnrollmentStatus.joined:
-          fa_ui.showFahSnack(context, l10n.dapEnrollmentJoined(result.channel));
+          if (!result.plaintextStorage) {
+            fa_ui.showFahSnack(
+              context,
+              l10n.dapEnrollmentJoined(result.channel),
+            );
+          } else {
+            fa_ui.showFahSnack(
+              context,
+              l10n.dapEnrollmentJoinedPlaintext(result.channel),
+              duration: const Duration(seconds: 8),
+            );
+          }
         case DapEnrollmentStatus.failed:
           fa_ui.showFahErrorSnack(
             context,
@@ -387,12 +400,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// UI-layer interception covers native AND relay-backed AgentServices:
   /// the credential-bearing paste never reaches any sendText override.
+  /// The network probes stay lazy: the interceptor runs on EVERY send,
+  /// and an AgentService whose agent network was never initialized
+  /// (widget tests, minimal hosts) must not throw mid-`send` —
+  /// `agentNetwork` is only touched once an enrollment paste is
+  /// actually recognized (gh-1895 review / CI red on file_browser).
   bool _interceptDapSubmit(BuildContext context, String text) =>
       interceptDapEnrollmentSubmit(
         context,
         text,
         supported: agentNetworkSupported,
         join: (bundle) => widget.service.agentNetwork.joinEnrollment(bundle),
+        plaintextStorage: () =>
+            widget.service.agentNetwork.enrollmentUsesPlaintextStorage(),
       );
 
   @override

@@ -1113,8 +1113,29 @@ Future<void> _runApp(List<String> args) async {
     redactionPipeline: redactionPipeline,
   );
 
+  Future<void> teardownPlugins() async {
+    try {
+      await resolved.hubHost?.dispose();
+    } on Object {
+      // Clean-shutdown hygiene must never replace the intended exit code.
+    }
+  }
+
+  // Signal-driven headless exits live in fah_util.dart; give that seam
+  // the same idempotent cleanup as the normal branch finally blocks.
+  _fahPluginTeardown = teardownPlugins;
+
+  // gh-1895 review: every _fail that runs AFTER plugin resolution must
+  // remove the runtime plaintext-key overlay before the usage exit — the
+  // next boot's guard sweep would reclaim it eventually, but the overlay
+  // must not linger on disk for the whole gap.
+  Future<Never> failAfterPlugins(String message) async {
+    await teardownPlugins();
+    _fail(message);
+  }
+
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
-    _fail('unknown mode: ${effective.mode}');
+    await failAfterPlugins('unknown mode: ${effective.mode}');
   }
   final promptTemplateDirs = <String>[
     '$cwd/.fah/prompts',
@@ -1141,7 +1162,7 @@ Future<void> _runApp(List<String> args) async {
     try {
       tee = File(path).openSync(mode: FileMode.write);
     } on Object catch (error) {
-      _fail('cannot open --log-file "$path": $error');
+      await failAfterPlugins('cannot open --log-file "$path": $error');
     }
     logTeeFile = tee;
     io = TeeCliIO(terminalIo, tee.writeStringSync);
@@ -1253,6 +1274,7 @@ Future<void> _runApp(List<String> args) async {
       mailSink: (envelope) =>
           A2aMailGateway.accept(envelope, fabric: projectFabric),
     );
+    await teardownPlugins();
     exit(0);
   }
   // `fa serve --bridge [--port N] [--token T]` — mount the loopback
@@ -1272,6 +1294,7 @@ Future<void> _runApp(List<String> args) async {
       token: tokenFlag,
       version: packageVersion,
     );
+    await teardownPlugins();
     exit(0);
   }
   // `late` so the onProviderChanged closure can reach the agent (to attach
@@ -1292,7 +1315,7 @@ Future<void> _runApp(List<String> args) async {
         ? flagTools
         : toolsSpecFromEnv(Platform.environment);
   } on ConfigException catch (error) {
-    _fail('invalid --tools/FA_TOOLS spec: ${error.message}');
+    await failAfterPlugins('invalid --tools/FA_TOOLS spec: ${error.message}');
   }
 
   // The tool-load preset (issue #680): `--omp` wins over the
@@ -1307,7 +1330,7 @@ Future<void> _runApp(List<String> args) async {
       configMode: saved.agentLoadMode,
     );
   } on ArgumentError catch (error) {
-    _fail('invalid load mode: ${error.message}');
+    await failAfterPlugins('invalid load mode: ${error.message}');
   }
 
   // Per-folder model memory: mirror the active triple into the folder's
@@ -1374,7 +1397,7 @@ Future<void> _runApp(List<String> args) async {
   for (final attachment in parsed.attachments) {
     final file = File(attachment);
     if (!file.existsSync()) {
-      _fail('--attach: no such file: $attachment');
+      await failAfterPlugins('--attach: no such file: $attachment');
     }
     final bytes = file.readAsBytesSync();
     final mime = _sniffMime(bytes);
@@ -1881,7 +1904,7 @@ Future<void> _runApp(List<String> args) async {
       io: io,
     );
   } on ConfigException catch (error) {
-    _fail(error.message);
+    await failAfterPlugins(error.message);
   }
   if (redactorAttached) attachSecretRedactor(cli.agent, redactor);
 
@@ -2007,6 +2030,7 @@ Future<void> _runApp(List<String> args) async {
       // the in-flight per-line flushes and crashes the exit path.
       await drainStdoutLines();
     } finally {
+      await teardownPlugins();
       exit(130);
     }
   }
@@ -2084,6 +2108,7 @@ Future<void> _runApp(List<String> args) async {
       await sigtermSub.cancel();
       await sigintSub.cancel();
       await drainStdoutLines();
+      await teardownPlugins();
       logTeeFile?.closeSync();
     }
     exit(code);
@@ -2107,6 +2132,7 @@ Future<void> _runApp(List<String> args) async {
     } finally {
       await sigintSub.cancel();
       await drainStdoutLines();
+      await teardownPlugins();
       logTeeFile?.closeSync();
     }
     exit(code);
@@ -2116,6 +2142,7 @@ Future<void> _runApp(List<String> args) async {
     await cli.run();
   } finally {
     await sigintSub.cancel();
+    await teardownPlugins();
     logTeeFile?.closeSync();
   }
 

@@ -236,6 +236,22 @@ String mailboxMisrouteNote(List<MailboxEntry> entries, String targetId) {
       'anywhere — queued offline';
 }
 
+/// A terminal channel-delivery refusal that must reach the caller.
+///
+/// Hub/file compositions normally queue transport failures for retry. This
+/// exception is reserved for failures that retry cannot fix (for example a
+/// private channel whose key is unavailable); silently writing those
+/// messages into an unpolled file mailbox would report false success.
+final class ChannelDeliveryException implements Exception {
+  ChannelDeliveryException(this.message);
+
+  /// Human-readable, credential-free refusal reason.
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Isolated messaging backend for agent inboxes.
 abstract interface class MessagingRepository {
   /// Delivers [message] to the recipient's inbox. Implementations must
