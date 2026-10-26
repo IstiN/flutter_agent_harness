@@ -532,6 +532,10 @@ final class NetworkSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Test seam for the exact future returned to the unawaited socket path.
+  @visibleForTesting
+  Future<void> debugHandleEnvelope(Envelope envelope) => _onEnvelope(envelope);
+
   Future<void> _onEnvelope(Envelope envelope) {
     final channelId = envelope.channelId;
     final state = channelStates[channelId];

@@ -517,14 +517,6 @@ final class DapScopedMemberships {
 
   String get _overlayGuardFile => '$overlayChannelsFile.$pid.guard';
 
-  /// Guards older than this are reclaimed even when their pid still
-  /// answers alive: after a crash the pid can be recycled by an
-  /// unrelated long-lived process, and a recycled pid would otherwise
-  /// pin the shared plaintext overlay forever (gh-1895 review). Every
-  /// boot rewrites the guard, so mtime tracks the owning agent's last
-  /// boot — a genuinely live guard is always fresh.
-  static const _overlayGuardMaxAge = Duration(hours: 24);
-
   Future<void> _registerOverlayGuard() async {
     try {
       final guard = File(_overlayGuardFile);
@@ -551,14 +543,8 @@ final class DapScopedMemberships {
       final guardPid = int.tryParse(pidText);
       if (guardPid == null) continue;
       if (await _pidAlive(guardPid)) {
-        if (await _guardIsFresh(entity)) {
-          keepOverlay = true;
-          continue;
-        }
-        // The pid answers alive but the guard has not been re-written
-        // for over [_overlayGuardMaxAge]: the classic recycled-pid
-        // shape (crashed agent, pid taken by an unrelated process).
-        // Fall through and reclaim the stale guard.
+        keepOverlay = true;
+        continue;
       }
       try {
         await entity.delete();
@@ -567,18 +553,6 @@ final class DapScopedMemberships {
       }
     }
     return keepOverlay;
-  }
-
-  /// A guard counts as fresh when its mtime is within
-  /// [_overlayGuardMaxAge]; a probe failure fails conservative and
-  /// treats the guard as fresh (keep-on-doubt).
-  Future<bool> _guardIsFresh(File entity) async {
-    try {
-      final modified = await entity.lastModified();
-      return DateTime.now().difference(modified) <= _overlayGuardMaxAge;
-    } on Object {
-      return true;
-    }
   }
 
   /// Best-effort removes legacy per-pid overlay files
