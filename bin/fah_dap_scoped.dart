@@ -133,8 +133,10 @@ final class DapScopedMemberships {
     this.keychain,
     this.onSecret,
     DateTime Function()? now,
+    Future<String?> Function(int pid)? processIdentity,
   }) : environment = environment ?? Platform.environment,
-       _now = now ?? (() => DateTime.now().toUtc());
+       _now = now ?? (() => DateTime.now().toUtc()),
+       processIdentity = processIdentity ?? processStartIdentity;
 
   /// `~/.dap/config.json` (legacy global room list + hub url).
   final String globalConfigFile;
@@ -171,6 +173,12 @@ final class DapScopedMemberships {
   final void Function(String value)? onSecret;
 
   final DateTime Function() _now;
+
+  /// The process-start identity probe (issue #1898): the guard records
+  /// the writer's identity so a sweep can tell a live owner from a
+  /// recycled pid. Injectable for tests; defaults to
+  /// [processStartIdentity]. Null = probe failure (keep-on-doubt).
+  final Future<String?> Function(int pid) processIdentity;
 
   /// Lazily loaded union (invalidated on every mutation).
   DapMembershipUnion? _union;
@@ -521,7 +529,13 @@ final class DapScopedMemberships {
     try {
       final guard = File(_overlayGuardFile);
       await guard.parent.create(recursive: true);
-      await guard.writeAsString('$pid\n', flush: true);
+      // The guard carries pid + process-start identity (no secret
+      // material): a later sweep compares the recorded identity with the
+      // live pid's, so a crashed agent's recycled pid no longer pins the
+      // overlay (issue #1898). A probe failure writes the legacy
+      // pid-only shape, which sweeps keep on doubt.
+      final identity = await processIdentity(pid) ?? '';
+      await guard.writeAsString('$pid $identity\n', flush: true);
     } on Object {
       // A missing guard must never block channel boot. Other guards still
       // protect cleanup, and the next successful boot retries registration.
@@ -530,6 +544,9 @@ final class DapScopedMemberships {
 
   /// Removes dead sibling guards and returns true when a LIVE sibling (or
   /// a guard whose deletion failed) requires the overlay to be preserved.
+  /// A live pid whose recorded guard identity differs from its CURRENT
+  /// process-start identity is a recycled pid (the writer crashed and an
+  /// unrelated process took the pid over) — that guard is reclaimed.
   Future<bool> _sweepStaleOverlayGuards() async {
     final dir = File(overlayChannelsFile).parent;
     if (!await dir.exists()) return false;
@@ -539,20 +556,74 @@ final class DapScopedMemberships {
       if (entity is! File || entity.path == _overlayGuardFile) continue;
       final name = entity.uri.pathSegments.last;
       if (!name.startsWith(prefix) || !name.endsWith('.guard')) continue;
-      final pidText = name.substring(prefix.length, name.length - 6);
-      final guardPid = int.tryParse(pidText);
-      if (guardPid == null) continue;
-      if (await _pidAlive(guardPid)) {
-        keepOverlay = true;
-        continue;
-      }
-      try {
-        await entity.delete();
-      } on Object {
-        keepOverlay = true; // keep-on-doubt, same as a live-pid probe
-      }
+      keepOverlay = await _sweepOverlayGuard(entity) || keepOverlay;
     }
     return keepOverlay;
+  }
+
+  /// The per-guard verdict: true when [entity] must keep the overlay
+  /// alive. Deletion failures fail closed (keep), like every probe.
+  Future<bool> _sweepOverlayGuard(File entity) async {
+    try {
+      final guard = await _readOverlayGuard(entity);
+      if (guard == null) return false;
+      final (guardPid, guardIdentity) = guard;
+      if (!(await _pidAlive(guardPid))) {
+        await entity.delete();
+        return false;
+      }
+      if (await _isLiveGuardOwner(guardPid, guardIdentity)) return true;
+      await entity.delete(); // recycled pid: writer is gone (issue #1898)
+      return false;
+    } on Object {
+      return true; // keep-on-doubt, same as a live-pid probe
+    }
+  }
+
+  /// Parses a sibling guard file into `(pid, identity)`; null when it is
+  /// not one of ours (foreign name or a non-numeric pid — left for a
+  /// human, like the unparseable names before).
+  Future<(int, String)?> _readOverlayGuard(File entity) async {
+    final name = entity.uri.pathSegments.last;
+    final prefix = '${File(overlayChannelsFile).uri.pathSegments.last}.';
+    if (!name.startsWith(prefix) || !name.endsWith('.guard')) return null;
+    final pidText = name.substring(prefix.length, name.length - 6);
+    return _parseOverlayGuard(pidText, await entity.readAsString());
+  }
+
+  /// True when the live process with [pid] is provably the same
+  /// incarnation that wrote the guard. Every uncertain answer — empty
+  /// legacy token, probe failure, unknown token shape — is a live owner.
+  Future<bool> _isLiveGuardOwner(int pid, String recorded) async {
+    if (recorded.isEmpty) return true; // legacy pid-only guard
+    final current = await processIdentity(pid);
+    if (current == null || current == recorded) return true;
+    return !_isRecycledPidEvidence(recorded, current);
+  }
+
+  /// True only on CERTAIN recycle evidence: both tokens are shapes this
+  /// build mints and they differ. Anything less keeps the overlay.
+  static bool _isRecycledPidEvidence(String recorded, String current) =>
+      _isKnownIdentityShape(recorded) &&
+      _isKnownIdentityShape(current) &&
+      recorded != current;
+
+  /// True for an identity token this build mints (`s<ticks>` from
+  /// `/proc` or `e<epoch>` from `ps lstart`). Anything else is treated
+  /// as unknown-format evidence and kept on doubt.
+  static bool _isKnownIdentityShape(String token) =>
+      RegExp(r'^[se]\d+$').hasMatch(token);
+
+  /// Parses a guard file into `(pid, identity)`; null when the pid is not
+  /// a number (left for a human, like the unparseable names before).
+  static (int, String)? _parseOverlayGuard(String pidText, String content) {
+    final guardPid = int.tryParse(pidText);
+    if (guardPid == null) return null;
+    final parts = content.trim().split(' ');
+    final identity = parts.length > 1 && parts.first == pidText
+        ? parts.sublist(1).join(' ')
+        : '';
+    return (guardPid, identity);
   }
 
   /// Best-effort removes legacy per-pid overlay files
@@ -596,6 +667,79 @@ final class DapScopedMemberships {
       return result.exitCode == 0;
     } on Object {
       return true; // unknown — keep the file rather than delete live keys
+    }
+  }
+
+  /// The process-start identity of [pid], or null when it cannot be
+  /// determined (callers keep the file — keep-on-doubt). Two incarnations
+  /// of one pid ALWAYS have different identities, which is what lets the
+  /// overlay sweep tell a live owner from a recycled pid (issue #1898).
+  /// The token is process metadata only — never secret material.
+  static Future<String?> processStartIdentity(int pid) async {
+    if (pid <= 0) return null;
+    if (Platform.isLinux) return _linuxProcStartIdentity(pid);
+    try {
+      final result = await Process.run('ps', ['-p', '$pid', '-o', 'lstart=']);
+      if (result.exitCode != 0) return null;
+      return psLstartIdentity(result.stdout as String);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Linux: field 22 of `/proc/<pid>/stat` — the start time in clock
+  /// ticks since boot, monotonic across pid reuse within one boot. The
+  /// `comm` field may contain spaces/parens, so parsing starts after the
+  /// LAST ')'.
+  static String? _linuxProcStartIdentity(int pid) {
+    try {
+      final stat = File('/proc/$pid/stat').readAsStringSync();
+      final rest = stat.substring(stat.lastIndexOf(')') + 2);
+      final fields = rest.split(' ');
+      return fields.length > 19 ? 's${fields[19]}' : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// macOS (and any `ps` with `lstart`): the absolute start time rendered
+  /// in the C locale as `Tue Oct 13 13:35:05 2026` (weekday month day
+  /// time year; single-digit days are space-padded). Parsing it into an
+  /// epoch second makes the token immune to timezone/DST shifts between
+  /// guard write and sweep; an unparseable (non-C locale) output returns
+  /// null — keep-on-doubt.
+  static String? psLstartIdentity(String lstart) {
+    const months = {
+      'Jan': 1,
+      'Feb': 2,
+      'Mar': 3,
+      'Apr': 4,
+      'May': 5,
+      'Jun': 6,
+      'Jul': 7,
+      'Aug': 8,
+      'Sep': 9,
+      'Oct': 10,
+      'Nov': 11,
+      'Dec': 12,
+    };
+    final m = RegExp(
+      r'^\w{3} (\w{3}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$',
+    ).firstMatch(lstart.trim());
+    final month = m == null ? null : months[m.group(1)];
+    if (month == null) return null;
+    try {
+      final start = DateTime(
+        int.parse(m!.group(6)!),
+        month,
+        int.parse(m.group(2)!),
+        int.parse(m.group(3)!),
+        int.parse(m.group(4)!),
+        int.parse(m.group(5)!),
+      );
+      return 'e${start.millisecondsSinceEpoch ~/ 1000}';
+    } on Object {
+      return null;
     }
   }
 
