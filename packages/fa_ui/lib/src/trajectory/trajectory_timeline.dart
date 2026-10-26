@@ -991,13 +991,7 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline>
   }
 
   void _onPointerUp(PointerUpEvent event) {
-    if (_rightDown) {
-      final panned = _panX != null;
-      _rightDown = false;
-      _panX = null;
-      if (!panned) _controller.setTimelineSelection(null);
-      return;
-    }
+    if (_finishRightDrag()) return;
     final model = _viewportModel;
     if (!_dragging || model == null) return;
     _stopEdgePan();
@@ -1012,35 +1006,60 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline>
     final draftEnd = _draftEnd;
     _draftStart = null;
     _draftEnd = null;
-    if (!moved) {
-      final span = _spanAt(x, y);
-      if (span != null) {
-        final record = _controller.records[span.index - 1];
-        _controller.setTimelineSelection(null);
-        _controller.selectRecord(record.recordId);
-        _controller.focusRecord(span.index);
-      } else {
-        final center = _trackDomain(x);
-        _controller.setTimelineSelection(
-          _centeredRange(center, _minimumSelection),
-        );
-        _controller.focusRecord(_nearestIndex(center));
-      }
-    } else if (draftStart != null && draftEnd != null) {
-      var start = draftStart;
-      var end = draftEnd;
-      if (end < start) (start, end) = (end, start);
-      final minimum = _minimumSelection;
-      if (end - start < minimum) {
-        final mid = (start + end) / 2;
-        start = mid - minimum / 2;
-        end = mid + minimum / 2;
-      }
-      _controller.setTimelineSelection(
-        _centeredRange((start + end) / 2, end - start),
-      );
+    if (moved) {
+      _applyDraggedSelection(draftStart, draftEnd);
+    } else {
+      _applyTapSelection(x, y);
     }
     setState(() {});
+  }
+
+  /// The right-button pan release: clears the drag state and drops the
+  /// selection only when the drag never panned. False when the release
+  /// was not a right-drag (gh-1848 tier-3 split).
+  bool _finishRightDrag() {
+    if (!_rightDown) return false;
+    final panned = _panX != null;
+    _rightDown = false;
+    _panX = null;
+    if (!panned) _controller.setTimelineSelection(null);
+    return true;
+  }
+
+  /// A tap (below the drag threshold): select the record under the point,
+  /// else center a minimum-width selection there (gh-1848 tier-3 split).
+  void _applyTapSelection(double x, double y) {
+    final span = _spanAt(x, y);
+    if (span != null) {
+      final record = _controller.records[span.index - 1];
+      _controller.setTimelineSelection(null);
+      _controller.selectRecord(record.recordId);
+      _controller.focusRecord(span.index);
+    } else {
+      final center = _trackDomain(x);
+      _controller.setTimelineSelection(
+        _centeredRange(center, _minimumSelection),
+      );
+      _controller.focusRecord(_nearestIndex(center));
+    }
+  }
+
+  /// A completed drag: the draft range (normalized, widened to the
+  /// minimum) becomes the selection (gh-1848 tier-3 split).
+  void _applyDraggedSelection(double? draftStart, double? draftEnd) {
+    if (draftStart == null || draftEnd == null) return;
+    var start = draftStart;
+    var end = draftEnd;
+    if (end < start) (start, end) = (end, start);
+    final minimum = _minimumSelection;
+    if (end - start < minimum) {
+      final mid = (start + end) / 2;
+      start = mid - minimum / 2;
+      end = mid + minimum / 2;
+    }
+    _controller.setTimelineSelection(
+      _centeredRange((start + end) / 2, end - start),
+    );
   }
 
   void _onPointerCancel(PointerCancelEvent event) {
