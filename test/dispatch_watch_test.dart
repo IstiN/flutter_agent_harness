@@ -70,9 +70,10 @@ String iso(int seconds) {
 /// files in [dir]:
 ///   `runs.json`        — raw `gh run list --json` array (dispatch
 ///                        correlation polls)
-///   `siblings.json`    — raw array for the read-only
-///                        `gh run list --status in_progress` liveness
-///                        probe (gh-1903); absent = []
+///   `siblings.json`    — raw array for the read-only repo-wide
+///                        liveness probe (gh-1903; unfiltered listing,
+///                        bucketed by status — queued AND in_progress);
+///                        absent = []
 ///   `view-<id>.txt`    — one `<status> <conclusion>` line per
 ///                        `gh run view <id>` poll; the last line repeats
 ///                        once exhausted
@@ -114,15 +115,17 @@ case "\$cmd" in
   run)
     case "\$sub" in
       list)
-        # gh-1903: distinguish the read-only sibling-liveness probe
-        # (`--status in_progress`, fixture siblings.json) from the
-        # dispatch-correlation listing (runs.json) — both are
+        # gh-1903: distinguish the read-only sibling-liveness probe (a
+        # repo-wide listing WITHOUT --workflow, served from
+        # siblings.json — the real probe is unfiltered and buckets by
+        # status, since queued siblings are the healthy-queue shape)
+        # from the dispatch-correlation listing (runs.json) — both are
         # `gh run list`.
-        is_status=0
+        has_workflow=0
         for ((j = 0; j < \${#args[@]}; j++)); do
-          if [ "\${args[\$j]}" = "--status" ]; then is_status=1; fi
+          if [ "\${args[\$j]}" = "--workflow" ]; then has_workflow=1; fi
         done
-        if [ "\$is_status" = "1" ]; then
+        if [ "\$has_workflow" = "0" ]; then
           if [ -f "\$GH_STUB_DIR/sibling-fail-next" ]; then
             failN=\$(cat "\$GH_STUB_DIR/sibling-fail-next" 2>/dev/null || echo 0)
             if [ "\$failN" -gt 0 ] 2>/dev/null; then
@@ -143,6 +146,15 @@ case "\$cmd" in
         ;;
       view)
         id="\$3"
+        # The `--json ... jobs` argument scan, computed ONCE for the
+        # whole handler (gh-1903 review: the block was duplicated — both
+        # copies scanned identical args and could never disagree). It
+        # gates the jobs_body construction below AND the output format /
+        # jobs-served-<id>.log bookkeeping at the end of the handler.
+        is_jobs=0
+        for ((j = 0; j < \${#args[@]} - 1; j++)); do
+          if [ "\${args[\$j]}" = "--json" ] && [[ "\${args[\$((j + 1))]}" == *jobs* ]]; then is_jobs=1; fi
+        done
         # view-fail-next holds N: the next N view calls fail (exit 1, no
         # output) — models a gh/API outage exactly like a real network
         # failure would (the script sees an empty poll).
@@ -162,10 +174,6 @@ case "\$cmd" in
           if ! [ -s "\$f" ]; then printf '%s\\n' "\$line" > "\$f"; fi
           status="\${line%% *}"; conclusion="\${line#* }"
           jobs_body=""
-          is_jobs=0
-          for ((j = 0; j < \${#args[@]} - 1; j++)); do
-            if [ "\${args[\$j]}" = "--json" ] && [[ "\${args[\$((j + 1))]}" == *jobs* ]]; then is_jobs=1; fi
-          done
           if [ "\$is_jobs" = "1" ]; then
             jf="\$GH_STUB_DIR/jobs-\$id.txt"
             if [ -f "\$jf" ]; then
@@ -192,10 +200,6 @@ case "\$cmd" in
             done
           fi
         fi
-        is_jobs=0
-        for ((j = 0; j < \${#args[@]} - 1; j++)); do
-          if [ "\${args[\$j]}" = "--json" ] && [[ "\${args[\$((j + 1))]}" == *jobs* ]]; then is_jobs=1; fi
-        done
         if [ "\$is_jobs" = "1" ]; then
           printf '%s\\n' "\$jobs_body" >> "\$GH_STUB_DIR/jobs-served-\$id.log"
           printf '{"status":"%s","conclusion":"%s","jobs":[%s]}' "\$status" "\$conclusion" "\$jobs_body" | apply_jq
@@ -378,9 +382,21 @@ const playTitle = 'build-mobile (all/none)';
 const testflightTitle = 'build-mobile (none/all)';
 
 /// Sibling runs occupying the shared runner while our child waits.
+/// Each entry carries `status` because the gh-1903 liveness probe lists
+/// the repo UNFILTERED and buckets by status (queued AND in_progress —
+/// a queued-only sibling set is the healthy-queue shape that must never
+/// read "pool appears IDLE").
 const siblingRuns = [
-  {'databaseId': 900, 'displayTitle': 'ci (main)'},
-  {'databaseId': 901, 'displayTitle': 'build-macos (create_release=true)'},
+  {
+    'databaseId': 900,
+    'displayTitle': 'ci (main)',
+    'status': 'in_progress',
+  },
+  {
+    'databaseId': 901,
+    'displayTitle': 'build-macos (create_release=true)',
+    'status': 'in_progress',
+  },
 ];
 
 void main() {
@@ -660,6 +676,57 @@ void main() {
       );
     });
 
+    test('(b2) queued siblings with NOTHING in_progress → NO idle-pool '
+        'warning — queued runs are the healthy-queue shape gh-1903 '
+        'protects', () {
+      // gh-1903 review: an in_progress-only probe is blind to queued
+      // runs, so the early incident window (siblings dispatched but not
+      // yet picked up) read "pool appears IDLE" on a healthy queue.
+      // The probe must count queued runs too before idleness is claimed.
+      final dw = runDw(
+        'queued-siblings-healthy',
+        [
+          'build-mobile.yml',
+          '--title',
+          testflightTitle,
+          '-f',
+          'ios_content=all',
+        ],
+        {
+          'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
+          'view-111.txt': longQueuedThen(polls: 30),
+          'jobs-111.txt': '${List.filled(200, '0').join('\n')}\n1\n',
+          // A sibling leg's freshly-dispatched child still QUEUED for
+          // the single self-hosted runner — exactly the 2026-10-26
+          // incident's healthy window.
+          'siblings.json': runJson(const [
+            {
+              'databaseId': 902,
+              'displayTitle': 'cli (macos chain)',
+              'status': 'queued',
+            },
+          ]),
+        },
+      );
+      expect(dw.exitCode, 0);
+      expect(File('${dw.dir.path}/cancelled-111').existsSync(), isFalse);
+      expect(dispatches(dw).length, 1);
+      expect(
+        dw.out,
+        isNot(contains('pool appears IDLE')),
+        reason:
+            'a queued run anywhere in the repo means the pool is NOT '
+            'observably idle — the zombie-signature warning must not '
+            'fire on the healthy-queue shape this PR exists to protect',
+      );
+      expect(
+        dw.out,
+        contains('queued sibling activity'),
+        reason: 'the probe must name the queued runs holding the pool',
+      );
+      expect(dw.out, contains('902'));
+    });
+
     test('(e) a failing liveness probe produces the cannot-judge diagnostic '
         'and no cancel either', () {
       final dw = runDw(
@@ -691,11 +758,11 @@ void main() {
             'instead of guessing',
       );
       expect(
-        dw.log.where((l) => l.contains('--status in_progress')),
+        dw.log.where((l) => l.contains('run list --repo OWNER/REPO --limit')),
         isNotEmpty,
         reason:
-            'the probe itself must stay read-only (a listing, never '
-            'a cancel-class call)',
+            'the probe itself must stay read-only (a repo-wide listing, '
+            'never a cancel-class call)',
       );
     });
 
@@ -801,6 +868,125 @@ void main() {
         live.out,
         contains('in_progress run(s)'),
         reason: 'the diagnostic names the observed pool activity',
+      );
+    });
+
+    test('(c2) TERM when the pool picked the child up between the last '
+        'poll and the signal → fresh re-observation proves STARTED → '
+        'NO cancel', () async {
+      // gh-1903 review: the trap used to decide from the possibly-stale
+      // child_started/last_state cache — a pickup between the final
+      // poll and the runner's SIGTERM got cancelled while starting.
+      // The trap must re-observe ONCE and leave a started child alone.
+      final live = await startDw(
+        'term-start-between-poll',
+        [
+          'build-mobile.yml',
+          '--title',
+          testflightTitle,
+          '-f',
+          'ios_content=all',
+        ],
+        {
+          'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
+          'view-111.txt': 'in_progress -\n',
+          // The single poll before TERM observes 0 running jobs; the
+          // NEXT jobs line (served to the trap's fresh re-observation)
+          // models the pool picking the child up in between.
+          'jobs-111.txt': '0\n1\n',
+          'siblings.json': runJson(siblingRuns),
+        },
+        // Long poll: exactly ONE poll runs before the TERM, so the
+        // '1' jobs line can only be seen by the trap's fresh check —
+        // no race between the poll loop and the trap.
+        env: {'DW_POLL_SECONDS': '30'},
+      );
+      await live.waitForLog('run view 111 --repo OWNER/REPO');
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect(
+        File('${live.dir.path}/cancelled-111').existsSync(),
+        isFalse,
+        reason: '(e) mid-watch there must be NO cancel',
+      );
+      live.process.kill(ProcessSignal.sigterm);
+      final code = await live.finish();
+      expect(code, 143);
+      expect(
+        File('${live.dir.path}/cancelled-111').existsSync(),
+        isFalse,
+        reason:
+            'the fresh re-observation proved the child STARTED — a '
+            'started child is left to its own per-job timeouts, never '
+            'cancelled (gh-1903)',
+      );
+      expect(
+        live.logLines.where((l) => l.contains('run cancel')),
+        isEmpty,
+        reason: 'not one cancel call may be issued',
+      );
+      expect(
+        live.out,
+        contains('STARTED between the last poll and this TERM'),
+        reason: 'the diagnostic must name what the fresh check proved',
+      );
+    });
+
+    test('(c3) TERM during a sustained gh/API outage with a '
+        'never-started child → fresh re-observation fails → NO cancel '
+        '(cannot observe ⇒ cannot judge)', () async {
+      // gh-1903 review: with the polls failing, the stale cache said
+      // "never started" while the child could be mid-build — the old
+      // trap cancelled a running child. When even the fresh check
+      // cannot observe, never-started cannot be established: no cancel.
+      final live = await startDw(
+        'term-outage-never-started',
+        [
+          'build-mobile.yml',
+          '--title',
+          testflightTitle,
+          '-f',
+          'ios_content=all',
+        ],
+        {
+          'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
+          'view-111.txt': 'in_progress -\n',
+          'jobs-111.txt': '0\n',
+          // Every view call fails for the whole life of the leg — the
+          // polls AND the trap's fresh re-observation see the outage.
+          'view-fail-next': '99\n',
+          'siblings.json': '[]',
+        },
+        env: {'DW_POLL_SECONDS': '1'},
+      );
+      await live.waitForLog('run view 111 --repo OWNER/REPO');
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      live.process.kill(ProcessSignal.sigterm);
+      final code = await live.finish();
+      expect(code, 143);
+      expect(
+        File('${live.dir.path}/cancelled-111').existsSync(),
+        isFalse,
+        reason:
+            'the fresh re-observation failed — the cancel decision '
+            'would have been made on a stale cache, exactly what the '
+            'gh-1903 invariant forbids',
+      );
+      expect(
+        live.logLines.where((l) => l.contains('run cancel')),
+        isEmpty,
+        reason: 'no cancel call may be issued on unobservable state',
+      );
+      expect(
+        live.out,
+        contains('NOT cancelled'),
+        reason: 'the diagnostic must say the cancel was withheld',
+      );
+      expect(
+        live.out,
+        contains('cannot observe'),
+        reason:
+            'the diagnostic must say never-started could not be '
+            'established (cannot observe ⇒ cannot judge)',
       );
     });
 
