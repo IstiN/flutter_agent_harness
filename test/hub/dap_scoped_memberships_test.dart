@@ -479,8 +479,8 @@ void main() {
       expect(await File(overlay).exists(), isFalse);
     });
 
-    test('cleanupOverlay reclaims a stale guard whose alive pid was '
-        'recycled by an unrelated process (gh-1895 review)', () async {
+    test('cleanupOverlay keeps an old guard while its pid is alive: no '
+        'wall-clock TTL may delete a long-running sibling\'s keys', () async {
       final other = await Process.start('sleep', ['30']);
       addTearDown(() async {
         other.kill();
@@ -489,21 +489,18 @@ void main() {
       final s = service();
       await s.seedOverlay();
       final runtimeDir = File(overlay).parent.path;
-      // The classic recycled-pid shape: the owning agent crashed and an
-      // unrelated long-lived process took the pid. The pid answers
-      // alive, but the guard has not been re-written (every boot
-      // rewrites it) for longer than the generous age bound.
-      final staleGuard = File(
+      final oldLiveGuard = File(
         '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
       );
-      await staleGuard.writeAsString('${other.pid}\n');
-      await staleGuard.setLastModified(
+      await oldLiveGuard.writeAsString('${other.pid}\n');
+      await oldLiveGuard.setLastModified(
         DateTime.now().subtract(const Duration(hours: 25)),
       );
 
       await s.cleanupOverlay();
-      expect(await staleGuard.exists(), isFalse);
-      expect(await File(overlay).exists(), isFalse);
+
+      expect(await oldLiveGuard.exists(), isTrue);
+      expect(await File(overlay).exists(), isTrue);
     });
 
     test(

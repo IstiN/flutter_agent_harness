@@ -734,8 +734,12 @@ rewritten atomically on every re-seed, never per-pid). Every normal and
 signal-graceful CLI shutdown calls the hub host's idempotent `dispose()`;
 pid guard files (no secret content) keep the shared overlay while another
 live agent uses it, and the last exiting agent deletes it. Stale guards
-and legacy per-pid overlays from older builds are swept at boot. Embedded
-hosts with their own lifecycle must call `HubPluginHost.dispose()`.
+and legacy per-pid overlays from older builds are swept at boot. A live
+pid is authoritative regardless of guard age (no wall-clock TTL: agents
+may run for days without rewriting their boot guard); recycled-pid-proof
+cleanup needs a boot nonce, not a timeout that can delete live keys.
+Embedded hosts with their own lifecycle must call
+`HubPluginHost.dispose()`.
 The pure-env CI path also carries plaintext values in process memory and
 its environment; those values are registered with both redaction systems.
 **Global scope is the deliberate exception** (see the table above): it
