@@ -84,14 +84,28 @@ DapEnvChannelsResult parseDapEnvChannels(
       );
       continue;
     }
+    final pub = entry['pub'];
+    final priv = entry['priv'];
+    if (pub != null && pub is! String) {
+      warnings.add(
+        'DAP_CHANNELS_JSON[$i]: "pub" is not a string — skipped (#$channel)',
+      );
+      continue;
+    }
+    if (priv != null && priv is! String) {
+      warnings.add(
+        'DAP_CHANNELS_JSON[$i]: "priv" is not a string — skipped (#$channel)',
+      );
+      continue;
+    }
     memberships.add(
       DapChannelMembership(
         hubUrl: hubUrl,
         channelId: channel,
         scope: DapChannelScope.global,
         joinedAt: now,
-        pub: entry['pub'] as String?,
-        priv: entry['priv'] as String?,
+        pub: pub as String?,
+        priv: priv as String?,
       ),
     );
   }

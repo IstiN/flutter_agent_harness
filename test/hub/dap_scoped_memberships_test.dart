@@ -379,4 +379,50 @@ void main() {
     final explicit = service(env: {...env, 'DAP_HUB_URL': 'wss://corp/ws'});
     expect(await explicit.preferredBootHub(), isNull);
   });
+
+  group('project store resilience (review: one bad record must not drop '
+      'them all)', () {
+    Future<void> writeProject(List<Object?> channels) async {
+      final file = File(projectFile);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(jsonEncode({'channels': channels}));
+    }
+
+    test('one malformed project entry warns and keeps the rest', () async {
+      final valid = DapChannelMembership(
+        hubUrl: hub,
+        channelId: 'good',
+        scope: DapChannelScope.project,
+        joinedAt: DateTime.utc(2026),
+        pub: pub,
+        priv: 'dapkey1.envelope',
+      ).toJson();
+      // A record from an older build: missing the required `scope` field
+      // makes DapChannelMembership.fromJson throw.
+      final stale = <String, Object?>{
+        'hubUrl': hub,
+        'channelId': 'stale',
+        'joinedAt': '2026-01-01T00:00:00.000Z',
+        'pub': pub,
+        'priv': 'dapkey1.envelope',
+      };
+      await writeProject([valid, 'garbage', stale]);
+      final s = service();
+      final effective = await s.union().then((u) => u.effective());
+      expect(effective.map((m) => m.channelId), ['good']);
+      expect(
+        s.loadWarnings.join('\n'),
+        contains('malformed project membership'),
+      );
+    });
+
+    test('a wholly unreadable project file still degrades to empty '
+        '(no throw), like before', () async {
+      final file = File(projectFile);
+      await file.parent.create(recursive: true);
+      await file.writeAsString('{not json');
+      final s = service();
+      expect(await s.union().then((u) => u.effective()), isEmpty);
+    });
+  });
 }

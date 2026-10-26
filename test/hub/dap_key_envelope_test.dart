@@ -97,4 +97,54 @@ void main() {
       throwsFormatException,
     );
   });
+
+  group(
+    'iteration count sanity bound (review: boot-DoS via committed config)',
+    () {
+      Future<String> envelopeWithIter(int iter) async {
+        // Build the envelope JSON directly so the test never pays the KDF.
+        final payload = jsonEncode({
+          'v': 1,
+          'kdf': 'pbkdf2-sha256',
+          'iter': iter,
+          'salt': base64Url.encode(List<int>.filled(16, 0)),
+          'nonce': base64Url.encode(List<int>.filled(12, 0)),
+          'ct': base64Url.encode(List<int>.filled(32, 0)),
+        });
+        return '$dapKeyEnvelopePrefix${base64Url.encode(utf8.encode(payload))}';
+      }
+
+      test('iter above the max is rejected BEFORE any KDF work', () async {
+        final sw = Stopwatch()..start();
+        await expectLater(
+          decryptChannelPriv(await envelopeWithIter(1000000000), pass),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('iteration count'),
+            ),
+          ),
+        );
+        // The rejection must be immediate — no billion-iteration KDF ran.
+        expect(sw.elapsedMilliseconds, lessThan(5000));
+      });
+
+      test('iter below 1 is rejected too', () async {
+        await expectLater(
+          decryptChannelPriv(await envelopeWithIter(0), pass),
+          throwsA(isA<FormatException>()),
+        );
+      });
+
+      test('just above the cap maps to the single FormatException warning '
+          'path (AC15: one clear warning, primary job proceeds)', () async {
+        final envelope = await envelopeWithIter(dapKeyMaxIterations + 1);
+        expect(
+          () => decryptChannelPriv(envelope, pass),
+          throwsA(isA<FormatException>()),
+        );
+      });
+    },
+  );
 }

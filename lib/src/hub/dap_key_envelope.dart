@@ -30,6 +30,16 @@ const dapKeyEnvelopePrefix = 'dapkey1.';
 /// Default PBKDF2 iteration count for new envelopes (stored per-envelope).
 const dapKeyDefaultIterations = 100000;
 
+/// Upper bound for the iteration count read out of an envelope. The count
+/// is attacker-influenceable data (a committed `.fah/dap.json` someone
+/// clones, or a `DAP_CHANNELS_JSON` env entry, can carry any value), and
+/// with `DAP_KEY_PASSPHRASE` set boot would pay the KDF cost before the
+/// AEAD tag check ever runs — an envelope claiming a billion iterations
+/// is a boot-DoS. The bound keeps the "tests may lower the count" seam
+/// while refusing absurd work; the rejection rides the existing
+/// `FormatException` path (one clear warning, primary job proceeds).
+const dapKeyMaxIterations = 5000000;
+
 final _aead = Chacha20.poly1305Aead();
 
 /// True when a stored `priv` value is an encrypted envelope (as opposed
@@ -108,6 +118,12 @@ Future<String> decryptChannelPriv(String envelope, String passphrase) async {
   }
   try {
     final iterations = decoded['iter'] as int;
+    if (iterations < 1 || iterations > dapKeyMaxIterations) {
+      throw const FormatException(
+        'dapkey1: unreasonable iteration count (corrupted or hostile '
+        'envelope)',
+      );
+    }
     final salt = base64Url.decode(decoded['salt'] as String);
     final nonce = base64Url.decode(decoded['nonce'] as String);
     final ct = base64Url.decode(decoded['ct'] as String);
