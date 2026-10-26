@@ -405,7 +405,14 @@ void main() {
           expect(agent.runIdleWindow.window, const Duration(seconds: 60));
           // A ~16MB request build (the #1916 evidence scale) tops the scale.
           lastOutboundEstimateBytes = 16 * 1024 * 1024;
-          expect(agent.runIdleWindow.window, const Duration(seconds: 120));
+          final scaled = agent.runIdleWindow;
+          expect(scaled.window, const Duration(seconds: 120));
+          // The scaled window names its real governor (#1916 review:
+          // `raised`/`source` never silently re-purpose the config layer).
+          expect(scaled.source, contains('default'));
+          expect(scaled.source, contains('payload-scaled'));
+          expect(scaled.source, contains('~16MB request'));
+          expect(scaled.raised, isTrue);
           // A text-sized estimate keeps the floor.
           lastOutboundEstimateBytes = 40 * 1024;
           expect(agent.runIdleWindow.window, const Duration(seconds: 60));
