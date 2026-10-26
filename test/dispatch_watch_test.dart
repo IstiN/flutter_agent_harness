@@ -319,6 +319,8 @@ class DwLive {
     Duration timeout = const Duration(seconds: 10),
   }) async {
     final deadline = DateTime.now().add(timeout);
+    var exited = false;
+    unawaited(process.exitCode.then((_) => exited = true));
     process.stdout.transform(utf8.decoder).listen(_outBuf.write);
     process.stderr.transform(utf8.decoder).listen(_outBuf.write);
     while (DateTime.now().isBefore(deadline)) {
@@ -326,9 +328,7 @@ class DwLive {
           File(logFile).readAsStringSync().contains(needle)) {
         return;
       }
-      if (await process.exitCode.then((_) => true).catchError((_) => false)) {
-        return;
-      }
+      if (exited) return;
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
     throw StateError('waitForLog timed out waiting for "$needle"');
@@ -575,9 +575,10 @@ void main() {
         {
           'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
           // 45m of queue modeled as 60 quiet polls (fixture time, not
-          // wall time), then the build starts, then completes.
+          // wall time): the first 30 polls have no job in_progress, a job
+          // starts on poll 31, the run completes on poll 61.
           'view-111.txt': longQueuedThen(),
-          'jobs-111.txt': '${List.filled(200, '0').join('\n')}\n1\n',
+          'jobs-111.txt': '${List.filled(30, '0').join('\n')}\n1\n',
           'siblings.json': runJson(siblingRuns),
         },
       );
