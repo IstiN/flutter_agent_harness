@@ -177,9 +177,12 @@ final class SubagentHeartbeat {
     final label = '${handle.id} (${handle.agentType})';
     final requests = handle.requests + handle.liveRequests;
     final tokens = handle.tokens + handle.liveTokens;
+    // Issue #1924: the token figure is lifetime cumulative usage — label it
+    // and ride the live ctx% so the two bases never blur.
     final facts =
         'age ${_minutes(now.difference(_parse(handle.createdAt)))} · '
-        '$requests requests · $tokens tokens · '
+        '$requests requests · $tokens lifetime tokens · '
+        '${handle.contextPressureText ?? 'ctx n/a'} · '
         'last activity '
         '${_minutes(now.difference(_parse(handle.lastActivity)))} ago';
     if (stall <= 0) return '$label — $facts · healthy';

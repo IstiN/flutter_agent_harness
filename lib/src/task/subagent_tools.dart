@@ -1525,14 +1525,19 @@ Future<String> _formatHandleDetail(
     'session: ${h.sessionId}',
     'created: ${h.createdAt}',
     'last activity: ${h.lastActivity}',
-    'tokens: ${h.tokens}',
+    // Issue #1924: name the basis of every figure — `tokens` is cumulative
+    // billed usage over the child's whole life, never the live context.
+    'tokens: ${h.tokens} (lifetime — cumulative billed usage, not live '
+        'context)',
     'requests: ${h.requests}',
     if (h.estTokens != null && h.windowTokens != null && h.windowTokens! > 0)
       'context: ~${h.estTokens}/${h.windowTokens} tokens '
-          '(${(h.estTokens! * 100 / h.windowTokens!).round()}%)'
+          '(${(h.estTokens! * 100 / h.windowTokens!).round()}%'
+          '${h.estTokens! >= h.windowTokens! ? ' OVER WINDOW — compact or restart from the parent' : ''})'
     else
       'context: n/a',
     'last compaction: ${h.lastCompactionText ?? 'n/a'}',
+    if (h.compactionError != null) 'compaction: ${h.compactionError}',
     if (h.modelId != null) 'model: ${h.modelId}',
     if (h.error != null) 'error: ${h.error}',
   ];
