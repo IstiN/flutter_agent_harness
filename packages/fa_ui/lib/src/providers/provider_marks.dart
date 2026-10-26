@@ -39,16 +39,24 @@ String _presetMarkKey(ProviderPreset preset) =>
 String providerMarkKeyForBaseUrl(String baseUrl) {
   if (isAiinBaseUrl(baseUrl)) return 'aiin';
   if (isCodeMieBaseUrl(baseUrl)) return 'codemie';
-  if (baseUrl.contains('openrouter.ai')) return 'openrouter';
-  if (baseUrl.contains('ollama.com')) return 'ollama';
-  if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
-  if (baseUrl.contains('ai-proxy.lab.epam.com')) return 'dial';
-  if (baseUrl.contains('api.openai.com')) return 'openai';
-  if (baseUrl.contains('anthropic.com')) return 'anthropic';
-  if (baseUrl.contains('kimi.com')) return 'kimi';
-  if (baseUrl.contains('z.ai')) return 'zai';
+  for (final entry in _baseUrlMarkRules.entries) {
+    if (baseUrl.contains(entry.key)) return entry.value;
+  }
   return 'custom';
 }
+
+/// The substring-to-mark table of the hosted endpoints, checked in order
+/// (gh-1848 tier-3: the flat if-chain as data, `_presetMarkKeys` doctrine).
+const _baseUrlMarkRules = <String, String>{
+  'openrouter.ai': 'openrouter',
+  'ollama.com': 'ollama',
+  'generativelanguage.googleapis.com': 'google',
+  'ai-proxy.lab.epam.com': 'dial',
+  'api.openai.com': 'openai',
+  'anthropic.com': 'anthropic',
+  'kimi.com': 'kimi',
+  'z.ai': 'zai',
+};
 
 /// The marks that carry a quota gauge (the quota service ids — one id per
 /// mark). The providers list renders gauges for these and the add flow's

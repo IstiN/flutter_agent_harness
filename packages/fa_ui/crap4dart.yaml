@@ -17,15 +17,14 @@ exclude:
 
 crap:
   enabled: true
-  # Tier 2 (issue #1848, fa_ui 48->24 of the 132->48->24->12 ladder): tier 1
-  # (#1887) covered the sixteen 0%-cov methods above 48; this tier covered
-  # the eleven remaining 0%-cov methods (CC4-6) with real branch tests and
-  # decomposed the thirty-three covered CC14-29 methods into cohesive
-  # private helpers (<=CC5 pieces at >=85% cov, <=CC3 where a piece stays
-  # 0%-cov). The NEW measured worst is 13.4545… — providerMarkKeyForBaseUrl
-  # (provider_marks.dart, CC 11 @ 73%); the threshold is pinned there.
-  # Tier 3 (24->12) owns the last two methods over 12. Only down.
-  threshold: 13.454545454545453
+  # Tier 3 FINAL (issue #1848, fa_ui 24->12 of the 132->48->24->12 ladder):
+  # providerMarkKeyForBaseUrl became a rule table (the _presetMarkKeys
+  # doctrine), _onPointerUp split into finish-right-drag / tap-selection /
+  # dragged-selection pieces, and the trajectory_details raw/timing arms
+  # gained real branch tests. The FINAL measured worst is 12.0 — the
+  # campaign target reached; fa_ui now holds the same 12.0 ratchet as core
+  # and flutter_app. Only down.
+  threshold: 12.0
 
 coverage:
   # run_tests: false — the merged shard lcov (faui-coverage artifact /
