@@ -293,6 +293,34 @@ void main() {
     expect(find.text('Full compaction summary.'), findsOneWidget);
   });
 
+  testWidgets('context record renders raw record JSON', (tester) async {
+    final context = TrajectoryContextRecord(
+      index: 97,
+      recordId: 'details/context',
+      text: 'environment snapshot',
+      startedAt: DateTime.fromMillisecondsSinceEpoch(60_000, isUtc: true),
+      sourceSeq: 7,
+    );
+    await _openRecord(tester, context);
+
+    await _openTab(tester, 'Raw');
+    expect(find.textContaining('"kind": "context"'), findsOneWidget);
+    expect(find.textContaining('"sourceSeq": 7'), findsOneWidget);
+  });
+
+  testWidgets('tool Timing without a duration reports not-available', (
+    tester,
+  ) async {
+    // failedTool: started but no timeSeconds — the Timing tab shows, the
+    // duration/source rows take their null arms (gh-1848 tier-3 branch
+    // coverage).
+    await _openRecord(tester, failedTool);
+    await _openTab(tester, 'Timing');
+
+    expect(find.text('Duration'), findsOneWidget);
+    expect(find.textContaining('Not available'), findsWidgets);
+  });
+
   testWidgets('user record renders markdown preview and raw record JSON', (
     tester,
   ) async {
