@@ -304,10 +304,7 @@ void main() {
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 20));
       }
-      expect(
-        find.text('This invite is for a different hub.'),
-        findsOneWidget,
-      );
+      expect(find.text('This invite is for a different hub.'), findsOneWidget);
       expect(rig.manager.wallet.channelKeysFor('net1', 'c1'), isNull);
       // No history reload ran — the invite was rejected before persist.
       expect(
