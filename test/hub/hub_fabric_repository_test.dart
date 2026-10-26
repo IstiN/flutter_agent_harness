@@ -147,6 +147,40 @@ void main() {
     expect(drained.single.fromId, sender.agentId);
   }, timeout: timeout);
 
+  test('a private channel with an UNRESOLVED key refuses loudly instead '
+      'of downgrading to plaintext or auto-keygen (gh-1888 review)', () async {
+    final (adapter, plugin) = await newFabric();
+    final fabric = HubFabricRepository(
+      plugin,
+      privateKeyMissingChecker: (_, channel) async => channel == 'locked',
+    );
+    await expectLater(
+      fabric.send(
+        AgentMessage(
+          id: 'blk1',
+          fromId: 'main',
+          toId: '#locked',
+          text: 'secret payload',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('refusing to send to #locked'), contains('key')),
+        ),
+      ),
+    );
+    // Nothing reached the wire.
+    await expectLater(
+      sender.inbound
+          .firstWhere((m) => m.channel == 'locked')
+          .timeout(const Duration(milliseconds: 300)),
+      throwsA(anything),
+    );
+  }, timeout: timeout);
+
   test('PRIVATE channel: fabric sends a fanet1 frame, not RAW dap/1', () async {
     final (adapter, plugin) = await newFabric();
     const channel = 'private-room';

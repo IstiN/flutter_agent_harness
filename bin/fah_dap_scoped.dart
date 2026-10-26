@@ -131,6 +131,7 @@ final class DapScopedMemberships {
     this.readSessionRecords,
     this.passphrasePrompt,
     this.keychain,
+    this.onSecret,
     DateTime Function()? now,
   }) : environment = environment ?? Platform.environment,
        _now = now ?? (() => DateTime.now().toUtc());
@@ -162,6 +163,12 @@ final class DapScopedMemberships {
 
   /// OS secret store (macOS Keychain); null disables that chain step.
   final DapChannelKeychain? keychain;
+
+  /// Host redaction hook (gh-1888 review, AC8/AC14): invoked with every
+  /// plaintext secret that enters memory — decrypted channel keys, hub
+  /// client secrets, auto-provisioned passphrases — so the host can
+  /// register it with the secret redaction pipeline. Never throws.
+  final void Function(String value)? onSecret;
 
   final DateTime Function() _now;
 
@@ -381,6 +388,7 @@ final class DapScopedMemberships {
     ).replaceAll('=', '');
     try {
       await store.write(item, generated);
+      onSecret?.call(generated);
       return generated;
     } on Object {
       // An unavailable/unwritable store is equivalent to no Keychain:
@@ -429,7 +437,15 @@ final class DapScopedMemberships {
   Future<String?> _runtimeSecret(DapChannelMembership m, String? stored) async {
     final priv = stored;
     if (priv == null) return null;
-    if (!isEncryptedChannelPriv(priv)) return priv;
+    if (!isEncryptedChannelPriv(priv)) {
+      // The pure-env plaintext path is first-class: pass through
+      // unchanged. The value is registered with the redaction pipeline
+      // (the whole DAP_CHANNELS_JSON / DAP_CLIENT_SECRET env value was
+      // registered at startup; belt-and-braces for individually held
+      // plaintext).
+      onSecret?.call(priv);
+      return priv;
+    }
     final passphrase = await _resolvePassphrase(m.hubUrl, m.channelId);
     if (passphrase == null) {
       loadWarnings.add(
@@ -439,7 +455,11 @@ final class DapScopedMemberships {
       return null;
     }
     try {
-      return await decryptChannelPriv(priv, passphrase);
+      final clear = await decryptChannelPriv(priv, passphrase);
+      // A plaintext key just entered memory — it must be masked from
+      // tool results / session JSONL like any other secret (AC8/AC14).
+      onSecret?.call(clear);
+      return clear;
     } on FormatException catch (e) {
       loadWarnings.add(
         'dap: #${m.channelId}: ${e.message}; $_dapPassphraseRecovery',
@@ -722,6 +742,7 @@ final class DapScopedMemberships {
         '$_dapPassphraseRecovery',
       );
       _memoryOnlyKeys[membership.key] = priv;
+      onSecret?.call(priv);
     }
     if (hubClientSecret != null) {
       warnings.add(
@@ -730,6 +751,7 @@ final class DapScopedMemberships {
         '$_dapPassphraseRecovery',
       );
       _memoryOnlySecrets[membership.key] = hubClientSecret;
+      onSecret?.call(hubClientSecret);
     }
     return (priv: null, hubClientSecret: null);
   }
