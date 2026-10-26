@@ -207,14 +207,6 @@
   "pr-1571": [
     {
       "leg": "rework",
-      "at": "2026-10-12T22:38:21Z",
-      "prompt": 73972,
-      "completion": 15393,
-      "total": 89365,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-13T07:51:53Z",
       "prompt": 179791,
       "completion": 61994,
@@ -4704,6 +4696,15 @@
       "completion": 31944,
       "total": 112976,
       "cacheRead": 4193792,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-26T22:50:46Z",
+      "prompt": 112922,
+      "completion": 27978,
+      "total": 140900,
+      "cacheRead": 3978240,
       "model": "glm-5.3-flash"
     }
   ]
