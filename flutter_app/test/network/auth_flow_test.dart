@@ -71,6 +71,44 @@ void main() {
     });
 
     test(
+      'web origin callback uses client_type web and the same exchange',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: initiateBody)
+          ..respond(200, body: exchangeBody);
+        final flow = NetworkAuthFlow(
+          client: FaNetworkClient(baseUrl: testBase, httpClient: httpClient),
+        );
+        final redirectUri = Uri.parse('https://fa1.dev/oauth/callback');
+
+        final tokens = await flow.signIn(
+          provider: 'google',
+          clientType: 'web',
+          startReceiver: () async => FakeOAuthReceiver(
+            redirectUri: redirectUri,
+            callbackUri: redirectUri.replace(
+              queryParameters: {'code': 'temp-1', 'state': 'st-1'},
+            ),
+          ),
+          openUrl: (_) async {},
+        );
+
+        expect(httpClient.requests[0].url.host, 'ai-native.cloud');
+        expect(jsonDecode(httpClient.requests[0].body), {
+          'provider': 'google',
+          'client_redirect_uri': 'https://fa1.dev/oauth/callback',
+          'client_type': 'web',
+          'environment': 'prod',
+        });
+        expect(jsonDecode(httpClient.requests[1].body), {
+          'code': 'temp-1',
+          'state': 'st-1',
+        });
+        expect(tokens.accessToken, 'at-1');
+      },
+    );
+
+    test(
       'a state mismatch throws AuthFlowException and never exchanges',
       () async {
         final httpClient = FakeHttpClient()..respond(200, body: initiateBody);

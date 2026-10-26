@@ -47,12 +47,16 @@ FahPlugin? _builtInPlugin(
   HubPlugin hubPlugin, {
   required bool fabricDeliversMail,
   Map<String, String>? dapEnvironment,
+  SecretRedactor? secretRedactor,
+  RedactionPipeline? redactionPipeline,
 }) {
   return switch (name) {
     'hub' => HubPluginHost(
       hubPlugin,
       environment: dapEnvironment,
       fabricDeliversMail: fabricDeliversMail,
+      secretRedactor: secretRedactor,
+      redactionPipeline: redactionPipeline,
     ),
     'inspect_image' => const InspectImagePlugin(),
     'transcribe_audio' => const TranscribeAudioPlugin(),
@@ -109,6 +113,8 @@ _resolvePlugins(
   HubPlugin hubPlugin,
   Map<String, String> dapEnvironment, {
   bool fabricHubAllowed = true,
+  SecretRedactor? secretRedactor,
+  RedactionPipeline? redactionPipeline,
 }) async {
   final Map<String, dynamic> config;
   try {
@@ -117,12 +123,25 @@ _resolvePlugins(
     _fail(error.message);
   }
   final enabled = resolveEnabledPlugins(args.plugins, config);
+  // gh-1825: the hub layer no longer requires DAP_MASTER_SECRET —
+  // enrolled, name-bound credentials (/network join) make the hub
+  // usable too, and the layer resolves the host's ACTIVE repository
+  // lazily, so a runtime join starts routing without a restart.
+  // Without it, agent_message could not address #channels at all and
+  // hub peer mail dead-dropped into file inboxes.
   final hubEnabled = hubFabricWired(
     hubPluginEnabled: enabled.contains('hub'),
-    dapUnlocked: (dapEnvironment[envMasterSecret] ?? '').isNotEmpty,
     fabricHubAllowed: fabricHubAllowed,
   );
-  final hubFabric = hubEnabled ? HubFabricRepository(hubPlugin) : null;
+  final hubFabric = hubEnabled
+      ? HubFabricRepository(
+          hubPlugin,
+          repositoryResolver: HubPluginHost.activeRepositoryFor,
+          publicChannelChecker: HubPluginHost.publicChannelFor,
+          privateKeyMissingChecker: HubPluginHost.privateChannelKeyMissing,
+          channelLister: HubPluginHost.joinedChannelsFor,
+        )
+      : null;
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
     final plugin = _builtInPlugin(
@@ -130,6 +149,8 @@ _resolvePlugins(
       hubPlugin,
       fabricDeliversMail: hubFabric != null,
       dapEnvironment: dapEnvironment,
+      secretRedactor: secretRedactor,
+      redactionPipeline: redactionPipeline,
     );
     if (plugin == null) _fail('unknown plugin: $name');
     plugins.add(plugin);

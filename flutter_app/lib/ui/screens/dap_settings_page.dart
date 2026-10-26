@@ -1279,6 +1279,12 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
     final controller = _controller;
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
+    // Extension enrollment and connection state live in the worker-backed
+    // DapHubService above; a second local network section would invite a
+    // parallel runtime and duplicate the same controls.
+    if (controller != null && controller.usesExternalEnrollment) {
+      return const SizedBox.shrink();
+    }
     if (controller == null || !controller.supported) {
       return Row(
         children: [

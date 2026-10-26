@@ -13,6 +13,108 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1825): DAP private-channel sends now use self-describing
+  `fanet1` frames (sender X25519 key in the frame, channel-bound AAD) via
+  `fa_hub_client` 0.2.11, so fa_network app members decrypt them without
+  a whois/senderKey round-trip. Inbound channel frames open `fanet1`
+  first and fall back to legacy `dap/1` payloads. Verified live in both
+  directions between a headless DAP agent and the Flutter app.
+- feat(gh-1825): the network offline banner now has a **Reconnect now**
+  action which restarts the socket and reloads the channel/member
+  snapshot. Fresh sockets also clear a stale offline flag (the server
+  sends no historical drain to a socket that was away during recovery).
+  `AgentNetworkController.start` stops after disposal instead of
+  notifying a dead controller.
+
+- feat(gh-1825): the roster sheet shows access-scope badges (whole
+  network vs N channels, decoded additively from Member.access in
+  snapshots and presence.changed) and owner/admins can drop an agent
+  (DELETE /api/networks/{id}/agents/{agentId} with confirmation; the
+  server tombstone keeps it out of future snapshots). Guests and store
+  members are removable too via DELETE /api/networks/{id}/members/{id}
+  (sessions revoked server-side); owner/admin/self rows stay protected.
+
+- feat(gh-1825): channel/network management in the app — rename a channel
+  (PATCH), delete a channel or an owned network (REST DELETE with
+  confirmation and state/navigation cleanup), and unnamed CLI/hub-created
+  channels show a short friendly label instead of the raw 64-char id.
+
+- feat(gh-1825): pasting a DAP invite no longer demands a passphrase on
+  macOS — importing NEW channel secrets auto-provisions a random
+  passphrase into the per-channel Keychain item (decryption of existing
+  envelopes never auto-generates; env/prompt/headless behavior unchanged),
+  and passphrase warnings now name the concrete recovery (re-paste the
+  invite to re-encrypt, or set DAP_KEY_PASSPHRASE).
+
+- feat(gh-1825): the network online counter opens a live-first roster
+  sheet (names, member class, presence), and the channel composer offers
+  roster-filtered @-mention autocomplete — the draft keeps the literal
+  @displayName for DAP agents and the envelope carries the resolved
+  member ids. On the CLI side the DAP channel notice names the agent's
+  own identity (display name + agentId), and inbound channel mail that
+  @-mentions that name (case-insensitive, word-boundary — no email or
+  @name2 false positives) is marked "[mentions you — you are @name]".
+
+- fix(gh-1825): the app's network roster no longer reads as permanently
+  empty ("0 online"): fa_network sends roster.snapshot with an OBJECT
+  payload ({members: [...]}) and the app only accepted a bare list, so
+  every snapshot silently decoded to zero members. Both shapes are now
+  accepted, with a production-shape regression test. The DAP paste hint
+  names web alongside CLI/macOS/iOS (plain-web join is supported).
+
+- fix(gh-1825): resumed CLI sessions rejoin their DAP channels and
+  receive channel mail again — session replay now re-arms membership
+  synchronization (plugin session-ready listeners on boot/resume and
+  in-process switches) and idle channel probes complete deferred joins
+  before inbox peek/drain. The post-replay sync also dials the
+  membership's OWN hub with its enrolled credential before joining:
+  a resumed session-scoped agent used to stay on the zero-config local
+  URL forever, and because a disconnected fabric probe short-circuits
+  before the sync, the remote dial never happened — the session-ready
+  listener now drives it directly (throttled to one attempt per 10 s).
+  App channel history no longer flashes raw
+  payloads on first open: decoding waits for startup's channel listing
+  instead of caching an undecoded guess until a manual switch.
+
+- feat(gh-1825): the fa app consumes the same DAP enrollment block as the
+  CLI — paste it into the agent chat composer (macOS/iOS/Android; the
+  smart-paste .txt chip path included) and the channel join happens
+  without the block ever reaching `sendText`, analytics, or session
+  records. Native joins ride the live agent-fabric hub repository:
+  per-project scoped identity, invite pub/priv import, keyless public
+  channels, reconnect-persisted membership in a dedicated secure
+  enrollment store (Keychain/Keystore where available). Harness additions:
+  `HubMessagingRepository.joinChannel`/`waitForConnection` with
+  rejoin-before-drain on reconnect, keyed channel decrypt
+  (`hubDecryptPayloadWithKeyPair`), public showcase payloads, and
+  `HubBearerTransport` (native `Authorization` header or the browser
+  `?token=` equivalent; authed dials never stringify transport errors
+  into logs). Plain web joins through the browser
+  `WebHubTransport` (`?token=` bearer equivalent, IndexedDB identity);
+  the browser extension rides the service worker's existing DAP client
+  (`hub.join` op), never a panel-local second connection. Add agent now defaults to the
+  DAP tab with a paste-into-chat hint; web gains ai-native provider
+  sign-in through the existing popup/callback OAuth flow.
+
+- fix(fa_network#4): the app inserts hub agents arriving via
+  `presence.changed` into the roster (additive displayName/class fields)
+  instead of dropping them, so the online counter no longer sticks at 0
+  when an agent comes online after `roster.snapshot`; legacy frames
+  without those fields create no phantom members. `roster.snapshot`/REST
+  contents are logged for decisive presence debugging.
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
 - feat(gh-1844): media slots never fall back to the main connection
   implicitly — SDK/CLI, app store, and the JS bridge resolve a slot
   without an override as UNCONFIGURED with an actionable

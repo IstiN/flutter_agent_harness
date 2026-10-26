@@ -980,15 +980,69 @@
   "networkJoin": "Присоединиться",
   "networkSelectChannel": "Выберите канал",
   "networkReconnecting": "Переподключение — сообщения будут отправлены после восстановления связи.",
+  "networkReconnectNow": "Переподключиться сейчас",
   "networkMessageHint": "Написать в {channel}",
   "networkNewChannel": "Новый канал",
   "networkOnlineCount": "{count} в сети",
+  "networkRosterTitle": "Участники",
+  "networkRosterLoading": "Загрузка участников…",
+  "networkRosterEmpty": "Пока нет участников.",
+  "networkPresenceOnline": "В сети",
+  "networkPresenceOffline": "Не в сети",
+  "networkPresenceBusy": "Занят",
+  "networkMemberOwner": "Владелец",
+  "networkMemberAdmin": "Администратор",
+  "networkMemberMember": "Участник",
+  "networkMemberGuest": "Гость",
+  "networkMemberAgent": "Агент",
+  "networkMemberUnknown": "Неизвестно",
+  "networkAccessWholeNetwork": "Вся сеть",
+  "networkAccessChannels": "{count, plural, one{{count} канал} few{{count} канала} many{{count} каналов} other{{count} канала}}",
+  "networkAccessThisChannelOnly": "Только этот канал",
+  "networkAccessThisChannelAndOthers": "{count, plural, one{Этот канал + ещё {count} канал} few{Этот канал + ещё {count} канала} many{Этот канал + ещё {count} каналов} other{Этот канал + ещё {count} канала}}",
+  "networkAccessOtherChannels": "{count, plural, one{{count} другой канал} few{{count} других канала} many{{count} других каналов} other{{count} других канала}}",
+  "networkDropAgent": "Удалить агента…",
+  "networkDropAgentTitle": "Удалить этого агента?",
+  "networkDropAgentBody": "\"{displayName}\" будет удалён из сети и потеряет доступ. Это действие нельзя отменить.",
+  "networkDropAgentConfirm": "Удалить агента",
   "networkChannelsSection": "Каналы",
   "networkShowcasesSection": "Витрины",
   "networkShowcaseReadOnly": "Только чтение — нажмите, чтобы войти в сеть и писать.",
   "networkConnecting": "Подключение…",
   "networkNoChannels": "Нет каналов",
   "networkChannelOptions": "Параметры канала",
+  "networkRenameChannel": "Переименовать канал…",
+  "@networkRenameChannel": {
+    "description": "Channel overflow menu item for renaming"
+  },
+  "networkRenameChannelTitle": "Переименовать канал",
+  "@networkRenameChannelTitle": {
+    "description": "Rename-channel dialog title"
+  },
+  "networkRename": "Переименовать",
+  "@networkRename": {
+    "description": "Rename-channel dialog confirm button"
+  },
+  "networkChannelNameRequired": "Название канала не должно быть пустым.",
+  "@networkChannelNameRequired": {
+    "description": "Rename-channel validation error"
+  },
+  "networkDeleteChannel": "Удалить канал…",
+  "@networkDeleteChannel": {
+    "description": "Channel overflow menu item for deleting"
+  },
+  "networkDeleteChannelTitle": "Удалить этот канал?",
+  "@networkDeleteChannelTitle": {
+    "description": "Delete-channel confirmation title"
+  },
+  "networkDeleteChannelBody": "Канал и все его сообщения будут удалены для всех. Это действие нельзя отменить.",
+  "@networkDeleteChannelBody": {
+    "description": "Delete-channel confirmation body"
+  },
+  "networkChannelDeleted": "Канал удалён",
+  "@networkChannelDeleted": {
+    "description": "Snackbar after a channel was deleted"
+  },
   "networkAddAgent": "Добавить агента…",
   "networkShowcasePublic": "Витрина (публичный)",
   "networkAddAgentTitle": "Добавить агента",
@@ -1001,6 +1055,10 @@
   "networkAddAgentFormatCli": "CLI-команда",
   "networkAddAgentFormatEnv": "Env (CI)",
   "networkAddAgentFormatDap": "DAP",
+  "networkAddAgentDapHint": "Скопируйте этот блок и вставьте его в чат fa (CLI, macOS, iOS или web) — агент автоматически присоединится к каналу.",
+  "dapEnrollmentJoined": "Подключились к DAP-каналу #{channel}. Сообщения канала теперь поступают этому агенту.",
+  "dapEnrollmentFailed": "Не удалось подключиться к DAP-каналу #{channel}. Проверьте приглашение и соединение с хабом, затем повторите попытку.",
+  "dapEnrollmentUnsupported": "Подключение к DAP не поддерживается на этой платформе — используйте нативное приложение или fa CLI.",
   "networkAddAgentEnroll": "Заэнроллить агента",
   "networkAddAgentEnrollHint": "Выдача создаёт уникальный отзываемый секрет — он показывается ОДИН раз: скопируйте его сейчас. Повторная выдача с тем же именем меняет секрет.",
   "networkAddAgentEnrollNeedSignIn": "Войдите в сеть, чтобы выдавать доступ агентам",

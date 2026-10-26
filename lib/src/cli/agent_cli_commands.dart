@@ -487,6 +487,7 @@ extension SlashCommandDispatch on AgentCli {
         // brand-new session re-latches from its first request.
         imageDropUx.reset();
         _session = await _createSession();
+        _notifyPluginSessionReady();
         // /reset is an in-process switch to a brand-new session — herdr
         // must re-report it, or every later report (release included)
         // carries the stale pre-reset id (#1483 review).

@@ -129,6 +129,9 @@ extension AgentCliInput on AgentCli {
       await _handleCommand(trimmed, images: images);
       return;
     }
+    // AC7 (issue #1825): a pasted DAP invite opens the /network join
+    // wizard instead of becoming an agent message.
+    if (await _tryDapInviteIntercept(trimmed)) return;
     await _sendUserMessage(line, images);
   }
 

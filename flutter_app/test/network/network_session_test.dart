@@ -43,6 +43,144 @@ void main() {
       expect(connector.channels, isNotEmpty);
     });
 
+    test('reconnect restarts the socket and reloads the snapshot', () async {
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody)
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody);
+      final connector = FakeWsConnector();
+      final session = buildSession(
+        httpClient: httpClient,
+        connector: connector,
+        wallet: await walletWithChannel(
+          channelPub: channelKeys.pub,
+          channelPriv: channelKeys.priv,
+        ),
+      );
+      addTearDown(session.close);
+
+      await session.start();
+      await pumpEventQueue();
+      expect(connector.channels, hasLength(1));
+
+      await session.reconnect();
+      await pumpEventQueue();
+
+      expect(connector.channels, hasLength(2));
+      expect(session.channels.single.id, 'c1');
+      expect(session.roster['other-1']?.displayName, 'Olya');
+      expect(session.error, isNull);
+      expect(httpClient.requests, hasLength(4));
+    });
+
+    test(
+      'renameChannel PATCHes with JWT auth and updates local metadata',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody);
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: FakeWsConnector(),
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+          jwtToken: 'jwt-1',
+        );
+        addTearDown(session.close);
+        await session.start();
+        httpClient.respond(
+          200,
+          body:
+              '{"id":"c1","networkId":"net1","name":"ops",'
+              '"public":false}',
+        );
+
+        final updated = await session.renameChannel('c1', '  ops  ');
+
+        expect(updated.name, 'ops');
+        expect(session.channels.single.name, 'ops');
+        final patch = httpClient.requests.last;
+        expect(patch.method, 'PATCH');
+        expect(patch.url.path, '/api/channels/c1');
+        expect(patch.headers['authorization'], 'Bearer jwt-1');
+        expect(jsonDecode(patch.body), {'name': 'ops'});
+      },
+    );
+
+    test(
+      'deleteChannel waits for 204 then drops local channel state',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody)
+          ..respond(200, body: '{"items":[],"nextCursor":""}')
+          ..respond(204);
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: FakeWsConnector(),
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+          jwtToken: 'jwt-1',
+        );
+        addTearDown(session.close);
+        await session.start();
+        await session.openChannel('c1');
+        expect(session.channelStates['c1'], isNotNull);
+
+        await session.deleteChannel('c1');
+
+        expect(session.channels, isEmpty);
+        expect(session.channelStates.containsKey('c1'), isFalse);
+        final delete = httpClient.requests.last;
+        expect(delete.method, 'DELETE');
+        expect(delete.url.path, '/api/channels/c1');
+        expect(delete.headers['authorization'], 'Bearer jwt-1');
+      },
+    );
+
+    test(
+      'deleteAgent waits for 204, removes the roster entry and notifies',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody)
+          ..respond(204);
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: FakeWsConnector(),
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+          jwtToken: 'jwt-1',
+        );
+        addTearDown(session.close);
+        await session.start();
+        session.roster['agent-1'] = const Member(
+          id: 'agent-1',
+          memberClass: MemberClass.agent,
+          displayName: 'Helper',
+          presence: Presence.live,
+        );
+        var notifications = 0;
+        session.addListener(() => notifications++);
+
+        await session.deleteAgent('agent-1');
+
+        expect(session.roster.containsKey('agent-1'), isFalse);
+        expect(notifications, 1);
+        final delete = httpClient.requests.last;
+        expect(delete.method, 'DELETE');
+        expect(delete.url.path, '/api/networks/net1/agents/agent-1');
+        expect(delete.headers['authorization'], 'Bearer jwt-1');
+      },
+    );
+
     test('openChannel decrypts history oldest-first and dedupes', () async {
       final wallet = await walletWithChannel(
         channelPub: channelKeys.pub,
@@ -280,10 +418,74 @@ void main() {
       connector.channels.single.serverEvent('presence.changed', {
         'memberId': 'other-1',
         'presence': 'live',
+        'access': {
+          'scope': 'channels',
+          'channelIds': ['c1'],
+        },
       });
       await pumpEventQueue();
       expect(session.roster['other-1']?.presence, Presence.live);
+      expect(session.roster['other-1']?.access?.channelIds, ['c1']);
+
+      // An older server's later frame must not erase known access metadata.
+      connector.channels.single.serverEvent('presence.changed', {
+        'memberId': 'other-1',
+        'presence': 'busy',
+      });
+      await pumpEventQueue();
+      expect(session.roster['other-1']?.presence, Presence.busy);
+      expect(session.roster['other-1']?.access?.channelIds, ['c1']);
     });
+
+    test(
+      'presence.changed inserts a hub agent missing from the snapshot',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody);
+        final connector = FakeWsConnector();
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: connector,
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+        );
+        addTearDown(session.close);
+
+        await session.start();
+        await pumpEventQueue();
+        expect(session.roster.containsKey('dap-1'), isFalse);
+
+        connector.channels.single.serverEvent('presence.changed', {
+          'memberId': 'dap-1',
+          'presence': 'live',
+          'displayName': 'public-agent',
+          'class': 'agent',
+          'access': {'scope': 'network'},
+        });
+        await pumpEventQueue();
+        final agent = session.roster['dap-1'];
+        expect(agent?.displayName, 'public-agent');
+        expect(agent?.memberClass, MemberClass.agent);
+        expect(agent?.presence, Presence.live);
+        expect(agent?.access?.scope, MemberAccessScope.network);
+        expect(
+          session.roster.values.where((m) => m.presence == Presence.live),
+          isNotEmpty,
+        );
+
+        // Legacy frames without the additive fields must not create
+        // blank phantom members.
+        connector.channels.single.serverEvent('presence.changed', {
+          'memberId': 'ghost',
+          'presence': 'live',
+        });
+        await pumpEventQueue();
+        expect(session.roster.containsKey('ghost'), isFalse);
+      },
+    );
 
     test('public showcase channels bypass E2E both ways', () async {
       final wallet = await walletWithChannel(
@@ -327,6 +529,66 @@ void main() {
         contains('"text":"hi all"'),
       );
     });
+
+    test(
+      'socket dispatch handles both roster shapes, wakeup and errors',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody);
+        final connector = FakeWsConnector();
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: connector,
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+        );
+        addTearDown(session.close);
+        await session.start();
+        await pumpEventQueue();
+        final channel = connector.channels.single;
+
+        channel.serverEvent('roster.snapshot', {
+          'members': [
+            {
+              'id': 'agent-1',
+              'class': 'agent',
+              'displayName': 'Helper',
+              'presence': 'live',
+            },
+          ],
+        });
+        await pumpEventQueue();
+        expect(session.roster.keys, ['agent-1']);
+        expect(session.roster['agent-1']?.presence, Presence.live);
+
+        channel.serverEvent('roster.snapshot', [
+          {
+            'id': 'member-2',
+            'class': 'member',
+            'displayName': 'Legacy member',
+            'presence': 'offline',
+          },
+        ]);
+        await pumpEventQueue();
+        expect(session.roster.keys, ['member-2']);
+        expect(session.roster['member-2']?.displayName, 'Legacy member');
+
+        var notifications = 0;
+        session.addListener(() => notifications++);
+        channel.serverEvent('wakeup.dispatched', {'agentId': 'agent-1'});
+        await pumpEventQueue();
+        expect(notifications, 0);
+        expect(session.error, isNull);
+
+        channel.serverEvent('error', {'message': 'relay failed'});
+        await pumpEventQueue();
+        expect(session.error, 'relay failed');
+        expect(notifications, 1);
+      },
+    );
 
     test('network.drain rebuilds channels + open-channel history', () async {
       final wallet = await walletWithChannel(
@@ -518,6 +780,33 @@ void main() {
         final last = rig.chat.messages.last;
         expect(last.role, 'user');
         expect(last.content, 'my own words');
+      },
+    );
+
+    test(
+      'sendText resolves exact roster mentions and preserves literal text',
+      () async {
+        final rig = await buildChat();
+        addTearDown(rig.session.close);
+        rig.session.roster['agent-kb'] = const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        );
+
+        await rig.chat.sendText(
+          '@kb-agent ping @Olya, ignore x@kb-agent and @nobody @kb-agent',
+        );
+
+        expect(
+          rig.session.channelStates['c1']!.messages.last.text,
+          '@kb-agent ping @Olya, ignore x@kb-agent and @nobody @kb-agent',
+        );
+        final frame = rig.connector.channels.single.sentFrames.lastWhere(
+          (f) => f['type'] == 'envelope.send',
+        );
+        expect(frame['mentions'], unorderedEquals(['agent-kb', 'other-1']));
       },
     );
 

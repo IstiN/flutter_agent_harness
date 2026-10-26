@@ -8,7 +8,7 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show HubIdentity;
+    show ExecutionEnv, HubIdentity;
 import 'package:flutter_agent_harness/io.dart';
 
 /// Whether this platform can host the agent's hub membership.
@@ -20,6 +20,10 @@ HubTransport? get platformHubTransport => const IoHubTransport();
 /// The agent identity lives in the app sandbox root.
 String? identityPathFor(String sandboxRoot) => '$sandboxRoot/hub_identity';
 
-/// Loads (or first-boot creates) the agent identity at [path].
-Future<HubIdentity?> loadOrCreateIdentity(String? path) async =>
-    path == null ? null : loadHubIdentity(path);
+/// Loads (or first-boot creates) the agent identity at [path]. The shared
+/// loader signature carries the app env for browser persistence; native keeps
+/// using the CLI-compatible file.
+Future<HubIdentity?> loadOrCreateIdentity(
+  ExecutionEnv env,
+  String? path,
+) async => path == null ? null : loadHubIdentity(path);
