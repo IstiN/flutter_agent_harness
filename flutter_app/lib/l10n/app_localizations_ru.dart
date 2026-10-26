@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -2632,6 +2633,10 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get networkChannelKeyWrongChannel =>
       'Это приглашение относится к другому каналу.';
+
+  @override
+  String get networkChannelKeyWrongHub =>
+      'Это приглашение относится к другому хабу.';
 
   @override
   String get networkChannelKeyMismatch =>

@@ -63,6 +63,9 @@ void main() {
       String? channelName = 'general',
       bool withChannelKeys = true,
       bool isPublic = false,
+      // The reload response served after a missing-key import — pass a
+      // malformed body to make the post-import history reload throw.
+      String? importReloadBody,
     }) async {
       final wallet = await KeyWallet.load(MemoryWalletBackend());
       await wallet.createIfMissing(displayName: 'Me');
@@ -110,7 +113,9 @@ void main() {
         ..respond(200, body: membersBody) // start: members
         ..respond(200, body: historyBody);
       // A missing-key import reloads the newest history page in place.
-      if (!withChannelKeys) httpClient.respond(200, body: historyBody);
+      if (!withChannelKeys) {
+        httpClient.respond(200, body: importReloadBody ?? historyBody);
+      }
       final connector = FakeWsConnector();
       final session = buildSession(
         httpClient: httpClient,
@@ -270,6 +275,92 @@ void main() {
             (request) => request.url.path == '/api/channels/c1/messages',
           ),
           hasLength(1),
+        );
+        await rig.session.close();
+      },
+    );
+
+    testWidgets('key import rejects a cross-hub invite before persisting', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester, withChannelKeys: false);
+      await tester.tap(find.text('Import channel key'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      // Same channel id, consistent keypair — only the hub differs. The
+      // key belongs to a channel on another deployment; persisting it
+      // would encrypt outgoing traffic no peer here can decrypt.
+      await tester.enterText(
+        find.byKey(const ValueKey('channelKeyInviteField')),
+        buildAgentInvite(
+          hubUri: Uri.parse('wss://hub.other-hub.example/ws'),
+          channel: 'c1',
+          pub: channelKeys.pub,
+          priv: channelKeys.priv,
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('channelKeyImportSubmit')));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(
+        find.text('This invite is for a different hub.'),
+        findsOneWidget,
+      );
+      expect(rig.manager.wallet.channelKeysFor('net1', 'c1'), isNull);
+      // No history reload ran — the invite was rejected before persist.
+      expect(
+        rig.httpClient.requests.where(
+          (request) => request.url.path == '/api/channels/c1/messages',
+        ),
+        hasLength(1),
+      );
+      await rig.session.close();
+    });
+
+    testWidgets(
+      'key import keeps the key when the history reload fails after persist',
+      (tester) async {
+        final rig = await pumpChat(
+          tester,
+          withChannelKeys: false,
+          // A malformed 200 body makes MessagePage.fromJson throw a
+          // FormatException inside the post-import reload.
+          importReloadBody: 'not-json',
+        );
+        await tester.tap(find.text('Import channel key'));
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        final invite = buildAgentInvite(
+          hubUri: Uri.parse('wss://hub.fa1.dev/ws'),
+          channel: 'c1',
+          pub: channelKeys.pub,
+          priv: channelKeys.priv,
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('channelKeyInviteField')),
+          invite,
+        );
+        await tester.tap(find.byKey(const ValueKey('channelKeyImportSubmit')));
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        // The key IS in the vault — the dialog must not claim the import
+        // failed, and the deterministic rebuild still swaps the composer.
+        expect(
+          find.text('The channel key could not be imported. Try again.'),
+          findsNothing,
+        );
+        expect(rig.manager.wallet.channelKeysFor('net1', 'c1'), isNotNull);
+        expect(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is TextField &&
+                widget.decoration?.hintText == 'Message general',
+          ),
+          findsOneWidget,
         );
         await rig.session.close();
       },

@@ -1055,6 +1055,7 @@
   "networkChannelKeyInviteLabel": "Приглашение с ключом канала",
   "networkChannelKeyImportHint": "Вставьте приглашение в закрытый канал с устройства, где уже есть ключ.",
   "networkChannelKeyWrongChannel": "Это приглашение относится к другому каналу.",
+  "networkChannelKeyWrongHub": "Это приглашение относится к другому хабу.",
   "networkChannelKeyMismatch": "Открытый и закрытый ключи приглашения не соответствуют друг другу.",
   "networkChannelKeyImportFailed": "Не удалось импортировать ключ канала. Повторите попытку.",
   "networkAddAgentScopeChannel": "Этот канал",

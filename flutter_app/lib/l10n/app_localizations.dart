@@ -4568,6 +4568,12 @@ abstract class AppLocalizations {
   /// **'This invite is for a different channel.'**
   String get networkChannelKeyWrongChannel;
 
+  /// Validation error when the invite targets another hub deployment than the connected session
+  ///
+  /// In en, this message translates to:
+  /// **'This invite is for a different hub.'**
+  String get networkChannelKeyWrongHub;
+
   /// Validation error for an inconsistent X25519 channel keypair
   ///
   /// In en, this message translates to:
