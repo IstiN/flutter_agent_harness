@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-26T03:51:46.512Z",
+  "ticketKey": "pr-1895",
+  "headSha": "4cb00babc7362b03675b113316da8f279e0c8c2e",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:071c9e7c0f783d0f",
+      "size": 103233
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:a00763f7d6e4861f",
+      "size": 687562
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:de090331f8f46568",
+      "size": 727
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:37bd7f309edf5c26",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:b4d03aa572d2bca2",
+      "size": 11701
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:4741ca98bd16ba9f",
+      "size": 5629
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:e3c7aa6bf2f6cdf8",
+      "size": 1536
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:b3d4dda15a587ac7",
+      "size": 1354
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:6be2cd83c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:876774dbd434a525",
+      "size": 1248
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:b5a6530621f1ba02",
+      "size": 1178
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6wILeP",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/network/network_session.dart:554",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: failed realtime decode still escapes as an unhandled async error**\n\nThe per-channel serialization chains later arrivals correctly via `_realtimeTail`, but `_onEnvelope` returns the raw `operation`, which **rejects** when `_decode` throws. The only call site is `unawaited(_onEnvelope(envelope))` in `_onWsEvent` (network_session.dart:457), so a single undecryptable/corrupt envelope becomes an unhandled asynchronous error in the root zone (reported by `FlutterError` / crash handlers) — despite the comment \"A failed decode must not prevent later arrivals from being handled\" only covering the chaining half.\n\nHistory decodes have the same pre-existing exposure, but this hunk is the one that introduces the containment comment; make the returned future match the intent:\n\n```dart\nstate._realtimeTail = operation.then<void>(\n  (_) {},\n  onError: (Object error, StackTrace stackTrace) {},\n);\nreturn state._realtimeTail; // was: return operation;\n```\n\n(or attach an empty `catchError` to `operation` before returning it). That keeps arrival order, swallows decode failures for the event loop, and still lets you await `_onEnvelope` in tests if needed."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wILfW",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/fah_hub_plugin.dart:278",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `dispose()` memoizes a no-op when called before `register()`**\n\n`dispose()` caches `_scoped?.cleanupOverlay() ?? Future<void>.value()`. If teardown ever runs before `register()` has built `_scoped` (early signal, test harnesses, future embedded hosts that call dispose at the wrong lifecycle point), the memoized no-op permanently disables cleanup — and a later `seedOverlay()` on the same host writes the plaintext overlay with no working dispose to remove it.\n\nCheap hardening: in `seedOverlay()` (or in `register`), no-op or re-arm when `_dispose != null`, e.g. reset `_dispose = null` before seeding, or make `dispose()` re-evaluate when `_dispose == null && _scoped != null`:\n\n```dart\nFuture<void> dispose() => _dispose ??= _scoped?.cleanupOverlay() ?? Future.value();\n// plus, at the top of the seed path:\nif (_dispose != null) return; // host already disposed — do not reseed plaintext\n```\n\nLow risk today (all CLI call sites run after register), but this is the security-sensitive teardown the PR is about."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wILgk",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/fah_runapp.dart:1129",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_fail` exit paths after plugin resolution skip `teardownPlugins()`**\n\n`teardownPlugins()` is wired into the six normal/signal exit branches, but `_fail(...)` paths that run *after* `_resolvePlugins` (this mode check is one; A2A/bridge argument errors and config failures further down are others) terminate via `exit`/`_fail` without ever calling it. The pid guard left behind has a dead pid, so the next boot's sweep reclaims it and the next clean shutdown deletes the overlay — but the plaintext overlay still lingers on disk for the whole gap, which slightly undercuts docs/dap.md's claim that \"every normal and signal-graceful CLI shutdown\" disposes it.\n\nEither route `_fail` through a shared shutdown wrapper that runs `_fahPluginTeardown` first, or soften the doc sentence to \"clean exit paths\". Not blocking: the fail-closed rewrite-on-next-boot design bounds the exposure."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wILiD",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/fah_dap_scoped.dart:545",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: pid-reuse can pin the shared overlay forever**\n\nThe guard sweep treats any parseable pid that answers `_pidAlive` as a live agent. If an agent crashes and its pid is recycled by an unrelated long-lived process, that stale guard reads as \"live\" on every sweep, so `cleanupOverlay()` in other agents keeps preserving the plaintext overlay indefinitely (until the unrelated process exits).\n\nConsider recording a guard creation timestamp (`pid + mtime`) and treating guards older than a generous bound (e.g. > 24 h) as reclaimable, or storing a boot-id/nonce. Deliberately conservative keep-on-doubt is fine for v1 — flagging as future polish for a plaintext-key cleanup path."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wILjh",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/test/chat_composer_test.dart:664",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: platform override is not restored on test failure**\n\n`debugDefaultTargetPlatformOverride = TargetPlatform.linux` is reset with `debugDefaultTargetPlatformOverride = null` only after `pumpAndSettle()`. If the test fails (or throws) before that line, the override leaks into every later test in the process with confusing cross-test pollution.\n\n```dart\ndebugDefaultTargetPlatformOverride = TargetPlatform.linux;\naddTearDown(() => debugDefaultTargetPlatformOverride = null);\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:7dfe9911",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: failed realtime decode still escapes as an unhandled async error**\n\nThe per-channel serialization chains later arrivals correctly via `_realtimeTail`, but `_onEnvelope` returns the raw `operation`, which **rejects** when `_decode` throws. The only call site is `unawaited(_onEnvelope(envelope))` in `_onWsEvent` (network_session.dart:457), so a single undecryptable/corrupt envelope becomes an unhandled asynchronous error in the root zone (reported by `FlutterError` / crash handlers) — despite the comment \"A failed decode must not prevent later arrivals from being handled\" only covering the chaining half.\n\nHistory decodes have the same pre-existing exposure, but this hunk is the one that introduces the containment comment; make the returned future match the intent:\n\n```dart\nstate._realtimeTail = operation.then<void>(\n  (_) {},\n  onError: (Object error, StackTrace stackTrace) {},\n);\nreturn state._realtimeTail; // was: return operation;\n```\n\n(or attach an empty `catchError` to `operation` before returning it). That keeps arrival order, swallows decode failures for the event loop, and still lets you await `_onEnvelope` in tests if needed."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:91d97522",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `dispose()` memoizes a no-op when called before `register()`**\n\n`dispose()` caches `_scoped?.cleanupOverlay() ?? Future<void>.value()`. If teardown ever runs before `register()` has built `_scoped` (early signal, test harnesses, future embedded hosts that call dispose at the wrong lifecycle point), the memoized no-op permanently disables cleanup — and a later `seedOverlay()` on the same host writes the plaintext overlay with no working dispose to remove it.\n\nCheap hardening: in `seedOverlay()` (or in `register`), no-op or re-arm when `_dispose != null`, e.g. reset `_dispose = null` before seeding, or make `dispose()` re-evaluate when `_dispose == null && _scoped != null`:\n\n```dart\nFuture<void> dispose() => _dispose ??= _scoped?.cleanupOverlay() ?? Future.value();\n// plus, at the top of the seed path:\nif (_dispose != null) return; // host already disposed — do not reseed plaintext\n```\n\nLow risk today (all CLI call sites run after register), but this is the security-sensitive teardown the PR is about."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:c74c77cc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_fail` exit paths after plugin resolution skip `teardownPlugins()`**\n\n`teardownPlugins()` is wired into the six normal/signal exit branches, but `_fail(...)` paths that run *after* `_resolvePlugins` (this mode check is one; A2A/bridge argument errors and config failures further down are others) terminate via `exit`/`_fail` without ever calling it. The pid guard left behind has a dead pid, so the next boot's sweep reclaims it and the next clean shutdown deletes the overlay — but the plaintext overlay still lingers on disk for the whole gap, which slightly undercuts docs/dap.md's claim that \"every normal and signal-graceful CLI shutdown\" disposes it.\n\nEither route `_fail` through a shared shutdown wrapper that runs `_fahPluginTeardown` first, or soften the doc sentence to \"clean exit paths\". Not blocking: the fail-closed rewrite-on-next-boot design bounds the exposure."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:62534010",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: pid-reuse can pin the shared overlay forever**\n\nThe guard sweep treats any parseable pid that answers `_pidAlive` as a live agent. If an agent crashes and its pid is recycled by an unrelated long-lived process, that stale guard reads as \"live\" on every sweep, so `cleanupOverlay()` in other agents keeps preserving the plaintext overlay indefinitely (until the unrelated process exits).\n\nConsider recording a guard creation timestamp (`pid + mtime`) and treating guards older than a generous bound (e.g. > 24 h) as reclaimable, or storing a boot-id/nonce. Deliberately conservative keep-on-doubt is fine for v1 — flagging as future polish for a plaintext-key cleanup path."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:f1dd81dd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: platform override is not restored on test failure**\n\n`debugDefaultTargetPlatformOverride = TargetPlatform.linux` is reset with `debugDefaultTargetPlatformOverride = null` only after `pumpAndSettle()`. If the test fails (or throws) before that line, the override leaks into every later test in the process with confusing cross-test pollution.\n\n```dart\ndebugDefaultTargetPlatformOverride = TargetPlatform.linux;\naddTearDown(() => debugDefaultTargetPlatformOverride = null);\n```"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:25a1b40e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40263555278\n🔴 red head 4cb00babc7362b03675b113316da8f279e0c8c2e — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:903145e9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Solid hardening follow-up to #1888: torn-membership fail-closed semantics, guarded plaintext-overlay teardown, credential-safe WebSocket errors, serialized joins/decodes, and honest plaintext-fallback disclosure all check out, and the focused suites I ran locally (fallback repo, hub plugin/scoped/fabric, enrollment, network session, composer, wiring-reg — 124 tests) pass with a clean `dart analyze`. One ⚠️ finding: a failed realtime decode still escapes as an unhandled async error because `_onEnvelope` returns the rejecting `operation` to an `unawaited` call site.\n\n**Key Issues**:\n1. ⚠️ `network_session.dart:554` — return the swallowing `_realtimeTail` (or attach `catchError`) so decode failures don't surface as unhandled async errors.\n2. 💡 `fah_hub_plugin.dart:278` — memoized no-op `dispose()` before `register()` permanently disables overlay cleanup.\n3. 💡 `fah_runapp.dart:1129` — post-resolution `_fail` paths skip `teardownPlugins`; doc claim slightly overstates coverage.\n4. 💡 pid reuse in `_sweepStaleOverlayGuards` can pin the shared overlay.\n5. 💡 test platform override not restored via `addTearDown`.\n\n**Next Steps**:\n1. Apply the one-line `_onEnvelope` return-tail fix (comment1).\n2. Optionally pick up the suggestion-level hardening (comment2–comment5); none block merge."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
