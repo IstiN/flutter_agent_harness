@@ -18,15 +18,18 @@
 // pattern of workflow_fetch_shape_guard_test.dart / release_hygiene_test.dart):
 //
 //   AC1  every self-hosted job in the macOS publish legs (build-mobile.yml,
-//        build-macos.yml) pins the UNIQUE macOS label `macos-m5` — the
-//        fa-m5-1 registration (gh-1005: the repo's ONE self-hosted macOS M5
-//        runner) — and never the generic `macOS`/`ARM64` labels that the
-//        Linux box also satisfies. gh-1692: the iOS legs (build-ios,
-//        submit-ios) must resolve to fa-m5-1 BY NAME (the runner-name
-//        label) — `macos-m5` also matches fa-m5-2, whose archive/signing
-//        environment is unverified (the 10-17/10-18 silent ARCHIVE FAILED
-//        runs), so the routing guard asserts the exact runner LABEL SET,
-//        not merely "a macOS M5 machine".
+//        build-macos.yml) pins the UNIQUE macOS label `macos-m5` — and
+//        never the generic `macOS`/`ARM64` labels that the Linux box also
+//        satisfies (gh-1600 F-A). gh-1906 supersedes the gh-1692
+//        runner-name pin: the iOS legs (build-ios, submit-ios) route to
+//        the shared `macos-m5` POOL and must NOT carry any `fa-m5-*`
+//        runner-name label — no m5 runner carries a name label anymore,
+//        so a set containing one matches ZERO runners and the job queues
+//        forever. The routing guard asserts the EXACT runner LABEL SET
+//        (an extra label fails exactly like a missing one), and a
+//        repo-wide audit bans `fa-m5-*` labels outright — in job-level
+//        `runs-on` AND strategy.matrix scalars — so this class cannot
+//        return.
 //   AC2  a bench run immediately followed by a mobile build on the same box
 //        cannot break the checkout: bench-harbor writes its job output
 //        OUTSIDE $GITHUB_WORKSPACE ($RUNNER_TEMP/bench/jobs) and tears its
@@ -54,17 +57,17 @@ String checkoutScriptOf(String workflowPath, String job, String stepName) {
 }
 
 /// The macOS publish legs, their jobs, and the exact runner-label set each
-/// job must pin. gh-1692: the iOS legs resolve to fa-m5-1 BY NAME (the
-/// runner-name label GitHub assigns to every self-hosted registration) —
-/// `macos-m5` alone also matches fa-m5-2, whose archive/signing
-/// environment is unverified (the 10-17/10-18 `** ARCHIVE FAILED **`
-/// runs), so a label-set pin without the runner name is a coin flip.
-/// build-macos stays on the shared `macos-m5` pool (mac builds are not
-/// the broken TestFlight path — gh-1692 scopes the name pin to iOS).
+/// job must pin. gh-1906: the iOS legs route to the SHARED `macos-m5`
+/// POOL — the gh-1692 runner-name pin (`fa-m5-1`) is dead: no m5 runner
+/// carries a runner-name label anymore (every registration advertises
+/// only self-hosted/macOS/ARM64/`macos-m5`), so a label set containing a
+/// name matches ZERO runners and the job queues forever (live
+/// 2026-10-26, blocked v1.0.648 TestFlight). The gh-1692 fa-m5-2
+/// signing-env concern is retired (fa-m5-2/fa-m5-3 signed desktop green).
 const mobileMacosLegs = <String, Map<String, List<String>>>{
   '.github/workflows/build-mobile.yml': {
-    'build-ios': ['self-hosted', 'macos-m5', 'fa-m5-1'],
-    'submit-ios': ['self-hosted', 'macos-m5', 'fa-m5-1'],
+    'build-ios': ['self-hosted', 'macos-m5'],
+    'submit-ios': ['self-hosted', 'macos-m5'],
   },
   '.github/workflows/build-macos.yml': {
     'build-macos': ['self-hosted', 'macos-m5'],
@@ -73,36 +76,44 @@ const mobileMacosLegs = <String, Map<String, List<String>>>{
 
 void main() {
   group('AC1 — self-hosted macOS legs pin the runner LABEL SET (gh-1600 '
-      'F-A, gh-1692)', () {
+      'F-A, gh-1906)', () {
     for (final entry in mobileMacosLegs.entries) {
       final jobs = jobsOf(entry.key);
       for (final jobEntry in entry.value.entries) {
         final id = jobEntry.key;
-        test('${entry.key}::$id runs on ${jobEntry.value.join(' + ')}', () {
-          final runsOn = (jobs[id] as YamlMap)['runs-on'].toString();
-          for (final label in jobEntry.value) {
-            expect(
-              runsOn,
-              contains(label),
-              reason:
-                  '$entry.key job "$id" must pin the runner-label set '
-                  '${jobEntry.value} — gh-1692: the iOS legs resolve to '
-                  'fa-m5-1 BY NAME, the runner-name label GitHub assigns '
-                  'to every self-hosted registration. `macos-m5` alone '
-                  'also matches fa-m5-2, whose archive/signing '
-                  'environment is unverified (the 10-17/10-18 '
-                  '`** ARCHIVE FAILED **` runs) — a name-less pin is a '
-                  'coin flip between a good and a broken runner.',
-            );
-          }
+        test('${entry.key}::$id runs on exactly '
+            '${jobEntry.value.join(' + ')}', () {
+          final raw = (jobs[id] as YamlMap)['runs-on'];
+          final labels = raw is YamlList
+              ? raw.map((e) => e.toString()).toList()
+              : <String>[raw.toString()];
+          // EXACT label-set equality, not per-label contains: gh-1906 —
+          // the workflow carried `[self-hosted, macos-m5, fa-m5-1]` and
+          // every contains-check passed, yet no runner advertises the
+          // `fa-m5-1` name label, so the set matched ZERO runners and
+          // both iOS legs queued forever (blocked v1.0.648 TestFlight).
+          // A phantom EXTRA label must fail this test exactly as a
+          // missing one does.
           expect(
-            runsOn.contains('macOS') || runsOn.contains('ARM64'),
+            labels,
+            unorderedEquals(jobEntry.value),
+            reason:
+                '$entry.key job "$id" must pin EXACTLY the runner-label '
+                'set ${jobEntry.value} — GitHub Actions requires ALL '
+                'labels to match ONE runner, so any extra (e.g. a dead '
+                'runner-name label like `fa-m5-1`) makes the set match '
+                'zero runners and the job queues forever (gh-1906), and '
+                'any missing label can route a macOS leg onto the Linux '
+                'box (gh-1600 F-A).',
+          );
+          expect(
+            labels.any((l) => l.contains('macOS') || l.contains('ARM64')),
             isFalse,
             reason:
                 '$entry.key job "$id" must not carry the generic '
                 '`macOS`/`ARM64` labels — only the unambiguous '
-                '`macos-m5` + runner-name pins route to the M5 runner '
-                '(gh-1600 F-A, gh-1692)',
+                '`macos-m5` pin routes to the M5 pool '
+                '(gh-1600 F-A, gh-1906)',
           );
         });
       }
@@ -193,6 +204,76 @@ void main() {
                   'matrix-routed job escapes the job-level runs-on '
                   'audit, and the Linux self-hosted box also satisfies '
                   'those labels (gh-1600 F-A class).',
+            );
+          }
+        }
+      }
+    });
+
+    test('audit: no workflow anywhere pins an fa-m5-* runner-name label', () {
+      // gh-1906: the iOS legs queued forever because the label set
+      // contained `fa-m5-1` — a runner-NAME label GitHub only assigns
+      // while that exact registration naming holds. The m5 pool no
+      // longer carries name labels at all (every registration shows
+      // only self-hosted/macOS/ARM64/`macos-m5`), and ANY name label
+      // in a runs-on set zeroes the runner match. The class dies only
+      // with a repo-wide audit — same shape as the gh-1600 macOS/ARM64
+      // ban: parsed YAML job-level `runs-on` values AND strategy.matrix
+      // scalars (a `${{ matrix.runner }}` route escapes the former).
+      final workflows = Directory('.github/workflows')
+          .listSync()
+          .where((f) => f.path.endsWith('.yml'))
+          .toList();
+      expect(workflows, isNotEmpty);
+
+      List<String> matrixScalars(Object? node) {
+        final out = <String>[];
+        void walk(Object? n) {
+          if (n is YamlMap) {
+            n.forEach((_, v) => walk(v));
+          } else if (n is YamlList) {
+            for (final v in n) {
+              walk(v);
+            }
+          } else if (n != null) {
+            out.add(n.toString());
+          }
+        }
+
+        walk(node);
+        return out;
+      }
+
+      const banned = 'fa-m5-'; // runner-NAME prefix: fa-m5-1/2/3, ...
+      for (final f in workflows) {
+        final jobs = jobsOf(f.path);
+        for (final e in jobs.entries) {
+          final job = e.value as YamlMap;
+          final runsOn = job['runs-on']?.toString() ?? '';
+          expect(
+            runsOn.contains(banned),
+            isFalse,
+            reason:
+                '${f.path} job "${e.key}" pins `$runsOn` with an '
+                '`fa-m5-*` runner-name label — no m5 runner carries a '
+                'name label anymore, so the set matches ZERO runners '
+                'and the job queues forever (gh-1906). Route to the '
+                '`macos-m5` pool instead.',
+          );
+          final strategy = job['strategy'];
+          if (strategy is! YamlMap) continue; // e.g. an expression string
+          final matrix = strategy['matrix'];
+          if (matrix is! YamlMap) continue;
+          for (final scalar in matrixScalars(matrix)) {
+            expect(
+              scalar.contains(banned),
+              isFalse,
+              reason:
+                  '${f.path} job "${e.key}" strategy.matrix carries '
+                  '`$scalar` with an `fa-m5-*` runner-name label — a '
+                  'matrix-routed job escapes the job-level runs-on '
+                  'audit, and a name label in the resolved set matches '
+                  'zero runners (gh-1906 class).',
             );
           }
         }
