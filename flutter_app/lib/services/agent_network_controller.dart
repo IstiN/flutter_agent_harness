@@ -66,6 +66,29 @@ class AgentNetworkController extends ChangeNotifier {
   HubMessagingRepository? _hub;
   StreamSubscription<HubLinkState>? _linkSub;
   bool _disposed = false;
+  Future<void>? _lifecycleInFlight;
+
+  /// Runs a complete settings/network transition after every earlier one.
+  /// Keeping persistence in the same queue makes concurrent connection or
+  /// enrollment changes resolve in invocation order, while the hub hand-off
+  /// itself remains atomic across identity loads and socket startup.
+  Future<void> _serializeLifecycle(Future<void> Function() action) {
+    final previous = _lifecycleInFlight;
+    final result = previous == null
+        ? Future.sync(action)
+        : previous.then((_) => action());
+    late final Future<void> tail;
+    tail = result.then<void>(
+      (_) {
+        if (identical(_lifecycleInFlight, tail)) _lifecycleInFlight = null;
+      },
+      onError: (_) {
+        if (identical(_lifecycleInFlight, tail)) _lifecycleInFlight = null;
+      },
+    );
+    _lifecycleInFlight = tail;
+    return result;
+  }
 
   /// Whether enrollment is available locally or through the extension host.
   bool get supported => usesExternalEnrollment || _localRuntimeSupported;
@@ -86,7 +109,7 @@ class AgentNetworkController extends ChangeNotifier {
 
   /// Loads the persisted settings; joins when enabled. Call once at boot
   /// (the service construction path).
-  Future<void> start() async {
+  Future<void> start() => _serializeLifecycle(() async {
     _store = await AgentNetworkStore.load(_env);
     if (_disposed) return;
     if (!usesExternalEnrollment) {
@@ -99,9 +122,9 @@ class AgentNetworkController extends ChangeNotifier {
     if (_store.enabled) await _joinSaved();
     if (_disposed) return;
     notifyListeners();
-  }
+  });
 
-  Future<void> setEnabled(bool value) async {
+  Future<void> setEnabled(bool value) => _serializeLifecycle(() async {
     await _store.setEnabled(value);
     if (_disposed) return;
     if (value) {
@@ -109,13 +132,21 @@ class AgentNetworkController extends ChangeNotifier {
     } else {
       await _leave();
     }
+    if (_disposed) return;
     notifyListeners();
-  }
+  });
 
   String get _effectiveProjectCwd => _projectCwd ?? _env.sessionCwd;
 
   Future<DapEnrollmentStore> _enrollments() async => _enrollmentStore ??=
       await DapEnrollmentStore.load(_env, projectCwd: _effectiveProjectCwd);
+
+  /// Whether a native join actually persists through the plaintext
+  /// fallback. Browser-extension enrollment uses the worker's own store.
+  Future<bool> enrollmentUsesPlaintextStorage() async {
+    if (usesExternalEnrollment || !_localRuntimeSupported) return false;
+    return (await _enrollments()).isPlaintext;
+  }
 
   /// Boot/toggle reconnect: a failed dial stays owned by the repository's
   /// reconnect loop; settings interactions never surface a raw hub error.
@@ -137,23 +168,21 @@ class AgentNetworkController extends ChangeNotifier {
 
   /// Persists a connection change; a live link restarts onto the new
   /// settings (the /settings flow).
-  Future<void> saveConnection({
-    String? url,
-    String? token,
-    String? name,
-  }) async {
-    // Saving the manual settings form explicitly leaves invite enrollment;
-    // otherwise the next boot would unexpectedly restore the old hub.
-    final enrollments = await _enrollments();
-    if (enrollments.enrollment != null) await enrollments.clear();
-    await _store.setConnection(url: url, token: token, name: name);
-    if (_disposed) return;
-    if (_store.enabled) {
-      await _leave();
-      await _join();
-    }
-    notifyListeners();
-  }
+  Future<void> saveConnection({String? url, String? token, String? name}) =>
+      _serializeLifecycle(() async {
+        // Saving the manual settings form explicitly leaves invite enrollment;
+        // otherwise the next boot would unexpectedly restore the old hub.
+        final enrollments = await _enrollments();
+        if (enrollments.enrollment != null) await enrollments.clear();
+        await _store.setConnection(url: url, token: token, name: name);
+        if (_disposed) return;
+        if (_store.enabled) {
+          await _leave();
+          await _join();
+        }
+        if (_disposed) return;
+        notifyListeners();
+      });
 
   /// The fabric directory (the roster view). Empty when not joined —
   /// callers render the file-fabric-only world.
@@ -171,31 +200,34 @@ class AgentNetworkController extends ChangeNotifier {
   /// to an invited channel and persists the scoped reconnect record. The
   /// credential goes only to the bearer transport and secure store — never
   /// to [SecretsExecutionEnv], session records, or model context.
-  Future<void> joinEnrollment(DapJoinBundle bundle) async {
-    if (!supported) throw StateError('DAP enrollment is unsupported');
-    final normalized = _normalizeEnrollment(bundle);
-    if ((normalized.invite.pub == null) != (normalized.invite.priv == null)) {
-      throw const FormatException('incomplete channel keypair');
-    }
-    final dapHub = _dapHubService;
-    if (dapHub is ExtensionDapHubService) {
-      await dapHub.joinEnrollment(normalized);
+  Future<void> joinEnrollment(DapJoinBundle bundle) => _serializeLifecycle(
+    () async {
+      if (!supported) throw StateError('DAP enrollment is unsupported');
+      final normalized = _normalizeEnrollment(bundle);
+      if ((normalized.invite.pub == null) != (normalized.invite.priv == null)) {
+        throw const FormatException('incomplete channel keypair');
+      }
+      final dapHub = _dapHubService;
+      if (dapHub is ExtensionDapHubService) {
+        await dapHub.joinEnrollment(normalized);
+        if (_disposed) return;
+        notifyListeners();
+        return;
+      }
+      final enrollments = await _enrollments();
+      await enrollments.save(normalized);
+      await _store.setConnection(
+        url: normalized.hubUrl,
+        name: normalized.agentName,
+      );
+      await _store.setEnabled(true);
+      if (_disposed) return;
+      await _leave();
+      await _join(enrollment: normalized);
       if (_disposed) return;
       notifyListeners();
-      return;
-    }
-    final enrollments = await _enrollments();
-    await enrollments.save(normalized);
-    await _store.setConnection(
-      url: normalized.hubUrl,
-      name: normalized.agentName,
-    );
-    await _store.setEnabled(true);
-    if (_disposed) return;
-    await _leave();
-    await _join(enrollment: normalized);
-    notifyListeners();
-  }
+    },
+  );
 
   /// Sends a DM through the composite fabric: hub-resolvable targets go
   /// hub-ward, everything else lands in the file inbox (offline carrier).
@@ -211,34 +243,27 @@ class AgentNetworkController extends ChangeNotifier {
     );
   }
 
+  bool get _joinWasCancelled => _disposed || !_store.enabled;
+
   Future<void> _join({DapJoinBundle? enrollment}) async {
-    if (usesExternalEnrollment || !_localRuntimeSupported || _hub != null) {
+    if (_disposed ||
+        usesExternalEnrollment ||
+        !_localRuntimeSupported ||
+        _hub != null) {
       return;
     }
-    final enrolled = enrollment != null;
-    final identityPath = enrolled
-        ? identityPathFor(
-            '${_env.appStorageCwd}/dap/'
-            '${dapEnrollmentProjectScope(_effectiveProjectCwd)}',
-          )
-        : identityPathFor(_env.cwd);
-    final identity = await _loadIdentity!(_env, identityPath);
-    final hub = HubMessagingRepository(
-      url: Uri.parse(enrollment?.hubUrl ?? _store.url),
-      transport: _transport!,
-      identity: identity,
-      token: enrolled
-          ? null
-          : _store.token.isEmpty
-          ? null
-          : _store.token,
-      clientSecret: enrollment?.clientSecret,
-      name: enrollment?.agentName ?? _store.name,
-      onLog: (line) => debugPrint('[agent-network] $line'),
-    );
+    final identity = await _loadIdentity!(_env, _joinIdentityPath(enrollment));
+    if (_joinWasCancelled) return;
+    final hub = _buildHub(enrollment, identity);
     _hub = hub;
-    _linkSub = hub.stateChanges.listen((_) => notifyListeners());
+    _linkSub = hub.stateChanges.listen((_) {
+      if (!_disposed) notifyListeners();
+    });
     await hub.start();
+    if (_joinWasCancelled) {
+      await _leave();
+      return;
+    }
     // Composite over the file layer (the CLI buildAgentFabric shape).
     final composite = FallbackMessagingRepository(
       primary: hub,
@@ -246,16 +271,51 @@ class AgentNetworkController extends ChangeNotifier {
     );
     composite.primaryMailbox = () => 'main';
     _fileFabric.swap(composite);
+    await _joinInviteChannel(hub, enrollment);
+    if (_joinWasCancelled) await _leave();
+  }
+
+  String? _joinIdentityPath(DapJoinBundle? enrollment) {
     if (enrollment != null) {
-      final pub = enrollment.invite.pub;
-      final priv = enrollment.invite.priv;
-      await hub.joinChannel(
-        enrollment.invite.channel,
-        keys: pub == null || priv == null
-            ? null
-            : HubChannelKeys(pub: pub, priv: priv),
+      return identityPathFor(
+        '${_env.appStorageCwd}/dap/'
+        '${dapEnrollmentProjectScope(_effectiveProjectCwd)}',
       );
     }
+    return identityPathFor(_env.cwd);
+  }
+
+  HubMessagingRepository _buildHub(
+    DapJoinBundle? enrollment,
+    HubIdentity? identity,
+  ) {
+    final token =
+        enrollment?.clientSecret ??
+        (_store.token.isEmpty ? null : _store.token);
+    return HubMessagingRepository(
+      url: Uri.parse(enrollment?.hubUrl ?? _store.url),
+      transport: _transport!,
+      identity: identity,
+      token: token,
+      clientSecret: enrollment?.clientSecret,
+      name: enrollment?.agentName ?? _store.name,
+      onLog: (line) => debugPrint('[agent-network] $line'),
+    );
+  }
+
+  Future<void> _joinInviteChannel(
+    HubMessagingRepository hub,
+    DapJoinBundle? enrollment,
+  ) async {
+    if (enrollment == null) return;
+    final pub = enrollment.invite.pub;
+    final priv = enrollment.invite.priv;
+    await hub.joinChannel(
+      enrollment.invite.channel,
+      keys: pub == null || priv == null
+          ? null
+          : HubChannelKeys(pub: pub, priv: priv),
+    );
   }
 
   static DapJoinBundle _normalizeEnrollment(DapJoinBundle bundle) =>
@@ -296,7 +356,7 @@ class AgentNetworkController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    unawaited(_leave());
+    unawaited(_serializeLifecycle(_leave));
     super.dispose();
   }
 }

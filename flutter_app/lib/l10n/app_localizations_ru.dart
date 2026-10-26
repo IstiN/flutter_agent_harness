@@ -2639,6 +2639,11 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String dapEnrollmentJoinedPlaintext(String channel) {
+    return 'Подключились к DAP-каналу #$channel. Сообщения канала теперь поступают этому агенту. Предупреждение о хранении: закрытый ключ приглашения и учётные данные хаба хранятся в ОТКРЫТОМ ВИДЕ (без шифрования) в песочнице приложения (в web — IndexedDB).';
+  }
+
+  @override
   String dapEnrollmentFailed(String channel) {
     return 'Не удалось подключиться к DAP-каналу #$channel. Проверьте приглашение и соединение с хабом, затем повторите попытку.';
   }

@@ -8,6 +8,8 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa_ui/fa_ui.dart' show FaClipboardImageReader;
+import 'package:flutter/foundation.dart'
+    show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -652,6 +654,43 @@ void main() {
       );
       expect(
         find.textContaining('Joined DAP channel #$channel'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('non-Keychain join discloses unencrypted enrollment storage', (
+      tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      final service = _fakeService(
+        MemoryExecutionEnv(),
+        _singleTextResponse('must not run'),
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      await _pumpComposer(
+        tester,
+        service,
+        onSubmit: (context, text) => interceptDapEnrollmentSubmit(
+          context,
+          text,
+          supported: true,
+          join: (_) async {},
+          plaintextStorage: () async => true,
+        ),
+      );
+
+      await _typeAndSend(tester, paste);
+      await tester.pumpAndSettle();
+      debugDefaultTargetPlatformOverride = null;
+
+      expect(
+        find.text(
+          'Joined DAP channel #$channel. Channel mail now reaches this agent. '
+          'Storage warning: the invite private key and hub credential are '
+          "stored UNENCRYPTED (plaintext) in this app's sandbox "
+          '(IndexedDB on web).',
+        ),
         findsOneWidget,
       );
     });

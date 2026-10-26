@@ -730,9 +730,14 @@ in the envelope, sanity-bounded at 5 000 000 — a hostile `"iter"` is
 rejected before any KDF work) → ChaCha20-Poly1305, AAD `dapkey1`.
 Plaintext keys exist in memory, in the runtime overlay
 (`~/.dap/runtime/channels.json`, 0600 — ONE stable name per `$HOME`,
-rewritten atomically on every re-seed, never per-pid; deleted on clean
-shutdown where the host has a teardown path, and stale per-pid leftovers
-from older builds are swept at boot), and in the pure-env CI path.
+rewritten atomically on every re-seed, never per-pid). Every normal and
+signal-graceful CLI shutdown calls the hub host's idempotent `dispose()`;
+pid guard files (no secret content) keep the shared overlay while another
+live agent uses it, and the last exiting agent deletes it. Stale guards
+and legacy per-pid overlays from older builds are swept at boot. Embedded
+hosts with their own lifecycle must call `HubPluginHost.dispose()`.
+The pure-env CI path also carries plaintext values in process memory and
+its environment; those values are registered with both redaction systems.
 **Global scope is the deliberate exception** (see the table above): it
 persists the invite keypair PLAINTEXT, byte-equivalent with
 `fa dap import` — the REG-* interop tests pin that equivalence, and the
@@ -773,16 +778,17 @@ DAP_AGENT_NAME=… fa` block into the agent chat composer (a smart-pasted
 composer consumes the paste synchronously — no `sendText`, no analytics,
 no session record — and shows a localized joined/failed status.
 
-Native (macOS/iOS/Android) joins through the SAME hub repository that
-feeds the agent fabric, so inbound channel mail wakes the agent and
+Native joins through the SAME hub repository that feeds the agent
+fabric, so inbound channel mail wakes the agent and
 `agent_message to: "#channel"` answers into the channel. Identity is
 scoped per project (stable across restarts, distinct across working
 directories); invite `pub`/`priv` are imported for private channels,
 public channels join keyless and speak the public showcase payload
 (`base64({"text": …})`, raw UTF-8 tolerated). The enrollment secret goes
-only to the WebSocket `Authorization` header and the dedicated secure
-enrollment store (Keychain/Keystore where available, app-sandboxed JSON
-otherwise) — never to `SecretsExecutionEnv`, model context, or logs.
+only to the WebSocket `Authorization` header and the dedicated
+enrollment store (Keychain/Keystore where available, with the explicitly
+unencrypted fallback below) — never to `SecretsExecutionEnv`, model
+context, or logs.
 Membership is restored on reconnect (rejoin precedes the outbound
 drain). Saving the manual `/settings` connection form clears the invite
 enrollment. One live hub connection per app agent: a new paste replaces
@@ -798,3 +804,26 @@ In the browser EXTENSION the join instead rides the service worker's
 existing DAP client (`hub.join` op + `joined`-ack polling): a
 panel-local socket would evict the worker's presence for the same
 agent, and the worker restores its persisted enrollment itself.
+
+### App enrollment secret storage
+
+Here `<scope>` is the first ten lowercase hex characters of
+`sha256(projectCwd)`, and the app-storage root is
+`ExecutionEnv.appStorageCwd` (never the mounted user project). The record
+name is `fa_dap_enrollment_<scope>`.
+
+| Platform / backend | Exact enrollment location | Secret protection at rest |
+|---|---|---|
+| macOS/iOS with an available Keychain | Keychain item `fa_dap_enrollment_<scope>` (service `fa.app`) | OS Keychain encryption; behavior is unchanged |
+| Android with an available Keystore | `fa_dap_enrollment_<scope>` in the app's Keystore-encrypted preferences | Android Keystore encryption; behavior is unchanged |
+| **Linux and Windows (always)**; also a native platform whose Keychain/Keystore probe is unavailable | `<app-storage-root>/fa_dap_enrollment_<scope>.json` (the application-support sandbox on Linux/Windows) | **PLAINTEXT, unencrypted JSON** |
+| **Plain web (always)** | Sandbox file `/fa_dap_enrollment_<scope>.json`, persisted inside the `sandbox` record of the origin's IndexedDB database **`fah_web_fs`**, object store **`snapshots`** | **PLAINTEXT, unencrypted JSON inside IndexedDB** |
+
+In either fallback, the invite's `priv` and the hub-issued `clientSecret`
+are written verbatim as JSON string fields whenever present; they are not
+ciphertext. App-sandbox or browser-origin isolation does not encrypt them.
+Linux, Windows, and web have no `KeychainStore` backend, so their successful
+composer join result explicitly warns that the invite private key and hub
+credential are stored unencrypted in the app sandbox (IndexedDB on web).
+The browser extension's service-worker-owned enrollment follows its own
+storage path rather than `DapEnrollmentStore`.

@@ -48,10 +48,12 @@ bool interceptDapEnrollmentSubmit(
   String text, {
   required bool supported,
   required DapEnrollmentJoin join,
+  DapEnrollmentStorageProbe? plaintextStorage,
 }) {
   final enrollment = DapEnrollmentService(
     supported: supported,
     join: join,
+    plaintextStorage: plaintextStorage,
   ).startPaste(text);
   if (enrollment == null) return false;
   unawaited(
@@ -60,7 +62,18 @@ bool interceptDapEnrollmentSubmit(
       final l10n = context.l10n;
       switch (result.status) {
         case DapEnrollmentStatus.joined:
-          fa_ui.showFahSnack(context, l10n.dapEnrollmentJoined(result.channel));
+          if (!result.plaintextStorage) {
+            fa_ui.showFahSnack(
+              context,
+              l10n.dapEnrollmentJoined(result.channel),
+            );
+          } else {
+            fa_ui.showFahSnack(
+              context,
+              l10n.dapEnrollmentJoinedPlaintext(result.channel),
+              duration: const Duration(seconds: 8),
+            );
+          }
         case DapEnrollmentStatus.failed:
           fa_ui.showFahErrorSnack(
             context,
@@ -393,6 +406,8 @@ class _ChatScreenState extends State<ChatScreen> {
         text,
         supported: agentNetworkSupported,
         join: (bundle) => widget.service.agentNetwork.joinEnrollment(bundle),
+        plaintextStorage:
+            widget.service.agentNetwork.enrollmentUsesPlaintextStorage,
       );
 
   @override
