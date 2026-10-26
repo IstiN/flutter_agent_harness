@@ -4521,11 +4521,16 @@ jobs:
       # issue. The tag is published and servable now: reclaim this run's
       # twin drafts. Success-path only — a red provenance keeps the draft
       # as the rerun --failed recovery vessel.
+      # Best-effort by design (gh-1899 review): the flip above already
+      # published the release — a cleanup-only API blip here must NOT fail
+      # the provenance job (release-asset-smoke gates on its result and
+      # would silently skip for a release that is actually fine). Warn
+      # and stay green; the 24h sweeper remains the backstop.
       - name: Reclaim orphaned draft twins (gh-1899)
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/release_draft_dedupe.sh "${GITHUB_REF_NAME}"
+        run: bash scripts/release_draft_dedupe.sh "${GITHUB_REF_NAME}" || echo "::warning::gh-1899 twin-draft dedupe failed — the 24h sweeper remains the backstop"
 
   # gh-1832 AC3: post-publish smoke. Probes (1) EVERY releases/(latest/)?
   # download/ URL the fa1.dev landing page exposes (site/index.html) and
