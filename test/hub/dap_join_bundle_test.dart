@@ -8,6 +8,7 @@ import 'package:test/test.dart';
 void main() {
   const url = 'wss://hub.fa1.dev/ws?channel=team';
   const secret = 'name-bound-secret-123';
+  const instance = '0123456789abcdef';
 
   test('bare invite link still parses, no credential', () {
     final bundle = parseDapJoinBundle(url);
@@ -15,17 +16,20 @@ void main() {
     expect(bundle.hubUrl, 'wss://hub.fa1.dev/ws?channel=team');
     expect(bundle.clientSecret, isNull);
     expect(bundle.agentName, isNull);
+    expect(bundle.agentInstance, isNull);
   });
 
   test('the app one-liner: import && env assignments + trailing fa', () {
     final bundle = parseDapJoinBundle(
       "fa dap import '$url' && DAP_HUB_URL=wss://hub.fa1.dev/ws "
-      "DAP_CLIENT_SECRET='$secret' DAP_AGENT_NAME=public-agent fa",
+      "DAP_CLIENT_SECRET='$secret' DAP_AGENT_NAME=public-agent "
+      'DAP_AGENT_INSTANCE=$instance fa',
     );
     expect(bundle.invite.channel, 'team');
     expect(bundle.hubUrl, 'wss://hub.fa1.dev/ws');
     expect(bundle.clientSecret, secret);
     expect(bundle.agentName, 'public-agent');
+    expect(bundle.agentInstance, instance);
   });
 
   test('the multi-line DAP tab block (one assignment per line)', () {
@@ -33,11 +37,13 @@ void main() {
       "fa dap import '$url'\n"
       'DAP_HUB_URL=wss://hub.fa1.dev/ws\n'
       'DAP_CLIENT_SECRET=$secret\n'
-      'DAP_AGENT_NAME=public-agent\n',
+      'DAP_AGENT_NAME=public-agent\n'
+      'DAP_AGENT_INSTANCE=$instance\n',
     );
     expect(bundle.invite.channel, 'team');
     expect(bundle.clientSecret, secret);
     expect(bundle.agentName, 'public-agent');
+    expect(bundle.agentInstance, instance);
   });
 
   test('a bare fa dap import command without env works', () {

@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -2556,6 +2557,10 @@ class AppLocalizationsRu extends AppLocalizations {
       'Только чтение — нажмите, чтобы войти в сеть и писать.';
 
   @override
+  String get networkShowcaseMemberReadOnly =>
+      'Писать в эту витрину могут только владелец и администраторы.';
+
+  @override
   String get networkConnecting => 'Подключение…';
 
   @override
@@ -2612,6 +2617,36 @@ class AppLocalizationsRu extends AppLocalizations {
       'В кошельке нет ключей каналов — агент увидит каналы только после инвайта ключа';
 
   @override
+  String get networkChannelKeyMissing =>
+      'Чтобы читать и писать в этом закрытом канале, на устройстве нужен его ключ.';
+
+  @override
+  String get networkChannelKeyImport => 'Импортировать ключ канала';
+
+  @override
+  String get networkChannelKeyInviteLabel => 'Приглашение с ключом канала';
+
+  @override
+  String get networkChannelKeyImportHint =>
+      'Вставьте приглашение в закрытый канал с устройства, где уже есть ключ.';
+
+  @override
+  String get networkChannelKeyWrongChannel =>
+      'Это приглашение относится к другому каналу.';
+
+  @override
+  String get networkChannelKeyWrongHub =>
+      'Это приглашение относится к другому хабу.';
+
+  @override
+  String get networkChannelKeyMismatch =>
+      'Открытый и закрытый ключи приглашения не соответствуют друг другу.';
+
+  @override
+  String get networkChannelKeyImportFailed =>
+      'Не удалось импортировать ключ канала. Повторите попытку.';
+
+  @override
   String get networkAddAgentScopeChannel => 'Этот канал';
 
   @override
@@ -2657,7 +2692,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkAddAgentEnrollHint =>
-      'Выдача создаёт уникальный отзываемый секрет — он показывается ОДИН раз: скопируйте его сейчас. Повторная выдача с тем же именем меняет секрет.';
+      'Выдача создаёт независимый отзываемый секрет: агенты с одинаковым именем могут подключаться одновременно. Секрет показывается ОДИН раз: скопируйте его сейчас.';
 
   @override
   String get networkAddAgentEnrollNeedSignIn =>

@@ -10,12 +10,14 @@ DapChannelMembership m(
   DapChannelScope scope, {
   String hub = 'wss://hub.fa1.dev/ws',
   String? priv,
+  String? agentInstance,
 }) => DapChannelMembership(
   hubUrl: hub,
   channelId: channel,
   scope: scope,
   joinedAt: DateTime.utc(2026, 10, 24),
   priv: priv,
+  agentInstance: agentInstance,
 );
 
 void main() {
@@ -25,6 +27,7 @@ void main() {
         'team',
         DapChannelScope.project,
         priv: 'k',
+        agentInstance: '0123456789abcdef',
       ).copyWithPub('p');
       final restored = DapChannelMembership.fromJson(original.toJson());
       expect(restored.hubUrl, original.hubUrl);
@@ -33,6 +36,7 @@ void main() {
       expect(restored.joinedAt, original.joinedAt);
       expect(restored.pub, 'p');
       expect(restored.priv, 'k');
+      expect(restored.agentInstance, '0123456789abcdef');
     });
 
     test('keyless (public channel) round-trip omits keys', () {
@@ -41,7 +45,9 @@ void main() {
       );
       expect(restored.pub, isNull);
       expect(restored.priv, isNull);
+      expect(restored.agentInstance, isNull);
       expect(restored.toJson().containsKey('priv'), isFalse);
+      expect(restored.toJson().containsKey('agentInstance'), isFalse);
     });
 
     test('malformed records fail loudly', () {
@@ -136,5 +142,6 @@ extension on DapChannelMembership {
     joinedAt: joinedAt,
     pub: pub,
     priv: priv,
+    agentInstance: agentInstance,
   );
 }

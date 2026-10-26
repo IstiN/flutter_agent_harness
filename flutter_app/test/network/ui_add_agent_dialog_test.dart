@@ -32,6 +32,17 @@ Future<NetworkSessionManager> buildManager({
 );
 
 void main() {
+  group('dapAgentInstance', () {
+    test('is deterministic, lowercase SHA-256 prefix, and secret-specific', () {
+      const expected = '4ee4ebd649acee94';
+      expect(dapAgentInstance('sk_enroll_123'), expected);
+      expect(dapAgentInstance('sk_enroll_123'), expected);
+      expect(dapAgentInstance('sk_enroll_456'), '0f266ef261130bd4');
+      expect(dapAgentInstance('sk_enroll_456'), isNot(expected));
+      expect(expected, matches(RegExp(r'^[0-9a-f]{16}$')));
+    });
+  });
+
   _registerNetworkScopeGroup();
   group('AddAgentDialog', () {
     late ({String pub, String priv}) channelKeys;
@@ -83,9 +94,7 @@ void main() {
       ]);
       expect(formats.selected, {AgentInviteFormat.dap});
       expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey('inviteDapHint')))
-            .data,
+        tester.widget<Text>(find.byKey(const ValueKey('inviteDapHint'))).data,
         'Copy this block and paste it into the fa chat (CLI, macOS, iOS or '
         'web) — the agent joins the channel automatically.',
       );
@@ -548,7 +557,7 @@ void _registerNetworkScopeGroup() {
       // The management call: JWT bearer + the agent name.
       final req = http.requests.single;
       expect(req.method, 'POST');
-      expect(req.url.path, '/api/networks/net1/agents/enroll');
+      expect(req.url.path, '/api/networks/net1/agents/enrollments');
       expect(req.headers['authorization'], 'Bearer jwt-1');
       expect(jsonDecode(req.body), {'name': 'general-agent'});
 
@@ -574,6 +583,14 @@ void _registerNetworkScopeGroup() {
             .data,
         'DAP_AGENT_NAME=general-agent',
       );
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('envRow:DAP_AGENT_INSTANCE')),
+            )
+            .data,
+        'DAP_AGENT_INSTANCE=4ee4ebd649acee94',
+      );
       // The hub master secret is gone from this UI entirely.
       expect(
         find.byKey(const ValueKey('envRow:DAP_MASTER_SECRET')),
@@ -587,7 +604,9 @@ void _registerNetworkScopeGroup() {
       expect(payload, startsWith("fa dap import 'wss://hub.fa1.dev/ws"));
       expect(payload, contains(' && DAP_HUB_URL=wss://hub.fa1.dev/ws'));
       expect(payload, contains("DAP_CLIENT_SECRET='sk_enroll_123'"));
-      expect(payload, contains('DAP_AGENT_NAME=general-agent fa'));
+      expect(payload, contains('DAP_AGENT_NAME=general-agent'));
+      expect(payload, contains('DAP_AGENT_INSTANCE=4ee4ebd649acee94'));
+      expect(payload, endsWith(' fa'));
 
       // Row-level copy puts the bare key=value on the clipboard.
       final secretCopy = find.byKey(
@@ -815,7 +834,9 @@ void _registerNetworkScopeGroup() {
         expect(payload, isNot(contains('channel=c3')));
         expect(payload, contains(' && DAP_HUB_URL=wss://hub.fa1.dev/ws'));
         expect(payload, contains("DAP_CLIENT_SECRET='sk_enroll_456'"));
-        expect(payload, contains('DAP_AGENT_NAME=fa-agent fa'));
+        expect(payload, contains('DAP_AGENT_NAME=fa-agent'));
+        expect(payload, contains('DAP_AGENT_INSTANCE=0f266ef261130bd4'));
+        expect(payload, endsWith(' fa'));
         await rig.session.close();
       });
 

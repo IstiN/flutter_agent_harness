@@ -34,6 +34,7 @@ final class DapChannelMembership {
     this.pub,
     this.priv,
     this.agentName,
+    this.agentInstance,
     this.hubClientSecret,
   });
 
@@ -61,6 +62,12 @@ final class DapChannelMembership {
   /// (the app's DAP enrollment mints name-bound secrets).
   final String? agentName;
 
+  /// Optional NON-SECRET scoped-identity discriminator. Session/project
+  /// records persist it so reconnect selects the same instance-specific
+  /// Ed25519 key; records from older builds have null and keep legacy
+  /// project-derived identity behavior.
+  final String? agentInstance;
+
   /// The hub-issued client secret for [hubUrl] — REQUIRED on hubs that
   /// reject the machine's default credential (a secret enrolled on one
   /// hub is not valid on another). At rest a `dapkey1.` envelope, like
@@ -80,6 +87,7 @@ final class DapChannelMembership {
         pub: pub,
         priv: priv,
         agentName: agentName,
+        agentInstance: agentInstance,
         hubClientSecret: hubClientSecret,
       );
 
@@ -93,6 +101,7 @@ final class DapChannelMembership {
     if (pub != null) 'pub': pub,
     if (priv != null) 'priv': priv,
     if (agentName != null) 'agentName': agentName,
+    if (agentInstance != null) 'agentInstance': agentInstance,
     if (hubClientSecret != null) 'hubClientSecret': hubClientSecret,
   };
 
@@ -125,6 +134,7 @@ final class DapChannelMembership {
       pub: json['pub'] as String?,
       priv: json['priv'] as String?,
       agentName: json['agentName'] as String?,
+      agentInstance: json['agentInstance'] as String?,
       hubClientSecret: json['hubClientSecret'] as String?,
     );
   }

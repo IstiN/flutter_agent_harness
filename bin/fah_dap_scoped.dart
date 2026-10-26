@@ -615,6 +615,7 @@ final class DapScopedMemberships {
           pub: m.pub,
           priv: m.priv != null ? await _runtimePriv(m) : _memoryOnlyKeys[m.key],
           agentName: m.agentName,
+          agentInstance: m.agentInstance,
           hubClientSecret: m.hubClientSecret != null
               ? await _runtimeSecret(m, m.hubClientSecret)
               : _memoryOnlySecrets[m.key],
@@ -625,8 +626,8 @@ final class DapScopedMemberships {
   /// The membership the LIVE boot connection should dial, decrypted
   /// credentials included: same rule as [preferredBootHub] (only when
   /// the configured hub is the zero-config local default), but carries
-  /// the enrolled agent name + hub client secret so a name-bound
-  /// credential actually authenticates after a restart.
+  /// the enrolled agent name + instance + hub client secret so the same
+  /// name-bound credential and Ed25519 identity return after a restart.
   Future<DapChannelMembership?> preferredBootMembership() async {
     final effective = await runtimeEffective();
     if (effective.isEmpty) return null;
@@ -656,6 +657,7 @@ final class DapScopedMemberships {
     DapInviteImport invite,
     DapChannelScope scope, {
     String? agentName,
+    String? agentInstance,
     String? hubClientSecret,
   }) async {
     final membership = DapChannelMembership(
@@ -666,6 +668,7 @@ final class DapScopedMemberships {
       pub: invite.pub,
       priv: invite.priv,
       agentName: agentName,
+      agentInstance: agentInstance,
       hubClientSecret: hubClientSecret,
     );
     final outcome = scope == DapChannelScope.global
@@ -742,6 +745,7 @@ final class DapScopedMemberships {
       pub: membership.pub,
       priv: secrets.priv,
       agentName: membership.agentName,
+      agentInstance: membership.agentInstance,
       hubClientSecret: secrets.hubClientSecret,
     );
     await _persistScopedJoin(stored);
@@ -932,17 +936,25 @@ final class DapScopedMemberships {
 /// connection of an agent id: two projects enrolled as `public-agent`
 /// kept kicking each other offline — inbound arrived only right after a
 /// reconnect, sends reported "hub is not connected yet" (gh-1825).
-/// Scoped identities are therefore per PROJECT: stable across restarts
-/// (offline mailbox preserved), distinct across working directories. An
-/// explicit `DAP_KEY_PATH` / `hub.keyPath` is respected verbatim.
+/// By default scoped identities are therefore per PROJECT: stable across
+/// restarts (offline mailbox preserved), distinct across working directories.
+/// A nonempty [instanceId] replaces the project input with a stable,
+/// project-independent identity discriminator, allowing independent agents
+/// with the same display name to stay connected simultaneously. Null/empty
+/// preserves the legacy path byte-for-byte. An explicit `DAP_KEY_PATH` /
+/// `hub.keyPath` is always respected verbatim.
 String scopedIdentityKeyPath({
   required String defaultKeyPath,
   required bool explicitKeyPath,
   required String projectCwd,
+  String? instanceId,
 }) {
   if (explicitKeyPath) return defaultKeyPath;
+  final identityScope = instanceId == null || instanceId.isEmpty
+      ? projectCwd
+      : instanceId;
   final digest = sha256
-      .convert(utf8.encode(projectCwd))
+      .convert(utf8.encode(identityScope))
       .toString()
       .substring(0, 10);
   return defaultKeyPath.endsWith('.key')

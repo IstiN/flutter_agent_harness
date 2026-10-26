@@ -548,6 +548,53 @@ void main() {
       });
     });
 
+    test('createAgentCredential posts to enrollments without rotating the '
+        'legacy name credential', () async {
+      client = build(jwtToken: 'jwt-1', sessionToken: 'sess-1');
+      httpClient.respond(
+        201,
+        body:
+            '{"name":"ops-bot","hubUrl":"wss://hub.fa1.dev/ws",'
+            '"clientSecret":"sk_independent_123",'
+            '"enrolledAt":"2026-02-03T04:05:06Z"}',
+      );
+
+      final enrollment = await client.createAgentCredential(
+        'net1',
+        name: 'ops-bot',
+      );
+
+      expect(enrollment.name, 'ops-bot');
+      expect(enrollment.clientSecret, 'sk_independent_123');
+      final req = httpClient.requests.single;
+      expect(req.method, 'POST');
+      expect(req.url.path, '/api/networks/net1/agents/enrollments');
+      expect(jsonDecode(req.body), {'name': 'ops-bot'});
+      expect(req.headers['authorization'], 'Bearer jwt-1');
+    });
+
+    test('createAgentCredential surfaces old-server 405 without a legacy '
+        'rotation fallback', () async {
+      client = build(jwtToken: 'jwt-1');
+      httpClient.respond(405);
+
+      await expectLater(
+        client.createAgentCredential('net1', name: 'ops-bot'),
+        throwsA(
+          isA<FaNetworkException>().having(
+            (e) => e.statusCode,
+            'statusCode',
+            405,
+          ),
+        ),
+      );
+      expect(httpClient.requests, hasLength(1));
+      expect(
+        httpClient.requests.single.url.path,
+        '/api/networks/net1/agents/enrollments',
+      );
+    });
+
     test('getWakeup parses the registration', () async {
       httpClient.respond(
         200,

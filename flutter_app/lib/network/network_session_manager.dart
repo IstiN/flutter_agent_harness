@@ -363,6 +363,15 @@ final class NetworkSessionManager extends ChangeNotifier {
     return _newClient().enrollAgent(networkId, name: name);
   }
 
+  /// Creates an additional independent credential for a pure-DAP agent in
+  /// [networkId] under [name] (owner/admin JWT required). Existing credentials
+  /// for the same display name remain valid; the new secret is shown once.
+  Future<AgentEnrollment> createAgentCredential(String networkId, String name) {
+    final jwt = _jwt;
+    if (jwt == null || jwt.isEmpty) throw StateError('not signed in');
+    return _newClient().createAgentCredential(networkId, name: name);
+  }
+
   /// Creates a network (management route — requires a JWT); the caller
   /// becomes owner and is joined immediately with the one-time join
   /// credentials. When [isPublic] the network is then listed in the

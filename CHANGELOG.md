@@ -13,6 +13,11 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1825): DAP agent enrollments carry a stable, independent
+  `agentInstance` through app/CLI bundles, persistence, direct boot and
+  reconnect. Independent same-name agents keep distinct identities and stay
+  online together, while legacy bundles retain their project-scoped identity.
+
 - feat(gh-1825): DAP private-channel sends now use self-describing
   `fanet1` frames (sender X25519 key in the frame, channel-bound AAD) via
   `fa_hub_client` 0.2.11, so fa_network app members decrypt them without
