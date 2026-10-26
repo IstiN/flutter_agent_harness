@@ -360,7 +360,9 @@ void main() {
     await host.dispose();
 
     // A later register() on the same host (embedded-host lifecycle) must
-    // NOT reseed the plaintext overlay for an already-disposed host.
+    // NOT reseed the plaintext overlay for an already-disposed host. The
+    // guard short-circuits the whole boot, so the overlay must not appear
+    // even after a bounded window (pre-fix it was seeded within ms).
     host.register(
       PluginContext(
         env: MemoryExecutionEnv(cwd: home.path),
@@ -370,11 +372,14 @@ void main() {
         ],
       ),
     );
-    await _waitUntil(() async => plugin.startCalls > 0);
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-
     final overlay = File('${home.path}/.dap/runtime/channels.json');
-    expect(await overlay.exists(), isFalse);
+    var overlayAppeared = true;
+    try {
+      await _waitUntil(() async => overlay.exists());
+    } on StateError {
+      overlayAppeared = false; // bounded window elapsed without a seed
+    }
+    expect(overlayAppeared, isFalse);
 
     // The early no-op dispose must have re-armed: a later dispose runs
     // the real cleanup path and completes without throwing.
