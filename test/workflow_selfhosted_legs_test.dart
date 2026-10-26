@@ -128,10 +128,9 @@ void main() {
       // box, correctly label-free of macOS) and the `[self-hosted,
       // macos-m5]` pins; `macos-latest` (GitHub-hosted) does not match the
       // case-sensitive `macOS`/`ARM64` check.
-      final workflows = Directory('.github/workflows')
-          .listSync()
-          .where((f) => f.path.endsWith('.yml'))
-          .toList();
+      final workflows = Directory(
+        '.github/workflows',
+      ).listSync().where((f) => f.path.endsWith('.yml')).toList();
       expect(workflows, isNotEmpty);
       for (final f in workflows) {
         final jobs = jobsOf(f.path);
@@ -152,63 +151,65 @@ void main() {
       }
     });
 
-    test('audit: matrix-defined runners never carry the generic macOS/ARM64 labels', () {
-      // gh-1600 rework round 2 (review thread): the job-level runs-on
-      // audit above reads only the parsed string — jobs routed through a
-      // matrix escape it (`runs-on: \${{ matrix.runner }}` resolves at
-      // runtime), so a future `strategy.matrix` value of
-      // `[self-hosted, macOS, ARM64]` would sail past the audit and
-      // re-route a macOS-shaped job onto the Linux box. Walk every
-      // strategy.matrix subtree and assert no scalar value (string or
-      // list item) carries the generic labels. A raw-text scan is NOT
-      // usable here: comments and display names legitimately contain
-      // `macOS` (e.g. build-macos.yml's `name: Build macOS Release (Fa)`
-      // and the gh-1600 F-A comment) — only parsed YAML values are
-      // semantically runner labels.
-      List<String> matrixScalars(Object? node) {
-        final out = <String>[];
-        void walk(Object? n) {
-          if (n is YamlMap) {
-            n.forEach((_, v) => walk(v));
-          } else if (n is YamlList) {
-            for (final v in n) {
-              walk(v);
+    test(
+      'audit: matrix-defined runners never carry the generic macOS/ARM64 labels',
+      () {
+        // gh-1600 rework round 2 (review thread): the job-level runs-on
+        // audit above reads only the parsed string — jobs routed through a
+        // matrix escape it (`runs-on: \${{ matrix.runner }}` resolves at
+        // runtime), so a future `strategy.matrix` value of
+        // `[self-hosted, macOS, ARM64]` would sail past the audit and
+        // re-route a macOS-shaped job onto the Linux box. Walk every
+        // strategy.matrix subtree and assert no scalar value (string or
+        // list item) carries the generic labels. A raw-text scan is NOT
+        // usable here: comments and display names legitimately contain
+        // `macOS` (e.g. build-macos.yml's `name: Build macOS Release (Fa)`
+        // and the gh-1600 F-A comment) — only parsed YAML values are
+        // semantically runner labels.
+        List<String> matrixScalars(Object? node) {
+          final out = <String>[];
+          void walk(Object? n) {
+            if (n is YamlMap) {
+              n.forEach((_, v) => walk(v));
+            } else if (n is YamlList) {
+              for (final v in n) {
+                walk(v);
+              }
+            } else if (n != null) {
+              out.add(n.toString());
             }
-          } else if (n != null) {
-            out.add(n.toString());
           }
+
+          walk(node);
+          return out;
         }
 
-        walk(node);
-        return out;
-      }
-
-      final workflows = Directory('.github/workflows')
-          .listSync()
-          .where((f) => f.path.endsWith('.yml'))
-          .toList();
-      for (final f in workflows) {
-        final jobs = jobsOf(f.path);
-        for (final e in jobs.entries) {
-          final strategy = (e.value as YamlMap)['strategy'];
-          if (strategy is! YamlMap) continue; // e.g. an expression string
-          final matrix = strategy['matrix'];
-          if (matrix is! YamlMap) continue;
-          for (final scalar in matrixScalars(matrix)) {
-            expect(
-              scalar.contains('macOS') || scalar.contains('ARM64'),
-              isFalse,
-              reason:
-                  '${f.path} job "${e.key}" strategy.matrix carries '
-                  '`$scalar` with the generic `macOS`/`ARM64` labels — a '
-                  'matrix-routed job escapes the job-level runs-on '
-                  'audit, and the Linux self-hosted box also satisfies '
-                  'those labels (gh-1600 F-A class).',
-            );
+        final workflows = Directory(
+          '.github/workflows',
+        ).listSync().where((f) => f.path.endsWith('.yml')).toList();
+        for (final f in workflows) {
+          final jobs = jobsOf(f.path);
+          for (final e in jobs.entries) {
+            final strategy = (e.value as YamlMap)['strategy'];
+            if (strategy is! YamlMap) continue; // e.g. an expression string
+            final matrix = strategy['matrix'];
+            if (matrix is! YamlMap) continue;
+            for (final scalar in matrixScalars(matrix)) {
+              expect(
+                scalar.contains('macOS') || scalar.contains('ARM64'),
+                isFalse,
+                reason:
+                    '${f.path} job "${e.key}" strategy.matrix carries '
+                    '`$scalar` with the generic `macOS`/`ARM64` labels — a '
+                    'matrix-routed job escapes the job-level runs-on '
+                    'audit, and the Linux self-hosted box also satisfies '
+                    'those labels (gh-1600 F-A class).',
+              );
+            }
           }
         }
-      }
-    });
+      },
+    );
 
     test('audit: no workflow anywhere pins an fa-m5-* runner-name label', () {
       // gh-1906: the iOS legs queued forever because the label set
@@ -220,10 +221,9 @@ void main() {
       // with a repo-wide audit — same shape as the gh-1600 macOS/ARM64
       // ban: parsed YAML job-level `runs-on` values AND strategy.matrix
       // scalars (a `${{ matrix.runner }}` route escapes the former).
-      final workflows = Directory('.github/workflows')
-          .listSync()
-          .where((f) => f.path.endsWith('.yml'))
-          .toList();
+      final workflows = Directory(
+        '.github/workflows',
+      ).listSync().where((f) => f.path.endsWith('.yml')).toList();
       expect(workflows, isNotEmpty);
 
       List<String> matrixScalars(Object? node) {
@@ -303,219 +303,229 @@ void main() {
     final harbor = read('.github/workflows/bench-harbor.yml');
     final harborJobs = jobsOf('.github/workflows/bench-harbor.yml');
 
-    test('harbor run writes its job output under \$RUNNER_TEMP, not the workspace', () {
-      final run = (harborJobs['bench'] as YamlMap)['steps'] as YamlList;
-      final harborRun = run
-          .whereType<YamlMap>()
-          .firstWhere((s) => (s['run']?.toString() ?? '').contains('harbor run'));
-      final script = harborRun['run'].toString();
-      expect(
-        script,
-        contains(r'-o "${RUNNER_TEMP:-/tmp}/bench/jobs"'),
-        reason:
-            'the harbor output dir must live OUTSIDE \$GITHUB_WORKSPACE — '
-            '`-o jobs` parked jobs/fa-<family>-<env>-<kind>-<shard>/ in the '
-            'persistent shared workspace and the next mobile build\'s clean '
-            'choked on the docker-held leftovers (gh-1600). The '
-            '`\${RUNNER_TEMP:-/tmp}` fallback form keeps the step alive '
-            'under `set -u` when the var is absent (same hardening as the '
-            'teardown step).',
-      );
-      expect(
-        script.contains('-o jobs'),
-        isFalse,
-        reason: 'no bare workspace-relative `-o jobs` may remain (gh-1600)',
-      );
-      // gh-1600 × gh-1658 merge invariant: the zero-trial retry gate and
-      // the attempt move-aside operate on the SAME out-of-workspace dir
-      // as the harbor -o output — a workspace-relative retry path would
-      // reintroduce the docker-held leftovers class.
-      expect(
-        script,
-        contains(r'trials_started()'),
-        reason:
-            'the gh-1658 zero-trial inline retry must survive the merge '
-            '(gh-1600 AC2 keeps its paths out-of-workspace)',
-      );
-      expect(
-        script.contains(r'"jobs/$JOB_NAME"'),
-        isFalse,
-        reason:
-            'no workspace-relative retry path (`jobs/\$JOB_NAME`) may '
-            'remain — the gate and the move-aside must work on the '
-            'out-of-workspace bench output (gh-1600 AC2)',
-      );
-      expect(
-        script,
-        contains(r'mv "${RUNNER_TEMP:-/tmp}/bench/jobs/$JOB_NAME"'),
-        reason:
-            'the zero-trial attempt move-aside must park the failed '
-            'attempt under the same out-of-workspace dir (gh-1600 AC2 '
-            '× gh-1658 C1)',
-      );
-    });
+    test(
+      'harbor run writes its job output under \$RUNNER_TEMP, not the workspace',
+      () {
+        final run = (harborJobs['bench'] as YamlMap)['steps'] as YamlList;
+        final harborRun = run.whereType<YamlMap>().firstWhere(
+          (s) => (s['run']?.toString() ?? '').contains('harbor run'),
+        );
+        final script = harborRun['run'].toString();
+        expect(
+          script,
+          contains(r'-o "${RUNNER_TEMP:-/tmp}/bench/jobs"'),
+          reason:
+              'the harbor output dir must live OUTSIDE \$GITHUB_WORKSPACE — '
+              '`-o jobs` parked jobs/fa-<family>-<env>-<kind>-<shard>/ in the '
+              'persistent shared workspace and the next mobile build\'s clean '
+              'choked on the docker-held leftovers (gh-1600). The '
+              '`\${RUNNER_TEMP:-/tmp}` fallback form keeps the step alive '
+              'under `set -u` when the var is absent (same hardening as the '
+              'teardown step).',
+        );
+        expect(
+          script.contains('-o jobs'),
+          isFalse,
+          reason: 'no bare workspace-relative `-o jobs` may remain (gh-1600)',
+        );
+        // gh-1600 × gh-1658 merge invariant: the zero-trial retry gate and
+        // the attempt move-aside operate on the SAME out-of-workspace dir
+        // as the harbor -o output — a workspace-relative retry path would
+        // reintroduce the docker-held leftovers class.
+        expect(
+          script,
+          contains(r'trials_started()'),
+          reason:
+              'the gh-1658 zero-trial inline retry must survive the merge '
+              '(gh-1600 AC2 keeps its paths out-of-workspace)',
+        );
+        expect(
+          script.contains(r'"jobs/$JOB_NAME"'),
+          isFalse,
+          reason:
+              'no workspace-relative retry path (`jobs/\$JOB_NAME`) may '
+              'remain — the gate and the move-aside must work on the '
+              'out-of-workspace bench output (gh-1600 AC2)',
+        );
+        expect(
+          script,
+          contains(r'mv "${RUNNER_TEMP:-/tmp}/bench/jobs/$JOB_NAME"'),
+          reason:
+              'the zero-trial attempt move-aside must park the failed '
+              'attempt under the same out-of-workspace dir (gh-1600 AC2 '
+              '× gh-1658 C1)',
+        );
+      },
+    );
 
-    test('artifact + Harbor Hub uploads follow the out-of-workspace output', () {
-      expect(
-        harbor,
-        contains('path: \${{ runner.temp }}/bench/jobs/'),
-        reason:
-            'the harbor-job artifact upload must point at '
-            '\$RUNNER_TEMP/bench/jobs — the workspace `jobs/` dir no longer '
-            'exists (gh-1600)',
-      );
-      expect(
-        harbor,
-        contains(r'for job_dir in "$RUNNER_TEMP/bench/jobs"/fa-'),
-        reason:
-            'the Harbor Hub upload loop must iterate the '
-            '\$RUNNER_TEMP/bench/jobs output, not a workspace `jobs/` dir '
-            '(gh-1600)',
-      );
-    });
+    test(
+      'artifact + Harbor Hub uploads follow the out-of-workspace output',
+      () {
+        expect(
+          harbor,
+          contains('path: \${{ runner.temp }}/bench/jobs/'),
+          reason:
+              'the harbor-job artifact upload must point at '
+              '\$RUNNER_TEMP/bench/jobs — the workspace `jobs/` dir no longer '
+              'exists (gh-1600)',
+        );
+        expect(
+          harbor,
+          contains(r'for job_dir in "$RUNNER_TEMP/bench/jobs"/fa-'),
+          reason:
+              'the Harbor Hub upload loop must iterate the '
+              '\$RUNNER_TEMP/bench/jobs output, not a workspace `jobs/` dir '
+              '(gh-1600)',
+        );
+      },
+    );
 
-    test('bench job tears its docker containers down before removing the output', () {
-      final steps = (harborJobs['bench'] as YamlMap)['steps'] as YamlList;
-      final cleanup = steps.whereType<YamlMap>().firstWhere(
-            (s) =>
-                (s['run']?.toString() ?? '').contains('docker rm -f') &&
-                (s['if']?.toString() ?? '') == 'always()',
-            orElse: () => throw TestFailure(
-              'bench-harbor bench job has no always-run cleanup step that '
-              'tears the shard docker containers down (gh-1600 AC2: a '
-              'cancelled shard must not leave bind-mounted leftovers behind)',
-            ),
-          );
-      final script = cleanup['run'].toString();
-      final dockerDown = script.indexOf('docker rm -f');
-      final dirRm = script.indexOf('rm -rf');
-      expect(dockerDown, greaterThan(-1));
-      expect(
-        dirRm,
-        greaterThan(dockerDown),
-        reason:
-            'the output-dir rm must come AFTER the docker teardown — the '
-            'containers hold the trial dirs and any earlier rm fails on the '
-            'live mounts (gh-1600)',
-      );
-      // The cleanup step references \$FAMILY (job env) and \$ENV_TYPE — but
-      // ENV_TYPE is only step-scoped to the harbor-run step. Without its own
-      // copy `set -u` kills the step ("ENV_TYPE: unbound variable") and the
-      // always() step fails the whole bench job.
-      expect(
-        (cleanup['env'] as YamlMap?)?.containsKey('ENV_TYPE') ?? false,
-        isTrue,
-        reason:
-            'the cleanup step must declare ENV_TYPE: \${{ matrix.env }} — '
-            'it is not in scope from the harbor-run step (gh-1600: a '
-            'set -u unbound-variable crash in an always() step fails the '
-            'job)',
-      );
-      // gh-1600 rework round 2 (BLOCKING review thread, re-opened): the
-      // round-1 guard keyed on `com.docker.compose.project.working_dir`,
-      // but harbor 0.23.0 runs compose with
-      // `--project-directory <task_cache>/environment` and the task cache
-      // lives in ~/.cache/harbor/tasks/packages/... (shared across ALL
-      // shards and bench runs) — never under $RUNNER_TEMP/bench. What IS
-      // under the bench output: the trial dirs (job.py trials_dir =
-      // job_dir under the -o dir) bind-mounted into the containers as
-      // /logs/* — so the container's .Mounts[].Source is the harbor-side
-      // path that actually lives under the bench output. The guard must
-      // inspect the mount Sources and prefix-match them against
-      // "$RUNNER_TEMP/bench"/*; anything else (name filter, working_dir
-      // label) selects zero containers and cancelled shards keep leaking.
-      expect(
-        script.contains('--filter "name='),
-        isFalse,
-        reason:
-            'harbor 0.23.0 names trial containers '
-            '`{task}__{random}__env-main-1` — a docker name filter can '
-            'never match them, so the teardown is a silent no-op and '
-            'cancelled shards leak live containers on the persistent box '
-            '(gh-1600 rework)',
-      );
-      expect(
-        script.contains('com.docker.compose.project.working_dir'),
-        isFalse,
-        reason:
-            'harbor 0.23.0 puts the compose project directory in the '
-            'shared task cache (~/.cache/harbor/tasks/packages/...), NOT '
-            'under \$RUNNER_TEMP/bench — a working_dir guard still matches '
-            'zero containers (gh-1600 rework round 2)',
-      );
-      expect(
-        script,
-        contains('label=com.docker.compose.project'),
-        reason:
-            'the teardown must select containers by the compose project '
-            'label, not by name (gh-1600 rework)',
-      );
-      expect(
-        script,
-        contains(r'{{range .Mounts}}{{.Source}} {{end}}'),
-        reason:
-            'the bench-bound path on a harbor trial container is its '
-            'bind-mount Source (the trial dirs under the -o output), not '
-            'the compose project dir (gh-1600 rework round 2)',
-      );
-      expect(
-        script,
-        contains(r'"${RUNNER_TEMP:-/tmp}/bench"/*'),
-        reason:
-            'the mount-source match must be anchored to the shard\'s own '
-            'out-of-workspace bench output — mount Sources embed the '
-            'per-registration _temp path, so another workflow\'s or '
-            'another registration\'s live containers are never touched; '
-            'the pattern uses the \${RUNNER_TEMP:-/tmp} fallback like the '
-            'final rm -rf (gh-1600 rework rounds 2+3)',
-      );
-      // gh-1600 rework round 3 (APPROVE review, suggestion): the step runs
-      // under `set -u` and the final `rm -rf` guards with
-      // "${RUNNER_TEMP:-/tmp}/bench" — but the mount-source `case` pattern,
-      // the "tore down" summary echo, and the unremovable-dir warning echo
-      // expanded bare $RUNNER_TEMP. If the var is ever absent (a
-      // misconfigured/ephemeral runner, a local `act` run) the always()
-      // cleanup hard-fails on an unbound variable — exactly the failure
-      // mode this step's best-effort design exists to avoid. Every
-      // $RUNNER_TEMP expansion in this step must carry the :-/tmp fallback.
-      // Full-line comments are skipped — bash never expands them, so a
-      // bare $RUNNER_TEMP in prose cannot trip set -u.
-      final codeOnly = script
-          .split('\n')
-          .where((l) => !l.trimLeft().startsWith('#'))
-          .join('\n');
-      var bareIdx = -1;
-      var hasBareRunnerTemp = false;
-      while ((bareIdx = codeOnly.indexOf(r'$RUNNER_TEMP', bareIdx + 1)) != -1) {
-        final next = bareIdx + r'$RUNNER_TEMP'.length < codeOnly.length
-            ? codeOnly[bareIdx + r'$RUNNER_TEMP'.length]
-            : '';
-        if (next != ':') hasBareRunnerTemp = true;
-      }
-      expect(
-        hasBareRunnerTemp,
-        isFalse,
-        reason:
-            'every \$RUNNER_TEMP expansion in the always() cleanup must use '
-            'the \${RUNNER_TEMP:-/tmp} fallback — a bare expansion under '
-            'set -u hard-fails the step when the var is absent (gh-1600 '
-            'rework round 3)',
-      );
-      expect(
-        script,
-        contains(r'"${RUNNER_TEMP:-/tmp}/bench"/*'),
-        reason:
-            'the mount-source case pattern must use the \${RUNNER_TEMP:-'
-            '/tmp} fallback like the final rm -rf (gh-1600 rework round 3)',
-      );
-      expect(
-        script,
-        contains(r'bound to ${RUNNER_TEMP:-/tmp}/bench'),
-        reason:
-            'the "tore down" summary echo must use the \${RUNNER_TEMP:-'
-            '/tmp} fallback like the final rm -rf (gh-1600 rework round 3)',
-      );
-    });
+    test(
+      'bench job tears its docker containers down before removing the output',
+      () {
+        final steps = (harborJobs['bench'] as YamlMap)['steps'] as YamlList;
+        final cleanup = steps.whereType<YamlMap>().firstWhere(
+          (s) =>
+              (s['run']?.toString() ?? '').contains('docker rm -f') &&
+              (s['if']?.toString() ?? '') == 'always()',
+          orElse: () => throw TestFailure(
+            'bench-harbor bench job has no always-run cleanup step that '
+            'tears the shard docker containers down (gh-1600 AC2: a '
+            'cancelled shard must not leave bind-mounted leftovers behind)',
+          ),
+        );
+        final script = cleanup['run'].toString();
+        final dockerDown = script.indexOf('docker rm -f');
+        final dirRm = script.indexOf('rm -rf');
+        expect(dockerDown, greaterThan(-1));
+        expect(
+          dirRm,
+          greaterThan(dockerDown),
+          reason:
+              'the output-dir rm must come AFTER the docker teardown — the '
+              'containers hold the trial dirs and any earlier rm fails on the '
+              'live mounts (gh-1600)',
+        );
+        // The cleanup step references \$FAMILY (job env) and \$ENV_TYPE — but
+        // ENV_TYPE is only step-scoped to the harbor-run step. Without its own
+        // copy `set -u` kills the step ("ENV_TYPE: unbound variable") and the
+        // always() step fails the whole bench job.
+        expect(
+          (cleanup['env'] as YamlMap?)?.containsKey('ENV_TYPE') ?? false,
+          isTrue,
+          reason:
+              'the cleanup step must declare ENV_TYPE: \${{ matrix.env }} — '
+              'it is not in scope from the harbor-run step (gh-1600: a '
+              'set -u unbound-variable crash in an always() step fails the '
+              'job)',
+        );
+        // gh-1600 rework round 2 (BLOCKING review thread, re-opened): the
+        // round-1 guard keyed on `com.docker.compose.project.working_dir`,
+        // but harbor 0.23.0 runs compose with
+        // `--project-directory <task_cache>/environment` and the task cache
+        // lives in ~/.cache/harbor/tasks/packages/... (shared across ALL
+        // shards and bench runs) — never under $RUNNER_TEMP/bench. What IS
+        // under the bench output: the trial dirs (job.py trials_dir =
+        // job_dir under the -o dir) bind-mounted into the containers as
+        // /logs/* — so the container's .Mounts[].Source is the harbor-side
+        // path that actually lives under the bench output. The guard must
+        // inspect the mount Sources and prefix-match them against
+        // "$RUNNER_TEMP/bench"/*; anything else (name filter, working_dir
+        // label) selects zero containers and cancelled shards keep leaking.
+        expect(
+          script.contains('--filter "name='),
+          isFalse,
+          reason:
+              'harbor 0.23.0 names trial containers '
+              '`{task}__{random}__env-main-1` — a docker name filter can '
+              'never match them, so the teardown is a silent no-op and '
+              'cancelled shards leak live containers on the persistent box '
+              '(gh-1600 rework)',
+        );
+        expect(
+          script.contains('com.docker.compose.project.working_dir'),
+          isFalse,
+          reason:
+              'harbor 0.23.0 puts the compose project directory in the '
+              'shared task cache (~/.cache/harbor/tasks/packages/...), NOT '
+              'under \$RUNNER_TEMP/bench — a working_dir guard still matches '
+              'zero containers (gh-1600 rework round 2)',
+        );
+        expect(
+          script,
+          contains('label=com.docker.compose.project'),
+          reason:
+              'the teardown must select containers by the compose project '
+              'label, not by name (gh-1600 rework)',
+        );
+        expect(
+          script,
+          contains(r'{{range .Mounts}}{{.Source}} {{end}}'),
+          reason:
+              'the bench-bound path on a harbor trial container is its '
+              'bind-mount Source (the trial dirs under the -o output), not '
+              'the compose project dir (gh-1600 rework round 2)',
+        );
+        expect(
+          script,
+          contains(r'"${RUNNER_TEMP:-/tmp}/bench"/*'),
+          reason:
+              'the mount-source match must be anchored to the shard\'s own '
+              'out-of-workspace bench output — mount Sources embed the '
+              'per-registration _temp path, so another workflow\'s or '
+              'another registration\'s live containers are never touched; '
+              'the pattern uses the \${RUNNER_TEMP:-/tmp} fallback like the '
+              'final rm -rf (gh-1600 rework rounds 2+3)',
+        );
+        // gh-1600 rework round 3 (APPROVE review, suggestion): the step runs
+        // under `set -u` and the final `rm -rf` guards with
+        // "${RUNNER_TEMP:-/tmp}/bench" — but the mount-source `case` pattern,
+        // the "tore down" summary echo, and the unremovable-dir warning echo
+        // expanded bare $RUNNER_TEMP. If the var is ever absent (a
+        // misconfigured/ephemeral runner, a local `act` run) the always()
+        // cleanup hard-fails on an unbound variable — exactly the failure
+        // mode this step's best-effort design exists to avoid. Every
+        // $RUNNER_TEMP expansion in this step must carry the :-/tmp fallback.
+        // Full-line comments are skipped — bash never expands them, so a
+        // bare $RUNNER_TEMP in prose cannot trip set -u.
+        final codeOnly = script
+            .split('\n')
+            .where((l) => !l.trimLeft().startsWith('#'))
+            .join('\n');
+        var bareIdx = -1;
+        var hasBareRunnerTemp = false;
+        while ((bareIdx = codeOnly.indexOf(r'$RUNNER_TEMP', bareIdx + 1)) !=
+            -1) {
+          final next = bareIdx + r'$RUNNER_TEMP'.length < codeOnly.length
+              ? codeOnly[bareIdx + r'$RUNNER_TEMP'.length]
+              : '';
+          if (next != ':') hasBareRunnerTemp = true;
+        }
+        expect(
+          hasBareRunnerTemp,
+          isFalse,
+          reason:
+              'every \$RUNNER_TEMP expansion in the always() cleanup must use '
+              'the \${RUNNER_TEMP:-/tmp} fallback — a bare expansion under '
+              'set -u hard-fails the step when the var is absent (gh-1600 '
+              'rework round 3)',
+        );
+        expect(
+          script,
+          contains(r'"${RUNNER_TEMP:-/tmp}/bench"/*'),
+          reason:
+              'the mount-source case pattern must use the \${RUNNER_TEMP:-'
+              '/tmp} fallback like the final rm -rf (gh-1600 rework round 3)',
+        );
+        expect(
+          script,
+          contains(r'bound to ${RUNNER_TEMP:-/tmp}/bench'),
+          reason:
+              'the "tore down" summary echo must use the \${RUNNER_TEMP:-'
+              '/tmp} fallback like the final rm -rf (gh-1600 rework round 3)',
+        );
+      },
+    );
 
     test('every mirror-checkout script is inline with a log-and-prune clean', () {
       // The hardened clean lives INLINE in each checkout step, NOT in a
@@ -525,8 +535,10 @@ void main() {
       // file would be missing on the first run and stale afterwards, because
       // the checkout step IS the thing that materializes the tree.
       final checkoutSteps = <String, String>{
-        '.github/workflows/build-mobile.yml': 'Checkout repository from local mirror',
-        '.github/workflows/build-macos.yml': 'Checkout repository from local mirrors',
+        '.github/workflows/build-mobile.yml':
+            'Checkout repository from local mirror',
+        '.github/workflows/build-macos.yml':
+            'Checkout repository from local mirrors',
       };
       for (final entry in checkoutSteps.entries) {
         final jobs = jobsOf(entry.key);
@@ -566,11 +578,14 @@ void main() {
           expect(
             script,
             contains('git clone --reference'),
-            reason: 'the local-mirror clone shape is kept (gh-1600, $entry.key)',
+            reason:
+                'the local-mirror clone shape is kept (gh-1600, $entry.key)',
           );
           expect(
-            RegExp(r'^\s*rm -rf "\$GITHUB_WORKSPACE"\s*$', multiLine: true)
-                .hasMatch(script),
+            RegExp(
+              r'^\s*rm -rf "\$GITHUB_WORKSPACE"\s*$',
+              multiLine: true,
+            ).hasMatch(script),
             isFalse,
             reason:
                 'no UNGUARDED workspace rm may remain — the bare failing form '
@@ -598,37 +613,43 @@ void main() {
       );
     });
 
-    test('build-macos parks its per-arch build cache outside the clean, expanded \$HOME', () {
-      final script = checkoutScriptOf(
-        '.github/workflows/build-macos.yml',
-        'build-macos',
-        'Checkout repository from local mirrors',
-      );
-      // bash double quotes expand $HOME natively here — the cache dir must
-      // be built at run time in the runner home (the gh-1600 round-1
-      // composite action assigned it single-quoted and would have parked a
-      // literal-\$HOME junk dir under the cwd).
-      expect(
-        script,
-        contains(r'BUILD_CACHE_DIR="$HOME/actions-runner-yoloit/build-cache/macos-$ARCH"'),
-        reason:
-            'the per-arch cache dir must expand \$HOME at run time '
-            '(gh-1600: a single-quoted assignment parks the cache in a junk '
-            'literal-\$HOME dir)',
-      );
-      expect(
-        script.indexOf('Preserving existing macOS build cache'),
-        lessThan(script.indexOf(r'rm -rf "$GITHUB_WORKSPACE" || true')),
-        reason:
-            'the cache must be parked BEFORE the workspace clean — the clean '
-            'removes everything else in the workspace (gh-1600)',
-      );
-      expect(
-        script,
-        contains('Restoring macOS build cache'),
-        reason: 'the parked cache must be restored after the clone (gh-1600 kept shape)',
-      );
-    });
+    test(
+      'build-macos parks its per-arch build cache outside the clean, expanded \$HOME',
+      () {
+        final script = checkoutScriptOf(
+          '.github/workflows/build-macos.yml',
+          'build-macos',
+          'Checkout repository from local mirrors',
+        );
+        // bash double quotes expand $HOME natively here — the cache dir must
+        // be built at run time in the runner home (the gh-1600 round-1
+        // composite action assigned it single-quoted and would have parked a
+        // literal-\$HOME junk dir under the cwd).
+        expect(
+          script,
+          contains(
+            r'BUILD_CACHE_DIR="$HOME/actions-runner-yoloit/build-cache/macos-$ARCH"',
+          ),
+          reason:
+              'the per-arch cache dir must expand \$HOME at run time '
+              '(gh-1600: a single-quoted assignment parks the cache in a junk '
+              'literal-\$HOME dir)',
+        );
+        expect(
+          script.indexOf('Preserving existing macOS build cache'),
+          lessThan(script.indexOf(r'rm -rf "$GITHUB_WORKSPACE" || true')),
+          reason:
+              'the cache must be parked BEFORE the workspace clean — the clean '
+              'removes everything else in the workspace (gh-1600)',
+        );
+        expect(
+          script,
+          contains('Restoring macOS build cache'),
+          reason:
+              'the parked cache must be restored after the clone (gh-1600 kept shape)',
+        );
+      },
+    );
   });
 
   group('Rework — checkout hardening (review threads)', () {
@@ -656,65 +677,79 @@ void main() {
       return scripts;
     }
 
-    test('stub collision parks the stale stub — the FRESH entry always wins', () {
-      final scripts = allCheckoutScripts();
-      expect(scripts.length, 3, reason: 'build-ios + submit-ios + build-macos');
-      for (final script in scripts) {
-        // The old path skipped the fresh entry (warning-only) and the
-        // trailing `rm -rf "$CLONE_TARGET"` then DELETED it — the
-        // workspace silently kept the stale leftover at that repo path.
+    test(
+      'stub collision parks the stale stub — the FRESH entry always wins',
+      () {
+        final scripts = allCheckoutScripts();
         expect(
-          script,
-          contains(r'mv "$GITHUB_WORKSPACE/$name" "$STALE'),
-          reason:
-              'on a stub collision the stale leftover must move into the '
-              '\$STALE sidecar — not stay in the workspace while the '
-              'fresh checkout entry is dropped and deleted (gh-1600 '
-              'rework: fresh content always wins)',
+          scripts.length,
+          3,
+          reason: 'build-ios + submit-ios + build-macos',
         );
-        expect(
-          script.indexOf(r'mv "$GITHUB_WORKSPACE/$name"'),
-          lessThan(script.indexOf(r'mv "$entry" "$GITHUB_WORKSPACE/"')),
-          reason:
-              'the stale stub must be parked BEFORE the fresh entry moves '
-              'in — same-name mv would otherwise overwrite the fresh '
-              'content (gh-1600 rework)',
-        );
-        expect(
-          script,
-          contains('stub collision on'),
-          reason:
-              'the skip-with-warning path may remain only as the '
-              'last-resort fallback when even parking the stub fails '
-              '(gh-1600 rework)',
-        );
-      }
-    });
+        for (final script in scripts) {
+          // The old path skipped the fresh entry (warning-only) and the
+          // trailing `rm -rf "$CLONE_TARGET"` then DELETED it — the
+          // workspace silently kept the stale leftover at that repo path.
+          expect(
+            script,
+            contains(r'mv "$GITHUB_WORKSPACE/$name" "$STALE'),
+            reason:
+                'on a stub collision the stale leftover must move into the '
+                '\$STALE sidecar — not stay in the workspace while the '
+                'fresh checkout entry is dropped and deleted (gh-1600 '
+                'rework: fresh content always wins)',
+          );
+          expect(
+            script.indexOf(r'mv "$GITHUB_WORKSPACE/$name"'),
+            lessThan(script.indexOf(r'mv "$entry" "$GITHUB_WORKSPACE/"')),
+            reason:
+                'the stale stub must be parked BEFORE the fresh entry moves '
+                'in — same-name mv would otherwise overwrite the fresh '
+                'content (gh-1600 rework)',
+          );
+          expect(
+            script,
+            contains('stub collision on'),
+            reason:
+                'the skip-with-warning path may remain only as the '
+                'last-resort fallback when even parking the stub fails '
+                '(gh-1600 rework)',
+          );
+        }
+      },
+    );
 
-    test('old stale-workspace-* sidecars are pruned before a new one is parked', () {
-      final scripts = allCheckoutScripts();
-      expect(scripts.length, 3, reason: 'build-ios + submit-ios + build-macos');
-      for (final script in scripts) {
+    test(
+      'old stale-workspace-* sidecars are pruned before a new one is parked',
+      () {
+        final scripts = allCheckoutScripts();
         expect(
-          script,
-          contains(r'rm -rf "${RUNNER_TEMP:-/tmp}"/stale-workspace-*'),
-          reason:
-              'on the persistent box the runner\'s own _temp cleanup '
-              'cannot remove mount-held sidecars either — every degraded '
-              'checkout must first best-effort-prune previous '
-              '`stale-workspace-*` dirs (the containers that held them '
-              'may have died since, so the retry often succeeds) '
-              '(gh-1600 rework)',
+          scripts.length,
+          3,
+          reason: 'build-ios + submit-ios + build-macos',
         );
-        expect(
-          script.indexOf('stale-workspace-*'),
-          lessThan(script.indexOf(r'stale-workspace-$(date')),
-          reason:
-              'the prune must run BEFORE the new timestamped sidecar is '
-              'created — otherwise the glob would also match (and '
-              're-delete) the fresh dir (gh-1600 rework)',
-        );
-      }
-    });
+        for (final script in scripts) {
+          expect(
+            script,
+            contains(r'rm -rf "${RUNNER_TEMP:-/tmp}"/stale-workspace-*'),
+            reason:
+                'on the persistent box the runner\'s own _temp cleanup '
+                'cannot remove mount-held sidecars either — every degraded '
+                'checkout must first best-effort-prune previous '
+                '`stale-workspace-*` dirs (the containers that held them '
+                'may have died since, so the retry often succeeds) '
+                '(gh-1600 rework)',
+          );
+          expect(
+            script.indexOf('stale-workspace-*'),
+            lessThan(script.indexOf(r'stale-workspace-$(date')),
+            reason:
+                'the prune must run BEFORE the new timestamped sidecar is '
+                'created — otherwise the glob would also match (and '
+                're-delete) the fresh dir (gh-1600 rework)',
+          );
+        }
+      },
+    );
   });
 }
