@@ -1,57 +1,70 @@
 #!/usr/bin/env bash
-# Dispatch a child workflow and watch it — with correct run correlation
-# (issue #343) and wedge self-healing (issue #344). Shared by every
-# dispatching daily-publish leg so the nightly legs cannot regress to the
-# old inline watchers.
+# Dispatch a child workflow and wait for it — NEVER kill it (gh-1903).
+# Shared by every dispatching daily-publish leg.
 #
-# #343 — the TestFlight and Play legs dispatch the SAME workflow
-# (build-mobile.yml) as concurrent `needs: plan` siblings; the old inline
-# watcher identified "our" run by event + a 60s createdAt window only and
-# grabbed [0] of the timestamp-ordered list, so the Play leg could latch
-# the TestFlight run (or a stale same-shaped run inside the trailing
-# window) and watch a build that never builds Android. Correlation here:
+# gh-1903 invariant: a child run QUEUED behind siblings on the single
+# self-hosted runner (fa-m5-1) is NORMAL OPERATION, not a failure mode.
+# The 2026-10-26 incident (daily run 40274465122, issue #1735) cancelled
+# TWO healthy queued testflight children (~31m "queue stall" each) and
+# failed a fully-built v1.0.648 release solely by killing its place in
+# line. What remains here:
+#   * dispatch + exact run correlation, unchanged (#343 below);
+#   * a read-only wait: child state + elapsed logged every poll, sibling
+#     in-progress runs logged on a diagnostic interval while the child has
+#     not started — NO stall timer, NO wedge cancel, NO re-dispatch;
+#   * bounds: the child's own per-job server-side timeouts (#344) and the
+#     leg's timeout-minutes — nothing else;
+#   * exactly ONE cancel path: when the LEG itself is terminated (leg
+#     timeout, manual cancel → this script gets TERM/INT), cancel only
+#     THIS leg's own NEVER-STARTED child (by the already-correlated run
+#     id) so an orphaned queued run cannot publish unattended when the
+#     pool revives, then fail with a diagnostic naming the child run, its
+#     last observed state, and the observed pool activity. A child that
+#     ever started, or already completed, is never touched.
+#
+# The watchdog it replaces (kept for history): #344 budgeted the watch
+# (~2x historical duration) and cancelled + re-dispatched a wedged run
+# once; gh-172 added a queue-stall window (no in_progress job for
+# max(600, budget/8)s) for the pool-held zombie (run 39374894901). Both
+# heuristics false-positive on healthy queues by construction — 31m does
+# not cover the cli sibling chain's 335m worst-case on the same runner —
+# and each cancel loses the queue position and restarts the clock, a
+# starvation loop. Zombie handling is now: CANNOT OBSERVE ⇒ CANNOT JUDGE.
+# The repo-wide `gh run list --status in_progress` probe is read-only; if
+# it shows runs, the queue is presumed healthy; if it shows none while the
+# child never started, a ::warning:: names the gh-172 zombie signature and
+# the leg timeout surfaces the full diagnostic. Only a repo-wide EMPTY
+# in_progress list while the child never started positively establishes
+# pool idleness — and even then the script does not cancel (gh-1903).
+#
+# #343 — correlation (unchanged): the TestFlight and Play legs dispatch
+# the SAME workflow (build-mobile.yml) as concurrent `needs: plan`
+# siblings; identifying "our" run by event + a createdAt window only let
+# the Play leg latch the TestFlight run. Correlation here:
 #   * exact displayTitle match (--title) — the child workflow's run-name
 #     embeds its inputs, so the sibling's differently-shaped run can never
 #     be adopted (`gh run list` cannot filter by inputs; displayTitle is
 #     the only distinguisher in the list API);
 #   * the NEWEST matching run ([-1]) — never [0];
 #   * a tight 30s createdAt window (clock-skew headroom; a run from
-#     minutes ago, like today's stale iOS failure, is out of scope).
-#
-# #344 — a self-hosted runner that lost its final job-completion report
-# holds a SUCCEEDED job in_progress forever (GitHub has no stale-run
-# detection for self-hosted jobs below the workflow timeout), blocking the
-# single-runner pool and every watcher leg until their 300m timeout. The
-# watch here is budgeted: a run still unfinished after --budget-seconds
-# (≈2x historical duration) is CANCELLED and re-dispatched exactly once;
-# if the retry also wedges we fail fast naming both runs, so the pool
-# problem surfaces in the leg log instead of silently eating 5 hours.
-# gh-172 refines the wedge detection: budget expiry alone misses the
-# pool-held zombie (run alive, nothing running) — a not-completed run with
-# no in_progress job for DW_QUEUE_STALL_SECONDS wedges the same way. The
-# window defaults to max(600, budget/8) so a healthy child queued behind a
-# SIBLING leg's job on the shared single-runner pool is not false-wedged
-# (the window cannot tell zombie-held from legitimately busy — see the
-# queue_stall comment below).
+#     minutes ago is out of scope).
 #
 # Usage:
 #   dispatch_and_watch.sh WORKFLOW.yml --repo OWNER/REPO --ref main \
-#     [--title 'run-name exact match'] [--budget-seconds N] \
-#     [--out-run-id FILE] [-f key=value]...
+#     [--title 'run-name exact match'] [--out-run-id FILE] [-f key=value]...
 #
 # The run id is written to --out-run-id as soon as correlation succeeds
-# (BEFORE the watch), so callers can export the run URL even when the
+# (BEFORE the wait), so callers can export the run URL even when the
 # child run later fails. Env knobs (test shims): DW_POLL_SECONDS (60),
 # DW_APPEAR_POLL_SECONDS (10), DW_APPEAR_ATTEMPTS (60),
-# DW_CANCEL_WAIT_SECONDS (180), DW_QUEUE_STALL_SECONDS (default
-# max(600, budget/8) — gh-172: no-running-job wedge window).
+# DW_DIAG_SECONDS (300 — sibling-liveness probe interval while the child
+# has not started; 0 = every poll).
 set -euo pipefail
 
 workflow=""
 repo="${GITHUB_REPOSITORY:-}"
 ref="main"
 title=""
-budget=$((2 * 60 * 60))
 out_run_id=""
 inputs=()
 
@@ -60,7 +73,6 @@ while [ $# -gt 0 ]; do
     --repo) repo="$2"; shift 2 ;;
     --ref) ref="$2"; shift 2 ;;
     --title) title="$2"; shift 2 ;;
-    --budget-seconds) budget="$2"; shift 2 ;;
     --out-run-id) out_run_id="$2"; shift 2 ;;
     -f) inputs+=( -f "$2" ); shift 2 ;;
     -*) echo "dispatch_and_watch: unknown flag: $1" >&2; exit 2 ;;
@@ -73,38 +85,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 if [ -z "$workflow" ] || [ -z "$repo" ]; then
-  echo "usage: dispatch_and_watch.sh WORKFLOW.yml --repo OWNER/REPO [--ref main] [--title T] [--budget-seconds N] [-f k=v]" >&2
+  echo "usage: dispatch_and_watch.sh WORKFLOW.yml --repo OWNER/REPO [--ref main] [--title T] [--out-run-id FILE] [-f k=v]" >&2
   exit 2
 fi
 
 poll="${DW_POLL_SECONDS:-60}"
 appear_poll="${DW_APPEAR_POLL_SECONDS:-10}"
 appear_attempts="${DW_APPEAR_ATTEMPTS:-60}"
-cancel_wait="${DW_CANCEL_WAIT_SECONDS:-180}"
-# gh-172: how long a not-completed run may sit with NO job in_progress
-# (everything queued or already done) before it is treated as a wedge —
-# the 2026-10-20 TestFlight leg (run 39374894901) burned ~107m of leg time
-# watching a re-dispatched child queued forever on a zombie self-hosted
-# worker and then died as a bare 360m ceiling kill with no diagnostic.
-#
-# The window CANNOT distinguish a zombie-held pool from a healthy child
-# queued behind a SIBLING leg's job on the shared single-runner macOS pool
-# (testflight's build-ios/submit-ios and cli's build-macos matrix contend
-# for the same fa-m5-1; one cli matrix leg can hold it for ~150m — and a
-# hosted-runner queue crunch does the same to the play/website/addin
-# children), so the default is scaled off the watch budget:
-# max(600, budget/8). Long-budget legs wait out realistic sibling
-# occupancy (testflight 15000s → ~31m) before wedging a quiet-but-alive
-# child; short-budget legs keep the fast 10-minute zombie trip.
-# Accepted residual class: a sibling occupancy longer than budget/8 can
-# still false-wedge into the one self-heal — bounded, diagnosed damage
-# inside the leg ceiling beats the gh-172 silent full-budget burn.
-# DW_QUEUE_STALL_SECONDS overrides (test shims).
-if [ -n "${DW_QUEUE_STALL_SECONDS:-}" ]; then
-  queue_stall="$DW_QUEUE_STALL_SECONDS"
-else
-  queue_stall=$(( budget / 8 > 600 ? budget / 8 : 600 ))
-fi
+diag="${DW_DIAG_SECONDS:-300}"
 
 # jq selector: optional exact displayTitle match (#343).
 title_select=""
@@ -137,93 +125,102 @@ wait_for_run() {
   return 1
 }
 
-attempt=1
-while :; do
-  dispatch
-  epoch=$(date +%s)
-  if ! run_id=$(wait_for_run "$((epoch - 30))"); then
-    echo "::error::dispatched $workflow run never appeared (no workflow_dispatch run${title:+ titled \"$title\"} in the trailing window after $((appear_attempts * appear_poll))s)" >&2
-    exit 1
-  fi
-  echo "watching $workflow run $run_id${title:+ (\"$title\")} — https://github.com/$repo/actions/runs/$run_id (queue-stall window ${queue_stall}s)"
-  if [ -n "$out_run_id" ]; then printf '%s\n' "$run_id" > "$out_run_id"; fi
+# ── gh-1903 single cancel path: the orphan-cleanup trap ────────────────────
+# Leg timeout / manual cancel make the runner TERM (then KILL) this
+# script. On TERM/INT: if OUR child was never started and is not completed,
+# cancel exactly that run (gh-172 containment — an orphaned queued run
+# must not publish unattended when the pool revives) and fail naming the
+# child, its last observed state, and the observed pool activity. A child
+# that ever started — even if it is between jobs right now — is left
+# alone: its own per-job server-side timeouts (#344) bound it.
+run_id=0
+child_started=0
+watch_started=0
+last_state="(never polled)"
+pool_note="no pool observation yet"
 
-  started=$(date +%s)
-  last_running="$started"
-  while :; do
-    # One poll = one API call (gh-172 review): status, conclusion and the
-    # running-job count arrive atomically — half the per-poll traffic and
-    # no race where the two calls straddle a completion and one iteration
-    # ticks the stall clock on an already-dead run. A failed poll cannot
-    # observe, so it cannot judge: it refreshes the stall clock (no
-    # signal — no accumulation) and never trips the guard; an outage
-    # outliving the window is accepted bounded debt (during one, `gh run
-    # cancel` hits the same unreachable API anyway) — the budget stays
-    # the backstop.
-    observed="$(gh run view "$run_id" --repo "$repo" --json status,conclusion,jobs \
-      --jq '"\(.status)/" + (.conclusion // "-") + " " + ([.jobs[] | select(.status == "in_progress")] | length | tostring)' 2>/dev/null)" || observed=""
+orphan_cleanup() {
+  local sig="$1" ec=143 now
+  [ "$sig" = "INT" ] && ec=130
+  now=$(date +%s)
+  if [ "$run_id" -gt 0 ] 2>/dev/null \
+      && [ "$child_started" -eq 0 ] \
+      && [ "${last_state%%/*}" != "completed" ]; then
+    echo "::error::leg terminated by $sig after $((now - watch_started))s — child $workflow run $run_id NEVER STARTED (last observed: $last_state; $pool_note); cancelling this orphaned child only (gh-1903 orphan-cancel) — https://github.com/$repo/actions/runs/$run_id" >&2
+    gh run cancel "$run_id" --repo "$repo" \
+      || echo "::warning::orphan cancel of run $run_id failed (already gone?)" >&2
+  else
+    echo "::error::leg terminated by $sig after $((now - watch_started))s — child $workflow run $run_id (started: $([ "$child_started" -eq 1 ] && echo yes || echo no); last observed: $last_state; $pool_note); nothing to cancel (gh-1903: never-started children only)" >&2
+  fi
+  exit "$ec"
+}
+trap 'orphan_cleanup TERM' TERM
+trap 'orphan_cleanup INT' INT
+
+dispatch
+epoch=$(date +%s)
+if ! run_id=$(wait_for_run "$((epoch - 30))"); then
+  echo "::error::dispatched $workflow run never appeared (no workflow_dispatch run${title:+ titled \"$title\"} in the trailing window after $((appear_attempts * appear_poll))s)" >&2
+  exit 1
+fi
+echo "watching $workflow run $run_id${title:+ (\"$title\")} — https://github.com/$repo/actions/runs/$run_id — read-only wait, no stall timer, no re-dispatch (gh-1903)"
+if [ -n "$out_run_id" ]; then printf '%s\n' "$run_id" > "$out_run_id"; fi
+
+watch_started=$(date +%s)
+last_diag=0
+while :; do
+  # One poll = one API call (gh-172 review): status, conclusion and the
+  # running-job count arrive atomically — no race where two calls
+  # straddle a completion. A failed poll cannot observe, so it cannot
+  # judge (gh-172): it is logged and the wait simply continues — the
+  # bounds are the child's per-job server-side timeouts (#344) and the
+  # leg timeout, and there is no heuristic left to poison.
+  observed="$(gh run view "$run_id" --repo "$repo" --json status,conclusion,jobs \
+    --jq '"\(.status)/" + (.conclusion // "-") + " " + ([.jobs[] | select(.status == "in_progress")] | length | tostring)' 2>/dev/null)" || observed=""
+  if [ -z "$observed" ] || [ "${observed%% *}" = "$observed" ]; then
+    status="error/-"
+    running=""
+    last_state="$status"
+    echo "poll failed (gh/API unreachable) after $(( $(date +%s) - watch_started ))s — cannot observe, cannot judge (gh-172); the wait continues"
+  else
     status="${observed%% *}"
     running="${observed##* }"
-    if [ -z "$observed" ] || [ "$status" = "$observed" ]; then
-      status="error/-"
-      running=""
-      # gh-172 rework: refresh the stall clock on error polls too — a
-      # sustained gh/API outage (longer than the window, starting while
-      # the child was quiet) must not read as "no running job for Ns"
-      # and false-wedge a healthy child into the one self-heal.
-      last_running="$(date +%s)"
+    last_state="$status"
+    if [ -n "$running" ] && [ "$running" -gt 0 ] 2>/dev/null; then
+      child_started=1
     fi
-    if [ "${status%%/*}" = "completed" ]; then break; fi
-    now=$(date +%s)
-    # gh-172 job-level liveness: a run that is not completed but has NO job
-    # in_progress is not making progress, however alive its status claims to
-    # be — the #34 zombie-worker class holds the run in_progress AND the
-    # single-runner pool forever, so a budget alone would burn the whole leg
-    # on a child that can never proceed. The budget check stays FIRST: a
-    # child that outlives ~2x its historical duration is wedged by
-    # definition even while a job reports progress — with the check behind
-    # the running-job refresh branch, a live jobs feed (the de-inerted
-    # gh-172 stub exposed this) made the watcher spin FOREVER on a healthy
-    # long child instead of self-healing at the budget.
-    wedge=""
-    if [ $((now - started)) -gt "$budget" ]; then
-      wedge="still unfinished after ${budget}s"
-    elif [ -n "$running" ] && [ "$running" -gt 0 ] 2>/dev/null; then
-      last_running="$now"
-    elif [ -n "$running" ] && [ $((now - last_running)) -gt "$queue_stall" ]; then
-      wedge="no running job for ${queue_stall}s (gh-172 pool-held zombie signature)"
-    fi
-    if [ -n "$wedge" ]; then
-      if [ "$attempt" -ge 2 ]; then
-        # Containment (gh-172): cancel the child before failing so a
-        # server-side-dead run can never start/publish unattended when the
-        # pool revives — the 2026-10-20 re-dispatch sat queued for hours
-        # after its leg was killed at the ceiling.
-        gh run cancel "$run_id" --repo "$repo" \
-          || echo "::warning::cancel of run $run_id failed (already gone?)"
-        echo "::error::$workflow run $run_id $wedge on the SECOND attempt — runner pool suspect (issue #344); https://github.com/$repo/actions/runs/$run_id" >&2
-        exit 1
-      fi
-      echo "::warning::$workflow run $run_id $wedge — cancelling and re-dispatching once (issue #344 self-heal); https://github.com/$repo/actions/runs/$run_id"
-      gh run cancel "$run_id" --repo "$repo" \
-        || echo "::warning::cancel of run $run_id failed (already gone?)"
-      # Bounded wait for the cancel to land — a wedged worker may never
-      # process it, so never block the re-dispatch on it.
-      cancel_deadline=$(( $(date +%s) + cancel_wait ))
-      while [ "$(date +%s)" -lt "$cancel_deadline" ]; do
-        s=$(gh run view "$run_id" --repo "$repo" --json status --jq '.status' 2>/dev/null || echo unknown)
-        [ "$s" = "completed" ] && break
-        sleep "$poll"
-      done
-      attempt=$((attempt + 1))
-      continue 2
-    fi
-    sleep "$poll"
-  done
+    echo "child $run_id: $status running_jobs=${running:-unknown} elapsed=$(( $(date +%s) - watch_started ))s (started: $([ "$child_started" -eq 1 ] && echo yes || echo 'not yet — queued is healthy, gh-1903'))"
+  fi
+  if [ "${status%%/*}" = "completed" ]; then break; fi
+  now=$(date +%s)
 
-  conclusion="${status#*/}"
-  echo "$workflow run $run_id conclusion: $conclusion"
-  if [ "$conclusion" = "success" ]; then exit 0; fi
-  echo "::error::$workflow run $run_id concluded $conclusion — https://github.com/$repo/actions/runs/$run_id" >&2
-  exit 1
+  # gh-1903 read-only zombie diagnostics: while the child has not started,
+  # probe repo-wide liveness on the diagnostic interval. This NEVER
+  # cancels — it only distinguishes "queued behind siblings" (healthy)
+  # from "pool appears idle but the child never starts" (the gh-172
+  # zombie signature, surfaced in full at the leg timeout above).
+  if [ "$child_started" -eq 0 ] && [ $((now - last_diag)) -ge "$diag" ]; then
+    last_diag="$now"
+    if sibs="$(gh run list --repo "$repo" --status in_progress --limit 20 \
+        --json databaseId,displayTitle \
+        --jq '[.[] | select(.databaseId != '"$run_id"')] | length as $n | "\($n) in_progress run(s): " + ([.[] | "\(.databaseId) \(.displayTitle)"] | join("; "))' 2>/dev/null)"; then
+      if [ "${sibs%% *}" = "0" ]; then
+        pool_note="repo-wide in_progress runs: NONE while child never started for $((now - watch_started))s — pool appears IDLE (gh-172 zombie signature possible; cannot be confirmed — the runners API is 403 for this token)"
+        echo "::warning::$pool_note — NO cancel (gh-1903); if this is a real zombie the leg timeout surfaces the full diagnostic"
+      else
+        pool_note="repo-wide $sibs"
+        echo "sibling activity — $sibs — the queued child is waiting behind these; healthy, no cancel, no stall timer (gh-1903)"
+      fi
+    else
+      pool_note="pool liveness probe FAILED (gh/API unreachable) — pool idleness can be neither established nor excluded"
+      echo "pool liveness probe failed — cannot observe, cannot judge (gh-172); no cancel regardless (gh-1903)"
+    fi
+  fi
+  sleep "$poll"
 done
+
+conclusion="${status#*/}"
+echo "$workflow run $run_id conclusion: $conclusion"
+if [ "$conclusion" = "success" ]; then exit 0; fi
+echo "::error::$workflow run $run_id concluded $conclusion — https://github.com/$repo/actions/runs/$run_id" >&2
+exit 1
