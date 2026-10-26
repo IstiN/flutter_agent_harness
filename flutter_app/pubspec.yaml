@@ -74,6 +74,10 @@ dependencies:
   # (`voxel.mesh.bin`/`voxel.blocks.bin`), and raises the quickjs_runtime
   # floor to ^0.3.6 (pure-Dart, additive symbol-probed FFI), which forced
   # the transitive quickjs_runtime 0.3.5→0.3.6 bump in flutter_app/pubspec.lock.
+  # gh-1842 (lock bump to 0.4.189): the test-compilation floor is now
+  # 0.4.189 — flutter_app/test/apps/fa_craft_bsp_smoke_test.dart
+  # references VoxelDiagnostics, which does not exist below 0.4.189. The
+  # ^0.4.156 constraint is unchanged; the lock pin keeps the test compiling.
   js_widget_runtime: ^0.4.156
 
   # The fa_widgets catalog validator — the SAME rule engine the catalog CI
