@@ -411,24 +411,24 @@ void main() {
       await session.start();
       await session.openChannel('c1');
       await pumpEventQueue();
-      final state = session.channelStates['c1']!;
-      final channel = connector.channels.single;
 
-      for (final id in ['e-corrupt', 'e-good']) {
-        channel.serverEvent('envelope', {
-          'id': id,
-          'channelId': 'c1',
-          'senderId': 'other-1',
-          'payload': 'opaque',
-        });
-      }
-      // The only call site is `unawaited(_onEnvelope(envelope))`: the
-      // returned future must contain the decode failure (never reject)
-      // and the chain must keep arrival order for the remaining
-      // envelopes — a corrupt frame lands no message and kills nothing.
-      await pumpEventQueue();
+      // Exercise the exact future returned to `unawaited(_onEnvelope(...))`.
+      // Awaiting only channel state would miss the pre-fix async rejection.
+      await Future.wait<void>([
+        for (final id in ['e-corrupt', 'e-good'])
+          session.debugHandleEnvelope(
+            Envelope(
+              id: id,
+              channelId: 'c1',
+              senderId: 'other-1',
+              payload: 'opaque',
+            ),
+          ),
+      ]);
 
-      expect(state.messages.map((message) => message.envelopeId), ['e-good']);
+      expect(session.channelStates['c1']!.messages.map((m) => m.envelopeId), [
+        'e-good',
+      ]);
     });
 
     test(
