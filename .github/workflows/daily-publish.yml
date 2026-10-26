@@ -447,12 +447,12 @@ jobs:
         id: dispatch
         run: |
           set -euo pipefail
-          # Shared watcher (issues #343/#344). pages.yml takes no inputs, so
-          # there is no displayTitle to disambiguate on — the watcher falls
-          # back to newest-in-tight-window, and still bounds the watch
-          # (cancel + one re-dispatch) instead of blocking forever.
-          # Budget 75m = child worst-case 60m (#351: pages build 45 +
-          # deploy 15) + 15m margin.
+          # Shared watcher (gh-1903 read-only wait; correlation from #343).
+          # pages.yml takes no inputs, so there is no displayTitle to
+          # disambiguate on — the watcher falls back to
+          # newest-in-tight-window and waits read-only: no cancel, no
+          # re-dispatch, bounded by the pages jobs' own timeout-minutes
+          # (#344) and this leg's 180m.
           rc=0
           bash scripts/dispatch_and_watch.sh pages.yml \
             --repo "${GITHUB_REPOSITORY}" --ref main \
@@ -466,9 +466,10 @@ jobs:
     name: 'Leg: Outlook add-in'
     needs: plan
     runs-on: ubuntu-latest
-    # #351 arithmetic: child wc 45m (single office-addin-suite job) →
-    # budget 60m; 150m leg ≥ 2×budget + 15m, so the second-wedge fail-fast
-    # fits (the old 45m leg made the self-heal dead code).
+    # #351 arithmetic: child wc 45m (single office-addin-suite job); 150m
+    # leg ≫ worst-case + margin. (The old 45m leg pre-dated #351 and could
+    # not even fit a healthy child + appear window — 150m is the #351
+    # sizing.)
     timeout-minutes: 150
     permissions:
       contents: read
@@ -496,9 +497,11 @@ jobs:
         id: dispatch
         run: |
           set -euo pipefail
-          # Shared watcher (issues #343/#344). No inputs to disambiguate on
-          # (newest-in-tight-window fallback), watch bounded at 60m =
-          # child worst-case 45m (#351) + 15m margin.
+          # Shared watcher (gh-1903 read-only wait; correlation from #343).
+          # No inputs to disambiguate on (newest-in-tight-window
+          # fallback); the wait is bounded by the office-addin-suite
+          # job's own 45m timeout (#344) and this leg's 150m — never by a
+          # watcher cancel.
           rc=0
           bash scripts/dispatch_and_watch.sh office-addin.yml \
             --repo "${GITHUB_REPOSITORY}" --ref main \
