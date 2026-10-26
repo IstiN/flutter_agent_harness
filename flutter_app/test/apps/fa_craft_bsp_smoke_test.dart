@@ -36,6 +36,16 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_engine.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:js_widget_runtime/js_widget_runtime.dart';
+
+import '../native_test_guard.dart';
+
 /// File-based progress for smoke debugging: `flutter test` only surfaces
 /// print output at the end, so long hangs are otherwise opaque. The file
 /// is append-only; each phase step stamps its own line.
@@ -46,16 +56,6 @@ void _progress(String msg) {
   );
 }
 
-
-import 'package:fa/apps/apps_store.dart';
-import 'package:fa/apps/js_app_engine.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_test/flutter_test.dart';
-import 'package:js_widget_runtime/js_widget_runtime.dart';
-
-import '../native_test_guard.dart';
 
 /// Skip value stamped on this file's tests: a real JS engine (issue #184)
 /// AND an unpacked fa-craft source tree are both required.
@@ -190,19 +190,20 @@ void main() {
       final rotationMs = <int>[];
       final skyHolesPerAngle = <int>[];
       for (var step = 0; step < 16; step++) {
-        // fire-and-forget: production wiring (js_app_view) never awaits
-        // callEvent — the render ack round trip can outlive the pump.
-        _progress('rot-$step-callEvent');
+        // The rAF tick's JS round trip drains on the REAL event loop, so
+        // the pump must run inside runAsync (the js_app_view voxel
+        // pattern) — a bare pump deadlocks once the tick awaits a host
+        // ack. callEvent stays fire-and-forget like production wiring.
+        var frameMs = 0;
         await tester.runAsync(() async {
           unawaited(engine.callEvent('look', const {'dx': 100, 'dy': 0}));
           await Future<void>.delayed(const Duration(milliseconds: 20));
+          final sw = Stopwatch()..start();
+          await tester.pump(const Duration(milliseconds: 16));
+          sw.stop();
+          frameMs = sw.elapsedMilliseconds;
         });
-        _progress('rot-$step-pump');
-        final sw = Stopwatch()..start();
-        await tester.pump(const Duration(milliseconds: 16));
-        sw.stop();
-        _progress('rot-$step-pumped-${sw.elapsedMilliseconds}ms');
-        rotationMs.add(sw.elapsedMilliseconds);
+        rotationMs.add(frameMs);
         skyHolesPerAngle.add(await _countEnclosedSkyPixels(
           tester,
           boundaryKey,
@@ -230,13 +231,15 @@ void main() {
       final moveMs = <int>[];
       for (var frame = 0; frame < 300; frame++) {
         if (frame % 50 == 0) _progress('move-frame-$frame');
-        final sw = Stopwatch()..start();
+        var frameMs = 0;
         await tester.runAsync(() async {
           await Future<void>.delayed(const Duration(milliseconds: 2));
+          final sw = Stopwatch()..start();
+          await tester.pump(const Duration(milliseconds: 16));
+          sw.stop();
+          frameMs = sw.elapsedMilliseconds;
         });
-        await tester.pump(const Duration(milliseconds: 16));
-        sw.stop();
-        moveMs.add(sw.elapsedMilliseconds);
+        moveMs.add(frameMs);
       }
       _progress('move-done');
       await tester.runAsync(() async {
