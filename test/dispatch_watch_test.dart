@@ -308,16 +308,18 @@ class DwLive {
   final String logFile;
 
   String get log => File(logFile).readAsStringSync();
+  List<String> get logLines => log.split('\n');
   String get out => _outBuf.toString();
   final _outBuf = StringBuffer();
 
   /// Waits until the stub log contains [needle] (the watch has begun) or
   /// the process exits — whichever comes first.
-  Future<void> waitForLog(String needle, {Duration timeout = const Duration(
-    seconds: 10,
-  )}) async {
+  Future<void> waitForLog(
+    String needle, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
     final deadline = DateTime.now().add(timeout);
-    process.out.transform(utf8.decoder).listen(_outBuf.write);
+    process.stdout.transform(utf8.decoder).listen(_outBuf.write);
     process.stderr.transform(utf8.decoder).listen(_outBuf.write);
     while (DateTime.now().isBefore(deadline)) {
       if (File(logFile).existsSync() &&
@@ -333,34 +335,31 @@ class DwLive {
   }
 
   Future<int> finish({Duration timeout = const Duration(seconds: 15)}) =>
-      process.exitCode.timeout(timeout, onTimeout: () {
-        process.kill(ProcessSignal.sigkill);
-        throw StateError('process did not exit after signal');
-      });
+      process.exitCode.timeout(
+        timeout,
+        onTimeout: () {
+          process.kill(ProcessSignal.sigkill);
+          throw StateError('process did not exit after signal');
+        },
+      );
 }
 
-DwLive startDw(
+Future<DwLive> startDw(
   String name,
   List<String> args,
   Map<String, String> stubFiles, {
   Map<String, String> env = const {},
-}) {
+}) async {
   final dir = _fixtureDir(name);
   final bin = stubGh(dir.path);
   _seed(dir, stubFiles);
-  final process = Process.start(
+  final process = await Process.start(
     'bash',
     [File('scripts/dispatch_and_watch.sh').absolute.path, ...args],
     workingDirectory: Directory.current.path,
     environment: {..._baseEnv(bin, dir.path), ...env},
   );
-  // Unhandled start errors must not surface as unhandled futures.
-  final live = DwLive(
-    process.catchError((Object e) => throw StateError('start failed: $e')),
-    dir,
-    '${dir.path}/log',
-  );
-  return live;
+  return DwLive(process, dir, '${dir.path}/log');
 }
 
 String runJson(List<Map<String, Object>> runs) => jsonEncode(runs);
@@ -558,347 +557,318 @@ void main() {
 
   // ── gh-1903 — dispatch + wait, never kill ────────────────────────────────
   group('gh-1903 — read-only wait, no stall timer, no re-dispatch', () {
-    test(
-      '(a) child queued 45m with siblings in_progress → NO cancel, leg '
-      'keeps waiting, then green',
-      () {
-        // The 2026-10-26 incident shape: testflight child queued behind
-        // the same daily's cli/macos + CI runs on the single self-hosted
-        // runner. Old watchdog: cancelled at ~31m ("queue stall"), twice,
-        # // then failed the leg. New invariant: keeps waiting, goes green.
-        final dw = runDw(
-          'healthy-queue',
-          [
-            'build-mobile.yml',
-            '--title',
-            testflightTitle,
-            '-f',
-            'ios_content=all',
-          ],
-          {
-            'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
-            // 45m of queue modeled as 60 quiet polls (fixture time, not
-            // wall time), then the build starts, then completes.
-            'view-111.txt': longQueuedThen(),
-            'jobs-111.txt': '${List.filled(200, '0').join('\n')}\n1\n',
-            'siblings.json': runJson(siblingRuns),
-          },
-        );
-        expect(dw.exitCode, 0, reason: 'a long healthy queue ends green');
-        expect(
-          dw.runIdFile,
-          '111',
-          reason: 'no re-dispatch — the same run is watched throughout',
-        );
-        expect(
-          File('${dw.dir.path}/cancelled-111').existsSync(),
-          isFalse,
-          reason: 'a healthy queued child is NEVER cancelled',
-        );
-        expect(dispatches(dw).length, 1, reason: '(d) no re-dispatch');
-        expect(
-          dw.out,
-          contains('sibling activity'),
-          reason: 'sibling in-progress runs must be logged read-only',
-        );
-        expect(
-          dw.out,
-          contains('900'),
-          reason: 'the diagnostic names the occupying runs',
-        );
-        expect(
-          servedJobs(dw, 111).contains('{"status":"in_progress"}'),
-          isTrue,
-          reason:
-              'the fixture genuinely modeled the job starting after the '
-              'queue — an inert jobs fixture would make the test vacuous',
-        );
-        expect(
-          dw.log.where((l) => l.contains('run view 111 ')).length,
-          greaterThan(60),
-          reason: 'the leg kept polling through the whole queue',
-        );
-      },
-    );
+    test('(a) child queued 45m with siblings in_progress → NO cancel, leg '
+        'keeps waiting, then green', () {
+      // The 2026-10-26 incident shape: testflight child queued behind
+      // the same daily's cli/macos + CI runs on the single self-hosted
+      // runner. Old watchdog: cancelled at ~31m ("queue stall"), twice,
+      // then failed the leg. New invariant: keeps waiting, goes green.
+      final dw = runDw(
+        'healthy-queue',
+        [
+          'build-mobile.yml',
+          '--title',
+          testflightTitle,
+          '-f',
+          'ios_content=all',
+        ],
+        {
+          'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
+          // 45m of queue modeled as 60 quiet polls (fixture time, not
+          // wall time), then the build starts, then completes.
+          'view-111.txt': longQueuedThen(),
+          'jobs-111.txt': '${List.filled(200, '0').join('\n')}\n1\n',
+          'siblings.json': runJson(siblingRuns),
+        },
+      );
+      expect(dw.exitCode, 0, reason: 'a long healthy queue ends green');
+      expect(
+        dw.runIdFile,
+        '111',
+        reason: 'no re-dispatch — the same run is watched throughout',
+      );
+      expect(
+        File('${dw.dir.path}/cancelled-111').existsSync(),
+        isFalse,
+        reason: 'a healthy queued child is NEVER cancelled',
+      );
+      expect(dispatches(dw).length, 1, reason: '(d) no re-dispatch');
+      expect(
+        dw.out,
+        contains('sibling activity'),
+        reason: 'sibling in-progress runs must be logged read-only',
+      );
+      expect(
+        dw.out,
+        contains('900'),
+        reason: 'the diagnostic names the occupying runs',
+      );
+      expect(
+        servedJobs(dw, 111).contains('{"status":"in_progress"}'),
+        isTrue,
+        reason:
+            'the fixture genuinely modeled the job starting after the '
+            'queue — an inert jobs fixture would make the test vacuous',
+      );
+      expect(
+        dw.log.where((l) => l.contains('run view 111 ')).length,
+        greaterThan(60),
+        reason: 'the leg kept polling through the whole queue',
+      );
+    });
 
-    test(
-      '(b) child completes after a long queue with NO siblings in '
-      'progress → leg green, idle-pool warning logged, still no cancel',
-      () {
-        // Zombie-SHAPED fixture (quiet pool, child not starting) that
-        // resolves healthy: the read-only probe may warn, but must never
-        // cancel — and a real zombie still surfaces at the leg timeout
-        // via the orphan-cancel trap (test below), not mid-watch.
-        final dw = runDw(
-          'quiet-pool-resolves',
-          [
-            'build-mobile.yml',
-            '--title',
-            testflightTitle,
-            '-f',
-            'ios_content=all',
-          ],
-          {
-            'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
-            'view-111.txt': longQueuedThen(polls: 40),
-            'jobs-111.txt': '${List.filled(200, '0').join('\n')}\n1\n',
-            'siblings.json': '[]',
-          },
-        );
-        expect(dw.exitCode, 0);
-        expect(File('${dw.dir.path}/cancelled-111').existsSync(), isFalse);
-        expect(dispatches(dw).length, 1);
-        expect(
-          dw.out,
-          contains('pool appears IDLE'),
-          reason:
-              'an empty repo-wide in_progress list while the child never '
-              'started positively establishes pool idleness — the gh-172 '
-              'zombie signature must be NAMED read-only',
-        );
-        expect(
-          dw.out,
-          contains('NO cancel'),
-          reason:
-              'even with idleness positively established, mid-watch '
-              'cancellation does not exist (gh-1903)',
-        );
-      },
-    );
+    test('(b) child completes after a long queue with NO siblings in '
+        'progress → leg green, idle-pool warning logged, still no cancel', () {
+      // Zombie-SHAPED fixture (quiet pool, child not starting) that
+      // resolves healthy: the read-only probe may warn, but must never
+      // cancel — and a real zombie still surfaces at the leg timeout
+      // via the orphan-cancel trap (test below), not mid-watch.
+      final dw = runDw(
+        'quiet-pool-resolves',
+        [
+          'build-mobile.yml',
+          '--title',
+          testflightTitle,
+          '-f',
+          'ios_content=all',
+        ],
+        {
+          'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
+          'view-111.txt': longQueuedThen(polls: 40),
+          'jobs-111.txt': '${List.filled(200, '0').join('\n')}\n1\n',
+          'siblings.json': '[]',
+        },
+      );
+      expect(dw.exitCode, 0);
+      expect(File('${dw.dir.path}/cancelled-111').existsSync(), isFalse);
+      expect(dispatches(dw).length, 1);
+      expect(
+        dw.out,
+        contains('pool appears IDLE'),
+        reason:
+            'an empty repo-wide in_progress list while the child never '
+            'started positively establishes pool idleness — the gh-172 '
+            'zombie signature must be NAMED read-only',
+      );
+      expect(
+        dw.out,
+        contains('NO cancel'),
+        reason:
+            'even with idleness positively established, mid-watch '
+            'cancellation does not exist (gh-1903)',
+      );
+    });
 
-    test(
-      '(e) a failing liveness probe produces the cannot-judge diagnostic '
-      'and no cancel either',
-      () {
-        final dw = runDw(
-          'probe-unreachable',
-          [
-            'build-mobile.yml',
-            '--title',
-            testflightTitle,
-            '-f',
-            'ios_content=all',
-          ],
-          {
-            'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
-            'view-111.txt': longQueuedThen(polls: 20),
-            'jobs-111.txt': '${List.filled(200, '0').join('\n')}\n1\n',
-            // The probe can never answer: idleness can be neither
-            // established nor excluded — the worst case for judgment.
-            'sibling-fail-next': '99\n',
-          },
-        );
-        expect(dw.exitCode, 0);
-        expect(File('${dw.dir.path}/cancelled-111').existsSync(), isFalse);
-        expect(dispatches(dw).length, 1);
-        expect(
-          dw.out,
-          contains('cannot observe, cannot judge'),
-          reason:
-              'gh-172: when the probe fails, the leg log must say so '
-              'instead of guessing',
-        );
-        expect(
-          dw.log.where((l) => l.contains('--status in_progress')),
-          isNotEmpty,
-          reason: 'the probe itself must stay read-only (a listing, never '
-              'a cancel-class call)',
-        );
-      },
-    );
+    test('(e) a failing liveness probe produces the cannot-judge diagnostic '
+        'and no cancel either', () {
+      final dw = runDw(
+        'probe-unreachable',
+        [
+          'build-mobile.yml',
+          '--title',
+          testflightTitle,
+          '-f',
+          'ios_content=all',
+        ],
+        {
+          'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
+          'view-111.txt': longQueuedThen(polls: 20),
+          'jobs-111.txt': '${List.filled(200, '0').join('\n')}\n1\n',
+          // The probe can never answer: idleness can be neither
+          // established nor excluded — the worst case for judgment.
+          'sibling-fail-next': '99\n',
+        },
+      );
+      expect(dw.exitCode, 0);
+      expect(File('${dw.dir.path}/cancelled-111').existsSync(), isFalse);
+      expect(dispatches(dw).length, 1);
+      expect(
+        dw.out,
+        contains('cannot observe, cannot judge'),
+        reason:
+            'gh-172: when the probe fails, the leg log must say so '
+            'instead of guessing',
+      );
+      expect(
+        dw.log.where((l) => l.contains('--status in_progress')),
+        isNotEmpty,
+        reason:
+            'the probe itself must stay read-only (a listing, never '
+            'a cancel-class call)',
+      );
+    });
 
-    test(
-      'a sustained gh/API outage does not cancel — failed polls just log '
-      'and the wait continues',
-      () {
-        final dw = runDw(
-          'outage-no-cancel',
-          [
-            'build-mobile.yml',
-            '--title',
-            playTitle,
-            '-f',
-            'android_content=all',
-          ],
-          {
-            'runs.json': runJson([run(111, playTitle, iso(-10))]),
-            // 4 failed polls (the outage), then the child was running all
-            // along and completes.
-            'view-fail-next': '4\n',
-            'jobs-111.txt': '1\n',
-            'view-111.txt':
-                'in_progress -\nin_progress -\ncompleted success\n',
-          },
-          env: {'DW_POLL_SECONDS': '1'},
-        );
-        expect(dw.exitCode, 0);
-        expect(dispatches(dw).length, 1);
-        expect(
-          dw.log.where((l) => l.contains('run cancel')),
-          isEmpty,
-          reason:
-              'during an outage the cancel is unreachable anyway — and '
-              'there is nothing to cancel: cannot observe, cannot judge',
-        );
-        expect(
-          dw.out,
-          contains('cannot observe, cannot judge'),
-          reason: 'failed polls must be visible in the leg log (gh-172)',
-        );
-      },
-    );
+    test('a sustained gh/API outage does not cancel — failed polls just log '
+        'and the wait continues', () {
+      final dw = runDw(
+        'outage-no-cancel',
+        ['build-mobile.yml', '--title', playTitle, '-f', 'android_content=all'],
+        {
+          'runs.json': runJson([run(111, playTitle, iso(-10))]),
+          // 4 failed polls (the outage), then the child was running all
+          // along and completes.
+          'view-fail-next': '4\n',
+          'jobs-111.txt': '1\n',
+          'view-111.txt': 'in_progress -\nin_progress -\ncompleted success\n',
+        },
+        env: {'DW_POLL_SECONDS': '1'},
+      );
+      expect(dw.exitCode, 0);
+      expect(dispatches(dw).length, 1);
+      expect(
+        dw.log.where((l) => l.contains('run cancel')),
+        isEmpty,
+        reason:
+            'during an outage the cancel is unreachable anyway — and '
+            'there is nothing to cancel: cannot observe, cannot judge',
+      );
+      expect(
+        dw.out,
+        contains('cannot observe, cannot judge'),
+        reason: 'failed polls must be visible in the leg log (gh-172)',
+      );
+    });
   });
 
   // ── gh-1903 — the ONE cancel path: leg-termination orphan-cleanup ────────
   group('gh-1903 — orphan-cancel fires only when the LEG dies', () {
-    test(
-      '(c) leg timeout (TERM) with a never-started child → exactly one '
-      'targeted cancel of that child, none otherwise',
-      () async {
-        final live = startDw(
-          'term-never-started',
-          [
-            'build-mobile.yml',
-            '--title',
-            testflightTitle,
-            '-f',
-            'ios_content=all',
-          ],
-          {
-            'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
-            // The child never starts (queued forever on the pool) — the
-            // gh-172 zombie, now bounded by the leg timeout instead of a
-            // heuristic.
-            'view-111.txt': 'in_progress -\n',
-            'jobs-111.txt': '0\n',
-            'siblings.json': runJson(siblingRuns),
-          },
-          env: {'DW_POLL_SECONDS': '1'},
-        );
-        await live.waitForLog('watching build-mobile.yml run 111');
-        // Give the watch a couple of polls so the sibling probe has run,
-        // then the leg timeout fires (runner → SIGTERM).
-        await Future<void>.delayed(const Duration(seconds: 2));
-        expect(
-          File('${live.dir.path}/cancelled-111').existsSync(),
-          isFalse,
-          reason:
-              '(e) mid-watch there must be NO cancel even on this '
-              'zombie-shaped fixture — diagnostics only',
-        );
-        live.process.kill(ProcessSignal.sigterm);
-        final code = await live.finish();
-        expect(code, 143, reason: 'killed by the leg timeout (TERM)');
-        expect(
-          File('${live.dir.path}/cancelled-111').existsSync(),
-          isTrue,
-          reason:
-              'exactly the orphaned never-started child is cancelled so it '
-              'cannot publish unattended when the pool revives (gh-172 '
-              'containment, gh-1903 orphan-cancel)',
-        );
-        final cancels = live.log
-            .where((l) => l.contains('run cancel'))
-            .toList();
-        expect(cancels.length, 1, reason: 'exactly ONE cancel, one target');
-        expect(cancels.single, contains('run cancel 111 --repo OWNER/REPO'));
-        expect(
-          live.log.where((l) => l.startsWith('workflow run')).length,
-          1,
-          reason: '(d) the orphan-cancel must never re-dispatch',
-        );
-        expect(
-          live.out,
-          contains('NEVER STARTED'),
-          reason: 'the leg-timeout diagnostic names the child state',
-        );
-        expect(
-          live.out,
-          contains('run 111'),
-          reason: 'the diagnostic names the child run id',
-        );
-        expect(
-          live.out,
-          contains('in_progress run(s)'),
-          reason: 'the diagnostic names the observed pool activity',
-        );
-      },
-    );
+    test('(c) leg timeout (TERM) with a never-started child → exactly one '
+        'targeted cancel of that child, none otherwise', () async {
+      final live = await startDw(
+        'term-never-started',
+        [
+          'build-mobile.yml',
+          '--title',
+          testflightTitle,
+          '-f',
+          'ios_content=all',
+        ],
+        {
+          'runs.json': runJson([run(111, testflightTitle, iso(-2))]),
+          // The child never starts (queued forever on the pool) — the
+          // gh-172 zombie, now bounded by the leg timeout instead of a
+          // heuristic.
+          'view-111.txt': 'in_progress -\n',
+          'jobs-111.txt': '0\n',
+          'siblings.json': runJson(siblingRuns),
+        },
+        env: {'DW_POLL_SECONDS': '1'},
+      );
+      await live.waitForLog('run view 111 --repo OWNER/REPO');
+      // Give the watch a couple of polls so the sibling probe has run,
+      // then the leg timeout fires (runner → SIGTERM).
+      await Future<void>.delayed(const Duration(seconds: 2));
+      expect(
+        File('${live.dir.path}/cancelled-111').existsSync(),
+        isFalse,
+        reason:
+            '(e) mid-watch there must be NO cancel even on this '
+            'zombie-shaped fixture — diagnostics only',
+      );
+      live.process.kill(ProcessSignal.sigterm);
+      final code = await live.finish();
+      expect(code, 143, reason: 'killed by the leg timeout (TERM)');
+      expect(
+        File('${live.dir.path}/cancelled-111').existsSync(),
+        isTrue,
+        reason:
+            'exactly the orphaned never-started child is cancelled so it '
+            'cannot publish unattended when the pool revives (gh-172 '
+            'containment, gh-1903 orphan-cancel)',
+      );
+      final cancels = live.logLines
+          .where((l) => l.contains('run cancel'))
+          .toList();
+      expect(cancels.length, 1, reason: 'exactly ONE cancel, one target');
+      expect(cancels.single, contains('run cancel 111 --repo OWNER/REPO'));
+      expect(
+        live.logLines.where((l) => l.startsWith('workflow run')).length,
+        1,
+        reason: '(d) the orphan-cancel must never re-dispatch',
+      );
+      expect(
+        live.out,
+        contains('NEVER STARTED'),
+        reason: 'the leg-timeout diagnostic names the child state',
+      );
+      expect(
+        live.out,
+        contains('run 111'),
+        reason: 'the diagnostic names the child run id',
+      );
+      expect(
+        live.out,
+        contains('in_progress run(s)'),
+        reason: 'the diagnostic names the observed pool activity',
+      );
+    });
 
-    test(
-      'TERM after the child started → NO cancel (never-started children '
-      'only), nothing to cancel is logged',
-      () async {
-        final live = startDw(
-          'term-after-start',
-          ['pages.yml'],
-          {
-            'runs.json': runJson([run(555, 'Deploy to GitHub Pages', iso(-2))]),
-            // The child started long ago and is mid-build when the leg
-            // times out: its own per-job timeout (#344) bounds it, the
-            // watcher must NOT cancel it.
-            'view-555.txt': 'in_progress -\n',
-            'jobs-555.txt': '1\n',
-            'siblings.json': '[]',
-          },
-          env: {'DW_POLL_SECONDS': '1'},
-        );
-        await live.waitForLog('watching pages.yml run 555');
-        await Future<void>.delayed(const Duration(seconds: 2));
-        live.process.kill(ProcessSignal.sigterm);
-        final code = await live.finish();
-        expect(code, 143);
-        expect(
-          File('${live.dir.path}/cancelled-555').existsSync(),
-          isFalse,
-          reason:
-              'a child that ever started is left to its own server-side '
-              'job timeout — the orphan-cancel is never-started children '
-              'ONLY (gh-1903 AC4)',
-        );
-        expect(
-          live.log.where((l) => l.contains('run cancel')),
-          isEmpty,
-          reason: 'not one cancel call may be issued',
-        );
-        expect(
-          live.out,
-          contains('nothing to cancel'),
-          reason: 'the diagnostic must say WHY no cancel happened',
-        );
-      },
-    );
+    test('TERM after the child started → NO cancel (never-started children '
+        'only), nothing to cancel is logged', () async {
+      final live = await startDw(
+        'term-after-start',
+        ['pages.yml'],
+        {
+          'runs.json': runJson([run(555, 'Deploy to GitHub Pages', iso(-2))]),
+          // The child started long ago and is mid-build when the leg
+          // times out: its own per-job timeout (#344) bounds it, the
+          // watcher must NOT cancel it.
+          'view-555.txt': 'in_progress -\n',
+          'jobs-555.txt': '1\n',
+          'siblings.json': '[]',
+        },
+        env: {'DW_POLL_SECONDS': '1'},
+      );
+      await live.waitForLog('run view 555 --repo OWNER/REPO');
+      await Future<void>.delayed(const Duration(seconds: 2));
+      live.process.kill(ProcessSignal.sigterm);
+      final code = await live.finish();
+      expect(code, 143);
+      expect(
+        File('${live.dir.path}/cancelled-555').existsSync(),
+        isFalse,
+        reason:
+            'a child that ever started is left to its own server-side '
+            'job timeout — the orphan-cancel is never-started children '
+            'ONLY (gh-1903 AC4)',
+      );
+      expect(
+        live.logLines.where((l) => l.contains('run cancel')),
+        isEmpty,
+        reason: 'not one cancel call may be issued',
+      );
+      expect(
+        live.out,
+        contains('nothing to cancel'),
+        reason: 'the diagnostic must say WHY no cancel happened',
+      );
+    });
 
-    test(
-      'INT (manual workflow cancel) with a never-started child → the '
-      'same single orphan-cancel',
-      () async {
-        final live = startDw(
-          'int-never-started',
-          ['office-addin.yml'],
-          {
-            'runs.json': runJson([
-              run(777, 'office-addin-suite', iso(-2)),
-            ]),
-            'view-777.txt': 'in_progress -\n',
-            'jobs-777.txt': '0\n',
-            'siblings.json': '[]',
-          },
-          env: {'DW_POLL_SECONDS': '1'},
-        );
-        await live.waitForLog('watching office-addin.yml run 777');
-        await Future<void>.delayed(const Duration(milliseconds: 500));
-        live.process.kill(ProcessSignal.sigint);
-        final code = await live.finish();
-        expect(code, 130, reason: 'killed by manual cancel (INT)');
-        expect(File('${live.dir.path}/cancelled-777').existsSync(), isTrue);
-        expect(
-          live.log.where((l) => l.contains('run cancel')).length,
-          1,
-          reason: 'exactly one targeted cancel',
-        );
-      },
-    );
+    test('INT (manual workflow cancel) with a never-started child → the '
+        'same single orphan-cancel', () async {
+      final live = await startDw(
+        'int-never-started',
+        ['office-addin.yml'],
+        {
+          'runs.json': runJson([run(777, 'office-addin-suite', iso(-2))]),
+          'view-777.txt': 'in_progress -\n',
+          'jobs-777.txt': '0\n',
+          'siblings.json': '[]',
+        },
+        env: {'DW_POLL_SECONDS': '1'},
+      );
+      await live.waitForLog('run view 777 --repo OWNER/REPO');
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      live.process.kill(ProcessSignal.sigint);
+      final code = await live.finish();
+      expect(code, 130, reason: 'killed by manual cancel (INT)');
+      expect(File('${live.dir.path}/cancelled-777').existsSync(), isTrue);
+      expect(
+        live.logLines.where((l) => l.contains('run cancel')).length,
+        1,
+        reason: 'exactly one targeted cancel',
+      );
+    });
   });
 
   // ── workflow structural lint ───────────────────────────────────────────
@@ -1012,43 +982,33 @@ void main() {
       },
     );
 
-    test(
-      'gh-1903: no leg passes a watcher budget or stall knob; the '
-      'watchdog vocabulary is gone from the workflow',
-      () {
-        final daily = read('.github/workflows/daily-publish.yml');
-        for (final leg in ['testflight', 'play', 'cli', 'website', 'addin']) {
-          final runText = dispatchStepRun(leg);
-          expect(
-            runText,
-            isNot(contains('--budget-seconds')),
-            reason:
-                'leg "$leg": the watcher budget was the gh-1903 defect — '
-                'waiting is bounded solely by the child per-job timeouts '
-                '(#344) and the leg timeout-minutes',
-          );
-          expect(
-            runText,
-            isNot(contains('DW_QUEUE_STALL_SECONDS')),
-            reason: 'leg "$leg": the queue-stall watchdog must be gone',
-          );
-        }
+    test('gh-1903: no leg passes a watcher budget or stall knob; the '
+        'watchdog vocabulary is gone from the workflow', () {
+      final daily = read('.github/workflows/daily-publish.yml');
+      for (final leg in ['testflight', 'play', 'cli', 'website', 'addin']) {
+        final runText = dispatchStepRun(leg);
         expect(
-          daily,
-          isNot(contains('cancel-in-progress: true')
-              .having((_) => false, '', '')),
-          isTrue,
-          reason: 'placeholder — real pins below',
-        );
-        expect(
-          daily.contains('re-dispatching once'),
-          isFalse,
+          runText,
+          isNot(contains('--budget-seconds')),
           reason:
-              'the self-heal cancel/re-dispatch must not survive anywhere '
-              'in the daily workflow (gh-1903 AC1)',
+              'leg "$leg": the watcher budget was the gh-1903 defect — '
+              'waiting is bounded solely by the child per-job timeouts '
+              '(#344) and the leg timeout-minutes',
         );
-      },
-    );
+        expect(
+          runText,
+          isNot(contains('DW_QUEUE_STALL_SECONDS')),
+          reason: 'leg "$leg": the queue-stall watchdog must be gone',
+        );
+      }
+      expect(
+        daily.contains('re-dispatching once'),
+        isFalse,
+        reason:
+            'the self-heal cancel/re-dispatch must not survive anywhere '
+            'in the daily workflow (gh-1903 AC1)',
+      );
+    });
 
     test(
       'build-mobile/build-macos legs pass --title values matching the child run-name',
@@ -1141,13 +1101,7 @@ void main() {
             360,
           ),
           'website': ('.github/workflows/pages.yml', {}, {}, 60, 180),
-          'addin': (
-            '.github/workflows/office-addin.yml',
-            {},
-            {},
-            45,
-            150,
-          ),
+          'addin': ('.github/workflows/office-addin.yml', {}, {}, 45, 150),
         };
 
     test(
