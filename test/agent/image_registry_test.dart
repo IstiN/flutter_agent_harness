@@ -646,4 +646,235 @@ void main() {
       );
     });
   });
+
+  group('#1916: per-request image byte budget', () {
+    // Sizes in base64 chars — ImageContent.data.length IS the wire size.
+    ImageDropReport? rewrite(List<Message> messages, {int? cap, int? bytes}) {
+      ImageDropReport? report;
+      rewriteHistoryImages(
+        messages,
+        maxPerRequest: cap,
+        maxBytesPerRequest: bytes,
+        onReport: (r) => report = r,
+      );
+      return report;
+    }
+
+    test('AC1: the byte budget drops oldest history first, reason bytes', () {
+      // Current image rides first (3 chars), history newest-first is
+      // img-new (3), img-mid (3), img-old (3); budget 8 leaves 5 for
+      // history → img-new rides (2 left), the rest drop as byte drops.
+      final messages = <Message>[
+        _user([_img('old')]),
+        _user([_img('mid')]),
+        _user([_img('new')]),
+        _user('current now'),
+        _user([_img('curr')]),
+      ];
+      final report = rewrite(messages, cap: 20, bytes: 8)!;
+      expect(report.registryCount, 4);
+      expect(report.ridingCount, 2); // current + newest history
+      expect(report.maxBytes, 8);
+      final byteDrops = report.drops
+          .where((d) => d.reason == ImageDropReason.bytes)
+          .toList();
+      expect(byteDrops, hasLength(2));
+      expect(
+        byteDrops.every((d) => d.fromCurrentMessage == false),
+        isTrue,
+        reason: 'current fits the budget; only history overflows',
+      );
+      // Drop order stays newest-first-then-older (current never drops here).
+      expect(byteDrops[0].key, imageContentKey(_img('mid')));
+      expect(byteDrops[1].key, imageContentKey(_img('old')));
+    });
+
+    test('AC1: a byte drop never stops the scan — a smaller older image '
+        'still fits (greedy pass)', () {
+      // Recency order (newest history first): 8 chars, 6 chars, 2 chars.
+      // Budget 10: 8 rides (leaving 2), 6 overflows (byte drop), the scan
+      // CONTINUES and the 2-char image rides. A stop-at-first-overflow
+      // policy would have dropped the 2-char image instead.
+      final messages = <Message>[
+        _user([_img('12')]), // 2 chars, oldest message
+        _user([_img('123456')]), // 6 chars
+        _user([_img('12345678')]), // 8 chars, newest history
+        _user('look'),
+      ];
+      final report = rewrite(messages, cap: 20, bytes: 10)!;
+      expect(report.ridingCount, 2); // 8-char + 2-char
+      expect(report.drops, hasLength(1));
+      expect(report.drops.single.reason, ImageDropReason.bytes);
+      expect(report.drops.single.key, imageContentKey(_img('123456')));
+    });
+
+    test('AC1: the count cap and the byte budget both name their reason', () {
+      final messages = <Message>[
+        _user([_img('aa')]),
+        _user([_img('bb')]),
+        _user([_img('cc')]),
+        _user('now'),
+      ];
+      // cap 2, bytes 0 (off): exactly one count drop.
+      final countOnly = rewrite(messages, cap: 2, bytes: 0)!;
+      expect(countOnly.drops, hasLength(1));
+      expect(countOnly.drops.single.reason, ImageDropReason.count);
+      // cap 20, bytes 3: two byte drops (only the newest 2-char image
+      // fits — the second 2-char image would exhaust what's left).
+      final byteOnly = rewrite(messages, cap: 20, bytes: 3)!;
+      expect(byteOnly.drops, hasLength(2));
+      expect(
+        byteOnly.drops.every((d) => d.reason == ImageDropReason.bytes),
+        isTrue,
+      );
+    });
+
+    test('AC1: an over-budget current image drops as a current byte drop', () {
+      final messages = <Message>[
+        _user('selfie time'),
+        _user([_img('12345678'), _img('87654321')]),
+      ];
+      final report = rewrite(messages, cap: 20, bytes: 10)!;
+      expect(report.drops, hasLength(1));
+      expect(report.drops.single.fromCurrentMessage, isTrue);
+      expect(report.drops.single.reason, ImageDropReason.bytes);
+      expect(report.ridingCount, 1);
+    });
+
+    test('AC1: report carries the budget; 0 keeps #1889 surfaces quiet', () {
+      final messages = <Message>[
+        _user('hi'),
+        _user([_img('aa')]),
+      ];
+      expect(rewrite(messages, cap: 5, bytes: 123)!.maxBytes, 123);
+      // The #1889 constructor shape (no maxBytes) still reports 0.
+      const legacy = ImageDropReport(
+        drops: [],
+        cap: 20,
+        modelId: 'm',
+        currentImageCount: 0,
+        registryCount: 0,
+        ridingCount: 0,
+      );
+      expect(legacy.maxBytes, 0);
+    });
+  });
+
+  group('#1916: legacy text-embedded images fold into the registry (AC2)', () {
+    // Just over the 64KB floor — small enough for a fast test, big enough
+    // to prove the floor gate. The session's real blobs were ~1.3MB.
+    final blob = 'Q' * 70000;
+    final blob2 = 'R' * 70000;
+    String dataUrl(String payload) => 'data:image/png;base64,$payload';
+
+    int outboundImageBytes(List<Message> messages) {
+      var bytes = 0;
+      for (final message in messages) {
+        final blocks = switch (message) {
+          UserMessage(:final content) when content is List<ContentBlock> =>
+            content,
+          ToolResultMessage(:final content) => content,
+          _ => null,
+        };
+        if (blocks == null) continue;
+        for (final block in blocks) {
+          if (block is ImageContent) bytes += block.data.length;
+        }
+      }
+      return bytes;
+    }
+
+    test('AC2: the request-590 shape — 9 history text screenshots, one '
+        'registered block — folds and never replays raw', () {
+      // Two identical history screenshots as TEXT (the evidence shape:
+      // raw base64 in user messages, nothing registered), one distinct
+      // history screenshot, and a current message with a real block.
+      final url = dataUrl(blob);
+      final messages = <Message>[
+        _user('look: ![]($url)'),
+        _assistantText('noted'),
+        _user('again: ![]($url)'),
+        _assistantText('ok'),
+        _user('different one: ${dataUrl(blob2)}'),
+        _assistantText('seen'),
+        _user('and now the current one'),
+        _user([_img('abc')]),
+      ];
+      final before = outboundImageBytes(messages);
+      ImageDropReport? report;
+      final out = rewriteHistoryImages(messages, onReport: (r) => report = r);
+      // BEFORE: 3 chars of ImageContent (the 'abc' block) — the 210000
+      // chars of text-embedded base64 were invisible to the registry and
+      // replayed on every request. AFTER: the two identical screenshots
+      // dedup to ONE carrier, the distinct one rides as a second, and no
+      // raw data URL survives anywhere in the payload.
+      expect(before, 3);
+      expect(outboundImageBytes(out), 140003);
+      final serialized = _serialized(out);
+      expect(serialized.contains(url), isFalse);
+      expect(serialized.contains(dataUrl(blob2)), isFalse);
+      expect(report!.registryCount, 3); // deduped screenshot + distinct + abc
+      // Both text occurrences became refs to the deduped carrier.
+      expect(
+        _occurrences(serialized, '[Image 0]'),
+        2 + 1,
+        reason: 'two refs plus the carrier label',
+      );
+    });
+
+    test('AC2: the current message keeps its text data URL verbatim (I3)', () {
+      final url = dataUrl(blob);
+      final messages = <Message>[
+        _user('earlier'),
+        _user('current paste: $url'),
+      ];
+      final out = rewriteHistoryImages(messages);
+      final current = out.last as UserMessage;
+      expect(current.content, 'current paste: $url');
+    });
+
+    test('AC2: small text data URLs stay text (icons are legitimate)', () {
+      const icon = 'iVBORw0KGgo=';
+      final messages = <Message>[_user('icon: ${dataUrl(icon)}'), _user('now')];
+      expect(identical(rewriteHistoryImages(messages), messages), isTrue);
+    });
+
+    test('AC2: tool-result text data URLs fold too', () {
+      final messages = <Message>[
+        _assistantCall(_call('c1')),
+        _result('c1', [TextContent(text: 'shot: ${dataUrl(blob)}')]),
+        _user('now'),
+      ];
+      final out = rewriteHistoryImages(messages);
+      expect(outboundImageBytes(out), 70000);
+      final serialized = _serialized(out);
+      expect(serialized.contains(dataUrl(blob)), isFalse);
+      expect(
+        _occurrences(serialized, '[Image 0]'),
+        2,
+        reason: 'the folded ref plus the carrier label',
+      );
+    });
+
+    test('AC2: surrounding text survives the fold (split at URL edges)', () {
+      final messages = <Message>[
+        _user('before ${dataUrl(blob)} after'),
+        _user('now'),
+      ];
+      final out = rewriteHistoryImages(messages);
+      final texts = [
+        for (final message in out)
+          if (message is UserMessage && message.content is List<ContentBlock>)
+            for (final block in message.content as List<ContentBlock>)
+              if (block is TextContent) block.text,
+      ];
+      expect(texts.any((t) => t.contains('before')), isTrue);
+      expect(texts.any((t) => t.contains('after')), isTrue);
+    });
+
+    test('AC2: image-free fast path still returns the caller instance', () {
+      final messages = <Message>[_user('hello'), _assistantText('hi')];
+      expect(identical(rewriteHistoryImages(messages), messages), isTrue);
+    });
+  });
 }

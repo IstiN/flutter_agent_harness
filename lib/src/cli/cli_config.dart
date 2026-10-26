@@ -438,7 +438,8 @@ bool _isGhostProviderEntry(Object? node) =>
 
 /// Parses the `images:` section (session image registry, issue #171):
 /// `registry` (kill switch), `maxPerRequest` (per-request unique-image
-/// cap) and `perModel` (per-model cap overrides, issue #1750). Strict —
+/// cap), `maxBytesPerRequest` (per-request image byte budget, issue
+/// #1916) and `perModel` (per-model cap overrides, issue #1750). Strict —
 /// a bad schema throws [ConfigException] instead of silently keeping the
 /// defaults. Public so the settings flow's reload-after-write (issue
 /// #395) reuses the same parser the boot runs.
@@ -447,22 +448,28 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('images must be a map, got: $node');
   }
-  final (registry, maxPerRequest, perModel) = _parseImagesEntries(node);
-  if (registry == null && maxPerRequest == null && perModel == null) {
+  final (registry, maxPerRequest, maxBytesPerRequest, perModel) =
+      _parseImagesEntries(node);
+  if (registry == null &&
+      maxPerRequest == null &&
+      maxBytesPerRequest == null &&
+      perModel == null) {
     return null;
   }
   return ImageRegistryConfig(
     enabled: registry ?? true,
     maxPerRequest: maxPerRequest ?? defaultMaxImagesPerRequest,
+    maxBytesPerRequest: maxBytesPerRequest ?? defaultMaxImageBytesPerRequest,
     perModel: perModel ?? const {},
   );
 }
 
-/// The three optional images knobs parsed from [node]; unset keys stay
+/// The four optional images knobs parsed from [node]; unset keys stay
 /// null (gh-1713 split of [parseImagesSection]).
-(bool?, int?, Map<String, int>?) _parseImagesEntries(YamlMap node) {
+(bool?, int?, int?, Map<String, int>?) _parseImagesEntries(YamlMap node) {
   bool? registry;
   int? maxPerRequest;
+  int? maxBytesPerRequest;
   Map<String, int>? perModel;
   for (final key in node.keys) {
     switch (key) {
@@ -470,13 +477,15 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
         registry = _readImagesBool(node, '$key');
       case 'maxPerRequest':
         maxPerRequest = _readImagesPositiveInt(node, '$key');
+      case 'maxBytesPerRequest':
+        maxBytesPerRequest = _readImagesPositiveInt(node, '$key');
       case 'perModel':
         perModel = _readImagesPerModel(node);
       default:
         throw ConfigException('unknown "images" key: $key');
     }
   }
-  return (registry, maxPerRequest, perModel);
+  return (registry, maxPerRequest, maxBytesPerRequest, perModel);
 }
 
 bool _readImagesBool(YamlMap node, String key) {
@@ -1588,6 +1597,9 @@ final class CliConfig {
     if (!config.enabled) buffer.write('  registry: false\n');
     if (config.maxPerRequest != defaultMaxImagesPerRequest) {
       buffer.write('  maxPerRequest: ${config.maxPerRequest}\n');
+    }
+    if (config.maxBytesPerRequest != defaultMaxImageBytesPerRequest) {
+      buffer.write('  maxBytesPerRequest: ${config.maxBytesPerRequest}\n');
     }
     return buffer.toString();
   }

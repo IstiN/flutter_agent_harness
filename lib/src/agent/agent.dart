@@ -27,6 +27,8 @@ import '../context.dart';
 import '../model.dart';
 import '../skills/skills.dart' show Skill;
 import '../types.dart';
+import '../providers/payload_stall.dart'
+    show lastOutboundEstimateBytes, payloadStallScaleFor;
 import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
 import 'message_cap.dart' show MessageCapPolicy;
@@ -912,18 +914,36 @@ class Agent {
   /// patience — a warming-up model gets exactly the patience its
   /// `providerTimeouts.streamIdleTimeoutMs` declares. `source` names the
   /// precedence layer (`role <role> override` / `provider:<name>` /
-  /// `global`), `raised` is true when a config governs (window > floor).
-  /// Hosts render this on the stall surfaces so a wide configured window
+  /// `global`) and — when payload scaling moved the window — says so,
+  /// because a wide patience must name its real governor (#1916 review:
+  /// `raised`/`source` never silently re-purpose). `raised` is true when
+  /// anything governs above the floor (a configured window OR payload
+  /// scaling). Hosts render this on the stall surfaces so a wide window
   /// never reads as a hang.
+  ///
+  /// Issue #1916 AC3: the resolved window then scales for the outbound
+  /// payload size ([lastOutboundEstimateBytes]) — a multi-MB image upload
+  /// legitimately needs more first-token patience than a text request,
+  /// and starving it produced the submit livelock. Capped at 2x; no
+  /// request build yet (or a text-sized request) keeps the window
+  /// byte-for-byte.
   ({Duration window, String source, bool raised}) get runIdleWindow {
     final explicit = explicitStreamIdleForModel(_state.model);
-    final window = runIdleWatchdogWindow(
+    final resolved = runIdleWatchdogWindow(
       floor: runIdleTimeout,
       explicitIdle: explicit?.$1,
     );
+    final scale = payloadStallScaleFor(lastOutboundEstimateBytes);
+    final window = Duration(
+      milliseconds: (resolved.inMilliseconds * scale).round(),
+    );
+    final payloadNote = scale > 1.0
+        ? ', payload-scaled for a ~${(lastOutboundEstimateBytes / (1024 * 1024)).toStringAsFixed(0)}MB '
+              'request'
+        : '';
     return (
       window: window,
-      source: explicit?.$2 ?? 'default',
+      source: '${explicit?.$2 ?? 'default'}$payloadNote',
       raised: window > runIdleTimeout,
     );
   }
