@@ -404,7 +404,8 @@ jobs:
   memory-churn:
     name: Memory churn report (issue #1850 AC5)
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # first run 2026-10-26 hit 180m mid-measurement (run 40264809597), app-subset needs ≥3h incl. 2GB fixture gen
+    timeout-minutes: 480
     permissions:
       contents: read
     steps:
