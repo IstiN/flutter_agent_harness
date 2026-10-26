@@ -387,11 +387,7 @@ const testflightTitle = 'build-mobile (none/all)';
 /// a queued-only sibling set is the healthy-queue shape that must never
 /// read "pool appears IDLE").
 const siblingRuns = [
-  {
-    'databaseId': 900,
-    'displayTitle': 'ci (main)',
-    'status': 'in_progress',
-  },
+  {'databaseId': 900, 'displayTitle': 'ci (main)', 'status': 'in_progress'},
   {
     'databaseId': 901,
     'displayTitle': 'build-macos (create_release=true)',
@@ -896,10 +892,13 @@ void main() {
           'jobs-111.txt': '0\n1\n',
           'siblings.json': runJson(siblingRuns),
         },
-        // Long poll: exactly ONE poll runs before the TERM, so the
-        // '1' jobs line can only be seen by the trap's fresh check —
-        // no race between the poll loop and the trap.
-        env: {'DW_POLL_SECONDS': '30'},
+        // Long trap determinism note: with a 1s poll, TERM lands inside
+        // the first `sleep 1`; bash runs the pending trap as soon as the
+        // sleep ends and the trap exits the script — the second poll
+        // never runs, so the '1' jobs line can ONLY be seen by the
+        // trap's fresh re-observation (a 30s poll would defer the trap
+        // for the whole sleep).
+        env: {'DW_POLL_SECONDS': '1'},
       );
       await live.waitForLog('run view 111 --repo OWNER/REPO');
       await Future<void>.delayed(const Duration(milliseconds: 500));

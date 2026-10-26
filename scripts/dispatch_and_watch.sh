@@ -10,8 +10,9 @@
 # line. What remains here:
 #   * dispatch + exact run correlation, unchanged (#343 below);
 #   * a read-only wait: child state + elapsed logged every poll, sibling
-#     in-progress runs logged on a diagnostic interval while the child has
-#     not started — NO stall timer, NO wedge cancel, NO re-dispatch;
+#     queued+in-progress activity logged on a diagnostic interval while
+#     the child has not started — NO stall timer, NO wedge cancel, NO
+#     re-dispatch;
 #   * bounds: the child's own per-job server-side timeouts (#344) and the
 #     leg's timeout-minutes — nothing else;
 #   * exactly ONE cancel path: when the LEG itself is terminated (leg
@@ -30,12 +31,14 @@
 # not cover the cli sibling chain's 335m worst-case on the same runner —
 # and each cancel loses the queue position and restarts the clock, a
 # starvation loop. Zombie handling is now: CANNOT OBSERVE ⇒ CANNOT JUDGE.
-# The repo-wide `gh run list --status in_progress` probe is read-only; if
-# it shows runs, the queue is presumed healthy; if it shows none while the
-# child never started, a ::warning:: names the gh-172 zombie signature and
-# the leg timeout surfaces the full diagnostic. Only a repo-wide EMPTY
-# in_progress list while the child never started positively establishes
-# pool idleness — and even then the script does not cancel (gh-1903).
+# The repo-wide `gh run list` liveness probe is read-only and covers BOTH
+# queued and in_progress runs (a probe that listed only in_progress would
+# read "pool IDLE" during the healthy early-queue window — siblings
+# dispatched but not yet picked up — and cry wolf on exactly the shape
+# gh-1903 protects; completed runs are filtered out). Only a repo-wide
+# list EMPTY in BOTH statuses while the child never started suggests pool
+# idleness — the gh-172 zombie signature, named in a ::warning:: — and
+# even then the script does not cancel (gh-1903).
 #
 # #343 — correlation (unchanged): the TestFlight and Play legs dispatch
 # the SAME workflow (build-mobile.yml) as concurrent `needs: plan`
@@ -135,20 +138,40 @@ wait_for_run() {
 # alone: its own per-job server-side timeouts (#344) bound it.
 run_id=0
 child_started=0
-watch_started=0
+# Leg start, taken at script start (NOT at the first watch poll): every
+# elapsed diagnostic — including a TERM landing in the dispatch/appear
+# window — then means leg-elapsed from the runner's perspective.
+watch_started=$(date +%s)
 last_state="(never polled)"
 pool_note="no pool observation yet"
 
 orphan_cleanup() {
-  local sig="$1" ec=143 now
+  local sig="$1" ec=143 now fresh
   [ "$sig" = "INT" ] && ec=130
   now=$(date +%s)
   if [ "$run_id" -gt 0 ] 2>/dev/null \
       && [ "$child_started" -eq 0 ] \
       && [ "${last_state%%/*}" != "completed" ]; then
-    echo "::error::leg terminated by $sig after $((now - watch_started))s — child $workflow run $run_id NEVER STARTED (last observed: $last_state; $pool_note); cancelling this orphaned child only (gh-1903 orphan-cancel) — https://github.com/$repo/actions/runs/$run_id" >&2
-    gh run cancel "$run_id" --repo "$repo" \
-      || echo "::warning::orphan cancel of run $run_id failed (already gone?)" >&2
+    # gh-1903: child_started/last_state are records of the LAST
+    # SUCCESSFUL poll — possibly minutes stale (sustained gh/API outage)
+    # or raced by a pickup between the final poll and this TERM. The
+    # trap is not latency-sensitive (the leg is already dead, and one
+    # `gh run view` is one call), so re-observe ONCE and cancel only
+    # what the FRESH observation proves never-started. Cannot observe ⇒
+    # cannot judge ⇒ no cancel.
+    fresh="$(gh run view "$run_id" --repo "$repo" --json status,conclusion,jobs \
+      --jq '"\(.status)/" + (.conclusion // "-") + " " + ([.jobs[] | select(.status == "in_progress")] | length | tostring)' 2>/dev/null)" || fresh=""
+    if [ -z "$fresh" ] || [ "${fresh%% *}" = "$fresh" ]; then
+      echo "::error::leg terminated by $sig after $((now - watch_started))s — child $workflow run $run_id NOT cancelled: the fresh re-observation FAILED (gh/API unreachable), so never-started cannot be established from the stale last observation ($last_state) — cannot observe, cannot judge (gh-172). Risk: an orphaned never-started child may publish unattended when the pool revives (gh-1903 containment withheld, not waived)" >&2
+    elif [ "${fresh%%/*}" = "completed" ]; then
+      echo "::error::leg terminated by $sig after $((now - watch_started))s — child $workflow run $run_id already ${fresh%% *} (fresh re-observation); nothing to cancel (gh-1903)" >&2
+    elif [ "${fresh##* }" -gt 0 ] 2>/dev/null; then
+      echo "::error::leg terminated by $sig after $((now - watch_started))s — child $workflow run $run_id STARTED between the last poll and this $sig (fresh re-observation: $fresh); left alone — a started child is bounded by its own per-job server-side timeouts (#344), never cancelled (gh-1903)" >&2
+    else
+      echo "::error::leg terminated by $sig after $((now - watch_started))s — child $workflow run $run_id NEVER STARTED (fresh re-observation: $fresh; $pool_note); cancelling this orphaned child only (gh-1903 orphan-cancel) — https://github.com/$repo/actions/runs/$run_id" >&2
+      gh run cancel "$run_id" --repo "$repo" \
+        || echo "::warning::orphan cancel of run $run_id failed (already gone?)" >&2
+    fi
   else
     echo "::error::leg terminated by $sig after $((now - watch_started))s — child $workflow run $run_id (started: $([ "$child_started" -eq 1 ] && echo yes || echo no); last observed: $last_state; $pool_note); nothing to cancel (gh-1903: never-started children only)" >&2
   fi
@@ -166,7 +189,6 @@ fi
 echo "watching $workflow run $run_id${title:+ (\"$title\")} — https://github.com/$repo/actions/runs/$run_id — read-only wait, no stall timer, no re-dispatch (gh-1903)"
 if [ -n "$out_run_id" ]; then printf '%s\n' "$run_id" > "$out_run_id"; fi
 
-watch_started=$(date +%s)
 last_diag=0
 while :; do
   # One poll = one API call (gh-172 review): status, conclusion and the
@@ -198,15 +220,25 @@ while :; do
   # probe repo-wide liveness on the diagnostic interval. This NEVER
   # cancels — it only distinguishes "queued behind siblings" (healthy)
   # from "pool appears idle but the child never starts" (the gh-172
-  # zombie signature, surfaced in full at the leg timeout above).
+  # zombie signature, surfaced in full at the leg timeout above). The
+  # probe lists the repo UNFILTERED (one listing, not per-status polls)
+  # and filters to non-completed runs: queued siblings are the healthy
+  # early-queue shape, and an in_progress-only probe would read "pool
+  # IDLE" during exactly that window — the wolf-crier this change exists
+  # to remove.
   if [ "$child_started" -eq 0 ] && [ $((now - last_diag)) -ge "$diag" ]; then
     last_diag="$now"
-    if sibs="$(gh run list --repo "$repo" --status in_progress --limit 20 \
-        --json databaseId,displayTitle \
-        --jq '[.[] | select(.databaseId != '"$run_id"')] | length as $n | "\($n) in_progress run(s): " + ([.[] | "\(.databaseId) \(.displayTitle)"] | join("; "))' 2>/dev/null)"; then
-      if [ "${sibs%% *}" = "0" ]; then
-        pool_note="repo-wide in_progress runs: NONE while child never started for $((now - watch_started))s — pool appears IDLE (gh-172 zombie signature possible; cannot be confirmed — the runners API is 403 for this token)"
+    if sibs="$(gh run list --repo "$repo" --limit 100 \
+        --json databaseId,displayTitle,status \
+        --jq '[.[] | select(.status != "completed" and .databaseId != '"$run_id"')] | (map(select(.status == "queued")) | length) as $q | (map(select(.status == "in_progress")) | length) as $p | "\($q) queued run(s), \($p) in_progress run(s): " + ([.[] | "\(.databaseId) \(.status) \(.displayTitle)"] | join("; "))' 2>/dev/null)"; then
+      queued_n="${sibs%% queued run(s),*}"
+      prog_n="${sibs#*, }"; prog_n="${prog_n%% in_progress run(s):*}"
+      if [ "$queued_n" -eq 0 ] 2>/dev/null && [ "$prog_n" -eq 0 ] 2>/dev/null; then
+        pool_note="repo-wide active (queued+in_progress) runs: NONE while child never started for $((now - watch_started))s — pool appears IDLE (gh-172 zombie signature possible; cannot be confirmed — the runners API is 403 for this token)"
         echo "::warning::$pool_note — NO cancel (gh-1903); if this is a real zombie the leg timeout surfaces the full diagnostic"
+      elif [ "$prog_n" -eq 0 ] 2>/dev/null; then
+        pool_note="repo-wide $sibs"
+        echo "queued sibling activity — $sibs — the child is queued behind these (none in_progress yet); healthy, no idle claim, no cancel, no stall timer (gh-1903)"
       else
         pool_note="repo-wide $sibs"
         echo "sibling activity — $sibs — the queued child is waiting behind these; healthy, no cancel, no stall timer (gh-1903)"
