@@ -4513,6 +4513,20 @@ jobs:
           # empty/partial-latest window class).
           gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
 
+      # gh-1899: the flip above publishes exactly ONE release object, but
+      # GitHub does not atomically enforce one release per tag — two train
+      # legs racing the lazy draft create can BOTH succeed (v1.0.641, run
+      # 40163369302: twin drafts 87 ms apart), and the unpicked twin then
+      # rots until the 24h sweeper deletes it and files a recurring sweep
+      # issue. The tag is published and servable now: reclaim this run's
+      # twin drafts. Success-path only — a red provenance keeps the draft
+      # as the rerun --failed recovery vessel.
+      - name: Reclaim orphaned draft twins (gh-1899)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/release_draft_dedupe.sh "${GITHUB_REF_NAME}"
+
   # gh-1832 AC3: post-publish smoke. Probes (1) EVERY releases/(latest/)?
   # download/ URL the fa1.dev landing page exposes (site/index.html) and
   # (2) the full required set from scripts/release_required_assets.txt via
