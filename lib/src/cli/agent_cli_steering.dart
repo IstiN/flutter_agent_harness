@@ -395,11 +395,14 @@ extension AgentCliSteering on AgentCli {
           ? '; press b to background the running call & deliver steering now'
           : '';
       return '⚠ agent stalled — no response for ${minutes}m$windowNote. '
-          '$saved: /restart delivers it into a fresh run, esc aborts'
+          '$saved: /compact (drops image data) or a lower '
+          'images.maxBytesPerRequest may unstick it; /restart delivers it '
+          'into a fresh run, esc aborts'
           '$budgetNote';
     }
     return 'info: agent stalled — no response for ${minutes}m$windowNote. '
-        '/restart starts a fresh run, esc aborts';
+        '/compact (drops image data) or a lower images.maxBytesPerRequest '
+        'may unstick it; /restart starts a fresh run, esc aborts';
   }
 
   /// Pushes the stall state to every consumer (issue #514 AC1): the busy

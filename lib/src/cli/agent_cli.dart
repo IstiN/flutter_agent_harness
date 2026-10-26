@@ -72,6 +72,8 @@ import '../agent/stuck_tool.dart';
 import '../agent/foreground_call_budget.dart';
 import '../agent/tool_pairing.dart';
 import '../providers/models_for_endpoint.dart';
+import '../providers/payload_stall.dart'
+    show payloadStallAdvice, payloadStallAdviceLine;
 import '../providers/proxy_connector.dart';
 import '../providers/proxy_connector_io.dart';
 import '../providers/stream_trace.dart';
@@ -2027,6 +2029,7 @@ class AgentCli {
     _wireTransientRetryNotice();
     _wireDeliverySloNotice();
     _wireImageDropNotice();
+    _wirePayloadStallAdvice();
     _wireOperativePinNotice();
     onUnknownFinishReason = (reason) =>
         _logDiagnostic('unknown finish_reason sid=$_logSid reason=$reason');

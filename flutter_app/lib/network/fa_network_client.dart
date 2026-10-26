@@ -13,8 +13,9 @@ import 'models.dart';
 ///
 /// [code] is the server error code (`unauthorized`, `invalid_credentials`,
 /// `forbidden_by_class`, `channel_read_only`, `throttled`, `not_found`,
-/// `conflict`). When the body does not match the Error schema, [code] is
-/// `http_5xx` for server errors and `http_<status>` otherwise.
+/// `conflict`). The client maps a retired hub's unknown `enroll_create` to
+/// `enrollment_unsupported`. When the body does not match the Error schema,
+/// [code] is `http_5xx` for server errors and `http_<status>` otherwise.
 class FaNetworkException implements Exception {
   const FaNetworkException({
     required this.statusCode,
@@ -34,6 +35,28 @@ class FaNetworkException implements Exception {
   String toString() =>
       'FaNetworkException($statusCode, $code): $message'
       '${retryAfterSeconds != null ? ' (retry after ${retryAfterSeconds}s)' : ''}';
+}
+
+/// Turns the retired hub's explicit `enroll_create` rejection into an
+/// actionable compatibility error. Other failures pass through unchanged;
+/// most importantly, this never retries through the legacy rotating route.
+FaNetworkException _independentEnrollmentError(FaNetworkException error) {
+  final message = error.message.toLowerCase();
+  final unsupported =
+      error.statusCode == 503 &&
+      message.contains('enroll_create') &&
+      (message.contains('unknown op') ||
+          message.contains('unknown enrollment operation'));
+  if (!unsupported) return error;
+  return FaNetworkException(
+    statusCode: error.statusCode,
+    code: 'enrollment_unsupported',
+    message:
+        'This DAP hub does not support independent agent enrollment. '
+        'Update the DAP hub and try again; existing agent credentials were '
+        'not changed.',
+    retryAfterSeconds: error.retryAfterSeconds,
+  );
 }
 
 /// REST client for the fa_network edge (fa_network/docs/openapi.yaml).
@@ -416,14 +439,18 @@ class FaNetworkClient {
     String networkId, {
     required String name,
   }) async {
-    final res = await _request(
-      'POST',
-      '/api/networks/$networkId/agents/enrollments',
-      body: {'name': name},
-      management: true,
-      expected: {201},
-    );
-    return AgentEnrollment.fromJson(_decodeMap(res));
+    try {
+      final res = await _request(
+        'POST',
+        '/api/networks/$networkId/agents/enrollments',
+        body: {'name': name},
+        management: true,
+        expected: {201},
+      );
+      return AgentEnrollment.fromJson(_decodeMap(res));
+    } on FaNetworkException catch (error) {
+      throw _independentEnrollmentError(error);
+    }
   }
 
   /// `DELETE /api/networks/{id}/agents/{agentId}` (owner/admin).

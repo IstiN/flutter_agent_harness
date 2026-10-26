@@ -16,6 +16,8 @@ library;
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/providers/payload_stall.dart'
+    show lastOutboundEstimateBytes;
 import 'package:test/test.dart';
 
 const _baseModel = Model(
@@ -27,17 +29,20 @@ const _baseModel = Model(
   maxTokens: 4096,
 );
 
-Model _model({Duration? idle, Duration? connect, String baseUrl = 'https://llama.test/v1'}) =>
-    Model(
-      id: 'warm-model',
-      api: 'openai-completions',
-      provider: 'kimi',
-      baseUrl: baseUrl,
-      contextWindow: 100000,
-      maxTokens: 4096,
-      streamIdleTimeout: idle,
-      connectTimeout: connect,
-    );
+Model _model({
+  Duration? idle,
+  Duration? connect,
+  String baseUrl = 'https://llama.test/v1',
+}) => Model(
+  id: 'warm-model',
+  api: 'openai-completions',
+  provider: 'kimi',
+  baseUrl: baseUrl,
+  contextWindow: 100000,
+  maxTokens: 4096,
+  streamIdleTimeout: idle,
+  connectTimeout: connect,
+);
 
 AssistantMessage _assistant({
   List<ContentBlock> content = const [],
@@ -154,6 +159,7 @@ void main() {
     // The ladder's inter-attempt pause is not under test here.
     transientRetrySleeper = (delay, token) async => true;
     transientRetryNotice = null;
+    lastOutboundEstimateBytes = 0;
   });
 
   tearDown(() {
@@ -162,6 +168,7 @@ void main() {
     providerTuningRegistry.registerAll(savedEntries);
     transientRetrySleeper = savedSleeper;
     transientRetryNotice = savedNotice;
+    lastOutboundEstimateBytes = 0;
   });
 
   group('gh-1617 AC1 — a warming-up model survives under its configured '
@@ -186,9 +193,9 @@ void main() {
         last.content.whereType<TextContent>().map((t) => t.text).join(),
         'warmed up',
       );
-      final errors = agent.state.messages
-          .whereType<AssistantMessage>()
-          .where((m) => m.errorMessage?.contains('(zero-byte stall)') ?? false);
+      final errors = agent.state.messages.whereType<AssistantMessage>().where(
+        (m) => m.errorMessage?.contains('(zero-byte stall)') ?? false,
+      );
       expect(errors, isEmpty, reason: 'no zero-byte abort under config');
     });
   });
@@ -216,8 +223,11 @@ void main() {
       await covered.prompt('hi');
       await covered.waitForIdle();
       final coveredLast = covered.state.messages.last as AssistantMessage;
-      expect(coveredLast.stopReason, StopReason.stop,
-          reason: 'the entry window (150ms) covers the warmup (120ms)');
+      expect(
+        coveredLast.stopReason,
+        StopReason.stop,
+        reason: 'the entry window (150ms) covers the warmup (120ms)',
+      );
 
       final otherWarmup = _WarmingUpProvider(const Duration(milliseconds: 500));
       final uncovered = _agent(
@@ -228,8 +238,11 @@ void main() {
       await uncovered.prompt('hi');
       await uncovered.waitForIdle();
       final uncoveredLast = uncovered.state.messages.last as AssistantMessage;
-      expect(uncoveredLast.stopReason, StopReason.error,
-          reason: 'the global window (80ms) never covers the warmup');
+      expect(
+        uncoveredLast.stopReason,
+        StopReason.error,
+        reason: 'the global window (80ms) never covers the warmup',
+      );
       expect(uncoveredLast.errorMessage, contains('(zero-byte stall)'));
     });
   });
@@ -272,8 +285,11 @@ void main() {
       await agent.prompt('hi');
       await agent.waitForIdle();
 
-      expect(provider.calls, 1,
-          reason: 'the connect budget buys no replay (100ms < 150ms window)');
+      expect(
+        provider.calls,
+        1,
+        reason: 'the connect budget buys no replay (100ms < 150ms window)',
+      );
       final last = agent.state.messages.last as AssistantMessage;
       expect(last.stopReason, StopReason.error);
       expect(last.errorMessage, contains('(zero-byte stall)'));
@@ -374,6 +390,35 @@ void main() {
       expect(plainInfo.window, defaultRunIdleTimeout);
       expect(plainInfo.raised, isFalse);
     });
+
+    group(
+      '#1916 AC3 — the run-idle window scales for the outbound payload',
+      () {
+        test('a multi-MB request build doubles the resolved window', () {
+          final provider = _WarmingUpProvider(const Duration(milliseconds: 10));
+          final agent = _agent(
+            model: _model(baseUrl: 'https://scale.test/v1'),
+            provider: provider,
+            floor: const Duration(seconds: 60),
+          );
+          // No request build yet: byte-for-byte floor.
+          expect(agent.runIdleWindow.window, const Duration(seconds: 60));
+          // A ~16MB request build (the #1916 evidence scale) tops the scale.
+          lastOutboundEstimateBytes = 16 * 1024 * 1024;
+          final scaled = agent.runIdleWindow;
+          expect(scaled.window, const Duration(seconds: 120));
+          // The scaled window names its real governor (#1916 review:
+          // `raised`/`source` never silently re-purpose the config layer).
+          expect(scaled.source, contains('default'));
+          expect(scaled.source, contains('payload-scaled'));
+          expect(scaled.source, contains('~16MB request'));
+          expect(scaled.raised, isTrue);
+          // A text-sized estimate keeps the floor.
+          lastOutboundEstimateBytes = 40 * 1024;
+          expect(agent.runIdleWindow.window, const Duration(seconds: 60));
+        });
+      },
+    );
 
     test('the replay notice carries the governing idle window '
         '(capability surface: replay event carries idleWindowMs)', () async {
