@@ -188,14 +188,6 @@
   "issue-1570": [
     {
       "leg": "review",
-      "at": "2026-10-12T23:21:42Z",
-      "prompt": 175190,
-      "completion": 9087,
-      "total": 184277,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-13T09:16:05Z",
       "prompt": 311290,
       "completion": 13640,
@@ -4725,6 +4717,17 @@
       "completion": 28324,
       "total": 101304,
       "cacheRead": 2472000,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-1926": [
+    {
+      "leg": "review",
+      "at": "2026-10-26T23:38:26Z",
+      "prompt": 116917,
+      "completion": 40913,
+      "total": 157830,
+      "cacheRead": 6408000,
       "model": "glm-5.3-flash"
     }
   ]
