@@ -686,6 +686,11 @@ void main() {
 
       await _typeAndSend(tester, paste);
       await tester.pumpAndSettle();
+      // In-body reset: flutter_test verifies all foundation debug vars
+      // are unset at the end of the test body. The addTearDown above is
+      // the failure-path net when this line is never reached (gh-1895
+      // review).
+      debugDefaultTargetPlatformOverride = null;
 
       expect(
         find.text(

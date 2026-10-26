@@ -144,9 +144,7 @@ without a replacement wiring.
       '(gh-1895 review)', () {
     final runapp = File('bin/fah_runapp.dart').readAsStringSync();
     expect(runapp, contains('Future<Never> failAfterPlugins'));
-    final postSeam = runapp
-        .split('_fahPluginTeardown = teardownPlugins;')
-        .last;
+    final postSeam = runapp.split('_fahPluginTeardown = teardownPlugins;').last;
     // Every _fail after the teardown seam must route through the wrapper
     // (usage/config failures remove the plaintext overlay before exit);
     // the only direct _fail left is the wrapper's own inner call.

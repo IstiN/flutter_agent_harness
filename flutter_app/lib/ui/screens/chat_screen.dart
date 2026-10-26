@@ -411,9 +411,8 @@ class _ChatScreenState extends State<ChatScreen> {
         text,
         supported: agentNetworkSupported,
         join: (bundle) => widget.service.agentNetwork.joinEnrollment(bundle),
-        plaintextStorage:
-            () =>
-                widget.service.agentNetwork.enrollmentUsesPlaintextStorage(),
+        plaintextStorage: () =>
+            widget.service.agentNetwork.enrollmentUsesPlaintextStorage(),
       );
 
   @override
