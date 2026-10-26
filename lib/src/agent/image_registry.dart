@@ -610,7 +610,8 @@ final class _RidingSelection {
 /// history overflow drops as history drops. Both limits ride the same
 /// greedy pass — whichever binds first names the drop's reason; a
 /// byte-drop never stops the scan (a smaller older image still fits).
-/// Every drop is reported — never silent.
+/// Every drop is reported — never silent. Phases live in the helpers
+/// below; this orchestrator only sequences them.
 _RidingSelection _selectRiding(
   List<Message> messages,
   Map<String, ImageRegistryEntry> entryByKey,
@@ -620,81 +621,160 @@ _RidingSelection _selectRiding(
   int maxBytes,
 ) {
   // Current-message keys in first-seen (document) order, deduped.
-  final currentOrdered = <String>[];
-  if (currentIdx >= 0) {
-    final seen = <String>{};
-    for (final image in _imagesOf(messages[currentIdx])) {
-      final key = imageContentKey(image);
-      if (seen.add(key)) currentOrdered.add(key);
-    }
+  final currentOrdered = _currentKeysInOrder(messages, currentIdx);
+  final current = _claimCurrentBatch(currentOrdered, entryByKey, cap, maxBytes);
+  final historyKeys = _recencyOrderedHistoryKeys(
+    entryByKey,
+    occurrences,
+    exclude: {...current.ride, ...current.droppedKeys},
+  );
+  final history = _fillHistorySlots(
+    historyKeys,
+    entryByKey,
+    countSlots: (cap - current.ride.length).clamp(0, historyKeys.length),
+    remainingBytes: current.remainingBytes,
+    maxBytes: maxBytes,
+  );
+  final drops = [...current.drops, ...history.drops];
+  final ridingKeys = {...current.ride, ...history.ride};
+  return _RidingSelection(
+    current.ride,
+    ridingKeys,
+    {for (final key in ridingKeys) key: entryByKey[key]!.index},
+    drops,
+    currentOrdered.length,
+  );
+}
+
+/// Which limit overflowed a candidate: the count cap binds first
+/// (structural — the reason a byte-drop alone can still ride later),
+/// bytes name the drop only when the count allowed it.
+ImageDropReason _dropReason({
+  required bool overCount,
+  required bool overBytes,
+}) => overCount ? ImageDropReason.count : ImageDropReason.bytes;
+
+/// The current message's image keys in first-seen (document) order,
+/// deduped by content key.
+List<String> _currentKeysInOrder(List<Message> messages, int currentIdx) {
+  if (currentIdx < 0) return const <String>[];
+  final ordered = <String>[];
+  final seen = <String>{};
+  for (final image in _imagesOf(messages[currentIdx])) {
+    final key = imageContentKey(image);
+    if (seen.add(key)) ordered.add(key);
   }
-  final currentRide = <String>{};
-  var remainingBytes = maxBytes;
+  return ordered;
+}
+
+/// One batch's claim on the caps: the keys that ride, the drops in
+/// encounter order, and the byte budget left for history.
+final class _BatchClaim {
+  const _BatchClaim(this.ride, this.drops, this.remainingBytes);
+
+  final Set<String> ride;
+  final List<ImageDropEvent> drops;
+  final int remainingBytes;
+
+  /// Keys this batch dropped — history must never re-claim them.
+  Set<String> get droppedKeys => {for (final drop in drops) drop.key};
+}
+
+/// The current batch's claim (#1889 R2 + #1916 AC1): slots first-come
+/// first-seen; over-count or over-budget images drop as current-message
+/// drops (just attached, immediately capped — the actionable case).
+_BatchClaim _claimCurrentBatch(
+  List<String> ordered,
+  Map<String, ImageRegistryEntry> entryByKey,
+  int cap,
+  int maxBytes,
+) {
+  final ride = <String>{};
   final drops = <ImageDropEvent>[];
-  for (final key in currentOrdered) {
+  var remaining = maxBytes;
+  for (final key in ordered) {
     final size = entryByKey[key]!.data.length;
-    final overCount = currentRide.length >= cap;
-    final overBytes = maxBytes > 0 && size > remainingBytes;
+    final overCount = ride.length >= cap;
+    final overBytes = maxBytes > 0 && size > remaining;
     if (overCount || overBytes) {
       drops.add(
         ImageDropEvent(
           index: entryByKey[key]!.index,
           key: key,
           fromCurrentMessage: true,
-          reason: overCount ? ImageDropReason.count : ImageDropReason.bytes,
+          reason: _dropReason(overCount: overCount, overBytes: overBytes),
         ),
       );
       continue;
     }
-    currentRide.add(key);
-    if (maxBytes > 0) remainingBytes -= size;
+    ride.add(key);
+    if (maxBytes > 0) remaining -= size;
   }
-  final currentDropped = {
-    for (final drop in drops)
-      if (drop.fromCurrentMessage) drop.key,
-  };
-  final historyKeys = [
-    for (final entry in entryByKey.values)
-      if (!currentRide.contains(entry.key) &&
-          !currentDropped.contains(entry.key))
-        entry.key,
-  ];
+  return _BatchClaim(ride, drops, remaining);
+}
+
+/// History keys newest-first (last occurrence recency, ties by
+/// first-seen index), minus every key the current batch claimed.
+List<String> _recencyOrderedHistoryKeys(
+  Map<String, ImageRegistryEntry> entryByKey,
+  Map<String, List<int>> occurrences, {
+  required Set<String> exclude,
+}) {
   int lastSeen(String key) => occurrences[key]!.last;
-  historyKeys.sort((a, b) {
+  final keys = [
+    for (final entry in entryByKey.values)
+      if (!exclude.contains(entry.key)) entry.key,
+  ];
+  keys.sort((a, b) {
     final byRecency = lastSeen(b).compareTo(lastSeen(a));
     return byRecency != 0
         ? byRecency
         : entryByKey[a]!.index.compareTo(entryByKey[b]!.index);
   });
-  final historySlots = (cap - currentRide.length).clamp(0, historyKeys.length);
-  var taken = 0;
-  final ridingKeys = <String>{...currentRide};
+  return keys;
+}
+
+/// The history fill's outcome: the keys that rode and the drops in
+/// scan (newest-first) order.
+final class _HistoryFill {
+  const _HistoryFill(this.ride, this.drops);
+  final Set<String> ride;
+  final List<ImageDropEvent> drops;
+}
+
+/// The greedy history fill (#1916 AC1): newest-first while count slots
+/// and the byte budget hold; a byte drop never stops the scan — a
+/// smaller older image still fits. Drop order and reasons are pinned by
+/// tests (drop order stays current-first-then-newest).
+_HistoryFill _fillHistorySlots(
+  List<String> historyKeys,
+  Map<String, ImageRegistryEntry> entryByKey, {
+  required int countSlots,
+  required int remainingBytes,
+  required int maxBytes,
+}) {
+  final ride = <String>{};
+  final drops = <ImageDropEvent>[];
+  var remaining = remainingBytes;
   for (final key in historyKeys) {
     final entry = entryByKey[key]!;
-    final overCount = taken >= historySlots;
-    final overBytes = maxBytes > 0 && entry.data.length > remainingBytes;
+    final overCount = ride.length >= countSlots;
+    final overBytes = maxBytes > 0 && entry.data.length > remaining;
     if (overCount || overBytes) {
       drops.add(
         ImageDropEvent(
           index: entry.index,
           key: entry.key,
           fromCurrentMessage: false,
-          reason: overCount ? ImageDropReason.count : ImageDropReason.bytes,
+          reason: _dropReason(overCount: overCount, overBytes: overBytes),
         ),
       );
       continue;
     }
-    ridingKeys.add(key);
-    taken++;
-    remainingBytes -= entry.data.length;
+    ride.add(key);
+    remaining -= entry.data.length;
   }
-  return _RidingSelection(
-    currentRide,
-    ridingKeys,
-    {for (final key in ridingKeys) key: entryByKey[key]!.index},
-    drops,
-    currentOrdered.length,
-  );
+  return _HistoryFill(ride, drops);
 }
 
 /// The carrier insertion plan: index → carriers before/after that message.
