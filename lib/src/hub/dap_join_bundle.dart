@@ -5,8 +5,9 @@
 /// Parser for the Fa app's Add an agent → **DAP** enrollment bundle
 /// (issue #1825 follow-up): the invite link ALONE is not enough on a hub
 /// that enrolls name-bound agent credentials — the app's own CLI command
-/// carries `DAP_HUB_URL`, `DAP_CLIENT_SECRET` and `DAP_AGENT_NAME` next
-/// to the `fa dap import` invite, and a secret enrolled on one hub is
+/// carries `DAP_HUB_URL`, `DAP_CLIENT_SECRET`, `DAP_AGENT_NAME` and the
+/// non-secret `DAP_AGENT_INSTANCE` next to the `fa dap import` invite, and
+/// a secret enrolled on one hub is
 /// rejected by another (live diagnosis: HTTP 401 with the machine's
 /// default credential, `hello name does not match the enrolled secret`
 /// with the wrong agent name).
@@ -15,7 +16,7 @@
 /// - the bare invite url / `#pub=…&priv=…` form / bare channel id;
 /// - `fa dap import` with the quoted or bare url;
 /// - the one-line app command `fa dap import` + `&& DAP_HUB_URL=…
-///   DAP_CLIENT_SECRET='…' DAP_AGENT_NAME=… fa`;
+///   DAP_CLIENT_SECRET='…' DAP_AGENT_NAME=… DAP_AGENT_INSTANCE=… fa`;
 /// - the multi-line DAP tab block (one assignment per line + import).
 ///
 /// The secret is NEVER included in error messages or logs.
@@ -31,6 +32,7 @@ final class DapJoinBundle {
     required this.hubUrl,
     this.clientSecret,
     this.agentName,
+    this.agentInstance,
   });
 
   /// The channel invite (keys included for private channels).
@@ -45,6 +47,10 @@ final class DapJoinBundle {
 
   /// The enrolled agent display name ([clientSecret] is bound to it).
   final String? agentName;
+
+  /// Optional NON-SECRET discriminator selecting an independent scoped
+  /// Ed25519 identity. Null/empty retains the legacy project identity.
+  final String? agentInstance;
 }
 
 /// An env-style assignment, single/double-quoted or bare, anywhere in
@@ -89,6 +95,7 @@ DapJoinBundle parseDapJoinBundle(String raw, {String? defaultHubUrl}) {
   }
   final secret = _assignment(trimmed, 'DAP_CLIENT_SECRET');
   final agentName = _assignment(trimmed, 'DAP_AGENT_NAME');
+  final agentInstance = _assignment(trimmed, 'DAP_AGENT_INSTANCE');
   final explicitHub = _assignment(trimmed, 'DAP_HUB_URL');
 
   final token = _importToken(trimmed);
@@ -115,5 +122,6 @@ DapJoinBundle parseDapJoinBundle(String raw, {String? defaultHubUrl}) {
     hubUrl: explicitHub ?? invite.hubUrl,
     clientSecret: secret,
     agentName: agentName,
+    agentInstance: agentInstance,
   );
 }

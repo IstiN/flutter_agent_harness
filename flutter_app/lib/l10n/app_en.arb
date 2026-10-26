@@ -1523,9 +1523,9 @@
   "@networkAddAgentEnroll": {
     "description": "Agent invite: button that enrolls the typed agent name against the fa_network backend (DAP format)"
   },
-  "networkAddAgentEnrollHint": "Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.",
+  "networkAddAgentEnrollHint": "Enrollment creates an independent, revocable credential, so agents with the same name can connect simultaneously. The secret is shown ONCE: copy it now.",
   "@networkAddAgentEnrollHint": {
-    "description": "Agent invite note under the pure-DAP format explaining the one-time secret and rotation"
+    "description": "Agent invite note under the pure-DAP format explaining the one-time secret and independent same-name enrollment"
   },
   "networkAddAgentEnrollNeedSignIn": "Sign in to the network to enroll agents",
   "@networkAddAgentEnrollNeedSignIn": {

@@ -2692,7 +2692,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkAddAgentEnrollHint =>
-      'Выдача создаёт уникальный отзываемый секрет — он показывается ОДИН раз: скопируйте его сейчас. Повторная выдача с тем же именем меняет секрет.';
+      'Выдача создаёт независимый отзываемый секрет: агенты с одинаковым именем могут подключаться одновременно. Секрет показывается ОДИН раз: скопируйте его сейчас.';
 
   @override
   String get networkAddAgentEnrollNeedSignIn =>

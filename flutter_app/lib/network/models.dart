@@ -250,12 +250,13 @@ class NetworkAgent {
   );
 }
 
-/// The one-time agent enrollment credential returned by
-/// `POST /api/networks/{id}/agents/enroll` (owner/admin only). The
-/// [clientSecret] is name-bound (the agent's dap/1 hello name MUST equal
-/// [name]) and is returned EXACTLY ONCE — it is never stored server-side
-/// and never returned again; re-enrolling the same name silently ROTATES
-/// it (the old secret dies).
+/// The one-time agent enrollment credential returned by the legacy
+/// `POST /api/networks/{id}/agents/enroll` rotation route or the independent
+/// `POST /api/networks/{id}/agents/enrollments` creation route (owner/admin
+/// only). The [clientSecret] is name-bound (the agent's dap/1 hello name MUST
+/// equal [name]) and is returned EXACTLY ONCE — it is never stored server-side
+/// or returned again. Only the legacy route rotates an existing name's
+/// credential; the creation route adds an independent same-name credential.
 final class AgentEnrollment {
   const AgentEnrollment({
     required this.name,

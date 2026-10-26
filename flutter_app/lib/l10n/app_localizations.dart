@@ -4658,10 +4658,10 @@ abstract class AppLocalizations {
   /// **'Enroll agent'**
   String get networkAddAgentEnroll;
 
-  /// Agent invite note under the pure-DAP format explaining the one-time secret and rotation
+  /// Agent invite note under the pure-DAP format explaining the one-time secret and independent same-name enrollment
   ///
   /// In en, this message translates to:
-  /// **'Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.'**
+  /// **'Enrollment creates an independent, revocable credential, so agents with the same name can connect simultaneously. The secret is shown ONCE: copy it now.'**
   String get networkAddAgentEnrollHint;
 
   /// Agent invite note shown on the DAP format when there is no signed-in network account

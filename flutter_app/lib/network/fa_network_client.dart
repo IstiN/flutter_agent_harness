@@ -408,6 +408,24 @@ class FaNetworkClient {
     return AgentEnrollment.fromJson(_decodeMap(res));
   }
 
+  /// `POST /api/networks/{id}/agents/enrollments` — creates an ADDITIONAL
+  /// independent, name-bound DAP credential (owner/admin). Repeating this
+  /// call for the same name does not rotate earlier credentials, so those
+  /// agents can connect simultaneously. The secret is returned exactly once.
+  Future<AgentEnrollment> createAgentCredential(
+    String networkId, {
+    required String name,
+  }) async {
+    final res = await _request(
+      'POST',
+      '/api/networks/$networkId/agents/enrollments',
+      body: {'name': name},
+      management: true,
+      expected: {201},
+    );
+    return AgentEnrollment.fromJson(_decodeMap(res));
+  }
+
   /// `DELETE /api/networks/{id}/agents/{agentId}` (owner/admin).
   ///
   /// The server treats 204 as idempotent success, including an unknown id.

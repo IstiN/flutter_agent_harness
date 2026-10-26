@@ -132,12 +132,24 @@ final class DapEnrollmentService {
 String dapEnrollmentProjectScope(String projectCwd) =>
     sha256.convert(utf8.encode(projectCwd)).toString().substring(0, 10);
 
+/// Stable identity-path scope for an enrollment. A nonempty instance replaces
+/// the project cwd as the digest input, so independent configs cannot share
+/// an Ed25519 key and one config keeps its identity across projects/restarts.
+/// Null/empty is byte-for-byte the legacy project behavior.
+String dapEnrollmentIdentityScope(String projectCwd, String? agentInstance) =>
+    dapEnrollmentProjectScope(
+      agentInstance == null || agentInstance.isEmpty
+          ? projectCwd
+          : agentInstance,
+    );
+
 /// One active enrollment per project, persisted through the app's existing
 /// secure-store/filesystem mechanisms. Keychain/Keystore is preferred when
 /// available. Otherwise [save] writes PLAINTEXT, unencrypted JSON to
 /// `fa_dap_enrollment_<sha256(projectCwd)[:10]>.json` at the app-storage root
-/// (`env.appStorageCwd`): the invite `priv` and hub `clientSecret`
-/// are persisted verbatim so reconnect can restore them. Web always uses this
+/// (`env.appStorageCwd`): the invite `priv`, hub `clientSecret`, and non-secret
+/// `agentInstance` are persisted so reconnect restores the same credential
+/// and identity. Web always uses this
 /// fallback and mirrors the sandbox file into origin-scoped IndexedDB;
 /// Linux and Windows always use the sandbox JSON file. Sandbox/origin
 /// isolation is not encryption.
@@ -235,6 +247,7 @@ final class DapEnrollmentStore {
     if (bundle.invite.priv != null) 'priv': bundle.invite.priv,
     if (bundle.clientSecret != null) 'clientSecret': bundle.clientSecret,
     if (bundle.agentName != null) 'agentName': bundle.agentName,
+    if (bundle.agentInstance != null) 'agentInstance': bundle.agentInstance,
   });
 
   static DapJoinBundle? _decode(String? raw) {
@@ -255,6 +268,7 @@ final class DapEnrollmentStore {
         hubUrl: decoded['hubUrl'] as String,
         clientSecret: decoded['clientSecret'] as String?,
         agentName: decoded['agentName'] as String?,
+        agentInstance: decoded['agentInstance'] as String?,
       );
     } on Object {
       // A corrupt store must not block app boot. It is never logged because

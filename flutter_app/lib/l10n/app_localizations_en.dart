@@ -2655,7 +2655,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkAddAgentEnrollHint =>
-      'Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.';
+      'Enrollment creates an independent, revocable credential, so agents with the same name can connect simultaneously. The secret is shown ONCE: copy it now.';
 
   @override
   String get networkAddAgentEnrollNeedSignIn =>

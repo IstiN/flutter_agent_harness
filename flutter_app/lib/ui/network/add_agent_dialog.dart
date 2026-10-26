@@ -2,6 +2,9 @@
 // Use of this source code is governed by an MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
@@ -25,6 +28,11 @@ enum AgentInviteScope { channel, network }
 /// set for clients that know nothing about fa_network (a self-hosted DAP
 /// hub + `fa dap`).
 enum AgentInviteFormat { link, cli, env, dap }
+
+/// The non-secret scoped-identity discriminator for an enrolled credential:
+/// the first 16 lowercase hex characters of SHA-256 over its UTF-8 secret.
+String dapAgentInstance(String clientSecret) =>
+    sha256.convert(utf8.encode(clientSecret)).toString().substring(0, 16);
 
 /// The AC-B17 minimal agent pairing (issue #955): the agent invite
 /// string for a channel or the whole network, as a link or a CLI
@@ -102,6 +110,7 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
   static const hubUrlPrefix = 'DAP_HUB_URL=';
   static const clientSecretPrefix = 'DAP_CLIENT_SECRET=';
   static const agentNamePrefix = 'DAP_AGENT_NAME=';
+  static const agentInstancePrefix = 'DAP_AGENT_INSTANCE=';
 
   bool get _agentNameValid => _agentNamePattern.hasMatch(_agentNameCtrl.text);
 
@@ -247,11 +256,12 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
   /// `FA_CHANNEL_URL='…' FA_AGENT_NAME=… fa` (reserved for the CLI
   /// network mode). The DAP format is for pure-DAP clients that know
   /// nothing about fa_network: the DEPLOYED agent-enrollment backend
-  /// mints a one-time, name-bound credential (`POST
-  /// /api/networks/{id}/agents/enroll`, owner/admin only) — the payload
-  /// is the DAP env launch line built from THAT response
-  /// (`DAP_HUB_URL` / `DAP_CLIENT_SECRET` / `DAP_AGENT_NAME`). The hub
-  /// master secret is banned from this UI: enrollment replaces it.
+  /// creates an additional one-time, name-bound credential (`POST
+  /// /api/networks/{id}/agents/enrollments`, owner/admin only) — the payload
+  /// is the DAP env launch line built from THAT response (`DAP_HUB_URL` /
+  /// `DAP_CLIENT_SECRET` / `DAP_AGENT_NAME` / `DAP_AGENT_INSTANCE`). The
+  /// instance keeps simultaneous same-name agents on distinct identities.
+  /// The hub master secret is banned from this UI: enrollment replaces it.
   String? get _payload {
     final invite = _invite;
     if (invite == null) return null;
@@ -285,24 +295,27 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
                 "fa dap import '$channelInvite'",
             ];
       final import = imports.isEmpty ? '' : "${imports.join(' && ')} && ";
+      final instance = dapAgentInstance(enrollment.clientSecret);
       return '$import$hubUrlPrefix${enrollment.hubUrl} '
           "$clientSecretPrefix'${enrollment.clientSecret}' "
-          '$agentNamePrefix${enrollment.name} fa';
+          '$agentNamePrefix${enrollment.name} '
+          '$agentInstancePrefix$instance fa';
     }
     if (_scope == AgentInviteScope.network) return invite;
     return "fa dap import '$invite'";
   }
 
-  /// Enrolls the typed agent name through the session manager (management
-  /// route — owner/admin JWT required). The one-time credential lands in
-  /// [_enrollment]; failures surface inline as [_enrollError].
+  /// Creates an independent credential for the typed agent name through the
+  /// session manager (owner/admin JWT required). Existing same-name agents
+  /// keep their credentials. The one-time secret lands in [_enrollment];
+  /// failures surface inline as [_enrollError].
   Future<void> _enroll() async {
     setState(() {
       _enrolling = true;
       _enrollError = null;
     });
     try {
-      final enrollment = await widget.manager.enrollAgent(
+      final enrollment = await widget.manager.createAgentCredential(
         widget.networkId,
         _agentNameCtrl.text,
       );
@@ -537,8 +550,8 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       )
     else ...[
       ..._enrollForm(colors, l10n),
-      // The one-time credential panel — the secret is shown
-      // here, once; re-enrolling the same name rotates it.
+      // The one-time credential panel — another enrollment adds an
+      // independent identity instead of rotating same-name credentials.
       if (_enrollment != null) ..._enrollmentRows(l10n),
     ],
   ];
@@ -604,6 +617,14 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       keyName: 'DAP_AGENT_NAME',
       display: '$agentNamePrefix${_enrollment!.name}',
       copyText: '$agentNamePrefix${_enrollment!.name}',
+    ),
+    _envCopyRow(
+      context,
+      keyName: 'DAP_AGENT_INSTANCE',
+      display:
+          '$agentInstancePrefix${dapAgentInstance(_enrollment!.clientSecret)}',
+      copyText:
+          '$agentInstancePrefix${dapAgentInstance(_enrollment!.clientSecret)}',
     ),
     // The network scope: the identity alone cannot read or
     // post — hand over every channel invite this wallet can

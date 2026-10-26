@@ -144,6 +144,28 @@ void main() {
     expect(sessionRecords.single['channelId'], 'team');
   });
 
+  test('legacy enrollment clears a previously applied instance', () async {
+    final context = buildContext();
+    final network = context.slashCommands['/network']!;
+    String payload(String secret, [String? instance]) =>
+        "fa dap import '$invite' "
+        'DAP_HUB_URL=wss://hub.fa1.dev/ws '
+        'DAP_CLIENT_SECRET=$secret '
+        'DAP_AGENT_NAME=same-name '
+        '${instance == null ? '' : 'DAP_AGENT_INSTANCE=$instance '}'
+        'fa';
+
+    await network([
+      'join',
+      payload('first-enrollment-secret', '0123456789abcdef'),
+    ]);
+    expect(env['DAP_AGENT_INSTANCE'], '0123456789abcdef');
+
+    await network(['join', payload('legacy-enrollment-secret')]);
+    expect(env['DAP_CLIENT_SECRET'], 'legacy-enrollment-secret');
+    expect(env.containsKey('DAP_AGENT_INSTANCE'), isFalse);
+  });
+
   test('channels menu: copy invite round-trips; leave(session) tombstones '
       '(AC4/E6)', () async {
     final context = buildContext();
