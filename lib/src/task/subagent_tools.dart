@@ -1533,7 +1533,7 @@ Future<String> _formatHandleDetail(
     if (h.estTokens != null && h.windowTokens != null && h.windowTokens! > 0)
       'context: ~${h.estTokens}/${h.windowTokens} tokens '
           '(${(h.estTokens! * 100 / h.windowTokens!).round()}%'
-          '${h.estTokens! >= h.windowTokens! ? ' OVER WINDOW — compact or restart from the parent' : ''})'
+          '${h.estTokens! >= h.windowTokens! ? ' OVER WINDOW — parent: task_resume or respawn' : ''})'
     else
       'context: n/a',
     'last compaction: ${h.lastCompactionText ?? 'n/a'}',

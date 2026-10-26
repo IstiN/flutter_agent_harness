@@ -19,17 +19,10 @@ import 'package:flutter_agent_harness/src/cli/subagent_board.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
 import 'package:test/test.dart';
 
-/// Tiny window, same calibration as subagent_compaction_test.dart: the
-/// compaction trigger lands at window − reserve, well under the window.
-final _model = Model(
-  id: 'child-model',
-  api: 'test-api',
-  provider: 'test-provider',
-  baseUrl: 'https://example.test',
-  contextWindow: 4300 + _contractTokens,
-  maxTokens: 4096,
-);
-
+/// The token estimate of the report-size contract's footprint in a child
+/// request (issue #1829): the contract rides the system prompt AND both
+/// injected tool descriptions (reply also carries a manifest paragraph
+/// beyond the contract), so the window carries the full measured growth.
 final int _contractTokens = () {
   final mgr = SubagentManager(parentSessionId: 'p', maxReplyChars: 8000);
   final descriptions = [
@@ -48,6 +41,17 @@ final int _contractTokens = () {
           .fold<int>(0, (a, b) => a + b);
   return (growthChars / 4).ceil();
 }();
+
+/// Tiny window, same calibration as subagent_compaction_test.dart: the
+/// compaction trigger lands at window − reserve, well under the window.
+final _model = Model(
+  id: 'child-model',
+  api: 'test-api',
+  provider: 'test-provider',
+  baseUrl: 'https://example.test',
+  contextWindow: 4300 + _contractTokens,
+  maxTokens: 4096,
+);
 
 final _fakeTime = DateTime.utc(2026, 10, 27, 9, 0, 0);
 
@@ -434,12 +438,14 @@ void main() {
       // Keep resuming until the latch trips (budget: 3 consecutive
       // failures); every resume still completes — a bounded compaction
       // failure never kills the child's run.
-      int failureCount() => int.parse(
-        RegExp(
+      int? failureCount() {
+        final match = RegExp(
           r'failed (\d+) consecutive',
-        ).firstMatch(handle.compactionError!)!.group(1)!,
-      );
-      for (var i = 0; i < 3 && failureCount() < 3; i++) {
+        ).firstMatch(handle.compactionError ?? '');
+        return match == null ? null : int.parse(match.group(1)!);
+      }
+
+      for (var i = 0; i < 3 && (failureCount() ?? 0) < 3; i++) {
         await w.execute('task_send', {
           'id': 'latchy',
           'message': 'more ${'y' * 200}',
@@ -449,13 +455,13 @@ void main() {
       expect(failureCount(), greaterThanOrEqualTo(3));
       expect(handle.compactionError, contains('latched'));
       final detail = await w.execute('task_status', {'id': 'latchy'});
-      expect(detail, contains('compaction: '));
+      expect(detail, contains('\ncompaction: child compaction failed'));
       expect(detail, contains('task_resume'));
 
       // Bounded: once latched, a resume probes EXACTLY ONE pass (the
       // recovery funnel) and boundary passes stop — one resume advances
       // the count by exactly one.
-      final before = failureCount();
+      final before = failureCount()!;
       await w.execute('task_send', {
         'id': 'latchy',
         'message': 'more ${'y' * 200}',
@@ -463,6 +469,48 @@ void main() {
       expect(handle.status, SubagentStatus.completed);
       expect(failureCount(), before + 1);
       expect(handle.compactions, 0);
+    });
+  });
+
+  group('AC-gate-declines: a healthy no-op pass never reads as failure', () {
+    test('resume probe where only + incoming crosses the trigger: engine '
+        'gate declines on the transcript basis — no stamp, no count',
+        () async {
+      // Two fat turns leave the transcript ~2.2k, under the ~3.3k trigger
+      // (healthy boundary compaction never fires on it).
+      final w = _Wiring(
+        rules: [
+          (
+            match: 'grow',
+            turns: [
+              _toolTurn('read', 'c1'),
+              _toolTurn('read', 'c2'),
+              _textTurn('base done'),
+            ],
+          ),
+        ],
+      );
+      final result = await w.spawn('declined', 'grow the context');
+      expect(result.status, TaskSpawnStatus.completed, reason: result.error);
+      await w.settle('declined');
+      final handle = w.manager['declined']!;
+      expect(handle.compactions, 0, reason: 'precondition: under trigger');
+      expect(handle.compactionError, isNull);
+
+      // The resume's incoming message (~1500t) crosses the trigger on the
+      // executor's basis (transcript + incoming) — but the transcript
+      // ALONE stays under it, so the engine's own gate declines the pass.
+      await w.execute('task_send', {'id': 'declined', 'message': 'y' * 6000});
+      expect(handle.status, SubagentStatus.completed);
+
+      // The declined no-op is a HEALTHY non-attempt: no failure stamp, no
+      // counter — the false alarm the review caught. (The resumed run's
+      // own in-run boundary may legitimately compact once the message has
+      // landed in state; that is a healthy pass, not a probe failure.)
+      expect(handle.compactionError, isNull);
+      expect(handle.statusLine, isNot(contains('compaction failing')));
+      final detail = await w.execute('task_status', {'id': 'declined'});
+      expect(detail, isNot(contains('\ncompaction: ')));
     });
   });
 }

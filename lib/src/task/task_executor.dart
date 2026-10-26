@@ -627,9 +627,6 @@ final class TaskExecutor {
       wiring: wiring,
       runForced: runForced,
     );
-    // Post-compaction invariant (#387): the flush cursor restarts at the
-    // projected length so later flushes append only new messages.
-    _childSessionWrites[id] = child.state.messages.length;
     if (!pass.ok) {
       _noteChildCompactionFailure(id, 'pass failed: ${pass.error}');
       return false; // The guard remains the last resort.
@@ -639,18 +636,28 @@ final class TaskExecutor {
       systemPrompt: child.state.systemPrompt,
       tools: child.state.tools,
     );
-    if (after >= before) {
-      // A pass that frees nothing is the #1914 shape: count it as failed.
+    if (after < before) {
+      // Post-compaction invariant (#387): the flush cursor restarts at the
+      // projected length so later flushes append only new messages.
+      _childSessionWrites[id] = child.state.messages.length;
+      _childCompactionFailures.remove(id);
+      manager.noteCompactionHealth(id);
+      manager.recordCompaction(id, freedTokens: before - after);
+      return true;
+    }
+    if (pass.attempted) {
+      // An ATTEMPTED pass that freed nothing is the #1914 shape (repeated
+      // cut point): count it as failed. A gate-DECLINED no-op
+      // (`attempted == false` — the engine's own shouldCompact re-check
+      // sees the transcript under the trigger, e.g. the resume probe
+      // where only + incomingTokens crossed it) is healthy: no stamp, no
+      // count, the guard remains the last resort.
       _noteChildCompactionFailure(
         id,
         'pass freed nothing (repeated cut point?)',
       );
-      return false;
     }
-    _childCompactionFailures.remove(id);
-    manager.noteCompactionHealth(id);
-    manager.recordCompaction(id, freedTokens: before - after);
-    return true;
+    return false;
   }
 
   /// Consecutive failed child compaction passes (issue #1924), per child
@@ -723,8 +730,10 @@ final class TaskExecutor {
 
   /// Runs ONE [AutoCompactor] pipeline for the child — the same engine the
   /// main loop uses. Best-effort by contract: a failed pass reports
-  /// `(ok: false, error: …)` and nothing changes.
-  Future<({bool ok, String? error})> _runChildCompactionPass({
+  /// `(ok: false, error: …)` and nothing changes; `attempted` reports
+  /// whether the engine actually attempted a pass (issue #1924 review
+  /// round 1) — a gate-declined no-op is a healthy non-attempt.
+  Future<({bool ok, bool attempted, String? error})> _runChildCompactionPass({
     required Session session,
     required Agent child,
     required int window,
@@ -732,6 +741,7 @@ final class TaskExecutor {
     required ({Model model, StreamFunction stream}) wiring,
     required bool runForced,
   }) async {
+    final hooks = _SilentCompactionHooks();
     try {
       final smol = rolesResolver?.resolveRole(smolModelRole);
       await AutoCompactorFactory(
@@ -752,14 +762,14 @@ final class TaskExecutor {
           mainStream: wiring.stream,
           mainModel: wiring.model,
         ),
-        hooks: _SilentCompactionHooks(),
+        hooks: hooks,
         engine: compactionEngine ?? CompactionEngine.structured,
         force: runForced,
       ).run();
     } on Object catch (error) {
-      return (ok: false, error: '$error');
+      return (ok: false, attempted: hooks.attempted, error: '$error');
     }
-    return (ok: true, error: null);
+    return (ok: true, attempted: hooks.attempted, error: null);
   }
 
   /// The observed-over-headroom latch per child id (see the forced-channel
@@ -1882,14 +1892,25 @@ final class TaskExecutor {
 final class _SilentCompactionHooks extends AutoCompactorHooks {
   _SilentCompactionHooks();
 
+  /// Whether the engine ATTEMPTED any pass (issue #1924 review round 1):
+  /// a gate-declined no-op (`shouldCompact` re-check declines — e.g. the
+  /// resume probe where only `+ incomingTokens` crossed the trigger while
+  /// the transcript sits under it) fires NO pass and NO attempt — the
+  /// caller must never read that healthy no-op as a failed pass.
+  bool attempted = false;
+
   @override
-  void onPass(AutoCompactorPass pass) {}
+  void onPass(AutoCompactorPass pass) {
+    attempted = true;
+  }
 
   @override
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
 
   @override
-  void onDone(int passes, int tokens) {}
+  void onDone(int passes, int tokens) {
+    if (passes > 0) attempted = true;
+  }
 
   @override
   void onBothRolesFailed(Object lastError) {}
