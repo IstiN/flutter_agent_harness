@@ -504,20 +504,16 @@ final class AgentLoopConfig {
 
   /// The mid-stream steering stall window (issue #1923 AC1): how long an
   /// in-flight provider stream may stay silent after a steering arrival
-  /// before the loop counts the attempt UNPRODUCTIVE, cancels it, injects
-  /// the steering into the rebuilt request, and resubmits. A zero-byte
-  /// attempt is interrupted IMMEDIATELY on arrival regardless of this
-  /// window; `<= 0` disables the mid-stream interrupt (zero-byte stays
-  /// armed). Hosts derive it BELOW their run-idle watchdog window so the
-  /// steering interrupt wins the race against the watchdog's whole-run
-  /// kill (the [Agent] uses `window - 30s`).
+  /// before the attempt counts UNPRODUCTIVE and is interrupted (zero-byte
+  /// attempts interrupt immediately regardless). `<= 0` disables the
+  /// mid-stream interrupt. Hosts derive it BELOW their run-idle watchdog
+  /// window so the interrupt wins the race against the whole-run kill
+  /// (the [Agent] uses `window - 30s`, payload scaling inherited).
   final Duration steeringStallWindow;
 
   /// Host-visible notices for the provider-phase steering interrupt
-  /// (issue #1923 AC4): `steering queued — provider stalled Ns,
-  /// interrupting to deliver` at the interrupt decision and `steering
-  /// delivered into rebuilt request` after the injection. Null keeps the
-  /// core silent.
+  /// (issue #1923 AC4) — the pinned queued/delivered lines. Null keeps
+  /// the core silent.
   final void Function(String line)? steeringInterruptNotice;
 
   /// How many times a degenerate EMPTY completion (stopReason `stop`, no
@@ -1511,116 +1507,6 @@ Future<({List<ToolResultMessage> results, bool hasMore})> _executeToolCallPhase(
 
 Future<List<Message>> _steeringMessages(AgentLoopConfig config) async {
   return await config.getSteeringMessages?.call() ?? const <Message>[];
-}
-
-/// Retries a degenerate-empty completion with the same context (bounded by
-/// `config.maxEmptyRetries`; a blank answer never ends a run on the first
-/// try). The retried messages stay in the transcript (truthful record) and
-/// the gh-1577 hiccup policy lives in `agent_loop_empty_completion.dart`.
-Future<(AssistantMessage, Context)> _retryDegenerateEmpty(
-  AssistantMessage message,
-  Context context,
-  AgentLoopConfig config,
-  AgentEventSink emit,
-  StreamFunction streamFunction,
-  CancelToken? cancelToken, {
-  required List<Message> newMessages,
-  required Future<List<Message>> Function() drainSteering,
-  CancelTokenSource? cancelTokenSource,
-}) => retryEmptyCompletion(
-  message,
-  context,
-  config,
-  emit,
-  streamFunction,
-  cancelToken,
-  newMessages: newMessages,
-  drainSteering: drainSteering,
-  cancelTokenSource: cancelTokenSource,
-);
-
-/// Streams one assistant response from the provider, emitting message
-/// lifecycle events and keeping the partial message in [context.messages]
-/// up to date (partial-first). Port of pi's `streamAssistantResponse`.
-///
-/// Issue #1923 AC1: each attempt runs under a steering-interrupt watch —
-/// a steering arrival while the attempt is UNPRODUCTIVE (zero bytes, or
-/// silent past `config.steeringStallWindow`) cancels it, drains the
-/// pending steering via [drainSteering], injects it into the rebuilt
-/// request (preserving the partial per existing abort semantics), and
-/// resubmits WITHOUT consuming a retry attempt. Productive streams are
-/// never cancelled — steering keeps its next-boundary semantics.
-Future<(AssistantMessage, Context)> _streamAssistantResponse(
-  Context context,
-  AgentLoopConfig config,
-  AgentEventSink emit,
-  StreamFunction streamFunction,
-  CancelToken? cancelToken, {
-  required List<Message> newMessages,
-  required Future<List<Message>> Function() drainSteering,
-  CancelTokenSource? cancelTokenSource,
-}) async {
-  var reliefUsed = false;
-  var pairingHealed = false;
-  // gh-1680: one-shot message-cap heal state; when armed, the next
-  // rebuilt payload coalesces toward its target.
-  final capState = _CapHealState();
-  // Issue #1750: one-shot image-cap heal state; the learned cap rides
-  // the retried request build and latches for the run.
-  final imageCapState = _ImageCapHealState();
-  // Issue #862: drain the armed corrective note once per streamed response
-  // (not per built context) so a mid-turn retry re-attaches it.
-  final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
-  // Hardening over pi: short-circuit an already-cancelled token instead of
-  // relying on the provider to surface the abort as an error event.
-  if (_isCancelRequested(cancelToken)) {
-    return await _abortedTurn(context, config, emit);
-  }
-  for (var attempt = 0; ; attempt++) {
-    final steer = _SteeringYieldWatch(
-      config: config,
-      runSource: cancelTokenSource,
-    );
-    final progress = steer.progress;
-    steer.start();
-    _AttemptResult result;
-    try {
-      result = await _streamAttempt(
-        context,
-        config,
-        emit,
-        streamFunction,
-        cancelToken,
-        misuseNote: misuseNote,
-        capState: capState,
-        imageCapState: imageCapState,
-        reliefUsed: reliefUsed,
-        pairingHealed: pairingHealed,
-        progress: progress,
-      );
-    } finally {
-      await steer.dispose();
-    }
-    final outcome = await _resolveAttemptOutcome(
-      result: result,
-      steer: steer,
-      cancelToken: cancelToken,
-      drainSteering: drainSteering,
-      context: context,
-      config: config,
-      emit: emit,
-      newMessages: newMessages,
-    );
-    if (outcome.turn != null) return outcome.turn!;
-    // Adopt and loop again: a steering-interrupt resubmit (deliberately
-    // NOT counted as a retry attempt — issue #1923 open question 2
-    // default: user-driven, not a failure) or a heal's one-shot retry.
-    context = outcome.context!;
-    if (outcome.reliefUsed != null) reliefUsed = outcome.reliefUsed!;
-    if (outcome.pairingHealed != null) {
-      pairingHealed = outcome.pairingHealed!;
-    }
-  }
 }
 
 /// The mid-turn over-window guard (issue #387): tool outputs can balloon

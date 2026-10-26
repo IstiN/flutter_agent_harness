@@ -58,7 +58,15 @@ final class _SteeringYieldWatch {
   StreamSubscription<void>? _sub;
   Timer? _probeTimer;
   Timer? _stallTimer;
+  Timer? _decisionTimer;
   var _stallWatchArmed = false;
+
+  /// Whether [dispose] ran. A disposed watch must NEVER touch the run
+  /// token again: the token is the RUN's, it outlives this attempt's
+  /// watch, and a late fire (an in-flight probe await, a deferred
+  /// decision) would spuriously cancel the NEXT attempt or a tool phase
+  /// (bot r1 blocker 2). Every fire path re-checks this.
+  var _disposed = false;
 
   /// The run token the interrupt lands on (null source = a bare loop run
   /// without a source: the watch stays inert — the pre-#1923 semantics).
@@ -100,7 +108,7 @@ final class _SteeringYieldWatch {
   /// otherwise arm the one-shot stall watch that fires if the stream goes
   /// quiet for the window. A productive stream is never cancelled here.
   void _onSteeringSignal() {
-    if (fired) return;
+    if (_disposed || fired) return;
     // The decision defers one macrotask: a stream whose first events are
     // already buffered in the response controller but not yet consumed
     // (events pushed and the steer landing in the same synchronous block
@@ -109,8 +117,8 @@ final class _SteeringYieldWatch {
     // timer runs, so buffered bytes count; a genuinely stalled connect
     // still reads zero-byte here. Cost: well under a millisecond of the
     // AC1 latency budget.
-    Timer.run(() {
-      if (fired) return;
+    _decisionTimer = Timer(Duration.zero, () {
+      if (_disposed || fired) return;
       if (!progress.sawBytes) {
         _fire('steering arrived with no provider bytes yet');
         return;
@@ -153,6 +161,11 @@ final class _SteeringYieldWatch {
 
   void _fire(String detail) {
     final source = _runSource;
+    // The disposed guard is load-bearing (bot r1 blocker 2): every path
+    // here may resume after [dispose] (the probe's async await, a
+    // decision timer that already left the gate) and the run token
+    // outlives this watch.
+    if (_disposed) return;
     if (source == null || source.token.isCancelled) return;
     _stallTimer?.cancel();
     source.cancel(
@@ -166,9 +179,11 @@ final class _SteeringYieldWatch {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     await _sub?.cancel();
     _probeTimer?.cancel();
     _stallTimer?.cancel();
+    _decisionTimer?.cancel();
   }
 }
 
@@ -269,4 +284,118 @@ class _AttemptOutcome {
   final Context? context;
   final bool? reliefUsed;
   final bool? pairingHealed;
+}
+
+// The streamed-response driver the interrupt watches own: moved here
+// with the steering-yield work (issue #1923) so agent_loop.dart stays
+// under the 2800-line gate — same library (a `part of`), private
+// access unchanged.
+/// Retries a degenerate-empty completion with the same context (bounded by
+/// `config.maxEmptyRetries`; a blank answer never ends a run on the first
+/// try). The retried messages stay in the transcript (truthful record) and
+/// the gh-1577 hiccup policy lives in `agent_loop_empty_completion.dart`.
+Future<(AssistantMessage, Context)> _retryDegenerateEmpty(
+  AssistantMessage message,
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+  StreamFunction streamFunction,
+  CancelToken? cancelToken, {
+  required List<Message> newMessages,
+  required Future<List<Message>> Function() drainSteering,
+  CancelTokenSource? cancelTokenSource,
+}) => retryEmptyCompletion(
+  message,
+  context,
+  config,
+  emit,
+  streamFunction,
+  cancelToken,
+  newMessages: newMessages,
+  drainSteering: drainSteering,
+  cancelTokenSource: cancelTokenSource,
+);
+
+/// Streams one assistant response from the provider, emitting message
+/// lifecycle events and keeping the partial message in [context.messages]
+/// up to date (partial-first). Port of pi's `streamAssistantResponse`.
+///
+/// Issue #1923 AC1: each attempt runs under a steering-interrupt watch —
+/// a steering arrival while the attempt is UNPRODUCTIVE (zero bytes, or
+/// silent past `config.steeringStallWindow`) cancels it, drains the
+/// pending steering via [drainSteering], injects it into the rebuilt
+/// request (preserving the partial per existing abort semantics), and
+/// resubmits WITHOUT consuming a retry attempt. Productive streams are
+/// never cancelled — steering keeps its next-boundary semantics.
+Future<(AssistantMessage, Context)> _streamAssistantResponse(
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+  StreamFunction streamFunction,
+  CancelToken? cancelToken, {
+  required List<Message> newMessages,
+  required Future<List<Message>> Function() drainSteering,
+  CancelTokenSource? cancelTokenSource,
+}) async {
+  var reliefUsed = false;
+  var pairingHealed = false;
+  // gh-1680: one-shot message-cap heal state; when armed, the next
+  // rebuilt payload coalesces toward its target.
+  final capState = _CapHealState();
+  // Issue #1750: one-shot image-cap heal state; the learned cap rides
+  // the retried request build and latches for the run.
+  final imageCapState = _ImageCapHealState();
+  // Issue #862: drain the armed corrective note once per streamed response
+  // (not per built context) so a mid-turn retry re-attaches it.
+  final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
+  // Hardening over pi: short-circuit an already-cancelled token instead of
+  // relying on the provider to surface the abort as an error event.
+  if (_isCancelRequested(cancelToken)) {
+    return await _abortedTurn(context, config, emit);
+  }
+  for (var attempt = 0; ; attempt++) {
+    final steer = _SteeringYieldWatch(
+      config: config,
+      runSource: cancelTokenSource,
+    );
+    final progress = steer.progress;
+    steer.start();
+    _AttemptResult result;
+    try {
+      result = await _streamAttempt(
+        context,
+        config,
+        emit,
+        streamFunction,
+        cancelToken,
+        misuseNote: misuseNote,
+        capState: capState,
+        imageCapState: imageCapState,
+        reliefUsed: reliefUsed,
+        pairingHealed: pairingHealed,
+        progress: progress,
+      );
+    } finally {
+      await steer.dispose();
+    }
+    final outcome = await _resolveAttemptOutcome(
+      result: result,
+      steer: steer,
+      cancelToken: cancelToken,
+      drainSteering: drainSteering,
+      context: context,
+      config: config,
+      emit: emit,
+      newMessages: newMessages,
+    );
+    if (outcome.turn != null) return outcome.turn!;
+    // Adopt and loop again: a steering-interrupt resubmit (deliberately
+    // NOT counted as a retry attempt — issue #1923 open question 2
+    // default: user-driven, not a failure) or a heal's one-shot retry.
+    context = outcome.context!;
+    if (outcome.reliefUsed != null) reliefUsed = outcome.reliefUsed!;
+    if (outcome.pairingHealed != null) {
+      pairingHealed = outcome.pairingHealed!;
+    }
+  }
 }
