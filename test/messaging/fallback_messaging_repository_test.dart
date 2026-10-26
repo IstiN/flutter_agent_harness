@@ -27,6 +27,7 @@ final class _ScriptedRepo
   /// drops mail in the peer's mailbox). Hub mode only logs the delivery.
   bool depositOnSend = false;
   bool failSends = false;
+  Object? sendError;
   bool failDirectory = false;
   var drainCount = 0;
 
@@ -44,7 +45,7 @@ final class _ScriptedRepo
 
   @override
   Future<void> send(AgentMessage message) async {
-    if (failSends) throw StateError('transport down');
+    if (failSends) throw sendError ?? StateError('transport down');
     sent.add(message);
     if (depositOnSend) receive(message.toId, message);
   }
@@ -149,6 +150,26 @@ void main() {
     await fabric.send(_msg('m1', to: '#general'));
     expect(hub.sent.single.toId, '#general');
     expect(files.sent, isEmpty);
+  });
+
+  test('a private-channel key refusal reaches the caller instead of '
+      'becoming a silent file dead drop', () async {
+    hub.resolvable.add('#locked');
+    hub.failSends = true;
+    hub.sendError = ChannelDeliveryException(
+      'private channel #locked has no usable key',
+    );
+
+    await expectLater(
+      fabric.send(_msg('secret', to: '#locked')),
+      throwsA(isA<ChannelDeliveryException>()),
+    );
+    expect(files.sent, isEmpty);
+
+    // Nothing was tracked for a later implicit forward either.
+    hub.failSends = false;
+    await fabric.send(_msg('after', to: 'file-peer'));
+    expect(hub.sent.map((m) => m.id), isNot(contains('secret')));
   });
 
   test(

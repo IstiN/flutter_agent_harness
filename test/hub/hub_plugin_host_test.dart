@@ -104,11 +104,12 @@ final class _StubHubPlugin extends hub.HubPlugin {
 }
 
 final class _HostFixture {
-  _HostFixture(this.plugin, this.context, this.io);
+  _HostFixture(this.plugin, this.context, this.io, this.host);
 
   final _StubHubPlugin plugin;
   final PluginContext context;
   final _IO io;
+  final HubPluginHost host;
 
   _MemoryHubRepository get repository => plugin.memoryRepository;
 
@@ -221,7 +222,7 @@ Future<_HostFixture> _fixture(
   host.register(context);
   await _waitUntil(() async => plugin.startCalls > 0);
   await Future<void>.delayed(Duration.zero);
-  return _HostFixture(plugin, context, io);
+  return _HostFixture(plugin, context, io, host);
 }
 
 void main() {
@@ -232,7 +233,19 @@ void main() {
   });
 
   tearDown(() async {
-    if (await home.exists()) await home.delete(recursive: true);
+    if (!await home.exists()) return;
+    // Boot seeding is intentionally fire-and-forget. Give an in-flight
+    // atomic overlay rename a bounded chance to settle before recursively
+    // deleting the fixture, rather than failing on transient ENOTEMPTY.
+    for (var attempt = 0; attempt < 10; attempt++) {
+      try {
+        await home.delete(recursive: true);
+        return;
+      } on FileSystemException {
+        if (attempt == 9 || !await home.exists()) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    }
   });
 
   test(
@@ -269,6 +282,52 @@ void main() {
       );
     },
   );
+
+  test('a torn priv-without-pub membership is never public and fails '
+      'closed instead of auto-keygen (gh-1888 review)', () async {
+    final fixture = await _fixture(
+      home,
+      memberships: [_membership('torn', priv: 'private-key')],
+    );
+
+    expect(
+      await HubPluginHost.publicChannelFor(fixture.plugin, 'torn'),
+      isFalse,
+    );
+    expect(
+      await HubPluginHost.privateChannelKeyMissing(fixture.plugin, 'torn'),
+      isTrue,
+    );
+  });
+
+  test(
+    'boot surfaces malformed scoped-membership warnings to the user',
+    () async {
+      final dir = Directory('${home.path}/.fah')..createSync();
+      File(
+        '${dir.path}/dap.json',
+      ).writeAsStringSync('{"channels":[{"channelId":"broken"}]}');
+
+      final fixture = await _fixture(home);
+      expect(
+        fixture.io.text,
+        contains('skipped a malformed project membership'),
+      );
+    },
+  );
+
+  test('plugin dispose removes the runtime plaintext-key overlay', () async {
+    final fixture = await _fixture(
+      home,
+      memberships: [_membership('private', pub: 'pub', priv: 'priv')],
+    );
+    final overlay = File('${home.path}/.dap/runtime/channels.json');
+    expect(await overlay.exists(), isTrue);
+
+    await fixture.host.dispose();
+    expect(await overlay.exists(), isFalse);
+    await fixture.host.dispose(); // idempotent teardown
+  });
 
   test('the public/private decision comes from the STORED shape: an '
       'undecryptable private envelope is still PRIVATE, and the missing '

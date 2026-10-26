@@ -128,6 +128,17 @@ without a replacement wiring.
     );
   });
 
+  test('runtime overlay cleanup is wired into every CLI shutdown path', () {
+    final runapp = File('bin/fah_runapp.dart').readAsStringSync();
+    final util = File('bin/fah_util.dart').readAsStringSync();
+    final model = File('bin/fah_model.dart').readAsStringSync();
+    // A2A, bridge, interactive Ctrl+C, wire-serve, headless and REPL.
+    expect(RegExp(r'await teardownPlugins\(\);').allMatches(runapp).length, 6);
+    expect(runapp, contains('_fahPluginTeardown = teardownPlugins'));
+    expect(util, contains('await _fahPluginTeardown?.call()'));
+    expect(model, contains('hubHost = plugin'));
+  });
+
   test('REG-preconfig-and-queue: the queue is resolved before '
       'keyCache.preload and the key gate (gh-1781 AC1/AC3)', () {
     // Boot order: the queue scope resolution precedes BOTH the preload and

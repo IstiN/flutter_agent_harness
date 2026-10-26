@@ -453,6 +453,32 @@ void main() {
       await s.cleanupOverlay();
     });
 
+    test('cleanupOverlay preserves the shared overlay while another live '
+        'agent owns a guard, then removes it after that agent exits', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      final s = service();
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      final otherGuard = File(
+        '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+      );
+      await otherGuard.writeAsString('${other.pid}\n');
+
+      await s.cleanupOverlay();
+      expect(await File(overlay).exists(), isTrue);
+      expect(await otherGuard.exists(), isTrue);
+
+      other.kill();
+      await other.exitCode;
+      await s.cleanupOverlay();
+      expect(await otherGuard.exists(), isFalse);
+      expect(await File(overlay).exists(), isFalse);
+    });
+
     test(
       'sweepLegacyOverlays removes pid files of dead processes only',
       () async {

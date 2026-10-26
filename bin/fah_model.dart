@@ -105,6 +105,7 @@ Future<
     List<FahPlugin> plugins,
     Map<String, dynamic> config,
     HubFabricRepository? hubFabric,
+    HubPluginHost? hubHost,
   })
 >
 _resolvePlugins(
@@ -143,6 +144,7 @@ _resolvePlugins(
         )
       : null;
   final plugins = <FahPlugin>[];
+  HubPluginHost? hubHost;
   for (final name in enabled) {
     final plugin = _builtInPlugin(
       name,
@@ -153,7 +155,13 @@ _resolvePlugins(
       redactionPipeline: redactionPipeline,
     );
     if (plugin == null) _fail('unknown plugin: $name');
+    if (plugin is HubPluginHost) hubHost = plugin;
     plugins.add(plugin);
   }
-  return (plugins: plugins, config: config, hubFabric: hubFabric);
+  return (
+    plugins: plugins,
+    config: config,
+    hubFabric: hubFabric,
+    hubHost: hubHost,
+  );
 }
