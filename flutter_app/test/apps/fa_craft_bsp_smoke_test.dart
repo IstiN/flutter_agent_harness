@@ -119,14 +119,24 @@ void main() {
       Future<void> disposeEngine() async {
         if (disposed) return;
         disposed = true;
+        // Stop the JS engine FIRST: bridge.dispose cancels the rAF ticker
+        // and the autosave interval. Pumping while the ticker still
+        // requests frames deadlocks — the tick's host ack needs the real
+        // event loop, which a pump cannot run. ValueListenableBuilder
+        // tolerates the notifier going quiet before unmount.
+        _progress('dispose-engine-start');
+        await tester.runAsync(() async {
+          await engine.dispose();
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        });
+        _progress('dispose-engine-done');
         await tester.runAsync(() async {
           await tester.pumpWidget(const SizedBox.shrink());
           await Future<void>.delayed(const Duration(milliseconds: 100));
         });
+        _progress('dispose-unmounted');
         await tester.pump();
-        await tester.runAsync(() async {
-          await engine.dispose();
-        });
+        _progress('dispose-pumped');
       }
 
       addTearDown(() async {
