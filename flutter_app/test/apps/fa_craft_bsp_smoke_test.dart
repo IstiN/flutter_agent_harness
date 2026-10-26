@@ -72,7 +72,8 @@ Object? get _skip {
 /// Unpacked fa-craft source tree (the directory holding widget.js).
 final String? _faCraftSrc = Platform.environment['FA_CRAFT_SRC'];
 
-const String _kSrcSkip = 'set FA_CRAFT_SRC to an unpacked fa-craft source '
+const String _kSrcSkip =
+    'set FA_CRAFT_SRC to an unpacked fa-craft source '
     'tree (fa_widgets release fa-craft-0.2.32.zip) to run the gh-1842 '
     'BSP smoke';
 
@@ -153,40 +154,47 @@ void main() {
 
     // The acceptance path is the DEFAULT renderer — no ?voxelBsp=0
     // anywhere in this harness.
-    expect(VoxelDiagnostics.bsp, isTrue,
-        reason: 'js_widget_runtime 0.4.189 must default to the '
-            'world-space BSP depth orderer (the ?voxelBsp=0 legacy '
-            'fallback must NOT be in effect)');
+    expect(
+      VoxelDiagnostics.bsp,
+      isTrue,
+      reason:
+          'js_widget_runtime 0.4.189 must default to the '
+          'world-space BSP depth orderer (the ?voxelBsp=0 legacy '
+          'fallback must NOT be in effect)',
+    );
 
     final boundaryKey = GlobalKey();
     final builtWidgets = <Widget>[];
-    binding.attachRootWidget(View(
-      view: binding.platformDispatcher.views.first,
-      child: MaterialApp(
-      home: Scaffold(
-        body: RepaintBoundary(
-          key: boundaryKey,
-          child: ValueListenableBuilder<Map<String, dynamic>?>(
-            valueListenable: engine.tree,
-            builder: (context, tree, _) {
-              if (tree == null) return const SizedBox.shrink();
-              final renderer = JsonWidgetRenderer(
-                theme: JsonWidgetTheme.fromAccent(
-                  Colors.teal,
-                  brightness: Brightness.light,
-                ),
-                voxelWorld: engine.voxelWorld,
-                onEvent: (actionId, payload) =>
-                    unawaited(engine.callEvent(actionId, payload)),
-              );
-              final built = renderer.build(tree, context);
-              builtWidgets.add(built);
-              return built;
-            },
+    binding.attachRootWidget(
+      View(
+        view: binding.platformDispatcher.views.first,
+        child: MaterialApp(
+          home: Scaffold(
+            body: RepaintBoundary(
+              key: boundaryKey,
+              child: ValueListenableBuilder<Map<String, dynamic>?>(
+                valueListenable: engine.tree,
+                builder: (context, tree, _) {
+                  if (tree == null) return const SizedBox.shrink();
+                  final renderer = JsonWidgetRenderer(
+                    theme: JsonWidgetTheme.fromAccent(
+                      Colors.teal,
+                      brightness: Brightness.light,
+                    ),
+                    voxelWorld: engine.voxelWorld,
+                    onEvent: (actionId, payload) =>
+                        unawaited(engine.callEvent(actionId, payload)),
+                  );
+                  final built = renderer.build(tree, context);
+                  builtWidgets.add(built);
+                  return built;
+                },
+              ),
+            ),
           ),
         ),
       ),
-    ));
+    );
 
     // Monotonic fake clock for the frame driver (the rAF scheduler folds
     // ticker restarts into epochs, so a plain millisecond counter is
@@ -210,6 +218,17 @@ void main() {
       }
     }
 
+    // Repaints once WITHOUT the trailing real-loop breath: the breath
+    // lets the JS tick deliver a camera/sync update that re-dirts the
+    // voxel painter, and RenderRepaintBoundary.toImage refuses a dirty
+    // boundary. Marks made during begin/draw are painted within the same
+    // handleDrawFrame, so the boundary is clean on return.
+    void repaintClean() {
+      clockMs += 16;
+      binding.handleBeginFrame(Duration(milliseconds: clockMs));
+      binding.handleDrawFrame();
+    }
+
     // ── Phase 1: boot + native binary lane ────────────────────────────
     // fa-craft probes the runtime, then streams terrain through
     // voxel.blocks.bin. Wait for the voxel node + resident chunks.
@@ -217,24 +236,35 @@ void main() {
     for (var i = 0; i < 600 && !booted; i++) {
       await pump();
       final tree = engine.tree.value;
-      booted = tree != null &&
+      booted =
+          tree != null &&
           engine.voxelWorld != null &&
           engine.voxelWorld!.chunksOf('fa-craft').isNotEmpty &&
           _containsVoxelNode(tree);
     }
     expect(engine.bootError.value, isNull);
-    expect(booted, isTrue,
-        reason: 'fa-craft 0.2.32 must boot, attach the voxel world and '
-            'stream at least one terrain chunk through the native '
-            'binary lane');
-    expect(builtWidgets, isNotEmpty,
-        reason: 'the renderer must have built the app tree at least once; '
-            'framework errors so far: $frameworkErrors');
+    expect(
+      booted,
+      isTrue,
+      reason:
+          'fa-craft 0.2.32 must boot, attach the voxel world and '
+          'stream at least one terrain chunk through the native '
+          'binary lane',
+    );
+    expect(
+      builtWidgets,
+      isNotEmpty,
+      reason:
+          'the renderer must have built the app tree at least once; '
+          'framework errors so far: $frameworkErrors',
+    );
     final chunksAfterBoot = engine.voxelWorld!.chunksOf('fa-craft').length;
     expect(chunksAfterBoot, greaterThan(0));
     frameMs.clear();
-    debugPrint('SMOKE gh-1842 boot: chunks=$chunksAfterBoot '
-        'bsp=${VoxelDiagnostics.bsp}');
+    debugPrint(
+      'SMOKE gh-1842 boot: chunks=$chunksAfterBoot '
+      'bsp=${VoxelDiagnostics.bsp}',
+    );
 
     // ── Phase 2: wide-landscape rotation sweep ──────────────────────
     // 16 × ~23° look steps = full yaw circle.
@@ -248,17 +278,25 @@ void main() {
       final before = frameMs.length;
       await pump();
       rotationMs.add(frameMs.sublist(before).reduce((a, b) => a + b));
-      skyHolesPerAngle.add(await _countEnclosedSkyPixels(
-        boundaryKey,
-        engine.voxelWorld!.cameraOf('fa-craft').skyColor,
-      ));
+      repaintClean();
+      skyHolesPerAngle.add(
+        await _countEnclosedSkyPixels(
+          boundaryKey,
+          engine.voxelWorld!.cameraOf('fa-craft').skyColor,
+        ),
+      );
     }
-    debugPrint('SMOKE gh-1842 rotation: frames=${rotationMs.length} '
-        'avg=${_avg(rotationMs).toStringAsFixed(1)}ms '
-        'max=${rotationMs.reduce((a, b) => a > b ? a : b)}ms '
-        'skyHoles=$skyHolesPerAngle');
-    expect(engine.voxelWorld!.chunksOf('fa-craft'), isNotEmpty,
-        reason: 'the world must survive a full camera rotation');
+    debugPrint(
+      'SMOKE gh-1842 rotation: frames=${rotationMs.length} '
+      'avg=${_avg(rotationMs).toStringAsFixed(1)}ms '
+      'max=${rotationMs.reduce((a, b) => a > b ? a : b)}ms '
+      'skyHoles=$skyHolesPerAngle',
+    );
+    expect(
+      engine.voxelWorld!.chunksOf('fa-craft'),
+      isNotEmpty,
+      reason: 'the world must survive a full camera rotation',
+    );
 
     // ── Phase 3: continuous forward movement (streaming) ────────────
     Map<String, dynamic>? posMap(Object? state) =>
@@ -279,17 +317,23 @@ void main() {
     final posAfter = posMap(engine.exportedState?['pos']);
     final chunksAfterMove = engine.voxelWorld!.chunksOf('fa-craft').length;
     final maxMoveMs = moveMs.reduce((a, b) => a > b ? a : b);
-    debugPrint('SMOKE gh-1842 streaming: frames=${moveMs.length} '
-        'avg=${_avg(moveMs).toStringAsFixed(1)}ms max=$maxMoveMs '
-        'p95=${_p95(moveMs)}ms '
-        'chunks:$chunksBeforeMove→$chunksAfterMove '
-        'pos:$posBefore→$posAfter');
+    debugPrint(
+      'SMOKE gh-1842 streaming: frames=${moveMs.length} '
+      'avg=${_avg(moveMs).toStringAsFixed(1)}ms max=$maxMoveMs '
+      'p95=${_p95(moveMs)}ms '
+      'chunks:$chunksBeforeMove→$chunksAfterMove '
+      'pos:$posBefore→$posAfter',
+    );
     expect(posAfter, isNotNull);
     final movedX = (posAfter!['x'] as num) - (posBefore?['x'] as num? ?? 0);
     final movedZ = (posAfter['z'] as num) - (posBefore?['z'] as num? ?? 0);
-    expect(movedX.abs() + movedZ.abs(), greaterThan(1.0),
-        reason: 'holding the joystick forward must move the player '
-            '(tick loop alive across 300 frames)');
+    expect(
+      movedX.abs() + movedZ.abs(),
+      greaterThan(1.0),
+      reason:
+          'holding the joystick forward must move the player '
+          '(tick loop alive across 300 frames)',
+    );
     expect(chunksAfterMove, greaterThanOrEqualTo(chunksBeforeMove));
     // Anti-wedge sanity: a software-rasterized headless frame that takes
     // longer than this is a hang, not a spike.
@@ -303,9 +347,11 @@ void main() {
     await pump(2);
     expect(engine.bootError.value, isNull);
     expect(
-      frameworkErrors.where((d) =>
-          d.exception is! NetworkImageLoadException &&
-          !d.toString().contains('was not laid out')),
+      frameworkErrors.where(
+        (d) =>
+            d.exception is! NetworkImageLoadException &&
+            !d.toString().contains('was not laid out'),
+      ),
       isEmpty,
       reason: 'no framework/paint errors across the whole smoke',
     );
@@ -319,7 +365,12 @@ void main() {
     // ── Teardown (inside the body: a live engine past the test end
     // wedges the runner; dispose cancels rAF/intervals first) ─────────
     await engine.dispose();
-    binding.attachRootWidget(const SizedBox.shrink());
+    binding.attachRootWidget(
+      View(
+        view: binding.platformDispatcher.views.first,
+        child: const SizedBox.shrink(),
+      ),
+    );
     clockMs += 16;
     binding.handleBeginFrame(Duration(milliseconds: clockMs));
     binding.handleDrawFrame();
@@ -346,8 +397,8 @@ Future<int> _countEnclosedSkyPixels(
   GlobalKey boundaryKey,
   Color skyColor,
 ) async {
-  final boundary = boundaryKey.currentContext?.findRenderObject()
-      as RenderRepaintBoundary?;
+  final boundary =
+      boundaryKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
   if (boundary == null) return -1;
   final image = await boundary.toImage(pixelRatio: 0.5);
   final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
