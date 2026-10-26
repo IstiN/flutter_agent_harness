@@ -1078,10 +1078,52 @@ extension OverWindowContinuation on AgentCli {
       }
     }
     _throwIfUserAborted();
-    await _reportContinuationExhausted(
-      _compactionPassesStarted - passesBefore,
-      lastFailure,
-    );
+    final passesRan = _compactionPassesStarted - passesBefore;
+    // Issue #1914 graceful recovery: after the bounded LM passes failed to
+    // free the window, do NOT kill the task — apply the mechanical local
+    // trim valve (the same endpoint-free path the resume boot cap uses, gh-
+    // 1425) so the run continues on a trimmed context. The session file
+    // keeps every record; the next turn's pre-flight retries the LM path.
+    // Only when nothing is droppable (or compaction never ran — a disabled
+    // config keeps its honest zero-pass verdict) does the loud terminal
+    // verdict stand.
+    if (passesRan > 0) {
+      final tokens = _liveRequestTokens();
+      final trimmed = localTrimValve(
+        messages: _agent.state.messages,
+        reason:
+            '2 compaction passes did not free the $_effectiveContextWindow-'
+            'token window',
+        window: _effectiveContextWindow,
+        settings: _effectiveCompactionSettings,
+        overheadTokens: estimateRequestTokens(
+          const [],
+          systemPrompt: _agent.state.systemPrompt,
+          tools: _agent.state.tools,
+        ),
+      );
+      if (trimmed != null) {
+        _agent.state.messages = trimmed.messages;
+        _persistedCount = _agent.state.messages.length;
+        final after = _liveRequestTokens();
+        _logDiagnostic(
+          'over-window continuation local-trim sid=$_logSid tokens=$tokens '
+          '-> $after (dropped ${trimmed.dropped})',
+        );
+        io.writeln(
+          _style.dim(
+            '[context trimmed] still ~$tokens tokens vs the '
+            '$_effectiveContextWindow-token window after $passesRan '
+            'compaction ${passesRan == 1 ? 'pass' : 'passes'} — trimmed '
+            'locally to ~$after tokens; the full history stays in the '
+            'session file',
+          ),
+        );
+        await _runContinuationPromptSafe();
+        return true;
+      }
+    }
+    await _reportContinuationExhausted(passesRan, lastFailure);
     return true;
   }
 
