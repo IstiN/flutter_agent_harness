@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/key_wallet.dart';
@@ -15,6 +16,7 @@ import 'package:fa/ui/network/add_agent_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../golden/golden_test_helper.dart' show ensureGoldenFonts;
 import 'fakes.dart';
 
 /// A session manager over the test fakes — the AddAgentDialog enrolls
@@ -53,6 +55,12 @@ void main() {
     });
 
     Future<Widget> pumpDialog(WidgetTester tester) async {
+      // These tests cover payload semantics, not the responsive layout —
+      // pin the wide (desktop) presentation so the surface-size default
+      // cannot flip the dialog into its narrow branch (issue #1913).
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       final wallet = await walletWithChannel(
         channelPub: channelKeys.pub,
         channelPriv: channelKeys.priv,
@@ -152,6 +160,10 @@ void main() {
         channelPub: channelKeys.pub,
         channelPriv: channelKeys.priv,
       );
+      // Payload-semantics test — pin the wide (desktop) presentation.
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(
         MaterialApp(
           theme: buildFahTheme(),
@@ -224,6 +236,11 @@ void _registerNetworkScopeGroup() {
       required KeyWallet wallet,
       bool public = false,
     }) async {
+      // Payload-semantics tests — pin the wide (desktop) presentation
+      // (issue #1913 narrow-branch split).
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(
         MaterialApp(
           theme: buildFahTheme(),
@@ -424,6 +441,10 @@ void _registerNetworkScopeGroup() {
     testWidgets('a network-scope dialog without a channel hides the scope '
         'switch', (tester) async {
       final wallet = await buildWallet(password: 'pw');
+      // Payload-semantics test — pin the wide (desktop) presentation.
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(
         MaterialApp(
           theme: buildFahTheme(),
@@ -482,6 +503,11 @@ void _registerNetworkScopeGroup() {
       required KeyWallet wallet,
       required NetworkSessionManager manager,
     }) async {
+      // Payload-semantics tests — pin the wide (desktop) presentation
+      // (issue #1913 narrow-branch split).
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(
         MaterialApp(
           theme: buildFahTheme(),
@@ -677,6 +703,10 @@ void _registerNetworkScopeGroup() {
         httpClient: http,
         jwt: 'jwt-1',
       );
+      // Payload-semantics test — pin the wide (desktop) presentation.
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(
         MaterialApp(
           theme: buildFahTheme(),
@@ -781,6 +811,11 @@ void _registerNetworkScopeGroup() {
         required KeyWallet wallet,
         required NetworkSessionManager manager,
       }) async {
+        // Payload-semantics tests — pin the wide (desktop) presentation
+        // (issue #1913 narrow-branch split).
+        tester.view.physicalSize = const Size(1280, 900);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
         await tester.pumpWidget(
           MaterialApp(
             theme: buildFahTheme(),
@@ -927,18 +962,10 @@ void _registerNarrowViewportGroup() {
       double textScale = 1.0,
       String? networkPassword,
     }) async {
-      final wallet = await KeyWallet.load(MemoryWalletBackend());
-      await wallet.createIfMissing(displayName: 'Me');
-      await wallet.addNetwork(
-        networkId: 'net1',
-        name: 'fa-team',
-        password: networkPassword,
-      );
-      await wallet.addChannelKeys(
-        networkId: 'net1',
-        channel: 'c1',
-        pub: channelKeys.pub,
-        priv: channelKeys.priv,
+      final wallet = await walletWithChannel(
+        channelPub: channelKeys.pub,
+        channelPriv: channelKeys.priv,
+        networkPassword: networkPassword,
       );
       final manager = await buildManager(wallet: wallet, jwt: 'jwt');
       tester.view.physicalSize = Size(width, height);
@@ -994,7 +1021,10 @@ void _registerNarrowViewportGroup() {
         expect(tester.takeException(), isNull);
 
         // Every selector label renders on ONE line — the #1913
-        // per-character wrapping doubles the label height.
+        // per-character wrapping doubles the label height. The 34 px
+        // ceiling is measured against the FlutterTest fallback font,
+        // which is WIDER per glyph than the bundled Inter — so
+        // single-line here implies single-line in production metrics.
         for (final label in [
           'This channel',
           'Whole network',
@@ -1036,6 +1066,107 @@ void _registerNarrowViewportGroup() {
         expect(tester.takeException(), isNull);
       });
     }
+
+    testWidgets('the round-2 measurement point (480 lp) uses the Wrap '
+        'layout — no wrapping just above the old breakpoint', (tester) async {
+      await pumpDialog(tester, width: 480);
+      expect(tester.takeException(), isNull);
+      expect(find.byType(SegmentedButton<AgentInviteFormat>), findsNothing);
+      expect(find.byType(ChoiceChip), findsNWidgets(6));
+      for (final label in ['DAP', 'Link (app)', 'CLI command', 'Env (CI)']) {
+        expect(tester.getSize(find.text(label)).height, lessThan(34));
+      }
+    });
+
+    testWidgets('at the 1024 lp breakpoint the SegmentedButton labels stay '
+        'single-line, with the bundled Inter at 1.3x text', (tester) async {
+      // Real bundled fonts: this assertion is about production metrics
+      // at the breakpoint (the FlutterTest fallback font is wider and
+      // wraps here — a test-font artifact, not a product bug).
+      await ensureGoldenFonts();
+      await pumpDialog(tester, width: 1024, textScale: 1.3);
+      expect(tester.takeException(), isNull);
+      expect(
+        tester.widget<SegmentedButton<AgentInviteFormat>>(
+          find.byKey(const ValueKey('inviteFormat')),
+        ),
+        isNotNull,
+      );
+      // Single line at 1.3x = 26 px; two lines = 52 px.
+      for (final label in ['DAP', 'Link (app)', 'CLI command', 'Env (CI)']) {
+        expect(
+          tester.getSize(find.text(label)).height,
+          lessThan(34),
+          reason: "'$label' wrapped at the 1024 lp breakpoint",
+        );
+      }
+      expect(find.byType(ChoiceChip), findsNothing);
+    });
+
+    testWidgets('russian labels stay single-line on the narrow layout', (
+      tester,
+    ) async {
+      // RU ships the longest selector labels
+      // ("Ссылка (приложение)") — the chips keep them intrinsic-width
+      // at phone widths, same contract as the EN matrix.
+      final wallet = await walletWithChannel(
+        channelPub: channelKeys.pub,
+        channelPriv: channelKeys.priv,
+      );
+      final manager = await buildManager(wallet: wallet, jwt: 'jwt');
+      tester.view.physicalSize = const Size(360, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          locale: const Locale('ru'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => AddAgentDialog(
+                      wallet: wallet,
+                      manager: manager,
+                      networkId: 'net1',
+                      channel: const Channel(
+                        id: 'c1',
+                        networkId: 'net1',
+                        name: 'general',
+                        isPublic: false,
+                      ),
+                    ),
+                  ),
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(ChoiceChip), findsNWidgets(6));
+      for (final label in [
+        'Этот канал',
+        'Вся сеть',
+        'DAP',
+        'Ссылка (приложение)',
+        'CLI-команда',
+        'Env (CI)',
+      ]) {
+        expect(
+          tester.getSize(find.text(label)).height,
+          lessThan(34),
+          reason: "RU '$label' wrapped at 360 lp",
+        );
+      }
+    });
 
     testWidgets('name field and Enroll agent stack vertically on narrow', (
       tester,

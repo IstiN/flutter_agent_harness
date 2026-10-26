@@ -86,7 +86,14 @@ class AddAgentDialog extends StatefulWidget {
 class _AddAgentDialogState extends State<AddAgentDialog> {
   /// Logical-width breakpoint between the wide SegmentedButton selectors
   /// and the stacked narrow layouts (issue #1913).
-  static const _narrowBreakpoint = 480.0;
+  ///
+  /// 1024 = desktop window class. The four icon+text format segments
+  /// simply do not fit a dialog below it: measured through `showDialog`,
+  /// labels wrap at every width up to ~700 lp even with the bundled
+  /// Inter (and to ~960 lp with the wider test font) — so anything
+  /// under 1024 gets the Wrap layout, where labels keep their
+  /// intrinsic width and rows wrap instead.
+  static const _narrowBreakpoint = 1024.0;
 
   late AgentInviteScope _scope;
   AgentInviteFormat _format = AgentInviteFormat.dap;
@@ -354,9 +361,10 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
     final l10n = context.l10n;
     final payload = _payload;
     final isPublicChannel = widget.channel?.isPublic ?? false;
-    // Below ~480 lp (iPhone portrait, issue #1913) the icon+text
-    // SegmentedButtons wrap per character and the name/enroll row
-    // squeezes — switch to stacked, wrap-friendly layouts.
+    // Narrow layout below the desktop window class (issue #1913): the
+    // icon+text SegmentedButtons wrap per character on phone/tablet
+    // dialogs and the name/enroll row squeezes — switch to stacked,
+    // wrap-friendly layouts.
     final narrow = MediaQuery.sizeOf(context).width < _narrowBreakpoint;
     return AlertDialog(
       title: Text(l10n.networkAddAgentTitle),
@@ -472,6 +480,21 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
     const SizedBox(height: 8),
   ];
 
+  /// The format↔icon↔label mapping, single-sourced for both the narrow
+  /// chips and the wide segments.
+  List<(AgentInviteFormat, IconData, String)> _formatEntries(
+    AppLocalizations l10n,
+  ) => [
+    (AgentInviteFormat.dap, Icons.dns, l10n.networkAddAgentFormatDap),
+    (AgentInviteFormat.link, Icons.link, l10n.networkAddAgentFormatLink),
+    (AgentInviteFormat.cli, Icons.terminal, l10n.networkAddAgentFormatCli),
+    (
+      AgentInviteFormat.env,
+      Icons.settings_ethernet,
+      l10n.networkAddAgentFormatEnv,
+    ),
+  ];
+
   Widget _buildFormatSelector(AppLocalizations l10n, bool narrow) {
     if (narrow) {
       return Wrap(
@@ -479,24 +502,7 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
         spacing: 8,
         runSpacing: 8,
         children: [
-          for (final (format, icon, label) in [
-            (AgentInviteFormat.dap, Icons.dns, l10n.networkAddAgentFormatDap),
-            (
-              AgentInviteFormat.link,
-              Icons.link,
-              l10n.networkAddAgentFormatLink,
-            ),
-            (
-              AgentInviteFormat.cli,
-              Icons.terminal,
-              l10n.networkAddAgentFormatCli,
-            ),
-            (
-              AgentInviteFormat.env,
-              Icons.settings_ethernet,
-              l10n.networkAddAgentFormatEnv,
-            ),
-          ])
+          for (final (format, icon, label) in _formatEntries(l10n))
             _selectorChip(
               icon: icon,
               label: label,
@@ -509,26 +515,12 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
     return SegmentedButton<AgentInviteFormat>(
       key: const ValueKey('inviteFormat'),
       segments: [
-        ButtonSegment(
-          value: AgentInviteFormat.dap,
-          icon: const Icon(Icons.dns, size: 16),
-          label: Text(l10n.networkAddAgentFormatDap),
-        ),
-        ButtonSegment(
-          value: AgentInviteFormat.link,
-          icon: const Icon(Icons.link, size: 16),
-          label: Text(l10n.networkAddAgentFormatLink),
-        ),
-        ButtonSegment(
-          value: AgentInviteFormat.cli,
-          icon: const Icon(Icons.terminal, size: 16),
-          label: Text(l10n.networkAddAgentFormatCli),
-        ),
-        ButtonSegment(
-          value: AgentInviteFormat.env,
-          icon: const Icon(Icons.settings_ethernet, size: 16),
-          label: Text(l10n.networkAddAgentFormatEnv),
-        ),
+        for (final (format, icon, label) in _formatEntries(l10n))
+          ButtonSegment(
+            value: format,
+            icon: Icon(icon, size: 16),
+            label: Text(label),
+          ),
       ],
       selected: {_format},
       onSelectionChanged: (s) => setState(() => _format = s.first),

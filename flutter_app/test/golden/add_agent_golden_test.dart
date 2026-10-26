@@ -20,30 +20,6 @@ import 'package:flutter_test/flutter_test.dart';
 import '../network/fakes.dart';
 import 'golden_test_helper.dart';
 
-/// The real app theme with one test-only patch: the theme's
-/// FilledButton/ElevatedButton `styleFrom(textStyle:)` carries a
-/// family-less `TextStyle(fontWeight: w600)`, and Material applies it
-/// terminally (no merge with the ambient default), so in flutter_test the
-/// button labels would fall back to the placeholder boxes. Pinning the
-/// family to Inter keeps the labels legible; the weight/shape/colors are
-/// untouched.
-ThemeData _goldenTheme() {
-  const interW600 = TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.w600);
-  ButtonStyle withInterLabels(ButtonStyle? style) =>
-      (style ?? const ButtonStyle()).copyWith(
-        textStyle: const WidgetStatePropertyAll(interW600),
-      );
-  final base = buildFahTheme();
-  return base.copyWith(
-    filledButtonTheme: FilledButtonThemeData(
-      style: withInterLabels(base.filledButtonTheme.style),
-    ),
-    elevatedButtonTheme: ElevatedButtonThemeData(
-      style: withInterLabels(base.elevatedButtonTheme.style),
-    ),
-  );
-}
-
 /// Pumps a chat-less host that opens the dialog over a private channel
 /// (the red warning hint) with a management JWT (the enroll form), then
 /// settles the entry animation.
@@ -93,7 +69,7 @@ Future<void> _pumpAddAgent(
         ),
       ),
     ),
-    theme: dark ? _goldenTheme() : buildFahThemeLight(),
+    theme: dark ? buildFahTheme() : buildFahThemeLight(),
     size: size,
   );
   await tester.tap(find.text('open'));

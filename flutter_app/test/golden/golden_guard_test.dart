@@ -126,6 +126,11 @@ const _exempt = <String, String>{
   // coverage (main's own guard is red for these); goldens belong to the
   // network feature work — waived here so the guard reflects #947 only.
   'lib/ui/network/channel_rail.dart': 'fa_network #955: no goldens yet',
+  // #1904 added the private-key import flow behind a real NetworkSession;
+  // goldens belong to the network feature work like its rail/dialog
+  // siblings above.
+  'lib/ui/network/channel_key_import_dialog.dart':
+      'fa_network #955/#1904: no goldens yet',
   'lib/ui/network/channel_composer.dart':
       'fa_network #955: no goldens yet (#1888 added the composer; goldens '
       'belong to the network feature work like its rail/dialog siblings)',

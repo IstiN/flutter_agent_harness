@@ -244,10 +244,15 @@ Future<String> encryptAs({
 Future<KeyWallet> walletWithChannel({
   required String channelPub,
   required String channelPriv,
+  String? networkPassword,
 }) async {
   final wallet = await KeyWallet.load(MemoryWalletBackend());
   await wallet.createIfMissing(displayName: 'Me');
-  await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
+  await wallet.addNetwork(
+    networkId: 'net1',
+    name: 'fa-team',
+    password: networkPassword,
+  );
   await wallet.addChannelKeys(
     networkId: 'net1',
     channel: 'c1',
