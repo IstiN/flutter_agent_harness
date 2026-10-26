@@ -755,10 +755,16 @@ pid guard files (no secret content) keep the shared overlay while another
 live agent uses it, and the last exiting agent deletes it. Stale guards
 and legacy per-pid overlays from older builds are swept at boot. A live
 pid is authoritative regardless of guard age (no wall-clock TTL: agents
-may run for days without rewriting their boot guard); recycled-pid-proof
-cleanup needs a boot nonce, not a timeout that can delete live keys.
-Embedded hosts with their own lifecycle must call
-`HubPluginHost.dispose()`.
+may run for days without rewriting their boot guard). Each guard also
+records the writer's process-start identity (`/proc/<pid>/stat` starttime
+on Linux, parsed `ps lstart` on macOS — process metadata, never secret
+material), so a guard whose pid is alive but whose recorded identity
+differs from the current incarnation is a RECYCLED pid: the writer
+crashed, the cleanup reclaims the guard, and the shared plaintext overlay
+is not pinned forever. Probe, listing, or identity-parse failures keep
+the keep-on-doubt behavior (the overlay survives); guards written by
+older builds (pid only) are kept on the same doubt. Embedded hosts with
+their own lifecycle must call `HubPluginHost.dispose()`.
 The pure-env CI path also carries plaintext values in process memory and
 its environment; those values are registered with both redaction systems.
 **Global scope is the deliberate exception** (see the table above): it
