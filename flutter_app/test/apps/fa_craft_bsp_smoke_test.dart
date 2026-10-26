@@ -36,6 +36,17 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+/// File-based progress for smoke debugging: `flutter test` only surfaces
+/// print output at the end, so long hangs are otherwise opaque. The file
+/// is append-only; each phase step stamps its own line.
+void _progress(String msg) {
+  File('/tmp/facraft_progress.log').writeAsStringSync(
+    '${DateTime.now().toIso8601String()} $msg\n',
+    mode: FileMode.append,
+  );
+}
+
+
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:flutter/material.dart';
@@ -97,6 +108,7 @@ void main() {
   group('gh-1842 fa-craft 0.2.32 smoke — default jsr 0.4.189 BSP', () {
     testWidgets('boots, streams chunks, survives rotation sweep + '
         'forward streaming + block edits', (tester) async {
+      _progress('test-start');
       final env = MemoryExecutionEnv();
       final engine = _engine(env);
       addTearDown(() async {
@@ -114,6 +126,7 @@ void main() {
         await _installSources(env, _faCraftSrc!);
         await engine.start();
       });
+      _progress('engine-started');
 
       // The acceptance path is the DEFAULT renderer — no ?voxelBsp=0
       // anywhere in this harness.
@@ -177,19 +190,25 @@ void main() {
       final rotationMs = <int>[];
       final skyHolesPerAngle = <int>[];
       for (var step = 0; step < 16; step++) {
+        // fire-and-forget: production wiring (js_app_view) never awaits
+        // callEvent — the render ack round trip can outlive the pump.
+        _progress('rot-$step-callEvent');
         await tester.runAsync(() async {
-          await engine.callEvent('look', const {'dx': 100, 'dy': 0});
-          await Future<void>.delayed(const Duration(milliseconds: 2));
+          unawaited(engine.callEvent('look', const {'dx': 100, 'dy': 0}));
+          await Future<void>.delayed(const Duration(milliseconds: 20));
         });
+        _progress('rot-$step-pump');
         final sw = Stopwatch()..start();
         await tester.pump(const Duration(milliseconds: 16));
         sw.stop();
+        _progress('rot-$step-pumped-${sw.elapsedMilliseconds}ms');
         rotationMs.add(sw.elapsedMilliseconds);
         skyHolesPerAngle.add(await _countEnclosedSkyPixels(
           tester,
           boundaryKey,
           engine.voxelWorld!.cameraOf('fa-craft').skyColor,
         ));
+        _progress('rot-$step-scanned');
       }
       debugPrint('SMOKE gh-1842 rotation: frames=${rotationMs.length} '
           'avg=${_avg(rotationMs).toStringAsFixed(1)}ms '
@@ -205,10 +224,12 @@ void main() {
       final chunksBeforeMove =
           engine.voxelWorld!.chunksOf('fa-craft').length;
       await tester.runAsync(() async {
-        await engine.callEvent('joyMove', const {'x': 48, 'y': 0});
+        unawaited(engine.callEvent('joyMove', const {'x': 48, 'y': 0}));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
       });
       final moveMs = <int>[];
       for (var frame = 0; frame < 300; frame++) {
+        if (frame % 50 == 0) _progress('move-frame-$frame');
         final sw = Stopwatch()..start();
         await tester.runAsync(() async {
           await Future<void>.delayed(const Duration(milliseconds: 2));
@@ -217,8 +238,10 @@ void main() {
         sw.stop();
         moveMs.add(sw.elapsedMilliseconds);
       }
+      _progress('move-done');
       await tester.runAsync(() async {
-        await engine.callEvent('joyEnd');
+        unawaited(engine.callEvent('joyEnd'));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
       });
       final posAfter = posMap(engine.exportedState?['pos']);
       final chunksAfterMove = engine.voxelWorld!.chunksOf('fa-craft').length;
@@ -241,10 +264,10 @@ void main() {
 
       // ── Phase 4: block edits + overlay regression sanity ────────────
       await tester.runAsync(() async {
-        await engine.callEvent('break');
-        await engine.callEvent('place');
-        await engine.callEvent('debug'); // F3-style debug overlay
-        await Future<void>.delayed(const Duration(milliseconds: 20));
+        unawaited(engine.callEvent('break'));
+        unawaited(engine.callEvent('place'));
+        unawaited(engine.callEvent('debug')); // F3-style debug overlay
+        await Future<void>.delayed(const Duration(milliseconds: 50));
       });
       await tester.pump(const Duration(milliseconds: 16));
       expect(engine.bootError.value, isNull);
@@ -284,6 +307,7 @@ Future<int> _countEnclosedSkyPixels(
   final image = await tester.runAsync<ui.Image>(
     () => boundary.toImage(pixelRatio: 0.5),
   );
+  _progress('scan-toImage-await-returned');
   if (image == null) return -1;
   final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
   final w = image.width;
