@@ -49,7 +49,7 @@ dependencies:
   path_provider: ^2.1.6
   image_picker: ^1.2.3
   # Clipboard images for the composer's smart paste (Cmd/Ctrl+V).
-  pasteboard: ^0.5.0
+  pasteboard: ^0.6.0
   # Image decode/encode for the Gemini adapter (PNG → JPEG conversion
   # strips alpha/EXIF that Gemini's vision encoder rejects).
   image: ^4.5.4
@@ -91,12 +91,12 @@ dependencies:
   # SVG app icons (inline markup or apps/<id>/*.svg files).
   flutter_svg: ^2.3.0
 
-  cupertino_icons: ^1.0.9
+  cupertino_icons: ^2.0.0
   flutter_chat_ui: ^2.11.1
   flutter_markdown: ^0.7.7+1
   re_highlight: ^0.0.3
   http: ^1.6.0
-  cupertino_http: ^2.0.2
+  cupertino_http: ^3.1.0
   uuid: ^4.6.0
   flutter_chat_core: ^2.9.0
   yaml: ^3.1.3
@@ -139,7 +139,7 @@ dependencies:
 
   # MD5/SHA digests for the sandbox md5sum/sha*sum builtins.
   crypto: ^3.0.3
-  dartssh2: ^2.22.2
+  dartssh2: ^4.1.0
 
   # Network mode (issue #955): fa_network REST+WS client and the 'fanet1'
   # envelope crypto (X25519/HKDF/ChaCha20-Poly1305, DAP/1 recipe).
@@ -190,14 +190,14 @@ dependencies:
   # same-day pub release once pulled firebase_crashlytics 5.2.7 whose
   # firebase-ios-sdk 12.17.0 did not exist on SPM yet — the build died in
   # 'Could not resolve package dependencies' (build 80). Bump deliberately.
-  firebase_core: 4.12.1
-  firebase_analytics: 12.4.5
+  firebase_core: ^5.1.0
+  firebase_analytics: ^13.0.1
 
   # Opens the privacy policy link (onboarding privacy page) in the browser.
   url_launcher: ^6.3.1
   # Deep-link handling for mobile OAuth callbacks (fah://oauth/openrouter).
-  app_links: ^6.4.0
-  firebase_crashlytics: 5.2.6
+  app_links: ^7.2.2
+  firebase_crashlytics: ^6.0.1
   # WS channel abstraction for the fa_network realtime socket.
   stream_channel: ^2.1.0
 
