@@ -54,17 +54,17 @@ String checkoutScriptOf(String workflowPath, String job, String stepName) {
 }
 
 /// The macOS publish legs, their jobs, and the exact runner-label set each
-/// job must pin. gh-1692: the iOS legs resolve to fa-m5-1 BY NAME (the
-/// runner-name label GitHub assigns to every self-hosted registration) —
-/// `macos-m5` alone also matches fa-m5-2, whose archive/signing
-/// environment is unverified (the 10-17/10-18 `** ARCHIVE FAILED **`
-/// runs), so a label-set pin without the runner name is a coin flip.
-/// build-macos stays on the shared `macos-m5` pool (mac builds are not
-/// the broken TestFlight path — gh-1692 scopes the name pin to iOS).
+/// job must pin. 2026-10-26: ALL macOS legs (iOS included) route to the
+/// shared `macos-m5` pool. The gh-1692 runner-name pin (`fa-m5-1`) became
+/// unsatisfiable — no runner carries a runner-name label anymore — so iOS
+/// jobs queued forever with all m5 boxes Idle (v1.0.648 TestFlight).
+/// fa-m5-2 and fa-m5-3 both signed desktop releases green on 2026-10-26,
+/// retiring the gh-1692 single-good-box assumption. Runner-name labels
+/// (`fa-m5-*`) are banned repo-wide by the audit below.
 const mobileMacosLegs = <String, Map<String, List<String>>>{
   '.github/workflows/build-mobile.yml': {
-    'build-ios': ['self-hosted', 'macos-m5', 'fa-m5-1'],
-    'submit-ios': ['self-hosted', 'macos-m5', 'fa-m5-1'],
+    'build-ios': ['self-hosted', 'macos-m5'],
+    'submit-ios': ['self-hosted', 'macos-m5'],
   },
   '.github/workflows/build-macos.yml': {
     'build-macos': ['self-hosted', 'macos-m5'],
@@ -86,13 +86,11 @@ void main() {
               contains(label),
               reason:
                   '$entry.key job "$id" must pin the runner-label set '
-                  '${jobEntry.value} — gh-1692: the iOS legs resolve to '
-                  'fa-m5-1 BY NAME, the runner-name label GitHub assigns '
-                  'to every self-hosted registration. `macos-m5` alone '
-                  'also matches fa-m5-2, whose archive/signing '
-                  'environment is unverified (the 10-17/10-18 '
-                  '`** ARCHIVE FAILED **` runs) — a name-less pin is a '
-                  'coin flip between a good and a broken runner.',
+                  '${jobEntry.value} — 2026-10-26: every macOS publish '
+                  'leg routes to the shared macos-m5 pool; runner-name '
+                  'labels no longer exist on any runner, so the old '
+                  'gh-1692 fa-m5-1 pin matched ZERO runners and queued '
+                  'iOS jobs forever (v1.0.648 TestFlight).',
             );
           }
           expect(
@@ -101,8 +99,8 @@ void main() {
             reason:
                 '$entry.key job "$id" must not carry the generic '
                 '`macOS`/`ARM64` labels — only the unambiguous '
-                '`macos-m5` + runner-name pins route to the M5 runner '
-                '(gh-1600 F-A, gh-1692)',
+                '`macos-m5` pool label routes to the M5 runners '
+                '(gh-1600 F-A, gh-1692; pool-wide since 2026-10-26)',
           );
         });
       }
@@ -136,6 +134,34 @@ void main() {
                 'Linux (gh-1600 F-A class). Only the `macos-m5` pin '
                 '(fa-m5-1) or GitHub-hosted `macos-*` runners are '
                 'legitimate.',
+          );
+        }
+      }
+    });
+
+    test('audit: no workflow pins a runner-NAME label (unsatisfiable)', () {
+      // 2026-10-26 (v1.0.648 TestFlight): the fa-m5-1 runner-name label
+      // silently vanished from every registration, and the iOS pin
+      // `[self-hosted, macos-m5, fa-m5-1]` matched ZERO runners — jobs
+      // queued forever while all m5 boxes sat Idle, and the daily
+      // watchdog misread it as a zombie pool. Runner-name labels are
+      // therefore banned outright: the only supported macOS routing is
+      // the `macos-m5` pool (Linux stays excluded by the generic-label
+      // audit above).
+      final workflows = Directory('.github/workflows')
+          .listSync()
+          .where((f) => f.path.endsWith('.yml'))
+          .toList();
+      for (final f in workflows) {
+        for (final e in jobsOf(f.path).entries) {
+          final runsOn = (e.value as YamlMap)['runs-on']?.toString() ?? '';
+          expect(
+            runsOn.contains('fa-m5-'),
+            isFalse,
+            reason:
+                '${f.path} job "${e.key}" pins a runner-NAME label — '
+                'no runner carries such labels anymore (2026-10-26), so '
+                'the job can never be scheduled. Use the macos-m5 pool.',
           );
         }
       }
