@@ -331,3 +331,6 @@ export 'src/web_search/web_search.dart';
 export 'src/viewport/follow_mode.dart';
 // ── decisions ──
 export 'src/decisions/decisions.dart';
+// ── dap ──
+export 'src/hub/dap_invite_import.dart';
+export 'src/hub/dap_join_bundle.dart';

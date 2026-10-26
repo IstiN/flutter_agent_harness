@@ -1218,6 +1218,10 @@
   "@networkReconnecting": {
     "description": "Offline banner above the channel chat"
   },
+  "networkReconnectNow": "Reconnect now",
+  "@networkReconnectNow": {
+    "description": "Tooltip for the manual reconnect button in the offline banner"
+  },
   "networkMessageHint": "Message {channel}",
   "@networkMessageHint": {
     "description": "Channel composer input hint",
@@ -1235,6 +1239,110 @@
     "placeholders": {
       "count": {}
     }
+  },
+  "networkRosterTitle": "Members",
+  "@networkRosterTitle": {
+    "description": "Roster bottom-sheet title and online-counter tooltip"
+  },
+  "networkRosterLoading": "Loading members…",
+  "@networkRosterLoading": {
+    "description": "Roster sheet state before the network session is ready"
+  },
+  "networkRosterEmpty": "No members yet.",
+  "@networkRosterEmpty": {
+    "description": "Roster sheet empty state"
+  },
+  "networkPresenceOnline": "Online",
+  "@networkPresenceOnline": {
+    "description": "Roster presence label for a live member"
+  },
+  "networkPresenceOffline": "Offline",
+  "@networkPresenceOffline": {
+    "description": "Roster presence label for an offline member"
+  },
+  "networkPresenceBusy": "Busy",
+  "@networkPresenceBusy": {
+    "description": "Roster presence label for a busy member"
+  },
+  "networkMemberOwner": "Owner",
+  "@networkMemberOwner": {
+    "description": "Roster member class: owner"
+  },
+  "networkMemberAdmin": "Admin",
+  "@networkMemberAdmin": {
+    "description": "Roster member class: admin"
+  },
+  "networkMemberMember": "Member",
+  "@networkMemberMember": {
+    "description": "Roster member class: regular member"
+  },
+  "networkMemberGuest": "Guest",
+  "@networkMemberGuest": {
+    "description": "Roster member class: guest"
+  },
+  "networkMemberAgent": "Agent",
+  "@networkMemberAgent": {
+    "description": "Roster member class: agent"
+  },
+  "networkMemberUnknown": "Unknown",
+  "@networkMemberUnknown": {
+    "description": "Roster fallback for an unrecognized member class"
+  },
+  "networkAccessWholeNetwork": "Whole network",
+  "@networkAccessWholeNetwork": {
+    "description": "Roster access badge for network-wide access"
+  },
+  "networkAccessChannels": "{count, plural, =1{1 channel} other{{count} channels}}",
+  "@networkAccessChannels": {
+    "description": "Roster access badge for a channel-scoped member outside channel context",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "networkAccessThisChannelOnly": "This channel only",
+  "@networkAccessThisChannelOnly": {
+    "description": "Roster access badge when only the currently open channel is accessible"
+  },
+  "networkAccessThisChannelAndOthers": "{count, plural, =1{This channel + 1 other channel} other{This channel + {count} other channels}}",
+  "@networkAccessThisChannelAndOthers": {
+    "description": "Roster access badge when the open channel and other channels are accessible",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "networkAccessOtherChannels": "{count, plural, =1{1 other channel} other{{count} other channels}}",
+  "@networkAccessOtherChannels": {
+    "description": "Roster access badge when accessible channels exclude the open channel",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "networkDropAgent": "Drop agent…",
+  "@networkDropAgent": {
+    "description": "Roster action that removes an agent from the network"
+  },
+  "networkDropAgentTitle": "Drop this agent?",
+  "@networkDropAgentTitle": {
+    "description": "Drop-agent confirmation title"
+  },
+  "networkDropAgentBody": "\"{displayName}\" will be removed from this network and lose access. This cannot be undone.",
+  "@networkDropAgentBody": {
+    "description": "Drop-agent confirmation body naming the selected agent",
+    "placeholders": {
+      "displayName": {
+        "type": "String"
+      }
+    }
+  },
+  "networkDropAgentConfirm": "Drop agent",
+  "@networkDropAgentConfirm": {
+    "description": "Destructive drop-agent confirmation button"
   },
   "networkChannelsSection": "Channels",
   "@networkChannelsSection": {
@@ -1259,6 +1367,38 @@
   "networkChannelOptions": "Channel options",
   "@networkChannelOptions": {
     "description": "Channel overflow menu tooltip"
+  },
+  "networkRenameChannel": "Rename channel…",
+  "@networkRenameChannel": {
+    "description": "Channel overflow menu item for renaming"
+  },
+  "networkRenameChannelTitle": "Rename channel",
+  "@networkRenameChannelTitle": {
+    "description": "Rename-channel dialog title"
+  },
+  "networkRename": "Rename",
+  "@networkRename": {
+    "description": "Rename-channel dialog confirm button"
+  },
+  "networkChannelNameRequired": "Channel name cannot be empty.",
+  "@networkChannelNameRequired": {
+    "description": "Rename-channel validation error"
+  },
+  "networkDeleteChannel": "Delete channel…",
+  "@networkDeleteChannel": {
+    "description": "Channel overflow menu item for deleting"
+  },
+  "networkDeleteChannelTitle": "Delete this channel?",
+  "@networkDeleteChannelTitle": {
+    "description": "Delete-channel confirmation title"
+  },
+  "networkDeleteChannelBody": "The channel and all its messages are deleted for everyone. This cannot be undone.",
+  "@networkDeleteChannelBody": {
+    "description": "Delete-channel confirmation body"
+  },
+  "networkChannelDeleted": "Channel deleted",
+  "@networkChannelDeleted": {
+    "description": "Snackbar after a channel was deleted"
   },
   "networkAddAgent": "Add agent…",
   "@networkAddAgent": {
@@ -1307,6 +1447,32 @@
   "networkAddAgentFormatDap": "DAP",
   "@networkAddAgentFormatDap": {
     "description": "Agent invite format segment: pure-DAP client env (self-hosted DAP hub)"
+  },
+  "networkAddAgentDapHint": "Copy this block and paste it into the fa chat (CLI, macOS, iOS or web) — the agent joins the channel automatically.",
+  "@networkAddAgentDapHint": {
+    "description": "Agent invite helper under the DAP format explaining how to paste the enrollment block into fa chat"
+  },
+  "dapEnrollmentJoined": "Joined DAP channel #{channel}. Channel mail now reaches this agent.",
+  "@dapEnrollmentJoined": {
+    "description": "Snack bar after a pasted DAP enrollment joined successfully",
+    "placeholders": {
+      "channel": {
+        "type": "String"
+      }
+    }
+  },
+  "dapEnrollmentFailed": "Couldn't join DAP channel #{channel}. Check the invite and hub connection, then try again.",
+  "@dapEnrollmentFailed": {
+    "description": "Snack bar after a pasted DAP enrollment failed; never includes credential or raw transport error",
+    "placeholders": {
+      "channel": {
+        "type": "String"
+      }
+    }
+  },
+  "dapEnrollmentUnsupported": "DAP join is not supported on this platform — use a native app or the fa CLI.",
+  "@dapEnrollmentUnsupported": {
+    "description": "Snack bar for a recognized DAP enrollment paste on an unsupported platform"
   },
   "networkAddAgentEnroll": "Enroll agent",
   "@networkAddAgentEnroll": {

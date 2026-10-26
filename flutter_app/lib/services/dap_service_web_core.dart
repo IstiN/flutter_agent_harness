@@ -2,6 +2,9 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show DapJoinBundle;
+
 import 'dap_service.dart';
 
 /// Request/response bridge into the extension service worker
@@ -41,7 +44,10 @@ final class ExtensionDapHubService implements DapHubService {
     required SwStorageGet storageGet,
     this.probeTimeout = const Duration(seconds: 5),
     this.pollInterval = const Duration(milliseconds: 250),
-  }) : _sendMessage = sendMessage,
+  }) : // Public bridge parameter names, private storage.
+       // ignore: prefer_initializing_formals
+       _sendMessage = sendMessage,
+       // ignore: prefer_initializing_formals
        _storageGet = storageGet;
 
   final SwSendMessage _sendMessage;
@@ -71,9 +77,7 @@ final class ExtensionDapHubService implements DapHubService {
       url: config.url,
       name: config.name,
       agentId: live.agentId,
-      // Channels v1 is not implemented in the extension client (no channel
-      // key store) — the honest list is empty.
-      channels: const [],
+      channels: live.channels,
       connected: live.connected,
       inboundMode: mode,
       boundSessionId: boundId.isEmpty ? null : boundId,
@@ -94,10 +98,35 @@ final class ExtensionDapHubService implements DapHubService {
       'name': name.trim(),
       // The SW keeps the stored one when the field is empty (write-only
       // field — a saved password is never echoed back into the form).
+      // ignore: prefer_adjacent_string_concatenation
       if (password.isNotEmpty) 'sec' + 'ret': password,
     });
     if (reply is Map && reply['ok'] == false) {
       throw StateError('hub.save failed: ${reply['error'] ?? 'unknown'}');
+    }
+  }
+
+  /// Enrolls through the service worker's existing hub client. Opening a
+  /// panel-local socket would create a second runtime and evict the worker's
+  /// presence for the same extension agent.
+  Future<void> joinEnrollment(DapJoinBundle bundle) async {
+    final pub = bundle.invite.pub;
+    final priv = bundle.invite.priv;
+    if ((pub == null) != (priv == null)) {
+      throw const FormatException('incomplete channel keypair');
+    }
+    final reply = await _sendMessage({
+      'type': 'hub.join',
+      'url': normalizeWebDapHost(bundle.hubUrl),
+      'channel': bundle.invite.channel,
+      'clientSecret': ?bundle.clientSecret,
+      'pub': ?pub,
+      'priv': ?priv,
+      'name': ?bundle.agentName,
+    });
+    if (reply is! Map || reply['ok'] != true) {
+      // Do not relay a server/worker error: it can contain a credentialed URI.
+      throw StateError('hub.join failed');
     }
   }
 
@@ -129,8 +158,8 @@ final class ExtensionDapHubService implements DapHubService {
         DapInboundMode.named => 'named',
         DapInboundMode.currentSession => 'current',
       },
-      if (sessionId != null) 'sessionId': sessionId,
-      if (sessionTitle != null) 'title': sessionTitle,
+      'sessionId': ?sessionId,
+      'title': ?sessionTitle,
     });
     if (reply is Map && reply['ok'] == false) {
       throw StateError('hub.bind failed: ${reply['error'] ?? 'unknown'}');
@@ -244,16 +273,23 @@ final class ExtensionDapHubService implements DapHubService {
   /// snapshot WRAPPED — `{ok: true, status: {…, agent: {hub: …}}}` —
   /// so unwrap the envelope first (a bare map without `status` is
   /// tolerated for tests/future relays).
-  Future<({bool? connected, String? agentId})> _readLive() async {
+  Future<({bool? connected, String? agentId, List<String> channels})>
+  _readLive() async {
+    final ({bool? connected, String? agentId, List<String> channels}) none = (
+      connected: null,
+      agentId: null,
+      channels: const [],
+    );
     try {
       final reply = await _sendMessage({'type': 'status'});
-      if (reply is! Map) return (connected: null, agentId: null);
+      if (reply is! Map) return none;
       final wrapped = reply['status'];
       final envelope = wrapped is Map ? wrapped : reply;
       final agent = envelope['agent'];
-      if (agent is! Map) return (connected: null, agentId: null);
+      if (agent is! Map) return none;
       final hub = agent['hub'];
-      if (hub is! Map) return (connected: null, agentId: null);
+      if (hub is! Map) return none;
+      final rawChannels = hub['channels'];
       return (
         connected: switch (hub['phase']) {
           'connected' => true,
@@ -261,10 +297,15 @@ final class ExtensionDapHubService implements DapHubService {
           _ => null, // connecting/reconnecting — not settled yet
         },
         agentId: hub['agentId'] is String ? hub['agentId'] as String : null,
+        channels: [
+          if (rawChannels is List)
+            for (final channel in rawChannels)
+              if (channel is String) channel,
+        ],
       );
     } on Object {
       // SW unreachable (update in flight) — unknown, not "unreachable hub".
-      return (connected: null, agentId: null);
+      return none;
     }
   }
 }

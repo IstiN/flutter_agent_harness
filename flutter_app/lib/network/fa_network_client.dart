@@ -408,6 +408,27 @@ class FaNetworkClient {
     return AgentEnrollment.fromJson(_decodeMap(res));
   }
 
+  /// `DELETE /api/networks/{id}/agents/{agentId}` (owner/admin).
+  ///
+  /// The server treats 204 as idempotent success, including an unknown id.
+  Future<void> deleteAgent(String networkId, String agentId) => _request(
+    'DELETE',
+    '/api/networks/$networkId/agents/$agentId',
+    management: true,
+    expected: {204},
+  ).then((_) {});
+
+  /// `DELETE /api/networks/{id}/members/{memberId}` (owner/admin).
+  ///
+  /// Removes a STORE member (guest/member/agent-class), revokes its
+  /// sessions and pushes a fresh roster.snapshot. 204 is idempotent.
+  Future<void> deleteMember(String networkId, String memberId) => _request(
+    'DELETE',
+    '/api/networks/$networkId/members/$memberId',
+    management: true,
+    expected: {204},
+  ).then((_) {});
+
   // --------------------------------------------------------------- wakeups
 
   /// `GET /api/networks/{id}/agents/{agentId}/wakeups` (owner/admin).

@@ -19,6 +19,13 @@ sealed class WsEvent {
   const WsEvent();
 }
 
+/// The socket just connected (initial connect or reconnect). The server
+/// asserts `network.offline` on its greet only while the hub is down, so
+/// a fresh connection is also the client's stale-offline reset point.
+final class WsConnected extends WsEvent {
+  const WsConnected();
+}
+
 /// `roster.snapshot` — full roster on connect and on roster change.
 final class RosterSnapshot extends WsEvent {
   const RosterSnapshot(this.members);
@@ -35,10 +42,24 @@ final class EnvelopeReceived extends WsEvent {
 
 /// `presence.changed` — one member's presence flipped.
 final class PresenceChanged extends WsEvent {
-  const PresenceChanged(this.memberId, this.presence);
+  const PresenceChanged(
+    this.memberId,
+    this.presence, {
+    this.displayName = '',
+    this.memberClass,
+    this.access,
+  });
 
   final String memberId;
   final Presence presence;
+
+  /// Additive hub-agent fields (fa_network#6): present for DAP agents so
+  /// clients can insert members missing from the roster snapshot.
+  final String displayName;
+  final MemberClass? memberClass;
+
+  /// Additive access metadata; null on frames from older servers.
+  final MemberAccess? access;
 }
 
 /// `network.offline` — the dap hub is unreachable; the server queues
@@ -254,6 +275,7 @@ class FaNetworkWs {
       onDone: _onChannelClosed,
     );
     _startHeartbeat();
+    _emit(const WsConnected());
     // Resubscribe first so flushed envelopes have a destination.
     for (final channelId in _subscriptions) {
       _sendNow({'type': 'subscribe', 'channelId': channelId});
@@ -328,12 +350,17 @@ class FaNetworkWs {
     }
   }
 
-  List<Member> _rosterMembers(Object? payload) => payload is List
-      ? payload
-            .whereType<Map>()
-            .map((m) => Member.fromJson(m.cast<String, Object?>()))
-            .toList()
-      : <Member>[];
+  List<Member> _rosterMembers(Object? payload) {
+    // Production wraps the roster in {members: [...]}; tolerate the
+    // legacy bare-list shape too instead of silently emptying the roster.
+    final wire = payload is Map ? payload['members'] : payload;
+    return wire is List
+        ? wire
+              .whereType<Map>()
+              .map((m) => Member.fromJson(m.cast<String, Object?>()))
+              .toList()
+        : <Member>[];
+  }
 
   void _onEnvelopeFrame(Object? payload) {
     if (payload is Map) {
@@ -349,6 +376,11 @@ class FaNetworkWs {
         PresenceChanged(
           payload['memberId']?.toString() ?? '',
           Presence.parse(payload['presence']),
+          displayName: payload['displayName']?.toString() ?? '',
+          memberClass: payload.containsKey('class')
+              ? MemberClass.parse(payload['class'])
+              : null,
+          access: MemberAccess.parse(payload['access']),
         ),
       );
     }

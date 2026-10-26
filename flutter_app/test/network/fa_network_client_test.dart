@@ -322,12 +322,16 @@ void main() {
         200,
         body:
             '[{"id":"m1","class":"owner","displayName":"A",'
-            '"presence":"live"},{"id":"m2","class":"agent",'
-            '"displayName":"B","presence":"offline"}]',
+            '"presence":"live","access":{"scope":"network"}},'
+            '{"id":"m2","class":"agent","displayName":"B",'
+            '"presence":"offline","access":{"scope":"channels",'
+            '"channelIds":["c1","c2"]}}]',
       );
       final members = await client.listMembers('net1');
       expect(members, hasLength(2));
+      expect(members[0].access?.scope, MemberAccessScope.network);
       expect(members[1].memberClass, MemberClass.agent);
+      expect(members[1].access?.channelIds, ['c1', 'c2']);
     });
 
     test('listChannels parses channels', () async {
@@ -445,6 +449,19 @@ void main() {
       final agents = await client.listAgents('net1');
       expect(agents.single.agentId, 'a1');
       expect(agents.single.wakeupRegistered, isTrue);
+    });
+
+    test('deleteAgent uses the owner/admin management route', () async {
+      client = build(jwtToken: 'jwt-1', sessionToken: 'sess-1');
+      httpClient.respond(204);
+
+      await client.deleteAgent('net1', 'agent-1');
+
+      final req = httpClient.requests.single;
+      expect(req.method, 'DELETE');
+      expect(req.url.path, '/api/networks/net1/agents/agent-1');
+      expect(req.headers['authorization'], 'Bearer jwt-1');
+      expect(req.body, isEmpty);
     });
 
     group('enrollAgent', () {

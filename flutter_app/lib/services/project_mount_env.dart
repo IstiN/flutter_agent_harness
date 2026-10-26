@@ -264,3 +264,22 @@ extension SessionCwd on ExecutionEnv {
     return cwd;
   }
 }
+
+/// App-container storage root, never the mounted user project. Dedicated
+/// credentials and identities must not become project/session artifacts.
+extension AppStorageCwd on ExecutionEnv {
+  String get appStorageCwd {
+    var env = this;
+    while (true) {
+      if (env is SecretsExecutionEnv) {
+        env = env.delegate;
+      } else if (env is SessionVarsExecutionEnv) {
+        env = env.delegate;
+      } else if (env case final ProjectMountEnv mountEnv) {
+        env = mountEnv._delegate;
+      } else {
+        return env.cwd;
+      }
+    }
+  }
+}

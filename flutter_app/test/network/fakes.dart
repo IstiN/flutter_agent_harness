@@ -262,10 +262,12 @@ NetworkSession buildSession({
   required FakeHttpClient httpClient,
   required FakeWsConnector connector,
   required KeyWallet wallet,
+  String? jwtToken,
 }) {
   final client = FaNetworkClient(
     baseUrl: testBase,
     httpClient: httpClient,
+    jwtToken: jwtToken,
     sessionToken: 'st-1',
   );
   final ws = FaNetworkWs(
@@ -286,11 +288,13 @@ NetworkSession buildSession({
   );
 }
 
-/// A fake OAuth callback receiver (auth_flow seam): fixed loopback
-/// redirect URI, [callback] resolves with [callbackUri] (or throws
-/// [callbackError]); [closed] records teardown.
+/// A fake OAuth callback receiver (auth_flow seam): [redirectUri] defaults
+/// to a desktop loopback and can be replaced with a web origin callback;
+/// [callback] resolves with [callbackUri] (or throws [callbackError]);
+/// [closed] records teardown.
 class FakeOAuthReceiver implements OAuthCallbackReceiver {
-  FakeOAuthReceiver({this.callbackUri, this.callbackError});
+  FakeOAuthReceiver({this.callbackUri, this.callbackError, Uri? redirectUri})
+    : redirectUri = redirectUri ?? Uri.parse('http://127.0.0.1:5555/callback');
 
   /// The URI [callback] resolves with (null → a null URI completes).
   final Uri? callbackUri;
@@ -299,7 +303,7 @@ class FakeOAuthReceiver implements OAuthCallbackReceiver {
   final Object? callbackError;
 
   @override
-  final Uri redirectUri = Uri.parse('http://127.0.0.1:5555/callback');
+  final Uri redirectUri;
 
   bool closed = false;
 

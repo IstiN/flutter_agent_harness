@@ -23,9 +23,7 @@ extension AgentCliMessagingFlow on AgentCli {
     // wrapped in the standard <system-notice> envelope. Unarmed = nothing.
     final messages = <Message>[
       for (final notice in _deadline.pollNotices())
-        UserMessage.text(
-          '<system-notice>\n${notice.text}\n</system-notice>',
-        ),
+        UserMessage.text('<system-notice>\n${notice.text}\n</system-notice>'),
     ];
     final queued = await _subagentManager.drainMessages(
       _subagentManager.selfId,
@@ -41,12 +39,15 @@ extension AgentCliMessagingFlow on AgentCli {
     // The btw panels: each drained fabric message lands as a bordered
     // panel block at delivery time (issue #277).
     _hubPanelsForInbox(queued);
+    final ownDapName = _ownDapDisplayName;
     messages.addAll([
       for (final message in queued)
         _steeringLine(
           message.fromId,
           message.text,
           userInput: message.isUserInput,
+          channel: message.toId,
+          ownDapName: ownDapName,
         ),
     ]);
     // Plugin inboxes (e.g. the hub) join the same steering flow, after
@@ -79,10 +80,23 @@ extension AgentCliMessagingFlow on AgentCli {
             message.fromId,
             message.text,
             userInput: message.kind == AgentMessageKind.user,
+            channel: message.toId,
+            ownDapName: ownDapName,
           ),
       ]);
     }
     return messages;
+  }
+
+  /// Current DAP name, isolated from transport failures like every other
+  /// inbox probe. A missing name simply disables mention decoration.
+  String? get _ownDapDisplayName {
+    try {
+      final name = config.dapDisplayNameResolver?.call()?.trim();
+      return name == null || name.isEmpty ? null : name;
+    } on Object {
+      return null;
+    }
   }
 
   /// Sender-attributed steering line for one inbox message: user input
@@ -92,9 +106,35 @@ extension AgentCliMessagingFlow on AgentCli {
     String fromId,
     String text, {
     required bool userInput,
-  }) => userInput
-      ? UserMessage.text('[from $fromId] ${text.trim()}')
-      : UserMessage.text('from $fromId: ${text.trim()}');
+    String? channel,
+    String? ownDapName,
+  }) {
+    // Channel mail names its channel AND the reply route: without the
+    // explicit hint agents tend to DM the sender (a dead end for app
+    // members) instead of posting back into the channel (gh-1825).
+    final isChannel = channel != null && channel.startsWith('#');
+    final where = isChannel ? ' in $channel' : '';
+    final hint = isChannel
+        ? '\n[reply into this channel with agent_message to: "$channel"]'
+        : '';
+    final body = text.trim();
+    var mention = '';
+    final name = ownDapName?.trim();
+    if (isChannel && name != null && name.isNotEmpty) {
+      // The left check rejects email-shaped x@name; the right check keeps
+      // @name2 distinct. Punctuation and case variants remain mentions.
+      final pattern = RegExp(
+        '(?:^|[^A-Za-z0-9_])@${RegExp.escape(name)}(?![A-Za-z0-9_])',
+        caseSensitive: false,
+      );
+      if (pattern.hasMatch(body)) {
+        mention = ' [mentions you — you are @$name]';
+      }
+    }
+    return userInput
+        ? UserMessage.text('[from $fromId$where] $body$mention$hint')
+        : UserMessage.text('from $fromId$where: $body$mention$hint');
+  }
 
   /// The steering probe: fabric mail pending, or any plugin inbox
   /// reports unread mail. Never throws — a broken plugin probe counts
