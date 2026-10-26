@@ -188,6 +188,13 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                           session: session,
                           networkId: widget.controller.networkId!,
                           channelId: chatFor.$2,
+                          // A successful import swaps this composer for
+                          // the real one; rebuild deterministically from
+                          // the dialog result instead of relying on the
+                          // session-notify relay.
+                          onKeyImported: () {
+                            if (mounted) setState(() {});
+                          },
                         )
                       : (context, service, drop) =>
                             ChannelChatComposer(service: chat),
@@ -245,12 +252,17 @@ class _MissingChannelKeyComposer extends StatelessWidget {
     required this.session,
     required this.networkId,
     required this.channelId,
+    required this.onKeyImported,
   });
 
   final NetworkSessionManager manager;
   final NetworkSession session;
   final String networkId;
   final String channelId;
+
+  /// Called when the import dialog reported success — the page rebuilds
+  /// so the composer swap does not depend on the session-notify relay.
+  final VoidCallback onKeyImported;
 
   @override
   Widget build(BuildContext context) {
@@ -278,15 +290,16 @@ class _MissingChannelKeyComposer extends StatelessWidget {
             Align(
               alignment: Alignment.centerRight,
               child: TextButton.icon(
-                onPressed: () => unawaited(
-                  showChannelKeyImportDialog(
+                onPressed: () async {
+                  final imported = await showChannelKeyImportDialog(
                     context,
                     wallet: manager.wallet,
                     session: session,
                     networkId: networkId,
                     channelId: channelId,
-                  ),
-                ),
+                  );
+                  if (imported && context.mounted) onKeyImported();
+                },
                 icon: const Icon(Icons.key_outlined, size: 18),
                 label: Text(context.l10n.networkChannelKeyImport),
               ),

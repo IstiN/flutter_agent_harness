@@ -12,6 +12,7 @@ import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_session.dart';
+import 'package:fa/services/app_log.dart';
 
 /// Imports a private-channel key invite into this device's wallet, then
 /// rebuilds the open channel's decoded history with the newly available key.
@@ -74,6 +75,13 @@ class _ChannelKeyImportDialogState extends State<_ChannelKeyImportDialog> {
       if (invite.channel != widget.channelId) {
         throw AgentInviteFormatException(l10n.networkChannelKeyWrongChannel);
       }
+      // The keypair may be internally consistent yet belong to a channel
+      // on ANOTHER hub deployment (staging vs. production, a foreign
+      // fa_network). Persisting it would encrypt outgoing traffic no
+      // peer on this hub can decrypt, so reject before persisting.
+      if (!isSameHubDeployment(invite.hubUri, widget.session.hubBaseUrl)) {
+        throw AgentInviteFormatException(l10n.networkChannelKeyWrongHub);
+      }
       // A length check alone cannot catch a torn invite pairing one keypair's
       // public half with another's private half. Such a wallet can encrypt but
       // never decrypt, so reject it before persisting anything.
@@ -92,14 +100,27 @@ class _ChannelKeyImportDialogState extends State<_ChannelKeyImportDialog> {
         pub: invite.pub,
         priv: invite.priv,
       );
-      await widget.session.reloadChannel(widget.channelId);
-      if (!mounted) return;
-      Navigator.of(context).pop(true);
     } on InviteFormatException catch (e) {
       _showError(e.message);
+      return;
     } on Object {
       _showError(l10n.networkChannelKeyImportFailed);
+      return;
     }
+    // From here the key IS in the vault: a history-reload failure must
+    // not claim the import failed (the user would re-paste a key that is
+    // already persisted). Log it and still report success — re-entering
+    // the channel triggers another history load.
+    try {
+      await widget.session.reloadChannel(widget.channelId);
+    } on Object catch (e) {
+      AppLog.i(
+        'fa_network',
+        'channel key import: history reload failed after persist: $e',
+      );
+    }
+    if (!mounted) return;
+    Navigator.of(context).pop(true);
   }
 
   void _showError(String message) {

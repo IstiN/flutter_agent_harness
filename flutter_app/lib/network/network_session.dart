@@ -116,6 +116,12 @@ final class NetworkSession extends ChangeNotifier {
 
   final String networkId;
   final JoinedIdentity identity;
+
+  /// The REST base of the hub this session is connected to. Channel-key
+  /// imports validate the invite's hub against it — a cross-hub invite
+  /// would persist a key no peer on this hub's channels can decrypt with.
+  Uri get hubBaseUrl => _client.baseUrl;
+
   final FaNetworkClient _client;
   final FaNetworkWs _ws;
   final KeyWallet _wallet;
