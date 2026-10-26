@@ -137,10 +137,7 @@ final class ChannelChatService implements FaChatService {
   static bool _mentionEnd(String text, int end) {
     if (end == text.length) return true;
     final next = text.substring(end, end + 1);
-    return next.trim().isEmpty ||
-        '.,!?;:)]}>/\\'.contains(next) ||
-        next == '"' ||
-        next == "'";
+    return next.trim().isEmpty || '.,!?;:)]}>/\\'.contains(next) || next == '"';
   }
 
   @override

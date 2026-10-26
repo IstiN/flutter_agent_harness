@@ -22,10 +22,18 @@ enum DapEnrollmentStatus { joined, failed, unsupported }
 
 /// A localized-UI-ready outcome; deliberately carries no raw error text.
 final class DapEnrollmentResult {
-  const DapEnrollmentResult(this.status, this.channel);
+  const DapEnrollmentResult(
+    this.status,
+    this.channel, {
+    this.plaintextStorage = false,
+  });
 
   final DapEnrollmentStatus status;
   final String channel;
+
+  /// True only when the successful join actually used the unencrypted
+  /// fallback (not merely when the platform could support a Keychain).
+  final bool plaintextStorage;
 }
 
 /// A synchronously recognized paste with its asynchronous join operation.
@@ -38,17 +46,28 @@ final class DapEnrollmentAttempt {
 
 typedef DapEnrollmentJoin = Future<void> Function(DapJoinBundle bundle);
 
+/// Reports whether the just-completed join persisted through the plaintext
+/// fallback. Extension-hosted joins provide a constant-false probe because
+/// their service worker owns a different store.
+typedef DapEnrollmentStorageProbe = Future<bool> Function();
+
 /// Parses only bundles accepted by the CLI parser, then delegates the join.
 final class DapEnrollmentService {
   factory DapEnrollmentService({
     required DapEnrollmentJoin join,
     required bool supported,
-  }) => DapEnrollmentService._(join, supported);
+    DapEnrollmentStorageProbe? plaintextStorage,
+  }) => DapEnrollmentService._(join, supported, plaintextStorage);
 
-  const DapEnrollmentService._(this._join, this._supported);
+  const DapEnrollmentService._(
+    this._join,
+    this._supported,
+    this._plaintextStorage,
+  );
 
   final DapEnrollmentJoin _join;
   final bool _supported;
+  final DapEnrollmentStorageProbe? _plaintextStorage;
 
   /// Returns null for ordinary text (including prose that mentions DAP).
   /// Recognition is synchronous, so the composer can clear a secret-bearing
@@ -78,7 +97,19 @@ final class DapEnrollmentService {
     }
     try {
       await _join(bundle);
-      return DapEnrollmentResult(DapEnrollmentStatus.joined, channel);
+      var plaintext = false;
+      try {
+        plaintext = await _plaintextStorage?.call() ?? false;
+      } on Object {
+        // A failed storage probe fails safe: warn rather than risk hiding
+        // an unencrypted fallback after an otherwise successful join.
+        plaintext = true;
+      }
+      return DapEnrollmentResult(
+        DapEnrollmentStatus.joined,
+        channel,
+        plaintextStorage: plaintext,
+      );
     } on Object {
       // Exception strings can contain transport-supplied text. Do not carry
       // them into the UI/logs; the localized failure is the safe boundary.
@@ -103,15 +134,29 @@ String dapEnrollmentProjectScope(String projectCwd) =>
 
 /// One active enrollment per project, persisted through the app's existing
 /// secure-store/filesystem mechanisms. Keychain/Keystore is preferred when
-/// available; otherwise the JSON stays in the app-sandboxed [ExecutionEnv].
+/// available. Otherwise [save] writes PLAINTEXT, unencrypted JSON to
+/// `fa_dap_enrollment_<sha256(projectCwd)[:10]>.json` at the app-storage root
+/// (`env.appStorageCwd`): the invite `priv` and hub `clientSecret`
+/// are persisted verbatim so reconnect can restore them. Web always uses this
+/// fallback and mirrors the sandbox file into origin-scoped IndexedDB;
+/// Linux and Windows always use the sandbox JSON file. Sandbox/origin
+/// isolation is not encryption.
 ///
 /// This is intentionally a single record: [AgentNetworkController] owns one
 /// live hub connection. A new paste replaces that connection and its record.
 final class DapEnrollmentStore {
-  DapEnrollmentStore._(this._write, this._clear, [this.enrollment]);
+  DapEnrollmentStore._(
+    this._write,
+    this._clear, [
+    this.enrollment,
+    this.isPlaintext = false,
+  ]);
 
   /// Non-persistent test seam.
-  DapEnrollmentStore.inMemory([this.enrollment]) : _write = null, _clear = null;
+  DapEnrollmentStore.inMemory([this.enrollment])
+    : _write = null,
+      _clear = null,
+      isPlaintext = false;
 
   static const _version = 1;
 
@@ -120,6 +165,9 @@ final class DapEnrollmentStore {
 
   /// The record restored for reconnect; never includes the raw paste.
   DapJoinBundle? enrollment;
+
+  /// Whether this store writes verbatim JSON instead of using Keychain.
+  final bool isPlaintext;
 
   static String storageName(String projectCwd) =>
       'fa_dap_enrollment_${dapEnrollmentProjectScope(projectCwd)}';
@@ -164,6 +212,7 @@ final class DapEnrollmentStore {
         }
       },
       stored,
+      true,
     );
   }
 

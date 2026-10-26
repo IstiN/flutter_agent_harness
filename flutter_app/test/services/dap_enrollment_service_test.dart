@@ -33,6 +33,7 @@ void main() {
 
     expect(result.status, DapEnrollmentStatus.joined);
     expect(result.channel, channel);
+    expect(result.plaintextStorage, isFalse);
     expect(joined!.invite.channel, channel);
     expect(joined!.agentName, 'app-agent');
     expect(
@@ -40,6 +41,18 @@ void main() {
       isTrue,
       reason: 'the credential crosses only the parsed join boundary',
     );
+  });
+
+  test('joined result carries the actual plaintext-fallback probe', () async {
+    final service = DapEnrollmentService(
+      supported: true,
+      join: (_) async {},
+      plaintextStorage: () async => true,
+    );
+
+    final result = await service.startPaste(block)!.result;
+    expect(result.status, DapEnrollmentStatus.joined);
+    expect(result.plaintextStorage, isTrue);
   });
 
   test('ordinary DAP prose is left for the model', () {
@@ -89,6 +102,7 @@ void main() {
       env,
       projectCwd: '/work/project',
     );
+    expect(store.isPlaintext, isTrue);
     await store.save(bundle);
     final projectArtifact = await env.readTextFile(
       '/project/${DapEnrollmentStore.fileName('/work/project')}',
@@ -164,6 +178,7 @@ void main() {
         env,
         projectCwd: '/work/project',
       );
+      expect(store.isPlaintext, isFalse);
 
       await store.save(bundle);
 

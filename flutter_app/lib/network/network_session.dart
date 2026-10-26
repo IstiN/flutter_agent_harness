@@ -59,6 +59,9 @@ final class ChannelState {
   final List<ChannelMessage> messages = [];
   final Set<String> seen = {};
 
+  Future<void> _realtimeTail = Future.value();
+  int _revision = 0;
+
   /// Pagination cursor of the NEXT older page; null = nothing older.
   String? nextCursor;
 
@@ -103,11 +106,13 @@ final class NetworkSession extends ChangeNotifier {
     required KeyWallet wallet,
     EnvelopeCodec codec = const EnvelopeCodec(),
     Uuid uuid = const Uuid(),
+    Future<ChannelMessage> Function(Envelope envelope)? envelopeDecoder,
   }) : _client = client,
        _ws = ws,
        _wallet = wallet,
        _codec = codec,
-       _uuid = uuid;
+       _uuid = uuid,
+       _envelopeDecoder = envelopeDecoder;
 
   final String networkId;
   final JoinedIdentity identity;
@@ -116,6 +121,7 @@ final class NetworkSession extends ChangeNotifier {
   final KeyWallet _wallet;
   final EnvelopeCodec _codec;
   final Uuid _uuid;
+  final Future<ChannelMessage> Function(Envelope envelope)? _envelopeDecoder;
 
   StreamSubscription<WsEvent>? _events;
   Future<void>? _startup;
@@ -249,7 +255,15 @@ final class NetworkSession extends ChangeNotifier {
     await _loadHistoryPage(channelId, state);
   }
 
+  bool _isCurrentChannelState(
+    String channelId,
+    ChannelState state,
+    int revision,
+  ) =>
+      identical(channelStates[channelId], state) && state._revision == revision;
+
   Future<void> _loadHistoryPage(String channelId, ChannelState state) async {
+    final revision = state._revision;
     state.loading = true;
     state.loadError = null;
     notifyListeners();
@@ -258,6 +272,7 @@ final class NetworkSession extends ChangeNotifier {
         channelId,
         cursor: state.nextCursor,
       );
+      if (!_isCurrentChannelState(channelId, state, revision)) return;
       // Chat-order pagination (fa_network contract): pages arrive
       // ascending oldest→newest; the first (cursor-less) page IS the
       // newest tail, later pages are strictly older and prepend as a
@@ -265,7 +280,9 @@ final class NetworkSession extends ChangeNotifier {
       final decoded = <ChannelMessage>[];
       for (final envelope in page.items) {
         if (!state.seen.add(envelope.id)) continue;
-        decoded.add(await _decode(envelope));
+        final message = await _decode(envelope);
+        if (!_isCurrentChannelState(channelId, state, revision)) return;
+        decoded.add(message);
       }
       state.messages.insertAll(0, decoded);
       state.nextCursor = (page.nextCursor?.isEmpty ?? true)
@@ -273,10 +290,14 @@ final class NetworkSession extends ChangeNotifier {
           : page.nextCursor;
       state.historyResolved = true;
     } on FaNetworkException catch (e) {
-      state.loadError = e.message;
+      if (_isCurrentChannelState(channelId, state, revision)) {
+        state.loadError = e.message;
+      }
     } finally {
-      state.loading = false;
-      notifyListeners();
+      if (_isCurrentChannelState(channelId, state, revision)) {
+        state.loading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -353,6 +374,8 @@ final class NetworkSession extends ChangeNotifier {
     // until the public/private decoder is known; the history/realtime
     // completion notification then rebuilds the chat with plaintext.
     await _startup;
+    final envelopeDecoder = _envelopeDecoder;
+    if (envelopeDecoder != null) return envelopeDecoder(envelope);
     final isOwn = envelope.senderId == identity.id;
     final known = channels.where((c) => c.id == envelope.channelId);
     // Public showcase channels have no chankey at all: the payload is
@@ -509,11 +532,30 @@ final class NetworkSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _onEnvelope(Envelope envelope) async {
-    final state = channelStates[envelope.channelId];
-    if (state == null) return; // not opened — the rail badge counts instead
-    final message = await _decode(envelope);
-    if (state.add(message)) notifyListeners();
+  Future<void> _onEnvelope(Envelope envelope) {
+    final channelId = envelope.channelId;
+    final state = channelStates[channelId];
+    if (state == null) {
+      return Future.value(); // not opened — the rail badge counts instead
+    }
+    final revision = state._revision;
+    // Decode and append in socket-arrival order, not decode-completion order.
+    final operation = state._realtimeTail.then((_) async {
+      if (!_isCurrentChannelState(channelId, state, revision)) return;
+      final message = await _decode(envelope);
+      if (!_isCurrentChannelState(channelId, state, revision)) return;
+      if (state.add(message)) notifyListeners();
+    });
+    // A failed decode must not prevent later arrivals from being handled,
+    // and the future handed back to the (unawaited) call site must carry
+    // the same containment: returning the raw `operation` would complete
+    // the returned future with the decode error even though the chain
+    // itself already swallowed it (gh-1895 review).
+    state._realtimeTail = operation.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {},
+    );
+    return state._realtimeTail;
   }
 
   /// After a reconnect the server drains queued envelopes; rebuild the
@@ -531,6 +573,9 @@ final class NetworkSession extends ChangeNotifier {
       // Chat-order history: the fresh cursor-less page is the NEWEST
       // tail — it cannot be prepended onto the old list, so the store is
       // rebuilt from it (older pages re-page in via Load earlier).
+      // Invalidate work queued against the old snapshot before resetting
+      // dedupe so stale decodes cannot append into the rebuilt store.
+      state._revision++;
       state.messages.clear();
       state.seen.clear();
       state.nextCursor = null;

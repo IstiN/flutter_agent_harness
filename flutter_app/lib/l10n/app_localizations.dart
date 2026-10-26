@@ -4580,6 +4580,12 @@ abstract class AppLocalizations {
   /// **'Joined DAP channel #{channel}. Channel mail now reaches this agent.'**
   String dapEnrollmentJoined(String channel);
 
+  /// Snack bar after a pasted DAP enrollment joined on a platform without Keychain/Keystore; discloses the unencrypted fallback
+  ///
+  /// In en, this message translates to:
+  /// **'Joined DAP channel #{channel}. Channel mail now reaches this agent. Storage warning: the invite private key and hub credential are stored UNENCRYPTED (plaintext) in this app\'s sandbox (IndexedDB on web).'**
+  String dapEnrollmentJoinedPlaintext(String channel);
+
   /// Snack bar after a pasted DAP enrollment failed; never includes credential or raw transport error
   ///
   /// In en, this message translates to:
