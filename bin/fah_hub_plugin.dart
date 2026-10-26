@@ -15,8 +15,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert' show jsonEncode;
-import 'dart:io'
-    show File, HttpClient, Platform, Process, ProcessStartMode;
+import 'dart:io' show File, HttpClient, Platform, Process, ProcessStartMode;
 import 'dart:math' show Random;
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
@@ -27,6 +26,7 @@ import 'package:flutter_agent_harness/io.dart'
 import 'fah_dap_command.dart' show DapHubController, resolveDapLocalHubUrl;
 import 'fah_dap_scoped.dart';
 import 'package:flutter_agent_harness/src/hub/dap_membership.dart';
+import 'package:flutter_agent_harness/src/hub/dap_secret_redaction.dart';
 
 // The /dap menu lives in lib/ as pure data (issue #129): the untagged
 // structural test pins it without importing this dart:io plugin, which
@@ -60,6 +60,8 @@ final class HubPluginHost implements FahPlugin {
     Future<bool> Function(int port)? hubHealthProbe,
     Future<void> Function(int port)? hubSpawner,
     this.hubStopper,
+    this.secretRedactor,
+    this.redactionPipeline,
   }) : _hub = hubPlugin,
        // ignore: prefer_initializing_formals
        _environment = environment ?? Platform.environment,
@@ -99,6 +101,15 @@ final class HubPluginHost implements FahPlugin {
   /// owning pid from the `~/.dap/hub.pid` state file, no zombie). Null
   /// builds the production controller; tests inject a fake.
   final Future<int> Function(String url)? hubStopper;
+
+  /// Secret masking systems the DAP env contract registers with at
+  /// startup (gh-1888 review, AC8/AC14): `DAP_CHANNELS_JSON` (plaintext
+  /// channel privs), `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`, plus
+  /// every runtime-resolved secret (decrypted privs, memory-only hub
+  /// credentials, auto-provisioned passphrases). Both are optional —
+  /// hosts without them (tests, embedders) just skip registration.
+  final SecretRedactor? secretRedactor;
+  final RedactionPipeline? redactionPipeline;
 
   /// Scoped channel membership (issue #1825), built at register time.
   DapScopedMemberships? _scoped;
@@ -367,6 +378,15 @@ final class HubPluginHost implements FahPlugin {
   void _applyScopedIdentity(String? secret, String? name) {
     _setEnvironmentValue('DAP_CLIENT_SECRET', secret);
     _setEnvironmentValue('DAP_AGENT_NAME', name);
+    // A join-bundle / boot credential just entered the process env —
+    // mask it like the startup-registered DAP env values (AC8/AC14).
+    if (secret != null && secret.isNotEmpty) {
+      registerDapSecret(
+        secret,
+        redactor: secretRedactor,
+        pipeline: redactionPipeline,
+      );
+    }
   }
 
   void _setEnvironmentValue(String key, String? value) {
@@ -405,6 +425,19 @@ final class HubPluginHost implements FahPlugin {
     final runtimeDir = '$home/.dap/runtime';
     unawaited(DapScopedMemberships.sweepLegacyOverlays(runtimeDir));
     final overlay = '$runtimeDir/channels.json';
+    // AC8/AC14: the DAP env values are secrets inherited by every child
+    // process — register them BEFORE anything can echo the environment,
+    // and hook every runtime-resolved secret into the same masking.
+    registerDapEnvSecrets(
+      _environment,
+      redactor: secretRedactor,
+      redactionPipeline: redactionPipeline,
+    );
+    void onSecret(String value) => registerDapSecret(
+      value,
+      redactor: secretRedactor,
+      pipeline: redactionPipeline,
+    );
     _scoped = DapScopedMemberships(
       globalConfigFile: hub.defaultDapConfigFile(_home, _environment),
       globalChannelsFile:
@@ -415,6 +448,7 @@ final class HubPluginHost implements FahPlugin {
       appendSessionRecord: context.appendSessionRecord,
       readSessionRecords: context.readSessionRecords,
       keychain: const MacOsDapChannelKeychain(),
+      onSecret: onSecret,
       passphrasePrompt: context.askLine == null
           ? null
           : (hubUrl, channelId) async {

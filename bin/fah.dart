@@ -41,6 +41,7 @@ import 'package:flutter_agent_harness/src/cli/session_clean_command.dart';
 import 'package:flutter_agent_harness/src/cli/session_info_command.dart';
 import 'package:flutter_agent_harness/src/cli/tui_key_hints.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
+import 'package:flutter_agent_harness/src/hub/dap_secret_redaction.dart';
 import 'package:flutter_agent_harness/src/import/harness_adapter.dart';
 import 'package:flutter_agent_harness/src/import/import_runner.dart';
 import 'package:flutter_agent_harness/src/import/foreign_session.dart';

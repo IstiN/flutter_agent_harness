@@ -6,6 +6,8 @@ import 'dart:io';
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/cli/startup.dart'
+    show buildRedactionPipeline;
 import 'package:flutter_agent_harness/src/hub/dap_membership.dart';
 import 'package:test/test.dart';
 
@@ -268,14 +270,70 @@ void main() {
     },
   );
 
+  test('the public/private decision comes from the STORED shape: an '
+      'undecryptable private envelope is still PRIVATE, and the missing '
+      'key is reported for a loud send refusal (gh-1888 review)', () async {
+    final environment = <String, String>{
+      // NOTE: no DAP_KEY_PASSPHRASE — the envelope cannot be opened.
+      'DAP_HUB_URL': _hubUrl,
+    };
+    final client = hub.HubClient(
+      config: const hub.HubConfig(url: _hubUrl),
+      identity: await hub.HubIdentity.generate(),
+    )..agentId = _selfId;
+    final plugin = _StubHubPlugin(
+      environment: environment,
+      home: home.path,
+      currentStatus: _connectedStatus,
+      memoryRepository: _MemoryHubRepository(client),
+    );
+    final host = HubPluginHost(
+      plugin,
+      environment: environment,
+      home: home.path,
+      localHubUrl: _hubUrl,
+      hubHealthProbe: (port) async => false,
+      hubSpawner: (port) async {},
+    );
+    final context = PluginContext(
+      env: MemoryExecutionEnv(cwd: home.path),
+      io: _IO(),
+      readSessionRecords: (type) async => [
+        _membership('locked', pub: 'pub', priv: 'dapkey1.undecodable').toJson(),
+        _membership('open').toJson(),
+      ],
+    );
+    host.register(context);
+
+    // Even though runtimeEffective() yields priv == null for 'locked',
+    // it is NOT public: pub != null at rest means private.
+    expect(await HubPluginHost.publicChannelFor(plugin, 'locked'), isFalse);
+    expect(await HubPluginHost.publicChannelFor(plugin, 'open'), isTrue);
+    expect(
+      await HubPluginHost.privateChannelKeyMissing(plugin, 'locked'),
+      isTrue,
+    );
+    expect(
+      await HubPluginHost.privateChannelKeyMissing(plugin, 'open'),
+      isFalse,
+    );
+    expect(
+      await HubPluginHost.privateChannelKeyMissing(plugin, 'missing'),
+      isFalse,
+    );
+  });
+
   test(
-    'the public/private decision comes from the STORED shape: an '
-    'undecryptable private envelope is still PRIVATE, and the missing '
-    'key is reported for a loud send refusal (gh-1888 review)',
+    'AC8/AC14: the DAP env secrets AND runtime-resolved in-memory keys '
+    'are registered with both masking systems at plugin register time',
     () async {
+      const envPriv = 'ENV_CHANNEL_PRIV_0123456789abcdef';
+      const envPassphrase = 'env-passphrase-0123456789';
+      const runtimePriv = 'runtime-decrypted-priv-0123456789abcdef';
       final environment = <String, String>{
-        // NOTE: no DAP_KEY_PASSPHRASE — the envelope cannot be opened.
         'DAP_HUB_URL': _hubUrl,
+        'DAP_CHANNELS_JSON': '[{"channel":"env","pub":"P","priv":"$envPriv"}]',
+        'DAP_KEY_PASSPHRASE': envPassphrase,
       };
       final client = hub.HubClient(
         config: const hub.HubConfig(url: _hubUrl),
@@ -287,6 +345,8 @@ void main() {
         currentStatus: _connectedStatus,
         memoryRepository: _MemoryHubRepository(client),
       );
+      final redactor = SecretRedactor();
+      final pipeline = buildRedactionPipeline(null);
       final host = HubPluginHost(
         plugin,
         environment: environment,
@@ -294,34 +354,40 @@ void main() {
         localHubUrl: _hubUrl,
         hubHealthProbe: (port) async => false,
         hubSpawner: (port) async {},
+        secretRedactor: redactor,
+        redactionPipeline: pipeline,
       );
-      final context = PluginContext(
-        env: MemoryExecutionEnv(cwd: home.path),
-        io: _IO(),
-        readSessionRecords: (type) async => [
-          _membership('locked', pub: 'pub', priv: 'dapkey1.undecodable')
-              .toJson(),
-          _membership('open').toJson(),
-        ],
+      host.register(
+        PluginContext(
+          env: MemoryExecutionEnv(cwd: home.path),
+          io: _IO(),
+          readSessionRecords: (type) async => [
+            _membership('runtime', pub: 'pub', priv: runtimePriv).toJson(),
+          ],
+        ),
       );
-      host.register(context);
 
-      // Even though runtimeEffective() yields priv == null for 'locked',
-      // it is NOT public: pub != null at rest means private.
-      expect(await HubPluginHost.publicChannelFor(plugin, 'locked'), isFalse);
-      expect(await HubPluginHost.publicChannelFor(plugin, 'open'), isTrue);
+      // 1. The env values never survive an `env`-dump-style tool result.
+      final dump = environment.entries
+          .map((e) => '${e.key}=${e.value}')
+          .join('\n');
+      final redacted = redactor.redact(dump);
+      expect(redacted, isNot(contains(envPriv)));
+      expect(redacted, isNot(contains(envPassphrase)));
+      expect(redacted, contains('DAP_HUB_URL=$_hubUrl'));
+
+      // 2. The layered pipeline carries the same env values.
       expect(
-        await HubPluginHost.privateChannelKeyMissing(plugin, 'locked'),
-        isTrue,
+        pipeline!.registeredSecrets,
+        contains(environment['DAP_CHANNELS_JSON']),
       );
-      expect(
-        await HubPluginHost.privateChannelKeyMissing(plugin, 'open'),
-        isFalse,
-      );
-      expect(
-        await HubPluginHost.privateChannelKeyMissing(plugin, 'missing'),
-        isFalse,
-      );
+
+      // 3. A plaintext key resolved into memory at runtime (session
+      // record pass-through) is masked too — this is what the AC8
+      // byte-scan covers end to end.
+      await HubPluginHost.publicChannelFor(plugin, 'runtime');
+      final transcript = redactor.redact('the key is $runtimePriv ok?');
+      expect(transcript, isNot(contains(runtimePriv)));
     },
   );
 

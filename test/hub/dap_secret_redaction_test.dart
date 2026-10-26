@@ -10,7 +10,8 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/cli/startup.dart' show buildRedactionPipeline;
+import 'package:flutter_agent_harness/src/cli/startup.dart'
+    show buildRedactionPipeline;
 import 'package:flutter_agent_harness/src/hub/dap_secret_redaction.dart';
 import 'package:test/test.dart';
 
@@ -29,9 +30,8 @@ void main() {
 
   /// The simulated tool-result / session-JSONL bytes an `env` call would
   /// produce when the DAP contract is exported.
-  String envDump(Map<String, String> environment) => environment.entries
-      .map((e) => '${e.key}=${e.value}')
-      .join('\n');
+  String envDump(Map<String, String> environment) =>
+      environment.entries.map((e) => '${e.key}=${e.value}').join('\n');
 
   test('every DAP env secret is registered with the legacy redactor — '
       'an env dump masks all of them (AC8 byte-scan)', () {
@@ -42,7 +42,11 @@ void main() {
     // under its own env name).
     expect(
       redactor.names,
-      containsAll(['DAP_CHANNELS_JSON', 'DAP_CLIENT_SECRET', 'DAP_KEY_PASSPHRASE']),
+      containsAll([
+        'DAP_CHANNELS_JSON',
+        'DAP_CLIENT_SECRET',
+        'DAP_KEY_PASSPHRASE',
+      ]),
     );
 
     final redacted = redactor.redact(envDump(env));
@@ -53,8 +57,7 @@ void main() {
     expect(redacted.split('***').length - 1, greaterThanOrEqualTo(3));
   });
 
-  test('the layered pipeline receives the same values (issue #24 parity)',
-      () {
+  test('the layered pipeline receives the same values (issue #24 parity)', () {
     final pipeline = buildRedactionPipeline(null);
     registerDapEnvSecrets(env, redactionPipeline: pipeline);
 
@@ -72,11 +75,7 @@ void main() {
     const autoPassphrase = 'auto-provisioned-passphrase';
 
     registerDapSecret(decryptedPriv, redactor: redactor);
-    registerDapSecret(
-      autoPassphrase,
-      redactor: redactor,
-      pipeline: pipeline,
-    );
+    registerDapSecret(autoPassphrase, redactor: redactor, pipeline: pipeline);
 
     final transcript =
         'channel key material: $decryptedPriv\npassphrase: $autoPassphrase';

@@ -453,21 +453,23 @@ void main() {
       await s.cleanupOverlay();
     });
 
-    test('sweepLegacyOverlays removes pid files of dead processes only',
-        () async {
-      final runtimeDir = '${tmp.path}/.dap/runtime';
-      await Directory(runtimeDir).create(recursive: true);
-      final dead = File('$runtimeDir/channels-999999.json');
-      final alive = File('$runtimeDir/channels-${pid}.json');
-      final stable = File('$runtimeDir/channels.json');
-      await dead.writeAsString('{}');
-      await alive.writeAsString('{}');
-      await stable.writeAsString('{}');
-      await DapScopedMemberships.sweepLegacyOverlays(runtimeDir);
-      expect(await dead.exists(), isFalse);
-      expect(await alive.exists(), isTrue, reason: 'live pid is kept');
-      expect(await stable.exists(), isTrue, reason: 'never our own file');
-    });
+    test(
+      'sweepLegacyOverlays removes pid files of dead processes only',
+      () async {
+        final runtimeDir = '${tmp.path}/.dap/runtime';
+        await Directory(runtimeDir).create(recursive: true);
+        final dead = File('$runtimeDir/channels-999999.json');
+        final alive = File('$runtimeDir/channels-${pid}.json');
+        final stable = File('$runtimeDir/channels.json');
+        await dead.writeAsString('{}');
+        await alive.writeAsString('{}');
+        await stable.writeAsString('{}');
+        await DapScopedMemberships.sweepLegacyOverlays(runtimeDir);
+        expect(await dead.exists(), isFalse);
+        expect(await alive.exists(), isTrue, reason: 'live pid is kept');
+        expect(await stable.exists(), isTrue, reason: 'never our own file');
+      },
+    );
 
     test('sweepLegacyOverlays tolerates a missing runtime dir', () async {
       await DapScopedMemberships.sweepLegacyOverlays(

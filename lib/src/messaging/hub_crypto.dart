@@ -167,7 +167,10 @@ Future<String> hubDecryptPayloadWithKeyPair({
 /// `base64(nonce(12) || ct || tag(16))` that
 /// [hubDecryptPayloadWithKeyPair] already understands.
 final class HubFanet1Frame {
-  const HubFanet1Frame({required this.senderPubkey, required this.ciphertextB64});
+  const HubFanet1Frame({
+    required this.senderPubkey,
+    required this.ciphertextB64,
+  });
 
   /// The sender's X25519 public key, extracted from the frame header.
   final SimplePublicKey senderPubkey;
@@ -195,10 +198,7 @@ HubFanet1Frame? hubTryOpenFanet1(String payloadB64) {
   const minFrameLength = 1 + 32 + 12 + 16;
   if (raw.length < minFrameLength || raw[0] != 1) return null;
   return HubFanet1Frame(
-    senderPubkey: SimplePublicKey(
-      raw.sublist(1, 33),
-      type: KeyPairType.x25519,
-    ),
+    senderPubkey: SimplePublicKey(raw.sublist(1, 33), type: KeyPairType.x25519),
     ciphertextB64: base64Encode(raw.sublist(33)),
   );
 }

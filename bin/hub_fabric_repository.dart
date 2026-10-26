@@ -146,8 +146,7 @@ final class HubFabricRepository
       // A stored-private membership whose key failed to resolve must
       // never downgrade: refuse loudly so the composition queues/retries
       // instead of emitting a hub-readable (or wrong-key) frame.
-      if (await (privateKeyMissingChecker?.call(_plugin, channel) ??
-          false)) {
+      if (await (privateKeyMissingChecker?.call(_plugin, channel) ?? false)) {
         throw StateError(
           'refusing to send to #$channel: the private channel key is '
           'unavailable (set DAP_KEY_PASSPHRASE or rejoin with the '

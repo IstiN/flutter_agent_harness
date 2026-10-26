@@ -65,8 +65,7 @@ void main() {
   });
 
   group('wrong-typed pub/priv warn and skip instead of crashing', () {
-    test('an int priv is skipped with a warning, valid entries still join',
-        () {
+    test('an int priv is skipped with a warning, valid entries still join', () {
       final result = parseDapEnvChannels(
         '[{"channel":"team","pub":"P","priv":123},'
         '{"channel":"ok","pub":"Q","priv":"K"}]',
@@ -78,16 +77,18 @@ void main() {
       expect(result.warnings.single, contains('skipped'));
     });
 
-    test('a list-typed pub is skipped (YAML-ism pasted into the CI secret)',
-        () {
-      final result = parseDapEnvChannels(
-        '[{"channel":"team","pub":["a","b"]}]',
-        defaultHubUrl: hub,
-      );
-      expect(result.memberships, isEmpty);
-      expect(result.warnings, hasLength(1));
-      expect(result.warnings.single, contains('pub'));
-    });
+    test(
+      'a list-typed pub is skipped (YAML-ism pasted into the CI secret)',
+      () {
+        final result = parseDapEnvChannels(
+          '[{"channel":"team","pub":["a","b"]}]',
+          defaultHubUrl: hub,
+        );
+        expect(result.memberships, isEmpty);
+        expect(result.warnings, hasLength(1));
+        expect(result.warnings.single, contains('pub'));
+      },
+    );
 
     test('null pub/priv stay keyless (public) — tolerated, not skipped', () {
       final result = parseDapEnvChannels(

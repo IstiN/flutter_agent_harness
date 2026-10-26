@@ -283,33 +283,36 @@ void main() {
       expect(mail.single.text, 'secret room text');
     });
 
-    test('a legacy dap1 frame still decrypts via whois (interop back)', () async {
-      hub.postJoinFrames = {
-        'priv-channel': [
-          {
-            'op': 'msg',
-            'id': 'cm-l1',
-            'channel': 'priv-channel',
-            'from': 'fabric-peer',
-            'ts': 1700000000000,
-            'ciphertext': await legacyDap1Payload(
-              'cm-l1',
-              'legacy room text',
-              nonce: List<int>.generate(12, (i) => i + 2),
-            ),
-          },
-        ],
-      };
-      repo = HubMessagingRepository(
-        url: hub.url,
-        transport: const IoHubTransport(),
-        backoff: testBackoff,
-      );
-      await repo.start();
-      await repo.joinChannel('priv-channel', keys: channelKeys);
-      final mail = await drainUntilNotEmpty();
-      expect(mail.single.text, 'legacy room text');
-    });
+    test(
+      'a legacy dap1 frame still decrypts via whois (interop back)',
+      () async {
+        hub.postJoinFrames = {
+          'priv-channel': [
+            {
+              'op': 'msg',
+              'id': 'cm-l1',
+              'channel': 'priv-channel',
+              'from': 'fabric-peer',
+              'ts': 1700000000000,
+              'ciphertext': await legacyDap1Payload(
+                'cm-l1',
+                'legacy room text',
+                nonce: List<int>.generate(12, (i) => i + 2),
+              ),
+            },
+          ],
+        };
+        repo = HubMessagingRepository(
+          url: hub.url,
+          transport: const IoHubTransport(),
+          backoff: testBackoff,
+        );
+        await repo.start();
+        await repo.joinChannel('priv-channel', keys: channelKeys);
+        final mail = await drainUntilNotEmpty();
+        expect(mail.single.text, 'legacy room text');
+      },
+    );
 
     test('a fanet1-SHAPED but legacy payload falls back instead of being '
         'dropped (nonce[0] == 1 collision)', () async {
@@ -356,10 +359,11 @@ Future<List<int>> _hkdfSha256({
   var previous = const <int>[];
   var counter = 1;
   while (okm.length < length) {
-    final block = await Hmac.sha256().calculateMac(
-      [...previous, ...info, counter],
-      secretKey: SecretKey(prk.bytes),
-    );
+    final block = await Hmac.sha256().calculateMac([
+      ...previous,
+      ...info,
+      counter,
+    ], secretKey: SecretKey(prk.bytes));
     previous = block.bytes;
     okm = [...okm, ...block.bytes];
     counter++;

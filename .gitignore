@@ -89,7 +89,9 @@ fa-local/
 # Runtime agent working directory (bash job logs, transient state).
 # .fah holds local-only junk (logs, sessions, bash_jobs, scratch) — but a
 # curated subset is committed on purpose: the project config, stream
-# rules, lsp/mcp settings, agents and skills.
+# rules, lsp/mcp settings, agents and skills. `.fah/dap.json` joins the
+# whitelist per gh-1825 v3: the DAP channel store MAY be committed because
+# it holds ENCRYPTED (`dapkey1.`) keys only — never plaintext (AC14).
 .fah/*
 !.fah/config.yaml
 !.fah/rules.yaml
@@ -99,6 +101,7 @@ fa-local/
 !.fah/skills/
 !.fah/packages.yaml
 !.fah/bootstrap.yaml
+!.fah/dap.json
 
 # Embedded browser-extension agent: dart2js output (built by
 # scripts/build_browser_ext.sh), plus the local package's tooling dirs.
