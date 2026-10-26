@@ -514,46 +514,48 @@ class ChatComposerState extends State<ChatComposer>
     // editing with shouldUnfocus for send/done/go/search). A chat composer
     // keeps the keyboard up instead — the follow-up message must not need a
     // re-tap. Defer past performAction's own unfocus (end of this frame).
-    final restoreFocus = _focusNode.hasFocus;
-    if (restoreFocus) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _focusNode.requestFocus();
-      });
-    }
+    _scheduleFocusRestore();
+    final pending = _consumeComposedForSend(trimmed);
+    await _dispatchSend(trimmed, pending);
+  }
+
+  /// Defers a focus restore to the end of the frame when the field holds
+  /// focus right now (the IME's send action is about to steal it).
+  void _scheduleFocusRestore() {
+    if (!_focusNode.hasFocus) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  /// Clears the composer for the send: the pending chips leave the list
+  /// (their metadata rides the outgoing message), the field resets, and the
+  /// send telemetry fires — metadata only (never the text, never the files).
+  List<({String name, String path, Uint8List bytes, String mimeType})>
+  _consumeComposedForSend(String trimmed) {
     final pending = List.of(_pendingAttachments);
     setState(() => _pendingAttachments.clear());
     _textController.clear();
-    // Metadata only (never the text, never the files).
     FaChatHost.track('message_sent', {
       'has_attachments': pending.isNotEmpty,
       'text_length': trimmed.length,
     });
+    return pending;
+  }
 
+  Future<void> _dispatchSend(
+    String trimmed,
+    List<({String name, String path, Uint8List bytes, String mimeType})>
+    pending,
+  ) async {
+    // Capture the pre-send streaming state: sendText STARTS a run when
+    // idle, which flips the flag synchronously — aborting on the flipped
+    // flag would kill the run we just started (that's the "empty session
+    // after every send" bug). The interrupt is only for a run that was
+    // ALREADY in flight when the user hit send.
+    final wasStreaming = _isStreaming;
     try {
-      // Capture the pre-send streaming state: sendText STARTS a run when
-      // idle, which flips the flag synchronously — aborting on the flipped
-      // flag would kill the run we just started (that's the "empty session
-      // after every send" bug). The interrupt is only for a run that was
-      // ALREADY in flight when the user hit send.
-      final wasStreaming = _isStreaming;
-      if (pending.isEmpty) {
-        await widget.service.sendText(trimmed);
-      } else {
-        // Attachments were staged into <cwd>/uploads/ at pick time; the
-        // outgoing message references the sandbox paths so the agent reads
-        // the files with its tools (see FaChatService.sendAttachments).
-        await widget.service.sendAttachments(
-          attachments: [
-            for (final attachment in pending)
-              (
-                path: attachment.path,
-                bytes: attachment.bytes,
-                mimeType: attachment.mimeType,
-              ),
-          ],
-          text: trimmed,
-        );
-      }
+      await _submitComposed(trimmed, pending);
       // Steer-interrupt (pi semantics): a message sent mid-run interrupts
       // the current turn — the queued message gets its own run right after
       // the lifecycle ends (AgentEndEvent → continueRun), instead of
@@ -563,12 +565,45 @@ class ChatComposerState extends State<ChatComposer>
     } on Object catch (e) {
       // The send itself failed before the run started: hand the chips and
       // the typed text back so nothing the user composed is lost.
-      if (mounted) {
-        setState(() => _pendingAttachments.addAll(pending));
-        _textController.text = trimmed;
-        _showSnack(FaChatStrings.of(context).chatSendError(e.toString()));
-      }
+      _restoreFailedSend(trimmed, pending, e);
     }
+  }
+
+  /// The two send arms: plain text when nothing is attached, otherwise the
+  /// staged-chip send. Attachments were staged into `<cwd>/uploads/` at pick
+  /// time; the outgoing message references the sandbox paths so the agent
+  /// reads the files with its tools (see FaChatService.sendAttachments).
+  Future<void> _submitComposed(
+    String trimmed,
+    List<({String name, String path, Uint8List bytes, String mimeType})>
+    pending,
+  ) {
+    if (pending.isEmpty) return widget.service.sendText(trimmed);
+    return widget.service.sendAttachments(
+      attachments: [
+        for (final attachment in pending)
+          (
+            path: attachment.path,
+            bytes: attachment.bytes,
+            mimeType: attachment.mimeType,
+          ),
+      ],
+      text: trimmed,
+    );
+  }
+
+  /// Hands the chips and the typed text back after a failed send so nothing
+  /// the user composed is lost, plus the failure notice.
+  void _restoreFailedSend(
+    String trimmed,
+    List<({String name, String path, Uint8List bytes, String mimeType})>
+    pending,
+    Object error,
+  ) {
+    if (!mounted) return;
+    setState(() => _pendingAttachments.addAll(pending));
+    _textController.text = trimmed;
+    _showSnack(FaChatStrings.of(context).chatSendError(error.toString()));
   }
 
   /// Picks arbitrary files and stages them as pending attachments. Staging
@@ -694,36 +729,47 @@ class ChatComposerState extends State<ChatComposer>
     );
   }
 
+  /// Whether any picker backend is wired (constructor override or host
+  /// hook) — the order the attach sheet lists them in.
+  bool get _hasAnyPicker =>
+      _galleryPicker != null || _cameraPicker != null || _uploadPicker != null;
+
+  /// The attach button renders only when attachments are on AND at least
+  /// one picker is reachable.
+  bool get _showAttach => widget.features.attachments && _hasAnyPicker;
+
+  /// The mic renders only when the feature is on and the backend reports
+  /// itself available.
+  bool get _showMic =>
+      widget.features.voiceInput &&
+      _voiceInput != null &&
+      _voiceInput.isAvailable;
+
+  bool get _hasComposedText => _textController.text.trim().isNotEmpty;
+
+  /// A recording/transcribing take never disappears mid-flight.
+  bool get _micBusy => _micRecording || _micTranscribing;
+
+  /// The one-action slot swaps to send/stop while idle with no mic wired,
+  /// or while a run streams with an empty field (the stop arm).
+  bool get _slotForcesSendStop => !_micBusy && (_isStreaming || !_showMic);
+
+  /// iMessage-style trailing slot: exactly one action — the mic while the
+  /// field is empty and idle, stop while streaming with an empty field,
+  /// send as soon as the field has text. Default mode (no slot) keeps the
+  /// send/stop button always visible.
+  bool get _slotShowsSendStop =>
+      !widget.hideMicWhenNotEmpty || _hasComposedText || _slotForcesSendStop;
+
+  /// A running take (recording pulse / transcribing spinner) or an idle
+  /// empty field keeps the mic in the slot.
+  bool get _slotKeepsMic => _micBusy || (!_hasComposedText && !_isStreaming);
+
+  bool get _slotShowsMic =>
+      _showMic && (!widget.hideMicWhenNotEmpty || _slotKeepsMic);
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    // Chat-surface palette: the host's FaUiTheme background/surface tokens
-    // re-seat the strip on the host palette; stock hosts get FahPalette.
-    final palette = fahChatColorsOf(context);
-    final strings = FaChatStrings.of(context);
-    final showAttach =
-        widget.features.attachments &&
-        (_galleryPicker != null ||
-            _cameraPicker != null ||
-            _uploadPicker != null);
-    final showMic =
-        widget.features.voiceInput &&
-        _voiceInput != null &&
-        _voiceInput.isAvailable;
-    // iMessage-style trailing slot: exactly one action — the mic while the
-    // field is empty and idle, stop while streaming with an empty field,
-    // send as soon as the field has text. A recording/transcribing mic
-    // never disappears mid-take. Default mode keeps both always visible.
-    final hasText = _textController.text.trim().isNotEmpty;
-    final micBusy = _micRecording || _micTranscribing;
-    final showSendStop =
-        !widget.hideMicWhenNotEmpty ||
-        hasText ||
-        (!micBusy && (_isStreaming || !showMic));
-    final micVisible =
-        showMic &&
-        (!widget.hideMicWhenNotEmpty || micBusy || (!hasText && !_isStreaming));
-
     return Container(
       decoration: BoxDecoration(
         // Keep the composer transparent so it inherits the scaffold/sheet
@@ -731,172 +777,201 @@ class ChatComposerState extends State<ChatComposer>
         // overlay/bottom-sheet where the panel background is panelAlt, not
         // palette.bg.
         // The top hairline still visually separates it from the transcript.
-        border: Border(top: BorderSide(color: theme.dividerColor)),
+        border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
       ),
       child: SafeArea(
         top: false,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_pendingAttachments.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (var i = 0; i < _pendingAttachments.length; i++)
-                        _buildPendingAttachmentChip(i),
-                    ],
-                  ),
-                ),
-              ),
-            if (widget.service.pendingSteerTexts.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (final pending in widget.service.pendingSteerTexts)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: palette.userBubble.withValues(alpha: 0.6),
-                          border: Border.all(color: palette.userBubbleBorder),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                pending,
-                                style: theme.textTheme.bodyMedium,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Icon(Icons.schedule, size: 16, color: palette.dim),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            Padding(
-              // Compact single-layer vertical padding (issue #459): the
-              // field's contentPadding carries the pill's inner air; the
-              // row itself adds only a hairline 4dp above/below.
-              padding: widget.hideMicWhenNotEmpty
-                  ? const EdgeInsets.fromLTRB(12, 4, 12, 4)
-                  : const EdgeInsets.fromLTRB(8, 4, 8, 4),
-              child: Row(
-                children: [
-                  if (widget.leadingBuilder != null)
-                    widget.leadingBuilder!(context)
-                  else if (showAttach)
-                    IconButton(
-                      // The modern "add content" mark: a plus in a rounded
-                      // square (owner-approved B3, see [FaAttachGlyph]) —
-                      // its 2px stroke rhymes with the mic circle in the
-                      // one-action slot.
-                      icon: FaAttachGlyph(color: palette.dim),
-                      tooltip: strings.chatAttachTooltip,
-                      onPressed: _showAttachmentSheet,
-                    ),
-                  Expanded(
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: widget.hideMicWhenNotEmpty ? 6 : 0,
-                      ),
-                      child: Focus(
-                        onKeyEvent: _handleComposerKey,
-                        child: TextField(
-                          controller: _textController,
-                          focusNode: _focusNode,
-                          decoration: InputDecoration(
-                            // The host-localized hint (the session surface
-                            // scopes FaChatStrings; channel chats override
-                            // it with "Message <channel>").
-                            hintText: FaChatStrings.of(context).chatInputHint,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            border: const OutlineInputBorder(
-                              borderRadius: BorderRadius.all(
-                                Radius.circular(24),
-                              ),
-                              borderSide: BorderSide.none,
-                            ),
-                            enabledBorder: const OutlineInputBorder(
-                              borderRadius: BorderRadius.all(
-                                Radius.circular(24),
-                              ),
-                              borderSide: BorderSide.none,
-                            ),
-                            focusedBorder: const OutlineInputBorder(
-                              borderRadius: BorderRadius.all(
-                                Radius.circular(24),
-                              ),
-                              borderSide: BorderSide.none,
-                            ),
-                            filled: true,
-                          ),
-                          // Multiline: Shift+Enter (hardware) or the
-                          // touch return key inserts a line break; plain
-                          // Enter sends (_handleComposerKey). The field
-                          // grows 1→6 lines and then scrolls internally.
-                          keyboardType: TextInputType.multiline,
-                          textInputAction: TextInputAction.newline,
-                          maxLines: 6,
-                          minLines: 1,
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (widget.hideMicWhenNotEmpty)
-                    // One-action slot: mic ↔ send/stop swap with a quick
-                    // scale+fade instead of a hard cut.
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 180),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      transitionBuilder: (child, animation) => FadeTransition(
-                        opacity: animation,
-                        child: ScaleTransition(scale: animation, child: child),
-                      ),
-                      child: micVisible
-                          ? KeyedSubtree(
-                              key: const ValueKey('composerTrailingMic'),
-                              child: _buildMicButton(context),
-                            )
-                          : showSendStop
-                          ? KeyedSubtree(
-                              key: const ValueKey('composerTrailingSend'),
-                              child: _buildSendStopButton(palette, strings),
-                            )
-                          : const SizedBox(
-                              key: ValueKey('composerTrailingNone'),
-                            ),
-                    )
-                  else ...[
-                    if (micVisible) _buildMicButton(context),
-                    if (micVisible && showSendStop) const SizedBox(width: 4),
-                    if (showSendStop) _buildSendStopButton(palette, strings),
-                  ],
-                ],
-              ),
-            ),
+            if (_pendingAttachments.isNotEmpty) _buildAttachmentChipsRow(),
+            if (widget.service.pendingSteerTexts.isNotEmpty) _buildSteerRows(),
+            _buildFieldRow(),
           ],
         ),
       ),
+    );
+  }
+
+  /// The pending-attachment chip strip above the field.
+  Widget _buildAttachmentChipsRow() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (var i = 0; i < _pendingAttachments.length; i++)
+              _buildPendingAttachmentChip(i),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The queued-steer rows: messages typed while a run was streaming,
+  /// waiting to steer it (the schedule icon marks the wait).
+  Widget _buildSteerRows() {
+    final theme = Theme.of(context);
+    final palette = fahChatColorsOf(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final pending in widget.service.pendingSteerTexts)
+            Container(
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: palette.userBubble.withValues(alpha: 0.6),
+                border: Border.all(color: palette.userBubbleBorder),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      pending,
+                      style: theme.textTheme.bodyMedium,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.schedule, size: 16, color: palette.dim),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// The field row: leading slot (launcher toggle / attach button), the
+  /// multiline text field, and the trailing action slot.
+  Widget _buildFieldRow() {
+    final palette = fahChatColorsOf(context);
+    final strings = FaChatStrings.of(context);
+    return Padding(
+      // Compact single-layer vertical padding (issue #459): the field's
+      // contentPadding carries the pill's inner air; the row itself adds
+      // only a hairline 4dp above/below.
+      padding: widget.hideMicWhenNotEmpty
+          ? const EdgeInsets.fromLTRB(12, 4, 12, 4)
+          : const EdgeInsets.fromLTRB(8, 4, 8, 4),
+      child: Row(
+        children: [
+          if (widget.leadingBuilder != null)
+            widget.leadingBuilder!(context)
+          else if (_showAttach)
+            _buildAttachButton(palette, strings),
+          Expanded(child: _buildTextField()),
+          ..._buildTrailingSlot(palette, strings),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAttachButton(FahColors palette, FaChatStrings strings) {
+    return IconButton(
+      // The modern "add content" mark: a plus in a rounded square
+      // (owner-approved B3, see [FaAttachGlyph]) — its 2px stroke rhymes
+      // with the mic circle in the one-action slot.
+      icon: FaAttachGlyph(color: palette.dim),
+      tooltip: strings.chatAttachTooltip,
+      onPressed: _showAttachmentSheet,
+    );
+  }
+
+  Widget _buildTextField() {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: widget.hideMicWhenNotEmpty ? 6 : 0,
+      ),
+      child: Focus(
+        onKeyEvent: _handleComposerKey,
+        child: TextField(
+          controller: _textController,
+          focusNode: _focusNode,
+          decoration: InputDecoration(
+            // The host-localized hint (the session surface scopes
+            // FaChatStrings; channel chats override it with "Message
+            // <channel>").
+            hintText: FaChatStrings.of(context).chatInputHint,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 8,
+            ),
+            border: const OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(24)),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: const OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(24)),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: const OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(24)),
+              borderSide: BorderSide.none,
+            ),
+            filled: true,
+          ),
+          // Multiline: Shift+Enter (hardware) or the touch return key
+          // inserts a line break; plain Enter sends (_handleComposerKey).
+          // The field grows 1→6 lines and then scrolls internally.
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          maxLines: 6,
+          minLines: 1,
+        ),
+      ),
+    );
+  }
+
+  /// The trailing actions: the iMessage-style one-action slot swaps mic ↔
+  /// send/stop through an AnimatedSwitcher; the default (full chat screen)
+  /// mode keeps both always visible, each under its own visibility rule.
+  List<Widget> _buildTrailingSlot(FahColors palette, FaChatStrings strings) {
+    if (widget.hideMicWhenNotEmpty) {
+      return [_buildOneActionSlot(palette, strings)];
+    }
+    return _buildAlwaysVisibleActions(palette, strings);
+  }
+
+  List<Widget> _buildAlwaysVisibleActions(
+    FahColors palette,
+    FaChatStrings strings,
+  ) {
+    return [
+      if (_slotShowsMic) _buildMicButton(context),
+      if (_slotShowsMic && _slotShowsSendStop) const SizedBox(width: 4),
+      if (_slotShowsSendStop) _buildSendStopButton(palette, strings),
+    ];
+  }
+
+  Widget _buildOneActionSlot(FahColors palette, FaChatStrings strings) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: ScaleTransition(scale: animation, child: child),
+      ),
+      child: _slotShowsMic
+          ? KeyedSubtree(
+              key: const ValueKey('composerTrailingMic'),
+              child: _buildMicButton(context),
+            )
+          : _slotShowsSendStop
+          ? KeyedSubtree(
+              key: const ValueKey('composerTrailingSend'),
+              child: _buildSendStopButton(palette, strings),
+            )
+          : const SizedBox(key: ValueKey('composerTrailingNone')),
     );
   }
 

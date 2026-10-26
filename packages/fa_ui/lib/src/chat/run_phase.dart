@@ -30,10 +30,8 @@ final class FaRunPhase {
   const FaRunPhase.hidden() : this(FaRunPhaseKind.hidden);
 
   /// The first tool of the in-flight batch ([FaRunPhaseKind.tool] only).
-  const FaRunPhase.tool({
-    required String first,
-    required int count,
-  }) : this(FaRunPhaseKind.tool, toolName: first, toolCount: count);
+  const FaRunPhase.tool({required String first, required int count})
+    : this(FaRunPhaseKind.tool, toolName: first, toolCount: count);
 
   final FaRunPhaseKind kind;
 
@@ -76,35 +74,74 @@ FaRunPhase faRunPhase({
   required List<FaChatMessage> messages,
 }) {
   if (!streaming) return const FaRunPhase.hidden();
-  // Completed tool results not yet accounted for by a start row.
-  var finished = 0;
-  // Unmatched tool starts, newest first.
-  final pending = <String>[];
+  final cursor = _PhaseCursor();
   for (final message in messages.reversed) {
-    switch (message.role) {
-      case 'tool':
-        finished++;
-      case 'system':
-        final match = _toolStartPrefix.firstMatch(message.content);
-        final name = match?.group(1);
-        if (name == null) continue; // prose system row — not a tool start
-        if (finished > 0) {
-          finished--;
-        } else {
-          pending.add(name);
-        }
-      case 'assistant' || 'thinking' || 'user' || 'widget':
-        if (pending.isNotEmpty) {
-          return FaRunPhase.tool(first: pending.last, count: pending.length);
-        }
-        return switch (message.role) {
-          'assistant' => const FaRunPhase(FaRunPhaseKind.writing),
-          _ => const FaRunPhase(FaRunPhaseKind.thinking),
-        };
-    }
+    final phase = cursor.step(message);
+    if (phase != null) return phase;
   }
-  if (pending.isNotEmpty) {
+  return cursor.settledTail() ?? const FaRunPhase(FaRunPhaseKind.thinking);
+}
+
+/// Backward-scan state for [faRunPhase]: tool-result rows not yet matched
+/// by a start row ([finished]) and unmatched tool starts, oldest first
+/// (last added = the first of the in-flight batch).
+final class _PhaseCursor {
+  var finished = 0;
+  final pending = <String>[];
+
+  /// Consumes one transcript row backwards; a non-null phase ends the scan
+  /// (a settled boundary row names the phase).
+  FaRunPhase? step(FaChatMessage message) {
+    final role = message.role;
+    if (role == 'tool') {
+      finished++;
+      return null;
+    }
+    if (role == 'system') {
+      _matchToolStart(message);
+      return null;
+    }
+    return _isBoundary(role) ? _settled(message) : null;
+  }
+
+  /// The phase at a settled boundary row: the in-flight batch if any, else
+  /// writing for assistant text (thinking rows included) or the provider
+  /// wait.
+  FaRunPhase _settled(FaChatMessage message) {
+    if (pending.isNotEmpty) {
+      return FaRunPhase.tool(first: pending.last, count: pending.length);
+    }
+    return message.role == 'assistant'
+        ? const FaRunPhase(FaRunPhaseKind.writing)
+        : const FaRunPhase(FaRunPhaseKind.thinking);
+  }
+
+  /// The phase when the transcript ends with starts still unmatched — the
+  /// scan ran off the top mid-batch. Null keeps the provider wait.
+  FaRunPhase? settledTail() {
+    if (pending.isEmpty) return null;
     return FaRunPhase.tool(first: pending.last, count: pending.length);
   }
-  return const FaRunPhase(FaRunPhaseKind.thinking);
+
+  /// Matches a system row against the tool cursor: a start row names the
+  /// in-flight batch unless it settles an already-finished result; prose
+  /// system rows (never `[`-prefixed) are ignored.
+  void _matchToolStart(FaChatMessage message) {
+    final match = _toolStartPrefix.firstMatch(message.content);
+    final name = match?.group(1);
+    if (name == null) return; // prose system row — not a tool start
+    if (finished > 0) {
+      finished--;
+    } else {
+      pending.add(name);
+    }
+  }
 }
+
+/// Whether [role] names a settled transcript row (data the agent produced
+/// or the user typed) — reaching one backwards ends the scan.
+bool _isBoundary(String role) =>
+    role == 'assistant' ||
+    role == 'thinking' ||
+    role == 'user' ||
+    role == 'widget';

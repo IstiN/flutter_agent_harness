@@ -98,50 +98,72 @@ class OpenRouterOAuthButton extends StatelessWidget {
       state: state,
     );
 
-    String? code;
-    if (onCapture != null) {
-      code = await onCapture!(authUrl);
-    }
-
-    if (code == null || code.isEmpty) {
-      final launched = await launchUrl(
-        authUrl,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!launched) return;
-
-      if (context.mounted) {
-        code = await _showCodeSheet(context);
-      }
-    }
+    final code = await _acquireCode(context, authUrl);
     if (code == null || code.isEmpty) return;
     if (!context.mounted) return;
+    await _exchangeKey(context, code, verifier);
+  }
 
+  /// The authorization code: a host capture first ([onCapture]); otherwise
+  /// the browser is opened and the user pastes the on-screen code. Null or
+  /// empty cancels the flow (the browser could not open, or the sheet was
+  /// dismissed).
+  Future<String?> _acquireCode(BuildContext context, Uri authUrl) {
+    // The browser must open even if this subtree went away during the
+    // capture await — the mounted guards live in the paste stage.
+    Future<String?> pasteFallback() => _pastedCodeAfterLaunch(context, authUrl);
+    return _capturedCode(authUrl).then(
+      (captured) =>
+          (captured == null || captured.isEmpty) ? pasteFallback() : captured,
+    );
+  }
+
+  /// The code a host captured automatically; null when no capture hook is
+  /// installed (the headless flow always goes through the browser).
+  Future<String?> _capturedCode(Uri authUrl) async =>
+      onCapture == null ? null : await onCapture!(authUrl);
+
+  /// Opens the browser and shows the manual code-paste sheet; null when the
+  /// browser could not be opened or the context went away first.
+  Future<String?> _pastedCodeAfterLaunch(
+    BuildContext context,
+    Uri authUrl,
+  ) async {
+    if (!await launchUrl(authUrl, mode: LaunchMode.externalApplication)) {
+      return null;
+    }
+    if (!context.mounted) return null;
+    return _showCodeSheet(context);
+  }
+
+  /// Exchanges [code] for the API key: success hands it to [onSuccess]; a
+  /// failure surfaces the provider's message as an error snack.
+  Future<void> _exchangeKey(
+    BuildContext context,
+    String code,
+    String verifier,
+  ) async {
     final strings = FaUiStrings.of(context);
+    void showError(String detail) =>
+        _showOAuthError(context, strings.settingsOpenRouterOAuthError(detail));
     try {
       final key = await (exchange ?? exchangeOpenRouterCode)(
         code,
         codeVerifier: verifier,
       );
-
       if (context.mounted) {
         onSuccess?.call(key.key);
       }
     } on ConfigException catch (e) {
-      if (context.mounted) {
-        showFahErrorSnack(
-          context,
-          strings.settingsOpenRouterOAuthError(e.message),
-        );
-      }
+      showError(e.message);
     } on Object catch (e) {
-      if (context.mounted) {
-        showFahErrorSnack(
-          context,
-          strings.settingsOpenRouterOAuthError(e.toString()),
-        );
-      }
+      showError(e.toString());
     }
+  }
+
+  void _showOAuthError(BuildContext context, String message) {
+    if (!context.mounted) return;
+    showFahErrorSnack(context, message);
   }
 
   Future<String?> _showCodeSheet(BuildContext context) async {

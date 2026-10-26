@@ -131,34 +131,47 @@ class ChatMessageTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dynamicTile = message.role == 'widget'
-        ? dynamicWidgetTileBuilder?.call(context, message)
-        : null;
-    final tile = switch (message.role) {
-      'widget' when dynamicTile != null => dynamicTile,
-      'user' => _textBubble(context, isUser: true),
-      'assistant' => _textBubble(context, isUser: false),
-      'thinking' => _thinkingTile(context),
-      // 'tool', 'system' and anything else (incl. 'widget' with no
-      // builder or a null tile).
-      _ => _toolOrSystemTile(context),
-    };
+    final tile = _roleTile(context);
     if (!compact) return tile;
-    return switch (message.role) {
-      'user' => Align(
-        alignment: Alignment.centerRight,
-        child: Padding(
-          padding: const EdgeInsets.only(left: 48, bottom: 8),
-          child: tile,
-        ),
-      ),
-      'assistant' => Padding(
-        padding: const EdgeInsets.only(right: 24, bottom: 8),
+    return _compactSpacing(tile);
+  }
+
+  /// The bare tile for the message's role: host dynamic-widget tiles for
+  /// `widget`, text bubbles for `user`/`assistant`, the thinking note, and
+  /// tool/system rows for everything else (incl. `widget` with no builder
+  /// or a null tile).
+  Widget _roleTile(BuildContext context) {
+    if (message.role == 'widget') return _dynamicTile(context);
+    if (message.role == 'user') return _textBubble(context, isUser: true);
+    if (message.role == 'assistant') return _textBubble(context, isUser: false);
+    if (message.role == 'thinking') return _thinkingTile(context);
+    return _toolOrSystemTile(context);
+  }
+
+  /// A `widget`-role message renders as the host's live dynamic-message
+  /// tile; a null builder or a null tile falls back to the stock system
+  /// tile (issue #336).
+  Widget _dynamicTile(BuildContext context) {
+    final dynamicTile = dynamicWidgetTileBuilder?.call(context, message);
+    return dynamicTile ?? _toolOrSystemTile(context);
+  }
+
+  /// Compact mode (the overlay panel) adds only a bottom gap: user bubbles
+  /// right-align with a leading gutter, assistant bubbles a trailing one.
+  Widget _compactSpacing(Widget tile) => switch (message.role) {
+    'user' => Align(
+      alignment: Alignment.centerRight,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 48, bottom: 8),
         child: tile,
       ),
-      _ => Padding(padding: const EdgeInsets.only(bottom: 8), child: tile),
-    };
-  }
+    ),
+    'assistant' => Padding(
+      padding: const EdgeInsets.only(right: 24, bottom: 8),
+      child: tile,
+    ),
+    _ => Padding(padding: const EdgeInsets.only(bottom: 8), child: tile),
+  };
 
   Widget _textBubble(BuildContext context, {required bool isUser}) {
     // Empty assistant bubbles (model returned no text) render as nothing —
@@ -166,14 +179,25 @@ class ChatMessageTile extends StatelessWidget {
     if (message.content.trim().isEmpty && !isUser) {
       return const SizedBox.shrink();
     }
+    final withCopy = _wrapWithCopyButton(
+      context,
+      _bubbleContainer(context, isUser),
+      alwaysVisible: false,
+    );
+    return _withLeadingAvatar(context, isUser, withCopy);
+  }
+
+  /// The bubble body: width budget (user bubbles keep the compact fixed
+  /// cap, AI bubbles span up to 90% of the viewport), the role surface, and
+  /// the single SelectionArea over the Markdown body.
+  Widget _bubbleContainer(BuildContext context, bool isUser) {
     final styleSheet = fahMarkdownStyleSheet(
       Theme.of(context),
       fontSize: messageFontSize,
     );
     final palette = fahChatColorsOf(context);
     final border = Theme.of(context).dividerColor;
-
-    final bubble = Container(
+    return Container(
       // AI messages can carry long code/report text: let the bubble span
       // 90% of the viewport instead of a cramped fixed 560px cap. User
       // bubbles keep the compact fixed width.
@@ -183,26 +207,9 @@ class ChatMessageTile extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: isUser ? palette.userBubble : palette.panel,
-        // Light theme: AI bubbles use subtle shadow instead of border,
-        // matching the prototype's card style. Dark theme keeps the border.
-        border: Theme.of(context).brightness == Brightness.light && !isUser
-            ? null
-            : Border.all(color: isUser ? palette.userBubbleBorder : border),
+        border: _bubbleBorder(context, palette, border, isUser),
         borderRadius: BorderRadius.circular(12),
-        boxShadow: Theme.of(context).brightness == Brightness.light && !isUser
-            ? [
-                BoxShadow(
-                  color: const Color(0xFF000000).withValues(alpha: 0.04),
-                  blurRadius: 8,
-                  offset: const Offset(0, 1),
-                ),
-                BoxShadow(
-                  color: const Color(0xFF000000).withValues(alpha: 0.06),
-                  blurRadius: 2,
-                  offset: const Offset(0, 1),
-                ),
-              ]
-            : null,
+        boxShadow: _bubbleShadow(context, isUser),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -233,24 +240,59 @@ class ChatMessageTile extends StatelessWidget {
         ],
       ),
     );
-    final avatar = isUser
-        ? null
-        : (avatarBuilder?.call(context, message.role) ??
-              _defaultAiAvatar(context));
-    // The raw-content copy button: hover-revealed on desktop for text
-    // bubbles, always visible in tool tile headers.
-    final withCopy = _wrapWithCopyButton(context, bubble, alwaysVisible: false);
-    if (avatar == null) return withCopy;
+  }
+
+  /// Light theme: AI bubbles drop the border (the shadow carries the edge,
+  /// the prototype's card style); everything else keeps a hairline border.
+  Border? _bubbleBorder(
+    BuildContext context,
+    FahColors palette,
+    Color border,
+    bool isUser,
+  ) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    if (isLight && !isUser) return null;
+    return Border.all(color: isUser ? palette.userBubbleBorder : border);
+  }
+
+  /// The light-theme AI-bubble shadow pair; null keeps the flat look.
+  List<BoxShadow>? _bubbleShadow(BuildContext context, bool isUser) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    if (isLight && !isUser) {
+      return [
+        BoxShadow(
+          color: const Color(0xFF000000).withValues(alpha: 0.04),
+          blurRadius: 8,
+          offset: const Offset(0, 1),
+        ),
+        BoxShadow(
+          color: const Color(0xFF000000).withValues(alpha: 0.06),
+          blurRadius: 2,
+          offset: const Offset(0, 1),
+        ),
+      ];
+    }
+    return null;
+  }
+
+  /// User bubbles render lead-less; assistant bubbles carry the host
+  /// avatar (or the stock brand tile) guttered next to the bubble.
+  Widget _withLeadingAvatar(BuildContext context, bool isUser, Widget bubble) {
+    final avatar = isUser ? null : _assistantAvatar(context);
+    if (avatar == null) return bubble;
     return Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         avatar,
         const SizedBox(width: 8),
-        Flexible(child: withCopy),
+        Flexible(child: bubble),
       ],
     );
   }
+
+  Widget _assistantAvatar(BuildContext context) =>
+      avatarBuilder?.call(context, message.role) ?? _defaultAiAvatar(context);
 
   /// The attachment strip of a user bubble (issue #461): a wrapped grid of
   /// tap-to-zoom thumbnails (one bigger thumb when single, `+N more` past
@@ -425,13 +467,17 @@ class ChatMessageTile extends StatelessWidget {
     );
   }
 
+  /// Tool/thinking tiles hug the edges in compact mode (the overlay panel
+  /// already pads its transcript); the full chat screen adds outer room.
+  EdgeInsetsGeometry get _tileMargin => compact
+      ? EdgeInsets.zero
+      : const EdgeInsets.symmetric(vertical: 4, horizontal: 16);
+
   Widget _thinkingTile(BuildContext context) {
     final palette = fahChatColorsOf(context);
     final isLight = Theme.of(context).brightness == Brightness.light;
     return Container(
-      margin: compact
-          ? EdgeInsets.zero
-          : const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+      margin: _tileMargin,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: isLight
@@ -474,6 +520,15 @@ class ChatMessageTile extends StatelessWidget {
     final content = message.content;
     final isError = message.isError;
     final palette = fahChatColorsOf(context);
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final specialCard = _specialToolCard(
+      context,
+      palette,
+      toolName,
+      content,
+      isLight,
+    );
+    if (specialCard != null) return specialCard;
     // generate_image results carry the saved sandbox path — show the image
     // inline under the tool tile instead of waiting for the model to
     // reference it. Errors ("Error: …") simply don't match.
@@ -483,8 +538,49 @@ class ChatMessageTile extends StatelessWidget {
     // speak/generate_music (and any non-read tool result mentioning a
     // media path) get an inline audio/video player under the tile.
     final toolMedia = _toolMedia(toolName, content, isError);
-    final isLight = Theme.of(context).brightness == Brightness.light;
+    return Container(
+      margin: _tileMargin,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        // Light theme: very subtle gray bg without border; dark theme: bordered.
+        color: isLight ? const Color(0xFFF9FAFB) : palette.panelAlt,
+        borderRadius: BorderRadius.circular(10),
+        border: _toolTileBorder(context, palette, isError, isLight),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (toolName != null)
+            ..._toolTileHeader(
+              context,
+              palette,
+              toolName,
+              content,
+              isError,
+              isLight,
+            ),
+          _toolTileBody(context, palette, toolName, content, isError),
+          ..._toolTileMedia(
+            context,
+            generatedImagePath: generatedImagePath,
+            toolMedia: toolMedia,
+          ),
+        ],
+      ),
+    );
+  }
 
+  /// The two special tool surfaces checked BEFORE the generic tile:
+  /// permission-denied cards (orange badge + working action buttons) and
+  /// auth-expired cards (an Authorize button that re-launches the SSO
+  /// flow). Null renders the generic tile.
+  Widget? _specialToolCard(
+    BuildContext context,
+    FahColors palette,
+    String? toolName,
+    String content,
+    bool isLight,
+  ) {
     // Permission-denied tool results get a special card: orange badge +
     // action buttons (Open Settings / Try again) matching the prototype.
     // We check the CONTENT, not just isError — some tools return the denial
@@ -501,7 +597,6 @@ class ChatMessageTile extends StatelessWidget {
         onPermissionAction,
       );
     }
-
     // Auth-expired provider errors (SSO session expired) get a special card
     // with an Authorize button that re-launches the SSO flow.
     final expiredProvider = authExpiredProvider(content);
@@ -515,141 +610,204 @@ class ChatMessageTile extends StatelessWidget {
         onAuthRecovery,
       );
     }
+    return null;
+  }
 
-    return Container(
-      margin: compact
-          ? EdgeInsets.zero
-          : const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        // Light theme: very subtle gray bg without border; dark theme: bordered.
-        color: isLight ? const Color(0xFFF9FAFB) : palette.panelAlt,
-        borderRadius: BorderRadius.circular(10),
-        border: isLight
-            ? (isError
-                  ? Border.all(color: palette.error.withValues(alpha: 0.3))
-                  : null)
-            : Border.all(
-                color: isError
-                    ? palette.error.withValues(alpha: 0.45)
-                    : Theme.of(context).dividerColor,
-              ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Border? _toolTileBorder(
+    BuildContext context,
+    FahColors palette,
+    bool isError,
+    bool isLight,
+  ) => isLight
+      ? _lightToolTileBorder(palette, isError)
+      : _darkToolTileBorder(context, palette, isError);
+
+  /// Light theme: errors get a faint error-tinted border, successes none
+  /// (the gray bg carries the edge).
+  Border? _lightToolTileBorder(FahColors palette, bool isError) =>
+      isError ? Border.all(color: palette.error.withValues(alpha: 0.3)) : null;
+
+  /// Dark theme: every tile bordered; errors more strongly tinted.
+  Border _darkToolTileBorder(
+    BuildContext context,
+    FahColors palette,
+    bool isError,
+  ) => Border.all(
+    color: isError
+        ? palette.error.withValues(alpha: 0.45)
+        : Theme.of(context).dividerColor,
+  );
+
+  /// The tool-call header row: pass/fail mark, verb'd display name,
+  /// dropdown affordance, and a raw-output copy button — plus the gap under
+  /// it when body text follows.
+  List<Widget> _toolTileHeader(
+    BuildContext context,
+    FahColors palette,
+    String toolName,
+    String content,
+    bool isError,
+    bool isLight,
+  ) {
+    return [
+      Row(
         children: [
-          if (toolName != null) ...[
-            Row(
-              children: [
-                Icon(
-                  isError ? Icons.close : Icons.check,
-                  size: 14,
-                  color: isError
-                      ? palette.error
-                      : (isLight ? palette.indigo : palette.teal),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    // Prototype style: "Checked Calendar" not "[ calendar ]".
-                    // Capitalize the tool name and prefix with a verb.
-                    _toolDisplayName(toolName),
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: isError ? palette.error : palette.indigo,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-                // Dropdown arrow like the prototype's tool rows.
-                Icon(
-                  Icons.keyboard_arrow_down,
-                  size: 16,
-                  color: palette.dim.withValues(alpha: 0.5),
-                ),
-                const SizedBox(width: 8),
-                // Copy the RAW tool output (the whole body, not a
-                // selection) — tool output is the thing users most often
-                // need verbatim.
-                _CopyIconButton(
-                  text: content,
-                  color: palette.dim.withValues(alpha: 0.7),
-                ),
-              ],
-            ),
-            if (content.isNotEmpty) const SizedBox(height: 6),
-          ],
-          if (content.isNotEmpty)
-            toolName == null
-                // System rows (e.g. tool-call echoes) read like shell input:
-                // a teal `$` prompt followed by dim mono text.
-                ? Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: r'$ ',
-                          style: palette.mono(color: palette.teal),
-                        ),
-                        TextSpan(
-                          text: content,
-                          style: palette.mono(color: palette.dim),
-                        ),
-                      ],
-                    ),
-                  )
-                // Tool output is selectable text (one region for the whole
-                // tile — the collapsible body used to swallow selection).
-                : SelectionArea(
-                    child: _CollapsibleToolOutput(
-                      content: content,
-                      style: palette.mono(color: palette.dim),
-                      // Failed results start expanded (errors are why you
-                      // look) with the tighter scroll cap.
-                      initiallyExpanded: isError,
-                      maxExpandedLines: isError
-                          ? _CollapsibleToolOutput.errorCapLines
-                          : _CollapsibleToolOutput.expandedLineCap,
-                    ),
-                  )
-          else if (toolName != null)
-            // Empty tool output: an explicit stub, no clamp UI (issue #458).
-            Text(
-              FaChatStrings.of(context).chatNoOutput,
-              style: palette.mono(color: palette.dim, fontSize: 12),
-            ),
-          if (generatedImagePath != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 280),
-                child: images.image(
-                  path: generatedImagePath,
-                  onTap: (bytes) => showFahImagePreview(context, [bytes]),
-                ),
+          _toolStatusIcon(palette, isError, isLight),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              // Prototype style: "Checked Calendar" not "[ calendar ]".
+              // Capitalize the tool name and prefix with a verb.
+              _toolDisplayName(toolName),
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: isError ? palette.error : palette.indigo,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
               ),
             ),
-          if (toolMedia != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 360),
-                child: switch (toolMedia.kind) {
-                  SandboxMediaKind.audio => SandboxAudioPlayer(
-                    bytes: images.load(toolMedia.path),
-                    controllerFactory: audioControllerFactory,
-                  ),
-                  SandboxMediaKind.video => SandboxVideoPlayer(
-                    path: toolMedia.path,
-                    bytes: images.load(toolMedia.path),
-                    controllerFactory: videoControllerFactory,
-                  ),
-                },
-              ),
-            ),
+          ),
+          // Dropdown arrow like the prototype's tool rows.
+          Icon(
+            Icons.keyboard_arrow_down,
+            size: 16,
+            color: palette.dim.withValues(alpha: 0.5),
+          ),
+          const SizedBox(width: 8),
+          // Copy the RAW tool output (the whole body, not a
+          // selection) — tool output is the thing users most often
+          // need verbatim.
+          _CopyIconButton(
+            text: content,
+            color: palette.dim.withValues(alpha: 0.7),
+          ),
+        ],
+      ),
+      if (content.isNotEmpty) const SizedBox(height: 6),
+    ];
+  }
+
+  /// Pass/fail mark of a tool call: a red X on errors, an indigo (light) /
+  /// teal (dark) check otherwise.
+  Widget _toolStatusIcon(FahColors palette, bool isError, bool isLight) {
+    return Icon(
+      isError ? Icons.close : Icons.check,
+      size: 14,
+      color: _toolStatusColor(palette, isError, isLight),
+    );
+  }
+
+  Color _toolStatusColor(FahColors palette, bool isError, bool isLight) =>
+      isError ? palette.error : (isLight ? palette.indigo : palette.teal);
+
+  /// The tile body: system rows read like shell input (a teal `$` prompt
+  /// over dim mono), tool output is one selectable collapsible block, and
+  /// an empty tool output renders an explicit stub (issue #458).
+  Widget _toolTileBody(
+    BuildContext context,
+    FahColors palette,
+    String? toolName,
+    String content,
+    bool isError,
+  ) {
+    if (content.isEmpty) return _emptyToolOutput(context, palette, toolName);
+    return toolName == null
+        ? _systemNoteLine(palette, content)
+        // Tool output is selectable text (one region for the whole
+        // tile — the collapsible body used to swallow selection).
+        : _toolOutputBlock(palette, content, isError);
+  }
+
+  /// System rows (e.g. tool-call echoes) read like shell input: a teal `$`
+  /// prompt followed by dim mono text.
+  Widget _systemNoteLine(FahColors palette, String content) {
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: r'$ ',
+            style: palette.mono(color: palette.teal),
+          ),
+          TextSpan(
+            text: content,
+            style: palette.mono(color: palette.dim),
+          ),
         ],
       ),
     );
+  }
+
+  Widget _toolOutputBlock(FahColors palette, String content, bool isError) {
+    return SelectionArea(
+      child: _CollapsibleToolOutput(
+        content: content,
+        style: palette.mono(color: palette.dim),
+        // Failed results start expanded (errors are why you look) with
+        // the tighter scroll cap.
+        initiallyExpanded: isError,
+        maxExpandedLines: isError
+            ? _CollapsibleToolOutput.errorCapLines
+            : _CollapsibleToolOutput.expandedLineCap,
+      ),
+    );
+  }
+
+  /// System rows with no content render nothing; an empty TOOL output gets
+  /// an explicit stub, no clamp UI (issue #458).
+  Widget _emptyToolOutput(
+    BuildContext context,
+    FahColors palette,
+    String? toolName,
+  ) {
+    if (toolName == null) return const SizedBox.shrink();
+    return Text(
+      FaChatStrings.of(context).chatNoOutput,
+      style: palette.mono(color: palette.dim, fontSize: 12),
+    );
+  }
+
+  /// The inline extras under the body: a generate_image result's saved
+  /// picture and a speak/generate_music (or media-path) player.
+  List<Widget> _toolTileMedia(
+    BuildContext context, {
+    required String? generatedImagePath,
+    required ({SandboxMediaKind kind, String path})? toolMedia,
+  }) {
+    return [
+      if (generatedImagePath != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
+            child: images.image(
+              path: generatedImagePath,
+              onTap: (bytes) => showFahImagePreview(context, [bytes]),
+            ),
+          ),
+        ),
+      if (toolMedia != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: _toolMediaPlayer(toolMedia),
+          ),
+        ),
+    ];
+  }
+
+  Widget _toolMediaPlayer(({SandboxMediaKind kind, String path}) media) {
+    return switch (media.kind) {
+      SandboxMediaKind.audio => SandboxAudioPlayer(
+        bytes: images.load(media.path),
+        controllerFactory: audioControllerFactory,
+      ),
+      SandboxMediaKind.video => SandboxVideoPlayer(
+        path: media.path,
+        bytes: images.load(media.path),
+        controllerFactory: videoControllerFactory,
+      ),
+    };
   }
 
   /// Wraps [child] with a hover-revealed raw-copy button (desktop): the

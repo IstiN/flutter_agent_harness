@@ -49,6 +49,15 @@ final class _ModelEntry {
   }
 }
 
+/// A CONNECTED endpoint provider gathered for the `/models` fetch: a saved
+/// [CustomProvider] or a hosted preset (its display name + stable name).
+typedef _FetchProvider = ({
+  String name,
+  String id,
+  String baseUrl,
+  String? kind,
+});
+
 /// A unified model picker that shows **all** models from **all** configured
 /// providers in a single flat list, mirroring the CLI's `/model` command.
 ///
@@ -148,36 +157,14 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
   }
 
   Future<void> _fetchAllModels() async {
-    final registry = widget.registry;
     final entries = <_ModelEntry>[];
 
     // Gather all CONNECTED endpoint providers: saved custom providers plus
     // hosted presets whose key resolves (hostedProviderConnected) — the
     // same set every other picker in the app shows. A custom provider on a
     // preset's endpoint covers the preset (never both).
-    final providers =
-        <({String name, String id, String baseUrl, String? kind})>[];
-    if (registry != null) {
-      for (final p in registry.providers) {
-        providers.add((
-          name: p.name,
-          id: p.id,
-          baseUrl: p.baseUrl,
-          kind: p.kind,
-        ));
-      }
-      for (final preset in hostedProviderPresets) {
-        if (preset.baseUrl == null) continue;
-        if (providers.any((p) => p.baseUrl == preset.baseUrl)) continue;
-        if (!hostedProviderConnected(preset)) continue;
-        providers.add((
-          name: preset.labelFor(context),
-          id: preset.name,
-          baseUrl: preset.baseUrl!,
-          kind: null,
-        ));
-      }
-    }
+    final providers = <_FetchProvider>[];
+    _collectProviders(providers);
 
     if (providers.isEmpty) {
       // No saved providers — just show the active model.
@@ -194,20 +181,65 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     }
 
     // Always include the active model even if the fetch failed.
-    final activeModel = widget.connection.modelId;
-    final activeBase = widget.connection.activeBaseUrl;
-    if (!entries.any(
-      (e) => e.modelId == activeModel && e.baseUrl == activeBase,
-    )) {
-      entries.insert(0, _entryFromActive());
-    }
+    _insertActiveEntry(entries);
+    _publishEntries(entries);
+  }
 
+  /// Publishes the fetched entries (a no-op once unmounted).
+  void _publishEntries(List<_ModelEntry> entries) {
     if (mounted) {
       setState(() {
         _entries = entries;
         _loading = false;
       });
     }
+  }
+
+  /// The saved entries plus the connected hosted presets into [providers].
+  void _collectProviders(List<_FetchProvider> providers) {
+    final registry = widget.registry;
+    if (registry == null) return;
+    for (final p in registry.providers) {
+      providers.add((name: p.name, id: p.id, baseUrl: p.baseUrl, kind: p.kind));
+    }
+    _collectHostedPresets(providers);
+  }
+
+  /// The hosted presets that list right now (see [_hostedPresetListable]).
+  void _collectHostedPresets(List<_FetchProvider> providers) {
+    for (final preset in hostedProviderPresets) {
+      if (!_hostedPresetListable(preset, providers)) continue;
+      providers.add((
+        name: preset.labelFor(context),
+        id: preset.name,
+        baseUrl: preset.baseUrl!,
+        kind: null,
+      ));
+    }
+  }
+
+  /// Whether a hosted preset lists now: it has an endpoint, no saved
+  /// custom provider already covers it (never both), and its key resolves
+  /// ([hostedProviderConnected]).
+  bool _hostedPresetListable(
+    ProviderPreset preset,
+    List<_FetchProvider> providers,
+  ) =>
+      preset.baseUrl != null &&
+      !providers.any((p) => p.baseUrl == preset.baseUrl) &&
+      hostedProviderConnected(preset);
+
+  /// The active model entry prepended when no fetch result carries it
+  /// (the fetch failed / the endpoint dropped it).
+  void _insertActiveEntry(List<_ModelEntry> entries) {
+    final activeModel = widget.connection.modelId;
+    final activeBase = widget.connection.activeBaseUrl;
+    if (entries.any(
+      (e) => e.modelId == activeModel && e.baseUrl == activeBase,
+    )) {
+      return;
+    }
+    entries.insert(0, _entryFromActive());
   }
 
   _ModelEntry _entryFromActive() {
@@ -242,113 +274,150 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     return providerHostOf(base);
   }
 
-  Future<List<_ModelEntry>> _fetchOne(
-    ({String name, String id, String baseUrl, String? kind}) provider,
-  ) async {
+  Future<List<_ModelEntry>> _fetchOne(_FetchProvider provider) async {
     try {
-      var key = widget.registry?.keyFor(provider.id) ?? '';
-      if (key.isEmpty) {
-        // A hosted preset entry: its named key resolves through the host's
-        // key chain (env / secure store / saved keys).
-        final preset = hostedProviderPresets
-            .where((p) => p.name == provider.id)
-            .firstOrNull;
-        if (preset != null) {
-          key = resolveProviderKey(
-            preset,
-            registry: widget.registry,
-            keysStore: SessionKeysScope.maybeOf(context),
-          );
-        }
-      }
-      if (key.isEmpty) {
-        // A saved custom provider whose registry key did not resolve —
-        // Copilot tokens live entry-scoped (`FA_KEY_COPILOT_<NAME>`) after
-        // a restart on platforms without a Keychain backend.
-        final custom = widget.registry?.providers
-            .where((p) => p.id == provider.id)
-            .firstOrNull;
-        if (custom != null) {
-          key = resolveProviderKey(
-            custom,
-            registry: widget.registry,
-            keysStore: SessionKeysScope.maybeOf(context),
-          );
-        }
-      }
-
-      // The host/test override wins; production goes through the core
-      // dispatch (DIAL deployments, the CodeMie marker, the bundled Codex
-      // catalog, and the Copilot token exchange all live in there), with
-      // the entry's persisted identity winning over URL matching.
-      final (ids, windows, caps) = widget.modelsFetcher != null
-          ? await widget.modelsFetcher!(provider.baseUrl, apiKey: key)
-          : await fetchModelsForEndpoint(
-              provider.baseUrl,
-              apiKey: key,
-              provider: modelsDispatchHintForEntry(
-                provider.kind,
-                provider.baseUrl,
-              ),
-            );
-
-      if (ids.isEmpty) {
-        // Fall back to the provider's saved model.
-        final savedModel = widget.registry?.providers
-            .where((p) => p.id == provider.id)
-            .first
-            .modelId;
-        if (savedModel != null && savedModel.isNotEmpty) {
-          return [
-            _ModelEntry(
-              provider: provider.name,
-              providerId: provider.id,
-              baseUrl: provider.baseUrl,
-              apiKey: key,
-              modelId: savedModel,
-              contextWindow: fallbackContextWindow,
-              maxTokens: fallbackMaxTokens,
-            ),
-          ];
-        }
-        return const [];
-      }
-      return [
-        for (final id in ids)
-          _ModelEntry(
-            provider: provider.name,
-            providerId: provider.id,
-            baseUrl: provider.baseUrl,
-            apiKey: key,
-            modelId: id,
-            contextWindow: windows[id] ?? fallbackContextWindow,
-            maxTokens: caps[id] ?? fallbackMaxTokens,
-            kind: provider.kind,
-          ),
-      ];
+      final key = _resolveFetchKey(provider);
+      final info = await _fetchModels(provider, key);
+      return _listedEntries(provider, key, info);
     } on Object {
       // Dead endpoint — try the saved model.
-      final savedModel = widget.registry?.providers
-          .where((p) => p.id == provider.id)
-          .first
-          .modelId;
-      if (savedModel != null && savedModel.isNotEmpty) {
-        return [
-          _ModelEntry(
-            provider: provider.name,
-            providerId: provider.id,
-            baseUrl: provider.baseUrl,
-            apiKey: widget.registry?.keyFor(provider.id) ?? '',
-            modelId: savedModel,
-            contextWindow: fallbackContextWindow,
-            maxTokens: fallbackMaxTokens,
-            kind: provider.kind,
-          ),
-        ];
-      }
-      return const [];
+      return _deadEndpointEntries(provider);
     }
   }
+
+  /// The fetch key for [provider]: the registry's session key first; when
+  /// it does not resolve, the hosted preset's named key (env / secure
+  /// store / saved keys); when that does not either, the saved entry's
+  /// own resolution.
+  String _resolveFetchKey(_FetchProvider provider) {
+    var key = widget.registry?.keyFor(provider.id) ?? '';
+    if (key.isEmpty) key = _hostedPresetKey(provider.id);
+    if (key.isEmpty) key = _savedEntryKey(provider.id);
+    return key;
+  }
+
+  /// The hosted preset whose id matches [id], or null.
+  ProviderPreset? _hostedPresetFor(String id) =>
+      hostedProviderPresets.where((p) => p.name == id).firstOrNull;
+
+  /// The saved entry with [id], or null.
+  CustomProvider? _savedProviderFor(String id) =>
+      widget.registry?.providers.where((p) => p.id == id).firstOrNull;
+
+  /// The hosted-preset key fallback: the preset's named key resolves
+  /// through the host's key chain (env / secure store / saved keys).
+  String _hostedPresetKey(String id) {
+    final preset = _hostedPresetFor(id);
+    if (preset == null) return '';
+    return resolveProviderKey(
+      preset,
+      registry: widget.registry,
+      keysStore: SessionKeysScope.maybeOf(context),
+    );
+  }
+
+  /// The saved-entry key fallback: Copilot tokens live entry-scoped
+  /// (`FA_KEY_COPILOT_<NAME>`) after a restart on platforms without a
+  /// Keychain backend.
+  String _savedEntryKey(String id) {
+    final custom = _savedProviderFor(id);
+    if (custom == null) return '';
+    return resolveProviderKey(
+      custom,
+      registry: widget.registry,
+      keysStore: SessionKeysScope.maybeOf(context),
+    );
+  }
+
+  /// `/models` for [provider]: the host/test override wins; production
+  /// goes through the core dispatch (DIAL deployments, the CodeMie
+  /// marker, the bundled Codex catalog, and the Copilot token exchange
+  /// all live in there), with the entry's persisted identity winning
+  /// over URL matching.
+  Future<ModelsEndpointInfo> _fetchModels(_FetchProvider provider, String key) {
+    if (widget.modelsFetcher != null) {
+      return widget.modelsFetcher!(provider.baseUrl, apiKey: key);
+    }
+    return fetchModelsForEndpoint(
+      provider.baseUrl,
+      apiKey: key,
+      provider: modelsDispatchHintForEntry(provider.kind, provider.baseUrl),
+    );
+  }
+
+  /// The endpoint's answer as picker entries: the listed ids, or the
+  /// saved model when the endpoint lists nothing.
+  List<_ModelEntry> _listedEntries(
+    _FetchProvider provider,
+    String key,
+    ModelsEndpointInfo info,
+  ) {
+    final (ids, windows, caps) = info;
+    if (ids.isEmpty) return _emptyListingEntries(provider, key);
+    return [
+      for (final id in ids) _listedModelEntry(provider, key, id, windows, caps),
+    ];
+  }
+
+  /// One listed id as an entry ([windows]/[caps] per-model when reported,
+  /// the shared fallback otherwise).
+  _ModelEntry _listedModelEntry(
+    _FetchProvider provider,
+    String key,
+    String id,
+    Map<String, int> windows,
+    Map<String, int> caps,
+  ) => _ModelEntry(
+    provider: provider.name,
+    providerId: provider.id,
+    baseUrl: provider.baseUrl,
+    apiKey: key,
+    modelId: id,
+    contextWindow: windows[id] ?? fallbackContextWindow,
+    maxTokens: caps[id] ?? fallbackMaxTokens,
+    kind: provider.kind,
+  );
+
+  /// A fetch that answered but listed nothing: the provider's saved model
+  /// stands in (with the resolved fetch key), or nothing at all.
+  List<_ModelEntry> _emptyListingEntries(_FetchProvider provider, String key) {
+    final savedModel = _savedModelOf(provider.id);
+    if (savedModel == null || savedModel.isEmpty) return const [];
+    return [
+      _ModelEntry(
+        provider: provider.name,
+        providerId: provider.id,
+        baseUrl: provider.baseUrl,
+        apiKey: key,
+        modelId: savedModel,
+        contextWindow: fallbackContextWindow,
+        maxTokens: fallbackMaxTokens,
+      ),
+    ];
+  }
+
+  /// A dead endpoint: the provider's saved model stands in (keyed by the
+  /// registry's own session key — nothing resolved), or nothing at all.
+  List<_ModelEntry> _deadEndpointEntries(_FetchProvider provider) {
+    final savedModel = _savedModelOf(provider.id);
+    if (savedModel == null || savedModel.isEmpty) return const [];
+    return [
+      _ModelEntry(
+        provider: provider.name,
+        providerId: provider.id,
+        baseUrl: provider.baseUrl,
+        apiKey: widget.registry?.keyFor(provider.id) ?? '',
+        modelId: savedModel,
+        contextWindow: fallbackContextWindow,
+        maxTokens: fallbackMaxTokens,
+        kind: provider.kind,
+      ),
+    ];
+  }
+
+  /// The saved entry's model id (the fetch-fallback model).
+  String? _savedModelOf(String providerId) =>
+      widget.registry?.providers.where((p) => p.id == providerId).first.modelId;
 
   String get _filter => _searchController.text.trim();
 

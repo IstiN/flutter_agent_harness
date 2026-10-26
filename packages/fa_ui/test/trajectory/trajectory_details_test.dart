@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:collection';
+
 import 'package:fa_ui/src/trajectory/trajectory_details.dart';
 import 'package:fa_ui/src/trajectory/trajectory_details_tabs.dart';
 import 'package:fa_ui/src/trajectory/trajectory_strings.dart';
@@ -492,5 +494,346 @@ void main() {
     // The tool record has no Raw tab — open on Summary instead.
     await _openRecord(tester, settledTool);
     expect(_selectedTabIndex(tester), 0);
+  });
+
+  group('prompt diff lines', () {
+    List<(TrajectoryPromptDiffLineKind, String)> kindsOf(
+      List<TrajectoryPromptDiffLine> lines,
+    ) => [for (final line in lines) (line.kind, line.text)];
+
+    test('identical texts diff to nothing', () {
+      expect(trajectoryPromptDiffLines('a\nb', 'a\nb'), isEmpty);
+    });
+
+    test('short edits render removed and added without context', () {
+      expect(kindsOf(trajectoryPromptDiffLines('old', 'new')), [
+        (TrajectoryPromptDiffLineKind.removed, '- old'),
+        (TrajectoryPromptDiffLineKind.added, '+ new'),
+      ]);
+    });
+
+    test('a long common suffix collapses behind an ellipsis', () {
+      expect(
+        kindsOf(
+          trajectoryPromptDiffLines('x\nb\nc\nd\ne\nf', 'y\nb\nc\nd\ne\nf'),
+        ),
+        [
+          (TrajectoryPromptDiffLineKind.removed, '- x'),
+          (TrajectoryPromptDiffLineKind.added, '+ y'),
+          (TrajectoryPromptDiffLineKind.ellipsis, '⋯'),
+          (TrajectoryPromptDiffLineKind.context, 'b'),
+          (TrajectoryPromptDiffLineKind.context, 'c'),
+          (TrajectoryPromptDiffLineKind.context, 'd'),
+        ],
+      );
+    });
+  });
+
+  group('status ladder', () {
+    testWidgets('failed assistant reports the code and message', (
+      tester,
+    ) async {
+      await _openRecord(
+        tester,
+        TrajectoryAssistantRecord(
+          index: 20,
+          recordId: 'details/assistant-failed',
+          messageId: 'mf1',
+          turn: 4,
+          step: 1,
+          provider: 'anthropic',
+          model: 'claude-test',
+          isError: true,
+          errorCode: 'RATE',
+          errorMessage: 'slow down',
+        ),
+      );
+      expect(find.text('Failed'), findsOneWidget);
+      expect(find.text('RATE: slow down'), findsOneWidget);
+    });
+
+    testWidgets('an AUTH failure renders the localized auth statement', (
+      tester,
+    ) async {
+      await _openRecord(
+        tester,
+        TrajectoryAssistantRecord(
+          index: 21,
+          recordId: 'details/assistant-auth',
+          messageId: 'mf2',
+          turn: 4,
+          step: 2,
+          isError: true,
+          errorCode: 'AUTH',
+          errorMessage: 'ignored',
+        ),
+      );
+      expect(find.text('API key is invalid'), findsOneWidget);
+    });
+
+    testWidgets('a started-but-unfinished step is Pending', (tester) async {
+      await _openRecord(
+        tester,
+        TrajectoryAssistantRecord(
+          index: 22,
+          recordId: 'details/assistant-running',
+          messageId: 'mr1',
+          turn: 5,
+          step: 1,
+          stepStartTime: DateTime.utc(2026, 1, 1, 12),
+          isError: false,
+        ),
+      );
+      expect(find.text('Pending'), findsOneWidget);
+    });
+
+    testWidgets('flat token counts render the usage rows without usage', (
+      tester,
+    ) async {
+      await _openRecord(
+        tester,
+        const TrajectoryAssistantRecord(
+          index: 23,
+          recordId: 'details/assistant-flat',
+          messageId: 'mu1',
+          turn: 6,
+          step: 1,
+          isError: false,
+          inputTokens: 100,
+          outputTokens: 40,
+          cacheReadTokens: 10,
+          cacheWriteTokens: 5,
+        ),
+      );
+      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('40 tok'), findsOneWidget);
+      // No reasoning tokens — the split rows stay hidden.
+      expect(find.text('Reasoning'), findsNothing);
+    });
+
+    testWidgets('interrupted compaction is Failed', (tester) async {
+      await _openRecord(
+        tester,
+        const TrajectoryCompactedRecord(
+          index: 24,
+          recordId: 'details/compacted-interrupted',
+          text: 'preview',
+          summary: 'Cut short.',
+          interrupted: true,
+        ),
+      );
+      expect(find.text('Failed'), findsOneWidget);
+    });
+
+    testWidgets('compaction without a duration is Pending', (tester) async {
+      await _openRecord(
+        tester,
+        const TrajectoryCompactedRecord(
+          index: 25,
+          recordId: 'details/compacted-running',
+          text: 'preview',
+          summary: 'Still going.',
+        ),
+      );
+      expect(find.text('Pending'), findsOneWidget);
+    });
+  });
+
+  group('captured blobs', () {
+    final blobSnapshot = TrajectorySnapshot(
+      records: UnmodifiableListView(const []),
+      requests: UnmodifiableListView(const []),
+      callSchemas: const {},
+      partial: null,
+      runningCalls: UnmodifiableListView(const []),
+      recordLocations: const {},
+      blobs: const TrajectoryBlobTable(
+        systemPrompts: {
+          'p1': TrajectoryPromptBlob(hash: 'p1', text: 'old prompt'),
+          'p2': TrajectoryPromptBlob(hash: 'p2', text: 'new prompt'),
+        },
+        toolManifests: {
+          'm1': TrajectoryToolManifestBlob(
+            hash: 'm1',
+            tools: [
+              TrajectoryToolManifestEntry(
+                name: 'bash',
+                description: 'Run shell commands',
+                schemaJson: '{\n  "type": "object"\n}',
+                schemaChars: 22,
+                schemaTruncated: false,
+              ),
+              TrajectoryToolManifestEntry(
+                name: 'bare',
+                description: '',
+                schemaJson: '',
+                schemaChars: 0,
+                schemaTruncated: false,
+              ),
+            ],
+          ),
+          'm2': TrajectoryToolManifestBlob(
+            hash: 'm2',
+            tools: [
+              TrajectoryToolManifestEntry(
+                name: 'bash',
+                description: 'Run shell commands',
+                schemaJson: '{\n  "type": "object"\n}',
+                schemaChars: 22,
+                schemaTruncated: false,
+              ),
+              TrajectoryToolManifestEntry(
+                name: 'read',
+                description: 'Read a file',
+                schemaJson: '{\n  "type": "object"\n}',
+                schemaChars: 22,
+                schemaTruncated: false,
+              ),
+            ],
+          ),
+        },
+      ),
+      revision: 1,
+    );
+
+    TrajectorySystemRecord systemWith({
+      required String recordId,
+      String? promptHash,
+      String? previousPromptHash,
+      String? manifestHash,
+      String? previousManifestHash,
+    }) => TrajectorySystemRecord(
+      index: 30,
+      recordId: recordId,
+      text: 'System',
+      change: TrajectorySystemChange.toolsChange,
+      systemPromptHash: promptHash,
+      previousSystemPromptHash: previousPromptHash,
+      toolManifestHash: manifestHash,
+      previousToolManifestHash: previousManifestHash,
+    );
+
+    testWidgets('tools tab renders the manifest with a changed-count head', (
+      tester,
+    ) async {
+      await _openRecord(
+        tester,
+        systemWith(
+          recordId: 'details/system-manifest-changed',
+          manifestHash: 'm2',
+          previousManifestHash: 'm1',
+        ),
+        blobSnapshot,
+      );
+      await _openTab(tester, 'Tools');
+
+      expect(
+        find.text('Changed vs previous version: +1 −1 tools'),
+        findsOneWidget,
+      );
+      expect(find.text('bash'), findsOneWidget);
+      expect(find.text('Run shell commands'), findsOneWidget);
+      expect(find.text('read'), findsOneWidget);
+      // Schema sections render only for tools carrying one.
+      expect(find.text('Parameters'), findsNWidgets(2));
+      expect(find.textContaining('"type"'), findsNWidgets(2));
+    });
+
+    testWidgets('tools tab skips the head without a previous version', (
+      tester,
+    ) async {
+      await _openRecord(
+        tester,
+        systemWith(
+          recordId: 'details/system-manifest-first',
+          manifestHash: 'm1',
+        ),
+        blobSnapshot,
+      );
+      await _openTab(tester, 'Tools');
+
+      expect(find.textContaining('Changed vs previous'), findsNothing);
+      expect(find.text('bash'), findsOneWidget);
+      // The bare tool renders its name only — no empty stubs.
+      expect(find.text('bare'), findsOneWidget);
+      expect(find.text('Parameters'), findsOneWidget);
+    });
+
+    testWidgets('tools tab skips the head for an identical manifest', (
+      tester,
+    ) async {
+      await _openRecord(
+        tester,
+        systemWith(
+          recordId: 'details/system-manifest-same',
+          manifestHash: 'm1',
+          previousManifestHash: 'm1',
+        ),
+        blobSnapshot,
+      );
+      await _openTab(tester, 'Tools');
+
+      expect(find.textContaining('Changed vs previous'), findsNothing);
+    });
+
+    testWidgets('system prompt tab diffs two captured versions', (
+      tester,
+    ) async {
+      await _openRecord(
+        tester,
+        systemWith(
+          recordId: 'details/system-prompt-diff',
+          promptHash: 'p2',
+          previousPromptHash: 'p1',
+        ),
+        blobSnapshot,
+      );
+      await _openTab(tester, 'System Prompt');
+
+      expect(find.text('- old prompt'), findsOneWidget);
+      expect(find.text('+ new prompt'), findsOneWidget);
+    });
+
+    testWidgets('system prompt tab renders a lone captured version', (
+      tester,
+    ) async {
+      await _openRecord(
+        tester,
+        systemWith(recordId: 'details/system-prompt-blob', promptHash: 'p2'),
+        blobSnapshot,
+      );
+      await _openTab(tester, 'System Prompt');
+
+      expect(find.text('new prompt'), findsOneWidget);
+    });
+  });
+
+  testWidgets('hidden-range drill-in resolves covered records', (tester) async {
+    await _open(
+      tester,
+      (context) => showTrajectoryDetails(
+        context,
+        record: const TrajectoryCompactedRecord(
+          index: 26,
+          recordId: 'details/compacted-hidden',
+          text: 'preview',
+          summary: 'Compacted.',
+          hiddenRecordIds: ['h1', 'h2'],
+        ),
+        resolveHiddenRecords: (record) async => const [
+          TrajectoryHiddenRecordPreview(
+            id: 'h1',
+            type: 'message',
+            preview: 'hidden text one',
+          ),
+        ],
+      ),
+    );
+    await _openTab(tester, 'Hidden Records');
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 hidden records'), findsOneWidget);
+    expect(find.text('message · h1'), findsOneWidget);
+    expect(find.text('hidden text one'), findsOneWidget);
   });
 }

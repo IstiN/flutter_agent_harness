@@ -17,18 +17,15 @@ exclude:
 
 crap:
   enabled: true
-  # Bootstrap (issue #1848, AC3, fa_ui tier 1 of 132->48->24->12): measured
-  # max was 132.0 over 1509 methods with SIXTEEN 0%-cov methods above the 48
-  # line (_stopMic/_toggleMic/_handleSmartPaste/_pasteClipboardText/
-  # _isSafeInlinePaste chat_composer, chatClampHint chat_strings, build x2 +
-  # sandboxMediaKind media_player, _load task_models_store, build/
-  # agentStatusEmoji/_send agents_section, _ruPlural trajectory_strings,
-  # _editPreset providers_section, _connectCopilot sso_flows) — all covered
-  # by real branch tests in this tier (tests only, zero lib/ changes). The
-  # NEW measured worst is 42.00 — _togglePreview (voice_presets.dart) and
-  # _resolveUser (fa_chat_screen.dart), CC 6 @ 0%; the threshold is pinned
-  # there. Tier 2 (48->24) and tier 3 (24->12) carry the rest. Only down.
-  threshold: 42.0
+  # Tier 2 (issue #1848, fa_ui 48->24 of the 132->48->24->12 ladder): tier 1
+  # (#1887) covered the sixteen 0%-cov methods above 48; this tier covered
+  # the eleven remaining 0%-cov methods (CC4-6) with real branch tests and
+  # decomposed the thirty-three covered CC14-29 methods into cohesive
+  # private helpers (<=CC5 pieces at >=85% cov, <=CC3 where a piece stays
+  # 0%-cov). The NEW measured worst is 13.4545… — providerMarkKeyForBaseUrl
+  # (provider_marks.dart, CC 11 @ 73%); the threshold is pinned there.
+  # Tier 3 (24->12) owns the last two methods over 12. Only down.
+  threshold: 13.454545454545453
 
 coverage:
   # run_tests: false — the merged shard lcov (faui-coverage artifact /

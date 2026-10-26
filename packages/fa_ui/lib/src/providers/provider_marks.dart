@@ -15,18 +15,24 @@ import 'package:fa_ui/src/stores/provider_registry.dart';
 /// the SAME branded mark the add-provider picker tiles use. Unknown
 /// endpoints fall back to the generic server-stack mark.
 String providerMarkKey(Object provider) => switch (provider) {
-  ProviderPreset preset => switch (preset) {
-    ProviderPreset.aiin => 'aiin',
-    ProviderPreset.openrouter => 'openrouter',
-    ProviderPreset.ollamaCloud => 'ollama',
-    ProviderPreset.gemini => 'google',
-    ProviderPreset.dial => 'dial',
-    _ => 'custom',
-  },
+  ProviderPreset preset => _presetMarkKey(preset),
   CustomProvider custom => providerMarkKeyForBaseUrl(custom.baseUrl),
   String baseUrl => providerMarkKeyForBaseUrl(baseUrl),
   _ => 'custom',
 };
+
+/// The branded mark keys of the hosted presets; on-device and the ad-hoc
+/// custom presets render the generic stack (the `_` fallback).
+const _presetMarkKeys = {
+  ProviderPreset.aiin: 'aiin',
+  ProviderPreset.openrouter: 'openrouter',
+  ProviderPreset.ollamaCloud: 'ollama',
+  ProviderPreset.gemini: 'google',
+  ProviderPreset.dial: 'dial',
+};
+
+String _presetMarkKey(ProviderPreset preset) =>
+    _presetMarkKeys[preset] ?? 'custom';
 
 /// The [ProviderMark] key inferred from an endpoint URL (see
 /// [providerMarkKey]).
@@ -92,29 +98,35 @@ class ProviderMark extends StatelessWidget {
 
   /// (svg, tint, background) — a null tint renders the SVG as-is
   /// (full-color official marks bleeding to the tile edge); otherwise the
-  /// SVG is monochrome-tinted with [BlendMode.srcIn].
-  static (String, Color?, Color) _mark(String key) => switch (key) {
-    'openrouter' => (
+  /// SVG is monochrome-tinted with [BlendMode.srcIn]. The mark table is
+  /// data, not logic: one lookup instead of an 11-arm switch.
+  static (String, Color?, Color) _mark(String key) =>
+      _marks[key] ?? _customMark;
+
+  static final (String, Color?, Color) _customMark = (
+    _custom,
+    Color(0xFF6B768B),
+    Color(0xFFECEFF5),
+  );
+
+  static final _marks = <String, (String, Color?, Color)>{
+    'openrouter': (
       _openrouter,
       const Color(0xFF5B61F6),
       const Color(0xFFEEF1FE),
     ),
     // Full-color official aiin.by mark (their favicon) — carries its own
     // dark background and bleeds to the tile edge.
-    'aiin' => (_aiin, null, const Color(0xFF07080D)),
-    'chatgpt' || 'openai' => (_openai, Colors.white, const Color(0xFF172033)),
-    'codemie' => (_codemie, null, const Color(0xFF230230)),
-    'anthropic' => (
-      _anthropic,
-      const Color(0xFFD97757),
-      const Color(0xFFF7EEE8),
-    ),
-    'google' => (_gemini, const Color(0xFF8E75B2), const Color(0xFFF3EEF9)),
-    'dial' => (_dial, null, const Color(0xFFFFFFFF)),
-    'kimi' => (_kimi, const Color(0xFF172033), const Color(0xFFEEF0F4)),
-    'zai' => (_zai, const Color(0xFF3566FF), const Color(0xFFE8EDFF)),
-    'ollama' => (_ollama, const Color(0xFF172033), const Color(0xFFF0F0F2)),
-    _ => (_custom, const Color(0xFF6B768B), const Color(0xFFECEFF5)),
+    'aiin': (_aiin, null, const Color(0xFF07080D)),
+    'chatgpt': (_openai, Colors.white, const Color(0xFF172033)),
+    'openai': (_openai, Colors.white, const Color(0xFF172033)),
+    'codemie': (_codemie, null, const Color(0xFF230230)),
+    'anthropic': (_anthropic, const Color(0xFFD97757), const Color(0xFFF7EEE8)),
+    'google': (_gemini, const Color(0xFF8E75B2), const Color(0xFFF3EEF9)),
+    'dial': (_dial, null, const Color(0xFFFFFFFF)),
+    'kimi': (_kimi, const Color(0xFF172033), const Color(0xFFEEF0F4)),
+    'zai': (_zai, const Color(0xFF3566FF), const Color(0xFFE8EDFF)),
+    'ollama': (_ollama, const Color(0xFF172033), const Color(0xFFF0F0F2)),
   };
 }
 

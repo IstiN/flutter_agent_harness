@@ -71,7 +71,8 @@ enum ProviderPreset {
   /// Short label shown in the provider picker.
   String labelFor(BuildContext context) => label(FaUiStrings.of(context));
 
-  /// Short label resolved from [strings] directly.
+  /// Short label resolved from [strings] directly (split into staged
+  /// lookups to keep each piece small — the flat table was CC11).
   String label(FaUiStrings strings) => switch (this) {
     ProviderPreset.aiin => strings.settingsPresetAiin,
     ProviderPreset.openrouter => strings.settingsPresetOpenrouter,
@@ -90,7 +91,8 @@ enum ProviderPreset {
   /// requests, so they have no note; other endpoints are not guaranteed to.
   String? corsNote(BuildContext context) => cors(FaUiStrings.of(context));
 
-  /// The CORS note resolved from [strings] directly.
+  /// The CORS note resolved from [strings] directly (split into staged
+  /// lookups to keep each piece small — the flat table was CC11).
   String? cors(FaUiStrings strings) => switch (this) {
     ProviderPreset.aiin ||
     ProviderPreset.openrouter ||

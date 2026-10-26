@@ -28,53 +28,79 @@ class TrajectoryCellAssistant extends StatelessWidget {
     final error = record.isError ?? false;
     final display = _displayText(record);
     final message = record.errorMessage;
-    final title = switch (record) {
-      _ when display.isNotEmpty => TrajectoryRowText(text: display),
-      _ when error && message != null && message.isNotEmpty =>
-        TrajectoryRowText(
-          text: message,
-          style: TextStyle(fontSize: 13, color: colors.error),
-        ),
-      _ when record.requestOnly => Text(
-        '${strings.recordNoContent}\n',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 13,
-          fontStyle: FontStyle.italic,
-          color: colors.dim,
-        ),
-      ),
-      _ => Text(
-        '${strings.detailsEmptyResponse}\n',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 13,
-          fontStyle: FontStyle.italic,
-          color: colors.dim,
-        ),
-      ),
-    };
     return TrajectoryCellScaffold(
       record: record,
-      title: title,
-      meta: [
-        strings.metaStep(record.step),
-        if (record.timeSeconds case final duration?)
-          trajectoryMetaDuration(duration),
-        if (_tokenCount(record) case final tokens when tokens > 0)
-          strings.metaTokens(trajectoryThousands(tokens)),
-        if (error &&
-            message != null &&
-            message.isNotEmpty &&
-            message != display)
-          message,
-      ],
+      title: _title(
+        colors,
+        strings,
+        error: error,
+        display: display,
+        message: message,
+      ),
+      meta: _meta(strings, error: error, display: display, message: message),
       error: error,
     );
   }
+
+  /// The row title: the content preview, else the explicit error message,
+  /// else the request-only / empty-response placeholder.
+  Widget _title(
+    FahColors colors,
+    TrajectoryStrings strings, {
+    required bool error,
+    required String display,
+    required String? message,
+  }) {
+    if (display.isNotEmpty) return TrajectoryRowText(text: display);
+    if (_hasErrorText(error, message)) {
+      return TrajectoryRowText(
+        text: message!,
+        style: TextStyle(fontSize: 13, color: colors.error),
+      );
+    }
+    return _dimText(
+      record.requestOnly
+          ? '${strings.recordNoContent}\n'
+          : '${strings.detailsEmptyResponse}\n',
+      colors,
+    );
+  }
+
+  /// The labeled meta segments under the title.
+  List<String> _meta(
+    TrajectoryStrings strings, {
+    required bool error,
+    required String display,
+    required String? message,
+  }) => [
+    strings.metaStep(record.step),
+    if (record.timeSeconds case final duration?)
+      trajectoryMetaDuration(duration),
+    if (_tokenCount(record) case final tokens when tokens > 0)
+      strings.metaTokens(trajectoryThousands(tokens)),
+    if (_hasExtraErrorText(error, message, display)) message!,
+  ];
 }
+
+/// Whether the assistant step failed with a non-empty error message.
+bool _hasErrorText(bool error, String? message) =>
+    error && message != null && message.isNotEmpty;
+
+/// Whether the error message is additional info (not already the title).
+bool _hasExtraErrorText(bool error, String? message, String display) =>
+    error && message != null && message.isNotEmpty && message != display;
+
+/// The italic dim single-line placeholder title.
+Widget _dimText(String text, FahColors colors) => Text(
+  text,
+  maxLines: 1,
+  overflow: TextOverflow.ellipsis,
+  style: TextStyle(
+    fontSize: 13,
+    fontStyle: FontStyle.italic,
+    color: colors.dim,
+  ),
+);
 
 String _displayText(TrajectoryAssistantRecord record) {
   final source = record.outputDetail ?? record.thinkingDetail ?? '';
