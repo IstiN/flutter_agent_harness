@@ -253,7 +253,13 @@ final class DapClient {
     final gen = ++_generation;
     _dialAt = DateTime.now();
     print('[dap] ws dial (attempt ${_attempt + 1})');
-    final ws = _WebSocket(wsUrl);
+    final _WebSocket ws;
+    try {
+      ws = _WebSocket(wsUrl);
+    } on Object {
+      // Browser syntax errors can echo the full credential-bearing URL.
+      throw StateError('hub WebSocket connection failed');
+    }
     _ws = ws;
     _awaitingWelcome = true;
     if (_attempt == 0) _set(DapPhase.connecting);
