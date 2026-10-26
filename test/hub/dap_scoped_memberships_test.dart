@@ -45,6 +45,7 @@ void main() {
     DapPassphrasePrompt? prompt,
     String? project,
     bool useKeychain = true,
+    Future<String?> Function(int pid)? processIdentity,
   }) => DapScopedMemberships(
     globalConfigFile: globalConfig,
     globalChannelsFile: globalChannels,
@@ -57,6 +58,7 @@ void main() {
       sessionRecords.add(Map<String, Object?>.from(data));
     },
     readSessionRecords: (type) async => sessionRecords,
+    processIdentity: processIdentity,
   );
 
   DapInviteImport invite({String channel = 'team', bool keys = true}) =>
@@ -509,6 +511,96 @@ void main() {
       expect(await oldLiveGuard.exists(), isTrue);
       expect(await File(overlay).exists(), isTrue);
     });
+
+    test('a live owner past 24h with a matching process-start identity '
+        'keeps the overlay (issue #1898)', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      // The injected resolver stands in for the platform probe so the
+      // ownership decision is deterministic on every host (the real
+      // registration shape is pinned by the guard-format test below).
+      final s = service(processIdentity: (_) async => 'e1700000000');
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      final guardFile =
+          '$runtimeDir/${File(overlay).uri.pathSegments.last}'
+          '.${other.pid}.guard';
+      final guard = File(guardFile);
+      await guard.writeAsString('${other.pid} e1700000000\n');
+      await guard.setLastModified(
+        DateTime.now().subtract(const Duration(hours: 25)),
+      );
+
+      await s.cleanupOverlay();
+
+      expect(await guard.exists(), isTrue, reason: 'live owner is kept');
+      expect(await File(overlay).exists(), isTrue);
+    });
+
+    test('a live pid whose guard identity differs is a recycled pid and '
+        'no longer pins the overlay (issue #1898)', () async {
+      final other = await Process.start('sleep', ['30']);
+      addTearDown(() async {
+        other.kill();
+        await other.exitCode;
+      });
+      // The live pid now runs a DIFFERENT incarnation than the one that
+      // wrote the guard: recorded e111111111, current e999999999.
+      final s = service(processIdentity: (_) async => 'e999999999');
+      await s.seedOverlay();
+      final runtimeDir = File(overlay).parent.path;
+      final recycledGuard = File(
+        '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+      );
+      await recycledGuard.writeAsString('${other.pid} e111111111\n');
+
+      await s.cleanupOverlay();
+
+      expect(await recycledGuard.exists(), isFalse, reason: 'reclaimed');
+      expect(await File(overlay).exists(), isFalse);
+    });
+
+    test(
+      'an identity probe failure preserves the overlay (keep-on-doubt)',
+      () async {
+        final other = await Process.start('sleep', ['30']);
+        addTearDown(() async {
+          other.kill();
+          await other.exitCode;
+        });
+        final s = service(processIdentity: (_) async => null);
+        await s.seedOverlay();
+        final runtimeDir = File(overlay).parent.path;
+        final guard = File(
+          '$runtimeDir/${File(overlay).uri.pathSegments.last}.${other.pid}.guard',
+        );
+        await guard.writeAsString('${other.pid} e111111111\n');
+
+        await s.cleanupOverlay();
+
+        expect(await guard.exists(), isTrue);
+        expect(await File(overlay).exists(), isTrue);
+      },
+    );
+
+    test(
+      'the boot guard records pid + identity token, never key material',
+      () async {
+        final s = service();
+        await s.seedOverlay();
+        final guard = File(
+          '${File(overlay).parent.path}/'
+          '${File(overlay).uri.pathSegments.last}.$pid.guard',
+        );
+        expect(await guard.exists(), isTrue);
+        final content = await guard.readAsString();
+        expect(content, matches(RegExp(r'^\d+ \S*\n$')), reason: content);
+        expect(content, isNot(contains(priv)));
+      },
+    );
 
     test(
       'sweepLegacyOverlays removes pid files of dead processes only',
