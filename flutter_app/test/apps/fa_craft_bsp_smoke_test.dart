@@ -129,11 +129,19 @@ bool _containsVoxelNode(Map<String, dynamic> node) {
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  // A PLAIN binding on purpose: TestWidgetsFlutterBinding overrides
+  // drawFrame with an `inTest` assert that throws under our manual
+  // handleBeginFrame/handleDrawFrame pumping (the framework catches it in
+  // the scheduler zone, records a FlutterErrorDetails, and bails — the
+  // widget tree builds exactly once at mount and never repaints).
+  // WidgetsFlutterBinding has no such gating and its drawFrame runs
+  // build/layout/paint/composite for real. The app engine's test-mode
+  // detection sees a non-test binding and takes its production lifecycle
+  // path — the SAME path a real host runs.
+  final binding = WidgetsFlutterBinding.ensureInitialized();
 
   test('gh-1842 fa-craft 0.2.32 smoke — default jsr 0.4.189 BSP', () async {
     _progress('test-start');
-    final binding = TestWidgetsFlutterBinding.ensureInitialized();
 
     final env = MemoryExecutionEnv();
     final engine = _engine(env);
@@ -400,6 +408,7 @@ Future<int> _countEnclosedSkyPixels(
   // re-marks; the OffsetLayer holds the last committed picture. A null
   // layer means the boundary was never composited — recorded as -2,
   // never fatal: the scan is an artifact PROXY, not the acceptance core.
+  // ignore: invalid_use_of_protected_member
   final layer = boundary.layer;
   if (layer == null) return -2;
   final offsetLayer = layer as OffsetLayer;
