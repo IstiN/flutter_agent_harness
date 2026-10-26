@@ -209,6 +209,7 @@ void main() {
     Future<void> pump([int count = 1]) async {
       for (var i = 0; i < count; i++) {
         clockMs += 16;
+        binding.scheduleFrame();
         final sw = Stopwatch()..start();
         binding.handleBeginFrame(Duration(milliseconds: clockMs));
         binding.handleDrawFrame();
@@ -222,9 +223,13 @@ void main() {
     // lets the JS tick deliver a camera/sync update that re-dirts the
     // voxel painter, and RenderRepaintBoundary.toImage refuses a dirty
     // boundary. Marks made during begin/draw are painted within the same
-    // handleDrawFrame, so the boundary is clean on return.
+    // handleDrawFrame, so the boundary is clean on return. scheduleFrame
+    // is required: TestWidgetsFlutterBinding.handleBeginFrame SKIPS the
+    // draw unless a frame was scheduled, and a paint-only mark (no
+    // setState) never schedules one.
     void repaintClean() {
       clockMs += 16;
+      binding.scheduleFrame();
       binding.handleBeginFrame(Duration(milliseconds: clockMs));
       binding.handleDrawFrame();
     }
@@ -372,6 +377,7 @@ void main() {
       ),
     );
     clockMs += 16;
+    binding.scheduleFrame();
     binding.handleBeginFrame(Duration(milliseconds: clockMs));
     binding.handleDrawFrame();
     _progress('test-body-done');
