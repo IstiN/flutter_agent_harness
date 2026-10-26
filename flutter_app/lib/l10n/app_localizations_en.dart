@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -2521,6 +2522,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Read-only preview — tap to join the network and write.';
 
   @override
+  String get networkShowcaseMemberReadOnly =>
+      'Only the owner and admins can post in this showcase.';
+
+  @override
   String get networkConnecting => 'Connecting…';
 
   @override
@@ -2576,6 +2581,35 @@ class AppLocalizationsEn extends AppLocalizations {
       'No channel keys in this wallet — the agent will see channels only after a key invite';
 
   @override
+  String get networkChannelKeyMissing =>
+      'This device needs the private channel key to read and write.';
+
+  @override
+  String get networkChannelKeyImport => 'Import channel key';
+
+  @override
+  String get networkChannelKeyInviteLabel => 'Channel key invite';
+
+  @override
+  String get networkChannelKeyImportHint =>
+      'Paste the private-channel invite from a device that already has the key.';
+
+  @override
+  String get networkChannelKeyWrongChannel =>
+      'This invite is for a different channel.';
+
+  @override
+  String get networkChannelKeyWrongHub => 'This invite is for a different hub.';
+
+  @override
+  String get networkChannelKeyMismatch =>
+      'The invite public and private keys do not match.';
+
+  @override
+  String get networkChannelKeyImportFailed =>
+      'The channel key could not be imported. Try again.';
+
+  @override
   String get networkAddAgentScopeChannel => 'This channel';
 
   @override
@@ -2621,7 +2655,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkAddAgentEnrollHint =>
-      'Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.';
+      'Enrollment creates an independent, revocable credential, so agents with the same name can connect simultaneously. The secret is shown ONCE: copy it now.';
 
   @override
   String get networkAddAgentEnrollNeedSignIn =>

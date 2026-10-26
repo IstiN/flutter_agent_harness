@@ -4430,6 +4430,12 @@ abstract class AppLocalizations {
   /// **'Read-only preview — tap to join the network and write.'**
   String get networkShowcaseReadOnly;
 
+  /// Composer replacement for a joined guest or member viewing a public showcase
+  ///
+  /// In en, this message translates to:
+  /// **'Only the owner and admins can post in this showcase.'**
+  String get networkShowcaseMemberReadOnly;
+
   /// Channel rail placeholder while the session connects
   ///
   /// In en, this message translates to:
@@ -4532,6 +4538,54 @@ abstract class AppLocalizations {
   /// **'No channel keys in this wallet — the agent will see channels only after a key invite'**
   String get networkAddAgentNoChannelKeys;
 
+  /// Composer replacement when a joined private channel has no key in this device's wallet
+  ///
+  /// In en, this message translates to:
+  /// **'This device needs the private channel key to read and write.'**
+  String get networkChannelKeyMissing;
+
+  /// Button and dialog title for importing a private channel key invite
+  ///
+  /// In en, this message translates to:
+  /// **'Import channel key'**
+  String get networkChannelKeyImport;
+
+  /// Input label for the private channel invite carrying its keypair
+  ///
+  /// In en, this message translates to:
+  /// **'Channel key invite'**
+  String get networkChannelKeyInviteLabel;
+
+  /// Helper text explaining where to obtain a channel key invite
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the private-channel invite from a device that already has the key.'**
+  String get networkChannelKeyImportHint;
+
+  /// Validation error when the invite channel id differs from the open channel
+  ///
+  /// In en, this message translates to:
+  /// **'This invite is for a different channel.'**
+  String get networkChannelKeyWrongChannel;
+
+  /// Validation error when the invite targets another hub deployment than the connected session
+  ///
+  /// In en, this message translates to:
+  /// **'This invite is for a different hub.'**
+  String get networkChannelKeyWrongHub;
+
+  /// Validation error for an inconsistent X25519 channel keypair
+  ///
+  /// In en, this message translates to:
+  /// **'The invite public and private keys do not match.'**
+  String get networkChannelKeyMismatch;
+
+  /// Generic safe channel-key import failure
+  ///
+  /// In en, this message translates to:
+  /// **'The channel key could not be imported. Try again.'**
+  String get networkChannelKeyImportFailed;
+
   /// Agent invite scope segment: channel-only access
   ///
   /// In en, this message translates to:
@@ -4604,10 +4658,10 @@ abstract class AppLocalizations {
   /// **'Enroll agent'**
   String get networkAddAgentEnroll;
 
-  /// Agent invite note under the pure-DAP format explaining the one-time secret and rotation
+  /// Agent invite note under the pure-DAP format explaining the one-time secret and independent same-name enrollment
   ///
   /// In en, this message translates to:
-  /// **'Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.'**
+  /// **'Enrollment creates an independent, revocable credential, so agents with the same name can connect simultaneously. The secret is shown ONCE: copy it now.'**
   String get networkAddAgentEnrollHint;
 
   /// Agent invite note shown on the DAP format when there is no signed-in network account

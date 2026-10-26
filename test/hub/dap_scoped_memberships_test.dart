@@ -328,20 +328,24 @@ void main() {
       invite(),
       DapChannelScope.session,
       agentName: 'public-agent',
+      agentInstance: '0123456789abcdef',
       hubClientSecret: 'hub-secret-1',
     );
     expect(sessionRecords.last['hubClientSecret'], isNot('hub-secret-1'));
     expect(sessionRecords.last['hubClientSecret'], startsWith('dapkey1.'));
     expect(sessionRecords.last['agentName'], 'public-agent');
+    expect(sessionRecords.last['agentInstance'], '0123456789abcdef');
 
     final effective = await s.runtimeEffective();
     expect(effective.single.hubClientSecret, 'hub-secret-1');
     expect(effective.single.agentName, 'public-agent');
+    expect(effective.single.agentInstance, '0123456789abcdef');
 
     final boot = await s.preferredBootMembership();
     expect(boot!.hubUrl, hub);
     expect(boot.hubClientSecret, 'hub-secret-1');
     expect(boot.agentName, 'public-agent');
+    expect(boot.agentInstance, '0123456789abcdef');
   });
 
   test('global scope keeps the hub credential in memory only (legacy '
@@ -373,13 +377,16 @@ void main() {
       invite(),
       DapChannelScope.session,
       agentName: 'public-agent',
+      agentInstance: '0123456789abcdef',
       hubClientSecret: 'hub-secret-1',
     );
     expect(outcome.warnings.join(' '), contains('memory'));
     expect(sessionRecords.last.containsKey('hubClientSecret'), isFalse);
     expect(sessionRecords.last['agentName'], 'public-agent');
+    expect(sessionRecords.last['agentInstance'], '0123456789abcdef');
     final effective = await s.runtimeEffective();
     expect(effective.single.hubClientSecret, 'hub-secret-1');
+    expect(effective.single.agentInstance, '0123456789abcdef');
   });
 
   test('preferredBootHub: a remote membership wins over the zero-config '

@@ -279,7 +279,7 @@ class AgentNetworkController extends ChangeNotifier {
     if (enrollment != null) {
       return identityPathFor(
         '${_env.appStorageCwd}/dap/'
-        '${dapEnrollmentProjectScope(_effectiveProjectCwd)}',
+        '${dapEnrollmentIdentityScope(_effectiveProjectCwd, enrollment.agentInstance)}',
       );
     }
     return identityPathFor(_env.cwd);
@@ -329,6 +329,7 @@ class AgentNetworkController extends ChangeNotifier {
         hubUrl: _normalizeHubUrl(bundle.hubUrl),
         clientSecret: bundle.clientSecret,
         agentName: bundle.agentName,
+        agentInstance: bundle.agentInstance,
       );
 
   static String _normalizeHubUrl(String value) {
