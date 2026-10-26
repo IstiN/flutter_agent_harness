@@ -447,14 +447,18 @@ platform :ios do
     # the per-user list and evicted the concurrent build-macos leg's
     # keychain on the shared fa-m5 host/user (run 40165498619: "No
     # certificate for team 'YP9HC3USZ3' matching ... found"). The helper
-    # unions the current list and verifies the keychain survived. Lane
-    # cwd is flutter_app/, hence the ../scripts path.
+    # unions the current list and verifies the keychain survived.
+    # gh-1910: resolve the helper absolutely from the Fastfile location
+    # (__dir__ = flutter_app/fastlane → repo/scripts) — fastlane's sh does
+    # not honor the assumed lane cwd, so the old relative ../scripts path
+    # failed with exit 127 on the runner.
+    keychain_helper = File.expand_path("../../scripts/keychain_searchlist_add.sh", __dir__)
     if File.exist?(File.expand_path("~/Library/Keychains/build.keychain-db"))
-      sh("bash", "../scripts/keychain_searchlist_add.sh", "#{Dir.home}/Library/Keychains/build.keychain-db")
+      sh("bash", keychain_helper, "#{Dir.home}/Library/Keychains/build.keychain-db")
       sh("security unlock-keychain -p '' #{Dir.home}/Library/Keychains/build.keychain-db")
       sh("security default-keychain -d user -s #{Dir.home}/Library/Keychains/login.keychain-db")
     else
-      sh("bash", "../scripts/keychain_searchlist_add.sh", "#{Dir.home}/Library/Keychains/login.keychain-db")
+      sh("bash", keychain_helper, "#{Dir.home}/Library/Keychains/login.keychain-db")
     end
 
     team_id = ENV["IOS_TEAM_ID"] || "YP9HC3USZ3"
