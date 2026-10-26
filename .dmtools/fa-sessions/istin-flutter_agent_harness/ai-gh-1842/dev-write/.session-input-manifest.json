@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-26T16:39:03.324Z",
+  "ticketKey": "pr-1909",
+  "headSha": "591b539a840b95f087fcf8fad46ea78e2e09af24",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:37e65d344e9a62fc",
+      "size": 65269
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:e69c039f343f3dff",
+      "size": 159008
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:8cd2968acb5cdea5",
+      "size": 768
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:7b6447244a88640f",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:83396e2e923ab8aa",
+      "size": 22838
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3cc175febe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:940142274fe3995e",
+      "size": 2670
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:937bbf38c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:335d9cf84987a69b",
+      "size": 2402
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:5d3032ab7bbb168f",
+      "size": 2334
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:f2ef95c8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: engine disposal only happens on the success path**\n\nThe teardown comment says it plainly: \"a live engine past the test end wedges the runner\". But `engine.dispose()` runs only if every `expect` above it passes. Any mid-test failure (a flaky timing assert, a throw from `_countEnclosedSkyPixels`, a boot timeout) leaves the JsAppEngine running with its rAF/interval callbacks on the real event loop — which can hang or wedge the whole `flutter test` invocation and mask the real failure with a timeout.\n\nRegister the dispose as a tearDown right after `engine.start()` so it runs on every exit path:\n\n```dart\nawait engine.start();\nvar disposed = false;\naddTearDown(() async {\n  if (disposed) return;\n  disposed = true;\n  await engine.dispose();\n});\n```\n\nand keep the explicit `await engine.dispose();` in the body guarded by the same flag (or drop it, since the tearDown covers it). The trailing `attachRootWidget(SizedBox.shrink())` frame-drain can stay on the success path only — it is cosmetic compared to cancelling the JS engine's timers."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:b262d01e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `chunksAfterMove >= chunksBeforeMove` may be a flaky proxy**\n\nThis asserts the resident-chunk count never shrinks across 300 frames of forward movement. It held in the recorded runs (52→63), but it is only valid if fa-craft 0.2.32 never evicts chunks behind the player during that window — if the runtime or the app unloads far chunks as the player advances, the count can legitimately drop while streaming is perfectly healthy, and the smoke fails for the wrong reason. I could not confirm the eviction semantics from the fa-craft 0.2.32 sources (not vendored here).\n\nPlease confirm against the fa-craft 0.2.32 chunk-manager source: if it evicts, consider relaxing this to a floor-based check (e.g. `greaterThan(0)` plus the recorded `chunks:$before→$after` line, which already preserves the growth evidence for the PR)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:e2bdf33f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `builtWidgets` grows unboundedly and is only used as a non-emptiness flag**\n\nEvery tree rebuild appends the built widget tree (~900 frames across boot + phases), retaining each tree for the whole test for no diagnostic benefit beyond the single `isNotEmpty` assert (the failure-reason interpolation already uses `frameworkErrors`). Swap the list for a boolean:\n\n```dart\nvar builtWidgetOnce = false;\n// in builder:\nbuiltWidgetOnce = true;\n// at the assert:\nexpect(builtWidgetOnce, isTrue, ...);\n```\n\nSaves memory headroom in an already long smoke run; `frameworkErrors` remains the real diagnostic payload."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:7324bd11",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: hardcoded `/tmp` path is not portable**\n\n`File('/tmp/facraft_progress.log')` works on Linux/macOS but on Windows resolves to `<current-drive>:\\tmp\\...` and throws `FileSystemException` if that directory doesn't exist (writeAsStringSync does not create parents) — turning a skipped/edge run into a hard failure on a Windows dev box. Use the platform temp dir:\n\n```dart\nfinal _progressLog = File(\n  '${Directory.systemTemp.path}${Platform.pathSeparator}facraft_progress.log',\n);\n```\n\nThe skip guard makes this mostly theoretical today (QuickJS bridge on Windows + FA_CRAFT_SRC set), but it is a one-line hardening."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:51f7cd74",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — engine disposal only happens on the success path (IMPORTANT)\n\nFixed. `engine.dispose()` is now registered as an `addTearDown` immediately after `engine.start()` (fa_craft_bsp_smoke_test.dart), guarded by an `engineDisposed` flag, so the JsAppEngine's rAF/interval callbacks are cancelled on **every** exit path — a mid-test `expect` failure, a throw from `_countEnclosedSkyPixels`, or a boot timeout can no longer leave a live engine that wedges the whole `flutter test` invocation and masks the real failure.\n\nThe body keeps its explicit `await engine.dispose()` before the cosmetic `attachRootWidget(SizedBox.shrink())` frame-drain, guarded by the same flag so the tearDown's later run is a no-op (no double dispose). The frame-drain itself stays on the success path only, per your note."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:620f9391",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — `chunksAfterMove >= chunksBeforeMove` may be a flaky proxy (SUGGESTION)\n\nFixed as suggested. The growth assertion is replaced with the floor-based check `expect(chunksAfterMove, greaterThan(0))`, and the recorded `SMOKE gh-1842 streaming: … chunks:$before→$after …` line above it keeps the 52→63 growth evidence for the PR.\n\nOn the eviction-semantics question: the fa-craft 0.2.32 widget sources are a fa_widgets catalog artifact and are not vendored in this repo, so its chunk manager could not be inspected directly. What could be verified is the runtime side: js_widget_runtime 0.4.189's voxel chunk store is add/remesh/**remove**-capable (`js_voxel_node.dart` — `_chunksByInstance[…].remove(…)` on remesh, `clear()` for host resets), so the host contract does not guarantee monotonic growth, and a healthy stream-with-eviction run could legitimately shrink the resident count. The comment above the assert now documents this reasoning, so a future reader knows why it is floor-based."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:179f17d5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — `builtWidgets` grows unboundedly and is only used as a non-emptiness flag (SUGGESTION)\n\nFixed exactly as proposed. The `builtWidgets` list is replaced with a `builtWidgetOnce` boolean: the tree builder now sets the flag instead of appending and retaining every built tree (~900 frames across boot + phases), and the assert reads `expect(builtWidgetOnce, isTrue, …)`. The failure-reason interpolation still uses `frameworkErrors`, which remains the real diagnostic payload. Saves the memory headroom in an already long smoke run."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:948ba369",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 4 — hardcoded `/tmp` path is not portable (SUGGESTION)\n\nFixed. `_progress` now writes to a `File` built from `Directory.systemTemp.path` + `Platform.pathSeparator` (`facraft_progress.log`), so on Windows it resolves to `%TEMP%\\facraft_progress.log` instead of a possibly-nonexistent `<current-drive>:\\tmp\\…` — no more `FileSystemException` turning a skipped/edge run into a hard failure. As you noted the skip guard makes this mostly theoretical today; it is now one less hazard."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:bc25ae45",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1842 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40326033383\n🔴 red head 10a71e3f99f79a6da159f409d75e96999048b187 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:f7e47038",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Verified lock bump — the new sha256 matches pub.dev's `archive_sha256` for js_widget_runtime 0.4.189 exactly, only that one package changed, and `VoxelDiagnostics.bsp = true` confirmed as the 0.4.189 default (js_voxel_diagnostics.dart:21 in the pub.dev archive). The new smoke test is analyze- and format-clean, compiles, and skips gracefully without the native bridge. One important robustness item: engine disposal only runs on the success path (inline).\n\n**Key Issues**:\n- ⚠️ IMPORTANT: `engine.dispose()` runs only when every assert passes — a mid-test failure leaves a live rAF-driving engine that can wedge the runner (masks the real failure). Use `addTearDown` for disposal.\n- 💡 SUGGESTION: `chunksAfterMove >= chunksBeforeMove` assumes fa-craft 0.2.32 never evicts chunks — please confirm; see inline.\n- 💡 SUGGESTION: `builtWidgets` grows unboundedly, used only as a non-emptiness flag.\n- 💡 SUGGESTION: hardcoded `/tmp/facraft_progress.log` — use `Directory.systemTemp`.\n\n**General notes** (not on diff lines): `flutter_app/pubspec.yaml:77` still declares `js_widget_runtime: ^0.4.156`, but the new test references `VoxelDiagnostics`, which does not exist in 0.4.180 (verified: no `js_voxel_diagnostics.dart` in the 0.4.180 archive). The lock pin at 0.4.189 keeps this compiling, but a comment noting the test-compilation floor (≥0.4.189) would prevent confusion if the lock ever re-resolves lower.\n\n**Next Steps**:\n1. Move engine disposal into an `addTearDown` so failures can't wedge the test runner.\n2. Confirm fa-craft 0.2.32 chunk-eviction semantics (or relax the chunk-count assert).\n3. Optional: swap `builtWidgets` for a flag, use `Directory.systemTemp`, add the pubspec floor comment."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:26bcb199",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 10a71e3f99f79a6da159f409d75e96999048b187 — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:501c5a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "✅ Rework finished. `pr_approved` is sticky (approved once — never re-reviewed): the new head re-validates and merges directly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:d34cabe1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — pr-1909\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:63c253f6",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 9ee8d85de67e5855db8bcb207c3cb5f495c490be — stale base at 2026-10-26T14:08:40.684Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:81001cc4",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1842 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40347596895\n🔴 red head 591b539a840b95f087fcf8fad46ea78e2e09af24 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:099d11b0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-1842\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:5e6147c5",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 591b539a840b95f087fcf8fad46ea78e2e09af24 — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    }
+  ]
+}
