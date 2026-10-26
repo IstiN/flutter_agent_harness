@@ -35,6 +35,12 @@
 #     ownership discipline as release_draft_guard.sh; the daily sweeper
 #     (scripts/sweep_stale_drafts.sh) reclaims those after 24h.
 #
+# Failure mode (gh-1899 review): every call site runs this script
+# BEST-EFFORT (`|| echo "::warning::…"`) — it fires AFTER the publish
+# flip, when the release is already published and servable, so a cleanup
+# blip (rate limit, one failed DELETE) must never red the leg/job; the
+# warning keeps it visible and the 24h sweeper remains the backstop.
+#
 # Usage: release_draft_dedupe.sh <tag>
 # Env: GITHUB_REPOSITORY, GITHUB_RUN_ID (Actions defaults), GH_TOKEN/
 #      GITHUB_TOKEN.
