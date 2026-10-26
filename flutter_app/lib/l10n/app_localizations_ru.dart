@@ -2556,6 +2556,10 @@ class AppLocalizationsRu extends AppLocalizations {
       'Только чтение — нажмите, чтобы войти в сеть и писать.';
 
   @override
+  String get networkShowcaseMemberReadOnly =>
+      'Писать в эту витрину могут только владелец и администраторы.';
+
+  @override
   String get networkConnecting => 'Подключение…';
 
   @override
@@ -2610,6 +2614,32 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get networkAddAgentNoChannelKeys =>
       'В кошельке нет ключей каналов — агент увидит каналы только после инвайта ключа';
+
+  @override
+  String get networkChannelKeyMissing =>
+      'Чтобы читать и писать в этом закрытом канале, на устройстве нужен его ключ.';
+
+  @override
+  String get networkChannelKeyImport => 'Импортировать ключ канала';
+
+  @override
+  String get networkChannelKeyInviteLabel => 'Приглашение с ключом канала';
+
+  @override
+  String get networkChannelKeyImportHint =>
+      'Вставьте приглашение в закрытый канал с устройства, где уже есть ключ.';
+
+  @override
+  String get networkChannelKeyWrongChannel =>
+      'Это приглашение относится к другому каналу.';
+
+  @override
+  String get networkChannelKeyMismatch =>
+      'Открытый и закрытый ключи приглашения не соответствуют друг другу.';
+
+  @override
+  String get networkChannelKeyImportFailed =>
+      'Не удалось импортировать ключ канала. Повторите попытку.';
 
   @override
   String get networkAddAgentScopeChannel => 'Этот канал';

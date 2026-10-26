@@ -248,6 +248,24 @@ final class NetworkSession extends ChangeNotifier {
     await _loadHistoryPage(channelId, state);
   }
 
+  /// Reloads the newest history page after this device's channel keys change.
+  ///
+  /// Cached plaintext cannot be retroactively decrypted, so the decoded store
+  /// and dedupe window are rebuilt from the server's ciphertext. The revision
+  /// invalidates older history/realtime decodes before they can append stale
+  /// placeholders into the refreshed store.
+  Future<void> reloadChannel(String channelId) async {
+    final state = channelStates[channelId];
+    if (state == null) return openChannel(channelId);
+    state._revision++;
+    state.messages.clear();
+    state.seen.clear();
+    state.nextCursor = null;
+    state.historyResolved = false;
+    state.loadError = null;
+    await _loadHistoryPage(channelId, state);
+  }
+
   /// Pages the next chunk of older history into the channel store.
   Future<void> loadOlder(String channelId) async {
     final state = channelStates[channelId];

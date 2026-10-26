@@ -1356,6 +1356,10 @@
   "@networkShowcaseReadOnly": {
     "description": "Composer replacement in the anonymous showcase"
   },
+  "networkShowcaseMemberReadOnly": "Only the owner and admins can post in this showcase.",
+  "@networkShowcaseMemberReadOnly": {
+    "description": "Composer replacement for a joined guest or member viewing a public showcase"
+  },
   "networkConnecting": "Connecting…",
   "@networkConnecting": {
     "description": "Channel rail placeholder while the session connects"
@@ -1423,6 +1427,34 @@
   "networkAddAgentNoChannelKeys": "No channel keys in this wallet — the agent will see channels only after a key invite",
   "@networkAddAgentNoChannelKeys": {
     "description": "Network-scope agent invite note when the wallet can produce no channel invites to bundle"
+  },
+  "networkChannelKeyMissing": "This device needs the private channel key to read and write.",
+  "@networkChannelKeyMissing": {
+    "description": "Composer replacement when a joined private channel has no key in this device's wallet"
+  },
+  "networkChannelKeyImport": "Import channel key",
+  "@networkChannelKeyImport": {
+    "description": "Button and dialog title for importing a private channel key invite"
+  },
+  "networkChannelKeyInviteLabel": "Channel key invite",
+  "@networkChannelKeyInviteLabel": {
+    "description": "Input label for the private channel invite carrying its keypair"
+  },
+  "networkChannelKeyImportHint": "Paste the private-channel invite from a device that already has the key.",
+  "@networkChannelKeyImportHint": {
+    "description": "Helper text explaining where to obtain a channel key invite"
+  },
+  "networkChannelKeyWrongChannel": "This invite is for a different channel.",
+  "@networkChannelKeyWrongChannel": {
+    "description": "Validation error when the invite channel id differs from the open channel"
+  },
+  "networkChannelKeyMismatch": "The invite public and private keys do not match.",
+  "@networkChannelKeyMismatch": {
+    "description": "Validation error for an inconsistent X25519 channel keypair"
+  },
+  "networkChannelKeyImportFailed": "The channel key could not be imported. Try again.",
+  "@networkChannelKeyImportFailed": {
+    "description": "Generic safe channel-key import failure"
   },
   "networkAddAgentScopeChannel": "This channel",
   "@networkAddAgentScopeChannel": {

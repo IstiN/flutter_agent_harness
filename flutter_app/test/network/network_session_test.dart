@@ -1008,6 +1008,29 @@ void main() {
       },
     );
 
+    test('an undecryptable own message never becomes a blank bubble', () async {
+      final rig = await buildChat();
+      addTearDown(rig.session.close);
+      rig.session.channelStates['c1']!.add(
+        const ChannelMessage(
+          envelopeId: 'e-own-undecryptable',
+          senderId: 'me-1',
+          senderPub: '',
+          text: null,
+          isOwn: true,
+        ),
+      );
+
+      final last = rig.chat.messages.last;
+      expect(last.role, 'user');
+      expect(last.content, contains('unable to decrypt this message'));
+      expect(last.content.trim(), isNotEmpty);
+      expect(
+        rig.chat.transcriptMarkdown(),
+        contains('**You**: (unable to decrypt this message)'),
+      );
+    });
+
     test(
       'sendText goes through the session; own message is a user bubble',
       () async {
