@@ -111,16 +111,26 @@ void main() {
       _progress('test-start');
       final env = MemoryExecutionEnv();
       final engine = _engine(env);
-      addTearDown(() async {
-        // Unmount BEFORE disposing the engine (the js_app_view pattern):
-        // the tree still listens to the engine notifiers while mounted.
+      var disposed = false;
+      // The engine must be disposed INSIDE the test body: a live engine
+      // (rAF ticker + native runtime) between body end and package:test
+      // teardown wedges the runner. The safety net below is a no-op when
+      // the body ran to completion.
+      Future<void> disposeEngine() async {
+        if (disposed) return;
+        disposed = true;
         await tester.runAsync(() async {
           await tester.pumpWidget(const SizedBox.shrink());
           await Future<void>.delayed(const Duration(milliseconds: 100));
-          await engine.dispose();
         });
         await tester.pump();
-        _progress('teardown-done');
+        await tester.runAsync(() async {
+          await engine.dispose();
+        });
+      }
+
+      addTearDown(() async {
+        await disposeEngine();
       });
 
       // Wide-landscape viewport for the rotation sweep.
@@ -290,6 +300,8 @@ void main() {
           reason: 'the HUD/debug overlay must keep rendering on top of '
               'the voxel viewport after edits');
       debugPrint('SMOKE gh-1842 edits: break+place+debug overlay OK');
+      await disposeEngine();
+      _progress('test-body-done');
     });
   }, skip: _skip);
 }
