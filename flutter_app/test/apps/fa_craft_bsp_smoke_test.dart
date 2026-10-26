@@ -54,8 +54,15 @@ import '../native_test_guard.dart';
 
 /// File-based progress for smoke debugging: `flutter test` only surfaces
 /// print output at the end, so long stalls are otherwise opaque.
+/// Uses the platform temp dir (not a hardcoded `/tmp`) so an edge run on
+/// a Windows dev box cannot turn into a FileSystemException.
+final File _progressLog = File(
+  '${Directory.systemTemp.path}${Platform.pathSeparator}'
+  'facraft_progress.log',
+);
+
 void _progress(String msg) {
-  File('/tmp/facraft_progress.log').writeAsStringSync(
+  _progressLog.writeAsStringSync(
     '${DateTime.now().toIso8601String()} $msg\n',
     mode: FileMode.append,
   );
@@ -160,6 +167,19 @@ void main() {
     await engine.start();
     _progress('engine-started');
 
+    // A live engine past the test end wedges the runner (its
+    // rAF/interval callbacks keep firing on the real event loop), so
+    // disposal is registered as a tearDown RIGHT AFTER start — it runs
+    // on EVERY exit path (a mid-test failure, a flaky timing assert, a
+    // throw from _countEnclosedSkyPixels), not just the success path.
+    // The body keeps its explicit dispose guarded by the same flag.
+    var engineDisposed = false;
+    addTearDown(() async {
+      if (engineDisposed) return;
+      engineDisposed = true;
+      await engine.dispose();
+    });
+
     // The acceptance path is the DEFAULT renderer — no ?voxelBsp=0
     // anywhere in this harness.
     expect(
@@ -172,7 +192,10 @@ void main() {
     );
 
     final boundaryKey = GlobalKey();
-    final builtWidgets = <Widget>[];
+    // A flag, not a list: every tree rebuild appends ~900 retained trees
+    // across the smoke for no diagnostic benefit beyond one non-emptiness
+    // assert — frameworkErrors remains the real diagnostic payload.
+    var builtWidgetOnce = false;
     binding.attachRootWidget(
       View(
         view: binding.platformDispatcher.views.first,
@@ -194,7 +217,7 @@ void main() {
                         unawaited(engine.callEvent(actionId, payload)),
                   );
                   final built = renderer.build(tree, context);
-                  builtWidgets.add(built);
+                  builtWidgetOnce = true;
                   return built;
                 },
               ),
@@ -255,8 +278,8 @@ void main() {
           'binary lane',
     );
     expect(
-      builtWidgets,
-      isNotEmpty,
+      builtWidgetOnce,
+      isTrue,
       reason:
           'the renderer must have built the app tree at least once; '
           'framework errors so far: $frameworkErrors',
@@ -337,7 +360,17 @@ void main() {
           'holding the joystick forward must move the player '
           '(tick loop alive across 300 frames)',
     );
-    expect(chunksAfterMove, greaterThanOrEqualTo(chunksBeforeMove));
+    // Floor-based check (review thread on this line): the resident-chunk
+    // count may legitimately SHRINK across the run — js_widget_runtime
+    // 0.4.189's chunk store is add/remesh/remove capable (js_voxel_node.dart
+    // `_chunksByInstance[…].remove(…)`), and whether fa-craft 0.2.32's
+    // chunk manager evicts far chunks behind the player could not be
+    // confirmed from the vendored runtime alone (the widget sources are
+    // a catalog artifact, not vendored here). A growth assertion would
+    // fail for the wrong reason on a healthy run with eviction; the
+    // recorded `chunks:$before→$after` SMOKE line above preserves the
+    // 52→63 growth evidence for the PR.
+    expect(chunksAfterMove, greaterThan(0));
     // Anti-wedge sanity: a software-rasterized headless frame that takes
     // longer than this is a hang, not a spike.
     expect(maxMoveMs, lessThan(2000));
@@ -365,9 +398,14 @@ void main() {
     expect(_containsVoxelNode(finalTree!), isTrue);
     debugPrint('SMOKE gh-1842 edits: break+place+debug overlay OK');
 
-    // ── Teardown (inside the body: a live engine past the test end
-    // wedges the runner; dispose cancels rAF/intervals first) ─────────
-    await engine.dispose();
+    // ── Teardown (the addTearDown registered after engine.start() covers
+    // every exit path — this guarded explicit dispose just disposes EARLY
+    // on the success path, before the cosmetic frame-drain below, and the
+    // flag prevents a double dispose when the tearDown later runs) ─────
+    if (!engineDisposed) {
+      engineDisposed = true;
+      await engine.dispose();
+    }
     binding.attachRootWidget(
       View(
         view: binding.platformDispatcher.views.first,
