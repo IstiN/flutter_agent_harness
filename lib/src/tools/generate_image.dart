@@ -24,6 +24,7 @@ import 'package:http/http.dart' as http;
 import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../cancel_token.dart' show CancelToken, cancellable;
 import '../env/execution_env.dart';
 import '../model_roles/media_model_slots.dart';
 import '../model_roles/models_config.dart';
@@ -569,6 +570,14 @@ int _gcd(int a, int b) {
 /// an actionable error instead of a provider 400. Only the OpenRouter
 /// dialect can carry them; other dialects refuse them up front.
 ///
+/// [cancelToken] honors cancellation checkpoints (issue #1923 AC2): a
+/// token cancelled before the call rejects up front with no HTTP at all;
+/// after that each unbounded HTTP await races [CancelToken.onCancel] and
+/// rejects with [CancelledException] when it fires — the request itself
+/// is not aborted (the provider keeps the paid work; only the wait
+/// rejects). The soft-yield token is deliberately NOT consulted: a
+/// mid-POST abort would lose paid API work.
+///
 /// Dispatches to the first dialect in [imageGenerationDialects] whose
 /// `matches(endpoint)` returns true.
 Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
@@ -580,7 +589,9 @@ Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
   List<MediaImageInput> images = const [],
   List<String> declaredInputModalities = const [],
   http.Client? httpClient,
+  CancelToken? cancelToken,
 }) async {
+  cancelToken?.throwIfCancelled();
   final client = httpClient ?? http.Client();
   try {
     final dialect = imageGenerationDialects
@@ -603,23 +614,29 @@ Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
       ensureImageInputSupported(
         slot: 'imageGeneration',
         modelId: endpoint.modelId,
-        inputModalities: await resolveInputModalities(
-          baseUrl: endpoint.baseUrl,
-          apiKey: endpoint.apiKey,
-          modelId: endpoint.modelId,
-          declared: declaredInputModalities,
-          client: client,
+        inputModalities: await cancellable(
+          cancelToken,
+          () => resolveInputModalities(
+            baseUrl: endpoint.baseUrl,
+            apiKey: endpoint.apiKey,
+            modelId: endpoint.modelId,
+            declared: declaredInputModalities,
+            client: client,
+          ),
         ),
       );
     }
-    return await dialect.generate(
-      env: env,
-      endpoint: endpoint,
-      prompt: prompt,
-      size: size,
-      quality: quality,
-      images: resolvedImages,
-      client: client,
+    return await cancellable(
+      cancelToken,
+      () => dialect.generate(
+        env: env,
+        endpoint: endpoint,
+        prompt: prompt,
+        size: size,
+        quality: quality,
+        images: resolvedImages,
+        client: client,
+      ),
     );
   } finally {
     client.close();
@@ -758,6 +775,7 @@ AgentTool generateImageTool({
         images: images,
         declaredInputModalities: override?.inputModalities ?? const [],
         httpClient: httpClient,
+        cancelToken: cancelToken,
       );
       cancelToken?.throwIfCancelled();
       return ToolExecutionResult(

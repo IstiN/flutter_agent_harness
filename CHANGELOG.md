@@ -13,6 +13,22 @@ block a release again.
 
 ## Unreleased
 
+- feat(1923): stall-proof steering. Steering arriving while the loop awaits
+  an UNPRODUCTIVE provider submit (zero bytes, or silent past the steering
+  stall window) now cancels the attempt via a `SteeringInterruptFire`
+  cancel, injects the pending steering into the rebuilt request, and
+  resubmits — the #1916-class submit stalls can no longer queue user or
+  agent mail invisibly. Productive streams keep next-boundary semantics;
+  the interrupt never consumes a retry attempt, and the run latch re-arms
+  in place so watchdog replays and user aborts keep working. `task_resume`
+  caps its foreground wait (like `task_send`) and continues in the
+  background; video polling honors soft-yield checkpoints (remote render
+  never restarted, honest hand-back text) and media generation honors run
+  cancellation; SLO-breached undelivered child mail surfaces in
+  `task_status` (`UNDELIVERED … past the 2s delivery SLO`); the TUI prints
+  `steering queued — provider stalled Ns, interrupting to deliver` plus the
+  delivered ack.
+
 - fix(gh-1825): DAP agent enrollments carry a stable, independent
   `agentInstance` through app/CLI bundles, persistence, direct boot and
   reconnect. Independent same-name agents keep distinct identities and stay

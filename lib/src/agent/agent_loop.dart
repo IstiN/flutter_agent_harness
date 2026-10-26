@@ -82,6 +82,7 @@ part 'agent_loop_foreground_budget.dart';
 part 'agent_loop_empty_completion.dart';
 part 'agent_loop_finalize_gate.dart';
 part 'agent_loop_message_cap.dart';
+part 'agent_loop_steering_yield.dart';
 
 /// Marker embedded in the over-window guard's error message (see
 /// [_streamAssistantResponse]): hosts match it to recognize "the loop
@@ -444,6 +445,8 @@ final class AgentLoopConfig {
     this.budgetLineProvider,
     this.imageCapLatches,
     this.onTruncatedToolCall,
+    this.steeringStallWindow = const Duration(minutes: 5),
+    this.steeringInterruptNotice,
   });
 
   /// The model to call each turn.
@@ -498,6 +501,24 @@ final class AgentLoopConfig {
   /// phase as a second yield trigger. Null when the host has no external
   /// steering source.
   final Future<bool> Function()? hasPendingSteering;
+
+  /// The mid-stream steering stall window (issue #1923 AC1): how long an
+  /// in-flight provider stream may stay silent after a steering arrival
+  /// before the loop counts the attempt UNPRODUCTIVE, cancels it, injects
+  /// the steering into the rebuilt request, and resubmits. A zero-byte
+  /// attempt is interrupted IMMEDIATELY on arrival regardless of this
+  /// window; `<= 0` disables the mid-stream interrupt (zero-byte stays
+  /// armed). Hosts derive it BELOW their run-idle watchdog window so the
+  /// steering interrupt wins the race against the watchdog's whole-run
+  /// kill (the [Agent] uses `window - 30s`).
+  final Duration steeringStallWindow;
+
+  /// Host-visible notices for the provider-phase steering interrupt
+  /// (issue #1923 AC4): `steering queued — provider stalled Ns,
+  /// interrupting to deliver` at the interrupt decision and `steering
+  /// delivered into rebuilt request` after the injection. Null keeps the
+  /// core silent.
+  final void Function(String line)? steeringInterruptNotice;
 
   /// How many times a degenerate EMPTY completion (stopReason `stop`, no
   /// tool calls, no text — some providers answer like this under load) is
@@ -657,6 +678,8 @@ final class AgentLoopConfig {
       budgetLineProvider: budgetLineProvider,
       imageCapLatches: imageCapLatches,
       onTruncatedToolCall: onTruncatedToolCall,
+      steeringStallWindow: steeringStallWindow,
+      steeringInterruptNotice: steeringInterruptNotice,
     );
   }
 }
@@ -1003,6 +1026,7 @@ AgentEventStream agentLoop({
   required StreamFunction streamFunction,
   required ToolExecutor toolExecutor,
   CancelToken? cancelToken,
+  CancelTokenSource? cancelTokenSource,
 }) {
   final stream = AgentEventStream();
   _drive(
@@ -1015,6 +1039,7 @@ AgentEventStream agentLoop({
       streamFunction: streamFunction,
       toolExecutor: toolExecutor,
       cancelToken: cancelToken,
+      cancelTokenSource: cancelTokenSource,
     ),
   );
   return stream;
@@ -1071,6 +1096,12 @@ Future<List<Message>> runAgentLoop({
   required ToolExecutor toolExecutor,
   required AgentEventSink emit,
   CancelToken? cancelToken,
+
+  /// The writable side of [cancelToken] (issue #1923 AC1): the provider-
+  /// phase steering interrupt cancels the run through it and re-arms the
+  /// latch before the resubmit. Null keeps the interrupt inert (the
+  /// pre-#1923 boundary-only steering semantics).
+  CancelTokenSource? cancelTokenSource,
 }) {
   return _runAgentLoop(
     prompts: prompts,
@@ -1080,6 +1111,7 @@ Future<List<Message>> runAgentLoop({
     streamFunction: streamFunction,
     toolExecutor: toolExecutor,
     cancelToken: cancelToken,
+    cancelTokenSource: cancelTokenSource,
   );
 }
 
@@ -1095,6 +1127,7 @@ Future<List<Message>> runAgentLoopContinue({
   required ToolExecutor toolExecutor,
   required AgentEventSink emit,
   CancelToken? cancelToken,
+  CancelTokenSource? cancelTokenSource,
 }) {
   if (context.messages.isEmpty) {
     throw const ConfigException('Cannot continue: no messages in context');
@@ -1111,6 +1144,7 @@ Future<List<Message>> runAgentLoopContinue({
     streamFunction: streamFunction,
     toolExecutor: toolExecutor,
     cancelToken: cancelToken,
+    cancelTokenSource: cancelTokenSource,
   );
 }
 
@@ -1133,6 +1167,7 @@ Future<List<Message>> _runAgentLoop({
   required StreamFunction streamFunction,
   required ToolExecutor toolExecutor,
   CancelToken? cancelToken,
+  CancelTokenSource? cancelTokenSource,
 }) async {
   final newMessages = <Message>[...prompts];
   var currentContext = Context(
@@ -1208,6 +1243,9 @@ Future<List<Message>> _runAgentLoop({
         emit,
         streamFunction,
         cancelToken,
+        newMessages: newMessages,
+        drainSteering: () => pollSteering(currentConfig),
+        cancelTokenSource: cancelTokenSource,
       );
       (message, currentContext) = await _retryDegenerateEmpty(
         message,
@@ -1216,6 +1254,9 @@ Future<List<Message>> _runAgentLoop({
         emit,
         streamFunction,
         cancelToken,
+        newMessages: newMessages,
+        drainSteering: () => pollSteering(currentConfig),
+        cancelTokenSource: cancelTokenSource,
       );
       newMessages.add(message);
 
@@ -1482,26 +1523,43 @@ Future<(AssistantMessage, Context)> _retryDegenerateEmpty(
   AgentLoopConfig config,
   AgentEventSink emit,
   StreamFunction streamFunction,
-  CancelToken? cancelToken,
-) => retryEmptyCompletion(
+  CancelToken? cancelToken, {
+  required List<Message> newMessages,
+  required Future<List<Message>> Function() drainSteering,
+  CancelTokenSource? cancelTokenSource,
+}) => retryEmptyCompletion(
   message,
   context,
   config,
   emit,
   streamFunction,
   cancelToken,
+  newMessages: newMessages,
+  drainSteering: drainSteering,
+  cancelTokenSource: cancelTokenSource,
 );
 
 /// Streams one assistant response from the provider, emitting message
 /// lifecycle events and keeping the partial message in [context.messages]
 /// up to date (partial-first). Port of pi's `streamAssistantResponse`.
+///
+/// Issue #1923 AC1: each attempt runs under a steering-interrupt watch —
+/// a steering arrival while the attempt is UNPRODUCTIVE (zero bytes, or
+/// silent past `config.steeringStallWindow`) cancels it, drains the
+/// pending steering via [drainSteering], injects it into the rebuilt
+/// request (preserving the partial per existing abort semantics), and
+/// resubmits WITHOUT consuming a retry attempt. Productive streams are
+/// never cancelled — steering keeps its next-boundary semantics.
 Future<(AssistantMessage, Context)> _streamAssistantResponse(
   Context context,
   AgentLoopConfig config,
   AgentEventSink emit,
   StreamFunction streamFunction,
-  CancelToken? cancelToken,
-) async {
+  CancelToken? cancelToken, {
+  required List<Message> newMessages,
+  required Future<List<Message>> Function() drainSteering,
+  CancelTokenSource? cancelTokenSource,
+}) async {
   var reliefUsed = false;
   var pairingHealed = false;
   // gh-1680: one-shot message-cap heal state; when armed, the next
@@ -1519,27 +1577,48 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
     return await _abortedTurn(context, config, emit);
   }
   for (var attempt = 0; ; attempt++) {
-    final result = await _streamAttempt(
-      context,
-      config,
-      emit,
-      streamFunction,
-      cancelToken,
-      misuseNote: misuseNote,
-      capState: capState,
-      imageCapState: imageCapState,
-      reliefUsed: reliefUsed,
-      pairingHealed: pairingHealed,
+    final steer = _SteeringYieldWatch(
+      config: config,
+      runSource: cancelTokenSource,
     );
-    switch (result) {
-      case _AttemptReturn():
-        return result.turn;
-      case _AttemptRetry():
-        context = result.nextContext;
-        if (result.reliefUsed != null) reliefUsed = result.reliefUsed!;
-        if (result.pairingHealed != null) {
-          pairingHealed = result.pairingHealed!;
-        }
+    final progress = steer.progress;
+    steer.start();
+    _AttemptResult result;
+    try {
+      result = await _streamAttempt(
+        context,
+        config,
+        emit,
+        streamFunction,
+        cancelToken,
+        misuseNote: misuseNote,
+        capState: capState,
+        imageCapState: imageCapState,
+        reliefUsed: reliefUsed,
+        pairingHealed: pairingHealed,
+        progress: progress,
+      );
+    } finally {
+      await steer.dispose();
+    }
+    final outcome = await _resolveAttemptOutcome(
+      result: result,
+      steer: steer,
+      cancelToken: cancelToken,
+      drainSteering: drainSteering,
+      context: context,
+      config: config,
+      emit: emit,
+      newMessages: newMessages,
+    );
+    if (outcome.turn != null) return outcome.turn!;
+    // Adopt and loop again: a steering-interrupt resubmit (deliberately
+    // NOT counted as a retry attempt — issue #1923 open question 2
+    // default: user-driven, not a failure) or a heal's one-shot retry.
+    context = outcome.context!;
+    if (outcome.reliefUsed != null) reliefUsed = outcome.reliefUsed!;
+    if (outcome.pairingHealed != null) {
+      pairingHealed = outcome.pairingHealed!;
     }
   }
 }
@@ -1950,8 +2029,9 @@ Future<
 _consumeResponseStream(
   AssistantMessageEventStream response,
   Context context,
-  AgentEventSink emit,
-) async {
+  AgentEventSink emit, [
+  _StreamProgress? progress,
+]) async {
   AssistantMessage? partialMessage;
   var addedPartial = false;
   // Ids are stamped as they STREAM, not just at finalization: every
@@ -1964,6 +2044,10 @@ _consumeResponseStream(
   );
 
   await for (final event in response) {
+    // Issue #1923: every stream event is progress — the steering-interrupt
+    // watch reads this to tell a productive stream (never cancelled) from
+    // an unproductive one (zero bytes, or silent past the stall window).
+    progress?.mark();
     switch (event) {
       case StartEvent(:final partial):
         partialMessage = _stampAgainstUsed(partial, used);
