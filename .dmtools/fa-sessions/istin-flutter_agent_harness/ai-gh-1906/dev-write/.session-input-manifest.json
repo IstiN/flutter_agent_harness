@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-26T12:05:18.191Z",
+  "ticketKey": "pr-1908",
+  "headSha": "cdadc1f592afd5cfa2fa51d561b649b2d744f599",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:c4f3155c06c6ca46",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:67c8c4f694632132",
+      "size": 6864
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:61f3e5b38b704677",
+      "size": 2729
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:f087f03021ba53fb",
+      "size": 2399
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:a8ee1d3a33f02eaf",
+      "size": 939
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:b69b477fc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:a600ba086db68761",
+      "size": 2132
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:0d3d0965722693af",
+      "size": 2061
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6wPsrF",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-mobile.yml:636",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: please confirm the iOS signing-env retirement on the whole pool**\n\ngh-1692 pinned `fa-m5-1` by name because `macos-m5` alone was \"a coin flip\":\n`fa-m5-2` produced `** ARCHIVE FAILED **` runs on 10-17/10-18 with an\n**iOS archive/signing** environment that was never verified. This PR retires\nthat concern with the evidence \"fa-m5-2/fa-m5-3 signed desktop green\" — but\ndesktop (macOS app) signing is not the iOS archive/sign path (different\nprovisioning profiles, export options, and keychain layout). With the pool\nrouting, `build-ios` can now land on `fa-m5-2`.\n\nRouting to the pool is still strictly right — the old set matched zero\nrunners and queued forever, whereas a signing failure on a bad runner is a\nloud, retryable failure. But before the v1.0.648 dispatch:\n\n- Was an **iOS archive + sign + export** (not desktop) verified on\n  `fa-m5-2`/`fa-m5-3` since 10-18? If not, is a first-attempt\n  archive-failure-then-retry on the pool an accepted risk for the\n  TestFlight unblock?\n- If `fa-m5-2` still fails iOS archives, consider (follow-up, not this PR):\n  either fix its signing env or have the workflow probe-and-retry so one\n  bad registration cannot burn the nightly slot.\n\nNot blocking: the fix is correct as shipped and the queue-forever incident\noutweighs a possible retryable archive failure."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6wPstD",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/workflow_selfhosted_legs_test.dart:306",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: unrelated `dart format` churn obscures the functional change**\n\n~800 of this file's 852 diff lines are pure reformatting to the Dart 3.13\ntall style (wrapping every `test(...)` and long `reason:` string), while\nsibling shape-guard tests (e.g. `workflow_fetch_shape_guard_test.dart`)\nremain in the old style and CI has no format gate. The gh-1906 logic change\n(exact-set assert + new `fa-m5-*` audit) is ~60 lines and is now buried in\nformat noise, which will also complicate future `git blame` archaeology of\nthe gh-1600 guards.\n\nNot blocking (the result is `dart format`-clean and analyzes with no\nissues). For future PRs, consider either landing a tree-wide format pass as\nits own PR or keeping the formatter's output out of functional changes."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:ce1609fc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: please confirm the iOS signing-env retirement on the whole pool**\n\ngh-1692 pinned `fa-m5-1` by name because `macos-m5` alone was \"a coin flip\":\n`fa-m5-2` produced `** ARCHIVE FAILED **` runs on 10-17/10-18 with an\n**iOS archive/signing** environment that was never verified. This PR retires\nthat concern with the evidence \"fa-m5-2/fa-m5-3 signed desktop green\" — but\ndesktop (macOS app) signing is not the iOS archive/sign path (different\nprovisioning profiles, export options, and keychain layout). With the pool\nrouting, `build-ios` can now land on `fa-m5-2`.\n\nRouting to the pool is still strictly right — the old set matched zero\nrunners and queued forever, whereas a signing failure on a bad runner is a\nloud, retryable failure. But before the v1.0.648 dispatch:\n\n- Was an **iOS archive + sign + export** (not desktop) verified on\n  `fa-m5-2`/`fa-m5-3` since 10-18? If not, is a first-attempt\n  archive-failure-then-retry on the pool an accepted risk for the\n  TestFlight unblock?\n- If `fa-m5-2` still fails iOS archives, consider (follow-up, not this PR):\n  either fix its signing env or have the workflow probe-and-retry so one\n  bad registration cannot burn the nightly slot.\n\nNot blocking: the fix is correct as shipped and the queue-forever incident\noutweighs a possible retryable archive failure."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:b9092d52",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: unrelated `dart format` churn obscures the functional change**\n\n~800 of this file's 852 diff lines are pure reformatting to the Dart 3.13\ntall style (wrapping every `test(...)` and long `reason:` string), while\nsibling shape-guard tests (e.g. `workflow_fetch_shape_guard_test.dart`)\nremain in the old style and CI has no format gate. The gh-1906 logic change\n(exact-set assert + new `fa-m5-*` audit) is ~60 lines and is now buried in\nformat noise, which will also complicate future `git blame` archaeology of\nthe gh-1600 guards.\n\nNot blocking (the result is `dart format`-clean and analyzes with no\nissues). For future PRs, consider either landing a tree-wide format pass as\nits own PR or keeping the formatter's output out of functional changes."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-26:85b7c294",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The dead `fa-m5-1` runner-name pin is correctly removed from both iOS legs (`runs-on: [self-hosted, macos-m5]`), the label assert is strengthened to exact set equality, and the new repo-wide `fa-m5-*` audit (job-level `runs-on` + `strategy.matrix` scalars) closes the bug class. Verified locally: 15/15 tests pass on the branch, and the updated test fails exactly 3/15 against the unfixed workflow (RED claim reproduced).\n\n**Key Issues**:\n- ⚠️ One IMPORTANT question (inline): the gh-1692 iOS signing-env retirement rests on *desktop* signing evidence — please confirm iOS archive/sign was verified on fa-m5-2/fa-m5-3 (or accept a retryable first-attempt archive failure for the v1.0.648 dispatch).\n- 💡 One SUGGESTION (inline): ~800 lines of unrelated `dart format` churn in the test file bury the ~60-line functional change.\n- Stale comments outside this diff (no action required here): `ci.yml:7-9` and `nightly.yml:46-47` still describe the M5 pool as \"ONE runner (fa-m5-1)\" — worth a follow-up sweep now that the pool is shared.\n\n**Next Steps**:\n1. Answer the iOS signing-env confirmation (comment1).\n2. Merge, then dispatch `build-mobile.yml` with `version=v1.0.648, android_content=none, ios_content=all`."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-26:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-26",
+      "updatedAt": "2026-10-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
