@@ -195,18 +195,23 @@ void main() {
         ),
       ),
     );
+    // pumpWidget normally does this: without it the binding defers the
+    // first frame forever, sendFramesToEngine stays false and NO layers
+    // are ever composited (RepaintBoundary.layer stays null).
+    binding.allowFirstFrame();
 
     // Monotonic frame counter; the binding owns the clock (pump advances
     // it), the rAF scheduler folds ticker restarts into epochs.
     final frameMs = <int>[];
 
-    /// Drives one frame through [TestWidgetsFlutterBinding.pump] — the
-    /// same entry point WidgetTester.pump uses — then takes a real-loop
+    /// Drives one frame through the binding's begin/draw-frame handlers
+    /// (the same entry points tester.pump uses), then takes a real-loop
     /// breath for the JS engine's pending deliveries.
     Future<void> pump([int count = 1]) async {
       for (var i = 0; i < count; i++) {
         final sw = Stopwatch()..start();
-        await binding.pump(const Duration(milliseconds: 16));
+        binding.handleBeginFrame(null);
+        binding.handleDrawFrame();
         sw.stop();
         frameMs.add(sw.elapsedMilliseconds);
         await Future<void>.delayed(const Duration(milliseconds: 2));
@@ -216,9 +221,12 @@ void main() {
     // Repaints once WITHOUT the trailing real-loop breath: the breath
     // lets the JS tick deliver a camera/sync update that re-dirts the
     // voxel painter, and RenderRepaintBoundary.toImage refuses a dirty
-    // boundary. Marks made during the pump are painted within the same
-    // draw frame, so the boundary is clean on return.
-    Future<void> repaintClean() => binding.pump(Duration.zero);
+    // boundary. Marks made during the frame are painted within the same
+    // handleDrawFrame, so the boundary is clean on return.
+    void repaintClean() {
+      binding.handleBeginFrame(null);
+      binding.handleDrawFrame();
+    }
 
     // ── Phase 1: boot + native binary lane ────────────────────────────
     // fa-craft probes the runtime, then streams terrain through
@@ -362,7 +370,8 @@ void main() {
         child: const SizedBox.shrink(),
       ),
     );
-    await binding.pump(const Duration(milliseconds: 16));
+    binding.handleBeginFrame(null);
+    binding.handleDrawFrame();
     _progress('test-body-done');
   }, skip: _skip);
 }
