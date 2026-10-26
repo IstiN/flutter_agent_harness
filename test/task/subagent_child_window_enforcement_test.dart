@@ -474,8 +474,7 @@ void main() {
 
   group('AC-gate-declines: a healthy no-op pass never reads as failure', () {
     test('resume probe where only + incoming crosses the trigger: engine '
-        'gate declines on the transcript basis — no stamp, no count',
-        () async {
+        'gate declines on the transcript basis — no stamp, no count', () async {
       // Two fat turns leave the transcript ~2.2k, under the ~3.3k trigger
       // (healthy boundary compaction never fires on it).
       final w = _Wiring(
