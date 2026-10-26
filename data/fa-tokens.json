@@ -201,14 +201,6 @@
   "pr-1563": [
     {
       "leg": "review",
-      "at": "2026-10-12T13:59:59Z",
-      "prompt": 116780,
-      "completion": 9083,
-      "total": 125863,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-12T14:08:40Z",
       "prompt": 15066,
       "completion": 3598,
@@ -4663,6 +4655,15 @@
       "completion": 32717,
       "total": 117552,
       "cacheRead": 5335296,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-26T14:05:42Z",
+      "prompt": 90706,
+      "completion": 6108,
+      "total": 96814,
+      "cacheRead": 1743616,
       "model": "kimi-for-coding"
     }
   ],
