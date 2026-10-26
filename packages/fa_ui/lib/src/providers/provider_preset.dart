@@ -73,44 +73,18 @@ enum ProviderPreset {
 
   /// Short label resolved from [strings] directly (split into staged
   /// lookups to keep each piece small — the flat table was CC11).
-  String label(FaUiStrings strings) {
-    if (this == ProviderPreset.aiin) {
-      return strings.settingsPresetAiin;
-    }
-    if (this == ProviderPreset.openrouter) {
-      return strings.settingsPresetOpenrouter;
-    }
-    if (this == ProviderPreset.ollamaCloud) {
-      return strings.settingsPresetOllama;
-    }
-    return _hostedLabel(strings);
-  }
-
-  String _hostedLabel(FaUiStrings strings) {
-    if (this == ProviderPreset.gemini) {
-      return strings.settingsPresetGemini;
-    }
-    if (this == ProviderPreset.dial) {
-      return strings.settingsPresetDial;
-    }
-    if (this == ProviderPreset.minimax) {
-      return strings.settingsPresetMinimax;
-    }
-    return _keylessLabel(strings);
-  }
-
-  String _keylessLabel(FaUiStrings strings) {
-    if (this == ProviderPreset.custom) {
-      return strings.settingsPresetCustom;
-    }
-    if (this == ProviderPreset.webllm) {
-      return strings.settingsPresetWebllm;
-    }
-    if (this == ProviderPreset.gemma) {
-      return strings.settingsPresetGemma;
-    }
-    return strings.settingsPresetTransformersJs;
-  }
+  String label(FaUiStrings strings) => switch (this) {
+    ProviderPreset.aiin => strings.settingsPresetAiin,
+    ProviderPreset.openrouter => strings.settingsPresetOpenrouter,
+    ProviderPreset.ollamaCloud => strings.settingsPresetOllama,
+    ProviderPreset.gemini => strings.settingsPresetGemini,
+    ProviderPreset.dial => strings.settingsPresetDial,
+    ProviderPreset.minimax => strings.settingsPresetMinimax,
+    ProviderPreset.custom => strings.settingsPresetCustom,
+    ProviderPreset.webllm => strings.settingsPresetWebllm,
+    ProviderPreset.gemma => strings.settingsPresetGemma,
+    ProviderPreset.transformersJs => strings.settingsPresetTransformersJs,
+  };
 
   /// Shown under the form for providers that may reject browser (CORS)
   /// calls. OpenRouter and the Gemini API allow cross-origin browser
@@ -119,22 +93,18 @@ enum ProviderPreset {
 
   /// The CORS note resolved from [strings] directly (split into staged
   /// lookups to keep each piece small — the flat table was CC11).
-  String? cors(FaUiStrings strings) {
-    if (isOnDevice || _browserFriendly) {
-      return null;
-    }
-    if (this == ProviderPreset.ollamaCloud) {
-      return strings.settingsCorsNoteOllama;
-    }
-    return strings.settingsCorsNoteCustom;
-  }
-
-  /// Whether the preset's fixed endpoint accepts cross-origin browser
-  /// calls: aiin.by, OpenRouter, and the Gemini API do.
-  bool get _browserFriendly =>
-      this == ProviderPreset.aiin ||
-      this == ProviderPreset.openrouter ||
-      this == ProviderPreset.gemini;
+  String? cors(FaUiStrings strings) => switch (this) {
+    ProviderPreset.aiin ||
+    ProviderPreset.openrouter ||
+    ProviderPreset.gemini => null,
+    ProviderPreset.ollamaCloud => strings.settingsCorsNoteOllama,
+    ProviderPreset.dial => strings.settingsCorsNoteCustom,
+    ProviderPreset.minimax => strings.settingsCorsNoteCustom,
+    ProviderPreset.custom => strings.settingsCorsNoteCustom,
+    ProviderPreset.webllm ||
+    ProviderPreset.gemma ||
+    ProviderPreset.transformersJs => null,
+  };
 
   /// Infers a preset from a configured base URL (for env-prefilled setups).
   static ProviderPreset fromBaseUrl(String url) {

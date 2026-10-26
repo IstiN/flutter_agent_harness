@@ -185,7 +185,7 @@ void main() {
     );
   });
 
-  testWidgets('the mode selector renders the four segments and their '
+  testWidgets('the mode selector renders the three segments and their '
       'hints live', (tester) async {
     final controller = _ModeController(ApprovalMode.alwaysAsk);
     await tester.pumpWidget(

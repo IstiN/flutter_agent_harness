@@ -333,6 +333,87 @@ void main() {
     expect(registry.providers, hasLength(1));
   });
 
+  testWidgets('cancelling the on-device connect page keeps the picker up '
+      'and reports nothing', (tester) async {
+    var connected = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AddProviderPresetPickerPage(
+          onDeviceRoutes: [
+            const FaOnDeviceRoute(
+              label: 'Gemma (local)',
+              pageBuilder: buildStubOnDevicePage,
+            ),
+          ],
+          onOnDeviceConnected: (_) => connected++,
+        ),
+      ),
+    );
+    final gemmaTile = find.text('Gemma (local)');
+    await tester.scrollUntilVisible(
+      gemmaTile,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(gemmaTile);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('cancelConfig')));
+    await tester.pumpAndSettle();
+    expect(connected, 0);
+    expect(find.text('Gemma (local)'), findsOneWidget);
+    expect(find.text('stub on-device connect page'), findsNothing);
+  });
+
+  testWidgets('an on-device tile pushes its connect page and lands the '
+      'config through onOnDeviceConnected', (tester) async {
+    const config = FaChatModelConfig(
+      providerKind: 'webllm-on-device',
+      modelId: 'local-model',
+      baseUrl: '',
+      apiKey: '',
+    );
+    FaChatModelConfig? connected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AddProviderPresetPickerPage(
+          onDeviceRoutes: [
+            const FaOnDeviceRoute(
+              label: 'WebLLM (local)',
+              pageBuilder: buildStubOnDevicePage,
+            ),
+          ],
+          onOnDeviceConnected: (c) => connected = c,
+        ),
+      ),
+    );
+    final webllmTile = find.text('WebLLM (local)');
+    expect(
+      webllmTile,
+      findsNothing,
+    ); // lazy list: below the fold until scrolled
+    await tester.scrollUntilVisible(
+      webllmTile,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(webllmTile, findsOneWidget);
+    expect(find.text('Runs on this device — download once'), findsOneWidget);
+
+    await tester.tap(webllmTile);
+    await tester.pumpAndSettle();
+    expect(find.text('stub on-device connect page'), findsOneWidget);
+
+    // The connect page applies the config: the picker pops back to the
+    // tile, reports the config and pops itself with `true`.
+    await tester.tap(find.byKey(const ValueKey('applyConfig')));
+    await tester.pumpAndSettle();
+    expect(connected, same(config));
+    expect(find.text('WebLLM (local)'), findsNothing);
+    expect(find.text('stub on-device connect page'), findsNothing);
+  });
+
   /// Scrolls the lazy tile list to [tileName] and taps it, returning the
   /// editor the tap pushed.
   Future<ProviderEditorPage> openEditor(
@@ -412,67 +493,4 @@ class _CountingQuotaAdapter implements QuotaAdapter {
   }
 }
 
-void _noop() {
-  testWidgets('an on-device tile pushes its connect page and lands the '
-      'config through onOnDeviceConnected', (tester) async {
-    const config = FaChatModelConfig(
-      providerKind: 'webllm-on-device',
-      modelId: 'local-model',
-      baseUrl: '',
-      apiKey: '',
-    );
-    FaChatModelConfig? connected;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AddProviderPresetPickerPage(
-          onDeviceRoutes: [
-            const FaOnDeviceRoute(
-              label: 'WebLLM (local)',
-              pageBuilder: buildStubOnDevicePage,
-            ),
-          ],
-          onOnDeviceConnected: (c) => connected = c,
-        ),
-      ),
-    );
-    expect(find.text('WebLLM (local)'), findsOneWidget);
-    expect(find.text('Runs on this device — download once'), findsOneWidget);
-
-    await tester.tap(find.text('WebLLM (local)'));
-    await tester.pumpAndSettle();
-    expect(find.text('stub on-device connect page'), findsOneWidget);
-
-    // The connect page applies the config: the picker pops back to the
-    // tile, reports the config and pops itself with `true`.
-    await tester.tap(find.byKey(const ValueKey('applyConfig')));
-    await tester.pumpAndSettle();
-    expect(connected, same(config));
-    expect(find.text('WebLLM (local)'), findsNothing);
-    expect(find.text('stub on-device connect page'), findsNothing);
-  });
-
-  testWidgets('cancelling the on-device connect page keeps the picker up '
-      'and reports nothing', (tester) async {
-    var connected = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AddProviderPresetPickerPage(
-          onDeviceRoutes: [
-            const FaOnDeviceRoute(
-              label: 'Gemma (local)',
-              pageBuilder: buildStubOnDevicePage,
-            ),
-          ],
-          onOnDeviceConnected: (_) => connected++,
-        ),
-      ),
-    );
-    await tester.tap(find.text('Gemma (local)'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('cancelConfig')));
-    await tester.pumpAndSettle();
-    expect(connected, 0);
-    expect(find.text('Gemma (local)'), findsOneWidget);
-    expect(find.text('stub on-device connect page'), findsNothing);
-  });
-}
+void _noop() {}

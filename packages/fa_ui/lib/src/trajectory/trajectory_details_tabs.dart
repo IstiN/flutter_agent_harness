@@ -890,7 +890,6 @@ Widget _summaryPage(
 ) => _listPage([
   _DetailRow(strings.detailsStatus, _statusLabel(record, strings)),
   ..._summaryExtraRows(
-    context,
     record,
     snapshot,
     strings,
@@ -900,7 +899,6 @@ Widget _summaryPage(
 
 /// Per-kind rows below the status row.
 List<Widget> _summaryExtraRows(
-  BuildContext context,
   TrajectoryRecord record,
   TrajectorySnapshot? snapshot,
   TrajectoryStrings strings,
