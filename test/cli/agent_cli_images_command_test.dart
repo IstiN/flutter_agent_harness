@@ -37,7 +37,7 @@ class _InstantStream {
 /// the quiet one-liner before one, and the kill-switch line when the
 /// registry is disabled. Nothing floods: one report, one notice.
 void main() {
-  Future<(AgentCli, FakeCliIO, _InstantStream)> _boot({
+  Future<(AgentCli, FakeCliIO, _InstantStream)> boot({
     ImageRegistryConfig config = const ImageRegistryConfig(),
   }) async {
     final io = FakeCliIO();
@@ -73,7 +73,7 @@ void main() {
     ridingCount: registry - drops,
   );
 
-  Future<void> _pump(FakeCliIO io, String needle) async {
+  Future<void> pump(FakeCliIO io, String needle) async {
     for (var i = 0; i < 5000 && !io.out.toString().contains(needle); i++) {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
@@ -88,12 +88,12 @@ void main() {
     '/images renders the shared projection after a capped request',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      final (cli, io, stream) = await _boot();
+      final (cli, io, stream) = await boot();
       addTearDown(io.close);
 
       // Before any capped request: the quiet one-liner + knobs.
       io.sendLine('/images');
-      await _pump(io, 'no capped request yet');
+      await pump(io, 'no capped request yet');
       expect(io.out.toString(), contains('cap: 20 per request for'));
       expect(io.out.toString(), contains('images.registry: false'));
 
@@ -110,7 +110,7 @@ void main() {
 
       // /images now shows the window counts + the per-image detail.
       io.sendLine('/images');
-      await _pump(io, '37 in the window, 20 sent, 17 not sent');
+      await pump(io, '37 in the window, 20 sent, 17 not sent');
       expect(io.out.toString(), contains('dropped [Image 0]'));
     },
   );
@@ -119,13 +119,13 @@ void main() {
     '/images under the kill switch renders the disabled line',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      final (cli, io, stream) = await _boot(
+      final (cli, io, stream) = await boot(
         config: ImageRegistryConfig(enabled: false),
       );
       addTearDown(io.close);
 
       io.sendLine('/images');
-      await _pump(io, 'registry disabled');
+      await pump(io, 'registry disabled');
       expect(io.out.toString(), contains('no drops, no notices'));
     },
   );

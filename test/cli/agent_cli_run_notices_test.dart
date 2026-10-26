@@ -106,7 +106,7 @@ void main() {
       key: 'content0000$index',
       fromCurrentMessage: false,
     );
-    final report = (int count) => ImageDropReport(
+    ImageDropReport report(int count) => ImageDropReport(
       drops: [for (var i = 0; i < count; i++) drop(i)],
       cap: 20,
       modelId: testModel.id,
