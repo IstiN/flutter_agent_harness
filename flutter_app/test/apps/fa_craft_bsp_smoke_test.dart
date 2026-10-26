@@ -271,8 +271,11 @@ void main() {
         unawaited(engine.callEvent('place'));
         unawaited(engine.callEvent('debug')); // F3-style debug overlay
         await Future<void>.delayed(const Duration(milliseconds: 50));
+        // pump inside runAsync — the rAF tick drains on the real event
+        // loop (same contract as the rotation/streaming phases above).
+        await tester.pump(const Duration(milliseconds: 16));
       });
-      await tester.pump(const Duration(milliseconds: 16));
+      _progress('edits-done');
       expect(engine.bootError.value, isNull);
       // The tree still renders the voxel node plus the HUD overlay (the
       // overlay is what carries hotbar/notice text around the viewport).
