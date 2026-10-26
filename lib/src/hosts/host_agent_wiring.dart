@@ -310,6 +310,11 @@ final class AgentCoreServices {
   final ObligationClose? obligationsClose;
   final InspectImageConfig? vision;
   final TranscribeAudioConfig? transcribe;
+
+  /// Resolves the live session id for the transcribe tool's sidecar
+  /// placement (issue #1890 review: sidecars must ride the session-scoped
+  /// spill bucket, not `sessionless`). Null = session-less host.
+  final String? Function()? transcribeSessionId;
   final MediaToolServices? media;
   final DecisionsServices? decisions;
   final BrowserController? browserController;
@@ -445,6 +450,7 @@ final class AgentCoreServices {
     this.obligationsClose,
     this.vision,
     this.transcribe,
+    this.transcribeSessionId,
     this.media,
     this.decisions,
     this.browserController,
@@ -799,7 +805,13 @@ List<AgentTool> _buildCoreTools({
         : [inspectImageTool(env, services.vision!)],
     ...?services.transcribe == null
         ? null
-        : [transcribeAudioTool(env, services.transcribe!)],
+        : [
+            transcribeAudioTool(
+              env,
+              services.transcribe!,
+              sessionId: services.transcribeSessionId,
+            ),
+          ],
     ...?media == null
         ? null
         : [
