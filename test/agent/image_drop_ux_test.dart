@@ -283,6 +283,81 @@ void main() {
     });
   });
 
+  group('#1916 — the byte budget in notices and the surface', () {
+    test('a byte drop names the budget in the history notice', () {
+      final ux = ImageDropUx();
+      final report = ImageDropReport(
+        drops: [
+          for (var i = 0; i < 2; i++)
+            ImageDropEvent(
+              index: i,
+              key: 'hist-key-$i',
+              fromCurrentMessage: false,
+              reason: ImageDropReason.bytes,
+            ),
+        ],
+        cap: 20,
+        modelId: 'test-model',
+        currentImageCount: 0,
+        registryCount: 4,
+        ridingCount: 2,
+        maxBytes: 8 * 1024 * 1024,
+      );
+      final view = ux.observe(report)!;
+      expect(view.line, contains('(cap 20 or ~8MB image budget)'));
+    });
+
+    test('no byte budget info keeps the #1889 lines byte-identical', () {
+      final ux = ImageDropUx();
+      final view = ux
+          .observe(historyDropReport(historyDrops: 2, registry: 4))!
+          .line;
+      expect(view, contains('(cap 20)'));
+      expect(view.contains('MB'), isFalse);
+    });
+
+    test('/images explains BOTH count- and byte-drops (AC1)', () {
+      final report = ImageDropReport(
+        drops: [
+          const ImageDropEvent(
+            index: 0,
+            key: 'hist-key-0',
+            fromCurrentMessage: false,
+            reason: ImageDropReason.count,
+          ),
+          const ImageDropEvent(
+            index: 1,
+            key: 'hist-key-1',
+            fromCurrentMessage: false,
+            reason: ImageDropReason.bytes,
+          ),
+        ],
+        cap: 20,
+        modelId: 'test-model',
+        currentImageCount: 0,
+        registryCount: 4,
+        ridingCount: 2,
+        maxBytes: 8 * 1024 * 1024,
+      );
+      final lines = imageSurfaceLines(
+        lastReport: report,
+        config: const ImageRegistryConfig(),
+        modelId: 'test-model',
+      );
+      final dropLines = lines
+          .where((l) => l.contains('dropped [Image'))
+          .toList();
+      expect(dropLines, hasLength(2));
+      expect(dropLines[0], contains('(older history — cap 20)'));
+      expect(dropLines[1], contains('(over the ~8MB image budget)'));
+      expect(lines.last, contains('images.maxBytesPerRequest'));
+      expect(
+        lines.firstWhere((l) => l.startsWith('cap:')),
+        contains('~8MB image budget'),
+      );
+    });
+  });
+
   group('AC4 — the shared projection', () {
     test('with drops: counts, per-image previews, cap, knobs', () {
       final lines = imageSurfaceLines(

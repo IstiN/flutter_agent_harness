@@ -675,7 +675,11 @@ fa dap import 'wss://hub…/ws?channel=<id>' && DAP_HUB_URL=wss://hub…/ws DAP_
 ```
 
 The app's DAP action creates an additional independent credential instead of
-rotating earlier credentials for the same display name. It also emits
+rotating earlier credentials for the same display name. It calls
+`POST /api/networks/{id}/agents/enrollments`, which requires a hub with the
+`enroll_create` operation; it never falls back to legacy `/agents/enroll`.
+A hub that answers `unknown op enroll_create` must be upgraded — the app
+reports that existing credentials were not changed. The action also emits
 `DAP_AGENT_INSTANCE`, the first 16 lowercase hex characters of SHA-256 over
 the UTF-8 client secret. This discriminator is not a secret;
 `DAP_AGENT_NAME` remains the unchanged display name.
