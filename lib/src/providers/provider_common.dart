@@ -629,6 +629,10 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
       // A later attempt answered first: the older abandoned generations
       // are orphans now — detach them (announce + release) exactly once.
       _detachAbandoned(abandoned, 'superseded');
+      // The stall episode is over (#1916 review: the latch must reset so
+      // a LATER stall episode of the same payload re-advices — one
+      // warning per episode, never once per process lifetime).
+      payloadStallLatch.reset();
       return response;
     } on TimeoutException {
       payloadStallLatch.noteStall(fingerprint, request.bodyBytes.length);
@@ -678,7 +682,11 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
           delay,
           cancelToken,
         );
-        if (adopted != null) return adopted;
+        if (adopted != null) {
+          // Adoption ended the stall episode — same reset contract.
+          payloadStallLatch.reset();
+          return adopted;
+        }
         continue;
       }
       final survived = await transientRetrySleeper(delay, cancelToken);
@@ -694,8 +702,11 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
 /// Hands every still-listed abandoned response future to the detach
 /// janitor (issue #1916): when it eventually lands, announce on the
 /// existing `[net]`/fa.log retry surface and release the connection at
-/// once — nobody will read that generation. [phase] names why adoption
-/// is no longer possible (`exhausted` / `superseded` / `cancelled`).
+/// once — nobody will read that generation. A late ERROR is classified
+/// the same way (never propagated — the loop already gave up on that
+/// generation; issue #921: late failures land in the janitor's own
+/// handler, never the zone). [phase] names why adoption is no longer
+/// possible (`exhausted` / `superseded` / `cancelled`).
 void _detachAbandoned(
   List<(int, Future<http.StreamedResponse>)> abandoned,
   String phase,
@@ -703,28 +714,49 @@ void _detachAbandoned(
   for (final (attempt, late) in List.of(abandoned)) {
     abandoned.remove((attempt, late));
     unawaited(
-      late.then<Object?>((response) {
-        transientRetryNotice?.call(
-          0,
-          providerConnectRetries + 1,
-          Duration.zero,
-          'abandoned connect attempt ${attempt + 1} answered late '
-          '($phase) — response detached, generation dropped',
-        );
-        return response.stream
-            .listen((_) {}, onError: (Object _) {}, cancelOnError: true)
-            .cancel();
-      }, onError: (Object _) {}),
+      late.then<Object?>(
+        (response) {
+          transientRetryNotice?.call(
+            0,
+            providerConnectRetries + 1,
+            Duration.zero,
+            'abandoned connect attempt ${attempt + 1} answered late '
+            '($phase) — response detached, generation dropped',
+          );
+          return response.stream
+              .listen((_) {}, onError: (Object _) {}, cancelOnError: true)
+              .cancel();
+        },
+        onError: (Object error) {
+          transientRetryNotice?.call(
+            0,
+            providerConnectRetries + 1,
+            Duration.zero,
+            'abandoned connect attempt ${attempt + 1} failed late ($phase) — '
+            'error detached: ${_shortLateError(error)}',
+          );
+        },
+      ),
     );
   }
 }
 
+/// One-line bounded render of a late attempt's error for the `[net]`
+/// notice — never the whole exception story.
+String _shortLateError(Object error) {
+  final text = '$error';
+  return text.length <= 120 ? text : '${text.substring(0, 120)}…';
+}
+
 /// Races the retry backoff sleep against the abandoned attempts' late
-/// responses (issue #1916 AC3): the first late headers to arrive are
-/// adopted and returned (announced once on the `[net]` surface); when the
-/// sleep wins, the full delay has elapsed and null returns — the still-
-/// pending late futures stay listed (adoptable in a later gap, detached
-/// by [_detachAbandoned] when no gap remains). A cancelled wait detaches
+/// outcomes (issue #1916 AC3): the first late headers to arrive are
+/// adopted and returned (announced once on the `[net]` surface); a late
+/// ERROR is classified and detached — it belongs to a generation this
+/// loop already abandoned, so it may never propagate as the turn's
+/// verdict (the retry below re-sends) — and when the sleep wins, the
+/// full delay has elapsed and null returns. Still-pending late futures
+/// stay listed (adoptable in a later gap, detached by
+/// [_detachAbandoned] when no gap remains). A cancelled wait detaches
 /// everything and propagates the abort.
 Future<http.StreamedResponse?> _adoptAbandonedResponse(
   List<(int, Future<http.StreamedResponse>)> abandoned,
@@ -735,18 +767,38 @@ Future<http.StreamedResponse?> _adoptAbandonedResponse(
   final winner = await Future.any<Object?>([
     slept.then<Object?>((_) => null),
     for (final (attempt, late) in List.of(abandoned))
-      late.then<Object?>((response) => (attempt, late, response)),
+      late.then<Object?>(
+        (response) => ('adopt', attempt, late, response),
+        onError: (Object error) => ('late-error', attempt, late, error),
+      ),
   ]);
-  if (winner is (int, Future<http.StreamedResponse>, http.StreamedResponse)) {
-    abandoned.remove((winner.$1, winner.$2)); // single ownership
+  if (winner is (String, int, Future<http.StreamedResponse>, Object?)) {
+    final (kind, attempt, late, payload) = winner;
+    abandoned.remove((attempt, late)); // single ownership
+    if (kind == 'adopt') {
+      transientRetryNotice?.call(
+        0,
+        providerConnectRetries + 1,
+        Duration.zero,
+        'an abandoned connect attempt answered during the retry wait — '
+        'adopting the late response',
+      );
+      return payload as http.StreamedResponse;
+    }
+    // Late error from an abandoned attempt: classified on the retry
+    // surface, detached, never propagated — the next attempt re-sends.
     transientRetryNotice?.call(
       0,
       providerConnectRetries + 1,
       Duration.zero,
-      'an abandoned connect attempt answered during the retry wait — '
-      'adopting the late response',
+      'abandoned connect attempt ${attempt + 1} failed late — '
+      'error detached: ${_shortLateError(payload!)}',
     );
-    return winner.$3;
+    if (!await slept) {
+      _detachAbandoned(abandoned, 'cancelled');
+      cancelToken?.throwIfCancelled(); // the abort propagates
+    }
+    return null;
   }
   if (!await slept) {
     _detachAbandoned(abandoned, 'cancelled');

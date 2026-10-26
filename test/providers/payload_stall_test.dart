@@ -263,6 +263,113 @@ void main() {
         reason: 'the advice names the whole escape ladder (AC4)',
       );
     });
+
+    test('a late ERROR from an abandoned attempt is classified and '
+        'detached — never the turn verdict (review r1 blocking)', () async {
+      final notices = <String>[];
+      transientRetryNotice = (a, m, d, r) => notices.add(r);
+      // First attempt ERRORS 30ms in — after the 20ms watchdog (the
+      // attempt is already abandoned) but inside the 50ms backoff gap.
+      // Before the fix this error escaped the race as the call's verdict.
+      final client = _ScriptedClient((count) {
+        if (count == 1) {
+          return Future<http.StreamedResponse>.delayed(
+            const Duration(milliseconds: 30),
+            () => throw http.ClientException('socket closed mid-handshake'),
+          );
+        }
+        return Future.value(
+          http.StreamedResponse(
+            Stream.value(utf8.encode('')),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          ),
+        );
+      });
+
+      final response = await sendWatchedProviderRequest(client, post(), null);
+      expect(
+        response.statusCode,
+        200,
+        reason: 'the retry answered — the late error never surfaced',
+      );
+      expect(client.sent, hasLength(2), reason: 'the retry went out');
+      expect(
+        notices.where(
+          (n) => n.contains('failed late') && n.contains('error detached'),
+        ),
+        hasLength(1),
+      );
+    });
+
+    test('a late error AFTER the adoption window is announced by the '
+        'janitor, not propagated', () async {
+      final notices = <String>[];
+      transientRetryNotice = (a, m, d, r) => notices.add(r);
+      final client = _ScriptedClient((count) {
+        if (count == 1) {
+          return Future<http.StreamedResponse>.delayed(
+            const Duration(milliseconds: 100),
+            () => throw http.ClientException('late transport death'),
+          );
+        }
+        return Future.value(
+          http.StreamedResponse(
+            Stream.value(utf8.encode('')),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          ),
+        );
+      });
+
+      final response = await sendWatchedProviderRequest(client, post(), null);
+      expect(response.statusCode, 200);
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(
+        notices.where(
+          (n) =>
+              n.contains('failed late (superseded)') &&
+              n.contains('error detached'),
+        ),
+        hasLength(1),
+      );
+    });
+
+    test('latch reset on success: a LATER identical-payload episode '
+        're-advices (one warning per episode, review r1)', () async {
+      final advices = <int>[];
+      payloadStallAdvice = (bytes, fingerprint) => advices.add(bytes);
+      // Episode 1: two stalls (advice fires), then attempt 3 succeeds —
+      // the success resets the latch.
+      var episode = 1;
+      final client = _ScriptedClient((count) {
+        if (episode == 1 && count <= 2) {
+          return Completer<http.StreamedResponse>().future;
+        }
+        return Future.value(
+          http.StreamedResponse(
+            Stream.value(utf8.encode('')),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          ),
+        );
+      });
+      final response = await sendWatchedProviderRequest(client, post(), null);
+      expect(response.statusCode, 200);
+      expect(advices, hasLength(1));
+
+      // Episode 2: the SAME payload stalls twice again — the advice must
+      // fire once more (the reset closed episode 1).
+      episode = 2;
+      final stalled = _ScriptedClient(
+        (count) => Completer<http.StreamedResponse>().future,
+      );
+      await expectLater(
+        sendWatchedProviderRequest(stalled, post(), null),
+        throwsA(isA<TimeoutException>()),
+      );
+      expect(advices, hasLength(2));
+    });
   });
 }
 
@@ -271,9 +378,11 @@ final class _ScriptedClient extends http.BaseClient {
   _ScriptedClient(this.script);
 
   final Future<http.StreamedResponse> Function(int count) script;
-  var _count = 0;
+  final sent = <int>[];
 
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) =>
-      script(++_count);
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    sent.add(sent.length + 1);
+    return script(sent.length);
+  }
 }
