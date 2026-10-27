@@ -104,7 +104,9 @@ final class ToolCardSegments {
   final List<String> meta;
 
   /// The applied-change diffstat (`+N −M`, gh-1933 AC2) — painted in the
-  /// `toolDiffAdded`/`toolDiffRemoved` roles, squeezed in after the meta.
+  /// `toolDiffAdded`/`toolDiffRemoved` roles, squeezed in BEFORE the meta
+  /// (review thread PRRT_kwDOTXdlLc6w5WJc: meta drops first when the row
+  /// is tight — see [_squeezeCardTail]).
   final String diffstat;
 
   /// The RIGHT-ALIGNED elapsed zone (gh-1933 AC3): reserved against the

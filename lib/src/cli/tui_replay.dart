@@ -200,10 +200,10 @@ bool _isChromeText(String text) =>
 /// TUI-mode replay entry in the ACTIVE session's format: the user message
 /// as the live submit echo box (notices via the system-row renderer), each
 /// assistant thinking block as ONE collapsed `> Thought for Ns` row
-/// (gh-1933 AC4 — expanded to the persisted dim text by [thinkingExpanded]
-/// or the `/transcript expand all` state), the `>_Fa `-prefixed raw
-/// markdown text the view styles exactly like a live stream, and one
-/// settled tool row per persisted call ([replayToolRow]).
+/// (gh-1933 AC4 — expanded to the persisted dim text by the
+/// `/transcript expand all` state, the one expansion channel), the
+/// `>_Fa `-prefixed raw markdown text the view styles exactly like a live
+/// stream, and one settled tool row per persisted call ([replayToolRow]).
 List<String> replayLinesTui(
   Message message, {
   required int width,
@@ -211,14 +211,13 @@ List<String> replayLinesTui(
   Map<String, ToolResultMessage> results = const {},
   String? cwd,
   String? home,
-  bool thinkingExpanded = false,
 }) {
   switch (message) {
     case UserMessage(:final content):
       return _replayUserTui(content, width, dim);
     case AssistantMessage(:final content):
       final rows = <String>[];
-      final expand = thinkingExpanded || transcriptExpandDetails;
+      final expand = transcriptExpandDetails;
       for (final block in content.whereType<ThinkingContent>()) {
         // Reasoning replays COLLAPSED into one `> Thought for Ns` row per
         // block (gh-1933 AC4; the honest `—` duration — the record carries
@@ -385,9 +384,9 @@ List<String> restoredInputHistory(List<Message> messages) {
   String? home,
   int rowBudget = 1900,
   int maxRowsPerMessage = 0,
-  // gh-1933 AC4: expand the collapsed thinking rows to their persisted
-  // text (the `/transcript expand all` boot state).
-  bool thinkingExpanded = false,
+  // gh-1933 AC4: the collapsed thinking rows expand through the
+  // `/transcript expand all` global — the one expansion channel (review
+  // thread PRRT_kwDOTXdlLc6w5WFF), read inside [replayLinesTui].
 }) {
   // Pair persisted results with their calls up front so each replayed call
   // renders its attached result (name + args preview + result), the same
@@ -418,7 +417,6 @@ List<String> restoredInputHistory(List<Message> messages) {
             results: results,
             cwd: cwd,
             home: home,
-            thinkingExpanded: thinkingExpanded,
           )
         : replayLines(
             message,

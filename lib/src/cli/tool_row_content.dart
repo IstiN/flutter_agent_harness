@@ -40,8 +40,9 @@ final class DiffStat {
   /// Whether nothing changed (an empty stat renders no fragment).
   bool get isEmpty => added == 0 && removed == 0;
 
-  /// The RAW `+N −M` label (U+2122-free: a plain ASCII `+`, a thin-space
-  /// free ` −`, matching the ticket grammar verbatim).
+  /// The RAW `+N −M` label: an ASCII `+`, then U+212 MINUS SIGN before
+  /// the removal count, between regular spaces — matching the ticket
+  /// grammar (and [paintDiffstat]'s `^\+(\d+) −(\d+)$`) verbatim.
   String get label => isEmpty ? '' : '+$added −$removed';
 }
 
@@ -168,13 +169,17 @@ String _rangeToken(LineRange range) =>
 
 /// The read outcome count (gh-1933 AC1): `20 lines read` from the result
 /// text; a head-truncated read reports shown-of-total from its
-/// continuation notice. Empty results contribute no fragment.
+/// continuation notice — anchored to the result's LAST line (review
+/// thread PRRT_kwDOTXdlLc6w5WAf: a read whose CONTENT quotes a past
+/// notice — session JSONLs, harness logs — must not misreport). Empty
+/// results contribute no fragment.
 String? readOutcomeMeta(String text) {
   final trimmed = text.trim();
   if (trimmed.isEmpty) return null;
-  final match = RegExp(r'\[Showing lines (\d+)-(\d+) of (\d+)\.').firstMatch(
-    trimmed,
-  );
+  final notice = trimmed.split('\n').last;
+  final match = RegExp(
+    r'^\[Showing lines (\d+)-(\d+) of (\d+)\.',
+  ).firstMatch(notice);
   if (match != null) {
     final shown =
         int.parse(match.group(2)!) - int.parse(match.group(1)!) + 1;
@@ -426,29 +431,11 @@ List<String> settledCallCardRows({
   );
 }
 
-/// The settled bash card (gh-1933 AC3): intent label, output-lines meta,
-/// RIGHT-ALIGNED elapsed zone, and the dim one-line command preview under
-/// the header.
-List<String> settledBashCardRows({
-  required String intent,
-  required String commandPreview,
-  String? outputMeta,
-  String? elapsed,
-  required int width,
-}) {
-  return settledToolCardRows(
-    toolName: 'bash',
-    successDetail: intent,
-    isError: false,
-    width: width,
-    meta: [?outputMeta],
-    rightElapsed: elapsed ?? '',
-    previewLines: [commandPreview],
-  );
-}
-
 /// The expanded/collapsed transcript state (`/transcript expand all|none`,
-/// gh-1933 interaction): collapsed thinking rows and previews by default;
-/// `all` renders the persisted detail under each collapsed row. Live rows
-/// emitted after the switch honor it; a resume replays with it.
+/// gh-1933 interaction): thinking rows render collapsed (`> Thought for
+/// Ns`) by default; `all` renders their persisted text under the label.
+/// Affects rows emitted after the switch and the in-process `/resume`
+/// replay; bash previews always render. Process-scoped: a restart replays
+/// collapsed (review thread PRRT_kwDOTXdlLc6w5WCs — `/transcript` is not a
+/// persisted setting).
 var transcriptExpandDetails = false;

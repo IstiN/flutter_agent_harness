@@ -405,6 +405,10 @@ void main() {
     test('expanded thinking renders the persisted text dim under the '
         'label (gh-1933 AC4/AC5 — nothing today\'s replay showed is lost)',
     () {
+      // Review thread PRRT_kwDOTXdlLc6w5WFF: the `/transcript expand all`
+      // global is the ONE expansion channel — no parallel parameter.
+      transcriptExpandDetails = true;
+      addTearDown(() => transcriptExpandDetails = false);
       final rows = replayLinesTui(
         assistant([
           ThinkingContent(thinking: 'reasoning hard\nline two'),
@@ -412,7 +416,6 @@ void main() {
         ]),
         width: 80,
         dim: dim,
-        thinkingExpanded: true,
       );
       expect(rows, [
         dim('> Thought for —'),
@@ -420,15 +423,14 @@ void main() {
         dim('line two'),
         '${assistantStreamPrefix()}the answer',
       ]);
-      // The global `/transcript expand all` state expands too.
-      transcriptExpandDetails = true;
-      addTearDown(() => transcriptExpandDetails = false);
-      final global = replayLinesTui(
+      // Collapsing back restores the one-row default.
+      transcriptExpandDetails = false;
+      final collapsed = replayLinesTui(
         assistant([ThinkingContent(thinking: 'deep thought')]),
         width: 80,
         dim: dim,
       );
-      expect(global, [dim('> Thought for —'), dim('deep thought')]);
+      expect(collapsed, [dim('> Thought for —')]);
     });
 
     test('the `>_Fa ` prefix lands on the first text row only', () {

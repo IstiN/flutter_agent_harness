@@ -368,19 +368,31 @@ extension SlashCommandDispatch on AgentCli {
   /// thinking/detail rows respond — `all` renders the persisted detail
   /// under every collapsed row (rows emitted after the switch, and the
   /// replay on the next resume), `none` restores the collapsed default.
-  /// Bare `/transcript` reports the current state.
+  /// Bare `/transcript` reports the current state. Review thread
+  /// PRRT_kwDOTXdlLc6w5WG8: outside the TUI chrome face nothing observable
+  /// responds to the flag (line mode streams thinking per-delta or never;
+  /// the line-mode replay renders thinking never), so the mutating arms
+  /// say so instead of confirming a silent no-op — and leave the render
+  /// state alone.
   void _handleTranscriptCommand(String rest) {
     final arg = rest.trim().toLowerCase();
     switch (arg) {
-      case 'expand all':
-        transcriptExpandDetails = true;
+      case 'expand all' || 'expand none' || 'collapse':
+        if (!_useTui || !tuiChromeEnabled) {
+          io.writeln(
+            'transcript expand only affects the TUI chrome transcript',
+          );
+          return;
+        }
+        final expanded = arg == 'expand all';
+        transcriptExpandDetails = expanded;
         io.writeln(
-          'transcript: expanded — collapsed rows render their persisted '
-          'detail (thinking text) until `/transcript expand none`',
+          expanded
+              ? 'transcript: expanded — collapsed rows render their '
+                    'persisted detail (thinking text) until '
+                    '`/transcript expand none`'
+              : 'transcript: collapsed (default)',
         );
-      case 'expand none' || 'collapse':
-        transcriptExpandDetails = false;
-        io.writeln('transcript: collapsed (default)');
       case 'expand' || '':
         io.writeln(
           'transcript rows are ${transcriptExpandDetails ? 'expanded' : 'collapsed'} — '

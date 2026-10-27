@@ -105,10 +105,21 @@ void main() {
       contains('transcript rows are collapsed'),
       reason: 'bare /transcript reports the state',
     );
-    expect(out, contains('transcript: expanded'));
+    // Review thread PRRT_kwDOTXdlLc6w5WG8: outside the TUI chrome face the
+    // expansion state renders nothing observable (line mode streams
+    // thinking per-delta or never; the line replay renders thinking NEVER)
+    // — the mutating arms say so instead of confirming a no-op.
+    expect(
+      out,
+      contains('transcript expand only affects the TUI chrome transcript'),
+      reason: 'this harness is the line-mode (non-TUI) face',
+    );
     expect(out, contains('usage: /transcript expand all|none'));
-    expect(out, contains('transcript: collapsed (default)'));
-    expect(transcriptExpandDetails, isFalse, reason: 'none restored it');
+    expect(
+      transcriptExpandDetails,
+      isFalse,
+      reason: 'a non-TUI face leaves the render state alone',
+    );
     expect(cli.isBusy, isFalse);
   });
 

@@ -139,6 +139,25 @@ void main() {
       expect(readOutcomeMeta(text), '2 of 200 lines read');
     });
 
+    test('a notice QUOTED mid-content is not an outcome meta (review '
+        'thread PRRT_kwDOTXdlLc6w5WAf — the notice anchors to the tail)',
+    () {
+      // Agents read session JSONLs and harness logs that embed PAST
+      // truncation notices; only a notice that is the result's LAST line
+      // is this read's own continuation notice.
+      const quoted =
+          'the earlier read said [Showing lines 1-10 of 500. '
+          'Use offset=11 to continue.] and then more prose\ntail line';
+      expect(readOutcomeMeta(quoted), '2 lines read');
+    });
+
+    test('the notice is recognized as the last line even after blank '
+        'padding', () {
+      const text = 'l1\nl2\n\n[Showing lines 90-140 of 500. '
+          'Use offset=141 to continue.]   ';
+      expect(readOutcomeMeta(text), '51 of 500 lines read');
+    });
+
     test('an empty result contributes no count fragment', () {
       expect(readOutcomeMeta(''), isNull);
       expect(readOutcomeMeta('   \n  '), isNull);
@@ -333,11 +352,14 @@ void main() {
   });
 
   group('UT-width (gh-1933 AC6)', () {
+    // The width oracles go through the REAL derivation (`settledCallCardRows`)
+    // — review thread PRRT_kwDOTXdlLc6w5V6O: no second bash-card builder may
+    // live in `lib/` next to it (the #916 drift surface).
     test('right-aligned elapsed never wraps and ends at the edge', () {
-      final card = settledBashCardRows(
-        intent: 'dart analyze && dart test',
-        commandPreview: 'dart analyze && dart test',
-        outputMeta: '3 lines',
+      final card = settledCallCardRows(
+        toolName: 'bash',
+        args: {'command': 'dart analyze && dart test'},
+        resultContent: [const TextContent(text: 'x\nx\nx')],
         elapsed: '12s',
         width: 40,
       );
@@ -350,10 +372,10 @@ void main() {
     });
 
     test('at a degenerate width the elapsed drops rather than wrapping', () {
-      final card = settledBashCardRows(
-        intent: 'a long intent label that cannot fit anywhere',
-        commandPreview: 'a long intent label that cannot fit anywhere',
-        outputMeta: '3 lines',
+      final card = settledCallCardRows(
+        toolName: 'bash',
+        args: {'command': 'a long intent label that cannot fit anywhere'},
+        resultContent: [const TextContent(text: 'x\nx\nx')],
         elapsed: '120s',
         width: 12,
       );
