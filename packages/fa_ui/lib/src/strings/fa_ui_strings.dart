@@ -191,6 +191,9 @@ abstract class FaUiStrings {
   /// Helper shown while the `/models` fetch is in flight.
   String get settingsModelsFetching;
 
+  /// Visible hint that the model-id field also filters the fetched list.
+  String get modelPickerSearchHelper;
+
   /// The model picker's manual-entry escape row (the typed id stays valid
   /// even when the endpoint's list lacks it).
   String modelPickerUseManual(String query);
@@ -462,6 +465,9 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsModelsFetching => 'Fetching models from the endpoint…';
   @override
+  String get modelPickerSearchHelper =>
+      'Type to filter models by name, or enter any model id';
+  @override
   String modelPickerUseManual(String query) => 'Use "$query"';
   @override
   String get modelPickerNoEndpointModels =>
@@ -702,6 +708,9 @@ class FaUiStringsRu extends FaUiStrings {
       'На устройстве (Gemma, transformers.js)';
   @override
   String get settingsModelsFetching => 'Загрузка списка моделей с эндпоинта…';
+  @override
+  String get modelPickerSearchHelper =>
+      'Введите текст для фильтрации моделей или любой ID модели';
   @override
   String modelPickerUseManual(String query) => 'Использовать «$query»';
   @override
