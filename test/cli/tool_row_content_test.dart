@@ -1,5 +1,6 @@
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tool_row_content.dart';
+import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
@@ -242,8 +243,12 @@ void main() {
 
     test('task rows name the child and the transition', () {
       final spawn = toolRowContent('task', {
-        'name': 'explorer',
-        'task': 'find every caller of layoutToolRow and list them',
+        'tasks': [
+          {
+            'name': 'explorer',
+            'task': 'find every caller of layoutToolRow and list them',
+          },
+        ],
       });
       expect(spawn.detail, contains('explorer'));
       final send = toolRowContent(

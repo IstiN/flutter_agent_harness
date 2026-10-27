@@ -87,6 +87,8 @@ final class ToolCardSegments {
     this.description = '',
     this.badge = '',
     this.meta = const [],
+    this.diffstat = '',
+    this.rightElapsed = '',
   });
 
   /// The tool label (`bash`, `read`, …) — painted in the accent role.
@@ -100,6 +102,15 @@ final class ToolCardSegments {
 
   /// Dot-joined dim meta fragments (elapsed, line counts).
   final List<String> meta;
+
+  /// The applied-change diffstat (`+N −M`, gh-1933 AC2) — painted in the
+  /// `toolDiffAdded`/`toolDiffRemoved` roles, squeezed in after the meta.
+  final String diffstat;
+
+  /// The RIGHT-ALIGNED elapsed zone (gh-1933 AC3): reserved against the
+  /// row edge, never wrapped — when it cannot fit whole it drops. Painted
+  /// in the muted role (the right-zone token).
+  final String rightElapsed;
 }
 
 /// The painted card header (omp `renderStatusLine`):
@@ -119,10 +130,28 @@ String tuiToolCardHeader(ToolCardSegments s, TuiCardPhase phase, int width) {
   final headRaw =
       paint(glyph, (g) => c.border(_phaseStyle(c, phase), g)) +
       paint(title.isEmpty ? '' : ' $title', (t) => c.accent(t));
-  final remain = width - tuiTextWidth('$glyph $title');
+  final headW = tuiTextWidth('$glyph $title');
 
-  final tail = _squeezeCardTail(s, remain);
-  return headRaw + _paintCardTail(c, phase, tail, paint);
+  // The right-aligned elapsed zone (gh-1933 AC3): reserved against the
+  // row edge BEFORE the tail squeezes, never wrapped — when the zone
+  // cannot fit whole it drops entirely (AC6). Empty zone = today's
+  // byte-shape (the tail budget is the full remain).
+  var elapsed = s.rightElapsed.trim();
+  var elapsedW = elapsed.isEmpty ? 0 : tuiTextWidth(' $elapsed');
+  final remain = width - headW;
+  if (elapsedW > remain) {
+    elapsed = '';
+    elapsedW = 0;
+  }
+  final tailBudget = remain - elapsedW;
+
+  final (desc, badge, meta, diff) = _squeezeCardTail(s, tailBudget);
+  final body = headRaw + _paintCardTail(c, phase, (desc, badge, meta, diff), paint);
+  if (elapsed.isEmpty) return body;
+  // Right-align: pad the body so the elapsed zone ENDS at the row edge.
+  final usedTail = tuiTextWidth('$desc$badge$meta$diff');
+  final pad = (tailBudget - usedTail).clamp(0, tailBudget);
+  return '$body${' ' * pad}${paint(' $elapsed', (t) => c.muted(t))}';
 }
 
 /// The width-fitted head: the glyph plus the title ellipsized to the
@@ -137,36 +166,44 @@ String tuiToolCardHeader(ToolCardSegments s, TuiCardPhase phase, int width) {
 }
 
 /// The fitted tail segments, decided on RAW widths. Squeeze drops from
-/// the tail — meta first, then the badge, then the description
-/// ellipsizes.
-(String, String, String) _squeezeCardTail(ToolCardSegments s, int remain) {
+/// the tail — meta first, then the diffstat, then the badge, then the
+/// description ellipsizes.
+(String, String, String, String) _squeezeCardTail(
+  ToolCardSegments s,
+  int remain,
+) {
   final descRaw = s.description.isEmpty ? '' : ': ${s.description}';
   final badgeRaw = s.badge.isEmpty ? '' : ' [${s.badge}]';
   final meta = s.meta.where((m) => m.trim().isNotEmpty).toList();
   final metaRaw = meta.isEmpty ? '' : ' ${meta.join('·')}';
+  final diffRaw = s.diffstat.isEmpty ? '' : ' ${s.diffstat}';
 
-  if (tuiTextWidth('$descRaw$badgeRaw$metaRaw') <= remain) {
-    return (descRaw, badgeRaw, metaRaw);
+  if (tuiTextWidth('$descRaw$badgeRaw$diffRaw$metaRaw') <= remain) {
+    return (descRaw, badgeRaw, metaRaw, diffRaw);
+  }
+  if (tuiTextWidth('$descRaw$badgeRaw$diffRaw') <= remain) {
+    return (descRaw, badgeRaw, '', diffRaw);
   }
   if (tuiTextWidth('$descRaw$badgeRaw') <= remain) {
-    return (descRaw, badgeRaw, '');
+    return (descRaw, badgeRaw, '', '');
   }
   if (tuiTextWidth(descRaw) > remain) {
-    return (remain > 0 ? tuiFitWidth(descRaw, remain) : '', '', '');
+    return (remain > 0 ? tuiFitWidth(descRaw, remain) : '', '', '', '');
   }
-  return (descRaw, '', '');
+  return (descRaw, '', '', '');
 }
 
 /// Paints the surviving tail in each piece's documented role
 /// (ToolCardSegments): description muted — bright in the error phase,
-/// #366's keep-failure-text-bright — badge in the phase color, meta dim.
+/// #366's keep-failure-text-bright — badge in the phase color, diffstat
+/// in the added/removed roles (gh-1933 AC7), meta dim.
 String _paintCardTail(
   FaThemeController c,
   TuiCardPhase phase,
-  (String, String, String) tail,
+  (String, String, String, String) tail,
   String Function(String, String Function(String)) paint,
 ) {
-  final (desc, badge, meta) = tail;
+  final (desc, badge, meta, diff) = tail;
   return (desc.isEmpty
           ? ''
           : paint(
@@ -178,7 +215,20 @@ String _paintCardTail(
       (badge.isEmpty
           ? ''
           : paint(badge, (t) => c.border(_phaseStyle(c, phase), t))) +
+      (diff.isEmpty ? '' : paintDiffstat(diff.trim())) +
       (meta.isEmpty ? '' : paint(meta, (t) => c.muted(t)));
+}
+
+/// Paints a `+N −M` diffstat through the theme's `toolDiffAdded`/
+/// `toolDiffRemoved` roles (gh-1933 AC7 — never a raw SGR pick).
+/// Unparsable labels degrade to the muted role whole.
+String paintDiffstat(String label) {
+  final c = FaThemeController.instance;
+  if (c.profile == null) return label;
+  final match = RegExp(r'^\+(\d+) −(\d+)$').firstMatch(label);
+  if (match == null) return c.muted(label);
+  return c.toolDiffAdded('+${match.group(1)}') +
+      c.toolDiffRemoved(' −${match.group(2)}');
 }
 
 /// The card tint's raw background SGR prefix ('' without a profile).
@@ -214,8 +264,11 @@ List<String> tuiToolCard(
   int width, {
   List<String> detailLines = const [],
   int maxDetailLines = 3,
+  List<String> previewLines = const [],
+  int maxPreviewLines = 1,
 }) {
   final tint = tuiCardTintSgr(phase);
+  final c = FaThemeController.instance;
   // Detail rows are width-fitted BEFORE painting — an overlong line would
   // break the card's right edge (paintRow only pads short rows). The
   // header is already composed to [width] and is STYLED — fitting it with
@@ -234,6 +287,12 @@ List<String> tuiToolCard(
   return [
     paintRow(tuiToolCardHeader(segments, phase, width), fit: false),
     ..._previewLines(detailLines, maxDetailLines).map((line) => paintRow(line)),
+    // The gh-1933 dim preview rows (the bash command preview): one line,
+    // painted in the dim toolOutput role UNDER the tint (the view-time
+    // formatter keeps inner styling over the phase band).
+    ..._previewLines(previewLines, maxPreviewLines).map(
+      (line) => paintRow(c.profile == null ? line : c.toolOutput(line)),
+    ),
   ];
 }
 
@@ -262,6 +321,11 @@ String failureFirstLine(List<ContentBlock> content) => content
 /// ONE source for live (`_onToolExecutionEnd`) and replay
 /// ([replayToolRow]) — the parity drift class that was #916 is closed by
 /// construction, not by test-mirrored hope.
+///
+/// gh-1933 additions: [diffstat] (`+N −M` for edit/write), [rightElapsed]
+/// (the right-aligned elapsed zone; the live seconds cell or the replay's
+/// honest `—`), and [previewLines] (the dim one-line bash command
+/// preview under the header).
 List<String> settledToolCardRows({
   required String toolName,
   required String successDetail,
@@ -270,6 +334,9 @@ List<String> settledToolCardRows({
   List<ContentBlock> resultContent = const [],
   List<String> meta = const [],
   bool interrupted = false,
+  String diffstat = '',
+  String rightElapsed = '',
+  List<String> previewLines = const [],
 }) {
   return tuiToolCard(
     ToolCardSegments(
@@ -279,9 +346,12 @@ List<String> settledToolCardRows({
         for (final m in meta)
           if (m.trim().isNotEmpty) m,
       ],
+      diffstat: diffstat,
+      rightElapsed: rightElapsed,
     ),
     isError || interrupted ? TuiCardPhase.error : TuiCardPhase.success,
     width,
+    previewLines: previewLines,
   );
 }
 
