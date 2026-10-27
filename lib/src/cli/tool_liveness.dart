@@ -113,7 +113,8 @@ final class ToolLivenessCall {
   final String toolName;
 
   /// The short human detail (the command tail, path, question) — the same
-  /// string the tool row showed at start.
+  /// string the tool row renders (since gh-1931 the end row; the TUI's
+  /// running card carries it while the call is in flight).
   final String detail;
 
   /// When the call started — read from the tracker's clock (the host's

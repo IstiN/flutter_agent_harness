@@ -1674,9 +1674,11 @@ extension ApprovalCommands on AgentCli {
   }
 
   /// Tool end row in the compact grammar (issue #366): `✓ label · detail
-  /// Ns` — the same detail the start row showed, plus the elapsed; errors
-  /// render `✗` with the result's first line as a full-bright snippet (the
-  /// one place the muted detail role gives way to readability).
+  /// Ns` — the detail stamped at start (the TUI running card's
+  /// description; since gh-1931 this row is the ONLY non-TUI render per
+  /// call), plus the elapsed. Errors render `✗` with the result's first
+  /// line as a full-bright snippet (the one place the muted detail role
+  /// gives way to readability).
   void _onToolExecutionEnd(
     String toolCallId,
     String toolName,

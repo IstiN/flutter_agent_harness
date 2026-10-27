@@ -28,7 +28,9 @@ final RegExp _livenessLine = RegExp(
 
 List<String> livenessLines(String out) => out
     .split('\n')
-    .map((line) => line.startsWith('fa> ') ? line.substring(4) : line)
+    .map(
+      (line) => line.startsWith('fa> ') ? line.substring('fa> '.length) : line,
+    )
     .where((line) => _livenessLine.hasMatch(line))
     .toList();
 

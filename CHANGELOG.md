@@ -13,6 +13,17 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1931): one render per tool call on the non-TUI console. Line mode
+  and the headless `-p` log printed every executed call twice — a start row
+  (`• bash · cmd`, no elapsed) followed by the end row (`✓/✗ bash · cmd
+  0s`). The duplicate start-row print is gone from `_onToolExecutionStart`;
+  the end row (command, status glyph, elapsed, failure news) is the single
+  render per call. The TUI keeps its running card + settled card, start
+  bookkeeping stays (`_toolStarts` feeds the end row's detail/elapsed, the
+  waiting coordinator still arms per-call liveness), and persisted
+  artifacts (session JSONL, trajectory records) are untouched —
+  rendering-only change. Long foreground calls keep the gh-1055 liveness
+  reminders past `waiting.toolLivenessSeconds` (default 60s).
 - fix(gh-1929): esc during the pre-flight auto-compaction no longer crashes
   the CLI. The compaction layer's deliberate abort (#1085) used to escape
   `_runPrompt` outside its guarded body and reach the root zone handler via
