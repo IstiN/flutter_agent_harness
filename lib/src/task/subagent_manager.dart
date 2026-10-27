@@ -690,6 +690,18 @@ final class SubagentManager {
     _persist();
   }
 
+  /// Compaction-health stamp (issue #1924): the executor reports every
+  /// failed child compaction pass; after its bounded latch trips, [error]
+  /// carries the actionable parent-visible text (resume compacts first /
+  /// respawn). A successful pass clears the stamp. In-memory event stamp
+  /// like [notePressure].
+  void noteCompactionHealth(String id, {String? error}) {
+    final handle = _handles[id];
+    if (handle == null) return;
+    handle.compactionError = error;
+    _emit(handle);
+  }
+
   /// Counts the unread inbox messages of [id] (0 without a fabric) — the
   /// `mail:N` indicator in the agents panel.
   Future<int> pendingInboxCount(String id) async =>

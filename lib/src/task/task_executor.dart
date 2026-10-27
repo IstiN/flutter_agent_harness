@@ -417,11 +417,14 @@ final class TaskExecutor {
       // an idle/at-wall child. When prior + incoming crosses the threshold,
       // compact BEFORE the first request so the guard never hard-fails a
       // deliverable message; then ride every boundary like a fresh spawn.
+      // probe: true (issue #1924) — the resume is the parent's recovery
+      // funnel, so it ignores the failure latch for THIS one pass.
       await _compactChildIfNeeded(
         id,
         child,
         wiring: wiring,
         incomingTokens: estimateRequestTokens([UserMessage.text(promptText)]),
+        probe: true,
       );
       agent.prepareNextTurn = (nextTurn) =>
           _compactChildAtBoundary(id, agent, wiring, nextTurn);
@@ -560,6 +563,7 @@ final class TaskExecutor {
     Agent child, {
     required ({Model model, StreamFunction stream}) wiring,
     int incomingTokens = 0,
+    bool probe = false,
   }) async {
     final manager = subagentManager;
     if (manager == null || childSessionFactory == null) return false;
@@ -594,6 +598,17 @@ final class TaskExecutor {
       windowVerified: contextWindowRegistry?.isVerified(wiring.model) ?? false,
     );
     if (!decision.triggered) return false;
+    // Issue #1924 bounded-failure latch: after [_maxChildCompactionFailures]
+    // consecutive failed passes, boundary passes stop — every further pass
+    // is a heavy LLM call the broken surface will burn at every boundary
+    // (the #1914-shape silent no-op loop). The parent-visible stamp is on
+    // the handle; pressure stamps keep flowing so the parent watches the
+    // wall approach and can resume (probe: true — the recovery funnel
+    // attempts ONE pass) or respawn the child (a fresh run resets).
+    if (!probe &&
+        (_childCompactionFailures[id] ?? 0) >= _maxChildCompactionFailures) {
+      return false;
+    }
     final runForced = _updateForcedLatch(
       id,
       observed,
@@ -604,7 +619,7 @@ final class TaskExecutor {
     final session = _childSessions[id];
     if (session == null) return false;
     final before = est - incomingTokens;
-    final compacted = await _runChildCompactionPass(
+    final pass = await _runChildCompactionPass(
       session: session,
       child: child,
       window: window,
@@ -612,18 +627,64 @@ final class TaskExecutor {
       wiring: wiring,
       runForced: runForced,
     );
-    if (!compacted) return false; // The guard remains the last resort.
-    // Post-compaction invariant (#387): the flush cursor restarts at the
-    // projected length so later flushes append only new messages.
-    _childSessionWrites[id] = child.state.messages.length;
+    if (!pass.ok) {
+      _noteChildCompactionFailure(id, 'pass failed: ${pass.error}');
+      return false; // The guard remains the last resort.
+    }
     final after = estimateRequestTokens(
       child.state.messages,
       systemPrompt: child.state.systemPrompt,
       tools: child.state.tools,
     );
-    if (after >= before) return false;
-    manager.recordCompaction(id, freedTokens: before - after);
-    return true;
+    if (after < before) {
+      // Post-compaction invariant (#387): the flush cursor restarts at the
+      // projected length so later flushes append only new messages.
+      _childSessionWrites[id] = child.state.messages.length;
+      _childCompactionFailures.remove(id);
+      manager.noteCompactionHealth(id);
+      manager.recordCompaction(id, freedTokens: before - after);
+      return true;
+    }
+    if (pass.attempted) {
+      // An ATTEMPTED pass that freed nothing is the #1914 shape (repeated
+      // cut point): count it as failed. A gate-DECLINED no-op
+      // (`attempted == false` — the engine's own shouldCompact re-check
+      // sees the transcript under the trigger, e.g. the resume probe
+      // where only + incomingTokens crossed it) is healthy: no stamp, no
+      // count, the guard remains the last resort.
+      _noteChildCompactionFailure(
+        id,
+        'pass freed nothing (repeated cut point?)',
+      );
+    }
+    return false;
+  }
+
+  /// Consecutive failed child compaction passes (issue #1924), per child
+  /// id. Reset at the start of every fresh spawn run and on every
+  /// successful pass; survives resumes so a broken surface cannot be
+  /// hammered once per boundary.
+  final _childCompactionFailures = <String, int>{};
+
+  /// The bounded-failure budget (issue #1924): three consecutive failed
+  /// passes latch the child off until its next run.
+  static const int _maxChildCompactionFailures = 3;
+
+  /// Counts one failed pass and stamps the actionable parent-visible error
+  /// on the handle (issue #1924): from the FIRST failure the parent sees
+  /// the running count; at the budget the stamp names the latch.
+  void _noteChildCompactionFailure(String id, String cause) {
+    final failures = (_childCompactionFailures[id] ?? 0) + 1;
+    _childCompactionFailures[id] = failures;
+    subagentManager?.noteCompactionHealth(
+      id,
+      error:
+          'child compaction failed $failures consecutive passes '
+          '($cause)${failures >= _maxChildCompactionFailures ? ' — latched: no further boundary passes this run' : ''}; '
+          'the context keeps growing toward the window; parent: '
+          'task_resume this child (the resume probes one compaction '
+          'pass) or respawn the task',
+    );
   }
 
   /// The forced-channel latch (gh-1742): an observation already reacted to
@@ -669,8 +730,10 @@ final class TaskExecutor {
 
   /// Runs ONE [AutoCompactor] pipeline for the child — the same engine the
   /// main loop uses. Best-effort by contract: a failed pass reports
-  /// `false` and nothing changes.
-  Future<bool> _runChildCompactionPass({
+  /// `(ok: false, error: …)` and nothing changes; `attempted` reports
+  /// whether the engine actually attempted a pass (issue #1924 review
+  /// round 1) — a gate-declined no-op is a healthy non-attempt.
+  Future<({bool ok, bool attempted, String? error})> _runChildCompactionPass({
     required Session session,
     required Agent child,
     required int window,
@@ -678,6 +741,7 @@ final class TaskExecutor {
     required ({Model model, StreamFunction stream}) wiring,
     required bool runForced,
   }) async {
+    final hooks = _SilentCompactionHooks();
     try {
       final smol = rolesResolver?.resolveRole(smolModelRole);
       await AutoCompactorFactory(
@@ -698,14 +762,14 @@ final class TaskExecutor {
           mainStream: wiring.stream,
           mainModel: wiring.model,
         ),
-        hooks: _SilentCompactionHooks(),
+        hooks: hooks,
         engine: compactionEngine ?? CompactionEngine.structured,
         force: runForced,
       ).run();
-    } on Object {
-      return false; // The guard remains the last resort.
+    } on Object catch (error) {
+      return (ok: false, attempted: hooks.attempted, error: '$error');
     }
-    return true;
+    return (ok: true, attempted: hooks.attempted, error: null);
   }
 
   /// The observed-over-headroom latch per child id (see the forced-channel
@@ -897,6 +961,9 @@ final class TaskExecutor {
     // persists a 'running' row that already carries the child's usage, so
     // rehydrate can tell a never-started row from a mid-run one.
     final untrackUsage = _trackChildUsage(id, child);
+    // Issue #1924: a fresh run gets a fresh compaction-failure budget —
+    // the latch is per-run, never per-child-lifetime.
+    _childCompactionFailures.remove(id);
     // Crash-resilient transcript: the real JSONL session is created lazily
     // on the FIRST transcript flush — never at spawn time. Subagents that
     // finish with no transcript leave no session file behind.
@@ -1825,14 +1892,25 @@ final class TaskExecutor {
 final class _SilentCompactionHooks extends AutoCompactorHooks {
   _SilentCompactionHooks();
 
+  /// Whether the engine ATTEMPTED any pass (issue #1924 review round 1):
+  /// a gate-declined no-op (`shouldCompact` re-check declines — e.g. the
+  /// resume probe where only `+ incomingTokens` crossed the trigger while
+  /// the transcript sits under it) fires NO pass and NO attempt — the
+  /// caller must never read that healthy no-op as a failed pass.
+  bool attempted = false;
+
   @override
-  void onPass(AutoCompactorPass pass) {}
+  void onPass(AutoCompactorPass pass) {
+    attempted = true;
+  }
 
   @override
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
 
   @override
-  void onDone(int passes, int tokens) {}
+  void onDone(int passes, int tokens) {
+    if (passes > 0) attempted = true;
+  }
 
   @override
   void onBothRolesFailed(Object lastError) {}

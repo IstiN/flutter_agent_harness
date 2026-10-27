@@ -312,6 +312,35 @@ class DwLive {
   String get out => _outBuf.toString();
   final _outBuf = StringBuffer();
 
+  /// Everything needed to post-mortem a failed signal handoff (issue #1924
+  /// validation red, gh-1903 leg): the script's own stdout/stderr (the
+  /// `::error::` trap diagnostic names the taken branch), the stub gh log
+  /// tail (which polls completed) and any cancelled-* stub artifacts. The
+  /// signal tests surface this in the failure reason — a bare
+  /// `Expected 143, Actual 2` without it is undebuggable on CI.
+  String diagnostics() {
+    final buf = StringBuffer()..write(out);
+    if (File(logFile).existsSync()) {
+      buf
+        ..writeln('--- stub gh log (tail) ---')
+        ..write(
+          logLines.length <= 30
+              ? log
+              : '${logLines.sublist(logLines.length - 30).join('\n')}\n',
+        );
+    }
+    final cancelled = Directory(dir.path)
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.uri.pathSegments.last.startsWith('cancelled-'))
+        .map((f) => f.uri.pathSegments.last)
+        .toList();
+    if (cancelled.isNotEmpty) {
+      buf.writeln('--- stub cancelled-* artifacts: $cancelled');
+    }
+    return buf.toString();
+  }
+
   /// Waits until the stub log contains [needle] (the watch has begun) or
   /// the process exits — whichever comes first.
   Future<void> waitForLog(
@@ -332,6 +361,34 @@ class DwLive {
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
     throw StateError('waitForLog timed out waiting for "$needle"');
+  }
+
+  /// Waits until the stub gh log holds [needle] at least [occurrences]
+  /// times — a poll-COUNT anchor (issue #1924 validation red): TERM must
+  /// land while the script sits in its poll sleep, never blindly inside
+  /// the startup window where a sibling suite's process churn can race
+  /// the trap installation.
+  Future<void> waitForPolls(
+    String needle, {
+    int occurrences = 2,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (File(logFile).existsSync() &&
+          '${File(logFile).readAsStringSync()} '
+              .split(needle)
+              .length -
+              1 >=
+          occurrences) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    throw StateError(
+      'waitForPolls timed out waiting for "$needle" x$occurrences — '
+      'script is wedged pre-poll; state: ${diagnostics()}',
+    );
   }
 
   Future<int> finish({Duration timeout = const Duration(seconds: 15)}) =>
@@ -757,8 +814,10 @@ void main() {
       );
       await live.waitForLog('run view 111 --repo OWNER/REPO');
       // Give the watch a couple of polls so the sibling probe has run,
-      // then the leg timeout fires (runner → SIGTERM).
-      await Future<void>.delayed(const Duration(seconds: 2));
+      // then the leg timeout fires (runner → SIGTERM). Poll-anchored, not
+      // a blind delay — the handoff must land inside the poll loop
+      // (issue #1924 validation red).
+      await live.waitForPolls('run view 111 --repo OWNER/REPO');
       expect(
         File('${live.dir.path}/cancelled-111').existsSync(),
         isFalse,
@@ -768,7 +827,13 @@ void main() {
       );
       live.process.kill(ProcessSignal.sigterm);
       final code = await live.finish();
-      expect(code, 143, reason: 'killed by the leg timeout (TERM)');
+      expect(
+        code,
+        143,
+        reason:
+            'killed by the leg timeout (TERM); diagnostics:\n'
+            '${live.diagnostics()}',
+      );
       expect(
         File('${live.dir.path}/cancelled-111').existsSync(),
         isTrue,
@@ -821,10 +886,21 @@ void main() {
         env: {'DW_POLL_SECONDS': '1'},
       );
       await live.waitForLog('run view 555 --repo OWNER/REPO');
-      await Future<void>.delayed(const Duration(seconds: 2));
+      // Anchor on the SECOND completed poll (issue #1924 validation red):
+      // TERM must land while the script sits in its poll sleep with the
+      // trap installed and `watch_started` stamped — not blindly inside
+      // the startup window where a sibling suite's process churn races
+      // the handoff.
+      await live.waitForPolls('run view 555 --repo OWNER/REPO');
       live.process.kill(ProcessSignal.sigterm);
       final code = await live.finish();
-      expect(code, 143);
+      expect(
+        code,
+        143,
+        reason:
+            'the dw script must die through the orphan-cleanup trap; '
+            'diagnostics:\n${live.diagnostics()}',
+      );
       expect(
         File('${live.dir.path}/cancelled-555').existsSync(),
         isFalse,
@@ -859,10 +935,18 @@ void main() {
         env: {'DW_POLL_SECONDS': '1'},
       );
       await live.waitForLog('run view 777 --repo OWNER/REPO');
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      // Same poll anchor as the TERM-after-start test (issue #1924
+      // validation red): the handoff must land inside the poll loop.
+      await live.waitForPolls('run view 777 --repo OWNER/REPO');
       live.process.kill(ProcessSignal.sigint);
       final code = await live.finish();
-      expect(code, 130, reason: 'killed by manual cancel (INT)');
+      expect(
+        code,
+        130,
+        reason:
+            'killed by manual cancel (INT); diagnostics:\n'
+            '${live.diagnostics()}',
+      );
       expect(File('${live.dir.path}/cancelled-777').existsSync(), isTrue);
       expect(
         live.logLines.where((l) => l.contains('run cancel')).length,
