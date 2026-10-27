@@ -367,6 +367,7 @@ Future<_AttemptResult> _streamAttempt(
   required _ImageCapHealState imageCapState,
   required bool reliefUsed,
   required bool pairingHealed,
+  required _StreamProgress progress,
 }) async {
   final (requestContext, repairReport) = await _buildRequestContext(
     context,
@@ -433,7 +434,12 @@ Future<_AttemptResult> _streamAttempt(
     );
   }
 
-  final streamed = await _consumeResponseStream(response, context, emit);
+  final streamed = await _consumeResponseStream(
+    response,
+    context,
+    emit,
+    progress,
+  );
   final finished = streamed.finished;
   if (finished != null) {
     final healed = await _finishedTurnResult(
