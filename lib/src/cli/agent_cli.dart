@@ -807,6 +807,13 @@ class AgentCli {
     // Non-draining probe for the same inbox: mid-run mail also triggers the
     // tool phase's soft-yield so a long bash/task call does not delay it.
     _agent.externalSteeringProbe = _mainInboxProbe;
+    // Issue #1923 AC4: the loop's steering-interrupt notices (queued /
+    // delivered) surface as visible transcript lines, same warning styling
+    // as the stall lines in agent_cli_steering.dart. The loop pins the
+    // wording — print verbatim.
+    _agent.onSteeringInterruptNotice = (line) {
+      io.writeln(tuiWarning(line));
+    };
     // Model roles: when the default role resolves, the agent runs through
     // the resolver's fallback stream (rotation/failover per provider call).
     // A resolver without a default role leaves the legacy wiring in place

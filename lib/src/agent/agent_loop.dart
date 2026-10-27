@@ -82,6 +82,11 @@ part 'agent_loop_foreground_budget.dart';
 part 'agent_loop_empty_completion.dart';
 part 'agent_loop_finalize_gate.dart';
 part 'agent_loop_message_cap.dart';
+part 'agent_loop_steering_yield.dart';
+
+/// The default stall-window provider: minutes-class patience for
+/// embedders that do not derive one from their watchdog.
+Duration _defaultSteeringStallWindow() => const Duration(minutes: 5);
 
 /// Marker embedded in the over-window guard's error message (see
 /// [_streamAssistantResponse]): hosts match it to recognize "the loop
@@ -444,6 +449,8 @@ final class AgentLoopConfig {
     this.budgetLineProvider,
     this.imageCapLatches,
     this.onTruncatedToolCall,
+    this.steeringStallWindow = _defaultSteeringStallWindow,
+    this.steeringInterruptNotice,
   });
 
   /// The model to call each turn.
@@ -498,6 +505,25 @@ final class AgentLoopConfig {
   /// phase as a second yield trigger. Null when the host has no external
   /// steering source.
   final Future<bool> Function()? hasPendingSteering;
+
+  /// The mid-stream steering stall window PROVIDER (issue #1923 AC1):
+  /// evaluated at every steering signal and stall re-arm — never
+  /// snapshotted per run (bot r2, thread `PRRT_kwDOTXdlLc6wfxlV`: the
+  /// watchdog re-windows on EVERY arm, so a mid-run failover must be able
+  /// to shrink the steering window with it). Returns how long an
+  /// in-flight provider stream may stay silent after a steering arrival
+  /// before the attempt counts UNPRODUCTIVE and is interrupted (zero-byte
+  /// attempts interrupt immediately regardless). `<= 0` disables the
+  /// mid-stream interrupt. Hosts derive it BELOW the actually-armed
+  /// run-idle watchdog window so the interrupt wins the race against the
+  /// whole-run kill (the [Agent] uses `armed window - 30s`, payload
+  /// scaling inherited).
+  final Duration Function() steeringStallWindow;
+
+  /// Host-visible notices for the provider-phase steering interrupt
+  /// (issue #1923 AC4) — the pinned queued/delivered lines. Null keeps
+  /// the core silent.
+  final void Function(String line)? steeringInterruptNotice;
 
   /// How many times a degenerate EMPTY completion (stopReason `stop`, no
   /// tool calls, no text — some providers answer like this under load) is
@@ -657,6 +683,8 @@ final class AgentLoopConfig {
       budgetLineProvider: budgetLineProvider,
       imageCapLatches: imageCapLatches,
       onTruncatedToolCall: onTruncatedToolCall,
+      steeringStallWindow: steeringStallWindow,
+      steeringInterruptNotice: steeringInterruptNotice,
     );
   }
 }
@@ -1003,6 +1031,7 @@ AgentEventStream agentLoop({
   required StreamFunction streamFunction,
   required ToolExecutor toolExecutor,
   CancelToken? cancelToken,
+  CancelTokenSource? cancelTokenSource,
 }) {
   final stream = AgentEventStream();
   _drive(
@@ -1015,6 +1044,7 @@ AgentEventStream agentLoop({
       streamFunction: streamFunction,
       toolExecutor: toolExecutor,
       cancelToken: cancelToken,
+      cancelTokenSource: cancelTokenSource,
     ),
   );
   return stream;
@@ -1071,6 +1101,12 @@ Future<List<Message>> runAgentLoop({
   required ToolExecutor toolExecutor,
   required AgentEventSink emit,
   CancelToken? cancelToken,
+
+  /// The writable side of [cancelToken] (issue #1923 AC1): the provider-
+  /// phase steering interrupt cancels the run through it and re-arms the
+  /// latch before the resubmit. Null keeps the interrupt inert (the
+  /// pre-#1923 boundary-only steering semantics).
+  CancelTokenSource? cancelTokenSource,
 }) {
   return _runAgentLoop(
     prompts: prompts,
@@ -1080,6 +1116,7 @@ Future<List<Message>> runAgentLoop({
     streamFunction: streamFunction,
     toolExecutor: toolExecutor,
     cancelToken: cancelToken,
+    cancelTokenSource: cancelTokenSource,
   );
 }
 
@@ -1095,6 +1132,7 @@ Future<List<Message>> runAgentLoopContinue({
   required ToolExecutor toolExecutor,
   required AgentEventSink emit,
   CancelToken? cancelToken,
+  CancelTokenSource? cancelTokenSource,
 }) {
   if (context.messages.isEmpty) {
     throw const ConfigException('Cannot continue: no messages in context');
@@ -1111,6 +1149,7 @@ Future<List<Message>> runAgentLoopContinue({
     streamFunction: streamFunction,
     toolExecutor: toolExecutor,
     cancelToken: cancelToken,
+    cancelTokenSource: cancelTokenSource,
   );
 }
 
@@ -1133,6 +1172,7 @@ Future<List<Message>> _runAgentLoop({
   required StreamFunction streamFunction,
   required ToolExecutor toolExecutor,
   CancelToken? cancelToken,
+  CancelTokenSource? cancelTokenSource,
 }) async {
   final newMessages = <Message>[...prompts];
   var currentContext = Context(
@@ -1208,6 +1248,9 @@ Future<List<Message>> _runAgentLoop({
         emit,
         streamFunction,
         cancelToken,
+        newMessages: newMessages,
+        drainSteering: () => pollSteering(currentConfig),
+        cancelTokenSource: cancelTokenSource,
       );
       (message, currentContext) = await _retryDegenerateEmpty(
         message,
@@ -1216,6 +1259,9 @@ Future<List<Message>> _runAgentLoop({
         emit,
         streamFunction,
         cancelToken,
+        newMessages: newMessages,
+        drainSteering: () => pollSteering(currentConfig),
+        cancelTokenSource: cancelTokenSource,
       );
       newMessages.add(message);
 
@@ -1407,6 +1453,17 @@ Future<({List<ToolResultMessage> results, bool hasMore})> _runToolCallPhase(
         // A probe failure must never break the tool phase.
       }
     });
+    // Issue #1923 (app-binding pending-timer leak): the periodic probe
+    // must not outlive the RUN. The whenComplete below only fires when
+    // the phase settles; a run cancelled while a tool call is still
+    // settling (esc mid-tool, a session torn down under a hung executor)
+    // left the timer armed to the end of time. A run-token cancel tears
+    // the probe down with the run.
+    unawaited(
+      cancelToken?.onCancel.then((_) {
+        probeTimer = probeTimer?..cancel();
+      }),
+    );
   }
   return runZoned(
     () => _executeToolCallPhase(
@@ -1470,78 +1527,6 @@ Future<({List<ToolResultMessage> results, bool hasMore})> _executeToolCallPhase(
 
 Future<List<Message>> _steeringMessages(AgentLoopConfig config) async {
   return await config.getSteeringMessages?.call() ?? const <Message>[];
-}
-
-/// Retries a degenerate-empty completion with the same context (bounded by
-/// `config.maxEmptyRetries`; a blank answer never ends a run on the first
-/// try). The retried messages stay in the transcript (truthful record) and
-/// the gh-1577 hiccup policy lives in `agent_loop_empty_completion.dart`.
-Future<(AssistantMessage, Context)> _retryDegenerateEmpty(
-  AssistantMessage message,
-  Context context,
-  AgentLoopConfig config,
-  AgentEventSink emit,
-  StreamFunction streamFunction,
-  CancelToken? cancelToken,
-) => retryEmptyCompletion(
-  message,
-  context,
-  config,
-  emit,
-  streamFunction,
-  cancelToken,
-);
-
-/// Streams one assistant response from the provider, emitting message
-/// lifecycle events and keeping the partial message in [context.messages]
-/// up to date (partial-first). Port of pi's `streamAssistantResponse`.
-Future<(AssistantMessage, Context)> _streamAssistantResponse(
-  Context context,
-  AgentLoopConfig config,
-  AgentEventSink emit,
-  StreamFunction streamFunction,
-  CancelToken? cancelToken,
-) async {
-  var reliefUsed = false;
-  var pairingHealed = false;
-  // gh-1680: one-shot message-cap heal state; when armed, the next
-  // rebuilt payload coalesces toward its target.
-  final capState = _CapHealState();
-  // Issue #1750: one-shot image-cap heal state; the learned cap rides
-  // the retried request build and latches for the run.
-  final imageCapState = _ImageCapHealState();
-  // Issue #862: drain the armed corrective note once per streamed response
-  // (not per built context) so a mid-turn retry re-attaches it.
-  final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
-  // Hardening over pi: short-circuit an already-cancelled token instead of
-  // relying on the provider to surface the abort as an error event.
-  if (_isCancelRequested(cancelToken)) {
-    return await _abortedTurn(context, config, emit);
-  }
-  for (var attempt = 0; ; attempt++) {
-    final result = await _streamAttempt(
-      context,
-      config,
-      emit,
-      streamFunction,
-      cancelToken,
-      misuseNote: misuseNote,
-      capState: capState,
-      imageCapState: imageCapState,
-      reliefUsed: reliefUsed,
-      pairingHealed: pairingHealed,
-    );
-    switch (result) {
-      case _AttemptReturn():
-        return result.turn;
-      case _AttemptRetry():
-        context = result.nextContext;
-        if (result.reliefUsed != null) reliefUsed = result.reliefUsed!;
-        if (result.pairingHealed != null) {
-          pairingHealed = result.pairingHealed!;
-        }
-    }
-  }
 }
 
 /// The mid-turn over-window guard (issue #387): tool outputs can balloon
@@ -1950,8 +1935,9 @@ Future<
 _consumeResponseStream(
   AssistantMessageEventStream response,
   Context context,
-  AgentEventSink emit,
-) async {
+  AgentEventSink emit, [
+  _StreamProgress? progress,
+]) async {
   AssistantMessage? partialMessage;
   var addedPartial = false;
   // Ids are stamped as they STREAM, not just at finalization: every
@@ -1964,6 +1950,10 @@ _consumeResponseStream(
   );
 
   await for (final event in response) {
+    // Issue #1923: every stream event is progress — the steering-interrupt
+    // watch reads this to tell a productive stream (never cancelled) from
+    // an unproductive one (zero bytes, or silent past the stall window).
+    progress?.mark();
     switch (event) {
       case StartEvent(:final partial):
         partialMessage = _stampAgainstUsed(partial, used);

@@ -118,6 +118,17 @@ class RunIdleWatchdogFire extends TimeoutException {
   RunIdleWatchdogFire([super.message, super.duration]);
 }
 
+/// The steering-interrupt cancel reason (issue #1923 AC1): the loop
+/// cancelled an UNPRODUCTIVE provider attempt (no bytes yet, or silent
+/// past the steering stall window) because a steering message arrived.
+/// A [TimeoutException] like [RunIdleWatchdogFire], but deliberately NOT
+/// matched by the transient-retry ladder's resume class — a steering
+/// cancel is user-driven intent handled by the loop itself (drain,
+/// inject, resubmit); it must not consume a retry attempt anywhere.
+class SteeringInterruptFire extends TimeoutException {
+  SteeringInterruptFire([super.message, super.duration]);
+}
+
 /// Zone key under which the agent loop publishes the current tool phase's
 /// soft-yield token (see [currentYieldToken]).
 const Symbol yieldTokenZoneKey = #fahYieldToken;
@@ -132,3 +143,16 @@ const Symbol yieldTokenZoneKey = #fahYieldToken;
 /// waits for the phase to complete (the classic behavior).
 CancelToken? currentYieldToken() =>
     Zone.current[yieldTokenZoneKey] as CancelToken?;
+
+/// Awaits [work], rejecting early with [CancelledException] when [token]
+/// fires first (issue #1923 AC2): the caller stops waiting, but the
+/// underlying work itself is NOT aborted — a paid provider request runs
+/// to completion and its late result or failure is discarded by the race.
+/// A null [token] just awaits [work].
+Future<T> cancellable<T>(CancelToken? token, Future<T> Function() work) {
+  if (token == null) return work();
+  return Future.any<T>([
+    work(),
+    token.onCancel.then<T>((_) => throw CancelledException(token.cancelReason)),
+  ]);
+}

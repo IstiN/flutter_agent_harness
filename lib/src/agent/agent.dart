@@ -490,6 +490,31 @@ class Agent {
     if (!_steeringArrived.isClosed) _steeringArrived.add(null);
   }
 
+  /// Host-visible notices for the provider-phase steering interrupt
+  /// (issue #1923 AC4). Null keeps the core silent; interactive hosts
+  /// print the lines verbatim (the copy is pinned by the issue).
+  void Function(String line)? onSteeringInterruptNotice;
+
+  /// The mid-stream steering stall window PROVIDER (issue #1923 AC1):
+  /// re-EVALUATED at every steering signal and stall re-arm — never a
+  /// per-run snapshot (bot r2, thread `PRRT_kwDOTXdlLc6wfxlV`: the
+  /// watchdog re-windows on every arm, so the steering interrupt must
+  /// chase the window that is actually armed or a mid-run failover to a
+  /// shorter entry lets the whole-run kill win the race AC1 says steering
+  /// always wins). Prefers [_armedRunIdleInfo] — the window the watchdog
+  /// timer is ACTUALLY armed with — over a fresh derivation, and keeps
+  /// the 30s margin (payload scaling included, since the armed window was
+  /// resolved through [runIdleWindow]). `Duration.zero` when the watchdog
+  /// is disabled: the mid-stream interrupt stays off, the zero-byte
+  /// immediate interrupt is unaffected.
+  Duration get _steeringStallWindowNow {
+    if (runIdleTimeout == Duration.zero) return Duration.zero;
+    final armed = _armedRunIdleInfo.window;
+    final base = armed > Duration.zero ? armed : runIdleWindow.window;
+    final window = base - const Duration(seconds: 30);
+    return window <= Duration.zero ? Duration.zero : window;
+  }
+
   /// Remove all queued steering messages.
   void clearSteeringQueue() => _steeringQueue.clear();
 
@@ -641,7 +666,7 @@ class Agent {
     // same-tick abort() and busy-gate reads).
     final guard = userMessageGuard;
     if (guard == null) {
-      return _runWithLifecycle((token) {
+      return _runWithLifecycle((token, source) {
         return runAgentLoop(
           prompts: messages,
           context: _createContextSnapshot(),
@@ -652,10 +677,11 @@ class Agent {
           streamFunction: streamFunction,
           toolExecutor: toolExecutor,
           cancelToken: token,
+          cancelTokenSource: source,
         );
       });
     }
-    return _runWithLifecycle((token) async {
+    return _runWithLifecycle((token, source) async {
       final guarded = await _guardIncomingUserMessages(messages);
       await runAgentLoop(
         prompts: guarded,
@@ -667,12 +693,13 @@ class Agent {
         streamFunction: streamFunction,
         toolExecutor: toolExecutor,
         cancelToken: token,
+        cancelTokenSource: source,
       );
     });
   }
 
   Future<void> _runContinuation() {
-    return _runWithLifecycle((token) {
+    return _runWithLifecycle((token, source) {
       return runAgentLoopContinue(
         context: _createContextSnapshot(),
         config: _createLoopConfig(),
@@ -680,6 +707,7 @@ class Agent {
         streamFunction: streamFunction,
         toolExecutor: toolExecutor,
         cancelToken: token,
+        cancelTokenSource: source,
       );
     });
   }
@@ -772,6 +800,14 @@ class Agent {
         return _guardIncomingUserMessages(_followUpQueue.drain());
       },
       steeringNotifications: _steeringArrived.stream,
+      // Issue #1923 AC1: the mid-stream steering stall window rides the
+      // SAME window the run-idle watchdog uses, margin'd 30s below it so
+      // the steering interrupt (drain + inject + resubmit) always wins
+      // the race against the watchdog's whole-run kill. Watchdog-disabled
+      // hosts keep `Duration.zero` — the mid-stream interrupt stays off,
+      // the zero-byte immediate interrupt stays armed.
+      steeringStallWindow: () => _steeringStallWindowNow,
+      steeringInterruptNotice: onSteeringInterruptNotice,
       // The in-process queue notifies via [steeringArrived]; the probe is
       // only needed for the external (file-inbox) source, which cannot
       // notify on its own.
@@ -787,7 +823,7 @@ class Agent {
   }
 
   Future<void> _runWithLifecycle(
-    Future<void> Function(CancelToken token) executor,
+    Future<void> Function(CancelToken token, CancelTokenSource source) executor,
   ) async {
     if (_activeRun != null) {
       throw StateError('Agent is already processing.');
@@ -801,7 +837,7 @@ class Agent {
     _armRunWatchdog();
 
     try {
-      await executor(run.source.token);
+      await executor(run.source.token, run.source);
     } catch (error) {
       await _handleRunFailure(error, run.source.token.isCancelled);
     } finally {
