@@ -533,10 +533,16 @@ void main() {
           cwd: '/work',
           home: config.homeDir,
         );
-        expect(
-          _normalize(frames.text),
-          contains(_normalize(settled.join('\n'))),
-        );
+        // The frame capture carries the rows joined by cursor-positioning
+        // (diff paint) — no literal newline survives _normalize, so the
+        // multi-row v2 card is asserted row-by-row.
+        for (final row in settled) {
+          expect(
+            _normalize(frames.text),
+            contains(_normalize(row)),
+            reason: 'the settled card row landed — frames=${frames.text}',
+          );
+        }
         expect(shell.commands, contains('echo hi'));
       } finally {
         keys.add([0x03]);
