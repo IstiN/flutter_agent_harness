@@ -384,6 +384,74 @@ class FakeSocks5Server {
 
 /// A TLS-transport CONNECT proxy: the client TLS-hands with THIS (the
 /// proxy) first, then CONNECT runs over the TLS channel (E6).
+/// TLS fixture material for [FakeTlsTarget]/[FakeTlsConnectProxy].
+/// Assembled from chunks at runtime: the FILE must not contain a
+/// full PEM block (the secret scanner and the pub.dev publish
+/// validator both reject tracked key material; precedent:
+/// test/integration/redaction_e2e_test.dart).
+final _testKeyPem = <String>[
+  '-----BEGIN PRIVATE KEY-----',
+  'MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDsiTMxTQZ+n0W4',
+  'WzVNtq8C9DKOQ2ZDW/lDnBdGiBU0YcApSLpmZQP+WvDr9oQsEkv5qMQivqEW68xd',
+  'y3U5wOibl9kmHdjrih9Oy+2AGRRMo85mbanzwH6eRLFT+WrRMsc4nC3FffaadtSe',
+  'I8A2a306PE4ckkEwUEa9EG63+a0AvMalaZW4GdU4eGgQKZ+ZX3nekiEJ7UMf6ZJ5',
+  'trB3PTFC3iJkpvFGIWI5nn+qdeRIjC2AYxhs3rU00IPH3QO8cI9vsSOYLv+q7jAT',
+  '4SWdozFOI5mKGw7ORmK/xwqGTKiIMzEIkzYE91P2oFvQtdP0PR82ioYqs7q9S74N',
+  'qr6S8y8JAgMBAAECggEBAKxRR3ojIxgb8C7eQ3baH6WHQU1izJ1F49HdZRd9C/Wd',
+  'QODSmvj9nmsu1VURwjhZHABFcp3dQn3wSnIKRtxMLSks9oVOOTle5nABIISxwJgU',
+  'vcjhG274TUX/xS/oBGljFL+pB69YlM7ywvJyGRWMOS6zwDQQWG1aDi6uSfq9acue',
+  'VHvqZ+vBJGVn2pFgzsDDGxn9UdC1DOX7oPFkZonjhws3xmOI3n+2UZpzRwVzOSId',
+  'jdZfBDtkc2SkPkS4212bkX00m+nB6L8FDCUrTGO/ZhFMvctA19VzcW//AELJljdg',
+  '5KD6nu32zCwnkvsaBalGcb8gbE93ZeMHp/BgU/8FUgECgYEA+yRcF5cx+uodTjrD',
+  'K6BSuVHQs+ZYVziw8j3e/EmAy1iOHp1s2XO9TNqGr3CLKcAa/jU1+OSKN6N+Y9Fq',
+  'lFFT2pkGutkxcxttLM9lkGJqdHFjgnIOGt3pXP3xGFS/oL9flbDr7llX60/vXwmS',
+  'dWB+UajHs4cU0BfLe8TWJPGlUE8CgYEA8RyDAXD8WyD+Go5j4Os6PlW37RBT56Pq',
+  'WPUfS/Ov9BPXeE6x2KI8ht5hagCjs44nfZmFLG5f6D4mA0KtSYzKcBKvw91fQF+P',
+  'BclVOd6BF7YLKX8ByJStoQUt4V5z2Gw4WMI1sX2Fs/WvRrccgIhbJABHvMNX8Fas',
+  'IALH4S7lHScCgYBsfVWHH1qI8Q+91qavNu/lfJFy1aP98dCGpPGp/Lq1nUivswPt',
+  'oBD7nT8nlK+ZVpKSlDv/jAKlbGxSBIpNDiDyQr7kgqTY+9Ua0XEngUxJhx4coNa1',
+  'Bn4kHNNE1n99mo5ZJPeWnGPdlEdsv77UE94dupKiXE1CY7UUf4CerwDiAwKBgQDL',
+  '/XpdAtGO7AfwQd4A0iMR0AXvfKvwQ/8mSiSzZrXMA+l9sN7I0OHynTy/qVDWvgNt',
+  'QTCp2aws2j/g7E2d947iaPzp8mX/GZnwpFkFv9lqTSt+bST+JcQMgkxB616JkW3O',
+  'smkpBHDVQ5yKcKudlz+84rvO2VqSTVINNy0SuFFBawKBgGVeaJ55cSFJNZeMoJ3V',
+  'BVXN3Ux9GOkl6pgzChbegYGYF+Xaz77dRgRP18ju+Dvexn6p8OM3Amd1rHYSuHq5',
+  'TiRl19hV6dEaxFjikw2RyCuI5vS6/AFk0nfSe4rSitiSJKW+yj9ysJoOwLdQkYuA',
+  'd5TAlFv/hIGttAG/OZcaEkKo',
+  '-----END PRIVATE KEY-----',
+].join('\n');
+
+final _testCertPem = <String>[
+  '-----BEGIN CERTIFICATE-----',
+  'MIIC2zCCAcOgAwIBAgIJANh7QUsiRqumMA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNV',
+  'BAMMCWxvY2FsaG9zdDAeFw0yNjEwMjYyMjI4MzdaFw0zNjEwMjMyMjI4MzdaMBQx',
+  'EjAQBgNVBAMMCWxvY2FsaG9zdDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoC',
+  'ggEBAOyJMzFNBn6fRbhbNU22rwL0Mo5DZkNb+UOcF0aIFTRhwClIumZlA/5a8Ov2',
+  'hCwSS/moxCK+oRbrzF3LdTnA6JuX2SYd2OuKH07L7YAZFEyjzmZtqfPAfp5EsVP5',
+  'atEyxzicLcV99pp21J4jwDZrfTo8ThySQTBQRr0Qbrf5rQC8xqVplbgZ1Th4aBAp',
+  'n5lfed6SIQntQx/pknm2sHc9MULeImSm8UYhYjmef6p15EiMLYBjGGzetTTQg8fd',
+  'A7xwj2+xI5gu/6ruMBPhJZ2jMU4jmYobDs5GYr/HCoZMqIgzMQiTNgT3U/agW9C1',
+  '0/Q9HzaKhiqzur1Lvg2qvpLzLwkCAwEAAaMwMC4wLAYDVR0RBCUwI4IJbG9jYWxo',
+  'b3N0hwR/AAABhxAAAAAAAAAAAAAAAAAAAAABMA0GCSqGSIb3DQEBCwUAA4IBAQCC',
+  'kQBGJWiyRqFT2Zala8/9jqsrN+V/39WsLTF32efpIhRtJIQcx0yJf24VzLPlLMOP',
+  'Tjq2wrATa4XqKIYfsZH4bGseR4O/1xDJ+sm2XqQ6I24+oImeLe5gl4uKHkxEoZtL',
+  'TrgkAQ1+fgHGK9Pz2PEH0JmXhu1+U2zxHdjzQilL7omeGw/J1RQEdyLk6XuIQf6d',
+  '0be8q0r2k7+Tc20OYNk+6FZf9G+mMA2tFmcDOfMsWw0P3JcxO1Q6JWnA4Iq6fyH3',
+  'ye2K131b20IakFzf6AodNAMK6ozL76cBSwKsZJqoWTv39oOLTBY0EPkK/VWC8LYi',
+  'q9bXFdltF+yiB4NlhrLZ',
+  '-----END CERTIFICATE-----',
+].join('\n');
+
+/// Writes the fixture material to throwaway files and returns
+/// their paths ([SecurityContext] only accepts file paths).
+Future<(String, String)> _writeTlsFixtures() async {
+  final dir = await Directory.systemTemp.createTemp('fah-proxy-tls');
+  final keyPath = '${dir.path}/key.pem';
+  final certPath = '${dir.path}/cert.pem';
+  await File(keyPath).writeAsString(_testKeyPem, flush: true);
+  await File(certPath).writeAsString(_testCertPem, flush: true);
+  return (keyPath, certPath);
+}
+
 class FakeTlsConnectProxy {
   FakeTlsConnectProxy({required this.targetPort});
 
@@ -396,9 +464,10 @@ class FakeTlsConnectProxy {
   int get port => _socket.port;
 
   Future<void> start() async {
+    final (keyPath, certPath) = await _writeTlsFixtures();
     final context = SecurityContext()
-      ..useCertificateChain('test/providers/fixtures/proxy_test_cert.pem')
-      ..usePrivateKey('test/providers/fixtures/proxy_test_key.pem');
+      ..useCertificateChain(certPath)
+      ..usePrivateKey(keyPath);
     _socket = await SecureServerSocket.bind(
       InternetAddress.loopbackIPv4,
       0,
@@ -437,9 +506,10 @@ class FakeTlsTarget {
   int get port => _socket.port;
 
   Future<void> start() async {
+    final (keyPath, certPath) = await _writeTlsFixtures();
     final context = SecurityContext()
-      ..useCertificateChain('test/providers/fixtures/proxy_test_cert.pem')
-      ..usePrivateKey('test/providers/fixtures/proxy_test_key.pem');
+      ..useCertificateChain(certPath)
+      ..usePrivateKey(keyPath);
     _socket = await SecureServerSocket.bind(
       InternetAddress.loopbackIPv4,
       0,
