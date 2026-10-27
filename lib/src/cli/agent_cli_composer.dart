@@ -54,6 +54,10 @@ extension ComposerChipsSubmit on AgentCli {
     List<TuiImageAttachment> images,
   ) async {
     controller.sendBusy(true, source: 'submit');
+    // gh-1929: a stale restore (a cancelled line-mode submission this
+    // process can never have made — the mode is boot-fixed) must never
+    // leak into this submit; cleared before the body can set it.
+    _submissionCancelRestorePending = false;
     try {
       // gh-1787: the catch is the trust boundary. A settings-flow throw
       // used to escape to the zone and dump a raw async stack trace into
@@ -70,6 +74,14 @@ extension ComposerChipsSubmit on AgentCli {
     } finally {
       _abortRequested = false;
       controller.sendBusy(false, source: 'submit');
+    }
+    // gh-1929: the submission was cancelled in the pre-flight window —
+    // the agent never saw it — so hand the typed text back to the
+    // composer: a resubmit is one Enter away, with the dim
+    // `submission cancelled` receipt right above.
+    if (_submissionCancelRestorePending) {
+      _submissionCancelRestorePending = false;
+      controller.sendInputText(line);
     }
     // `/exit` marks the session exited during handling. Quit in a later
     // event-loop batch: dart_tui drains the whole queue before rendering
