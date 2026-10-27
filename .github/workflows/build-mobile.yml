@@ -953,6 +953,7 @@ jobs:
           echo "All required iOS secrets are present"
 
       - name: Import certificates and provisioning profile
+        id: ios_signing
         env:
           IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
           IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
@@ -981,6 +982,34 @@ jobs:
           security import certificate.p12 -k build.keychain -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
 
+          # gh-1865: pin the signing identity by SHA-1, never by name. The
+          # per-user keychain search list is ADDITIVE by design (gh-1866),
+          # so it can legitimately hold BOTH this job's cert and a
+          # concurrent signing leg's cert with the SAME common name ("Apple
+          # Distribution: Uladzimir Klyshevich (YP9HC3USZ3)") but a
+          # DIFFERENT serial (owner-verified gh-1865 timeline, run
+          # 40455401630: the build-macos arm64 leg imported its macOS cert
+          # 05:31:23Z, this job's union write landed 05:31:35Z, and
+          # xcodebuild resolved the generic name to the WRONG cert at
+          # 05:56:14Z — its serial is not in the iOS profile, the archive
+          # is dead). Resolve the fingerprint from THIS job's OWN keychain
+          # right after import and thread it into every signing call, so
+          # resolution stays deterministic even with same-named duplicates
+          # in the search list.
+          IDENT_LINE=$(security find-identity -v -p codesigning build.keychain \
+            | grep 'Apple Distribution' || true)
+          IDENT_COUNT=$(printf '%s\n' "$IDENT_LINE" | grep -c . || true)
+          if [ "$IDENT_COUNT" -ne 1 ]; then
+            echo "::error::gh-1865: expected exactly 1 'Apple Distribution' codesigning identity in build.keychain, found $IDENT_COUNT. Refusing to pick silently:"
+            security find-identity -v -p codesigning build.keychain || true
+            exit 1
+          fi
+          IOS_CERT_SHA1=$(printf '%s\n' "$IDENT_LINE" | awk '{print $2}')
+          IOS_CERT_NAME=$(printf '%s\n' "$IDENT_LINE" | sed -E 's/^[^"]*"([^"]+)".*/\1/')
+          echo "identity_sha1=$IOS_CERT_SHA1" >> $GITHUB_OUTPUT
+          echo "identity_name=$IOS_CERT_NAME" >> $GITHUB_OUTPUT
+          echo "gh-1865: signing identity pinned by SHA-1: $IOS_CERT_NAME ($IOS_CERT_SHA1)"
+
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
 
@@ -993,6 +1022,38 @@ jobs:
             echo "::error::IOS_LIVE_ACTIVITY_PROFILE_BASE64 secret is not set (App Store profile for dev.fa1.app.FaLiveActivity)"
             exit 1
           fi
+
+          # gh-1865 fail-fast precheck (owner option B): every profile must
+          # embed the certificate we JUST imported. A profile issued under
+          # a stale/revoked/different cert used to surface only after a
+          # ~24-minute archive (run 40455519923: gym rejected the cert on
+          # BOTH targets, Runner and FaLiveActivity, after ~24 min) — now
+          # the mismatch aborts in seconds, BEFORE flutter build.
+          IOS_CERT_SERIAL=$(security find-certificate -c "$IOS_CERT_NAME" -p build.keychain \
+            | openssl x509 -noout -serial | sed 's/^serial=//')
+          profile_contains_identity() {
+            local label="$1" profile="$2" serials=""
+            serials=$(security cms -D -i "$profile" \
+              | awk '/<key>DeveloperCertificates<\/key>/{grab=1; next}
+                     grab && /<\/array>/{grab=0; next}
+                     grab && /<data>/{indata=1; buf=""; sub(/.*<data>/, ""); if ($0 != "") {gsub(/[ \t\r]/, ""); buf=$0}; next}
+                     grab && indata && /<\/data>/{sub(/<\/data>.*/, ""); gsub(/[ \t\r]/, ""); print buf $0; indata=0; next}
+                     grab && indata {gsub(/[ \t\r]/, ""); buf = buf $0}' \
+              | while IFS= read -r der; do
+                  printf '%s' "$der" | base64 --decode \
+                    | openssl x509 -inform DER -noout -serial 2>/dev/null \
+                    | sed 's/^serial=//' || true
+                done)
+            if ! printf '%s\n' "$serials" | grep -qxF "$IOS_CERT_SERIAL"; then
+              echo "::error::gh-1865 fail-fast: $label does not contain the imported signing certificate (profile cert serials: $(printf '%s' "$serials" | tr '\n' ' ')— imported identity serial: $IOS_CERT_SERIAL). Re-issue the profile under the current distribution certificate in the Apple Developer Portal and update the profile secret. Aborting BEFORE the archive (the ~24-minute gym failure class, gh-1865)."
+              exit 1
+            fi
+            echo "gh-1865 precheck OK: $label contains identity serial $IOS_CERT_SERIAL"
+          }
+          profile_contains_identity "Fa Profile (profile.mobileprovision)" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/profile.mobileprovision"
+          profile_contains_identity "FaLiveActivity Profile (liveactivity.mobileprovision)" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/liveactivity.mobileprovision"
 
       - name: Ensure iOS device SDK is available
         run: |
@@ -1043,6 +1104,12 @@ jobs:
           # so the daily train stalled forever. Ship the derived next-tag
           # version (e.g. 0.1.446), which strictly increases.
           BUILD_NAME: ${{ needs.version.outputs.version }}
+          # gh-1865: CODE_SIGN_IDENTITY as a SHA-1 fingerprint (read from
+          # THIS job's own keychain right after import) instead of the
+          # generic "iPhone Distribution" — a concurrent signing leg's
+          # same-CN cert in the shared additive search list can no longer
+          # shadow the identity at codesign time.
+          IOS_CERT_SHA1: ${{ steps.ios_signing.outputs.identity_sha1 }}
         run: |
           set -euo pipefail
           export PATH="/opt/homebrew/opt/ruby/bin:/opt/homebrew/bin:$PATH"
@@ -1063,7 +1130,7 @@ jobs:
           IOS_BUNDLE_ID="$BUNDLE_ID" \
           IOS_PROVISIONING_PROFILE_NAME="$PROFILE_NAME" \
           IOS_LIVE_ACTIVITY_PROFILE_NAME="$LA_PROFILE_NAME" \
-          IOS_SIGNING_IDENTITY="iPhone Distribution" \
+          IOS_SIGNING_IDENTITY="$IOS_CERT_SHA1" \
           bundle exec fastlane ios build_only
 
       # gh-1692 AC2: the gym log holds the REAL xcodebuild error — without
