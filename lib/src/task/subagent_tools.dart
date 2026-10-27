@@ -1028,7 +1028,14 @@ AgentTool _taskStatusTool(SubagentManager manager) {
       if (handles.isEmpty) {
         return ToolExecutionResult.text('no subagents spawned');
       }
-      final lines = [for (final h in handles) h.statusLine];
+      // Issue #1923 AC3 (bot r2): the sweep is the path an agent actually
+      // uses to scan children — past-SLO pending mail must be visible
+      // here too, from the SAME formatter as the detail view.
+      final lines = [
+        for (final h in handles)
+          '${h.statusLine}'
+              '${(await undeliveredMailLine(manager, h, compact: true)) ?? ''}',
+      ];
       return ToolExecutionResult.text(
         '${handles.length} subagent${handles.length == 1 ? '' : 's'}:\n'
         '${lines.join('\n')}',
@@ -1106,7 +1113,7 @@ AgentTool _taskSendTool(
         'Send a follow-up message to a subagent. A running child receives '
         'it in its inbox at the next turn boundary; an idle (waiting for '
         'input) or completed child is resumed in its SAME session with the '
-        'message. The resume wait is capped (${taskSendWaitCap.inSeconds}s): '
+        'message. The resume wait is capped (${_describeWaitCap(taskSendWaitCap)}): '
         'a child that does not respond in time reports the message queued '
         'and keeps waking in the background (check task_status). Failed '
         'children are continued with task_resume instead. Remote '
@@ -1309,7 +1316,7 @@ AgentTool _taskResumeTool(
         'appends to the existing JSONL transcript, keeps the same mailbox '
         'id and display name, and never mints a cloned "name-2" session. '
         'Use this after transient failures (provider quota, network). The '
-        'resume wait is capped (${taskSendWaitCap.inSeconds}s): a child '
+        'resume wait is capped (${_describeWaitCap(taskSendWaitCap)}): a child '
         'that does not confirm in time reports the resume continuing in '
         'the background — it is never restarted (check task_status). '
         'Steering running/idle/completed children is task_send; respawning '
@@ -1367,6 +1374,14 @@ Future<ToolExecutionResult> _runTaskResume(
     message,
     taskSendWaitCap,
   );
+}
+
+/// The wait-cap renderer for the tool descriptions: fractional seconds
+/// stay truthful (the 1500ms default reads "1.5s", bot r2 suggestion —
+/// `.inSeconds` truncation told the model a wrong bound).
+String _describeWaitCap(Duration cap) {
+  final tenths = (cap.inMilliseconds / 100).round() / 10;
+  return '${tenths}s';
 }
 
 /// The `task_resume` instruction: an explicit non-blank message, else the
@@ -1466,6 +1481,37 @@ Future<ToolExecutionResult> _resumeFailedChild(
   );
 }
 
+/// The AC3 UNDELIVERED-mail escalation for one child — the ONE source both
+/// `task_status` views render from (bot r2, thread `PRRT_kwDOTXdlLc6wfxj3`:
+/// the bare sweep path is the one agents actually use to scan children, so
+/// the marker must live there too, and a shared formatter keeps the two
+/// views from drifting). One fabric read yields age AND count (no
+/// disagreeing snapshots). Null when mail is absent or within the SLO.
+Future<String?> undeliveredMailLine(
+  SubagentManager manager,
+  SubagentHandle h, {
+  bool compact = false,
+}) async {
+  final fabric = await manager.pendingInbox(h.id);
+  final local = h.pendingMessages;
+  if (fabric.isEmpty && local.isEmpty) return null;
+  // One snapshot per source, both read HERE — age and count can never
+  // disagree with each other.
+  final stamps = <DateTime>[
+    for (final m in fabric) ?DateTime.tryParse(m.sentAt),
+    for (final m in local) ?DateTime.tryParse(m.sentAt),
+  ].whereType<DateTime>();
+  if (stamps.isEmpty) return null;
+  final oldest = stamps.reduce((a, b) => a.isBefore(b) ? a : b);
+  final age = DateTime.now().difference(oldest);
+  if (age <= deliverySlo) return null;
+  final n = fabric.length + local.length;
+  return compact
+      ? ' mail:$n@${age.inSeconds}s UNDELIVERED'
+      : 'mail: $n pending — UNDELIVERED ${age.inSeconds}s '
+            '(past the ${deliverySlo.inSeconds}s delivery SLO)';
+}
+
 /// Formats a detailed view of one handle for `task_status`.
 Future<String> _formatHandleDetail(
   SubagentManager manager,
@@ -1491,18 +1537,8 @@ Future<String> _formatHandleDetail(
     if (h.error != null) 'error: ${h.error}',
   ];
   // Issue #1923 AC3: pending mail sitting past the delivery SLO escalates
-  // to a visible UNDELIVERED line — no silent queues.
-  final oldest = await manager.oldestPendingMailSince(h.id);
-  if (oldest != null) {
-    final age = DateTime.now().difference(oldest);
-    if (age > deliverySlo) {
-      final n =
-          await manager.pendingInboxCount(h.id) + h.pendingMessages.length;
-      parts.add(
-        'mail: $n pending — UNDELIVERED ${age.inSeconds}s '
-        '(past the ${deliverySlo.inSeconds}s delivery SLO)',
-      );
-    }
-  }
+  // to a visible UNDELIVERED line — no silent queues (shared formatter).
+  final escalation = await undeliveredMailLine(manager, h);
+  if (escalation != null) parts.add(escalation);
   return parts.join('\n');
 }

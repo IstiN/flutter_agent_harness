@@ -189,7 +189,7 @@ void main() {
           model: _model,
           getSteeringMessages: drain,
           steeringNotifications: steering.stream,
-          steeringStallWindow: const Duration(minutes: 5),
+          steeringStallWindow: () => const Duration(minutes: 5),
         ),
         streamFunction: streamFunction,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
@@ -267,7 +267,7 @@ void main() {
           getSteeringMessages: () async =>
               queue.isEmpty ? const <Message>[] : [queue.removeAt(0)],
           steeringNotifications: steering.stream,
-          steeringStallWindow: const Duration(milliseconds: 150),
+          steeringStallWindow: () => const Duration(milliseconds: 150),
         ),
         streamFunction: streamFunction,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
@@ -345,7 +345,7 @@ void main() {
           getSteeringMessages: () async =>
               queue.isEmpty ? const <Message>[] : [queue.removeAt(0)],
           steeringNotifications: steering.stream,
-          steeringStallWindow: const Duration(milliseconds: 150),
+          steeringStallWindow: () => const Duration(milliseconds: 150),
         ),
         streamFunction: streamFunction,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
@@ -397,7 +397,7 @@ void main() {
         context: const Context(messages: []),
         config: AgentLoopConfig(
           model: _model,
-          steeringStallWindow: const Duration(milliseconds: 50),
+          steeringStallWindow: () => const Duration(milliseconds: 50),
         ),
         streamFunction: streamFunction,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
@@ -551,6 +551,88 @@ void main() {
       expect(RegExp(r'stalled \d+ seconds').hasMatch(notices.first), isTrue);
       expect(notices[1], 'steering delivered into rebuilt request');
       steering.close();
+    });
+
+    test('a disposed watch can never cancel the live run token (r1 '
+        'blocker regression): a probe completing after dispose fires '
+        'nothing, and the next attempt stays healthy', () async {
+      final probeGate = Completer<bool>();
+      final cancelStates = <bool>[];
+      var calls = 0;
+      // Attempt 1 streams normally (so its watch is disposed at ~t2);
+      // attempt 2 hangs (its own watch armed). The attempt-1 probe was
+      // called at the 2s tick and only completes AFTER attempt 1 ended —
+      // the disposed watch must drop it instead of cancelling the run
+      // token under attempt 2.
+      AssistantMessageEventStream streamFunction(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        calls++;
+        if (cancelToken != null) {
+          unawaited(cancelToken.onCancel.then((_) => cancelStates.add(true)));
+        }
+        final stream = AssistantMessageEventStream();
+        if (calls == 1) {
+          // Complete shortly AFTER the probe tick so dispose precedes the
+          // probe completion.
+          Timer(const Duration(milliseconds: 2200), () {
+            for (final event in _textTurn('first-ok')) {
+              stream.push(event);
+            }
+            stream.end();
+          });
+          return stream;
+        }
+        // Attempt 2: healthy but slow — if the stale watch fired, this
+        // would surface aborted instead.
+        Timer(const Duration(milliseconds: 500), () {
+          for (final event in _textTurn('second-ok')) {
+            stream.push(event);
+          }
+          stream.end();
+        });
+        return stream;
+      }
+
+      final runSource = CancelTokenSource();
+      final run = agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: const Context(messages: []),
+        config: AgentLoopConfig(
+          model: _model,
+          hasPendingSteering: () => probeGate.future,
+          // A tiny window: without the disposed guard the stale watch's
+          // decision would see attempt-1 silence past the window and fire
+          // the interrupt into the live run token mid-attempt-2.
+          steeringStallWindow: () => const Duration(milliseconds: 50),
+        ),
+        streamFunction: streamFunction,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+        cancelToken: runSource.token,
+        cancelTokenSource: runSource,
+      );
+
+      // Let the 2s probe tick fire inside attempt 1 and hold it open.
+      await Future<void>.delayed(const Duration(milliseconds: 2100));
+      expect(calls, 1);
+      // Attempt 1 settles (watch disposed); then the probe completes with
+      // pending-steering=true into the DISPOSED watch.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      probeGate.complete(true);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      // No stale interrupt: the run token was never cancelled.
+      expect(runSource.token.isCancelled, isFalse);
+
+      final messages = await run.result.timeout(const Duration(seconds: 15));
+      expect(cancelStates, everyElement(isFalse));
+      final lastAssistant = messages.whereType<AssistantMessage>().last;
+      expect(lastAssistant.stopReason, StopReason.stop);
+      expect(
+        messages.whereType<UserMessage>().map((m) => m.content as String),
+        ['hi'],
+      );
     });
 
     test('the steering cancel reason is SteeringInterruptFire, never a '

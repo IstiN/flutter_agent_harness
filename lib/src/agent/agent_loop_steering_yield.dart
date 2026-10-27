@@ -26,17 +26,22 @@ part of 'agent_loop.dart';
 /// ("bytes") and when the last one landed. The steering-interrupt watch
 /// reads it; `_consumeResponseStream` marks it.
 final class _StreamProgress {
-  DateTime _lastActivity = DateTime.now();
+  // Monotonic on purpose (bot r2 suggestion): the stall timers are
+  // monotonic, so an NTP step between mark() and a timer callback must
+  // not inflate or fire-early the silence math.
+  final _sinceLastActivity = Stopwatch()..start();
 
   /// Whether the attempt received at least one stream event.
   bool sawBytes = false;
 
   void mark() {
     sawBytes = true;
-    _lastActivity = DateTime.now();
+    _sinceLastActivity
+      ..reset()
+      ..start();
   }
 
-  Duration get silence => DateTime.now().difference(_lastActivity);
+  Duration get silence => _sinceLastActivity.elapsed;
 }
 
 /// The per-attempt steering-interrupt supervisor: listens for steering
@@ -130,7 +135,7 @@ final class _SteeringYieldWatch {
         _fire('steering arrived with no provider bytes yet');
         return;
       }
-      final window = config.steeringStallWindow;
+      final window = config.steeringStallWindow();
       if (window <= Duration.zero) return; // mid-stream interrupts disabled
       if (progress.silence >= window) {
         _fire('steering arrived on a stream silent for the stall window');
@@ -151,7 +156,10 @@ final class _SteeringYieldWatch {
 
   void _rearmStallTimer() {
     _stallTimer?.cancel();
-    final window = config.steeringStallWindow;
+    // Re-read the provider per re-arm: a mid-run failover re-windows the
+    // watchdog, and this timer must chase the window that is actually
+    // armed (bot r2, thread PRRT_kwDOTXdlLc6wfxlV).
+    final window = config.steeringStallWindow();
     final remaining = window - progress.silence;
     _stallTimer = Timer(
       remaining <= Duration.zero ? Duration.zero : remaining,
@@ -268,6 +276,11 @@ Future<_AttemptOutcome> _resolveAttemptOutcome({
       }
       return _AttemptOutcome(turn: result.turn);
     case _AttemptRetry():
+      // A steering fire that raced a heal retry must not leave the latch
+      // cancelled into the retried attempt (bot r2 thread): the queued
+      // steering still drains at the boundary — the retry just rides a
+      // live token.
+      if (steer.firedForSteering) cancelToken?.reset();
       return _AttemptOutcome(
         context: result.nextContext,
         reliefUsed: result.reliefUsed,

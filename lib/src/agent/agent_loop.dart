@@ -84,6 +84,10 @@ part 'agent_loop_finalize_gate.dart';
 part 'agent_loop_message_cap.dart';
 part 'agent_loop_steering_yield.dart';
 
+/// The default stall-window provider: minutes-class patience for
+/// embedders that do not derive one from their watchdog.
+Duration _defaultSteeringStallWindow() => const Duration(minutes: 5);
+
 /// Marker embedded in the over-window guard's error message (see
 /// [_streamAssistantResponse]): hosts match it to recognize "the loop
 /// refused to send because the outgoing context exceeded the model
@@ -445,7 +449,7 @@ final class AgentLoopConfig {
     this.budgetLineProvider,
     this.imageCapLatches,
     this.onTruncatedToolCall,
-    this.steeringStallWindow = const Duration(minutes: 5),
+    this.steeringStallWindow = _defaultSteeringStallWindow,
     this.steeringInterruptNotice,
   });
 
@@ -502,14 +506,19 @@ final class AgentLoopConfig {
   /// steering source.
   final Future<bool> Function()? hasPendingSteering;
 
-  /// The mid-stream steering stall window (issue #1923 AC1): how long an
+  /// The mid-stream steering stall window PROVIDER (issue #1923 AC1):
+  /// evaluated at every steering signal and stall re-arm — never
+  /// snapshotted per run (bot r2, thread `PRRT_kwDOTXdlLc6wfxlV`: the
+  /// watchdog re-windows on EVERY arm, so a mid-run failover must be able
+  /// to shrink the steering window with it). Returns how long an
   /// in-flight provider stream may stay silent after a steering arrival
   /// before the attempt counts UNPRODUCTIVE and is interrupted (zero-byte
   /// attempts interrupt immediately regardless). `<= 0` disables the
-  /// mid-stream interrupt. Hosts derive it BELOW their run-idle watchdog
-  /// window so the interrupt wins the race against the whole-run kill
-  /// (the [Agent] uses `window - 30s`, payload scaling inherited).
-  final Duration steeringStallWindow;
+  /// mid-stream interrupt. Hosts derive it BELOW the actually-armed
+  /// run-idle watchdog window so the interrupt wins the race against the
+  /// whole-run kill (the [Agent] uses `armed window - 30s`, payload
+  /// scaling inherited).
+  final Duration Function() steeringStallWindow;
 
   /// Host-visible notices for the provider-phase steering interrupt
   /// (issue #1923 AC4) — the pinned queued/delivered lines. Null keeps

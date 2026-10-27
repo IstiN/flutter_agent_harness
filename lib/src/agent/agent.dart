@@ -495,17 +495,23 @@ class Agent {
   /// print the lines verbatim (the copy is pinned by the issue).
   void Function(String line)? onSteeringInterruptNotice;
 
-  /// The mid-stream steering stall window (issue #1923 AC1): the run-idle
-  /// watchdog window minus a 30s margin so the steering interrupt always
-  /// beats the watchdog's whole-run kill; `Duration.zero` when the
-  /// watchdog is disabled (the mid-stream interrupt stays off — the
-  /// zero-byte immediate interrupt is unaffected). Reads [runIdleWindow],
-  /// so the merged #1916 payload scaling (multi-MB uploads, capped 2x)
-  /// widens BOTH windows together — the margin stays 30s at any scale,
-  /// with the scaling logic living only in the getter (no duplication).
-  Duration get _steeringStallWindow {
+  /// The mid-stream steering stall window PROVIDER (issue #1923 AC1):
+  /// re-EVALUATED at every steering signal and stall re-arm — never a
+  /// per-run snapshot (bot r2, thread `PRRT_kwDOTXdlLc6wfxlV`: the
+  /// watchdog re-windows on every arm, so the steering interrupt must
+  /// chase the window that is actually armed or a mid-run failover to a
+  /// shorter entry lets the whole-run kill win the race AC1 says steering
+  /// always wins). Prefers [_armedRunIdleInfo] — the window the watchdog
+  /// timer is ACTUALLY armed with — over a fresh derivation, and keeps
+  /// the 30s margin (payload scaling included, since the armed window was
+  /// resolved through [runIdleWindow]). `Duration.zero` when the watchdog
+  /// is disabled: the mid-stream interrupt stays off, the zero-byte
+  /// immediate interrupt is unaffected.
+  Duration get _steeringStallWindowNow {
     if (runIdleTimeout == Duration.zero) return Duration.zero;
-    final window = runIdleWindow.window - const Duration(seconds: 30);
+    final armed = _armedRunIdleInfo.window;
+    final base = armed > Duration.zero ? armed : runIdleWindow.window;
+    final window = base - const Duration(seconds: 30);
     return window <= Duration.zero ? Duration.zero : window;
   }
 
@@ -800,7 +806,7 @@ class Agent {
       // the race against the watchdog's whole-run kill. Watchdog-disabled
       // hosts keep `Duration.zero` — the mid-stream interrupt stays off,
       // the zero-byte immediate interrupt stays armed.
-      steeringStallWindow: _steeringStallWindow,
+      steeringStallWindow: () => _steeringStallWindowNow,
       steeringInterruptNotice: onSteeringInterruptNotice,
       // The in-process queue notifies via [steeringArrived]; the probe is
       // only needed for the external (file-inbox) source, which cannot

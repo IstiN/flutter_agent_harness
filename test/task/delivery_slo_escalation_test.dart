@@ -58,6 +58,27 @@ void main() {
     expect(detail, isNot(contains('UNDELIVERED')));
   });
 
+  test('the BARE task_status sweep carries the same UNDELIVERED marker '
+      '(bot r2: the sweep is the scan path agents actually use)', () async {
+    await enqueue(age: const Duration(seconds: 10), text: 'stale mail');
+    final tools = subagentMonitoringTools(manager: mgr);
+    final statusTool = tools.firstWhere((t) => t.name == 'task_status');
+    final result = await statusTool.execute({}, null, null);
+    final sweep = (result.content.first as dynamic).text as String;
+    expect(sweep, contains('UNDELIVERED'));
+    expect(sweep, contains('a1'));
+    expect(sweep, contains('mail:1@'));
+  });
+
+  test('the bare sweep stays clean within the SLO', () async {
+    await enqueue(age: Duration.zero, text: 'fresh mail');
+    final tools = subagentMonitoringTools(manager: mgr);
+    final statusTool = tools.firstWhere((t) => t.name == 'task_status');
+    final result = await statusTool.execute({}, null, null);
+    final sweep = (result.content.first as dynamic).text as String;
+    expect(sweep, isNot(contains('UNDELIVERED')));
+  });
+
   test('oldestPendingMailSince answers the oldest pending stamp', () async {
     expect(await mgr.oldestPendingMailSince('a1'), isNull);
     await enqueue(age: const Duration(seconds: 30), text: 'old');
