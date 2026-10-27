@@ -403,26 +403,9 @@ extension on AgentCli {
 
     if (entry.authMethod == CustomProviderAuthMethod.jwt ||
         (token != null && isCodeMieJwtToken(token))) {
-      if (token == null || token.isEmpty) {
-        io.writeln('CodeMie JWT token missing — re-run /provider codemie jwt');
-        return;
-      }
-      if (codeMieJwtExpired(token)) {
-        io.writeln('CodeMie JWT token expired — re-run /provider codemie jwt');
-        return;
-      }
-      await _switchCodeMieJwtProvider(
-        entry.spec,
-        entry.baseUrl,
-        entry.modelId,
-        token,
-        keyName ?? '',
-        project: entry.project,
-        providerName: entry.name,
-      );
+      await _switchSavedCodeMieJwt(entry, token, keyName);
       return;
     }
-
     // SSO cookie auth (default for legacy CodeMie entries).
     if (token == null || token.isEmpty || codeMieCookieExpired(token)) {
       final orgUrl = codeMieOrgUrl(entry.baseUrl);
@@ -433,6 +416,32 @@ extension on AgentCli {
       return;
     }
     await _switchCodeMieProvider(
+      entry.spec,
+      entry.baseUrl,
+      entry.modelId,
+      token,
+      keyName ?? '',
+      project: entry.project,
+      providerName: entry.name,
+    );
+  }
+
+  /// The JWT leg of [_switchToSavedCodeMieProvider]: validates the saved
+  /// token (present, unexpired) then applies it.
+  Future<void> _switchSavedCodeMieJwt(
+    CustomProviderEntry entry,
+    String? token,
+    String? keyName,
+  ) async {
+    if (token == null || token.isEmpty) {
+      io.writeln('CodeMie JWT token missing — re-run /provider codemie jwt');
+      return;
+    }
+    if (codeMieJwtExpired(token)) {
+      io.writeln('CodeMie JWT token expired — re-run /provider codemie jwt');
+      return;
+    }
+    await _switchCodeMieJwtProvider(
       entry.spec,
       entry.baseUrl,
       entry.modelId,
