@@ -465,6 +465,12 @@ platform :ios do
     bundle_id = ENV["IOS_BUNDLE_ID"] || "dev.fa1.app"
     profile_name = ENV["IOS_PROVISIONING_PROFILE_NAME"] || "Fa Profile"
     live_activity_profile_name = ENV["IOS_LIVE_ACTIVITY_PROFILE_NAME"] || "FaLiveActivity Profile"
+    # gh-1865: CI passes a SHA-1 fingerprint (IOS_SIGNING_IDENTITY read
+    # from the job's own keychain right after import) — never resolve the
+    # identity by NAME, which is a lottery when the additive per-user
+    # search list holds two same-CN "Apple Distribution" certs from
+    # concurrent signing legs. The bare name below is a LOCAL-dev fallback
+    # only; the workflow always pins.
     signing_identity = ENV["IOS_SIGNING_IDENTITY"] || "iPhone Distribution"
 
     update_code_signing_settings(
@@ -536,6 +542,11 @@ platform :ios do
             "#{bundle_id}.FaLiveActivity" => live_activity_profile_name
           },
           signingStyle: "manual",
+          # gh-1865: pin the export step by the same fingerprint — the
+          # exportOptions signingCertificate accepts a SHA-1 (that is what
+          # Xcode itself writes into exportOptions plists), so
+          # -exportArchive cannot resolve a shadowing same-CN cert either.
+          signingCertificate: signing_identity,
           teamID: team_id,
           manageAppVersionAndBuildNumber: false,
           uploadBitcode: false,
