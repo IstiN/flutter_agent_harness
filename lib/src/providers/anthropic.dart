@@ -892,7 +892,7 @@ Object _convertContentBlocks(List<ContentBlock> content) {
             'data': block.data,
           },
         });
-      case ThinkingContent() || ToolCall():
+      case ThinkingContent() || ToolCall() || AudioContent():
         // Not valid in tool results; skip defensively.
         break;
     }
@@ -1009,6 +1009,9 @@ List<Map<String, dynamic>> _convertUserContentBlocks(
             'data': item.data,
           },
         });
+      case AudioContent():
+        // Anthropic has no audio input; skip defensively.
+        break;
       case ThinkingContent() || ToolCall():
         // Not valid in user messages; skip defensively.
         break;
@@ -1077,7 +1080,7 @@ void _addAssistantBlock(
         'name': block.name,
         'input': block.arguments,
       });
-    case ImageContent():
+    case ImageContent() || AudioContent():
       // Not valid in assistant messages; skip defensively.
       break;
   }

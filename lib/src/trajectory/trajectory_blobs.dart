@@ -666,6 +666,12 @@ List<TrajectoryRequestMessageBlock> trajectoryRequestBlocks(
           text: '',
           imageMarker: '[image ${_imageDimensions(data, mimeType)}]',
         ),
+      AudioContent(:final data, :final mimeType) =>
+        TrajectoryRequestMessageBlock(
+          type: 'audio',
+          chars: data.length,
+          text: '[audio $mimeType]',
+        ),
     },
 ];
 

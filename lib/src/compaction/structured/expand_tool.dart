@@ -763,6 +763,8 @@ String _assistantText(AssistantMessage message) {
         parts.add('tool_call $name(${_shortArgs(arguments)})');
       case ImageContent():
         parts.add('[image]');
+      case AudioContent():
+        parts.add('[audio]');
     }
   }
   return parts.join('\n');

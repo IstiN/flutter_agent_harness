@@ -1310,6 +1310,9 @@ Map<String, dynamic>? _convertUserMessage(UserMessage message) {
           'type': 'image_url',
           'image_url': {'url': 'data:${item.mimeType};base64,${item.data}'},
         });
+      case AudioContent():
+        // Audio input is only wired for Gemini; skip on this dialect.
+        break;
       case ThinkingContent() || ToolCall():
         // Not valid in user messages; skip defensively.
         break;
