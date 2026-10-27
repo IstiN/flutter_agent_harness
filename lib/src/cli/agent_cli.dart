@@ -2469,6 +2469,7 @@ class AgentCli {
   /// attempt and before the exhaustion verdict; [_beginUserPrompt] resets
   /// it with the fresh turn.
   bool _runAbortRequested = false;
+
   /// gh-1929: a submit's pre-flight compaction was cancelled by the user
   /// (the prompt was never sent) — the TUI submit boundary consumes this
   /// to hand the typed text back to the composer

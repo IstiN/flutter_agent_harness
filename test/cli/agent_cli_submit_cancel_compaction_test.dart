@@ -170,7 +170,8 @@ void main() {
   /// message — the prompt-really-was-not-sent probe.
   bool promptSent(_CancelObservingStream stream, String text) =>
       stream.contexts.any(
-        (context) => context.messages.lastOrNull is UserMessage &&
+        (context) =>
+            context.messages.lastOrNull is UserMessage &&
             messageText(context.messages.last as UserMessage) == text,
       );
 
@@ -380,6 +381,12 @@ void main() {
           // The esc key: aborts the pre-flight compaction mid-flight.
           keys.add([0x1B]);
           await submit;
+          await waitForIt(
+            () => frames.plain.contains('submission cancelled'),
+            reason:
+                'the neutral cancel receipt paints '
+                '(frame flush coalesces ~16ms behind the settle)',
+          );
           await waitForIt(
             () => !cli.isBusy,
             reason: 'the cancelled submission settles',
