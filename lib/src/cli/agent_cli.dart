@@ -2383,6 +2383,15 @@ class AgentCli {
         // otherwise print the honest detach summary before exiting.
         await _waiting.waitForJobsOrSummarize(waitForJobs: waitForJobs);
       }
+    } on CancelledException {
+      // gh-1929: esc/Ctrl+C during the pre-flight compaction window —
+      // the compaction layer's deliberate abort (#1085) must exit with
+      // the CANCELLED semantics (130, the aborted-run code) and the
+      // neutral dim receipt, never the failure path's `error:` line and
+      // exit 1.
+      _sealReactionRuns();
+      _renderUserCancel('submission cancelled');
+      return 130;
     } catch (error) {
       // gh-1589: the run is over — settles from here do bookkeeping only
       // (the finally below still seals the file).
@@ -2460,6 +2469,12 @@ class AgentCli {
   /// attempt and before the exhaustion verdict; [_beginUserPrompt] resets
   /// it with the fresh turn.
   bool _runAbortRequested = false;
+  /// gh-1929: a submit's pre-flight compaction was cancelled by the user
+  /// (the prompt was never sent) — the TUI submit boundary consumes this
+  /// to hand the typed text back to the composer
+  /// ([FaTuiController.sendInputText]). Line mode and headless never
+  /// read it.
+  bool _submissionCancelRestorePending = false;
 
   /// Every compaction pass that actually STARTED (issue #1085 round-1):
   /// the over-window funnel's exhaustion verdict names how many passes

@@ -313,6 +313,5 @@ extension AgentCliRun on AgentCli {
       // The dim note is the receipt; the next prompt starts clean.
       _renderUserCancel('compaction interrupted');
     }
-    }
   }
 }
