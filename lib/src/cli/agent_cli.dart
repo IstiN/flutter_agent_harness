@@ -2327,10 +2327,20 @@ class AgentCli {
       // The same pre-flight compaction guard as the REPL's [_runPrompt]:
       // a resumed session already over the threshold must compact BEFORE
       // the first request, or it goes out over-window and gets rejected.
-      // Inside the guarded section (issue #1085 round-4): a cancel here
-      // surfaces through the same loud error line as any run failure —
-      // the listener above is already live for it.
-      await _maybeAutoCompact();
+      // Inside the guarded section (issue #1085 round-4): the listener
+      // above is already live for it. gh-1929: a cancel HERE — the
+      // pre-flight window, the prompt never sent — exits with the
+      // CANCELLED semantics (130, the aborted-run code) and the neutral
+      // dim receipt; a cancel DURING the run (in-flight relief, settle
+      // funnel) keeps its loud abort via the error line + exit 1 below
+      // (the pinned mid-run contract).
+      try {
+        await _maybeAutoCompact();
+      } on CancelledException {
+        _sealReactionRuns();
+        _renderUserCancel('submission cancelled');
+        return 130;
+      }
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(prompt));
       } else {
@@ -2460,6 +2470,13 @@ class AgentCli {
   /// attempt and before the exhaustion verdict; [_beginUserPrompt] resets
   /// it with the fresh turn.
   bool _runAbortRequested = false;
+
+  /// gh-1929: a submit's pre-flight compaction was cancelled by the user
+  /// (the prompt was never sent) — the TUI submit boundary consumes this
+  /// to hand the typed text back to the composer
+  /// ([FaTuiController.sendInputText]). Line mode and headless never
+  /// read it.
+  bool _submissionCancelRestorePending = false;
 
   /// Every compaction pass that actually STARTED (issue #1085 round-1):
   /// the over-window funnel's exhaustion verdict names how many passes

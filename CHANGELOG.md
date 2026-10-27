@@ -13,6 +13,20 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1929): esc during the pre-flight auto-compaction no longer crashes
+  the CLI. The compaction layer's deliberate abort (#1085) used to escape
+  `_runPrompt` outside its guarded body and reach the root zone handler via
+  an unlistened `whenComplete` chain — `fa crashed: CancelledException` +
+  crash.log + a lost session view. The pre-flight window (submit on an
+  over-window transcript) now translates the cancel into a user-cancel
+  outcome: neutral dim `submission cancelled` receipt (never `error:`), the
+  TUI composer hands the typed text back (`sendInputText`) so a resubmit is
+  one Enter away, headless exits 130 with the same receipt, and the next
+  prompt works (the funnel's local-trim recovery or a retried compaction).
+  Cancels DURING the run — in-flight relief, settle funnel — keep their
+  pinned loud-abort surfaces, and the post-run window keeps its
+  `compaction interrupted` receipt via the shared `_renderUserCancel`
+  helper.
 - feat(1923): stall-proof steering. Steering arriving while the loop awaits
   an UNPRODUCTIVE provider submit (zero bytes, or silent past the steering
   stall window) now cancels the attempt via a `SteeringInterruptFire`
