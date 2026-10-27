@@ -183,7 +183,6 @@ void main() {
         await seedOverWindow('cancel-target');
         final stream = _CancelObservingStream([
           textTurn('resumed context summary'),
-          textTurn('recovered context summary'),
           textTurn('recovered answer'),
           textTurn('spare'),
         ], hangFromCall: 1);
@@ -241,13 +240,15 @@ void main() {
         expect(stream.calls, 1);
         expect(promptSent(stream, 'rescue-me'), isFalse);
 
-        // Session alive: the next prompt retries the compaction (the
-        // fresh turn re-arms it) and runs normally.
+        // Session alive: the next prompt works. The cancel already left
+        // the funnel's local-trim recovery in place (the summarizer abort
+        // degrades to the mechanical valve, visible as `[context
+        // trimmed]`), so the fresh turn runs directly — no second pass.
         stream.hangFromCall = 1 << 30;
         io.sendLine('again');
         await waitForIt(
-          () => stream.calls >= 3 && !cli.isBusy,
-          reason: 'the retried pre-flight compaction + turn settle',
+          () => stream.calls >= 2 && !cli.isBusy,
+          reason: 'the follow-up turn settles on the recovered context',
         );
         expect(io.out.toString(), contains('recovered answer'));
 
@@ -306,6 +307,7 @@ void main() {
   group('the live TUI submit boundary', () {
     late _FrameSink frames;
     late StreamController<List<int>> keys;
+    late _CancelObservingStream stream;
 
     setUp(() {
       frames = _FrameSink();
@@ -314,10 +316,9 @@ void main() {
 
     /// Boots the real CLI in TUI mode over the over-window resume.
     Future<AgentCli> bootTui() async {
-      final stream = _CancelObservingStream([
+      await seedOverWindow('tui-cancel');
+      stream = _CancelObservingStream([
         textTurn('resumed context summary'),
-        textTurn('recovered context summary'),
-        textTurn('recovered answer'),
         textTurn('spare'),
       ], hangFromCall: 1);
       final cli = AgentCli(
@@ -343,14 +344,16 @@ void main() {
       );
       final run = cli.run();
       unawaited(run.catchError((Object _) {}));
-      await seedOverWindow('tui-cancel');
+      // The boot-cap defer note prints BEFORE the TUI owns the io (the
+      // session boot precedes `_runTuiRepl`), so it lands in io.out; the
+      // alt-screen escape proves the TUI is live.
       await waitForIt(
         () =>
-            frames.plain.contains(
+            io.out.toString().contains(
               'compaction deferred to the first message',
-            ) ||
+            ) &&
             frames.text.contains('\x1b[?1049h'),
-        reason: 'the TUI booted',
+        reason: 'the TUI booted over the deferred over-window resume',
       );
       return cli;
     }
@@ -366,12 +369,13 @@ void main() {
       () async {
         final cli = await bootTui();
         try {
-          // The live TUI submit: the echo lands, the composer clears,
-          // and the pre-flight compaction freezes on the hung summarizer.
+          // The TUI submit boundary: the pre-flight compaction freezes on
+          // the hung summarizer (tuiSubmitForTest bypasses the model's
+          // echo — the text lives only in the submit call here).
           final submit = cli.tuiSubmitForTest('ZR9Q rescue me', const []);
           await waitForIt(
-            () => frames.plain.contains('ZR9Q rescue me'),
-            reason: 'the submitted text echoed into the transcript',
+            () => stream.calls >= 1,
+            reason: 'the pre-flight summarizer started',
           );
           // The esc key: aborts the pre-flight compaction mid-flight.
           keys.add([0x1B]);
@@ -385,12 +389,11 @@ void main() {
           expect(plain, contains('submission cancelled'));
           expect(plain, isNot(contains('error:')));
           expect(plain, isNot(contains('CancelledException')));
-          // The composer text is RESTORED: the echo above holds one
-          // occurrence, the refilled composer a second one (pre-fix the
-          // submitted text lived only in the stale echo).
+          // The composer text is RESTORED: pre-fix the cancelled text
+          // existed nowhere on the glass (never echoed, never restored).
           expect(
-            'ZR9Q'.allMatches(plain).length,
-            greaterThanOrEqualTo(2),
+            plain,
+            contains('ZR9Q rescue me'),
             reason: 'the composer must hold the typed text again',
           );
         } finally {
