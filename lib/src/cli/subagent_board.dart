@@ -89,10 +89,6 @@ final class SubagentBoardRow {
 /// timestamps parse tolerantly (a bad stamp degrades that column only).
 SubagentStatusRecord subagentRecordOf(SubagentHandle handle, {String? task}) {
   final total = handle.tokens + handle.liveTokens;
-  // Issue #1924: the live ctx% rides the row (prefixed to the preview) so
-  // an over-window child is visible BEFORE it stalls — the cost cell is
-  // lifetime cumulative usage and must never be misread as context.
-  final pressure = handle.contextPressureText;
   // The preview is pre-rendered host-side: strip ANSI/control sequences so
   // the frame buffer stays plain text (review thread 3 — the source is
   // model-authored `task` text; escapes measure zero-width and would ride
@@ -100,11 +96,6 @@ SubagentStatusRecord subagentRecordOf(SubagentHandle handle, {String? task}) {
   final previewSource = stripAnsi(
     (task ?? handle.task).replaceAll('\n', ' ').trim(),
   );
-  final previewText = pressure == null
-      ? previewSource
-      : previewSource.isEmpty
-      ? '[$pressure]'
-      : '[$pressure] $previewSource';
   return SubagentStatusRecord(
     id: handle.id,
     name: handle.name,
@@ -121,8 +112,22 @@ SubagentStatusRecord subagentRecordOf(SubagentHandle handle, {String? task}) {
         ? null
         : DateTime.tryParse(handle.lastActivity),
     tokens: total > 0 ? total : null,
-    preview: previewText.isEmpty ? null : previewText,
+    preview: _previewWithPressure(previewSource, handle.contextPressureText),
   );
+}
+
+/// Issue #1924: the live ctx% rides the row (prefixed to the preview) so
+/// an over-window child is visible BEFORE it stalls — the cost cell is
+/// lifetime cumulative usage and must never be misread as context. An
+/// empty task renders the bare pressure marker so the basis is never
+/// lost; both-empty stays null (the row renders `–`).
+String? _previewWithPressure(String previewSource, String? pressure) {
+  final text = pressure == null
+      ? previewSource
+      : previewSource.isEmpty
+      ? '[$pressure]'
+      : '[$pressure] $previewSource';
+  return text.isEmpty ? null : text;
 }
 
 // ---------------------------------------------------------------------------

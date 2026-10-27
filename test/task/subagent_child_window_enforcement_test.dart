@@ -361,6 +361,11 @@ void main() {
           // The board row carries the live ctx% in its preview.
           final record = subagentRecordOf(handle);
           expect(record.preview, startsWith('[~'));
+          // The bare-pressure arm: an empty task still carries the basis
+          // (CRAP-gate branch coverage, issue #1924).
+          final bare = subagentRecordOf(handle, task: '');
+          expect(bare.preview, startsWith('[~'));
+          expect(bare.preview, endsWith(']'));
           expect(record.preview, isNot(contains('OVER WINDOW')));
         },
       );
