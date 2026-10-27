@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-27T21:32:00.731Z",
+  "ticketKey": "pr-1935",
+  "headSha": "29c0c049344c98aca08e551568aa438dc598b6ba",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:a307c0496e6e9be0",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:236213726d1e3626",
+      "size": 6396
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:be0c6a2a026c5049",
+      "size": 2354
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:57af0f0961db6bd0",
+      "size": 3223
+    },
+    "request.md": {
+      "hash": "fnv1a64:91f91ecb1d5e794b",
+      "size": 2886
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:85472ea658626be8",
+      "size": 916
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:43da5ce3c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:28a858defce56fac",
+      "size": 2964
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:91f91ecb1d5e794b",
+      "size": 2886
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6w41ex",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/approval_commands.dart:1323",
+      "resolved": false,
+      "body": "💡 **SUGGESTION — start-edge feedback for long line-mode calls (confirm intent)**\n\nWith the start row gone, a *long-running* foreground call in line mode/headless now has **no per-call output for the first `waiting.toolLivenessSeconds` (default 60s)** — the old `• bash · cmd` row was the instant \"your command started\" acknowledgment. Verified in source: `toolCallStarted` only arms `ToolLivenessTracker` (`lib/src/cli/tool_liveness.dart:28`, `defaultToolLivenessSeconds = 60`); the first reminder line (which does carry tool name + detail) prints only past that horizon.\n\nThis matches the ticket (one render per call) and the PR explicitly keeps the liveness watch, so this is a confirm-question, not a change request:\n\n- If the 60s quiet window is intended → nothing to do, this comment can be resolved.\n- If a faster ack is ever wanted, the seam is a shorter **first** liveness tick (e.g. one early reminder at ~5s, then the 60s cadence) — please do **not** reintroduce a start row, that would undo gh-1931.\n\nShort-lived calls (the overwhelming majority) are unaffected: the end row lands immediately with command + glyph + elapsed."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6w41iT",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/agent_cli_tool_liveness_test.dart:31",
+      "resolved": false,
+      "body": "💡 **SUGGESTION — prefer the symbolic prefix length**\n\n`line.substring(4)` hardcodes the length of the `'fa> '` prefix:\n\n```dart\n.map((line) => line.startsWith('fa> ') ? line.substring(4) : line)\n```\n\nThe sibling helper added in this same PR (`agent_cli_single_render_test.dart`, `_rowLines`) uses the self-maintaining form:\n\n```dart\n.map(\n  (line) =>\n      line.startsWith('fa> ') ? line.substring('fa> '.length) : line,\n)\n```\n\nIf the prompt ever changes (e.g. a differently-sized mark), the literal `4` silently slices the wrong column. Cosmetic only — behavior is identical today."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:e2ba3f59",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION — start-edge feedback for long line-mode calls (confirm intent)**\n\nWith the start row gone, a *long-running* foreground call in line mode/headless now has **no per-call output for the first `waiting.toolLivenessSeconds` (default 60s)** — the old `• bash · cmd` row was the instant \"your command started\" acknowledgment. Verified in source: `toolCallStarted` only arms `ToolLivenessTracker` (`lib/src/cli/tool_liveness.dart:28`, `defaultToolLivenessSeconds = 60`); the first reminder line (which does carry tool name + detail) prints only past that horizon.\n\nThis matches the ticket (one render per call) and the PR explicitly keeps the liveness watch, so this is a confirm-question, not a change request:\n\n- If the 60s quiet window is intended → nothing to do, this comment can be resolved.\n- If a faster ack is ever wanted, the seam is a shorter **first** liveness tick (e.g. one early reminder at ~5s, then the 60s cadence) — please do **not** reintroduce a start row, that would undo gh-1931.\n\nShort-lived calls (the overwhelming majority) are unaffected: the end row lands immediately with command + glyph + elapsed."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:3f46c640",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION — prefer the symbolic prefix length**\n\n`line.substring(4)` hardcodes the length of the `'fa> '` prefix:\n\n```dart\n.map((line) => line.startsWith('fa> ') ? line.substring(4) : line)\n```\n\nThe sibling helper added in this same PR (`agent_cli_single_render_test.dart`, `_rowLines`) uses the self-maintaining form:\n\n```dart\n.map(\n  (line) =>\n      line.startsWith('fa> ') ? line.substring('fa> '.length) : line,\n)\n```\n\nIf the prompt ever changes (e.g. a differently-sized mark), the literal `4` silently slices the wrong column. Cosmetic only — behavior is identical today."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:9a0f6122",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Correct, well-scoped rendering-only fix. The production change is a single removal in `_onToolExecutionStart` (non-TUI branch); the loop guarantees a paired `ToolExecutionEndEvent` for every start (approval-deny/cancel paths emit error results — `agent_loop.dart` `_executeToolCalls*`/`_failToolCallsFromTruncatedMessage`), so exactly one row per call survives. Verified locally: analyzer clean on all 8 files, `dart format` clean, the PR's verification command passes (55 tests, incl. the byte-level AC1/AC3/AC4/AC5/E1/E2/E4 pins and the live-TUI AC2 running-card guard), all touched golden suites pass. No failed CI checks; no secrets, workflow, or persistence changes.\n\n**Key Issues** (none blocking):\n1. ⚠️ Missing `CHANGELOG.md` `## Unreleased` entry — this changes user-visible console/headless-log output (one row per call instead of two); the file's own curation policy asks for entries there and recent user-facing PRs (gh-1929, #1926, #1920, #1904) all added one.\n2. 💡 Line-mode long calls have no per-call feedback for the first 60s (`defaultToolLivenessSeconds`) — see inline comment; confirm intent.\n3. 💡 `substring(4)` vs `'fa> '.length` nit in the liveness test helper — see inline comment. (Minor: `_onToolExecutionEnd`'s doc still says \"the same detail the start row showed\" — start row now exists only as the TUI card.)\n\n**Next Steps**:\n1. Add the `## Unreleased` changelog line.\n2. Resolve the two suggestions (or resolve comment 1 as intended-behavior)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-27:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
