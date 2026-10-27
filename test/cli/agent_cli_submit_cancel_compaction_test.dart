@@ -32,9 +32,8 @@ import 'agent_cli_test_support.dart';
 // Over-TRIGGER but UNDER-WINDOW resume (the lazy regime, gh-1425 AC5):
 // boot defers and the first turn's pre-flight owns the durable compaction —
 // the exact window gh-1929 crashes in. Same numbers the resume-boot-cap
-// suite pins: 131072 window, trigger 114688, ~115k seeded tokens.
+// suite pins: 131072 window (trigger 114688), ~115k seeded tokens.
 const _window = 131072;
-const _trigger = _window - 16384;
 
 Model get _bigModel => const Model(
   id: 'test-model',
