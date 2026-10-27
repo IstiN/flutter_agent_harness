@@ -11,6 +11,7 @@ library;
 
 import '../compaction/structured/projection.dart';
 import '../compaction/summary_sanitizer.dart';
+import '../compaction/token_estimation.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../session_seal.dart';
@@ -589,7 +590,12 @@ final class Session {
   Future<List<Message>> buildContextMessages() async {
     final path = await getBranch();
     final (kept, dropped) = _applyCompactionTransform(path);
-    return _projectMessages(kept, classicHidden: dropped);
+    final messages = await _projectMessages(kept, classicHidden: dropped);
+    return _resetStaleUsageAnchors(
+      messages,
+      sourcePath: path,
+      staleEntryIds: _staleUsageAnchorEntryIds(path),
+    );
   }
 
   /// Projects an explicit record path (root-first) into messages — the
@@ -608,8 +614,13 @@ final class Session {
     final path = await getBranch();
     final state = _deriveState(path);
     final (kept, dropped) = _applyCompactionTransform(path);
+    final messages = await _projectMessages(kept, classicHidden: dropped);
     return SessionContext(
-      messages: await _projectMessages(kept, classicHidden: dropped),
+      messages: _resetStaleUsageAnchors(
+        messages,
+        sourcePath: path,
+        staleEntryIds: _staleUsageAnchorEntryIds(path),
+      ),
       thinkingLevel: state.thinkingLevel,
       model: state.model,
       activeToolNames: state.activeToolNames,
@@ -736,6 +747,53 @@ final class Session {
       model: model,
       activeToolNames: activeToolNames,
     );
+  }
+
+  /// Entries whose assistant usage predates the latest compaction boundary.
+  ///
+  /// Provider usage describes the request in which an assistant message was
+  /// generated, not the smaller context reconstructed after a compaction.
+  /// Resetting only the prefix before the boundary gives hosts the safe CLI
+  /// behavior by default while preserving fresh usage reported afterwards.
+  Set<String> _staleUsageAnchorEntryIds(List<SessionRecord> path) {
+    var boundary = -1;
+    for (var i = 0; i < path.length; i++) {
+      final entry = path[i];
+      if (entry is CompactionRecord ||
+          entry is HiddenRangeRecord ||
+          entry is CompactCheckpointRecord) {
+        boundary = i;
+      }
+    }
+    if (boundary < 0) return const {};
+    return {for (var i = 0; i < boundary; i++) path[i].id};
+  }
+
+  /// Clears generation-time usage on the projected instances that came from
+  /// stale entries. Structured projection emits visible message records
+  /// directly, so identity (rather than text/timestamp) is the reliable link
+  /// back to their source records. Custom projections remain available via
+  /// [projectPath], which intentionally performs no usage normalization.
+  List<Message> _resetStaleUsageAnchors(
+    List<Message> messages, {
+    required List<SessionRecord> sourcePath,
+    required Set<String> staleEntryIds,
+  }) {
+    if (staleEntryIds.isEmpty) return messages;
+    final staleMessages = Set<Message>.identity();
+    for (final entry in sourcePath) {
+      if (entry is MessageRecord && staleEntryIds.contains(entry.id)) {
+        staleMessages.add(entry.message);
+      }
+    }
+    if (staleMessages.isEmpty) return messages;
+    return [
+      for (final message in messages)
+        if (staleMessages.contains(message))
+          resetLoadedUsageAnchors([message]).single
+        else
+          message,
+    ];
   }
 
   /// The classic compaction cut: everything before the LAST
