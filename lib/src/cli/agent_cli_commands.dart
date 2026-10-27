@@ -257,14 +257,22 @@ extension SlashCommandDispatch on AgentCli {
       _quotaService ??= ProviderQuotaService(
         adapters: {
           'openrouter': OpenRouterQuotaAdapter(
-            client: config.quotaHttpClient ?? sharedProviderHttpClient(),
+            // OQ2 (issue #1921): a bound provider's quota requests honor
+            // the same proxy gate as its chat traffic.
+            client:
+                config.quotaHttpClient ??
+                proxiedProviderClient('openrouter') ??
+                sharedProviderHttpClient(),
             resolveApiKey: () async {
               final spec = providerCatalog['openrouter']!;
               return _providerKeyFor(spec, spec.defaultBaseUrl);
             },
           ),
           'codemie': CodeMieQuotaAdapter(
-            client: config.quotaHttpClient ?? sharedProviderHttpClient(),
+            client:
+                config.quotaHttpClient ??
+                proxiedProviderClient('codemie') ??
+                sharedProviderHttpClient(),
             // OQ1 lean (b): no pinned limits endpoint — the adapter stays
             // dark until the endpoint is confirmed, and renders its reason.
             resolveSessionCookie: _resolveCodeMieSessionCookie,

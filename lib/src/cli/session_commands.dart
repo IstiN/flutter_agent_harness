@@ -1147,7 +1147,13 @@ extension on AgentCli {
       );
       if (!applied) return;
     } else {
-      _streamFunction = _catalogStreamFunction(spec.kind, key);
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        key,
+        // _activeCustomName was JUST assigned from entry?.name above —
+        // state it explicitly (entry bind keys the entry name).
+        providerName: entry?.name ?? spec.name,
+      );
       _agent.streamFunction = _streamFunction;
     }
     if (key.isEmpty) {

@@ -1555,6 +1555,8 @@ Future<void> _runApp(List<String> args) async {
         // null = the section is absent — no sweep, no note (AC1).
         sessionsRetention: saved.sessions,
         projectContext: projectContextConfig,
+        // Per-provider proxy bindings (issue #1921) ride the loaded config.
+        providerNetworks: saved.providerNetworks,
         // Shared by the env config and the presence store below.
         env: cliEnv,
         // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the
