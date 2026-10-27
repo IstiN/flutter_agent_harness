@@ -367,7 +367,9 @@ void main() {
       final out = io.out.toString();
       expect(out, contains('pondering…'), reason: out);
       // Order: thinking renders before the narration and the tool row.
-      expect(out.indexOf('pondering…'), lessThan(out.indexOf('• bash')));
+      // gh-1931: the tool line is the single end row (the start row was
+      // the duplicate print).
+      expect(out.indexOf('pondering…'), lessThan(out.indexOf('✓ bash')));
       expect(out.indexOf('pondering…'), lessThan(out.indexOf('done')));
     });
 
@@ -451,25 +453,24 @@ void main() {
       expect(exit, 0);
       final out = io.out.toString();
       final narration = out.indexOf('Checking the file now.');
-      final toolStart = out.indexOf('• bash');
-      final toolEnd = out.indexOf('✓ bash');
+      // gh-1931: ONE tool line per call — the end row (start row removed).
+      final toolRow = out.indexOf('✓ bash');
       final trailingAt = out.indexOf(trailing);
       final finalText = out.indexOf('All done — found it.');
       expect(narration, greaterThanOrEqualTo(0));
       expect(
-        toolStart,
+        toolRow,
         greaterThan(narration),
         reason: 'narration before the tool line:\n$out',
       );
-      expect(toolEnd, greaterThan(toolStart));
       expect(
         trailingAt,
-        greaterThan(toolEnd),
+        greaterThan(toolRow),
         reason:
             'same-message trailing narration after the RESULT row:\n'
             '$out',
       );
-      expect(finalText, greaterThan(toolEnd));
+      expect(finalText, greaterThan(toolRow));
     });
 
     test('AC3 multi-call: narration follows ITS OWN result row when one '
@@ -570,7 +571,8 @@ void main() {
       expect(out, contains('pondering…'));
       // The thinking closes with ONE newline; the whitespace-only
       // narration must not add another blank line before the tool row.
-      final toolRowAt = out.indexOf('• bash');
+      // gh-1931: the tool line is the single end row.
+      final toolRowAt = out.indexOf('✓ bash');
       expect(toolRowAt, greaterThan(0));
       final before = out.substring(0, toolRowAt);
       expect(
@@ -733,8 +735,9 @@ void main() {
         final out = io.out.toString();
         expect(out.contains('pondering'), isFalse, reason: out);
         expect(out.contains('\x1B[2m'), isFalse, reason: out);
-        // The legacy shape still carries the tool activity and the answer.
-        expect(out, contains('• bash'));
+        // The legacy shape still carries the tool activity and the answer —
+        // gh-1931: the single end row (command + status + elapsed).
+        expect(out, contains('✓ bash · echo hi 0s'));
         expect(out, contains('All done — found it.'));
       },
     );
