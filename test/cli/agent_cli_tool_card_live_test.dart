@@ -50,102 +50,108 @@ String _normalize(String s) => s
     .replaceAll(RegExp(' +'), ' ');
 
 void main() {
-  test('live tool end paints the settled card fed exactly like the shared '
-      'builder expects (start-event detail, success phase, elapsed meta)',
-      () async {
-    final frames = _FrameSink();
-    final keys = StreamController<List<int>>();
-    addTearDown(keys.close);
-    final shell = FakeShell(stdout: 'hi');
-    final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
-    final io = FakeCliIO();
-    final config = AgentCliConfig(
-      model: testModel,
-      apiKey: 'test-key',
-      env: env,
-      sessionRoot: '/sessions',
-      approvalMode: ApprovalMode.yolo,
-      skillsAccess: SkillsAccess.granted,
-      tuiProgramHooks: TuiProgramHooks(
-        input: keys.stream,
-        output: frames,
-        width: 80,
-        height: 24,
-      ),
-    );
-    final cli = AgentCli(
-      config: config,
-      io: io,
-      useTui: true,
-      streamFunction: FakeStreamFunction([
-        toolTurn([
-          const ToolCall(id: 't1', name: 'bash', arguments: {
-            'command': 'echo hi',
-          }),
-        ]),
-        textTurn('done'),
-      ]).call,
-    );
-    final run = cli.run();
-    try {
-      await waitForIt(
-        () => frames.text.contains('\x1b[?1049h'),
-        reason: 'the TUI boot reached the frame renderer',
+  test(
+    'live tool end paints the settled card fed exactly like the shared '
+    'builder expects (start-event detail, success phase, elapsed meta)',
+    () async {
+      final frames = _FrameSink();
+      final keys = StreamController<List<int>>();
+      addTearDown(keys.close);
+      final shell = FakeShell(stdout: 'hi');
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final io = FakeCliIO();
+      final config = AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        approvalMode: ApprovalMode.yolo,
+        skillsAccess: SkillsAccess.granted,
+        tuiProgramHooks: TuiProgramHooks(
+          input: keys.stream,
+          output: frames,
+          width: 80,
+          height: 24,
+        ),
       );
-      // Submit the prompt: the fake provider streams one bash tool turn,
-      // then the final text turn.
-      keys.add(utf8.encode('hi'));
-      keys.add([0x0d]);
-      // The final text turn proves the whole loop ran: the settled card
-      // painted before it.
-      await waitForIt(
-        () => _normalize(frames.text).contains('done'),
-        reason: 'the turn settled with the final text',
+      final cli = AgentCli(
+        config: config,
+        io: io,
+        useTui: true,
+        streamFunction: FakeStreamFunction([
+          toolTurn([
+            const ToolCall(
+              id: 't1',
+              name: 'bash',
+              arguments: {'command': 'echo hi'},
+            ),
+          ]),
+          textTurn('done'),
+        ]).call,
       );
+      final run = cli.run();
+      try {
+        await waitForIt(
+          () => frames.text.contains('\x1b[?1049h'),
+          reason: 'the TUI boot reached the frame renderer',
+        );
+        // Submit the prompt: the fake provider streams one bash tool turn,
+        // then the final text turn.
+        keys.add(utf8.encode('hi'));
+        keys.add([0x0d]);
+        // The final text turn proves the whole loop ran: the settled card
+        // painted before it.
+        await waitForIt(
+          () => _normalize(frames.text).contains('done'),
+          reason: 'the turn settled with the final text',
+        );
 
-      // The oracle: the builder fed with EXACTLY the live edge's call —
-      // the gh-1933 v2 derivation (`settledCallCardRows`: bash intent
-      // label, output-lines count, right-aligned elapsed zone, dim
-      // command preview) at `_rowWidth` (the pinned TUI width). An
-      // in-process bash call always lands inside its first second.
-      final oracle = settledCallCardRows(
-        toolName: 'bash',
-        args: const {'command': 'echo hi'},
-        resultContent: const [TextContent(text: 'hi')],
-        isError: false,
-        width: 80,
-        elapsed: '0s',
-        cwd: '/work',
-        home: config.homeDir,
-      );
-      final oracleHeader = oracle.first;
-      final oraclePreview = oracle.last;
-      expect(
-        _normalize(frames.text),
-        contains(_normalize(oracleHeader)),
-        reason: 'the live edge must feed the shared derivation its exact '
-            'material (name, args, result, phase, width, elapsed) — '
-            'frames=${frames.text}',
-      );
-      // The dim command preview renders as its own row (the frame
-      // renderer separates rows with cursor moves, so rows assert one by
-      // one).
-      expect(
-        _normalize(frames.text),
-        contains(_normalize(oraclePreview)),
-        reason: 'frames=${frames.text}',
-      );
-      // The command really executed through the env (the card describes a
-      // real run, not a synthetic event).
-      expect(shell.commands, contains('echo hi'));
-    } finally {
-      keys.add([0x03]); // ctrl+c press 1: arms the double-press window
-      keys.add([0x03]); // press 2: quits the TUI
-      await run.timeout(const Duration(seconds: 10), onTimeout: () {});
-      await io.close();
-      await keys.close();
-    }
-  }, timeout: const Timeout(Duration(seconds: 60)));
+        // The oracle: the builder fed with EXACTLY the live edge's call —
+        // the gh-1933 v2 derivation (`settledCallCardRows`: bash intent
+        // label, output-lines count, right-aligned elapsed zone, dim
+        // command preview) at `_rowWidth` (the pinned TUI width). An
+        // in-process bash call always lands inside its first second.
+        final oracle = settledCallCardRows(
+          toolName: 'bash',
+          args: const {'command': 'echo hi'},
+          resultContent: const [TextContent(text: 'hi')],
+          isError: false,
+          width: 80,
+          elapsed: '0s',
+          cwd: '/work',
+          home: config.homeDir,
+        );
+        final oracleHeader = oracle.first;
+        final oraclePreview = oracle.last;
+        expect(
+          _normalize(frames.text),
+          contains(_normalize(oracleHeader)),
+          reason:
+              'the live edge must feed the shared derivation its exact '
+              'material (name, args, result, phase, width, elapsed) — '
+              'frames=${frames.text}',
+        );
+        // The dim command preview renders as its own row (the frame
+        // renderer separates rows with cursor moves, so rows assert one by
+        // one).
+        expect(
+          _normalize(frames.text),
+          contains(_normalize(oraclePreview)),
+          reason: 'frames=${frames.text}',
+        );
+        // The command really executed through the env (the card describes a
+        // real run, not a synthetic event).
+        expect(shell.commands, contains('echo hi'));
+      } finally {
+        keys.add([0x03]); // ctrl+c press 1: arms the double-press window
+        keys.add([0x03]); // press 2: quits the TUI
+        await run.timeout(const Duration(seconds: 10), onTimeout: () {});
+        await io.close();
+        await keys.close();
+      }
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
 
   test('live thinking collapses to ONE `> Thought for Ns` row in the TUI '
       '(gh-1933 AC4) — the per-delta stream is gone; expand all renders '
@@ -157,7 +163,10 @@ void main() {
         content: [ThinkingContent(thinking: think)],
       );
       final partial = testAssistant(
-        content: [ThinkingContent(thinking: think), TextContent(text: answer)],
+        content: [
+          ThinkingContent(thinking: think),
+          TextContent(text: answer),
+        ],
       );
       return [
         StartEvent(partial: empty),

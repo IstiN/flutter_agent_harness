@@ -85,43 +85,45 @@ void main() {
     fail('timed out waiting for async condition');
   }
 
-  test('/transcript expand toggles the collapsed-detail state (gh-1933)',
-      () async {
-    // Session-start memory maintenance is due on a fresh env (no stamp);
-    // its consolidate() would consume a scripted turn on a slow runner.
-    await env.writeFile('/work/.fah/memory/.last_maintenance', '');
-    addTearDown(() => transcriptExpandDetails = false);
-    final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
-    final run = cli.run();
-    io.sendLine('/transcript');
-    io.sendLine('/transcript expand all');
-    io.sendLine('/transcript expand bogus');
-    io.sendLine('/transcript expand none');
-    io.sendLine('/exit');
-    await run;
-    final out = io.out.toString();
-    expect(
-      out,
-      contains('transcript rows are collapsed'),
-      reason: 'bare /transcript reports the state',
-    );
-    // Review thread PRRT_kwDOTXdlLc6w5WG8: outside the TUI chrome face the
-    // expansion state renders nothing observable (line mode streams
-    // thinking per-delta or never; the line replay renders thinking NEVER)
-    // — the mutating arms say so instead of confirming a no-op.
-    expect(
-      out,
-      contains('transcript expand only affects the TUI chrome transcript'),
-      reason: 'this harness is the line-mode (non-TUI) face',
-    );
-    expect(out, contains('usage: /transcript expand all|none'));
-    expect(
-      transcriptExpandDetails,
-      isFalse,
-      reason: 'a non-TUI face leaves the render state alone',
-    );
-    expect(cli.isBusy, isFalse);
-  });
+  test(
+    '/transcript expand toggles the collapsed-detail state (gh-1933)',
+    () async {
+      // Session-start memory maintenance is due on a fresh env (no stamp);
+      // its consolidate() would consume a scripted turn on a slow runner.
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      addTearDown(() => transcriptExpandDetails = false);
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+      final run = cli.run();
+      io.sendLine('/transcript');
+      io.sendLine('/transcript expand all');
+      io.sendLine('/transcript expand bogus');
+      io.sendLine('/transcript expand none');
+      io.sendLine('/exit');
+      await run;
+      final out = io.out.toString();
+      expect(
+        out,
+        contains('transcript rows are collapsed'),
+        reason: 'bare /transcript reports the state',
+      );
+      // Review thread PRRT_kwDOTXdlLc6w5WG8: outside the TUI chrome face the
+      // expansion state renders nothing observable (line mode streams
+      // thinking per-delta or never; the line replay renders thinking NEVER)
+      // — the mutating arms say so instead of confirming a no-op.
+      expect(
+        out,
+        contains('transcript expand only affects the TUI chrome transcript'),
+        reason: 'this harness is the line-mode (non-TUI) face',
+      );
+      expect(out, contains('usage: /transcript expand all|none'));
+      expect(
+        transcriptExpandDetails,
+        isFalse,
+        reason: 'a non-TUI face leaves the render state alone',
+      );
+      expect(cli.isBusy, isFalse);
+    },
+  );
 
   test('an untouched session leaves no file behind on exit', () async {
     // Session-start memory maintenance is due on a fresh env (no stamp);

@@ -82,8 +82,9 @@ const _nonSettingsCommands = <String, String>{
   '/stats': 'read-only token/cost totals',
   '/tasks': 'lists/cancels background jobs',
   '/transcript':
-      'session-scoped transcript detail expansion (gh-1933) — render '
-      'state only, no config.yaml setting',
+      'process-scoped transcript detail expansion (gh-1933) — render '
+      'state only, no config.yaml setting; expansion answers only on '
+      'the TUI chrome face',
   '/reset': 'starts a new session (no persisted setting)',
   '/restart': 'aborts a run and re-runs its steering, nothing persisted',
   '/compact': 'manual compaction (no persisted setting)',

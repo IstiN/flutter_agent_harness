@@ -25,7 +25,8 @@ import '../tools/read_selector.dart'
 import '../types.dart' show ContentBlock, TextContent;
 import 'tool_rows.dart'
     show briefPath, collapseCd, shellJobCommandPreview, toolRowDetail;
-import 'tui_chrome.dart' show failureFirstLine, paintDiffstat, settledToolCardRows;
+import 'tui_chrome.dart'
+    show failureFirstLine, paintDiffstat, settledToolCardRows;
 
 /// Lines added/removed by one applied change (gh-1933 AC2).
 final class DiffStat {
@@ -162,8 +163,7 @@ String _selectorToken(String sel) {
   };
 }
 
-String _rangeToken(LineRange range) =>
-    range.endLine == null
+String _rangeToken(LineRange range) => range.endLine == null
     ? '${range.startLine}-'
     : '${range.startLine}-${range.endLine}';
 
@@ -181,8 +181,7 @@ String? readOutcomeMeta(String text) {
     r'^\[Showing lines (\d+)-(\d+) of (\d+)\.',
   ).firstMatch(notice);
   if (match != null) {
-    final shown =
-        int.parse(match.group(2)!) - int.parse(match.group(1)!) + 1;
+    final shown = int.parse(match.group(2)!) - int.parse(match.group(1)!) + 1;
     return '$shown of ${match.group(3)} lines read';
   }
   final lines = trimmed.split('\n').length;
@@ -230,11 +229,7 @@ List<String> thinkingCollapsedRows({
   required String text,
   int? seconds,
   bool expanded = false,
-}) =>
-    [
-      '> ${thinkingRowLabel(seconds)}',
-      if (expanded) ...text.split('\n'),
-    ];
+}) => ['> ${thinkingRowLabel(seconds)}', if (expanded) ...text.split('\n')];
 
 /// One settled row's derived content (gh-1933 capability surface).
 final class ToolRowContent {
@@ -383,10 +378,8 @@ String _firstStringArg(Map<String, dynamic> args) {
   return '';
 }
 
-String _resultText(List<ContentBlock> content) => content
-    .whereType<TextContent>()
-    .map((block) => block.text)
-    .join();
+String _resultText(List<ContentBlock> content) =>
+    content.whereType<TextContent>().map((block) => block.text).join();
 
 /// The settled end-row BOTH edges paint for one executed call (gh-1933):
 /// the per-tool content contract through the shared

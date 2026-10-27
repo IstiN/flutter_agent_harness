@@ -134,14 +134,14 @@ void main() {
     });
 
     test('a truncated read reports shown-of-total from the notice', () {
-      const text = 'l1\nl2\n\n[Showing lines 1-2 of 200. '
+      const text =
+          'l1\nl2\n\n[Showing lines 1-2 of 200. '
           'Use offset=3 to continue.]';
       expect(readOutcomeMeta(text), '2 of 200 lines read');
     });
 
     test('a notice QUOTED mid-content is not an outcome meta (review '
-        'thread PRRT_kwDOTXdlLc6w5WAf — the notice anchors to the tail)',
-    () {
+        'thread PRRT_kwDOTXdlLc6w5WAf — the notice anchors to the tail)', () {
       // Agents read session JSONLs and harness logs that embed PAST
       // truncation notices; only a notice that is the result's LAST line
       // is this read's own continuation notice.
@@ -153,7 +153,8 @@ void main() {
 
     test('the notice is recognized as the last line even after blank '
         'padding', () {
-      const text = 'l1\nl2\n\n[Showing lines 90-140 of 500. '
+      const text =
+          'l1\nl2\n\n[Showing lines 90-140 of 500. '
           'Use offset=141 to continue.]   ';
       expect(readOutcomeMeta(text), '51 of 500 lines read');
     });
@@ -223,11 +224,9 @@ void main() {
     List<ContentBlock> text(String s) => [TextContent(text: s)];
 
     test('read: path + selector detail, lines-read meta', () {
-      final c = toolRowContent(
-        'read',
-        {'path': 'sm.yml:90-140'},
-        resultContent: text('a\nb'),
-      );
+      final c = toolRowContent('read', {
+        'path': 'sm.yml:90-140',
+      }, resultContent: text('a\nb'));
       expect(c.detail, 'sm.yml:90-140');
       expect(c.meta, contains('2 lines read'));
       expect(c.diffstat, isNull);
@@ -235,27 +234,26 @@ void main() {
     });
 
     test('edit: path detail + diffstat fragment; write: path + +N', () {
-      final edit = toolRowContent(
-        'edit',
-        {'path': 'a.yml', 'oldText': 'x: 1', 'newText': 'x: 2\ny: 3'},
-      );
+      final edit = toolRowContent('edit', {
+        'path': 'a.yml',
+        'oldText': 'x: 1',
+        'newText': 'x: 2\ny: 3',
+      });
       expect(edit.detail, 'a.yml');
       expect(edit.diffstat, '+2 −1');
 
-      final write = toolRowContent(
-        'write',
-        {'path': 'notes.txt', 'content': 'one\ntwo\nthree'},
-      );
+      final write = toolRowContent('write', {
+        'path': 'notes.txt',
+        'content': 'one\ntwo\nthree',
+      });
       expect(write.detail, 'notes.txt');
       expect(write.diffstat, '+3 −0');
     });
 
     test('bash: intent detail + lines meta + dim command preview', () {
-      final c = toolRowContent(
-        'bash',
-        {'command': 'cd /w && dart analyze && dart test'},
-        resultContent: text('out1\nout2\nout3'),
-      );
+      final c = toolRowContent('bash', {
+        'command': 'cd /w && dart analyze && dart test',
+      }, resultContent: text('out1\nout2\nout3'));
       expect(c.detail, 'dart analyze && dart test');
       expect(c.meta, contains('3 lines'));
       expect(c.preview, hasLength(1));
@@ -272,10 +270,10 @@ void main() {
         ],
       });
       expect(spawn.detail, contains('explorer'));
-      final send = toolRowContent(
-        'task_send',
-        {'id': 'explorer', 'message': 'also check the tests'},
-      );
+      final send = toolRowContent('task_send', {
+        'id': 'explorer',
+        'message': 'also check the tests',
+      });
       expect(send.detail, contains('explorer'));
       final resume = toolRowContent('task_resume', {'id': 'explorer'});
       expect(resume.detail, contains('explorer'));
@@ -289,11 +287,9 @@ void main() {
     });
 
     test('request_secret names the credential', () {
-      final c = toolRowContent(
-        'request_secret',
-        {'name': 'GITHUB_TOKEN'},
-        resultContent: text('saved'),
-      );
+      final c = toolRowContent('request_secret', {
+        'name': 'GITHUB_TOKEN',
+      }, resultContent: text('saved'));
       expect(c.detail, contains('GITHUB_TOKEN'));
     });
 
@@ -307,11 +303,9 @@ void main() {
     });
 
     test('unknown tools degrade to their first string argument', () {
-      final c = toolRowContent(
-        'mcp__fs__stat',
-        {'path': '/tmp/x'},
-        resultContent: const [],
-      );
+      final c = toolRowContent('mcp__fs__stat', {
+        'path': '/tmp/x',
+      }, resultContent: const []);
       expect(c.detail, '/tmp/x');
       expect(c.meta, isEmpty);
     });

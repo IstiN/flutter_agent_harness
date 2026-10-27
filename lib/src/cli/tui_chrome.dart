@@ -148,7 +148,8 @@ String tuiToolCardHeader(ToolCardSegments s, TuiCardPhase phase, int width) {
   final tailBudget = remain - elapsedW;
 
   final (desc, badge, meta, diff) = _squeezeCardTail(s, tailBudget);
-  final body = headRaw + _paintCardTail(c, phase, (desc, badge, meta, diff), paint);
+  final body =
+      headRaw + _paintCardTail(c, phase, (desc, badge, meta, diff), paint);
   if (elapsed.isEmpty) return body;
   // Right-align: pad the body so the elapsed zone ENDS at the row edge.
   final usedTail = tuiTextWidth('$desc$badge$meta$diff');
@@ -292,9 +293,10 @@ List<String> tuiToolCard(
     // The gh-1933 dim preview rows (the bash command preview): one line,
     // painted in the dim toolOutput role UNDER the tint (the view-time
     // formatter keeps inner styling over the phase band).
-    ..._previewLines(previewLines, maxPreviewLines).map(
-      (line) => paintRow(c.profile == null ? line : c.toolOutput(line)),
-    ),
+    ..._previewLines(
+      previewLines,
+      maxPreviewLines,
+    ).map((line) => paintRow(c.profile == null ? line : c.toolOutput(line))),
   ];
 }
 

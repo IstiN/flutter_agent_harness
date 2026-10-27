@@ -155,7 +155,11 @@ void main() {
       expect(failed, [liveEndRow(call, error)]);
       expect(failed.single, contains('✗'));
       expect(failed.single, contains('fatal: not a repo'));
-      final interrupted = replayLinesTui(assistant([call]), width: 80, dim: dim);
+      final interrupted = replayLinesTui(
+        assistant([call]),
+        width: 80,
+        dim: dim,
+      );
       expect(interrupted, [liveEndRow(call, null)]);
       expect(interrupted.single, contains('✗'));
     });
@@ -403,8 +407,7 @@ void main() {
     });
 
     test('expanded thinking renders the persisted text dim under the '
-        'label (gh-1933 AC4/AC5 — nothing today\'s replay showed is lost)',
-    () {
+        'label (gh-1933 AC4/AC5 — nothing today\'s replay showed is lost)', () {
       // Review thread PRRT_kwDOTXdlLc6w5WFF: the `/transcript expand all`
       // global is the ONE expansion channel — no parallel parameter.
       transcriptExpandDetails = true;
@@ -631,11 +634,7 @@ void main() {
         arguments: {'path': 'sm.yml:90-140'},
       );
       final row = strip(
-        replayToolRow(
-          call,
-          okResult('r1', 'a\nb\nc'),
-          width: 100,
-        ),
+        replayToolRow(call, okResult('r1', 'a\nb\nc'), width: 100),
       );
       expect(row, contains('sm.yml:90-140'));
       expect(row, contains('3 lines read'));
@@ -653,11 +652,7 @@ void main() {
         },
       );
       final row = strip(
-        replayToolRow(
-          call,
-          okResult('e1', 'Edited a.yml.'),
-          width: 100,
-        ),
+        replayToolRow(call, okResult('e1', 'Edited a.yml.'), width: 100),
       );
       expect(row, contains('a.yml'));
       expect(row, contains('+1 −2'));
@@ -668,9 +663,7 @@ void main() {
       final call = ToolCall(
         id: 'e2',
         name: 'edit',
-        arguments: {
-          'patch': '[a.yml#DEAD]\nSWAP 1.=1:\n+nope',
-        },
+        arguments: {'patch': '[a.yml#DEAD]\nSWAP 1.=1:\n+nope'},
       );
       final row = strip(
         replayToolRow(
@@ -835,6 +828,4 @@ void main() {
       expect(rendered, file.readAsStringSync());
     });
   });
-
-
 }
