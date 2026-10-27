@@ -59,7 +59,7 @@ extension AgentCliRun on AgentCli {
   }) async {
     // herdr pane state (issue #1481): a turn is working.
     _herdrRunWorking();
-    var promptCommitted = false;
+    var preFlightCancelled = false;
     try {
       // gh-1241: the owner opens the usage segment lazily at the FIRST
       // drive — an idle boot or a `/sessions` switch that never drives
@@ -67,13 +67,21 @@ extension AgentCliRun on AgentCli {
       // the marker must precede this segment's request records.
       // Per-session idempotent (auto-continuations and later turns skip).
       await _markUsageSegmentStart();
-      // gh-1929: the pre-flight belongs INSIDE the guarded body. Its
-      // cancellation (esc during the pre-flight compaction window, the
-      // deliberate #1085 rethrow) is a USER-CANCEL outcome for the whole
-      // submission — outside the try it escaped into `_startRun`'s
-      // unlistened `whenComplete` chain and crashed the process.
-      await _beginUserPrompt(isAutoContinue: isAutoContinue);
-      promptCommitted = true;
+      try {
+        await _beginUserPrompt(isAutoContinue: isAutoContinue);
+      } on CancelledException {
+        // gh-1929: ONLY the PRE-FLIGHT window translates the compaction
+        // layer's deliberate abort (#1085) into a user-cancel outcome —
+        // the submission never went out. Pre-fix the rethrow escaped
+        // [_runPrompt] entirely and crashed the process via `_startRun`'s
+        // unlistened `whenComplete` chain. A cancel DURING the run (the
+        // in-flight relief, the settle funnel) keeps its loud-abort
+        // behavior — the outer catch below.
+        preFlightCancelled = true;
+        _renderUserCancel('submission cancelled');
+        _submissionCancelRestorePending = true;
+      }
+      if (preFlightCancelled) return;
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(text));
       } else {
@@ -100,14 +108,6 @@ extension AgentCliRun on AgentCli {
         isAutoContinue: isAutoContinue,
       );
       if (finished) await _afterRun();
-    } on CancelledException {
-      // gh-1929: the user cancelled the submission (esc/Ctrl+C during
-      // the pre-flight compaction window — the compaction layer's
-      // deliberate abort). Render the neutral cancelled status — never
-      // an `error:` line, never a crash report — and mark the restore
-      // for the TUI submit boundary when the prompt was never sent.
-      _renderUserCancel('submission cancelled');
-      if (!promptCommitted) _submissionCancelRestorePending = true;
     } catch (error) {
       await _handleRunError(error);
     }

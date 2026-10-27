@@ -2327,10 +2327,20 @@ class AgentCli {
       // The same pre-flight compaction guard as the REPL's [_runPrompt]:
       // a resumed session already over the threshold must compact BEFORE
       // the first request, or it goes out over-window and gets rejected.
-      // Inside the guarded section (issue #1085 round-4): a cancel here
-      // surfaces through the same loud error line as any run failure —
-      // the listener above is already live for it.
-      await _maybeAutoCompact();
+      // Inside the guarded section (issue #1085 round-4): the listener
+      // above is already live for it. gh-1929: a cancel HERE — the
+      // pre-flight window, the prompt never sent — exits with the
+      // CANCELLED semantics (130, the aborted-run code) and the neutral
+      // dim receipt; a cancel DURING the run (in-flight relief, settle
+      // funnel) keeps its loud abort via the error line + exit 1 below
+      // (the pinned mid-run contract).
+      try {
+        await _maybeAutoCompact();
+      } on CancelledException {
+        _sealReactionRuns();
+        _renderUserCancel('submission cancelled');
+        return 130;
+      }
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(prompt));
       } else {
@@ -2383,15 +2393,6 @@ class AgentCli {
         // otherwise print the honest detach summary before exiting.
         await _waiting.waitForJobsOrSummarize(waitForJobs: waitForJobs);
       }
-    } on CancelledException {
-      // gh-1929: esc/Ctrl+C during the pre-flight compaction window —
-      // the compaction layer's deliberate abort (#1085) must exit with
-      // the CANCELLED semantics (130, the aborted-run code) and the
-      // neutral dim receipt, never the failure path's `error:` line and
-      // exit 1.
-      _sealReactionRuns();
-      _renderUserCancel('submission cancelled');
-      return 130;
     } catch (error) {
       // gh-1589: the run is over — settles from here do bookkeeping only
       // (the finally below still seals the file).
