@@ -2359,6 +2359,34 @@ void main() {
     List<dynamic> messagesOf(Map<String, dynamic> body) =>
         body['messages'] as List<dynamic>;
 
+    test('user AudioContent becomes input_audio (OpenRouter dialect)', () async {
+      final body = await sentBody(
+        testModel,
+        Context(
+          messages: [
+            UserMessage(
+              content: const [
+                TextContent(text: 'What do you hear?'),
+                AudioContent(data: 'aGk=', mimeType: 'audio/mp4'),
+              ],
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        ),
+      );
+      final messages = messagesOf(body);
+      expect(messages.last, {
+        'role': 'user',
+        'content': [
+          {'type': 'text', 'text': 'What do you hear?'},
+          {
+            'type': 'input_audio',
+            'input_audio': {'data': 'aGk=', 'format': 'm4a'},
+          },
+        ],
+      });
+    });
+
     test('pipe-separated tool call ids reduce to the call id part', () async {
       final body = await sentBody(
         testModel,
