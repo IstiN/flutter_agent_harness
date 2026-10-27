@@ -925,6 +925,12 @@ Map<String, dynamic>? _convertUserMessage(UserMessage message) {
         parts.add({'text': item.text});
       case ImageContent():
         parts.add(_convertImageContent(item));
+      case AudioContent():
+        // Gemini audio understanding: raw bytes ride inlineData exactly
+        // like images (mp3, mp4/m4a, wav, aac, flac, ogg mime types).
+        parts.add({
+          'inlineData': {'mimeType': item.mimeType, 'data': item.data},
+        });
       case ThinkingContent() || ToolCall():
         // Not valid in user messages; skip defensively.
         break;
@@ -987,7 +993,7 @@ Map<String, dynamic>? _convertAssistantBlock(
       includeId,
     ),
     // Not valid in assistant messages; skip defensively.
-    ImageContent() => null,
+    ImageContent() || AudioContent() => null,
   };
 }
 
