@@ -32,6 +32,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 // LocalExecutionEnv is a VM-only surface (dart:io-backed) — it ships via
 // the io.dart barrel, not the platform-neutral one.
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/cli/tool_row_content.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
@@ -518,20 +519,19 @@ void main() {
           reason: 'the TUI keeps its running card — frames=${frames.text}',
         );
         // ...and the settled card still lands on the end edge — the SAME
-        // shared builder the live edge feeds (start detail, success phase,
-        // pinned width, elapsed meta).
-        final startDetail = toolRowDetail(
-          'bash',
-          const {'command': 'echo hi'},
-          cwd: '/work',
-          home: config.homeDir,
-        );
-        final settled = settledToolCardRows(
+        // shared builder the live edge feeds, fed through the gh-1933 v2
+        // derivation ([settledCallCardRows]: bash intent detail, output
+        // lines meta, right elapsed zone, dim command preview) so the
+        // golden can never drift from the real call site.
+        final settled = settledCallCardRows(
           toolName: 'bash',
-          successDetail: startDetail,
+          args: const {'command': 'echo hi'},
+          resultContent: [const TextContent(text: 'hi\n')],
           isError: false,
           width: 80,
-          meta: const ['0s'],
+          elapsed: '0s',
+          cwd: '/work',
+          home: config.homeDir,
         );
         expect(
           _normalize(frames.text),
