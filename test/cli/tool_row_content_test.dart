@@ -308,6 +308,28 @@ void main() {
       expect(c.meta, isEmpty);
       expect(c.diffstat, isNull);
     });
+
+    test('AC5: the derivation is pure — persisted record material is '
+        'never mutated (rendering-only)', () {
+      final args = <String, dynamic>{
+        'path': 'a.yml',
+        'oldText': 'x: 1',
+        'newText': 'x: 2',
+      };
+      final resultContent = [TextContent(text: 'out')];
+      final argsSnapshot = Map.of(args);
+      final resultSnapshot = List.of(resultContent);
+      settledCallCardRows(
+        toolName: 'edit',
+        args: args,
+        resultContent: resultContent,
+        isError: false,
+        width: 80,
+        elapsed: '1s',
+      );
+      expect(args, argsSnapshot);
+      expect(resultContent, resultSnapshot);
+    });
   });
 
   group('UT-width (gh-1933 AC6)', () {

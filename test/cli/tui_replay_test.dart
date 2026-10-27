@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/system_notice_render.dart';
 import 'package:flutter_agent_harness/src/cli/tool_row_content.dart'
-    show settledCallCardRows, thinkingCollapsedRows, transcriptExpandDetails;
+    show settledCallCardRows, transcriptExpandDetails;
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart'
     show tuiChromeEnabled;
@@ -397,7 +397,7 @@ void main() {
         dim: dim,
       );
       expect(rows, [
-        '${dim('> Thought for —')}',
+        dim('> Thought for —'),
         '${assistantStreamPrefix()}the answer',
       ]);
     });
