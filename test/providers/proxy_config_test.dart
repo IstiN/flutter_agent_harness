@@ -121,6 +121,21 @@ void main() {
     });
   });
 
+  group('port range', () {
+    test('out-of-range port is rejected with a named config error', () {
+      expect(
+        () => parse(yamlOf('proxy: http://proxy.corp:99999')),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('proxy port 99999 out of range 1..65535'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('credential half-validation', () {
     test('proxyUsername without proxyPasswordEnv is rejected', () {
       expect(

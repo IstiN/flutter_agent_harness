@@ -123,6 +123,11 @@ final class ProviderNetworkConfig {
         'user+pass); set proxyUsername next to proxyPasswordEnv',
       );
     }
+    if (uri.port != 0 && (uri.port < 1 || uri.port > 65535)) {
+      throw ConfigException(
+        '$configLabel: proxy port ${uri.port} out of range 1..65535',
+      );
+    }
     return ProviderNetworkConfig(
       proxy: uri,
       proxyUsername: username,

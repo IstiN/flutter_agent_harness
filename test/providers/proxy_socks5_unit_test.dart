@@ -209,6 +209,27 @@ void main() {
       },
     );
 
+    test('non-ASCII credential fails named, not with a codec error', () async {
+      final rec = _Rec();
+      await expectLater(
+        socks5NegotiateAuth(
+          rec.readerFor([
+            [0x05, 0x02],
+          ]),
+          rec.written.add,
+          username: 'usér',
+          password: 'p',
+        ),
+        throwsA(
+          isA<SocketException>().having(
+            (e) => e.message,
+            'message',
+            contains('credentials must be ASCII'),
+          ),
+        ),
+      );
+    });
+
     test('RFC1929 failure names proxyUsername / proxyPasswordEnv', () async {
       final rec = _Rec();
       await expectLater(

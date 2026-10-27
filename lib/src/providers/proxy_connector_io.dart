@@ -364,6 +364,26 @@ List<int> _rfc1929AuthBytes({
   required String username,
   required String? password,
 }) {
+  // RFC1929 carries the credential as single length-prefixed byte runs —
+  // fail NAMED instead of a RangeError/FormatException mid-handshake.
+  void check(String what, String value) {
+    if (value.isEmpty) return;
+    if (value.codeUnits.any((c) => c > 127)) {
+      throw const SocketException(
+        'SOCKS5 proxy credentials must be ASCII — check proxyUsername / '
+        'proxyPasswordEnv',
+      );
+    }
+    if (value.length > 255) {
+      throw const SocketException(
+        'SOCKS5 proxy credentials must be at most 255 bytes — check '
+        'proxyUsername / proxyPasswordEnv',
+      );
+    }
+  }
+
+  check('proxyUsername', username);
+  check('proxyPasswordEnv', password ?? '');
   final user = ascii.encode(username);
   final pass = ascii.encode(password ?? '');
   return [0x01, user.length, ...user, pass.length, ...pass];

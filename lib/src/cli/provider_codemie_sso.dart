@@ -124,6 +124,7 @@ extension ProviderCodeMieSso on AgentCli {
       cookie,
       keyName,
       project: project,
+      providerName: name,
     );
     final hours =
         (credentials.expiresAt - DateTime.now().millisecondsSinceEpoch) ~/
@@ -174,6 +175,7 @@ extension ProviderCodeMieSso on AgentCli {
     String cookie,
     String keyName, {
     String? project,
+    required String providerName,
   }) async {
     final modelLine = modelId == _agent.state.model.id
         ? '  model unchanged: $modelId — use /model to change'
@@ -184,10 +186,14 @@ extension ProviderCodeMieSso on AgentCli {
     // header; the cookie rides in via model.headers instead.
     _apiKey = cookie;
     _explicitToken = true;
+    // The SAVED ENTRY's name keys the `providers:` gate — `spec` here is
+    // the catalog openai spec, never the binding identity (issue #1921
+    // round-4: keying 'openai' sent bound entries' cookie-bearing chat
+    // traffic direct).
     _streamFunction = _catalogStreamFunction(
       spec.kind,
       '',
-      providerName: spec.name,
+      providerName: providerName,
     );
     _agent.streamFunction = _streamFunction;
     final builtModel = buildCatalogModel(spec.name, modelId, baseUrl: baseUrl);

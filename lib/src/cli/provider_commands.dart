@@ -341,6 +341,9 @@ extension on AgentCli {
         modelId,
         token: switchToken,
         tokenKeyName: keyName,
+        // The just-saved entry IS the identity: the switch must state it
+        // (pin + gate keying) instead of silently meaning "catalog".
+        customName: entry?.name,
       );
       return;
     }
@@ -357,6 +360,7 @@ extension on AgentCli {
         modelId,
         switchToken,
         stored ?? '',
+        providerName: entry?.name ?? 'codemie',
       );
       return;
     }
@@ -366,6 +370,7 @@ extension on AgentCli {
       modelId,
       switchToken,
       stored ?? '',
+      providerName: entry?.name ?? 'codemie',
     );
   }
 
