@@ -3,6 +3,8 @@ import '../session/session_tree.dart'
     show branchSummaryPrefix, compactionSummaryPrefix;
 import '../types.dart';
 import 'system_notice_render.dart';
+import 'tool_row_content.dart'
+    show settledCallCardRows, thinkingCollapsedRows, transcriptExpandDetails;
 import 'tool_rows.dart';
 import 'tui_chrome.dart';
 import 'tui_theme.dart';
@@ -48,14 +50,16 @@ void _closeDanglingFence(List<String> rows) {
 
 /// The tool row a persisted [ToolCall] replays as — the live end-row
 /// grammar fed from the record itself: the settled band card through the
-/// SHARED builder the live `_onToolExecutionEnd` paints
-/// ([settledToolCardRows], issue #916) in chrome mode, the legacy painted
-/// row under the [tuiChromeEnabled] kill switch, the plain unpainted row in
-/// line mode. Name + args preview; the attached result's first line on
+/// SHARED v2 derivation the live `_onToolExecutionEnd` paints
+/// ([settledCallCardRows] — gh-1933 per-tool content: read lines-read,
+/// edit/write diffstat, bash intent + output count + dim command preview;
+/// issue #916 parity by construction) in chrome mode, the legacy painted
+/// row under the [tuiChromeEnabled] kill switch, the plain unpainted row
+/// in line mode. Name + args preview; the attached result's first line on
 /// errors. A call whose result never landed (crash mid-turn) renders in
-/// its interrupted state from the args — never a bare `[name]` marker. The
-/// card's meta zone carries the honest `—` where a live card shows the
-/// elapsed cell (issue #446 contract point 2).
+/// its interrupted state from the args — never a bare `[name]` marker.
+/// The card's right zone carries the honest `—` where a live card shows
+/// the elapsed cell (issue #446 contract point 2).
 String replayToolRow(
   ToolCall call,
   ToolResultMessage? result, {
@@ -66,19 +70,21 @@ String replayToolRow(
 }) {
   final detail = toolRowDetail(call.name, call.arguments, cwd: cwd, home: home);
   // TUI chrome (issue #916): the settled card IS the live end-row grammar
-  // since #807 — both edges render through [settledToolCardRows], so the
+  // since #807 — both edges render through the same derivation, so the
   // parity cannot drift again. Line mode and the kill switch keep the
   // legacy row.
   if (styled && tuiChromeEnabled) {
-    return settledToolCardRows(
+    return settledCallCardRows(
       toolName: call.name,
-      successDetail: detail,
+      args: call.arguments,
+      resultContent: result?.content ?? const <ContentBlock>[],
       isError: result != null && result.isError,
       width: width,
-      resultContent: result?.content ?? const <ContentBlock>[],
-      // The one permitted live/replay difference: no live duration.
-      meta: const ['—'],
       interrupted: result == null,
+      cwd: cwd,
+      home: home,
+      // The one permitted live/replay difference: no live duration.
+      elapsed: '—',
     ).join('\n');
   }
   final failed = result == null || result.isError;
@@ -192,8 +198,10 @@ bool _isChromeText(String text) =>
     needsSystemNoticeRewrite(text) || _summaryMarker(text) != null;
 
 /// TUI-mode replay entry in the ACTIVE session's format: the user message
-/// as the live submit echo box (notices via the system-row renderer), the
-/// assistant message as dimmed thinking rows, the `>_Fa `-prefixed raw
+/// as the live submit echo box (notices via the system-row renderer), each
+/// assistant thinking block as ONE collapsed `> Thought for Ns` row
+/// (gh-1933 AC4 — expanded to the persisted dim text by [thinkingExpanded]
+/// or the `/transcript expand all` state), the `>_Fa `-prefixed raw
 /// markdown text the view styles exactly like a live stream, and one
 /// settled tool row per persisted call ([replayToolRow]).
 List<String> replayLinesTui(
@@ -203,19 +211,25 @@ List<String> replayLinesTui(
   Map<String, ToolResultMessage> results = const {},
   String? cwd,
   String? home,
+  bool thinkingExpanded = false,
 }) {
   switch (message) {
     case UserMessage(:final content):
       return _replayUserTui(content, width, dim);
     case AssistantMessage(:final content):
       final rows = <String>[];
+      final expand = thinkingExpanded || transcriptExpandDetails;
       for (final block in content.whereType<ThinkingContent>()) {
-        // Reasoning replays dim like the live stream showed it (TUI only
-        // live; the dim rows are the restored transcript's memory of it).
+        // Reasoning replays COLLAPSED into one `> Thought for Ns` row per
+        // block (gh-1933 AC4; the honest `—` duration — the record carries
+        // none). The expanded form renders the persisted text dim beneath
+        // the label: everything the pre-gh-1933 replay showed stays
+        // available (AC5 information preservation).
         rows.addAll(
-          block.thinking
-              .split('\n')
-              .map((line) => line.trim().isEmpty ? line : dim(line)),
+          thinkingCollapsedRows(
+            text: block.thinking,
+            expanded: expand,
+          ).map((line) => line.trim().isEmpty ? line : dim(line)),
         );
       }
       final texts = content
@@ -371,6 +385,9 @@ List<String> restoredInputHistory(List<Message> messages) {
   String? home,
   int rowBudget = 1900,
   int maxRowsPerMessage = 0,
+  // gh-1933 AC4: expand the collapsed thinking rows to their persisted
+  // text (the `/transcript expand all` boot state).
+  bool thinkingExpanded = false,
 }) {
   // Pair persisted results with their calls up front so each replayed call
   // renders its attached result (name + args preview + result), the same
@@ -401,6 +418,7 @@ List<String> restoredInputHistory(List<Message> messages) {
             results: results,
             cwd: cwd,
             home: home,
+            thinkingExpanded: thinkingExpanded,
           )
         : replayLines(
             message,

@@ -1,14 +1,15 @@
-/// Unit pin for the LIVE edge's feeding of the shared settled-card builder
-/// (issue #916 round-2 review): the replay side is pinned against
-/// [settledToolCardRows] by construction (the test oracle IS the builder),
-/// so it can no longer catch a live-side feeding mistake — the live end
-/// edge (`_onToolExecutionEnd`, approval_commands.dart) is the one seam
-/// still verified only by the sharded PTY legs. This boots the real TUI
-/// headlessly (the agent_cli_tui_sync_test harness: TuiProgramHooks in/out,
-/// no real terminal), drives ONE real bash tool execution through the agent
-/// loop, and pins the painted settled card against the builder fed with
-/// exactly the live call's arguments: toolName, the START-event detail,
-/// isError, `_rowWidth`, and `[elapsed]`.
+/// Unit pin for the LIVE edge's feeding of the shared settled-card
+/// derivation (issue #916 round-2 review, gh-1933 v2): the replay side is
+/// pinned against [settledCallCardRows] by construction (the test oracle
+/// IS the derivation), so it can no longer catch a live-side feeding
+/// mistake — the live end edge (`_onToolExecutionEnd`,
+/// approval_commands.dart) is the one seam still verified only by the
+/// sharded PTY legs. This boots the real TUI headlessly (the
+/// agent_cli_tui_sync_test harness: TuiProgramHooks in/out, no real
+/// terminal), drives ONE real bash tool execution through the agent loop,
+/// and pins the painted settled card against the derivation fed with
+/// exactly the live call's material: toolName, the persisted args, the
+/// result content, isError, `_rowWidth`, and the elapsed zone.
 library;
 
 import 'dart:async';
@@ -16,8 +17,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/cli/tui_chrome.dart';
-import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
+import 'package:flutter_agent_harness/src/cli/tool_row_content.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
 import 'package:test/test.dart';
 
@@ -104,27 +104,25 @@ void main() {
       );
 
       // The oracle: the builder fed with EXACTLY the live edge's call —
-      // the start-event detail (toolRowDetail at tool START), success
-      // phase, `_rowWidth` (the pinned TUI width), and the elapsed meta
-      // (an in-process bash call always lands inside its first second).
-      final startDetail = toolRowDetail(
-        'bash',
-        const {'command': 'echo hi'},
-        cwd: '/work',
-        home: config.homeDir,
-      );
-      final oracle = settledToolCardRows(
+      // the gh-1933 v2 derivation (`settledCallCardRows`: bash intent
+      // label, output-lines count, right-aligned elapsed zone, dim
+      // command preview) at `_rowWidth` (the pinned TUI width). An
+      // in-process bash call always lands inside its first second.
+      final oracle = settledCallCardRows(
         toolName: 'bash',
-        successDetail: startDetail,
+        args: const {'command': 'echo hi'},
+        resultContent: const [TextContent(text: 'hi')],
         isError: false,
         width: 80,
-        meta: const ['0s'],
+        elapsed: '0s',
+        cwd: '/work',
+        home: config.homeDir,
       );
       expect(
         _normalize(frames.text),
         contains(_normalize(oracle.join('\n'))),
-        reason: 'the live edge must feed the shared builder its exact '
-            'segments (name, start detail, phase, width, [elapsed]) — '
+        reason: 'the live edge must feed the shared derivation its exact '
+            'material (name, args, result, phase, width, elapsed) — '
             'frames=${frames.text}',
       );
       // The command really executed through the env (the card describes a

@@ -405,7 +405,10 @@ List<String> settledCallCardRows({
     toolName,
     args,
     resultContent: resultContent,
-    isError: isError || interrupted,
+    // Only a real error result flips the content to the failure line —
+    // an INTERRUPTED call (replay-only) keeps its args preview over the
+    // error phase (issue #446 contract point 1).
+    isError: isError,
     cwd: cwd,
     home: home,
   );

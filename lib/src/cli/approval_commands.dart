@@ -1301,6 +1301,9 @@ extension ApprovalCommands on AgentCli {
       home: config.homeDir,
     );
     _toolStarts[toolCallId] = (DateTime.now(), detail, args);
+    // gh-1933 AC4: thinking streamed right before this call collapses
+    // its row first — the running card starts on a fresh line.
+    if (_useTui) _closeThinkingWindow();
     // Per-call liveness (gh-1055): headless/line mode watch the foreground
     // call and speak up when it runs long. TUI mode is skipped inside —
     // its waiting row already covers it.
@@ -1379,6 +1382,9 @@ extension ApprovalCommands on AgentCli {
     if (deltaChars > 0) _meter.observeDelta(deltaChars);
     if (assistantMessageEvent is ToolCallStartEvent ||
         assistantMessageEvent is ToolCallEndEvent) {
+      // gh-1933 AC4: the stream moved past the thinking block — collapse
+      // it before the call rows (no-op when no window is open).
+      _closeThinkingWindow();
       _onToolCallGate(assistantMessageEvent);
       return;
     }
@@ -1434,6 +1440,8 @@ extension ApprovalCommands on AgentCli {
         return;
       }
       if (_flushWhitespaceHold(delta)) return;
+      // gh-1933 AC4: the collapsed thinking row lands before the answer.
+      if (_useTui) _closeThinkingWindow();
       if (_streamedThinking && !_streamedText) io.write('\n');
       _writeAssistantPrefix();
       io.write(_redactRendered(delta));
@@ -1458,9 +1466,42 @@ extension ApprovalCommands on AgentCli {
   /// (a long thinking burst froze the whole UI — see
   /// AnsiMarkdown.inlineFormatMaxChars). Split out of [_onMessageUpdate]
   /// so the dispatcher stays under the CRAP ratchet.
+  ///
+  /// gh-1933 AC4: on the TUI chrome face the per-delta stream collapses
+  /// into ONE `> Thought for Ns` row — the deltas buffer into the open
+  /// window (persisted in full regardless; only the RENDER collapses),
+  /// and the row emits when the window closes (first answer/tool-call
+  /// delta or message end) with the streamed window's duration. The
+  /// other faces keep today's byte shape.
   void _onThinkingDelta(ThinkingDeltaEvent assistantMessageEvent) {
+    if (_useTui && tuiChromeEnabled) {
+      final window =
+          _thinkingWindow ??=
+              (startedAt: DateTime.now(), buffer: StringBuffer());
+      window.buffer.write(_redactRendered(assistantMessageEvent.delta));
+      return;
+    }
     io.write(_style.dim(_redactRendered(assistantMessageEvent.delta)));
     _streamedThinking = true;
+  }
+
+  /// Closes the open thinking window, emitting the collapsed
+  /// `> Thought for Ns` row (plus the full dim text when
+  /// [transcriptExpandDetails] is on — the `/transcript expand all`
+  /// state). A closed window paints nothing.
+  void _closeThinkingWindow() {
+    final window = _thinkingWindow;
+    if (window == null) return;
+    _thinkingWindow = null;
+    final seconds = DateTime.now().difference(window.startedAt).inSeconds;
+    final rows = thinkingCollapsedRows(
+      text: window.buffer.toString(),
+      seconds: seconds,
+      expanded: transcriptExpandDetails,
+    );
+    for (final row in rows) {
+      io.writeln(_style.dim(_redactRendered(row)));
+    }
   }
 
   /// The E1 whitespace hold: whitespace-only deltas before the first real
@@ -1611,6 +1652,9 @@ extension ApprovalCommands on AgentCli {
   /// CRAP ratchet (gh-1198: the thinking-reset branches tipped it over).
   void _flushAssistantStreamAtEnd() {
     if (_useTui || !_buffersAnswer) {
+      // gh-1933 AC4: the collapsed thinking row emits before any trailing
+      // newline — a pure-thinking message still renders its one row.
+      if (_useTui) _closeThinkingWindow();
       // E1: a whitespace-only narration hold decides at message end —
       // still whitespace-only, it paints nothing (and the separators of
       // a real text stream must not fire for it).
@@ -1685,7 +1729,8 @@ extension ApprovalCommands on AgentCli {
     required bool isError,
   }) {
     final (started, startDetail, startArgs) =
-        _toolStarts.remove(toolCallId) ?? (null, '', const {});
+        _toolStarts.remove(toolCallId) ??
+        (null, '', const <String, dynamic>{});
     _waiting.toolCallEnded(toolCallId);
     // No offer may outlive its call (issue #1786): the call ending is the
     // last chance to clear a stale outstanding `b` affordance.

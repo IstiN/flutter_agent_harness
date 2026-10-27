@@ -2,9 +2,11 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/system_notice_render.dart';
+import 'package:flutter_agent_harness/src/cli/tool_row_content.dart'
+    show settledCallCardRows, thinkingCollapsedRows, transcriptExpandDetails;
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart'
-    show settledToolCardRows, tuiChromeEnabled;
+    show tuiChromeEnabled;
 import 'package:flutter_agent_harness/src/cli/tui_replay.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/context.dart';
@@ -72,25 +74,25 @@ void main() {
     ).style(glyph: glyphPaint, label: tuiAccent2, dim: detailPaint);
   }
 
-  /// The live SETTLED CARD for [call] — the SAME [settledToolCardRows]
-  /// builder `_onToolExecutionEnd` and [replayToolRow] render through
-  /// (issue #807 chrome, #916 parity by construction), minus the live
-  /// duration (the meta zone carries the honest `—`). The replayed TUI
-  /// tool row must equal this byte for byte.
+  /// The live SETTLED CARD for [call] — the SAME [settledCallCardRows]
+  /// derivation `_onToolExecutionEnd` and [replayToolRow] render through
+  /// (issue #807 chrome, #916 parity by construction, gh-1933 v2
+  /// content), minus the live duration (the right zone carries the honest
+  /// `—`). The replayed TUI tool row must equal this byte for byte.
   String liveEndCard(
     ToolCall call,
     ToolResultMessage? result, {
     int width = 80,
   }) {
-    final hasError = result != null && result.isError;
-    return settledToolCardRows(
+    return settledCallCardRows(
       toolName: call.name,
-      successDetail: toolRowDetail(call.name, call.arguments),
-      isError: hasError,
-      width: width,
+      args: call.arguments,
       resultContent: result?.content ?? const [],
-      meta: const ['—'],
+      isError: result != null && result.isError,
+      width: width,
       interrupted: result == null,
+      // The one permitted live/replay difference: no live duration.
+      elapsed: '—',
     ).join('\n');
   }
 
@@ -383,7 +385,8 @@ void main() {
       expect(replayOut, contains('\x1b[1mbold\x1b[0m'));
     });
 
-    test('dim rides thinking rows only — never assistant text', () {
+    test('thinking collapses to ONE `> Thought for Ns` row (gh-1933 AC4) — '
+        'dim rides it, never assistant text', () {
       final rows = replayLinesTui(
         assistant([
           ThinkingContent(thinking: 'reasoning hard\nline two'),
@@ -393,10 +396,38 @@ void main() {
         dim: dim,
       );
       expect(rows, [
-        '<d>reasoning hard</d>',
-        '<d>line two</d>',
+        '${dim('> Thought for —')}',
         '${assistantStreamPrefix()}the answer',
       ]);
+    });
+
+    test('expanded thinking renders the persisted text dim under the '
+        'label (gh-1933 AC4/AC5 — nothing today\'s replay showed is lost)',
+    () {
+      final rows = replayLinesTui(
+        assistant([
+          ThinkingContent(thinking: 'reasoning hard\nline two'),
+          TextContent(text: 'the answer'),
+        ]),
+        width: 80,
+        dim: dim,
+        thinkingExpanded: true,
+      );
+      expect(rows, [
+        dim('> Thought for —'),
+        dim('reasoning hard'),
+        dim('line two'),
+        '${assistantStreamPrefix()}the answer',
+      ]);
+      // The global `/transcript expand all` state expands too.
+      transcriptExpandDetails = true;
+      addTearDown(() => transcriptExpandDetails = false);
+      final global = replayLinesTui(
+        assistant([ThinkingContent(thinking: 'deep thought')]),
+        width: 80,
+        dim: dim,
+      );
+      expect(global, [dim('> Thought for —'), dim('deep thought')]);
     });
 
     test('the `>_Fa ` prefix lands on the first text row only', () {

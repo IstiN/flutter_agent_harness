@@ -152,6 +152,7 @@ import '../model_roles/model_roles.dart';
 import '../model_roles/provider_model_binding.dart';
 import '../session_deadline.dart';
 import 'tool_phase_labels.dart';
+import 'tool_row_content.dart';
 import 'tool_rows.dart';
 import '../model_roles/vision_models.dart';
 import '../providers/chatgpt_codex_models.dart';
