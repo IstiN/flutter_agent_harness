@@ -256,7 +256,10 @@ final class ToolRowContent {
 /// The per-tool content derivation for a settled row: arguments and
 /// result text in, detail/meta/diffstat/preview out (the capability
 /// table's content contract). Error results lead with the failure line
-/// and carry no counts (the failure IS the news, #366).
+/// and carry no counts (the failure IS the news, #366). The dispatcher
+/// is a flat switch over the collapsed row kind ([_rowKind]); each arm's
+/// body lives in its per-tool helper (the `toolRowDetail` house shape —
+/// the CRAP ratchet pins the dispatcher complexity).
 ToolRowContent toolRowContent(
   String toolName,
   Map<String, dynamic> args, {
@@ -268,55 +271,87 @@ ToolRowContent toolRowContent(
   if (isError) {
     return ToolRowContent(detail: failureFirstLine(resultContent));
   }
-  switch (toolName) {
-    case 'read':
-      return ToolRowContent(
-        detail: readRowSelector(
-          _stringArg(args, 'path'),
-          offset: args['offset'],
-          limit: args['limit'],
-          cwd: cwd,
-          home: home,
-        ),
-        meta: [?readOutcomeMeta(_resultText(resultContent))],
-      );
-    case 'edit':
-    case 'write':
-      final stat = toolName == 'edit'
-          ? diffStatFromEditArgs(args)
-          : _writeDiffStat(args);
-      return ToolRowContent(
-        detail: briefPath(_stringArg(args, 'path'), cwd: cwd, home: home),
-        diffstat: stat == null || stat.isEmpty ? null : stat.label,
-      );
-    case 'bash':
-    case 'bash_job':
-      final command = _stringArg(args, 'command');
-      return ToolRowContent(
-        detail: bashIntentLabel(command),
-        meta: [?bashOutputMeta(_resultText(resultContent))],
-        preview: command.trim().isEmpty
-            ? const []
-            : [shellJobCommandPreview(collapseCd(command))],
-      );
-    case 'task':
-      return ToolRowContent(detail: _taskDetail(args));
-    case 'task_send':
-    case 'task_resume':
-      return ToolRowContent(detail: _childDetail(args));
-    case 'checkpoint':
-    case 'rewind':
-      return ToolRowContent(detail: _checkpointDetail(toolName, args));
-    case 'request_secret':
-      final name = _stringArg(args, 'name');
-      return ToolRowContent(detail: name.isEmpty ? 'credential' : name);
-    default:
-      // The #366 fallback grammar (ask question text, unknown tools'
-      // first string argument) stays the contract for everything else.
-      return ToolRowContent(
-        detail: toolRowDetail(toolName, args, cwd: cwd, home: home),
-      );
-  }
+  return switch (_rowKind(toolName)) {
+    'read' => _readRowContent(args, resultContent, cwd: cwd, home: home),
+    'write' => _writeRowContent(toolName, args, cwd: cwd, home: home),
+    'bash' => _bashRowContent(args, resultContent),
+    'task' => ToolRowContent(detail: _taskDetail(args)),
+    'task_send' => ToolRowContent(detail: _childDetail(args)),
+    'checkpoint' => ToolRowContent(detail: _checkpointDetail(toolName, args)),
+    'request_secret' => _secretRowContent(args),
+    // The #366 fallback grammar (ask question text, unknown tools'
+    // first string argument) stays the contract for everything else.
+    _ => ToolRowContent(
+      detail: toolRowDetail(toolName, args, cwd: cwd, home: home),
+    ),
+  };
+}
+
+/// Collapses the tool-name aliases onto one row grammar kind — `edit`
+/// writes, `bash_job` bashes, `task_send`/`task_resume` child-update,
+/// `rewind` checkpoints — so the [toolRowContent] dispatcher stays a
+/// flat switch under the CRAP ratchet.
+String _rowKind(String toolName) => switch (toolName) {
+  'edit' => 'write',
+  'bash_job' => 'bash',
+  'task_send' || 'task_resume' => 'task_send',
+  'rewind' => 'checkpoint',
+  _ => toolName,
+};
+
+/// The read row: `path + selector` detail plus the lines-read meta.
+ToolRowContent _readRowContent(
+  Map<String, dynamic> args,
+  List<ContentBlock> resultContent, {
+  String? cwd,
+  String? home,
+}) => ToolRowContent(
+  detail: readRowSelector(
+    _stringArg(args, 'path'),
+    offset: args['offset'],
+    limit: args['limit'],
+    cwd: cwd,
+    home: home,
+  ),
+  meta: [?readOutcomeMeta(_resultText(resultContent))],
+);
+
+/// The edit/write row: the path detail plus the applied-change diffstat.
+ToolRowContent _writeRowContent(
+  String toolName,
+  Map<String, dynamic> args, {
+  String? cwd,
+  String? home,
+}) {
+  final stat = toolName == 'edit'
+      ? diffStatFromEditArgs(args)
+      : _writeDiffStat(args);
+  return ToolRowContent(
+    detail: briefPath(_stringArg(args, 'path'), cwd: cwd, home: home),
+    diffstat: stat == null || stat.isEmpty ? null : stat.label,
+  );
+}
+
+/// The bash/bash_job row: intent detail, output-lines meta, and the dim
+/// one-line command preview.
+ToolRowContent _bashRowContent(
+  Map<String, dynamic> args,
+  List<ContentBlock> resultContent,
+) {
+  final command = _stringArg(args, 'command');
+  return ToolRowContent(
+    detail: bashIntentLabel(command),
+    meta: [?bashOutputMeta(_resultText(resultContent))],
+    preview: command.trim().isEmpty
+        ? const []
+        : [shellJobCommandPreview(collapseCd(command))],
+  );
+}
+
+/// The request_secret row: the credential name (or the bare noun).
+ToolRowContent _secretRowContent(Map<String, dynamic> args) {
+  final name = _stringArg(args, 'name');
+  return ToolRowContent(detail: name.isEmpty ? 'credential' : name);
 }
 
 /// `write` replaces the whole file: the change's add side is the written

@@ -279,6 +279,66 @@ void main() {
       expect(resume.detail, contains('explorer'));
     });
 
+    group('UT-task-fallback (the #36 no-tasks shape — CRAP ratchet '
+        'coverage for the first-string-arg arm)', () {
+      test('a task call with no tasks list keeps the #36 context detail', () {
+        final c = toolRowContent('task', {'context': 'Prove the task loop'});
+        expect(c.detail, 'Prove the task loop');
+      });
+
+      test('a non-list tasks value falls back to the first string arg', () {
+        // The fallback is mechanical (first string value in arg order) —
+        // a malformed string `tasks` is itself a string arg.
+        final c = toolRowContent('task', {
+          'tasks': 'oops',
+          'context': 'the loop',
+        });
+        expect(c.detail, 'oops');
+      });
+
+      test('an empty tasks list falls back to the first string arg', () {
+        final c = toolRowContent('task', {
+          'tasks': <String>[],
+          'note': ' the batch intent ',
+        });
+        expect(c.detail, 'the batch intent');
+      });
+
+      test('the fallback skips non-string and blank values', () {
+        final c = toolRowContent('task', {
+          'count': 42,
+          'blank': '   ',
+          'label': ' padded real value ',
+        });
+        expect(c.detail, 'padded real value');
+      });
+
+      test('nothing string-y yields an empty detail', () {
+        final c = toolRowContent('task', {'count': 42, 'blank': ' '});
+        expect(c.detail, '');
+      });
+
+      test('non-map entries and name-less entries are skipped, not fatal',
+          () {
+        final c = toolRowContent('task', {
+          'tasks': [
+            'not-a-map',
+            {'task': 'text-only entry, no name'},
+            {'name': 42, 'task': 'numeric name'},
+            {'name': 'explorer'},
+          ],
+        });
+        expect(c.detail, contains('explorer'));
+      });
+
+      test('entries with no names and no task text count the children', () {
+        final c = toolRowContent('task', {
+          'tasks': [{'x': 1}],
+        });
+        expect(c.detail, '1 child');
+      });
+    });
+
     test('checkpoint/rewind rows carry the span summary', () {
       final cp = toolRowContent('checkpoint', {'goal': 'explore the parser'});
       expect(cp.detail, contains('explore the parser'));
