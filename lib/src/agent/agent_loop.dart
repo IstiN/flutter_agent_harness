@@ -1444,6 +1444,17 @@ Future<({List<ToolResultMessage> results, bool hasMore})> _runToolCallPhase(
         // A probe failure must never break the tool phase.
       }
     });
+    // Issue #1923 (app-binding pending-timer leak): the periodic probe
+    // must not outlive the RUN. The whenComplete below only fires when
+    // the phase settles; a run cancelled while a tool call is still
+    // settling (esc mid-tool, a session torn down under a hung executor)
+    // left the timer armed to the end of time. A run-token cancel tears
+    // the probe down with the run.
+    unawaited(
+      cancelToken?.onCancel.then((_) {
+        probeTimer = probeTimer?..cancel();
+      }),
+    );
   }
   return runZoned(
     () => _executeToolCallPhase(

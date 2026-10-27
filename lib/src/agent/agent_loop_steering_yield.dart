@@ -87,7 +87,11 @@ final class _SteeringYieldWatch {
   }
 
   /// Starts the steering listeners: the in-process arrival stream, plus
-  /// the same 2s external probe cadence the tool phase uses.
+  /// the same 2s external probe cadence the tool phase uses. A run-token
+  /// cancel tears the watch down with the run (the app-binding
+  /// pending-timer lesson): a watchdog-resumed attempt is the ladder's
+  /// business, never this watch's, and a hung attempt must not leave the
+  /// probe timer armed past the run.
   void start() {
     _sub = config.steeringNotifications?.listen((_) => _onSteeringSignal());
     final probe = config.hasPendingSteering;
@@ -99,6 +103,9 @@ final class _SteeringYieldWatch {
           // A probe failure must never break the attempt.
         }
       });
+    }
+    if (runToken != null) {
+      unawaited(runToken!.onCancel.then((_) => dispose()));
     }
   }
 

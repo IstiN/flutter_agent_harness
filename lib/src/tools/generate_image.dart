@@ -15,6 +15,7 @@
 /// base64-staged [ImageContent] are returned. Web-safe.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -593,6 +594,18 @@ Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
 }) async {
   cancelToken?.throwIfCancelled();
   final client = httpClient ?? http.Client();
+  // Finish-or-detach (r1 blocker): a cancel rejects the WAIT below while
+  // the paid POST is still on the wire — closing the client in `finally`
+  // at that moment ABORTS the in-flight request, and aborting saves
+  // nothing (the money is spent). `inFlight` therefore chains the close
+  // to the newest work's own settlement; the cancelled wait's result is
+  // discarded, never its wire work.
+  Future<void>? inFlight;
+  Future<T> track<T>(Future<T> work) {
+    inFlight = work.then((_) {}, onError: (Object _, StackTrace _) {});
+    return work;
+  }
+
   try {
     final dialect = imageGenerationDialects
         .where((d) => d.matches(endpoint))
@@ -616,30 +629,40 @@ Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
         modelId: endpoint.modelId,
         inputModalities: await cancellable(
           cancelToken,
-          () => resolveInputModalities(
-            baseUrl: endpoint.baseUrl,
-            apiKey: endpoint.apiKey,
-            modelId: endpoint.modelId,
-            declared: declaredInputModalities,
-            client: client,
+          () => track(
+            resolveInputModalities(
+              baseUrl: endpoint.baseUrl,
+              apiKey: endpoint.apiKey,
+              modelId: endpoint.modelId,
+              declared: declaredInputModalities,
+              client: client,
+            ),
           ),
         ),
       );
     }
     return await cancellable(
       cancelToken,
-      () => dialect.generate(
-        env: env,
-        endpoint: endpoint,
-        prompt: prompt,
-        size: size,
-        quality: quality,
-        images: resolvedImages,
-        client: client,
+      () => track(
+        dialect.generate(
+          env: env,
+          endpoint: endpoint,
+          prompt: prompt,
+          size: size,
+          quality: quality,
+          images: resolvedImages,
+          client: client,
+        ),
       ),
     );
   } finally {
-    client.close();
+    final pending = inFlight;
+    if (pending == null) {
+      client.close();
+    } else {
+      // Detach, never abort: close only once the wire work settles.
+      unawaited(pending.then((_) => client.close()));
+    }
   }
 }
 
