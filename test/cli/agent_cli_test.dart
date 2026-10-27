@@ -412,8 +412,9 @@ void main() {
       await run;
 
       final output = io.out.toString();
-      // The tool ran (start/end one-liners) and the job completed…
-      expect(output, contains('• task · repo state'));
+      // The tool ran (the single end one-liner — gh-1931 removed the
+      // duplicate start row) and the job completed…
+      expect(output, contains('✓ task · repo state 0s'));
       expect(output, contains('✓ task'));
       expect(output, contains('[task] Scout (task) completed'));
       expect(output, contains('agent://Scout'));
@@ -774,7 +775,9 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(output, contains('• read · notes.txt'));
+    // gh-1931: ONE one-liner per call — the end row (the old start row
+    // `• read · …` was the duplicate print).
+    expect(output, contains('✓ read · notes.txt'));
     expect(output, contains('✓ read'));
 
     final entries = await sessionEntries();
@@ -1470,9 +1473,9 @@ void main() {
     await run;
 
     // The unserializable arg never crashes rendering or leaks JSON: the
-    // row degrades to the bare label (E2) and still completes.
-    expect(io.out.toString(), contains('• ls'));
-    expect(io.out.toString(), contains('✓ ls'));
+    // row degrades to the bare label (E2) and still completes. gh-1931:
+    // the single end row (the old start row `• ls` was the duplicate).
+    expect(io.out.toString(), contains('✓ ls 0s'));
     expect(io.out.toString(), isNot(contains('unserializable')));
   });
 

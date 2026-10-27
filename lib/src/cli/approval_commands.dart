@@ -1280,11 +1280,12 @@ extension ApprovalCommands on AgentCli {
     _onAssistantMessageEnd(message);
   }
 
-  /// Tool start row in the compact grammar (issue #366): `• label ·
-  /// detail` — the human detail (question text, command, path), never the
-  /// raw args JSON. Also records file-path args into [_touchedPaths] so
-  /// path-gated skills (`paths:` frontmatter) join the prompt on the next
-  /// turn, and stamps [_toolStarts] for the end row's elapsed zone.
+  /// Tool-call start bookkeeping (issue #366 grammar): records file-path
+  /// args into [_touchedPaths] so path-gated skills (`paths:` frontmatter)
+  /// join the prompt on the next turn, stamps [_toolStarts] for the end
+  /// row's detail + elapsed zone, arms the liveness watch, and — TUI only —
+  /// paints the running card. Line mode and headless print NOTHING here
+  /// since gh-1931: the end row is the single render per call.
   void _onToolExecutionStart(
     String toolCallId,
     String toolName,
@@ -1309,8 +1310,9 @@ extension ApprovalCommands on AgentCli {
     // its waiting row already covers it.
     _waiting.toolCallStarted(toolCallId, toolName, detail);
     // TUI chrome (issue #807): the phase-tinted card replaces the compact
-    // row — omp's card grammar keeps fa's detail extraction. Line mode and
-    // headless keep the legacy row byte-identically.
+    // row — omp's card grammar keeps fa's detail extraction. The TUI
+    // transcript grammar is a non-goal for gh-1931 (AC2): the running card
+    // still paints here.
     if (_useTui && tuiChromeEnabled) {
       io.writeln(
         tuiToolCard(
@@ -1321,15 +1323,12 @@ extension ApprovalCommands on AgentCli {
       );
       return;
     }
-    io.writeln(
-      tuiToolRow(
-        layoutToolRow(
-          ToolRowSegments(glyph: '•', label: toolName, detail: detail),
-          _rowWidth - 2,
-        ),
-        ToolRowState.running,
-      ),
-    );
+    // gh-1931 (AC1/AC3): line mode and headless render ONE row per call —
+    // the end row (`_onToolExecutionEnd`) already carries the detail
+    // (command), the status glyph and the elapsed cell, so the start row
+    // here was a pure duplicate print of every command. The start stays
+    // recorded above ([_toolStarts] feeds the end row's detail/elapsed)
+    // and the waiting coordinator still watches the call for liveness.
   }
 
   /// The row budget: the live TUI width, or UNBOUNDED for
@@ -1719,9 +1718,11 @@ extension ApprovalCommands on AgentCli {
   }
 
   /// Tool end row in the compact grammar (issue #366): `✓ label · detail
-  /// Ns` — the same detail the start row showed, plus the elapsed; errors
-  /// render `✗` with the result's first line as a full-bright snippet (the
-  /// one place the muted detail role gives way to readability).
+  /// Ns` — the detail stamped at start (the TUI running card's
+  /// description; since gh-1931 this row is the ONLY non-TUI render per
+  /// call), plus the elapsed. Errors render `✗` with the result's first
+  /// line as a full-bright snippet (the one place the muted detail role
+  /// gives way to readability).
   void _onToolExecutionEnd(
     String toolCallId,
     String toolName,

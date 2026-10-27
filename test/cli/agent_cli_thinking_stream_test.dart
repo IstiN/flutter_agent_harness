@@ -447,11 +447,13 @@ void main() {
       final out = io.out.toString();
       expect(out, contains('\x1B[2mwhy not\x1B[0m'));
       expect(out, contains('let me check'));
-      // The tool card prints between the two thinking bursts.
-      expect(out, contains('•'));
-      expect(out.indexOf('\x1B[2mwhy not\x1B[0m'), lessThan(out.indexOf('•')));
+      // The tool row prints between the two thinking bursts — gh-1931:
+      // ONE row per call, the end row (the old start row was the
+      // duplicate print).
+      expect(out, contains('✓'));
+      expect(out.indexOf('\x1B[2mwhy not\x1B[0m'), lessThan(out.indexOf('✓')));
       expect(
-        out.indexOf('•'),
+        out.indexOf('✓'),
         lessThan(out.indexOf('\x1B[2msecond thought\x1B[0m')),
       );
       expect(out, contains('All done'));
