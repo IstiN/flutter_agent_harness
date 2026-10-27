@@ -707,6 +707,27 @@ final class SubagentManager {
       (await pendingInboxCount(id)) > 0 ||
       (_handles[id]?.pendingMessages.isNotEmpty ?? false);
 
+  /// The send time of the oldest unconsumed pending mail for [id] — the
+  /// fabric inbox AND the in-process pending queue (issue #1923 AC3:
+  /// `task_status` flags mail sitting past the delivery SLO). Null = no
+  /// pending mail. O(pending); no timers, no background tasks. Entries
+  /// already carry their enqueue stamp (`sentAt`), so this only reads.
+  Future<DateTime?> oldestPendingMailSince(String id) async {
+    final sentAts = <String>[
+      for (final m in await pendingInbox(id)) m.sentAt,
+      for (final m
+          in _handles[id]?.pendingMessages ?? const <SubagentMessage>[])
+        m.sentAt,
+    ];
+    final stamps = <DateTime>[];
+    for (final sentAt in sentAts) {
+      final t = DateTime.tryParse(sentAt);
+      if (t != null) stamps.add(t);
+    }
+    if (stamps.isEmpty) return null;
+    return stamps.reduce((a, b) => a.isBefore(b) ? a : b);
+  }
+
   /// Records the child's explicit `reply` (Phase 3b) on its handle.
   Future<void> recordReply(String id, String text) async {
     final handle = _handles[id];

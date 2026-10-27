@@ -74,8 +74,9 @@ List<AgentTool> subagentMonitoringTools({
   TaskExecutor? executor,
   DeliverableCaptureProvider? capture,
 
-  /// How long `task_send` waits for a resumed child to acknowledge before
-  /// reporting (issue #647). The default equals the delivery SLO: the
+  /// How long `task_send` and `task_resume` wait for a resumed child to
+  /// acknowledge before reporting (issue #647; #1923 extends the cap to
+  /// `task_resume`). The default equals the delivery SLO: the
   /// warm wake consumes the message before the boot, so the wait never
   /// blocks on session load. A wedged child's wake keeps running in the
   /// background either way.
@@ -86,7 +87,7 @@ List<AgentTool> subagentMonitoringTools({
     _taskStatusTool(manager),
     _taskObserveTool(manager, readMessages),
     _taskSendTool(manager, resumeChild, taskSendWaitCap),
-    _taskResumeTool(manager, resumeChild),
+    _taskResumeTool(manager, resumeChild, taskSendWaitCap),
     if (jobs != null) _taskCancelTool(jobs, manager, executor),
     _replyTool(manager, currentSubagentId, capture),
     _agentMessageTool(manager, currentSubagentId, capture),
@@ -1019,13 +1020,22 @@ AgentTool _taskStatusTool(SubagentManager manager) {
         if (handle == null) {
           return ToolExecutionResult.text('no subagent with id "$id"');
         }
-        return ToolExecutionResult.text(_formatHandleDetail(handle));
+        return ToolExecutionResult.text(
+          await _formatHandleDetail(manager, handle),
+        );
       }
       final handles = manager.handles;
       if (handles.isEmpty) {
         return ToolExecutionResult.text('no subagents spawned');
       }
-      final lines = [for (final h in handles) h.statusLine];
+      // Issue #1923 AC3 (bot r2): the sweep is the path an agent actually
+      // uses to scan children — past-SLO pending mail must be visible
+      // here too, from the SAME formatter as the detail view.
+      final lines = [
+        for (final h in handles)
+          '${h.statusLine}'
+              '${(await undeliveredMailLine(manager, h, compact: true)) ?? ''}',
+      ];
       return ToolExecutionResult.text(
         '${handles.length} subagent${handles.length == 1 ? '' : 's'}:\n'
         '${lines.join('\n')}',
@@ -1103,7 +1113,7 @@ AgentTool _taskSendTool(
         'Send a follow-up message to a subagent. A running child receives '
         'it in its inbox at the next turn boundary; an idle (waiting for '
         'input) or completed child is resumed in its SAME session with the '
-        'message. The resume wait is capped (${taskSendWaitCap.inSeconds}s): '
+        'message. The resume wait is capped (${_describeWaitCap(taskSendWaitCap)}): '
         'a child that does not respond in time reports the message queued '
         'and keeps waking in the background (check task_status). Failed '
         'children are continued with task_resume instead. Remote '
@@ -1294,6 +1304,7 @@ Future<ToolExecutionResult> _resumeIdleChild(
 AgentTool _taskResumeTool(
   SubagentManager manager,
   ChildResumeRunner? resumeChild,
+  Duration taskSendWaitCap,
 ) {
   final unavailableNote = resumeChild == null
       ? ' UNAVAILABLE on this host (capability: child-resume).'
@@ -1304,7 +1315,10 @@ AgentTool _taskResumeTool(
         'Resume a FAILED subagent, continuing the SAME session: the run '
         'appends to the existing JSONL transcript, keeps the same mailbox '
         'id and display name, and never mints a cloned "name-2" session. '
-        'Use this after transient failures (provider quota, network). '
+        'Use this after transient failures (provider quota, network). The '
+        'resume wait is capped (${_describeWaitCap(taskSendWaitCap)}): a child '
+        'that does not confirm in time reports the resume continuing in '
+        'the background — it is never restarted (check task_status). '
         'Steering running/idle/completed children is task_send; respawning '
         'a fresh agent is task (the new child links supersedes).'
         '$unavailableNote',
@@ -1323,7 +1337,7 @@ AgentTool _taskResumeTool(
     },
     tier: ApprovalTier.write,
     execute: (args, cancelToken, onUpdate) =>
-        _runTaskResume(manager, resumeChild, args),
+        _runTaskResume(manager, resumeChild, args, taskSendWaitCap),
   );
 }
 
@@ -1334,6 +1348,7 @@ Future<ToolExecutionResult> _runTaskResume(
   SubagentManager manager,
   ChildResumeRunner? resumeChild,
   Map<String, dynamic> args,
+  Duration taskSendWaitCap,
 ) async {
   final id = args['id'] as String;
   final message = _resumeInstruction(args);
@@ -1351,7 +1366,22 @@ Future<ToolExecutionResult> _runTaskResume(
       'task text.',
     );
   }
-  return _resumeByChildStatus(manager, resumeChild, id, handle, message);
+  return _resumeByChildStatus(
+    manager,
+    resumeChild,
+    id,
+    handle,
+    message,
+    taskSendWaitCap,
+  );
+}
+
+/// The wait-cap renderer for the tool descriptions: fractional seconds
+/// stay truthful (the 1500ms default reads "1.5s", bot r2 suggestion —
+/// `.inSeconds` truncation told the model a wrong bound).
+String _describeWaitCap(Duration cap) {
+  final tenths = (cap.inMilliseconds / 100).round() / 10;
+  return '${tenths}s';
 }
 
 /// The `task_resume` instruction: an explicit non-blank message, else the
@@ -1371,6 +1401,7 @@ Future<ToolExecutionResult> _resumeByChildStatus(
   String id,
   SubagentHandle handle,
   String message,
+  Duration taskSendWaitCap,
 ) async {
   switch (handle.status) {
     case SubagentStatus.queued:
@@ -1389,17 +1420,26 @@ Future<ToolExecutionResult> _resumeByChildStatus(
         'aborted subagent "$id" cannot be resumed',
       );
     case SubagentStatus.failed:
-      return _resumeFailedChild(manager, resumeChild, id, message);
+      return _resumeFailedChild(
+        manager,
+        resumeChild,
+        id,
+        message,
+        taskSendWaitCap,
+      );
   }
 }
 
 /// Resumes a failed child in its SAME session; a failed resume leaves the
-/// child failed and resumable.
+/// child failed and resumable. The wait is capped (issue #1923 AC2 — the
+/// same bound `task_send` already applies, issue #647): a child wedged in
+/// session boot cannot hang the parent for the length of a full boot.
 Future<ToolExecutionResult> _resumeFailedChild(
   SubagentManager manager,
   ChildResumeRunner? resumeChild,
   String id,
   String message,
+  Duration taskSendWaitCap,
 ) async {
   if (resumeChild == null) {
     return ToolExecutionResult.text(
@@ -1407,8 +1447,25 @@ Future<ToolExecutionResult> _resumeFailedChild(
       '(capability: child-resume) — the child stays failed',
     );
   }
+  // Issue #1923 AC2: the resume await was UNBOUNDED — a child wedged in
+  // session boot hung the parent for minutes (343s in the issue). Same
+  // shape as _resumeIdleChild (issue #488 AC3 + #647): past the cap the
+  // receipt reports and the resume KEEPS RUNNING in the background — it
+  // is never restarted. A late failure is recorded on the child by
+  // resumeChild itself, which returns the child to failed-and-resumable
+  // (task_status shows it); only its rethrow is swallowed here.
+  Future<void>? resumed;
   try {
-    await resumeChild(id, message);
+    resumed = resumeChild(id, message);
+    await resumed.timeout(taskSendWaitCap);
+  } on TimeoutException {
+    unawaited(resumed!.catchError((Object _) {}));
+    return ToolExecutionResult.text(
+      'resume of "$id" not responding within the wait cap — the resumed '
+      'run keeps going in the background and will NOT be restarted; a '
+      'late failure is recorded on the child, which returns to failed '
+      'and resumable (see task_status)',
+    );
   } on Object catch (error) {
     final detail = error is StateError ? error.message : '$error';
     return ToolExecutionResult.text(
@@ -1424,8 +1481,42 @@ Future<ToolExecutionResult> _resumeFailedChild(
   );
 }
 
+/// The AC3 UNDELIVERED-mail escalation for one child — the ONE source both
+/// `task_status` views render from (bot r2, thread `PRRT_kwDOTXdlLc6wfxj3`:
+/// the bare sweep path is the one agents actually use to scan children, so
+/// the marker must live there too, and a shared formatter keeps the two
+/// views from drifting). One fabric read yields age AND count (no
+/// disagreeing snapshots). Null when mail is absent or within the SLO.
+Future<String?> undeliveredMailLine(
+  SubagentManager manager,
+  SubagentHandle h, {
+  bool compact = false,
+}) async {
+  final fabric = await manager.pendingInbox(h.id);
+  final local = h.pendingMessages;
+  if (fabric.isEmpty && local.isEmpty) return null;
+  // One snapshot per source, both read HERE — age and count can never
+  // disagree with each other.
+  final stamps = <DateTime>[
+    for (final m in fabric) ?DateTime.tryParse(m.sentAt),
+    for (final m in local) ?DateTime.tryParse(m.sentAt),
+  ].whereType<DateTime>();
+  if (stamps.isEmpty) return null;
+  final oldest = stamps.reduce((a, b) => a.isBefore(b) ? a : b);
+  final age = DateTime.now().difference(oldest);
+  if (age <= deliverySlo) return null;
+  final n = fabric.length + local.length;
+  return compact
+      ? ' mail:$n@${age.inSeconds}s UNDELIVERED'
+      : 'mail: $n pending — UNDELIVERED ${age.inSeconds}s '
+            '(past the ${deliverySlo.inSeconds}s delivery SLO)';
+}
+
 /// Formats a detailed view of one handle for `task_status`.
-String _formatHandleDetail(SubagentHandle h) {
+Future<String> _formatHandleDetail(
+  SubagentManager manager,
+  SubagentHandle h,
+) async {
   final parts = <String>[
     'id: ${h.id}',
     'type: ${h.agentType}',
@@ -1445,5 +1536,9 @@ String _formatHandleDetail(SubagentHandle h) {
     if (h.modelId != null) 'model: ${h.modelId}',
     if (h.error != null) 'error: ${h.error}',
   ];
+  // Issue #1923 AC3: pending mail sitting past the delivery SLO escalates
+  // to a visible UNDELIVERED line — no silent queues (shared formatter).
+  final escalation = await undeliveredMailLine(manager, h);
+  if (escalation != null) parts.add(escalation);
   return parts.join('\n');
 }
