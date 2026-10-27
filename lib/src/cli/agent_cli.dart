@@ -74,6 +74,8 @@ import '../agent/tool_pairing.dart';
 import '../providers/models_for_endpoint.dart';
 import '../providers/payload_stall.dart'
     show payloadStallAdvice, payloadStallAdviceLine;
+import '../providers/proxy_connector.dart';
+import '../providers/proxy_connector_io.dart';
 import '../providers/stream_trace.dart';
 import '../agent/tool_registry.dart';
 import '../utils/list_equals.dart';
@@ -304,6 +306,8 @@ export 'model_presets.dart' show bundledCatalogModelIds, knownModelPresets;
 
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
+part 'provider_codemie_sso.dart';
+part 'provider_proxy_gate.dart';
 part 'provider_key_persist.dart';
 part 'provider_export_command.dart';
 part 'chatgpt_import_command.dart';
@@ -460,7 +464,13 @@ class AgentCli {
     _streamFunction =
         streamFunction ??
         scriptedTestStreamFunction() ??
-        _catalogStreamFunction(config.providerKind, config.apiKey);
+        _catalogStreamFunction(
+          config.providerKind,
+          config.apiKey,
+          providerName:
+              config.activeCustomName ??
+              resolveCliProviderSpec(config.providerKind)?.name,
+        );
     // MCP servers connect lazily in the background; their tools land in
     // the registry via _onMcpChanged (registered after the agent exists).
     _mcp = AgentCliMcpWiring(config: config.mcpConfig, cwd: _env.cwd);

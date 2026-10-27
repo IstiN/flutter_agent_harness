@@ -198,7 +198,6 @@ extension SettingsFlow on AgentCli {
       apply: (choice) async {
         final entry = choice.savedEntry;
         if (entry != null) {
-          _activeCustomName = entry.name;
           final keyName = entry.keyName;
           final token = keyName != null
               ? config.secureKeys?.read(keyName)
@@ -210,6 +209,9 @@ extension SettingsFlow on AgentCli {
             token: token,
             tokenKeyName: keyName,
             authHeader: entry.authHeader,
+            // The switch WRITES the pin: the saved entry binds the gate
+            // (issue #1921) and stays the active custom name after it.
+            customName: entry.name,
           );
           // Keep the entry's last-used model in sync (the flow bypasses
           // _switchModel, which normally records it).

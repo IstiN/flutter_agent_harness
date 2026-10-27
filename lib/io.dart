@@ -32,6 +32,7 @@ export 'src/lsp/io_lsp_transport.dart';
 export 'src/mcp/io_mcp_transport.dart';
 export 'src/power/io_power_runner.dart';
 export 'src/providers/conn_trace_io.dart';
+export 'src/providers/proxy_connector_io.dart';
 export 'src/providers/stall_sentinel_io.dart';
 export 'src/providers/stream_trace_io.dart';
 export 'src/secrets/secure_key_store_io.dart';
